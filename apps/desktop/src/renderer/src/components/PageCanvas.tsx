@@ -1,34 +1,46 @@
 import {
+  AlertCircle,
   ArrowUpRight,
   BookOpen,
   Brain,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleDashed,
   Clock3,
   FileText,
-  FolderSync,
-  Github,
-  Globe2,
+  File,
+  FolderOpen,
   HardDrive,
   ListChecks,
   MoreHorizontal,
+  Pause,
+  Play,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
+  Trash2,
+  Unplug,
 } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 
 import type { PageId } from '@/data/navigation'
+import type { DataSourceSummary, SourceFileStatus, SourceFileSummary, SyncResult } from '../../../shared/sources'
 
 function PageHeader({
   title,
   description,
   action,
+  actionDisabled = false,
+  onAction,
 }: {
   title: string
   description: string
   action?: string
+  actionDisabled?: boolean
+  onAction?: () => void
 }) {
   return (
     <header className="page-header">
@@ -37,7 +49,7 @@ function PageHeader({
         <p>{description}</p>
       </div>
       {action ? (
-        <button type="button" className="primary-button">
+        <button type="button" className="primary-button" disabled={actionDisabled} onClick={onAction}>
           <Plus aria-hidden="true" />
           {action}
         </button>
@@ -47,6 +59,18 @@ function PageHeader({
 }
 
 function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void }) {
+  const [sourceCount, setSourceCount] = useState(0)
+
+  useEffect(() => {
+    let active = true
+    void window.nexcore?.sources.list().then((sources) => {
+      if (active) setSourceCount(sources.length)
+    }).catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
   return (
     <div className="page page-home">
       <header className="home-heading">
@@ -109,9 +133,9 @@ function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void }) {
             <span className="status-ok"><Check aria-hidden="true" />正常</span>
           </div>
           <div className="metric-grid">
-            <div><strong>4</strong><span>数据源</span></div>
-            <div><strong>128</strong><span>记忆</span></div>
-            <div><strong>2</strong><span>运行任务</span></div>
+            <div><strong>{sourceCount}</strong><span>数据源</span></div>
+            <div><strong>0</strong><span>记忆</span></div>
+            <div><strong>0</strong><span>运行任务</span></div>
           </div>
         </section>
       </div>
@@ -181,32 +205,302 @@ function DocsPage() {
   )
 }
 
+const SOURCE_STATUS_LABELS: Record<DataSourceSummary['status'], string> = {
+  connected: '已同步',
+  syncing: '同步中',
+  paused: '已暂停',
+  disconnected: '已断开',
+  error: '同步失败',
+}
+
+const FILE_STATUS_LABELS: Record<SourceFileStatus, string> = {
+  added: '新增',
+  updated: '已修改',
+  moved: '已移动',
+  unchanged: '未变化',
+  missing: '原文件缺失',
+  error: '读取失败',
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return '尚未同步'
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`
+  return `${(value / 1024 ** 3).toFixed(1)} GB`
+}
+
+function describeSync(result: SyncResult): string {
+  return `发现 ${result.discovered} 个文件，新增 ${result.added}，更新 ${result.updated}，移动 ${result.moved}，未变化 ${result.unchanged}。`
+}
+
 function SourcesPage() {
-  const sources = [
-    { name: '本地文件夹', type: '本地', icon: HardDrive, status: '已同步', updated: '刚刚' },
-    { name: 'GitHub', type: '连接器', icon: Github, status: '已同步', updated: '18 分钟前' },
-    { name: '飞书文档', type: '连接器', icon: FolderSync, status: '等待连接', updated: '未连接' },
-    { name: '网页导入', type: '手动', icon: Globe2, status: '可用', updated: '随时导入' },
-  ]
+  const api = window.nexcore?.sources
+  const [sources, setSources] = useState<DataSourceSummary[]>([])
+  const [loading, setLoading] = useState(Boolean(api))
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null)
+  const [filesBySource, setFilesBySource] = useState<Record<string, SourceFileSummary[]>>({})
+  const [filesLoadingId, setFilesLoadingId] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadSources = useCallback(async (): Promise<DataSourceSummary[] | null> => {
+    if (!api) return null
+    try {
+      const nextSources = await api.list()
+      const sourceIds = new Set(nextSources.map((source) => source.id))
+      setSources(nextSources)
+      setExpandedSourceId((current) => current && sourceIds.has(current) ? current : null)
+      setFilesBySource((current) => Object.fromEntries(
+        Object.entries(current).filter(([sourceId]) => sourceIds.has(sourceId)),
+      ))
+      setError(null)
+      return nextSources
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '无法读取数据源。')
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [api])
+
+  useEffect(() => {
+    void loadSources()
+    const refreshTimer = window.setInterval(() => void loadSources(), 2_000)
+    return () => window.clearInterval(refreshTimer)
+  }, [loadSources])
+
+  const loadFiles = useCallback(async (sourceId: string) => {
+    if (!api) return
+    setFilesLoadingId(sourceId)
+    try {
+      const files = await api.listFiles(sourceId)
+      setFilesBySource((current) => ({ ...current, [sourceId]: files }))
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : '无法读取文件清单。'
+      if (message.includes('数据源不存在或已断开')) {
+        setExpandedSourceId((current) => current === sourceId ? null : current)
+        setFilesBySource((current) => {
+          const next = { ...current }
+          delete next[sourceId]
+          return next
+        })
+      } else {
+        setError(message)
+      }
+    } finally {
+      setFilesLoadingId(null)
+    }
+  }, [api])
+
+  const toggleFiles = (sourceId: string) => {
+    if (expandedSourceId === sourceId) {
+      setExpandedSourceId(null)
+      return
+    }
+    setExpandedSourceId(sourceId)
+    void loadFiles(sourceId)
+  }
+
+  useEffect(() => {
+    if (!expandedSourceId) return
+    const refreshTimer = window.setInterval(() => void loadFiles(expandedSourceId), 2_000)
+    return () => window.clearInterval(refreshTimer)
+  }, [expandedSourceId, loadFiles])
+
+  const runAction = async (id: string, action: () => Promise<unknown>) => {
+    setBusyId(id)
+    setMessage(null)
+    setError(null)
+    try {
+      await action()
+      const nextSources = await loadSources()
+      if (expandedSourceId === id && nextSources?.some((source) => source.id === id)) {
+        await loadFiles(id)
+      }
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : '操作失败，请重试。')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const addLocalFolder = async () => {
+    if (!api) {
+      setMessage('网页版不读取本机文件夹。请在 NexCore 桌面版中使用此功能。')
+      return
+    }
+    setBusyId('new')
+    setMessage(null)
+    setError(null)
+    try {
+      const result = await api.addLocalFolder()
+      if (result) {
+        setMessage(describeSync(result))
+        await loadSources()
+      }
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : '无法连接该文件夹。')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const disconnect = (source: DataSourceSummary, deleteLocalData: boolean) => {
+    if (!api) return
+    const detail = deleteLocalData
+      ? '这会删除极核保存的文件副本和版本记录，不会删除原文件。'
+      : '原文件不会受到影响，极核保存的来源、版本和对象副本将保留，可随时恢复。'
+    if (!window.confirm(`要断开“${source.name}”吗？\n\n${detail}`)) return
+
+    if (deleteLocalData && expandedSourceId === source.id) setExpandedSourceId(null)
+    void runAction(source.id, () => api.disconnect(source.id, deleteLocalData))
+  }
 
   return (
     <div className="page">
-      <PageHeader title="数据源" description="管理进入极核的文件、应用和网页资料。" action="添加数据源" />
-      <div className="data-table">
-        <div className="table-head"><span>名称</span><span>类型</span><span>状态</span><span>最近同步</span><span /></div>
-        {sources.map((source) => {
-          const Icon = source.icon
-          return (
-            <div key={source.name} className="table-row">
-              <span className="name-cell"><span className="item-icon"><Icon aria-hidden="true" /></span><strong>{source.name}</strong></span>
-              <span>{source.type}</span>
-              <span className="status-cell"><span className="status-dot active" />{source.status}</span>
-              <span>{source.updated}</span>
-              <button type="button" className="icon-button" aria-label="更多操作"><MoreHorizontal aria-hidden="true" /></button>
-            </div>
-          )
-        })}
-      </div>
+      <PageHeader
+        title="数据源"
+        description="管理进入极核的文件、应用和网页资料。"
+        action="连接文件夹"
+        actionDisabled={busyId === 'new'}
+        onAction={() => void addLocalFolder()}
+      />
+
+      {!api ? (
+        <div className="source-notice">
+          <HardDrive aria-hidden="true" />
+          <div><strong>请在桌面版中连接本地文件夹</strong><span>网页版不会请求或读取本机文件权限。</span></div>
+        </div>
+      ) : null}
+      {message ? <div className="source-feedback" role="status">{message}</div> : null}
+      {error ? <div className="source-feedback error" role="alert"><AlertCircle aria-hidden="true" />{error}</div> : null}
+
+      {api && !loading && sources.length === 0 ? (
+        <div className="sources-empty">
+          <span className="sources-empty-icon"><HardDrive aria-hidden="true" /></span>
+          <strong>还没有连接数据源</strong>
+          <p>选择一个本地文件夹，极核会保存受支持文件的版本与同步状态。</p>
+          <button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}>
+            <Plus aria-hidden="true" />连接文件夹
+          </button>
+        </div>
+      ) : null}
+
+      {api && (loading || sources.length > 0) ? (
+        <div className="data-table source-table">
+          <div className="table-head"><span>名称</span><span>文件</span><span>状态</span><span>最近同步</span><span>操作</span></div>
+          {loading ? <div className="source-loading">正在读取本地数据源...</div> : null}
+          {sources.map((source) => {
+            const busy = busyId === source.id || source.status === 'syncing'
+            return (
+              <div key={source.id} className="source-record">
+                <div className="table-row">
+                  <span className="name-cell">
+                    <button
+                      type="button"
+                      className="source-expand-button"
+                      aria-label={`${expandedSourceId === source.id ? '收起' : '查看'} ${source.name} 的文件清单`}
+                      aria-expanded={expandedSourceId === source.id}
+                      onClick={() => toggleFiles(source.id)}
+                    >
+                      {expandedSourceId === source.id ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+                    </button>
+                    <span className="item-icon"><HardDrive aria-hidden="true" /></span>
+                    <span className="source-name-copy"><strong>{source.name}</strong><small title={source.rootPath}>{source.rootPath}</small></span>
+                  </span>
+                  <button type="button" className="source-count source-count-button" onClick={() => toggleFiles(source.id)}>
+                    <strong>{source.fileCount}</strong><small>{formatBytes(source.totalBytes)} · {source.versionCount} 个版本</small>
+                  </button>
+                  <span className="status-cell" data-status={source.status} title={source.lastError ?? undefined}>
+                    <span className="status-dot active" />{SOURCE_STATUS_LABELS[source.status]}
+                  </span>
+                  <span>{formatDate(source.lastSyncedAt)}</span>
+                  <span className="source-actions">
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`重新扫描 ${source.name}`}
+                      title="重新扫描"
+                      disabled={busy || source.status === 'paused' || source.status === 'disconnected'}
+                      onClick={() => void runAction(source.id, async () => {
+                        const result = await api.sync(source.id)
+                        setMessage(describeSync(result))
+                      })}
+                    ><RefreshCw aria-hidden="true" /></button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={source.status === 'paused' || source.status === 'disconnected' || source.status === 'error' ? `恢复 ${source.name}` : `暂停 ${source.name}`}
+                      title={source.status === 'disconnected' ? '重新连接' : source.status === 'paused' || source.status === 'error' ? '恢复同步' : '暂停同步'}
+                      disabled={busy}
+                      onClick={() => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))}
+                    >{source.status === 'paused' || source.status === 'disconnected' || source.status === 'error' ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`断开 ${source.name}`}
+                      title="仅断开"
+                      disabled={busy}
+                      onClick={() => disconnect(source, false)}
+                    ><Unplug aria-hidden="true" /></button>
+                    <button
+                      type="button"
+                      className="icon-button danger"
+                      aria-label={`断开并清理 ${source.name}`}
+                      title="断开并清理本地副本"
+                      disabled={busy}
+                      onClick={() => disconnect(source, true)}
+                    ><Trash2 aria-hidden="true" /></button>
+                  </span>
+                </div>
+                {expandedSourceId === source.id ? (
+                  <div className="source-files-panel">
+                    <div className="source-files-head">
+                      <span>文件</span><span>变化</span><span>修改时间</span><span>大小</span><span />
+                    </div>
+                    {filesLoadingId === source.id ? <div className="source-files-empty">正在读取文件清单...</div> : null}
+                    {filesLoadingId !== source.id && (filesBySource[source.id]?.length ?? 0) === 0 ? (
+                      <div className="source-files-empty">该文件夹中没有受支持的文件。</div>
+                    ) : null}
+                    {filesBySource[source.id]?.map((file) => (
+                      <div key={file.id} className="source-file-row" data-status={file.status}>
+                        <span className="source-file-name">
+                          <File aria-hidden="true" />
+                          <span><strong>{file.name}</strong><small title={file.originalPath}>{file.relativePath}</small></span>
+                        </span>
+                        <span className="file-status">{FILE_STATUS_LABELS[file.status]}</span>
+                        <span>{formatDate(file.modifiedAt)}</span>
+                        <span>{formatBytes(file.size)}</span>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`在 Finder 中显示 ${file.name}`}
+                          title={file.exists ? '在 Finder 中显示' : '原始文件已不存在'}
+                          disabled={!file.exists}
+                          onClick={() => void api.showFile(source.id, file.id).catch((showError) => {
+                            setError(showError instanceof Error ? showError.message : '无法定位原始文件。')
+                          })}
+                        ><FolderOpen aria-hidden="true" /></button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
     </div>
   )
 }

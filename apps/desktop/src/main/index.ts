@@ -1,6 +1,71 @@
 import { join } from 'node:path'
 
-import { app, BrowserWindow, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+
+import { LocalDataService } from './core/local-data-service'
+
+const SOURCE_CHANNELS = {
+  list: 'sources:list',
+  listFiles: 'sources:list-files',
+  showFile: 'sources:show-file',
+  addLocalFolder: 'sources:add-local-folder',
+  sync: 'sources:sync',
+  setPaused: 'sources:set-paused',
+  disconnect: 'sources:disconnect',
+} as const
+
+let localDataService: LocalDataService | null = null
+let shutdownStarted = false
+
+function requireSourceId(value: unknown): string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 100) {
+    throw new Error('无效的数据源标识。')
+  }
+  return value
+}
+
+function registerSourceHandlers(service: LocalDataService): void {
+  ipcMain.handle(SOURCE_CHANNELS.list, () => service.listSources())
+  ipcMain.handle(SOURCE_CHANNELS.listFiles, (_event, id: unknown) =>
+    service.listFiles(requireSourceId(id)),
+  )
+  ipcMain.handle(
+    SOURCE_CHANNELS.showFile,
+    (_event, id: unknown, fileId: unknown) => {
+      const originalPath = service.getOriginalFilePath(
+        requireSourceId(id),
+        requireSourceId(fileId),
+      )
+      shell.showItemInFolder(originalPath)
+    },
+  )
+
+  ipcMain.handle(SOURCE_CHANNELS.addLocalFolder, async () => {
+    const result = await dialog.showOpenDialog({
+      title: '选择要连接的文件夹',
+      buttonLabel: '连接文件夹',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    const rootPath = result.filePaths[0]
+    return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
+  })
+
+  ipcMain.handle(SOURCE_CHANNELS.sync, (_event, id: unknown) => service.sync(requireSourceId(id)))
+  ipcMain.handle(
+    SOURCE_CHANNELS.setPaused,
+    (_event, id: unknown, paused: unknown) => {
+      if (typeof paused !== 'boolean') throw new Error('无效的暂停状态。')
+      return service.setPaused(requireSourceId(id), paused)
+    },
+  )
+  ipcMain.handle(
+    SOURCE_CHANNELS.disconnect,
+    (_event, id: unknown, deleteLocalData: unknown) => {
+      if (typeof deleteLocalData !== 'boolean') throw new Error('无效的清理选项。')
+      return service.disconnect(requireSourceId(id), deleteLocalData)
+    },
+  )
+}
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -14,12 +79,16 @@ function createWindow(): void {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 7 },
     webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
+      preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
+      nodeIntegration: false,
       sandbox: true,
     },
   })
 
+  window.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error(`Failed to load preload script: ${preloadPath}`, error)
+  })
   window.once('ready-to-show', () => window.show())
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -34,13 +103,33 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light'
-  createWindow()
+  try {
+    localDataService = new LocalDataService(join(app.getPath('appData'), 'JiheCore'))
+    await localDataService.initialize()
+    registerSourceHandlers(localDataService)
+    createWindow()
+  } catch (error) {
+    const service = localDataService
+    localDataService = null
+    await service?.shutdown()
+    console.error('Failed to initialize NexCore local data service', error)
+    app.quit()
+    return
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
+app.on('before-quit', (event) => {
+  if (!localDataService || shutdownStarted) return
+  event.preventDefault()
+  shutdownStarted = true
+  const service = localDataService
+  localDataService = null
+  void service.shutdown().finally(() => app.quit())
+})
 app.on('window-all-closed', () => app.quit())

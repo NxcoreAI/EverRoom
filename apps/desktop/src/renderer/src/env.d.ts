@@ -1,7 +1,11 @@
 /// <reference types="vite/client" />
 
-interface Window {
-  nexcore?: {
-    platform: string
+import type { NexcoreDesktopApi } from '../../shared/sources'
+
+declare global {
+  interface Window {
+    nexcore?: NexcoreDesktopApi
   }
 }
+
+export {}
