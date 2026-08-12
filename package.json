@@ -1,0 +1,12 @@
+{
+  "name": "nexcore-ce",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.15.1",
+  "scripts": {
+    "dev": "pnpm --filter @nexcore/desktop dev",
+    "build": "pnpm --filter @nexcore/desktop build",
+    "typecheck": "pnpm --filter @nexcore/desktop typecheck",
+    "package:mac": "pnpm --filter @nexcore/desktop package:mac"
+  }
+}
