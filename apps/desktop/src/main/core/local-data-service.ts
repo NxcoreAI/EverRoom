@@ -54,6 +54,7 @@ interface SourceRow {
   disconnected_at: string | null
   last_synced_at: string | null
   last_error: string | null
+  last_change_run_id: string | null
   created_at: string
 }
 
@@ -68,16 +69,20 @@ interface ItemRow {
   file_identity: string
   relative_path: string
   content_hash: string | null
+  state: 'present' | 'missing'
 }
 
 interface FileSummaryRow {
   id: string
   relative_path: string
+  previous_relative_path: string | null
   extension: string
   size: number
   modified_at: string
   state: 'present' | 'missing'
   sync_status: SourceFileStatus
+  last_change_run_id: string | null
+  last_changed_at: string
   content_hash: string | null
   last_seen_at: string
   version_count: number
@@ -117,6 +122,7 @@ export class LocalDataService {
         status TEXT NOT NULL,
         last_synced_at TEXT,
         last_error TEXT,
+        last_change_run_id TEXT,
         disconnected_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -133,6 +139,9 @@ export class LocalDataService {
         content_hash TEXT,
         state TEXT NOT NULL DEFAULT 'present' CHECK (state IN ('present', 'missing')),
         sync_status TEXT NOT NULL DEFAULT 'unchanged',
+        previous_relative_path TEXT,
+        last_change_run_id TEXT,
+        last_changed_at TEXT NOT NULL,
         first_seen_at TEXT NOT NULL,
         last_seen_at TEXT NOT NULL,
         UNIQUE(data_source_id, file_identity)
@@ -178,11 +187,28 @@ export class LocalDataService {
     if (!sourceColumns.some((column) => column.name === 'disconnected_at')) {
       this.database.exec('ALTER TABLE data_sources ADD COLUMN disconnected_at TEXT')
     }
+    if (!sourceColumns.some((column) => column.name === 'last_change_run_id')) {
+      this.database.exec('ALTER TABLE data_sources ADD COLUMN last_change_run_id TEXT')
+    }
     const itemColumns = this.database
       .prepare('PRAGMA table_info(source_items)')
       .all() as unknown as Array<{ name: string }>
     if (!itemColumns.some((column) => column.name === 'sync_status')) {
       this.database.exec("ALTER TABLE source_items ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'unchanged'")
+    }
+    if (!itemColumns.some((column) => column.name === 'previous_relative_path')) {
+      this.database.exec('ALTER TABLE source_items ADD COLUMN previous_relative_path TEXT')
+    }
+    if (!itemColumns.some((column) => column.name === 'last_change_run_id')) {
+      this.database.exec('ALTER TABLE source_items ADD COLUMN last_change_run_id TEXT')
+    }
+    if (!itemColumns.some((column) => column.name === 'last_changed_at')) {
+      this.database.exec('ALTER TABLE source_items ADD COLUMN last_changed_at TEXT')
+      this.database.exec(`
+        UPDATE source_items
+        SET last_changed_at = COALESCE(last_seen_at, first_seen_at)
+        WHERE last_changed_at IS NULL
+      `)
     }
 
     const recoveredAt = new Date().toISOString()
@@ -229,11 +255,14 @@ export class LocalDataService {
       SELECT
         source_items.id,
         source_items.relative_path,
+        source_items.previous_relative_path,
         source_items.extension,
         source_items.size,
         source_items.modified_at,
         source_items.state,
         source_items.sync_status,
+        source_items.last_change_run_id,
+        source_items.last_changed_at,
         source_items.content_hash,
         source_items.last_seen_at,
         COUNT(source_versions.id) AS version_count
@@ -249,12 +278,18 @@ export class LocalDataService {
       id: row.id,
       name: basename(row.relative_path),
       relativePath: row.relative_path,
+      previousRelativePath: row.previous_relative_path,
       originalPath: join(source.root_path, row.relative_path),
       extension: row.extension,
       size: Number(row.size),
       modifiedAt: row.modified_at,
       exists: row.state === 'present',
-      status: row.sync_status,
+      status: row.state === 'missing'
+        ? 'missing'
+        : source.last_change_run_id !== null && row.last_change_run_id === source.last_change_run_id
+          ? row.sync_status
+          : 'unchanged',
+      changedAt: row.last_changed_at,
       versionCount: Number(row.version_count),
       contentHash: row.content_hash,
       lastSeenAt: row.last_seen_at,
@@ -392,7 +427,7 @@ export class LocalDataService {
       const files = await this.collectFiles(source.root_path, counts)
       counts.discovered = files.length
       const existingItems = this.database
-        .prepare('SELECT id, file_identity, relative_path, content_hash FROM source_items WHERE data_source_id = ?')
+        .prepare('SELECT id, file_identity, relative_path, content_hash, state FROM source_items WHERE data_source_id = ?')
         .all(id) as unknown as ItemRow[]
       const itemsByIdentity = new Map(existingItems.map((item) => [item.file_identity, item]))
       const itemsByPath = new Map(existingItems.map((item) => [item.relative_path, item]))
@@ -408,50 +443,75 @@ export class LocalDataService {
 
           if (!existingItem) {
             await this.storeObject(file.absolutePath, contentHash)
-            this.insertItemAndVersion(id, file, contentHash)
+            this.insertItemAndVersion(id, runId, file, contentHash)
             counts.added += 1
             continue
           }
 
           const moved = existingItem.relative_path !== file.relativePath
+          const restored = existingItem.state === 'missing'
           if (existingItem.content_hash === contentHash) {
-            this.updateItem(existingItem.id, file, contentHash, moved ? 'moved' : 'unchanged')
-            if (moved) counts.moved += 1
-            else counts.unchanged += 1
+            if (moved) {
+              const status = basename(existingItem.relative_path) === basename(file.relativePath)
+                ? 'moved'
+                : 'renamed'
+              this.recordItemChange(existingItem, runId, file, contentHash, status)
+              counts.moved += 1
+            } else if (restored) {
+              this.recordItemChange(existingItem, runId, file, contentHash, 'restored')
+              counts.added += 1
+            } else {
+              this.markItemSeen(existingItem.id, file, contentHash)
+              counts.unchanged += 1
+            }
             continue
           }
 
           await this.storeObject(file.absolutePath, contentHash)
-          this.updateItem(existingItem.id, file, contentHash, 'updated')
+          this.recordItemChange(existingItem, runId, file, contentHash, 'updated')
           this.insertVersion(existingItem.id, file, contentHash)
           if (moved) counts.moved += 1
           counts.updated += 1
         } catch {
           if (existingItem) {
+            const failedAt = new Date().toISOString()
             this.database.prepare(`
               UPDATE source_items
-              SET sync_status = 'error', last_seen_at = ?
+              SET sync_status = 'error', previous_relative_path = NULL,
+                  last_change_run_id = ?, last_changed_at = ?, last_seen_at = ?
               WHERE id = ?
-            `).run(new Date().toISOString(), existingItem.id)
+            `).run(runId, failedAt, failedAt, existingItem.id)
           }
           counts.failed += 1
         }
       }
 
-      const missingItems = existingItems.filter((item) => !seenIdentities.has(item.file_identity))
+      const missingItems = existingItems.filter(
+        (item) => item.state === 'present' && !seenIdentities.has(item.file_identity),
+      )
       if (missingItems.length > 0) {
-        const markMissing = this.database.prepare("UPDATE source_items SET state = 'missing', sync_status = 'missing' WHERE id = ?")
-        for (const item of missingItems) markMissing.run(item.id)
+        const markMissing = this.database.prepare(`
+          UPDATE source_items
+          SET state = 'missing', sync_status = 'missing', previous_relative_path = NULL,
+              last_change_run_id = ?, last_changed_at = ?
+          WHERE id = ?
+        `)
+        const changedAt = new Date().toISOString()
+        for (const item of missingItems) markMissing.run(runId, changedAt, item.id)
         counts.removed = missingItems.length
       }
 
       const finishedAt = new Date().toISOString()
       this.finishRun(runId, 'success', counts, finishedAt, null)
+      const hasChanges = counts.added > 0 || counts.updated > 0 || counts.moved > 0 ||
+        counts.removed > 0 || counts.failed > 0
       this.database.prepare(`
         UPDATE data_sources
-        SET status = 'connected', last_synced_at = ?, last_error = NULL, updated_at = ?
+        SET status = 'connected', last_synced_at = ?, last_error = NULL,
+            last_change_run_id = CASE WHEN ? THEN ? ELSE last_change_run_id END,
+            updated_at = ?
         WHERE id = ?
-      `).run(finishedAt, finishedAt, id)
+      `).run(finishedAt, hasChanges ? 1 : 0, runId, finishedAt, id)
 
       return { source: this.getSummary(id), ...counts }
     } catch (error) {
@@ -586,14 +646,20 @@ export class LocalDataService {
     return join(this.objectsDirectory, hash.slice(0, 2), hash)
   }
 
-  private insertItemAndVersion(dataSourceId: string, file: ScannedFile, hash: string): void {
+  private insertItemAndVersion(
+    dataSourceId: string,
+    runId: string,
+    file: ScannedFile,
+    hash: string,
+  ): void {
     const itemId = randomUUID()
     const now = new Date().toISOString()
     this.database.prepare(`
       INSERT INTO source_items (
         id, data_source_id, file_identity, relative_path, extension, size, modified_at,
-        content_hash, state, sync_status, first_seen_at, last_seen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'present', 'added', ?, ?)
+        content_hash, state, sync_status, previous_relative_path, last_change_run_id, last_changed_at,
+        first_seen_at, last_seen_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'present', 'added', NULL, ?, ?, ?, ?)
     `).run(
       itemId,
       dataSourceId,
@@ -603,22 +669,30 @@ export class LocalDataService {
       file.size,
       file.modifiedAt,
       hash,
+      runId,
+      now,
       now,
       now,
     )
     this.insertVersion(itemId, file, hash)
   }
 
-  private updateItem(
-    itemId: string,
+  private recordItemChange(
+    existingItem: ItemRow,
+    runId: string,
     file: ScannedFile,
     hash: string,
-    status: Exclude<SourceFileStatus, 'added' | 'missing' | 'error'>,
+    status: Exclude<SourceFileStatus, 'added' | 'unchanged' | 'missing' | 'error'>,
   ): void {
+    const previousPath = existingItem.relative_path === file.relativePath
+      ? null
+      : existingItem.relative_path
+    const now = new Date().toISOString()
     this.database.prepare(`
       UPDATE source_items
       SET file_identity = ?, relative_path = ?, extension = ?, size = ?, modified_at = ?, content_hash = ?,
-          state = 'present', sync_status = ?, last_seen_at = ?
+          state = 'present', sync_status = ?, previous_relative_path = ?,
+          last_change_run_id = ?, last_changed_at = ?, last_seen_at = ?
       WHERE id = ?
     `).run(
       file.identity,
@@ -628,6 +702,27 @@ export class LocalDataService {
       file.modifiedAt,
       hash,
       status,
+      previousPath,
+      runId,
+      now,
+      now,
+      existingItem.id,
+    )
+  }
+
+  private markItemSeen(itemId: string, file: ScannedFile, hash: string): void {
+    this.database.prepare(`
+      UPDATE source_items
+      SET file_identity = ?, relative_path = ?, extension = ?, size = ?, modified_at = ?,
+          content_hash = ?, state = 'present', last_seen_at = ?
+      WHERE id = ?
+    `).run(
+      file.identity,
+      file.relativePath,
+      file.extension,
+      file.size,
+      file.modifiedAt,
+      hash,
       new Date().toISOString(),
       itemId,
     )

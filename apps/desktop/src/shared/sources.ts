@@ -1,16 +1,26 @@
 export type DataSourceStatus = 'connected' | 'syncing' | 'paused' | 'disconnected' | 'error'
-export type SourceFileStatus = 'added' | 'updated' | 'moved' | 'unchanged' | 'missing' | 'error'
+export type SourceFileStatus =
+  | 'added'
+  | 'updated'
+  | 'renamed'
+  | 'moved'
+  | 'restored'
+  | 'unchanged'
+  | 'missing'
+  | 'error'
 
 export interface SourceFileSummary {
   id: string
   name: string
   relativePath: string
+  previousRelativePath: string | null
   originalPath: string
   extension: string
   size: number
   modifiedAt: string
   exists: boolean
   status: SourceFileStatus
+  changedAt: string
   versionCount: number
   contentHash: string | null
   lastSeenAt: string

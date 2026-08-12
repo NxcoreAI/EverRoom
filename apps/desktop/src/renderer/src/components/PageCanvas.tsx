@@ -216,9 +216,11 @@ const SOURCE_STATUS_LABELS: Record<DataSourceSummary['status'], string> = {
 const FILE_STATUS_LABELS: Record<SourceFileStatus, string> = {
   added: '新增',
   updated: '已修改',
+  renamed: '已重命名',
   moved: '已移动',
+  restored: '已恢复',
   unchanged: '未变化',
-  missing: '原文件缺失',
+  missing: '已删除',
   error: '读取失败',
 }
 
@@ -477,9 +479,18 @@ function SourcesPage() {
                       <div key={file.id} className="source-file-row" data-status={file.status}>
                         <span className="source-file-name">
                           <File aria-hidden="true" />
-                          <span><strong>{file.name}</strong><small title={file.originalPath}>{file.relativePath}</small></span>
+                          <span>
+                            <strong>{file.name}</strong>
+                            <small title={file.originalPath}>
+                              {file.previousRelativePath
+                                ? `${file.previousRelativePath} → ${file.relativePath}`
+                                : file.relativePath}
+                            </small>
+                          </span>
                         </span>
-                        <span className="file-status">{FILE_STATUS_LABELS[file.status]}</span>
+                        <span className="file-status" title={`变化时间：${formatDate(file.changedAt)}`}>
+                          {FILE_STATUS_LABELS[file.status]}
+                        </span>
                         <span>{formatDate(file.modifiedAt)}</span>
                         <span>{formatBytes(file.size)}</span>
                         <button

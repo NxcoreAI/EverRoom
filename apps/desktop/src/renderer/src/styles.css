@@ -1373,6 +1373,8 @@ summary:focus-visible {
 
 .source-file-row[data-status='added'] .file-status,
 .source-file-row[data-status='updated'] .file-status,
+.source-file-row[data-status='renamed'] .file-status,
+.source-file-row[data-status='restored'] .file-status,
 .source-file-row[data-status='moved'] .file-status {
   color: var(--accent);
 }
