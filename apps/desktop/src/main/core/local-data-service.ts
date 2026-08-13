@@ -1,9 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream, mkdirSync, watch, type FSWatcher } from 'node:fs'
-import { copyFile, mkdir, readdir, rename, stat, unlink } from 'node:fs/promises'
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { createReadStream, createWriteStream, mkdirSync } from 'node:fs'
+import { mkdir, rename, stat, unlink } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { DatabaseSync } from 'node:sqlite'
 
+import { ConnectorRegistry } from '../connectors/connector-registry'
+import type {
+  ConnectorConnection,
+  ConnectorItem,
+  ConnectorKind,
+  ConnectorSubscription,
+} from '../connectors/types'
 import type {
   DataSourceSummary,
   SourceFileStatus,
@@ -11,45 +19,13 @@ import type {
   SyncResult,
 } from '../../shared/sources'
 
-const SUPPORTED_EXTENSIONS = new Set([
-  '.docx',
-  '.gif',
-  '.heic',
-  '.htm',
-  '.html',
-  '.jpeg',
-  '.jpg',
-  '.md',
-  '.mdx',
-  '.pdf',
-  '.png',
-  '.pptx',
-  '.rtf',
-  '.text',
-  '.txt',
-  '.tif',
-  '.tiff',
-  '.webp',
-  '.xlsx',
-  '.xml',
-  '.yaml',
-  '.yml',
-])
-
-interface ScannedFile {
-  absolutePath: string
-  relativePath: string
-  identity: string
-  extension: string
-  size: number
-  modifiedAt: string
-}
-
 interface SourceRow {
   id: string
-  kind: 'local-folder'
+  kind: ConnectorKind
   name: string
-  root_path: string
+  root_path: string | null
+  connection_key: string
+  config_json: string
   status: DataSourceSummary['status']
   disconnected_at: string | null
   last_synced_at: string | null
@@ -66,7 +42,7 @@ interface CountRow {
 
 interface ItemRow {
   id: string
-  file_identity: string
+  remote_id: string
   relative_path: string
   content_hash: string | null
   state: 'present' | 'missing'
@@ -92,11 +68,14 @@ export class LocalDataService {
   private readonly database: DatabaseSync
   private readonly objectsDirectory: string
   private readonly activeScans = new Map<string, Promise<SyncResult>>()
-  private readonly watchers = new Map<string, FSWatcher>()
+  private readonly watchers = new Map<string, ConnectorSubscription>()
   private readonly watchTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly verificationTimers = new Map<string, ReturnType<typeof setInterval>>()
 
-  constructor(private readonly dataDirectory: string) {
+  constructor(
+    private readonly dataDirectory: string,
+    private readonly connectors: ConnectorRegistry,
+  ) {
     this.objectsDirectory = join(dataDirectory, 'objects', 'sha256')
     mkdirSync(join(dataDirectory, 'database'), { recursive: true })
     this.database = new DatabaseSync(join(dataDirectory, 'database', 'nexcore.db'))
@@ -116,9 +95,11 @@ export class LocalDataService {
 
       CREATE TABLE IF NOT EXISTS data_sources (
         id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL CHECK (kind = 'local-folder'),
+        kind TEXT NOT NULL,
         name TEXT NOT NULL,
-        root_path TEXT NOT NULL UNIQUE,
+        root_path TEXT UNIQUE,
+        connection_key TEXT NOT NULL UNIQUE,
+        config_json TEXT NOT NULL DEFAULT '{}',
         status TEXT NOT NULL,
         last_synced_at TEXT,
         last_error TEXT,
@@ -132,6 +113,9 @@ export class LocalDataService {
         id TEXT PRIMARY KEY,
         data_source_id TEXT NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
         file_identity TEXT NOT NULL,
+        remote_id TEXT,
+        title TEXT,
+        uri TEXT,
         relative_path TEXT NOT NULL,
         extension TEXT NOT NULL,
         size INTEGER NOT NULL,
@@ -157,12 +141,14 @@ export class LocalDataService {
         object_hash TEXT NOT NULL,
         size INTEGER NOT NULL,
         source_modified_at TEXT NOT NULL,
-        captured_at TEXT NOT NULL,
-        UNIQUE(source_item_id, content_hash)
+        captured_at TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_source_versions_object_hash
         ON source_versions(object_hash);
+
+      CREATE INDEX IF NOT EXISTS idx_source_versions_item_captured
+        ON source_versions(source_item_id, captured_at);
 
       CREATE TABLE IF NOT EXISTS sync_runs (
         id TEXT PRIMARY KEY,
@@ -184,18 +170,63 @@ export class LocalDataService {
     const sourceColumns = this.database
       .prepare('PRAGMA table_info(data_sources)')
       .all() as unknown as Array<{ name: string }>
-    if (!sourceColumns.some((column) => column.name === 'disconnected_at')) {
+    const sourceSchema = this.database.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'data_sources'
+    `).get() as unknown as { sql: string }
+    if (sourceSchema.sql.includes("CHECK (kind = 'local-folder')")) {
+      this.migrateDataSourcesTable(sourceColumns)
+    }
+    const migratedSourceColumns = this.database
+      .prepare('PRAGMA table_info(data_sources)')
+      .all() as unknown as Array<{ name: string }>
+    if (!migratedSourceColumns.some((column) => column.name === 'disconnected_at')) {
       this.database.exec('ALTER TABLE data_sources ADD COLUMN disconnected_at TEXT')
     }
-    if (!sourceColumns.some((column) => column.name === 'last_change_run_id')) {
+    if (!migratedSourceColumns.some((column) => column.name === 'last_change_run_id')) {
       this.database.exec('ALTER TABLE data_sources ADD COLUMN last_change_run_id TEXT')
     }
+    if (!migratedSourceColumns.some((column) => column.name === 'config_json')) {
+      this.database.exec("ALTER TABLE data_sources ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'")
+    }
+    if (!migratedSourceColumns.some((column) => column.name === 'connection_key')) {
+      this.database.exec('ALTER TABLE data_sources ADD COLUMN connection_key TEXT')
+      this.database.exec(`
+        UPDATE data_sources
+        SET connection_key = kind || ':' || COALESCE(root_path, id)
+        WHERE connection_key IS NULL
+      `)
+      this.database.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_data_sources_connection_key
+        ON data_sources(connection_key)
+      `)
+    }
+    this.database.exec(`
+      UPDATE data_sources
+      SET config_json = json_object('rootPath', root_path)
+      WHERE kind = 'local-folder' AND (config_json = '{}' OR config_json IS NULL)
+    `)
     const itemColumns = this.database
       .prepare('PRAGMA table_info(source_items)')
       .all() as unknown as Array<{ name: string }>
     if (!itemColumns.some((column) => column.name === 'sync_status')) {
       this.database.exec("ALTER TABLE source_items ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'unchanged'")
     }
+    if (!itemColumns.some((column) => column.name === 'remote_id')) {
+      this.database.exec('ALTER TABLE source_items ADD COLUMN remote_id TEXT')
+    }
+    if (!itemColumns.some((column) => column.name === 'title')) {
+      this.database.exec('ALTER TABLE source_items ADD COLUMN title TEXT')
+    }
+    if (!itemColumns.some((column) => column.name === 'uri')) {
+      this.database.exec('ALTER TABLE source_items ADD COLUMN uri TEXT')
+    }
+    this.database.exec(`
+      UPDATE source_items
+      SET remote_id = COALESCE(remote_id, file_identity),
+          title = COALESCE(title, relative_path),
+          uri = COALESCE(uri, relative_path)
+      WHERE remote_id IS NULL OR title IS NULL OR uri IS NULL
+    `)
     if (!itemColumns.some((column) => column.name === 'previous_relative_path')) {
       this.database.exec('ALTER TABLE source_items ADD COLUMN previous_relative_path TEXT')
     }
@@ -209,6 +240,12 @@ export class LocalDataService {
         SET last_changed_at = COALESCE(last_seen_at, first_seen_at)
         WHERE last_changed_at IS NULL
       `)
+    }
+    const versionSchema = this.database.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'source_versions'
+    `).get() as unknown as { sql: string }
+    if (versionSchema.sql.includes('UNIQUE(source_item_id, content_hash)')) {
+      this.migrateSourceVersionsTable()
     }
 
     const recoveredAt = new Date().toISOString()
@@ -228,6 +265,99 @@ export class LocalDataService {
       WHERE status = 'connected' AND disconnected_at IS NULL
     `).all() as unknown as SourceRow[]
     for (const source of connectedSources) this.startWatching(source)
+  }
+
+  private migrateDataSourcesTable(columns: Array<{ name: string }>): void {
+    const hasDisconnectedAt = columns.some((column) => column.name === 'disconnected_at')
+    const hasLastChangeRunId = columns.some((column) => column.name === 'last_change_run_id')
+    const disconnectedAt = hasDisconnectedAt ? 'disconnected_at' : 'NULL'
+    const lastChangeRunId = hasLastChangeRunId ? 'last_change_run_id' : 'NULL'
+
+    this.database.exec(`
+      PRAGMA foreign_keys = OFF;
+      PRAGMA legacy_alter_table = ON;
+      BEGIN IMMEDIATE;
+
+      ALTER TABLE data_sources RENAME TO data_sources_legacy;
+
+      CREATE TABLE data_sources (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        root_path TEXT UNIQUE,
+        connection_key TEXT NOT NULL UNIQUE,
+        config_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL,
+        last_synced_at TEXT,
+        last_error TEXT,
+        last_change_run_id TEXT,
+        disconnected_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO data_sources (
+        id, kind, name, root_path, connection_key, config_json, status, last_synced_at, last_error,
+        last_change_run_id, disconnected_at, created_at, updated_at
+      )
+      SELECT
+        id, kind, name, root_path, kind || ':' || COALESCE(root_path, id),
+        json_object('rootPath', root_path), status,
+        last_synced_at, last_error, ${lastChangeRunId}, ${disconnectedAt}, created_at, updated_at
+      FROM data_sources_legacy;
+
+      DROP TABLE data_sources_legacy;
+      COMMIT;
+      PRAGMA legacy_alter_table = OFF;
+      PRAGMA foreign_keys = ON;
+    `)
+
+    const foreignKeyIssues = this.database.prepare('PRAGMA foreign_key_check').all()
+    if (foreignKeyIssues.length > 0) {
+      throw new Error('数据源数据库迁移后外键检查失败。')
+    }
+  }
+
+  private migrateSourceVersionsTable(): void {
+    this.database.exec(`
+      PRAGMA foreign_keys = OFF;
+      PRAGMA legacy_alter_table = ON;
+      BEGIN IMMEDIATE;
+
+      ALTER TABLE source_versions RENAME TO source_versions_legacy;
+
+      CREATE TABLE source_versions (
+        id TEXT PRIMARY KEY,
+        source_item_id TEXT NOT NULL REFERENCES source_items(id) ON DELETE CASCADE,
+        content_hash TEXT NOT NULL,
+        object_hash TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        source_modified_at TEXT NOT NULL,
+        captured_at TEXT NOT NULL
+      );
+
+      INSERT INTO source_versions (
+        id, source_item_id, content_hash, object_hash, size, source_modified_at, captured_at
+      )
+      SELECT
+        id, source_item_id, content_hash, object_hash, size, source_modified_at, captured_at
+      FROM source_versions_legacy;
+
+      DROP TABLE source_versions_legacy;
+      CREATE INDEX IF NOT EXISTS idx_source_versions_object_hash
+        ON source_versions(object_hash);
+      CREATE INDEX IF NOT EXISTS idx_source_versions_item_captured
+        ON source_versions(source_item_id, captured_at);
+
+      COMMIT;
+      PRAGMA legacy_alter_table = OFF;
+      PRAGMA foreign_keys = ON;
+    `)
+
+    const foreignKeyIssues = this.database.prepare('PRAGMA foreign_key_check').all()
+    if (foreignKeyIssues.length > 0) {
+      throw new Error('文件版本数据库迁移后外键检查失败。')
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -274,12 +404,16 @@ export class LocalDataService {
     `).all(dataSourceId) as unknown as FileSummaryRow[]
 
     const source = this.requireSource(dataSourceId)
+    const connector = this.connectors.get(source.kind)
+    const connection = this.toConnection(source)
     return rows.map((row) => ({
       id: row.id,
       name: basename(row.relative_path),
       relativePath: row.relative_path,
       previousRelativePath: row.previous_relative_path,
-      originalPath: join(source.root_path, row.relative_path),
+      originalPath: connector.resolveLocalPath
+        ? connector.resolveLocalPath(connection, row.relative_path)
+        : row.relative_path,
       extension: row.extension,
       size: Number(row.size),
       modifiedAt: row.modified_at,
@@ -298,6 +432,8 @@ export class LocalDataService {
 
   getOriginalFilePath(dataSourceId: string, fileId: string): string {
     const source = this.requireSource(dataSourceId)
+    const connector = this.connectors.get(source.kind)
+    if (!connector.resolveLocalPath) throw new Error('该数据源没有可在本机打开的位置。')
     const item = this.database.prepare(`
       SELECT relative_path, state
       FROM source_items
@@ -308,19 +444,24 @@ export class LocalDataService {
 
     if (!item) throw new Error('文件记录不存在。')
     if (item.state !== 'present') throw new Error('原始文件当前不存在。')
-
-    const rootPath = resolve(source.root_path)
-    const originalPath = resolve(rootPath, item.relative_path)
-    if (!isAbsolute(originalPath) || (originalPath !== rootPath && !originalPath.startsWith(`${rootPath}${sep}`))) {
-      throw new Error('文件位置超出已授权目录。')
-    }
-    return originalPath
+    return connector.resolveLocalPath(this.toConnection(source), item.relative_path)
   }
 
   async addLocalFolder(rootPath: string): Promise<SyncResult> {
+    return this.addConnection('local-folder', basename(rootPath), { rootPath }, rootPath)
+  }
+
+  async addConnection<TConfig>(
+    kind: ConnectorKind,
+    name: string,
+    config: TConfig,
+    compatibilityRootPath: string | null = null,
+  ): Promise<SyncResult> {
+    const connector = this.connectors.get(kind)
+    const connectionKey = `${kind}:${connector.getConnectionKey(config)}`
     const existing = this.database
-      .prepare('SELECT * FROM data_sources WHERE root_path = ?')
-      .get(rootPath) as unknown as SourceRow | undefined
+      .prepare('SELECT * FROM data_sources WHERE kind = ? AND connection_key = ?')
+      .get(kind, connectionKey) as unknown as SourceRow | undefined
 
     if (existing) {
       if (existing.status === 'paused' || existing.disconnected_at) {
@@ -334,9 +475,19 @@ export class LocalDataService {
     const now = new Date().toISOString()
     const id = randomUUID()
     this.database.prepare(`
-      INSERT INTO data_sources (id, kind, name, root_path, status, created_at, updated_at)
-      VALUES (?, 'local-folder', ?, ?, 'connected', ?, ?)
-    `).run(id, basename(rootPath), rootPath, now, now)
+      INSERT INTO data_sources (
+        id, kind, name, root_path, connection_key, config_json, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'connected', ?, ?)
+    `).run(
+      id,
+      kind,
+      name,
+      compatibilityRootPath,
+      connectionKey,
+      JSON.stringify(config),
+      now,
+      now,
+    )
 
     const result = await this.sync(id)
     this.startWatching(this.requireSource(id))
@@ -424,52 +575,56 @@ export class LocalDataService {
       .run(startedAt, id)
 
     try {
-      const files = await this.collectFiles(source.root_path, counts)
-      counts.discovered = files.length
+      const connector = this.connectors.get(source.kind)
+      const scan = await connector.scan(this.toConnection(source))
+      const items = scan.items
+      counts.failed = scan.failed
+      counts.discovered = items.length
       const existingItems = this.database
-        .prepare('SELECT id, file_identity, relative_path, content_hash, state FROM source_items WHERE data_source_id = ?')
+        .prepare('SELECT id, remote_id, relative_path, content_hash, state FROM source_items WHERE data_source_id = ?')
         .all(id) as unknown as ItemRow[]
-      const itemsByIdentity = new Map(existingItems.map((item) => [item.file_identity, item]))
+      const itemsByRemoteId = new Map(existingItems.map((item) => [item.remote_id, item]))
       const itemsByPath = new Map(existingItems.map((item) => [item.relative_path, item]))
-      const seenIdentities = new Set<string>()
+      const seenRemoteIds = new Set<string>()
 
-      for (const file of files) {
-        const existingItem = itemsByIdentity.get(file.identity) ?? itemsByPath.get(file.relativePath)
-        seenIdentities.add(file.identity)
-        if (existingItem) seenIdentities.add(existingItem.file_identity)
+      for (const item of items) {
+        const existingItem = itemsByRemoteId.get(item.remoteId) ?? itemsByPath.get(item.path)
+        seenRemoteIds.add(item.remoteId)
+        if (existingItem) seenRemoteIds.add(existingItem.remote_id)
 
         try {
-          const contentHash = await this.hashFile(file.absolutePath)
+          const contentHash = await this.hashItem(item)
 
           if (!existingItem) {
-            await this.storeObject(file.absolutePath, contentHash)
-            this.insertItemAndVersion(id, runId, file, contentHash)
+            await this.storeObject(item, contentHash)
+            this.insertItemAndVersion(id, runId, item, contentHash)
             counts.added += 1
             continue
           }
 
-          const moved = existingItem.relative_path !== file.relativePath
+          const moved = existingItem.relative_path !== item.path
           const restored = existingItem.state === 'missing'
           if (existingItem.content_hash === contentHash) {
             if (moved) {
-              const status = basename(existingItem.relative_path) === basename(file.relativePath)
+              const status = basename(existingItem.relative_path) === basename(item.path)
                 ? 'moved'
                 : 'renamed'
-              this.recordItemChange(existingItem, runId, file, contentHash, status)
+              this.recordItemChange(existingItem, runId, item, contentHash, status)
               counts.moved += 1
             } else if (restored) {
-              this.recordItemChange(existingItem, runId, file, contentHash, 'restored')
+              this.recordItemChange(existingItem, runId, item, contentHash, 'restored')
+              this.insertVersion(existingItem.id, item, contentHash)
               counts.added += 1
             } else {
-              this.markItemSeen(existingItem.id, file, contentHash)
+              this.markItemSeen(existingItem.id, item, contentHash)
               counts.unchanged += 1
             }
             continue
           }
 
-          await this.storeObject(file.absolutePath, contentHash)
-          this.recordItemChange(existingItem, runId, file, contentHash, 'updated')
-          this.insertVersion(existingItem.id, file, contentHash)
+          await this.storeObject(item, contentHash)
+          this.recordItemChange(existingItem, runId, item, contentHash, 'updated')
+          this.insertVersion(existingItem.id, item, contentHash)
           if (moved) counts.moved += 1
           counts.updated += 1
         } catch {
@@ -487,7 +642,7 @@ export class LocalDataService {
       }
 
       const missingItems = existingItems.filter(
-        (item) => item.state === 'present' && !seenIdentities.has(item.file_identity),
+        (item) => item.state === 'present' && !seenRemoteIds.has(item.remote_id),
       )
       if (missingItems.length > 0) {
         const markMissing = this.database.prepare(`
@@ -534,7 +689,9 @@ export class LocalDataService {
     if (this.watchers.has(source.id)) return
 
     try {
-      const watcher = watch(source.root_path, { recursive: true }, () => {
+      const connector = this.connectors.get(source.kind)
+      if (!connector.watch) return
+      const watcher = connector.watch(this.toConnection(source), () => {
         const existingTimer = this.watchTimers.get(source.id)
         if (existingTimer) clearTimeout(existingTimer)
         this.watchTimers.set(source.id, setTimeout(() => {
@@ -542,11 +699,7 @@ export class LocalDataService {
           void this.sync(source.id).catch(() => undefined)
         }, 750))
       })
-      watcher.on('error', () => {
-        watcher.close()
-        this.watchers.delete(source.id)
-      })
-      this.watchers.set(source.id, watcher)
+      if (watcher) this.watchers.set(source.id, watcher)
     } catch {
       // Periodic verification remains active when native watching is unavailable.
     }
@@ -563,64 +716,17 @@ export class LocalDataService {
     this.verificationTimers.delete(id)
   }
 
-  private async collectFiles(
-    rootPath: string,
-    counts: Pick<SyncResult, 'failed'>,
-  ): Promise<ScannedFile[]> {
-    const files: ScannedFile[] = []
-    const visit = async (directory: string, isRoot = false): Promise<void> => {
-      let entries
-      try {
-        entries = await readdir(directory, { withFileTypes: true })
-      } catch (error) {
-        if (isRoot) throw error
-        counts.failed += 1
-        return
-      }
-
-      for (const entry of entries) {
-        if (entry.name.startsWith('.')) continue
-        const absolutePath = join(directory, entry.name)
-        if (entry.isDirectory()) {
-          await visit(absolutePath)
-          continue
-        }
-        if (!entry.isFile()) continue
-
-        const extension = extname(entry.name).toLowerCase()
-        if (!SUPPORTED_EXTENSIONS.has(extension)) continue
-
-        try {
-          const info = await stat(absolutePath)
-          files.push({
-            absolutePath,
-            relativePath: relative(rootPath, absolutePath),
-            identity: info.ino > 0 ? `${info.dev}:${info.ino}` : relative(rootPath, absolutePath),
-            extension,
-            size: info.size,
-            modifiedAt: info.mtime.toISOString(),
-          })
-        } catch {
-          counts.failed += 1
-        }
-      }
-    }
-
-    await visit(rootPath, true)
-    return files
-  }
-
-  private hashFile(path: string): Promise<string> {
+  private hashItem(item: ConnectorItem): Promise<string> {
     return new Promise((resolve, reject) => {
       const hash = createHash('sha256')
-      const stream = createReadStream(path)
+      const stream = item.openContent()
       stream.on('data', (chunk) => hash.update(chunk))
       stream.on('error', reject)
       stream.on('end', () => resolve(hash.digest('hex')))
     })
   }
 
-  private async storeObject(sourcePath: string, hash: string): Promise<void> {
+  private async storeObject(item: ConnectorItem, hash: string): Promise<void> {
     const destination = this.objectPath(hash)
     try {
       await stat(destination)
@@ -633,13 +739,25 @@ export class LocalDataService {
     const temporaryPath = join(destinationDirectory, `.${hash}.${randomUUID()}.tmp`)
     await mkdir(destinationDirectory, { recursive: true })
     try {
-      await copyFile(sourcePath, temporaryPath)
-      const capturedHash = await this.hashFile(temporaryPath)
-      if (capturedHash !== hash) throw new Error('文件在扫描过程中发生变化，请重新扫描。')
+      await pipeline(item.openContent(), createWriteStream(temporaryPath, { flags: 'wx' }))
+      const temporaryHash = await this.hashStoredObject(temporaryPath)
+      if (temporaryHash !== hash) {
+        throw new Error('文件在扫描过程中发生变化，请重新扫描。')
+      }
       await rename(temporaryPath, destination)
     } finally {
       await unlink(temporaryPath).catch(() => undefined)
     }
+  }
+
+  private hashStoredObject(path: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = createHash('sha256')
+      const stream = createReadStream(path)
+      stream.on('data', (chunk) => hash.update(chunk))
+      stream.on('error', reject)
+      stream.on('end', () => resolve(hash.digest('hex')))
+    })
   }
 
   private objectPath(hash: string): string {
@@ -649,57 +767,65 @@ export class LocalDataService {
   private insertItemAndVersion(
     dataSourceId: string,
     runId: string,
-    file: ScannedFile,
+    item: ConnectorItem,
     hash: string,
   ): void {
     const itemId = randomUUID()
     const now = new Date().toISOString()
     this.database.prepare(`
       INSERT INTO source_items (
-        id, data_source_id, file_identity, relative_path, extension, size, modified_at,
+        id, data_source_id, file_identity, remote_id, title, uri,
+        relative_path, extension, size, modified_at,
         content_hash, state, sync_status, previous_relative_path, last_change_run_id, last_changed_at,
         first_seen_at, last_seen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'present', 'added', NULL, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'present', 'added', NULL, ?, ?, ?, ?)
     `).run(
       itemId,
       dataSourceId,
-      file.identity,
-      file.relativePath,
-      file.extension,
-      file.size,
-      file.modifiedAt,
+      item.remoteId,
+      item.remoteId,
+      item.title,
+      item.uri,
+      item.path,
+      item.extension,
+      item.byteSize,
+      item.modifiedAt,
       hash,
       runId,
       now,
       now,
       now,
     )
-    this.insertVersion(itemId, file, hash)
+    this.insertVersion(itemId, item, hash)
   }
 
   private recordItemChange(
     existingItem: ItemRow,
     runId: string,
-    file: ScannedFile,
+    item: ConnectorItem,
     hash: string,
     status: Exclude<SourceFileStatus, 'added' | 'unchanged' | 'missing' | 'error'>,
   ): void {
-    const previousPath = existingItem.relative_path === file.relativePath
+    const previousPath = existingItem.relative_path === item.path
       ? null
       : existingItem.relative_path
     const now = new Date().toISOString()
     this.database.prepare(`
       UPDATE source_items
-      SET file_identity = ?, relative_path = ?, extension = ?, size = ?, modified_at = ?, content_hash = ?,
+      SET file_identity = ?, remote_id = ?, title = ?, uri = ?, relative_path = ?,
+          extension = ?, size = ?, modified_at = ?, content_hash = ?,
           state = 'present', sync_status = ?, previous_relative_path = ?,
           last_change_run_id = ?, last_changed_at = ?, last_seen_at = ?
       WHERE id = ?
     `).run(
-      file.identity,
-      file.relativePath,
-      file.extension,
-      file.size,
-      file.modifiedAt,
+      item.remoteId,
+      item.remoteId,
+      item.title,
+      item.uri,
+      item.path,
+      item.extension,
+      item.byteSize,
+      item.modifiedAt,
       hash,
       status,
       previousPath,
@@ -710,30 +836,49 @@ export class LocalDataService {
     )
   }
 
-  private markItemSeen(itemId: string, file: ScannedFile, hash: string): void {
+  private markItemSeen(itemId: string, item: ConnectorItem, hash: string): void {
     this.database.prepare(`
       UPDATE source_items
-      SET file_identity = ?, relative_path = ?, extension = ?, size = ?, modified_at = ?,
+      SET file_identity = ?, remote_id = ?, title = ?, uri = ?, relative_path = ?,
+          extension = ?, size = ?, modified_at = ?,
           content_hash = ?, state = 'present', last_seen_at = ?
       WHERE id = ?
     `).run(
-      file.identity,
-      file.relativePath,
-      file.extension,
-      file.size,
-      file.modifiedAt,
+      item.remoteId,
+      item.remoteId,
+      item.title,
+      item.uri,
+      item.path,
+      item.extension,
+      item.byteSize,
+      item.modifiedAt,
       hash,
       new Date().toISOString(),
       itemId,
     )
   }
 
-  private insertVersion(itemId: string, file: ScannedFile, hash: string): void {
+  private insertVersion(itemId: string, item: ConnectorItem, hash: string): void {
     this.database.prepare(`
-      INSERT OR IGNORE INTO source_versions (
+      INSERT INTO source_versions (
         id, source_item_id, content_hash, object_hash, size, source_modified_at, captured_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(randomUUID(), itemId, hash, hash, file.size, file.modifiedAt, new Date().toISOString())
+    `).run(randomUUID(), itemId, hash, hash, item.byteSize, item.modifiedAt, new Date().toISOString())
+  }
+
+  private toConnection(source: SourceRow): ConnectorConnection<any> {
+    let config: unknown
+    try {
+      config = JSON.parse(source.config_json)
+    } catch {
+      throw new Error(`数据源“${source.name}”的配置无效。`)
+    }
+    return {
+      id: source.id,
+      kind: source.kind,
+      name: source.name,
+      config,
+    }
   }
 
   private finishRun(
@@ -791,7 +936,7 @@ export class LocalDataService {
       id: source.id,
       kind: source.kind,
       name: source.name,
-      rootPath: source.root_path,
+      rootPath: source.root_path ?? '',
       status: source.disconnected_at ? 'disconnected' : source.status,
       fileCount: Number(counts.file_count ?? 0),
       versionCount: Number(counts.version_count ?? 0),

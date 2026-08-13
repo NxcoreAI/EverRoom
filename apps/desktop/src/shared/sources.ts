@@ -1,4 +1,5 @@
 export type DataSourceStatus = 'connected' | 'syncing' | 'paused' | 'disconnected' | 'error'
+export type DataSourceKind = 'local-folder' | 'web-page' | 'github' | 'feishu'
 export type SourceFileStatus =
   | 'added'
   | 'updated'
@@ -28,7 +29,7 @@ export interface SourceFileSummary {
 
 export interface DataSourceSummary {
   id: string
-  kind: 'local-folder'
+  kind: DataSourceKind
   name: string
   rootPath: string
   status: DataSourceStatus

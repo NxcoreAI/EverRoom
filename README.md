@@ -14,6 +14,11 @@ The desktop app includes the first local data-source workflow:
 - Store metadata in SQLite (WAL mode) and deduplicated file copies by SHA-256.
 - Pause, resume, rescan, disconnect, or disconnect and remove local copies.
 
+Data ingestion uses a shared Connector contract. The local-folder implementation
+only discovers items and reports changes; the Core Service owns hashing, object
+storage, source versions, sync runs, and lifecycle state. Future web page,
+GitHub, and Feishu connectors use the same boundary.
+
 Application data is stored under `~/Library/Application Support/JiheCore/`.
 The renderer never receives direct filesystem or database access. File parsing,
 OCR, embeddings, memory extraction, and Context Room aggregation are outside

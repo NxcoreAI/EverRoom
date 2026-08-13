@@ -2,6 +2,8 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 
+import { ConnectorRegistry } from './connectors/connector-registry'
+import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { LocalDataService } from './core/local-data-service'
 
 const SOURCE_CHANNELS = {
@@ -106,7 +108,11 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light'
   try {
-    localDataService = new LocalDataService(join(app.getPath('appData'), 'JiheCore'))
+    const connectors = new ConnectorRegistry().register(new LocalFolderConnector())
+    localDataService = new LocalDataService(
+      join(app.getPath('appData'), 'JiheCore'),
+      connectors,
+    )
     await localDataService.initialize()
     registerSourceHandlers(localDataService)
     createWindow()
