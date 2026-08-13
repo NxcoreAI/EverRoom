@@ -23,7 +23,6 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
-  Unplug,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -478,15 +477,12 @@ function SourcesPage() {
     }
   }
 
-  const disconnect = (source: DataSourceSummary, deleteLocalData: boolean) => {
+  const deleteSource = (source: DataSourceSummary) => {
     if (!api) return
-    const detail = deleteLocalData
-      ? '这会删除极核保存的文件副本和版本记录，不会删除原文件。'
-      : '原文件不会受到影响，极核保存的来源、版本和对象副本将保留，可随时恢复。'
-    if (!window.confirm(`要断开“${source.name}”吗？\n\n${detail}`)) return
-
-    if (deleteLocalData && expandedSourceId === source.id) setExpandedSourceId(null)
-    void runAction(source.id, () => api.disconnect(source.id, deleteLocalData))
+    const detail = '这会删除极核保存的文件副本和版本记录，不会删除原文件。'
+    if (!window.confirm(`要删除“${source.name}”吗？\n\n${detail}`)) return
+    if (expandedSourceId === source.id) setExpandedSourceId(null)
+    void runAction(source.id, () => api.disconnect(source.id, true))
   }
 
   const openEvidence = useCallback(async (
@@ -660,19 +656,11 @@ function SourcesPage() {
                     >{source.status === 'paused' || source.status === 'disconnected' || source.status === 'error' ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}</button>
                     <button
                       type="button"
-                      className="icon-button"
-                      aria-label={`断开 ${source.name}`}
-                      title="仅断开"
-                      disabled={busy}
-                      onClick={() => disconnect(source, false)}
-                    ><Unplug aria-hidden="true" /></button>
-                    <button
-                      type="button"
                       className="icon-button danger"
-                      aria-label={`断开并清理 ${source.name}`}
-                      title="断开并清理本地副本"
+                      aria-label={`删除 ${source.name}`}
+                      title="删除并清理本地副本"
                       disabled={busy}
-                      onClick={() => disconnect(source, true)}
+                      onClick={() => deleteSource(source)}
                     ><Trash2 aria-hidden="true" /></button>
                   </span>
                 </div>
