@@ -12,10 +12,12 @@ import type {
   ConnectorKind,
   ConnectorSubscription,
 } from '../connectors/types'
+import { EvidenceService } from '../evidence/evidence-service'
 import type {
   DataSourceSummary,
   SourceFileStatus,
   SourceFileSummary,
+  SourceChangeEvent,
   SyncResult,
 } from '../../shared/sources'
 
@@ -62,15 +64,19 @@ interface FileSummaryRow {
   content_hash: string | null
   last_seen_at: string
   version_count: number
+  parse_status: SourceFileSummary['parseStatus'] | null
+  evidence_count: number
 }
 
 export class LocalDataService {
   private readonly database: DatabaseSync
   private readonly objectsDirectory: string
+  private readonly evidence: EvidenceService
   private readonly activeScans = new Map<string, Promise<SyncResult>>()
   private readonly watchers = new Map<string, ConnectorSubscription>()
   private readonly watchTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly verificationTimers = new Map<string, ReturnType<typeof setInterval>>()
+  private readonly changeListeners = new Set<(event: SourceChangeEvent) => void>()
 
   constructor(
     private readonly dataDirectory: string,
@@ -79,6 +85,11 @@ export class LocalDataService {
     this.objectsDirectory = join(dataDirectory, 'objects', 'sha256')
     mkdirSync(join(dataDirectory, 'database'), { recursive: true })
     this.database = new DatabaseSync(join(dataDirectory, 'database', 'nexcore.db'))
+    this.evidence = new EvidenceService(
+      this.database,
+      (hash) => this.objectPath(hash),
+      (sourceId) => this.notifyChanged(sourceId, true),
+    )
   }
 
   async initialize(): Promise<void> {
@@ -241,12 +252,30 @@ export class LocalDataService {
         WHERE last_changed_at IS NULL
       `)
     }
+    this.database.exec(`
+      UPDATE source_items
+      SET sync_status = CASE
+        WHEN state = 'missing' THEN 'missing'
+        WHEN (
+          SELECT COUNT(*) FROM source_versions
+          WHERE source_versions.source_item_id = source_items.id
+        ) > 1 THEN 'updated'
+        WHEN (
+          SELECT COUNT(*) FROM source_versions
+          WHERE source_versions.source_item_id = source_items.id
+        ) = 1 THEN 'added'
+        ELSE sync_status
+      END
+      WHERE sync_status = 'unchanged'
+    `)
     const versionSchema = this.database.prepare(`
       SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'source_versions'
     `).get() as unknown as { sql: string }
     if (versionSchema.sql.includes('UNIQUE(source_item_id, content_hash)')) {
       this.migrateSourceVersionsTable()
     }
+    this.backfillLatestChangeRuns()
+    this.evidence.initialize()
 
     const recoveredAt = new Date().toISOString()
     this.database.prepare(`
@@ -360,6 +389,52 @@ export class LocalDataService {
     }
   }
 
+  private backfillLatestChangeRuns(): void {
+    this.database.exec(`
+      UPDATE data_sources
+      SET last_change_run_id = (
+        SELECT sync_runs.id
+        FROM sync_runs
+        WHERE sync_runs.data_source_id = data_sources.id
+          AND sync_runs.status = 'success'
+          AND (
+            sync_runs.added > 0 OR sync_runs.updated > 0 OR sync_runs.moved > 0 OR
+            sync_runs.removed > 0 OR sync_runs.failed > 0
+          )
+        ORDER BY sync_runs.finished_at DESC, sync_runs.started_at DESC
+        LIMIT 1
+      )
+      WHERE last_change_run_id IS NULL
+    `)
+
+    this.database.exec(`
+      UPDATE source_items
+      SET last_change_run_id = (
+        SELECT sync_runs.id
+        FROM sync_runs
+        WHERE sync_runs.data_source_id = source_items.data_source_id
+          AND sync_runs.status = 'success'
+          AND (
+            EXISTS (
+              SELECT 1
+              FROM source_versions
+              WHERE source_versions.source_item_id = source_items.id
+                AND source_versions.captured_at >= sync_runs.started_at
+                AND source_versions.captured_at <= COALESCE(sync_runs.finished_at, sync_runs.started_at)
+            )
+            OR (
+              source_items.sync_status IN ('renamed', 'moved', 'restored', 'error')
+              AND source_items.last_changed_at >= sync_runs.started_at
+              AND source_items.last_changed_at <= COALESCE(sync_runs.finished_at, sync_runs.started_at)
+            )
+          )
+        ORDER BY sync_runs.finished_at DESC, sync_runs.started_at DESC
+        LIMIT 1
+      )
+      WHERE last_change_run_id IS NULL
+    `)
+  }
+
   async shutdown(): Promise<void> {
     for (const timer of this.watchTimers.values()) clearTimeout(timer)
     this.watchTimers.clear()
@@ -368,6 +443,7 @@ export class LocalDataService {
     for (const watcher of this.watchers.values()) watcher.close()
     this.watchers.clear()
     await Promise.allSettled(this.activeScans.values())
+    await this.evidence.shutdown()
     this.database.close()
   }
 
@@ -377,6 +453,11 @@ export class LocalDataService {
       .all() as unknown as SourceRow[]
 
     return rows.map((row) => this.toSummary(row))
+  }
+
+  onChanged(listener: (event: SourceChangeEvent) => void): () => void {
+    this.changeListeners.add(listener)
+    return () => this.changeListeners.delete(listener)
   }
 
   listFiles(dataSourceId: string): SourceFileSummary[] {
@@ -395,7 +476,27 @@ export class LocalDataService {
         source_items.last_changed_at,
         source_items.content_hash,
         source_items.last_seen_at,
-        COUNT(source_versions.id) AS version_count
+        COUNT(source_versions.id) AS version_count,
+        (
+          SELECT evidence_parse_jobs.status
+          FROM source_versions AS latest_version
+          LEFT JOIN evidence_parse_jobs
+            ON evidence_parse_jobs.source_version_id = latest_version.id
+          WHERE latest_version.source_item_id = source_items.id
+          ORDER BY latest_version.captured_at DESC, latest_version.rowid DESC
+          LIMIT 1
+        ) AS parse_status,
+        (
+          SELECT COUNT(*)
+          FROM evidence_blocks
+          WHERE evidence_blocks.source_version_id = (
+            SELECT latest_evidence_version.id
+            FROM source_versions AS latest_evidence_version
+            WHERE latest_evidence_version.source_item_id = source_items.id
+            ORDER BY latest_evidence_version.captured_at DESC, latest_evidence_version.rowid DESC
+            LIMIT 1
+          )
+        ) AS evidence_count
       FROM source_items
       LEFT JOIN source_versions ON source_versions.source_item_id = source_items.id
       WHERE source_items.data_source_id = ?
@@ -427,7 +528,19 @@ export class LocalDataService {
       versionCount: Number(row.version_count),
       contentHash: row.content_hash,
       lastSeenAt: row.last_seen_at,
+      parseStatus: row.parse_status ?? 'unsupported',
+      evidenceCount: Number(row.evidence_count),
     }))
+  }
+
+  listEvidence(dataSourceId: string, fileId: string) {
+    this.requireSource(dataSourceId)
+    return this.evidence.listDocument(dataSourceId, fileId)
+  }
+
+  searchEvidence(query: string, dataSourceId: string | null) {
+    if (dataSourceId) this.requireSource(dataSourceId)
+    return this.evidence.search(query, dataSourceId)
   }
 
   getOriginalFilePath(dataSourceId: string, fileId: string): string {
@@ -517,6 +630,8 @@ export class LocalDataService {
       void this.sync(id).catch(() => undefined)
     }
 
+    this.notifyChanged(id, false)
+
     return this.toSummary({
       ...source,
       status: paused ? 'paused' : 'connected',
@@ -533,6 +648,7 @@ export class LocalDataService {
       this.database.prepare(`
         UPDATE data_sources SET status = 'paused', disconnected_at = ?, last_error = NULL, updated_at = ? WHERE id = ?
       `).run(new Date().toISOString(), new Date().toISOString(), id)
+      this.notifyChanged(id, false)
       return
     }
 
@@ -546,6 +662,7 @@ export class LocalDataService {
       : []
 
     this.database.prepare('DELETE FROM data_sources WHERE id = ?').run(id)
+    this.notifyChanged(id, true)
 
     for (const { object_hash: objectHash } of objectHashes) {
       const reference = this.database
@@ -668,6 +785,8 @@ export class LocalDataService {
         WHERE id = ?
       `).run(finishedAt, hasChanges ? 1 : 0, runId, finishedAt, id)
 
+      this.notifyChanged(id, hasChanges)
+
       return { source: this.getSummary(id), ...counts }
     } catch (error) {
       const message = error instanceof Error ? error.message : '同步失败'
@@ -676,6 +795,7 @@ export class LocalDataService {
       this.database.prepare(`
         UPDATE data_sources SET status = 'error', last_error = ?, updated_at = ? WHERE id = ?
       `).run(message, finishedAt, id)
+      this.notifyChanged(id, false)
       throw new Error(message)
     }
   }
@@ -684,7 +804,7 @@ export class LocalDataService {
     if (!this.verificationTimers.has(source.id)) {
       this.verificationTimers.set(source.id, setInterval(() => {
         if (!this.activeScans.has(source.id)) void this.sync(source.id).catch(() => undefined)
-      }, 5_000))
+      }, 60_000))
     }
     if (this.watchers.has(source.id)) return
 
@@ -762,6 +882,10 @@ export class LocalDataService {
 
   private objectPath(hash: string): string {
     return join(this.objectsDirectory, hash.slice(0, 2), hash)
+  }
+
+  private notifyChanged(sourceId: string, filesChanged: boolean): void {
+    for (const listener of this.changeListeners) listener({ sourceId, filesChanged })
   }
 
   private insertItemAndVersion(
@@ -859,11 +983,13 @@ export class LocalDataService {
   }
 
   private insertVersion(itemId: string, item: ConnectorItem, hash: string): void {
+    const versionId = randomUUID()
     this.database.prepare(`
       INSERT INTO source_versions (
         id, source_item_id, content_hash, object_hash, size, source_modified_at, captured_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(randomUUID(), itemId, hash, hash, item.byteSize, item.modifiedAt, new Date().toISOString())
+    `).run(versionId, itemId, hash, hash, item.byteSize, item.modifiedAt, new Date().toISOString())
+    this.evidence.enqueueVersion(versionId, item.extension)
   }
 
   private toConnection(source: SourceRow): ConnectorConnection<any> {

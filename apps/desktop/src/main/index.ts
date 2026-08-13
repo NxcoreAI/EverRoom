@@ -9,6 +9,9 @@ import { LocalDataService } from './core/local-data-service'
 const SOURCE_CHANNELS = {
   list: 'sources:list',
   listFiles: 'sources:list-files',
+  listEvidence: 'sources:list-evidence',
+  searchEvidence: 'sources:search-evidence',
+  changed: 'sources:changed',
   showFile: 'sources:show-file',
   addLocalFolder: 'sources:add-local-folder',
   sync: 'sources:sync',
@@ -26,10 +29,34 @@ function requireSourceId(value: unknown): string {
   return value
 }
 
+function requireSearchQuery(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('无效的搜索内容。')
+  const query = value.trim()
+  if (query.length < 1 || query.length > 200) throw new Error('请输入 1 到 200 个字符。')
+  return query
+}
+
 function registerSourceHandlers(service: LocalDataService): void {
+  service.onChanged((event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(SOURCE_CHANNELS.changed, event)
+    }
+  })
   ipcMain.handle(SOURCE_CHANNELS.list, () => service.listSources())
   ipcMain.handle(SOURCE_CHANNELS.listFiles, (_event, id: unknown) =>
     service.listFiles(requireSourceId(id)),
+  )
+  ipcMain.handle(
+    SOURCE_CHANNELS.listEvidence,
+    (_event, id: unknown, fileId: unknown) =>
+      service.listEvidence(requireSourceId(id), requireSourceId(fileId)),
+  )
+  ipcMain.handle(
+    SOURCE_CHANNELS.searchEvidence,
+    (_event, query: unknown, id: unknown) => {
+      const sourceId = id === undefined ? null : requireSourceId(id)
+      return service.searchEvidence(requireSearchQuery(query), sourceId)
+    },
   )
   ipcMain.handle(
     SOURCE_CHANNELS.showFile,

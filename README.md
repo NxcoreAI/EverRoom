@@ -19,6 +19,11 @@ only discovers items and reports changes; the Core Service owns hashing, object
 storage, source versions, sync runs, and lifecycle state. Future web page,
 GitHub, and Feishu connectors use the same boundary.
 
+Markdown and plain-text versions are parsed locally into Evidence blocks with
+heading ancestry, line and character positions, content hashes, and parent-child
+relationships. Parsing status is tracked per source version, and SQLite FTS5
+search returns current-version evidence that can be opened at its source lines.
+
 Application data is stored under `~/Library/Application Support/JiheCore/`.
 The renderer never receives direct filesystem or database access. File parsing,
 OCR, embeddings, memory extraction, and Context Room aggregation are outside

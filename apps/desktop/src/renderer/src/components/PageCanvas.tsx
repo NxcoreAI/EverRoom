@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleDashed,
   Clock3,
+  ExternalLink,
   FileText,
   File,
   FolderOpen,
@@ -23,11 +24,20 @@ import {
   ShieldCheck,
   Trash2,
   Unplug,
+  X,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import type { PageId } from '@/data/navigation'
-import type { DataSourceSummary, SourceFileStatus, SourceFileSummary, SyncResult } from '../../../shared/sources'
+import type {
+  DataSourceSummary,
+  EvidenceDocument,
+  EvidenceParseStatus,
+  EvidenceSearchResult,
+  SourceFileStatus,
+  SourceFileSummary,
+  SyncResult,
+} from '../../../shared/sources'
 
 function PageHeader({
   title,
@@ -224,6 +234,14 @@ const FILE_STATUS_LABELS: Record<SourceFileStatus, string> = {
   error: '读取失败',
 }
 
+const EVIDENCE_STATUS_LABELS: Record<EvidenceParseStatus, string> = {
+  pending: '待解析',
+  running: '解析中',
+  success: '已解析',
+  failed: '解析失败',
+  unsupported: '暂不支持',
+}
+
 function formatDate(value: string | null): string {
   if (!value) return '尚未同步'
   return new Intl.DateTimeFormat('zh-CN', {
@@ -245,6 +263,95 @@ function describeSync(result: SyncResult): string {
   return `发现 ${result.discovered} 个文件，新增 ${result.added}，更新 ${result.updated}，移动 ${result.moved}，未变化 ${result.unchanged}。`
 }
 
+function EvidenceViewer({
+  evidence,
+  activeBlockId,
+  onClose,
+  onShowFile,
+}: {
+  evidence: EvidenceDocument
+  activeBlockId: string | null
+  onClose: () => void
+  onShowFile: () => void
+}) {
+  useEffect(() => {
+    if (!activeBlockId) return
+    window.document.getElementById(`evidence-${activeBlockId}`)?.scrollIntoView({ block: 'center' })
+  }, [activeBlockId, evidence.blocks])
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  return (
+    <div className="evidence-dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.currentTarget === event.target) onClose()
+    }}>
+      <section className="evidence-dialog" role="dialog" aria-modal="true" aria-labelledby="evidence-dialog-title">
+        <header className="evidence-dialog-head">
+          <div>
+            <span>证据查看</span>
+            <h2 id="evidence-dialog-title">{evidence.fileName}</h2>
+            <small>{evidence.relativePath} · 当前版本 · {formatDate(evidence.modifiedAt)}</small>
+          </div>
+          <span className="evidence-dialog-actions">
+            <button
+              type="button"
+              className="icon-button"
+              title={evidence.exists ? '在 Finder 中显示' : '原始文件已不存在'}
+              aria-label="在 Finder 中显示"
+              disabled={!evidence.exists}
+              onClick={onShowFile}
+            >
+              <FolderOpen aria-hidden="true" />
+            </button>
+            <button type="button" className="icon-button" title="关闭" aria-label="关闭证据查看" onClick={onClose}>
+              <X aria-hidden="true" />
+            </button>
+          </span>
+        </header>
+        <div className="evidence-dialog-body">
+          {evidence.status === 'pending' || evidence.status === 'running' ? (
+            <div className="evidence-viewer-state"><RefreshCw aria-hidden="true" />正在解析当前版本...</div>
+          ) : null}
+          {evidence.status === 'unsupported' ? (
+            <div className="evidence-viewer-state"><FileText aria-hidden="true" />该格式将在接入 Docling 后解析。</div>
+          ) : null}
+          {evidence.status === 'failed' ? (
+            <div className="evidence-viewer-state error"><AlertCircle aria-hidden="true" />{evidence.error ?? '解析失败'}</div>
+          ) : null}
+          {evidence.status === 'success' && evidence.blocks.length === 0 ? (
+            <div className="evidence-viewer-state">当前文档没有可提取的文本段落。</div>
+          ) : null}
+          {evidence.status === 'success' ? evidence.blocks.map((block) => (
+            <article
+              id={`evidence-${block.id}`}
+              key={block.id}
+              className="evidence-block"
+              data-kind={block.kind}
+              data-active={String(activeBlockId === block.id)}
+            >
+              <div className="evidence-block-location">
+                <span>{block.pageNumber ? `第 ${block.pageNumber} 页` : block.startLine === block.endLine ? `第 ${block.startLine} 行` : `第 ${block.startLine}-${block.endLine} 行`}</span>
+                {block.headingPath.length > 0 ? <small>{block.headingPath.join(' / ')}</small> : null}
+              </div>
+              {block.kind === 'heading' ? (
+                <h3 data-level={block.headingLevel ?? 1}>{block.text}</h3>
+              ) : (
+                <p>{block.text}</p>
+              )}
+            </article>
+          )) : null}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function SourcesPage() {
   const api = window.nexcore?.sources
   const [sources, setSources] = useState<DataSourceSummary[]>([])
@@ -255,6 +362,11 @@ function SourcesPage() {
   const [filesLoadingId, setFilesLoadingId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<EvidenceSearchResult[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [evidenceDocument, setEvidenceDocument] = useState<EvidenceDocument | null>(null)
+  const [activeEvidenceId, setActiveEvidenceId] = useState<string | null>(null)
 
   const loadSources = useCallback(async (): Promise<DataSourceSummary[] | null> => {
     if (!api) return null
@@ -276,15 +388,9 @@ function SourcesPage() {
     }
   }, [api])
 
-  useEffect(() => {
-    void loadSources()
-    const refreshTimer = window.setInterval(() => void loadSources(), 2_000)
-    return () => window.clearInterval(refreshTimer)
-  }, [loadSources])
-
-  const loadFiles = useCallback(async (sourceId: string) => {
+  const loadFiles = useCallback(async (sourceId: string, showLoading = true) => {
     if (!api) return
-    setFilesLoadingId(sourceId)
+    if (showLoading) setFilesLoadingId(sourceId)
     try {
       const files = await api.listFiles(sourceId)
       setFilesBySource((current) => ({ ...current, [sourceId]: files }))
@@ -301,9 +407,25 @@ function SourcesPage() {
         setError(message)
       }
     } finally {
-      setFilesLoadingId(null)
+      if (showLoading) setFilesLoadingId(null)
     }
   }, [api])
+
+  useEffect(() => {
+    void loadSources()
+    if (!api) return
+    return api.onChanged((event) => {
+      if (!event.filesChanged) {
+        void loadSources()
+        return
+      }
+      void loadSources().then((nextSources) => {
+        if (expandedSourceId === event.sourceId && nextSources?.some((source) => source.id === event.sourceId)) {
+          void loadFiles(event.sourceId, false)
+        }
+      })
+    })
+  }, [api, expandedSourceId, loadFiles, loadSources])
 
   const toggleFiles = (sourceId: string) => {
     if (expandedSourceId === sourceId) {
@@ -311,13 +433,11 @@ function SourcesPage() {
       return
     }
     setExpandedSourceId(sourceId)
-    void loadFiles(sourceId)
   }
 
   useEffect(() => {
     if (!expandedSourceId) return
-    const refreshTimer = window.setInterval(() => void loadFiles(expandedSourceId), 2_000)
-    return () => window.clearInterval(refreshTimer)
+    void loadFiles(expandedSourceId)
   }, [expandedSourceId, loadFiles])
 
   const runAction = async (id: string, action: () => Promise<unknown>) => {
@@ -369,6 +489,48 @@ function SourcesPage() {
     void runAction(source.id, () => api.disconnect(source.id, deleteLocalData))
   }
 
+  const openEvidence = useCallback(async (
+    sourceId: string,
+    fileId: string,
+    blockId: string | null = null,
+  ) => {
+    if (!api) return
+    setActiveEvidenceId(blockId)
+    try {
+      setEvidenceDocument(await api.listEvidence(sourceId, fileId))
+      setError(null)
+    } catch (viewError) {
+      setError(viewError instanceof Error ? viewError.message : '无法读取证据。')
+    }
+  }, [api])
+
+  useEffect(() => {
+    if (!evidenceDocument || !['pending', 'running'].includes(evidenceDocument.status)) return
+    const timer = window.setInterval(() => {
+      void openEvidence(evidenceDocument.sourceId, evidenceDocument.fileId, activeEvidenceId)
+    }, 1_000)
+    return () => window.clearInterval(timer)
+  }, [activeEvidenceId, evidenceDocument, openEvidence])
+
+  const searchEvidence = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!api) return
+    const query = searchQuery.trim()
+    if (!query) {
+      setSearchResults(null)
+      return
+    }
+    setSearching(true)
+    setError(null)
+    try {
+      setSearchResults(await api.searchEvidence(query))
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : '搜索失败，请重试。')
+    } finally {
+      setSearching(false)
+    }
+  }
+
   return (
     <div className="page">
       <PageHeader
@@ -387,6 +549,54 @@ function SourcesPage() {
       ) : null}
       {message ? <div className="source-feedback" role="status">{message}</div> : null}
       {error ? <div className="source-feedback error" role="alert"><AlertCircle aria-hidden="true" />{error}</div> : null}
+
+      {api && sources.length > 0 ? (
+        <form className="evidence-search" role="search" onSubmit={(event) => void searchEvidence(event)}>
+          <label>
+            <Search aria-hidden="true" />
+            <input
+              value={searchQuery}
+              aria-label="搜索证据内容"
+              placeholder="搜索已解析的文档内容"
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+          </label>
+          <button type="submit" className="secondary-button" disabled={searching || !searchQuery.trim()}>
+            {searching ? '搜索中' : '搜索'}
+          </button>
+          {searchResults !== null ? (
+            <button type="button" className="icon-button" title="清除搜索" aria-label="清除搜索" onClick={() => {
+              setSearchQuery('')
+              setSearchResults(null)
+            }}><X aria-hidden="true" /></button>
+          ) : null}
+        </form>
+      ) : null}
+
+      {searchResults !== null ? (
+        <section className="evidence-search-results" aria-label="证据搜索结果">
+          <div className="evidence-results-head">
+            <strong>{searchResults.length} 条结果</strong>
+            <span>来自当前文件版本</span>
+          </div>
+          {searchResults.length === 0 ? <div className="evidence-results-empty">没有找到相关证据。</div> : null}
+          {searchResults.map((result) => (
+            <button
+              type="button"
+              key={result.id}
+              className="evidence-result"
+              onClick={() => void openEvidence(result.sourceId, result.fileId, result.id)}
+            >
+              <span className="evidence-result-source">
+                <strong>{result.fileName}</strong>
+                <small>{result.sourceName} · {result.startLine === result.endLine ? `第 ${result.startLine} 行` : `第 ${result.startLine}-${result.endLine} 行`}</small>
+              </span>
+              <span className="evidence-result-text">{result.text}</span>
+              <ExternalLink aria-hidden="true" />
+            </button>
+          ))}
+        </section>
+      ) : null}
 
       {api && !loading && sources.length === 0 ? (
         <div className="sources-empty">
@@ -469,7 +679,7 @@ function SourcesPage() {
                 {expandedSourceId === source.id ? (
                   <div className="source-files-panel">
                     <div className="source-files-head">
-                      <span>文件</span><span>变化</span><span>修改时间</span><span>大小</span><span />
+                      <span>文件</span><span>变化</span><span>证据</span><span>修改时间</span><span>大小</span><span />
                     </div>
                     {filesLoadingId === source.id ? <div className="source-files-empty">正在读取文件清单...</div> : null}
                     {filesLoadingId !== source.id && (filesBySource[source.id]?.length ?? 0) === 0 ? (
@@ -491,6 +701,13 @@ function SourcesPage() {
                         <span className="file-status" title={`变化时间：${formatDate(file.changedAt)}`}>
                           {FILE_STATUS_LABELS[file.status]}
                         </span>
+                        <button
+                          type="button"
+                          className="evidence-status"
+                          data-status={file.parseStatus}
+                          title={file.parseStatus === 'success' ? `${file.evidenceCount} 个证据段落` : EVIDENCE_STATUS_LABELS[file.parseStatus]}
+                          onClick={() => void openEvidence(source.id, file.id)}
+                        >{file.parseStatus === 'success' ? `${file.evidenceCount} 段` : EVIDENCE_STATUS_LABELS[file.parseStatus]}</button>
                         <span>{formatDate(file.modifiedAt)}</span>
                         <span>{formatBytes(file.size)}</span>
                         <button
@@ -511,6 +728,19 @@ function SourcesPage() {
             )
           })}
         </div>
+      ) : null}
+      {evidenceDocument ? (
+        <EvidenceViewer
+          evidence={evidenceDocument}
+          activeBlockId={activeEvidenceId}
+          onClose={() => {
+            setEvidenceDocument(null)
+            setActiveEvidenceId(null)
+          }}
+          onShowFile={() => void api?.showFile(evidenceDocument.sourceId, evidenceDocument.fileId).catch((showError) => {
+            setError(showError instanceof Error ? showError.message : '无法定位原始文件。')
+          })}
+        />
       ) : null}
     </div>
   )
