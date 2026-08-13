@@ -18,6 +18,7 @@ const api: NexcoreDesktopApi = {
     },
     showFile: (id, fileId) => ipcRenderer.invoke('sources:show-file', id, fileId),
     addLocalFolder: () => ipcRenderer.invoke('sources:add-local-folder'),
+    addGitHub: (input) => ipcRenderer.invoke('sources:add-github', input),
     sync: (id) => ipcRenderer.invoke('sources:sync', id),
     setPaused: (id, paused) => ipcRenderer.invoke('sources:set-paused', id, paused),
     disconnect: (id, deleteLocalData) =>

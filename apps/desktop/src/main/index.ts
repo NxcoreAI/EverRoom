@@ -4,7 +4,9 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electro
 
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
+import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
 import { LocalDataService } from './core/local-data-service'
+import { CredentialStore } from './security/credential-store'
 
 const SOURCE_CHANNELS = {
   list: 'sources:list',
@@ -14,6 +16,7 @@ const SOURCE_CHANNELS = {
   changed: 'sources:changed',
   showFile: 'sources:show-file',
   addLocalFolder: 'sources:add-local-folder',
+  addGitHub: 'sources:add-github',
   sync: 'sources:sync',
   setPaused: 'sources:set-paused',
   disconnect: 'sources:disconnect',
@@ -36,7 +39,7 @@ function requireSearchQuery(value: unknown): string {
   return query
 }
 
-function registerSourceHandlers(service: LocalDataService): void {
+function registerSourceHandlers(service: LocalDataService, credentials: CredentialStore): void {
   service.onChanged((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(SOURCE_CHANNELS.changed, event)
@@ -61,11 +64,12 @@ function registerSourceHandlers(service: LocalDataService): void {
   ipcMain.handle(
     SOURCE_CHANNELS.showFile,
     (_event, id: unknown, fileId: unknown) => {
-      const originalPath = service.getOriginalFilePath(
+      const location = service.getSourceItemLocation(
         requireSourceId(id),
         requireSourceId(fileId),
       )
-      shell.showItemInFolder(originalPath)
+      if (location.kind === 'local') shell.showItemInFolder(location.value)
+      else void shell.openExternal(location.value)
     },
   )
 
@@ -77,6 +81,20 @@ function registerSourceHandlers(service: LocalDataService): void {
     })
     const rootPath = result.filePaths[0]
     return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
+  })
+  ipcMain.handle(SOURCE_CHANNELS.addGitHub, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('无效的 GitHub 配置。')
+    const value = input as Partial<GitHubConfig> & { token?: unknown }
+    if (typeof value.repository !== 'string' || !value.repository.trim()) throw new Error('请输入 GitHub 仓库。')
+    if (value.token !== undefined && typeof value.token !== 'string') throw new Error('GitHub Token 格式无效。')
+    const tokenCredentialKey = value.token?.trim() ? await credentials.set(value.token.trim()) : undefined
+    const config: GitHubConfig = {
+      repository: value.repository.trim(),
+      branch: typeof value.branch === 'string' && value.branch.trim() ? value.branch.trim() : undefined,
+      syncIssues: value.syncIssues !== false,
+      tokenCredentialKey,
+    }
+    return service.addConnection('github', config.repository, config)
   })
 
   ipcMain.handle(SOURCE_CHANNELS.sync, (_event, id: unknown) => service.sync(requireSourceId(id)))
@@ -135,13 +153,17 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light'
   try {
-    const connectors = new ConnectorRegistry().register(new LocalFolderConnector())
+    const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
+    await credentials.initialize()
+    const connectors = new ConnectorRegistry()
+      .register(new LocalFolderConnector())
+      .register(new GitHubConnector((key) => credentials.get(key)))
     localDataService = new LocalDataService(
       join(app.getPath('appData'), 'JiheCore'),
       connectors,
     )
     await localDataService.initialize()
-    registerSourceHandlers(localDataService)
+    registerSourceHandlers(localDataService, credentials)
     createWindow()
   } catch (error) {
     const service = localDataService

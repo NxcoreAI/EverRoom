@@ -11,6 +11,8 @@ import {
   ExternalLink,
   FileText,
   File,
+  Github,
+  Globe,
   FolderOpen,
   HardDrive,
   ListChecks,
@@ -25,7 +27,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import type { PageId } from '@/data/navigation'
 import type {
@@ -44,12 +46,14 @@ function PageHeader({
   action,
   actionDisabled = false,
   onAction,
+  extraAction,
 }: {
   title: string
   description: string
   action?: string
   actionDisabled?: boolean
   onAction?: () => void
+  extraAction?: ReactNode
 }) {
   return (
     <header className="page-header">
@@ -57,12 +61,15 @@ function PageHeader({
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
-      {action ? (
-        <button type="button" className="primary-button" disabled={actionDisabled} onClick={onAction}>
-          <Plus aria-hidden="true" />
-          {action}
-        </button>
-      ) : null}
+      <span className="page-header-actions">
+        {extraAction}
+        {action ? (
+          <button type="button" className="primary-button" disabled={actionDisabled} onClick={onAction}>
+            <Plus aria-hidden="true" />
+            {action}
+          </button>
+        ) : null}
+      </span>
     </header>
   )
 }
@@ -301,8 +308,8 @@ function EvidenceViewer({
             <button
               type="button"
               className="icon-button"
-              title={evidence.exists ? '在 Finder 中显示' : '原始文件已不存在'}
-              aria-label="在 Finder 中显示"
+              title={evidence.exists ? '打开来源' : '原始文件已不存在'}
+              aria-label="打开来源"
               disabled={!evidence.exists}
               onClick={onShowFile}
             >
@@ -366,6 +373,12 @@ function SourcesPage() {
   const [searching, setSearching] = useState(false)
   const [evidenceDocument, setEvidenceDocument] = useState<EvidenceDocument | null>(null)
   const [activeEvidenceId, setActiveEvidenceId] = useState<string | null>(null)
+  const [githubOpen, setGithubOpen] = useState(false)
+  const [githubRepository, setGithubRepository] = useState('')
+  const [githubBranch, setGithubBranch] = useState('')
+  const [githubToken, setGithubToken] = useState('')
+  const [githubIssues, setGithubIssues] = useState(true)
+  const [connectMenuOpen, setConnectMenuOpen] = useState(false)
 
   const loadSources = useCallback(async (): Promise<DataSourceSummary[] | null> => {
     if (!api) return null
@@ -474,6 +487,27 @@ function SourcesPage() {
       setError(addError instanceof Error ? addError.message : '无法连接该文件夹。')
     } finally {
       setBusyId(null)
+      setConnectMenuOpen(false)
+    }
+  }
+
+  const addGitHub = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!api) return
+    setBusyId('new')
+    setMessage(null)
+    setError(null)
+    try {
+      const result = await api.addGitHub({ repository: githubRepository, branch: githubBranch || undefined, token: githubToken || undefined, syncIssues: githubIssues })
+      setGithubOpen(false)
+      setConnectMenuOpen(false)
+      setGithubToken('')
+      setMessage(describeSync(result))
+      await loadSources()
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : '无法连接 GitHub 仓库。')
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -532,10 +566,19 @@ function SourcesPage() {
       <PageHeader
         title="数据源"
         description="管理进入极核的文件、应用和网页资料。"
-        action="连接文件夹"
+        action="连接数据源"
         actionDisabled={busyId === 'new'}
-        onAction={() => void addLocalFolder()}
+        onAction={() => setConnectMenuOpen((open) => !open)}
       />
+
+      {api && connectMenuOpen ? (
+        <div className="connect-source-menu" role="menu" aria-label="选择数据源类型">
+          <button type="button" role="menuitem" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><FolderOpen aria-hidden="true" /><span><strong>本地文件夹</strong><small>扫描本机目录中的文件</small></span></button>
+          <button type="button" role="menuitem" disabled={busyId === 'new'} onClick={() => { setConnectMenuOpen(false); setGithubOpen(true) }}><Github aria-hidden="true" /><span><strong>GitHub</strong><small>同步仓库代码与 Issue</small></span></button>
+          <button type="button" role="menuitem" className="connect-source-disabled" disabled><ExternalLink aria-hidden="true" /><span><strong>飞书文档 / 云盘</strong><small>即将支持只读同步</small></span></button>
+          <button type="button" role="menuitem" className="connect-source-disabled" disabled><Globe aria-hidden="true" /><span><strong>手动网页导入</strong><small>即将支持 URL 导入</small></span></button>
+        </div>
+      ) : null}
 
       {!api ? (
         <div className="source-notice">
@@ -598,7 +641,7 @@ function SourcesPage() {
         <div className="sources-empty">
           <span className="sources-empty-icon"><HardDrive aria-hidden="true" /></span>
           <strong>还没有连接数据源</strong>
-          <p>选择一个本地文件夹，极核会保存受支持文件的版本与同步状态。</p>
+          <p>连接一个数据源，极核会保存受支持内容的版本与同步状态。</p>
           <button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}>
             <Plus aria-hidden="true" />连接文件夹
           </button>
@@ -701,8 +744,8 @@ function SourcesPage() {
                         <button
                           type="button"
                           className="icon-button"
-                          aria-label={`在 Finder 中显示 ${file.name}`}
-                          title={file.exists ? '在 Finder 中显示' : '原始文件已不存在'}
+                          aria-label={`打开 ${file.name} 的来源`}
+                          title={file.exists ? '打开来源' : '原始文件已不存在'}
                           disabled={!file.exists}
                           onClick={() => void api.showFile(source.id, file.id).catch((showError) => {
                             setError(showError instanceof Error ? showError.message : '无法定位原始文件。')
@@ -729,6 +772,20 @@ function SourcesPage() {
             setError(showError instanceof Error ? showError.message : '无法定位原始文件。')
           })}
         />
+      ) : null}
+      {githubOpen ? (
+        <div className="evidence-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setGithubOpen(false) }}>
+          <section className="source-connect-dialog" role="dialog" aria-modal="true" aria-labelledby="github-dialog-title">
+            <header className="evidence-dialog-head"><div><span>连接数据源</span><h2 id="github-dialog-title">GitHub 仓库</h2><small>只读同步代码文件与 Issue</small></div><button type="button" className="icon-button" title="关闭" aria-label="关闭" onClick={() => setGithubOpen(false)}><X aria-hidden="true" /></button></header>
+            <form className="source-connect-form" onSubmit={(event) => void addGitHub(event)}>
+              <label>仓库地址<input required value={githubRepository} placeholder="owner/repository 或 GitHub URL" onChange={(event) => setGithubRepository(event.target.value)} /></label>
+              <label>分支（可选）<input value={githubBranch} placeholder="默认分支" onChange={(event) => setGithubBranch(event.target.value)} /></label>
+              <label>访问令牌（可选）<input type="password" value={githubToken} placeholder="私有仓库或更高速率限制需要" onChange={(event) => setGithubToken(event.target.value)} /></label>
+              <label className="source-connect-check"><input type="checkbox" checked={githubIssues} onChange={(event) => setGithubIssues(event.target.checked)} />同步 Issue 与评论</label>
+              <footer><button type="button" className="secondary-button" onClick={() => setGithubOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={busyId === 'new'}><Github aria-hidden="true" />开始连接</button></footer>
+            </form>
+          </section>
+        </div>
       ) : null}
     </div>
   )

@@ -560,6 +560,25 @@ export class LocalDataService {
     return connector.resolveLocalPath(this.toConnection(source), item.relative_path)
   }
 
+  getSourceItemLocation(dataSourceId: string, fileId: string): { kind: 'local' | 'remote'; value: string } {
+    const source = this.requireSource(dataSourceId)
+    const item = this.database.prepare(`
+      SELECT relative_path, uri, state
+      FROM source_items
+      WHERE id = ? AND data_source_id = ?
+    `).get(fileId, dataSourceId) as unknown as
+      | { relative_path: string; uri: string | null; state: 'present' | 'missing' }
+      | undefined
+    if (!item) throw new Error('文件记录不存在。')
+    if (item.state !== 'present') throw new Error('原始文件当前不存在。')
+    const connector = this.connectors.get(source.kind)
+    if (connector.resolveLocalPath) {
+      return { kind: 'local', value: connector.resolveLocalPath(this.toConnection(source), item.relative_path) }
+    }
+    if (!item.uri) throw new Error('该文件没有可打开的来源地址。')
+    return { kind: 'remote', value: item.uri }
+  }
+
   async addLocalFolder(rootPath: string): Promise<SyncResult> {
     return this.addConnection('local-folder', basename(rootPath), { rootPath }, rootPath)
   }
