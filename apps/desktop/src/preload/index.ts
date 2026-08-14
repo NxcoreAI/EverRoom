@@ -7,6 +7,11 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
+  account: {
+    status: () => ipcRenderer.invoke('account:status'),
+    login: (input) => ipcRenderer.invoke('account:login', input),
+    logout: () => ipcRenderer.invoke('account:logout'),
+  },
   asr: {
     beginRecording: (mimeType) => ipcRenderer.invoke('asr:begin-recording', mimeType),
     appendRecording: (id, chunk) => ipcRenderer.invoke('asr:append-recording', id, chunk),

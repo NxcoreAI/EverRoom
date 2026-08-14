@@ -55,7 +55,7 @@ export function PageCanvas({
   if (page === 'docs') return <DocsPage />
   if (page === 'recording') return (
     <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载录音...</div></div>}>
-      <RecordingPage />
+      <RecordingPage onOpenSettings={() => onNavigate('settings')} />
     </Suspense>
   )
   if (page === 'sources') return <SourcesPage />

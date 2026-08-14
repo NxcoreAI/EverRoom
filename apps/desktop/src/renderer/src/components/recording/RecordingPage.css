@@ -33,6 +33,7 @@
 .recording-status[data-state='requesting'] svg,
 .recording-status[data-state='saving'] svg,
 .recording-status[data-state='transcribing'] svg { animation: recording-spin 900ms linear infinite; }
+.asr-mode-bar{display:flex;min-height:46px;align-items:center;justify-content:space-between;gap:16px;margin:14px 0 4px;padding:9px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}.asr-mode-bar .segmented-control button{display:inline-flex;align-items:center;gap:6px}.asr-mode-bar .segmented-control svg{width:13px;height:13px}.asr-login-hint{display:flex;align-items:center;justify-content:flex-end;gap:10px;color:var(--muted);font-size:10px}.asr-login-hint .secondary-button{min-height:30px}.asr-account-name{overflow:hidden;color:var(--muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
 
 .recording-controls {
   display: flex;
