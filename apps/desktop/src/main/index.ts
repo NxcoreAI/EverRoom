@@ -181,7 +181,7 @@ function createWindow(): void {
     minWidth: 1080,
     minHeight: 700,
     show: false,
-    title: 'NxCore CE',
+    title: 'Everroom',
     backgroundColor: '#f5f5f5',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 7 },
@@ -245,7 +245,7 @@ app.whenReady().then(async () => {
     recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
-    console.error('Failed to initialize NxCore desktop services', error)
+    console.error('Failed to initialize Everroom desktop services', error)
     app.quit()
     return
   }

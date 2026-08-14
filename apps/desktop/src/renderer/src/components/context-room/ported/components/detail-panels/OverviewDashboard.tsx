@@ -1,0 +1,199 @@
+import {
+  BarChart3,
+  Bookmark,
+  CalendarDays,
+  CheckSquare2,
+  ChevronLeft,
+  ChevronRight,
+  CornerDownRight,
+  FileText,
+  GitBranch,
+  Zap,
+} from 'lucide-react';
+import { useMemo, useState } from 'react';
+
+import { createContextRoomResourceLibrary } from '../../resources';
+import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import { roomKindIcon, roomKindTone } from '../utils';
+type WorkspaceObjectPreview =
+  | { kind: 'meeting'; id: string }
+  | { kind: 'task'; id: string };
+
+type TimelineView = 'day' | 'week' | 'month';
+
+const REFERENCE_TODAY = new Date(2026, 7, 11);
+
+const DASHBOARD_COPY: Record<
+  string,
+  { aiStatus: string; nextSteps: string[]; entities: Array<{ label: string; description: string }> }
+> = {
+  'room-launch': {
+    aiStatus:
+      '客户沟通会后进入方案冲刺阶段。已完成 V0.2 方案生成与纪要写回，当前聚焦 4 项高风险动作确认与 Gmail 授权续期。整体节奏稳健，预计 07-30 可达成 V1 内测包目标。',
+    nextSteps: [
+      '跟进张总反馈，确认「来源可追溯」验收细节',
+      '完成《竞品分析》定稿并入库',
+      '联系 IT 续期 Gmail 连接器授权',
+      '准备 07-25 发布材料初稿评审',
+    ],
+    entities: [
+      { label: '张总', description: '关键客户决策人，关注 AI 输出可信度与来源可追溯性。' },
+      { label: '陆远', description: '产品负责人，主导 NexOS PC 端 V1 发布与方案输出。' },
+      { label: 'V1 发布', description: 'NexOS PC 端 V1 内测包，目标 2026-07-30 交付。' },
+      { label: '报价', description: '本期报价区间 ¥45-50w，分两期交付。' },
+      { label: '来源可追溯', description: '客户验收核心要求：AI 输出必须能点开到原始资料。' },
+      { label: 'Gmail 连接器', description: '客户邮件接入通道，当前授权即将过期。' },
+    ],
+  },
+};
+
+function parseRoomDate(value: string) {
+  const date = new Date(REFERENCE_TODAY);
+  date.setHours(0, 0, 0, 0);
+  if (value.startsWith('今天')) return date;
+  if (value.startsWith('昨天')) {
+    date.setDate(date.getDate() - 1);
+    return date;
+  }
+  const match = value.match(/(\d{1,2})-(\d{1,2})/);
+  if (!match) return null;
+  return new Date(REFERENCE_TODAY.getFullYear(), Number(match[1]) - 1, Number(match[2]));
+}
+
+function startOfWeek(value: Date) {
+  const result = new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  result.setDate(result.getDate() + (result.getDay() === 0 ? -6 : 1 - result.getDay()));
+  return result;
+}
+
+function inTimelineRange(value: Date | null, view: TimelineView, cursor: Date) {
+  if (!value) return false;
+  if (view === 'day') return value.toDateString() === cursor.toDateString();
+  if (view === 'week') {
+    const start = startOfWeek(cursor);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    return value >= start && value < end;
+  }
+  return value.getFullYear() === cursor.getFullYear() && value.getMonth() === cursor.getMonth();
+}
+
+function timelineRangeLabel(view: TimelineView, cursor: Date) {
+  if (view === 'day') {
+    return `${String(cursor.getFullYear())}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+  }
+  if (view === 'week') {
+    const start = startOfWeek(cursor);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return `${String(start.getMonth() + 1)}/${String(start.getDate()).padStart(2, '0')} ~ ${String(end.getMonth() + 1)}/${String(end.getDate()).padStart(2, '0')}`;
+  }
+  return `${String(cursor.getFullYear())} 年 ${String(cursor.getMonth() + 1)} 月`;
+}
+
+export function OverviewDashboard({
+  room,
+  onSelectResource,
+  onOpenObject,
+  onToggleTask,
+}: {
+  room: ContextRoomRecord;
+  onSelectResource: (resource: ContextRoomResource) => void;
+  onOpenObject: (target: WorkspaceObjectPreview) => void;
+  onToggleTask: (taskId: string) => void;
+}) {
+  const [timelineView, setTimelineView] = useState<TimelineView>('month');
+  const [timelineCursor, setTimelineCursor] = useState(() => new Date(REFERENCE_TODAY));
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const Icon = roomKindIcon(room.kind);
+  const dashboard = DASHBOARD_COPY[room.id] ?? {
+    aiStatus: room.brief.status,
+    nextSteps: room.actionItems.slice(0, 4).map((item) => item.title),
+    entities: room.people.map((person) => ({ label: person.name, description: person.role })),
+  };
+  const library = useMemo(() => createContextRoomResourceLibrary(room), [room]);
+  const visibleTimeline = room.timeline.filter((item) =>
+    inTimelineRange(parseRoomDate(item.time), timelineView, timelineCursor)
+  );
+  const recentMaterials = room.materials.slice(0, 3);
+  const todayMeeting = room.materials.find((item) => item.type === '会议');
+  const openTasks = room.actionItems.filter((item) => !item.completed && item.status !== '已完成').slice(0, 3);
+  const moveTimeline = (delta: number) =>
+    setTimelineCursor((current) => {
+      const next = new Date(current);
+      if (timelineView === 'month') next.setMonth(next.getMonth() + delta);
+      else next.setDate(next.getDate() + delta * (timelineView === 'week' ? 7 : 1));
+      return next;
+    });
+
+  return (
+    <section className="context-room-dashboard" data-testid="context-room-pane-overview">
+      <header className="context-room-dashboard-hero">
+        <span data-icon-tone={roomKindTone(room.kind)}><Icon aria-hidden="true" /></span>
+        <div>
+          <h1>{room.title}</h1>
+          <p><CalendarDays aria-hidden="true" />创建于 2026-07-09 <i /> 更新于 {room.lastViewed} <i /> {room.materials.length + room.fileItems.length} 条资料</p>
+        </div>
+        <b>{room.status}</b>
+      </header>
+
+      <div className="context-room-dashboard-grid">
+        <article>
+          <header data-icon-tone="document"><FileText aria-hidden="true" />Room 简介</header>
+          <p>{room.brief.background}</p><small><b>目标：</b>{room.brief.goal}</small>
+        </article>
+        <article>
+          <header data-icon-tone="room"><BarChart3 aria-hidden="true" />当前状态 <em>AI</em></header>
+          <p>{dashboard.aiStatus}</p>
+        </article>
+        <article>
+          <header data-icon-tone="ai"><Zap aria-hidden="true" />建议下一步 <em>AI</em></header>
+          <ul>{dashboard.nextSteps.map((item) => <li key={item}><CornerDownRight aria-hidden="true" />{item}</li>)}</ul>
+        </article>
+        <article>
+          <header data-icon-tone="memory"><Bookmark aria-hidden="true" />关联记忆实体</header>
+          <div className="context-room-dashboard-entities">
+            {dashboard.entities.map((entity) => <span key={entity.label} title={entity.description}>{entity.label}</span>)}
+            {!dashboard.entities.length ? '暂无关联实体' : null}
+          </div>
+        </article>
+      </div>
+
+      <div className="context-room-dashboard-bottom">
+        <article>
+          <header data-icon-tone="document"><FileText aria-hidden="true" />最新资料</header>
+          {recentMaterials.map((material) => {
+            const resource = library.resources.find((item) => item.name === material.title);
+            return <button type="button" key={material.id} onClick={() => resource && onSelectResource(resource)}><span>{material.type}</span><b>{material.title}</b><time>{material.time}</time></button>;
+          })}
+        </article>
+        <article>
+          <header data-icon-tone="calendar"><CalendarDays aria-hidden="true" />今日日程</header>
+          {todayMeeting ? <button type="button" onClick={() => onOpenObject({ kind: 'meeting', id: todayMeeting.id })}><time>10:30</time><b>{todayMeeting.title}</b></button> : <p>今天没有日程</p>}
+        </article>
+        <article>
+          <header data-icon-tone="task"><CheckSquare2 aria-hidden="true" />待办任务</header>
+          {openTasks.map((task) => <div className="context-room-dashboard-task" key={task.id}><button type="button" aria-label={`完成 ${task.title}`} onClick={() => onToggleTask(task.id)}><i /></button><button type="button" onClick={() => onOpenObject({ kind: 'task', id: task.id })}><b>{task.title}</b><time>{task.deadline}</time></button></div>)}
+        </article>
+      </div>
+
+      <article className="context-room-dashboard-timeline">
+        <header data-icon-tone="data"><GitBranch aria-hidden="true" />Room 时间轴 <span>{visibleTimeline.length} 个事件</span></header>
+        <div className="context-room-timeline-toolbar">
+          <div>{(['day', 'week', 'month'] as const).map((view) => <button type="button" key={view} aria-pressed={timelineView === view} onClick={() => setTimelineView(view)}>{view === 'day' ? '日' : view === 'week' ? '周' : '月'}</button>)}</div>
+          <nav aria-label="时间轴范围">
+            <button type="button" aria-label="上一周期" onClick={() => moveTimeline(-1)}><ChevronLeft aria-hidden="true" /></button>
+            <span>{timelineRangeLabel(timelineView, timelineCursor)}</span>
+            <button type="button" aria-label="下一周期" onClick={() => moveTimeline(1)}><ChevronRight aria-hidden="true" /></button>
+            <button type="button" disabled={timelineCursor.toDateString() === REFERENCE_TODAY.toDateString()} onClick={() => setTimelineCursor(new Date(REFERENCE_TODAY))}>今天</button>
+          </nav>
+        </div>
+        {visibleTimeline.length ? <ol>{visibleTimeline.map((item, index) => {
+          const material = recentMaterials[index] as (typeof recentMaterials)[number] | undefined;
+          const resource = material ? library.resources.find((candidate) => candidate.name === material.title) : null;
+          return <li key={`${item.time}-${item.title}`}><i data-kind={item.kind} /><div><div><b>{item.title}</b><time>{item.time}</time></div><p>{item.description}</p>{resource ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />相关资料 <span>1</span></button>{expanded.has(index) ? <button type="button" className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{resource.name}</button> : null}</> : null}</div></li>;
+        })}</ol> : <div className="context-room-dashboard-empty">该范围内暂无事件</div>}
+      </article>
+    </section>
+  );
+}

@@ -1,0 +1,506 @@
+.context-room-tiptap-editor {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--cr-surface);
+}
+.context-room-tiptap-bubble > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+}
+
+.context-room-tiptap-bubble > button:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-tiptap-bubble > button[data-active='true'] {
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-tiptap-bubble button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-tiptap-bubble-divider {
+  width: 1px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin: 0 3px;
+  background: var(--cr-border);
+}
+
+.context-room-tiptap-bubble {
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  box-shadow: 0 8px 24px rgba(22, 27, 38, 0.14);
+}
+
+.context-room-tiptap-bubble-link {
+  display: flex;
+  width: 264px;
+  gap: 5px;
+}
+
+.context-room-tiptap-bubble-link input {
+  min-width: 0;
+  height: 28px;
+  flex: 1;
+  padding: 0 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  outline: 0;
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-tiptap-bubble-link input:focus {
+  border-color: var(--cr-blue);
+}
+
+.context-room-tiptap-bubble-link button {
+  padding: 0 10px;
+  border-radius: 5px;
+  background: var(--cr-blue);
+  color: #fff;
+  font-size: 12px;
+}
+
+.context-room-tiptap-slash-menu {
+  position: fixed;
+  z-index: 60;
+  width: 284px;
+  max-height: 356px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  box-shadow: 0 12px 32px rgba(22, 27, 38, 0.16);
+}
+
+.context-room-tiptap-slash-title {
+  padding: 6px 8px 5px;
+  color: var(--cr-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.context-room-tiptap-slash-menu > button {
+  display: grid;
+  width: 100%;
+  min-height: 48px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  text-align: left;
+}
+
+.context-room-tiptap-slash-menu > button[data-selected='true'] {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-tiptap-slash-menu > button > span:first-child {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  color: var(--cr-text);
+  background: var(--cr-surface);
+}
+
+.context-room-tiptap-slash-menu svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-tiptap-slash-menu b,
+.context-room-tiptap-slash-menu small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-tiptap-slash-menu b {
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-tiptap-slash-menu small {
+  margin-top: 2px;
+  color: var(--cr-muted);
+  font-size: 10px;
+}
+
+.context-room-tiptap-drag-handle {
+  z-index: 45;
+}
+
+.context-room-tiptap-block-controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-right: 5px;
+}
+
+.context-room-tiptap-block-controls > button {
+  display: grid;
+  width: 22px;
+  height: 24px;
+  place-items: center;
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--cr-muted) 78%, transparent);
+  cursor: grab;
+}
+
+.context-room-tiptap-block-controls > button:hover,
+.context-room-tiptap-block-controls > button[aria-expanded='true'] {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-tiptap-block-controls > .context-room-tiptap-add-block {
+  cursor: pointer;
+}
+
+.context-room-tiptap-block-controls > button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-tiptap-block-menu {
+  position: absolute;
+  top: 28px;
+  left: 25px;
+  z-index: 70;
+  width: 184px;
+  padding: 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  box-shadow: 0 12px 32px rgba(22, 27, 38, 0.16);
+}
+
+.context-room-tiptap-block-menu > span {
+  display: block;
+  padding: 5px 7px;
+  color: var(--cr-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.context-room-tiptap-block-menu > button {
+  display: flex;
+  width: 100%;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 7px;
+  border-radius: 5px;
+  color: var(--cr-text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.context-room-tiptap-block-menu > button:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-tiptap-block-menu > button[data-danger='true'] {
+  color: var(--cr-danger, #c64242);
+}
+
+.context-room-tiptap-block-menu svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-tiptap-block-menu > i {
+  display: block;
+  height: 1px;
+  margin: 5px 0;
+  background: var(--cr-border);
+}
+
+.context-room-tiptap-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 30px;
+  container-type: inline-size;
+}
+
+.context-room-tiptap-content-scale {
+  position: absolute;
+  z-index: 20;
+  top: 50%;
+  right: 8px;
+  width: 22px;
+  padding: 4px 0;
+  transform: translateY(-50%);
+}
+
+.context-room-tiptap-scale-markers {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.context-room-tiptap-scale-track {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  bottom: 4px;
+  width: 1px;
+  background: color-mix(in srgb, var(--cr-border) 72%, transparent);
+}
+
+.context-room-tiptap-content-scale button {
+  position: relative;
+  width: 22px;
+  height: 8px;
+  flex: 0 0 8px;
+  background: transparent;
+}
+
+.context-room-tiptap-content-scale button::after {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  width: 15px;
+  height: 2px;
+  border-radius: 2px 0 0 2px;
+  background: color-mix(in srgb, var(--cr-muted) 42%, transparent);
+  content: '';
+  transition: width 120ms ease, background-color 120ms ease;
+}
+
+.context-room-tiptap-content-scale button[data-level='2']::after {
+  width: 11px;
+}
+
+.context-room-tiptap-content-scale button[data-level='3']::after {
+  width: 9px;
+}
+
+.context-room-tiptap-content-scale button:hover::after,
+.context-room-tiptap-content-scale button:focus-visible::after,
+.context-room-tiptap-content-scale button[data-active='true']::after {
+  width: 17px;
+  background: var(--cr-blue);
+}
+
+.context-room-tiptap-scale-preview {
+  position: absolute;
+  top: 50%;
+  right: 28px;
+  z-index: 30;
+  width: 224px;
+  padding: 7px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  box-shadow: 0 8px 24px rgba(22, 27, 38, 0.14);
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translate(4px, -50%);
+  transition: opacity 100ms ease, transform 100ms ease;
+  visibility: hidden;
+}
+
+.context-room-tiptap-content-scale button:hover .context-room-tiptap-scale-preview,
+.context-room-tiptap-content-scale button:focus-visible .context-room-tiptap-scale-preview {
+  opacity: 1;
+  transform: translate(0, -50%);
+  visibility: visible;
+}
+
+.context-room-tiptap-scroll .tiptap {
+  width: min(100%, 720px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 44px clamp(24px, 8cqw, 72px) 72px;
+  outline: 0;
+}
+
+.context-room-tiptap-content > * {
+  position: relative;
+}
+
+.context-room-tiptap-content .is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: color-mix(in srgb, var(--cr-muted) 56%, transparent);
+}
+
+.context-room-tiptap-content h1 {
+  margin: 0 0 30px;
+  color: var(--cr-text);
+  font-size: 32px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.context-room-tiptap-content h2 {
+  margin: 30px 0 10px;
+  color: var(--cr-text);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.context-room-tiptap-content h3 {
+  margin: 24px 0 8px;
+  color: var(--cr-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.context-room-tiptap-content p,
+.context-room-tiptap-content li,
+.context-room-tiptap-content blockquote {
+  color: var(--cr-muted);
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.context-room-tiptap-content p {
+  margin: 0 0 10px;
+}
+
+.context-room-tiptap-content ul,
+.context-room-tiptap-content ol {
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+
+.context-room-tiptap-content ul[data-type='taskList'] {
+  padding-left: 0;
+  list-style: none;
+}
+
+.context-room-tiptap-content ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.context-room-tiptap-content ul[data-type='taskList'] li > label {
+  display: grid;
+  min-height: 26px;
+  place-items: center;
+}
+
+.context-room-tiptap-content ul[data-type='taskList'] input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--cr-blue);
+}
+
+.context-room-tiptap-content ul[data-type='taskList'] li > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.context-room-tiptap-content ul[data-type='taskList'] li[data-checked='true'] > div {
+  opacity: 0.58;
+  text-decoration: line-through;
+}
+
+.context-room-tiptap-content blockquote {
+  margin: 18px 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--cr-border-strong);
+}
+
+.context-room-tiptap-content code {
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.context-room-tiptap-content pre {
+  margin: 16px 0;
+  overflow-x: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-text);
+}
+
+.context-room-tiptap-content pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.context-room-tiptap-content hr {
+  margin: 24px 0;
+  border: 0;
+  border-top: 1px solid var(--cr-border);
+}
+
+.context-room-tiptap-content a {
+  color: var(--cr-blue);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.context-room-tiptap-content ::selection {
+  background: var(--cr-blue-soft);
+}
+
+@container context-room-shell (max-width: 620px) {
+  .context-room-tiptap-content-scale {
+    display: none;
+  }
+
+  .context-room-tiptap-scroll {
+    padding-right: 0;
+  }
+
+  .context-room-tiptap-scroll .tiptap {
+    padding: 28px 20px 52px;
+  }
+
+  .context-room-tiptap-content h1 {
+    font-size: 26px;
+  }
+}
