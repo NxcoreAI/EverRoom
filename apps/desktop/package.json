@@ -1,5 +1,5 @@
 {
-  "name": "@nexcore/desktop",
+  "name": "@nxcore/desktop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,9 @@
     "package:mac": "pnpm run build && electron-builder --mac dmg zip"
   },
   "dependencies": {
+    "@nxcore/agent-contract": "workspace:*",
     "@antv/g6": "^5.1.1",
+    "ws": "^8.18.3",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -20,6 +22,7 @@
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
@@ -28,8 +31,8 @@
     "vite": "^6.0.5"
   },
   "build": {
-    "appId": "com.nexcore.ce",
-    "productName": "NexCore CE",
+    "appId": "com.nxcore.ce",
+    "productName": "NxCore CE",
     "asar": true,
     "directories": {
       "output": "../../release"

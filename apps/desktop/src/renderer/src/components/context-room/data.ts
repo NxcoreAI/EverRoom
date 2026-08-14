@@ -6,7 +6,7 @@ import type {
 
 export const INITIAL_ROOMS: ContextRoomRecord[] = [
   {
-    id: 'room-nexcore-ce',
+    id: 'room-nxcore-ce',
     title: '极核开源 PC 版',
     kind: '项目',
     description: '围绕开源版桌面工作台，沉淀产品边界、工程决策和交付进展。',

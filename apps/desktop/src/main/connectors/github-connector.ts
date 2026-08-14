@@ -129,7 +129,7 @@ export class GitHubConnector implements Connector<GitHubConfig> {
   }
 
   private headers(token: string | undefined): HeadersInit {
-    return { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'NexCore-CE', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+    return { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'NxCore-CE', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
   }
 
   private async request<T>(path: string, headers: HeadersInit): Promise<GitHubResponse<T>> {

@@ -89,7 +89,7 @@
   --inset-shadow: inset 0 1px 1px rgba(30, 18, 18, 0.05);
 }
 
-:root[data-theme='nexcore'] {
+:root[data-theme='nxcore'] {
   --bg: #f7f7f5;
   --chrome: #f1f1ef;
   --surface: #ffffff;
@@ -626,6 +626,7 @@ summary:focus-visible {
 }
 
 .sidebar-status,
+.gateway-status,
 .account-row {
   display: flex;
   min-height: 58px;
@@ -645,6 +646,28 @@ summary:focus-visible {
   background: rgba(255, 255, 255, 0.46);
 }
 
+.gateway-status {
+  --gateway-state-color: #7a8492;
+  min-height: 46px;
+  margin: 0 8px 2px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.gateway-status[data-state='ready'] {
+  --gateway-state-color: #278447;
+}
+
+.gateway-status[data-state='starting'] {
+  --gateway-state-color: #ad7628;
+}
+
+.gateway-status[data-state='error'] {
+  --gateway-state-color: #c14452;
+}
+
 .account-row {
   background: transparent;
   cursor: pointer;
@@ -656,13 +679,19 @@ summary:focus-visible {
 }
 
 .sidebar-status > svg,
+.gateway-status > svg,
 .account-row > svg {
   width: 20px;
   height: 20px;
   color: var(--muted);
 }
 
+.gateway-status > svg {
+  color: var(--gateway-state-color);
+}
+
 .sidebar-status > span,
+.gateway-status > span,
 .account-row > span {
   display: flex;
   min-width: 0;
@@ -671,14 +700,32 @@ summary:focus-visible {
 }
 
 .sidebar-status strong,
+.gateway-status strong,
 .account-row strong {
   font-size: 11px;
 }
 
 .sidebar-status small,
+.gateway-status small,
 .account-row small {
   color: var(--subtle);
   font-size: 10px;
+}
+
+.gateway-status small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gateway-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--gateway-state-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gateway-state-color) 16%, transparent);
 }
 
 .workspace-main {
@@ -2107,6 +2154,10 @@ summary:focus-visible {
   height: 12px;
 }
 
+.local-badge[data-connected='true'] {
+  color: #287652;
+}
+
 .agent-tabs {
   display: grid;
   min-height: 44px;
@@ -2143,6 +2194,109 @@ summary:focus-visible {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
+}
+
+.agent-conversation {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-message {
+  display: flex;
+  max-width: 94%;
+  flex-direction: column;
+  gap: 5px;
+  align-self: flex-start;
+}
+
+.agent-message[data-role='user'] {
+  align-self: flex-end;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: var(--surface-alt);
+}
+
+.agent-message-meta {
+  display: flex;
+  height: 18px;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtle);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.agent-message-meta svg {
+  width: 12px;
+  height: 12px;
+}
+
+.agent-message p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-reasoning {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.agent-reasoning summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+  list-style: none;
+}
+
+.agent-reasoning summary svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-reasoning p {
+  margin: 7px 0 0 19px;
+  color: var(--subtle);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.agent-loading,
+.agent-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.agent-loading svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-error {
+  color: #9c231a;
+}
+
+.spin {
+  animation: agent-spin 900ms linear infinite;
+}
+
+@keyframes agent-spin {
+  to { transform: rotate(360deg); }
 }
 
 .agent-empty {
@@ -2336,6 +2490,23 @@ summary:focus-visible {
 .send-button svg {
   width: 15px;
   height: 15px;
+}
+
+.send-button:disabled,
+.icon-button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.stop-button {
+  background: var(--text);
+  color: var(--surface);
+}
+
+.stop-button svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
 }
 
 :root[data-theme='soft'] .recent-item,

@@ -82,7 +82,7 @@ function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void }) {
 
   useEffect(() => {
     let active = true
-    void window.nexcore?.sources.list().then((sources) => {
+    void window.nxcore?.sources.list().then((sources) => {
       if (active) setSourceCount(sources.length)
     }).catch(() => undefined)
     return () => {
@@ -322,7 +322,7 @@ function EvidenceViewer({
 }
 
 function SourcesPage() {
-  const api = window.nexcore?.sources
+  const api = window.nxcore?.sources
   const [sources, setSources] = useState<DataSourceSummary[]>([])
   const [loading, setLoading] = useState(Boolean(api))
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -434,7 +434,7 @@ function SourcesPage() {
 
   const addLocalFolder = async () => {
     if (!api) {
-      setMessage('网页版不读取本机文件夹。请在 NexCore 桌面版中使用此功能。')
+      setMessage('网页版不读取本机文件夹。请在 NxCore 桌面版中使用此功能。')
       return
     }
     setBusyId('new')
