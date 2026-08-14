@@ -13,6 +13,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTiptapBlockHandleVisibility } from './useTiptapBlockHandleVisibility'
 
 const BLOCK_HANDLE_POSITION = { placement: 'left-start' } as const
 
@@ -27,6 +28,9 @@ export function TiptapBlockHandle({
   const [activePos, setActivePos] = useState(-1)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const controlsRef = useRef<HTMLDivElement>(null)
+
+  useTiptapBlockHandleVisibility(editor, controlsRef)
 
   useEffect(() => {
     if (!menuOpen) return
@@ -82,7 +86,7 @@ export function TiptapBlockHandle({
         setActivePos(pos)
       }}
     >
-      <div className="context-room-tiptap-block-controls">
+      <div ref={controlsRef} className="context-room-tiptap-block-controls">
         <button
           type="button"
           className="context-room-tiptap-add-block"
