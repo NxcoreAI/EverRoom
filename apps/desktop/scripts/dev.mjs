@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const workspaceEnvPath = resolve(desktopRoot, '../../.env')
+if (existsSync(workspaceEnvPath)) process.loadEnvFile(workspaceEnvPath)
 const electronExecutable = require('electron')
 const electronViteCli = join(dirname(require.resolve('electron-vite/package.json')), 'bin/electron-vite.js')
 
