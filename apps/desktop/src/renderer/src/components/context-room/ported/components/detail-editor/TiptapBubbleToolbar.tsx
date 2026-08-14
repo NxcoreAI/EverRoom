@@ -1,5 +1,6 @@
 import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
+import { TextSelection } from '@tiptap/pm/state'
 import { Bold, Code2, Italic, Link2, Strikethrough, Underline, Unlink2 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -12,7 +13,13 @@ function normalizeLink(value: string): string | null {
   return /^[a-z][a-z\d+.-]*:/i.test(link) ? link : `https://${link}`
 }
 
-export function TiptapBubbleToolbar({ editor }: { editor: Editor }) {
+export function TiptapBubbleToolbar({
+  editor,
+  dragging,
+}: {
+  editor: Editor
+  dragging: boolean
+}) {
   const [linkOpen, setLinkOpen] = useState(false)
   const [linkValue, setLinkValue] = useState('')
 
@@ -32,9 +39,14 @@ export function TiptapBubbleToolbar({ editor }: { editor: Editor }) {
     <BubbleMenu
       editor={editor}
       className="context-room-tiptap-bubble"
+      updateDelay={0}
       options={{ placement: 'top', offset: 8 }}
-      shouldShow={({ editor: currentEditor, from, to }) => (
-        from !== to && currentEditor.isEditable && !currentEditor.isActive('codeBlock')
+      shouldShow={({ editor: currentEditor, state }) => (
+        !dragging &&
+        state.selection instanceof TextSelection &&
+        !state.selection.empty &&
+        currentEditor.isEditable &&
+        !currentEditor.isActive('codeBlock')
       )}
     >
       {linkOpen ? (

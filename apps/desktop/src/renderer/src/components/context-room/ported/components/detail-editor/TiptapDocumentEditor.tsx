@@ -34,10 +34,16 @@ export function TiptapDocumentEditor({
   const saveTimer = useRef<number | null>(null)
   const [saveState, setSaveState] = useState('已保存')
   const [tableOfContents, setTableOfContents] = useState<TableOfContentData>([])
+  const [blockDragging, setBlockDragging] = useState(false)
 
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
+        dropcursor: {
+          class: 'context-room-tiptap-dropcursor',
+          color: false,
+          width: 2,
+        },
         heading: { levels: [1, 2, 3] },
         link: { openOnClick: false, autolink: true, defaultProtocol: 'https' },
       }),
@@ -75,8 +81,18 @@ export function TiptapDocumentEditor({
     if (editor) writeDocumentDraft(documentId, editor.getJSON())
   }, [documentId, editor])
 
+  const handleBlockDraggingChange = (dragging: boolean) => {
+    setBlockDragging(dragging)
+    if (!dragging && editor && !editor.isDestroyed) {
+      editor.view.dom.dispatchEvent(new Event('dragend'))
+    }
+  }
+
   return (
-    <div className="context-room-embedded-cloud-doc context-room-tiptap-editor">
+    <div
+      className="context-room-embedded-cloud-doc context-room-tiptap-editor"
+      data-block-dragging={String(blockDragging)}
+    >
       <div className="context-room-embedded-doc-status">
         <span>{version}</span>
         <b>{saveState}</b>
@@ -87,8 +103,8 @@ export function TiptapDocumentEditor({
       </div>
       {editor ? (
         <>
-          <TiptapBubbleToolbar editor={editor} />
-          <TiptapBlockHandle editor={editor} />
+          <TiptapBubbleToolbar editor={editor} dragging={blockDragging} />
+          <TiptapBlockHandle editor={editor} onDraggingChange={handleBlockDraggingChange} />
           <TiptapContentScale items={tableOfContents} />
           <TiptapSlashCommandMenu editor={editor} />
         </>

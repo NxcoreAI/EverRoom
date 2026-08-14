@@ -14,7 +14,13 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-export function TiptapBlockHandle({ editor }: { editor: Editor }) {
+export function TiptapBlockHandle({
+  editor,
+  onDraggingChange,
+}: {
+  editor: Editor
+  onDraggingChange: (dragging: boolean) => void
+}) {
   const [activeNode, setActiveNode] = useState<Node | null>(null)
   const [activePos, setActivePos] = useState(-1)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -64,6 +70,11 @@ export function TiptapBlockHandle({ editor }: { editor: Editor }) {
       editor={editor}
       className="context-room-tiptap-drag-handle"
       computePositionConfig={{ placement: 'left-start' }}
+      onElementDragStart={() => {
+        setMenuOpen(false)
+        onDraggingChange(true)
+      }}
+      onElementDragEnd={() => onDraggingChange(false)}
       onNodeChange={({ node, pos }) => {
         setActiveNode(node)
         setActivePos(pos)

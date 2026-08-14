@@ -50,6 +50,19 @@
   box-shadow: 0 8px 24px rgba(22, 27, 38, 0.14);
 }
 
+.context-room-tiptap-editor[data-block-dragging='true'] .context-room-tiptap-bubble {
+  display: none !important;
+}
+
+.context-room-tiptap-dropcursor {
+  border-radius: 2px;
+  background: var(--cr-blue);
+}
+
+.context-room-tiptap-editor:not([data-block-dragging='true']) .context-room-tiptap-dropcursor {
+  display: none !important;
+}
+
 .context-room-tiptap-bubble-link {
   display: flex;
   width: 264px;
