@@ -12,6 +12,15 @@ import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { RecordingStore } from './recording/recording-store'
 
+const APP_NAME = 'EverRoom'
+
+const appDataDirectory = app.getPath('appData')
+const dataDirectory = join(appDataDirectory, APP_NAME)
+
+app.setPath('userData', dataDirectory)
+app.setName(APP_NAME)
+if (process.platform === 'darwin') process.title = APP_NAME
+
 const SOURCE_CHANNELS = {
   list: 'sources:list',
   listFiles: 'sources:list-files',
@@ -212,8 +221,10 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light'
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
+  }
   try {
-    const dataDirectory = join(app.getPath('appData'), 'NxCore')
     gatewaySupervisor = new GatewaySupervisor(dataDirectory)
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
