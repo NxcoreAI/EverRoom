@@ -1,3 +1,4 @@
+import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
@@ -11,7 +12,7 @@ import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { RecordingStore } from './recording/recording-store'
-import { SaasClient } from './cloud/saas-client'
+import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 
 const APP_NAME = 'EverRoom'
@@ -22,6 +23,9 @@ const dataDirectory = join(appDataDirectory, APP_NAME)
 app.setPath('userData', dataDirectory)
 app.setName(APP_NAME)
 if (process.platform === 'darwin') process.title = APP_NAME
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) app.quit()
 
 const SOURCE_CHANNELS = {
   list: 'sources:list',
@@ -66,6 +70,8 @@ const ASR_CHANNELS = {
 const ACCOUNT_CHANNELS = {
   status: 'account:status',
   login: 'account:login',
+  oidcLogin: 'account:oidc-login',
+  oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
 } as const
 
@@ -73,7 +79,62 @@ let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
+let saasClient: SaasClient | null = null
 let shutdownStarted = false
+const queuedProtocolUrls: string[] = []
+let requestLogWrite = Promise.resolve()
+
+function localDate(value: Date): string {
+  return [value.getFullYear(), value.getMonth() + 1, value.getDate()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join('-')
+}
+
+function logRendererRequestError(input: unknown): void {
+  if (!input || typeof input !== 'object') return
+  const value = input as { channel?: unknown; message?: unknown }
+  if (typeof value.channel !== 'string' || typeof value.message !== 'string') return
+  const channel = value.channel.slice(0, 120)
+  const message = value.message.slice(0, 2_000)
+  const now = new Date()
+  const entry = JSON.stringify({ time: now.toISOString(), level: 'error', channel, message })
+  console.error(`[desktop-request] ${channel}: ${message}`)
+  requestLogWrite = requestLogWrite.then(async () => {
+    const logsDirectory = join(dataDirectory, 'logs')
+    await mkdir(logsDirectory, { recursive: true })
+    await appendFile(join(logsDirectory, `desktop-${localDate(now)}.log`), `${entry}\n`, 'utf8')
+  }).catch((error) => console.error('Unable to write desktop request log.', error))
+}
+
+ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
+
+function focusMainWindow(): void {
+  const window = BrowserWindow.getAllWindows()[0]
+  if (!window || window.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
+
+function handleProtocolUrl(url: string): void {
+  if (!url.startsWith(OIDC_CALLBACK_URL)) return
+  if (saasClient) saasClient.handleOidcCallback(url)
+  else queuedProtocolUrls.push(url)
+  focusMainWindow()
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  handleProtocolUrl(url)
+})
+
+if (hasSingleInstanceLock) {
+  app.on('second-instance', (_event, argv) => {
+    const protocolUrl = argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
+    if (protocolUrl) handleProtocolUrl(protocolUrl)
+    else focusMainWindow()
+  })
+}
 
 function requireSourceId(value: unknown): string {
   if (typeof value !== 'string' || value.length < 1 || value.length > 100) {
@@ -191,10 +252,22 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
 }
 
-function registerAccountHandlers(client:SaasClient):void {
-  ipcMain.handle(ACCOUNT_CHANNELS.status,()=>client.status())
-  ipcMain.handle(ACCOUNT_CHANNELS.login,(_event,input:unknown)=>{if(!input||typeof input!=='object')throw new Error('无效的登录信息。');const value=input as {identifier?:unknown;password?:unknown};if(typeof value.identifier!=='string'||typeof value.password!=='string')throw new Error('请输入账号和密码。');return client.login(value.identifier,value.password)})
-  ipcMain.handle(ACCOUNT_CHANNELS.logout,()=>client.logout())
+function registerAccountHandlers(client: SaasClient): void {
+  ipcMain.handle(ACCOUNT_CHANNELS.status, () => client.status())
+  ipcMain.handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
+    const value = input as { identifier?: unknown; password?: unknown }
+    if (typeof value.identifier !== 'string' || typeof value.password !== 'string') {
+      throw new Error('请输入账号和密码。')
+    }
+    return client.login(value.identifier, value.password)
+  })
+  ipcMain.handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
+    if (provider !== 'apple' && provider !== 'google') throw new Error('不支持的登录方式。')
+    return client.loginWithOidc(provider)
+  })
+  ipcMain.handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
+  ipcMain.handle(ACCOUNT_CHANNELS.logout, () => client.logout())
 }
 
 function createWindow(): void {
@@ -233,8 +306,13 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(async () => {
+if (hasSingleInstanceLock) app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light'
+  if (process.defaultApp && process.argv[1] && process.platform !== 'darwin') {
+    app.setAsDefaultProtocolClient('everroom', process.execPath, [process.argv[1]])
+  } else {
+    app.setAsDefaultProtocolClient('everroom')
+  }
   if (process.platform === 'darwin' && !app.isPackaged) {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
@@ -249,8 +327,13 @@ app.whenReady().then(async () => {
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')
     recordingStore = new RecordingStore(recordingsDirectory)
-    const saasClient=new SaasClient(credentials,app,recordingsDirectory)
-    await saasClient.initialize()
+    saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
+    void saasClient.initialize()
+    if (process.platform !== 'darwin') {
+      const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
+      if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
+    }
+    for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     registerAccountHandlers(saasClient)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient))
 
@@ -292,11 +375,14 @@ app.on('before-quit', (event) => {
   const gateway = gatewaySupervisor
   const agentBridge = agentGatewayBridge
   const recordings = recordingStore
+  const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
   agentGatewayBridge = null
   recordingStore = null
+  saasClient = null
   agentBridge?.dispose()
+  cloud?.cancelOidcLogin('EverRoom 正在退出。')
   void Promise.allSettled([service?.shutdown(), recordings?.dispose(), gateway?.shutdown()]).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

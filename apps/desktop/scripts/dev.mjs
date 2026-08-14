@@ -24,6 +24,7 @@ function prepareMacElectron() {
   const brandedApp = join(cacheDirectory, 'EverRoom.app')
   const markerPath = join(cacheDirectory, 'build.json')
   const marker = JSON.stringify({
+    brandingVersion: 2,
     electronExecutable,
     electronPlistModifiedAt: statSync(sourcePlist).mtimeMs,
     iconModifiedAt: statSync(iconPath).mtimeMs,
@@ -44,6 +45,11 @@ function prepareMacElectron() {
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleName EverRoom', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier com.nxcore.everroom.dev', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIconFile icon.icns', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes array', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0 dict', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLName string com.nxcore.everroom.auth', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string everroom', plistPath])
   copyFileSync(iconPath, join(brandedApp, 'Contents/Resources/icon.icns'))
   run('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', brandedApp])
   writeFileSync(markerPath, marker)
