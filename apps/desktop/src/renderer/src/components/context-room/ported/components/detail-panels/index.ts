@@ -1,0 +1,5 @@
+export { MemoryPane } from './MemoryPane'
+export { RelationsPane } from './RelationsPane'
+export { MailsPane, SchedulePane, TasksPane } from './ActivityPanes'
+export { ObjectPreview, type WorkspaceObjectPreview } from './ObjectPreview'
+export { OverviewDashboard } from './OverviewDashboard'

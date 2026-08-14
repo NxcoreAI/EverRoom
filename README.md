@@ -1,4 +1,4 @@
-# NexCore CE
+# Everroom
 
 Local-first personal context workspace for macOS.
 

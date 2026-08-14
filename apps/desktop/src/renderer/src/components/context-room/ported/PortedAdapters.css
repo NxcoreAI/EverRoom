@@ -1,0 +1,23 @@
+.context-room-ported-main {
+  overflow: auto;
+  border-right: 0;
+}
+
+.context-room-memory-full-graph {
+  min-height: 0;
+  flex: 1;
+  margin: 0 16px 16px;
+}
+
+.context-room-dialog-content .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.context-room-dialog-close .size-4 {
+  width: 16px;
+  height: 16px;
+}

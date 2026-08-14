@@ -1,6 +1,8 @@
 import { Check, Palette } from 'lucide-react'
 import { useRef } from 'react'
 
+import { PRODUCT_NAME } from '@/components/ui/brand'
+
 export type ThemeId = 'soft' | 'mono' | 'crimson' | 'nexcore'
 
 const themes: Array<{
@@ -29,7 +31,7 @@ const themes: Array<{
   },
   {
     id: 'nexcore',
-    label: 'NexCore',
+    label: PRODUCT_NAME,
     description: '正式版暖灰米白',
     colors: ['#f7f7f5', '#f1f1ef', '#3d6ff6'],
   },

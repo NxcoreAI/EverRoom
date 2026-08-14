@@ -21,6 +21,7 @@ export default defineConfig({
       strictPort: true,
     },
     resolve: {
+      dedupe: ['react', 'react-dom'],
       alias: {
         '@': resolve('src/renderer/src'),
       },

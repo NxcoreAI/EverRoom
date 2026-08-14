@@ -121,7 +121,7 @@ function createWindow(): void {
     minWidth: 1080,
     minHeight: 700,
     show: false,
-    title: 'NexCore CE',
+    title: 'Everroom',
     backgroundColor: '#f5f5f5',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 7 },
@@ -169,7 +169,7 @@ app.whenReady().then(async () => {
     const service = localDataService
     localDataService = null
     await service?.shutdown()
-    console.error('Failed to initialize NexCore local data service', error)
+    console.error('Failed to initialize Everroom local data service', error)
     app.quit()
     return
   }

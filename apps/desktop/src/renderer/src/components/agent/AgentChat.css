@@ -1,0 +1,159 @@
+.agent-chat-conversation-frame {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px;
+  background: transparent;
+}
+
+.agent-chat-empty {
+  display: flex;
+  width: 100%;
+  min-height: 100%;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 44px 16px 120px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.agent-chat-empty > svg {
+  width: 30px;
+  height: 30px;
+}
+
+.agent-chat-empty > span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 22px;
+}
+
+.agent-chat-empty > small {
+  max-width: 250px;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.agent-chat-quick-prompts {
+  display: flex;
+  width: min(100%, 300px);
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 2px;
+}
+
+.agent-chat-quick-prompts button {
+  min-height: 34px;
+  padding: 6px 7px;
+  border-radius: 5px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: left;
+}
+
+.agent-chat-quick-prompts button:hover {
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--text);
+}
+
+.agent-composer-shell {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(207, 214, 224, 0.8);
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.agent-composer-context {
+  margin-bottom: 7px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 1px solid #dde1e6;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-prompt {
+  display: flex;
+  width: 100%;
+  height: 104px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.agent-prompt:focus-within {
+  border-color: var(--accent);
+}
+
+.agent-prompt textarea {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  padding: 4px;
+  resize: none;
+  border: 0;
+  border-radius: 8px;
+  outline: 0;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.agent-prompt textarea::placeholder {
+  color: rgba(74, 85, 102, 0.62);
+}
+
+.agent-prompt-actions {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.agent-prompt-tool,
+.agent-prompt-submit {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.agent-prompt-tool:hover,
+.agent-prompt-submit:hover:not(:disabled) {
+  background: rgba(61, 111, 246, 0.1);
+  color: var(--accent);
+}
+
+.agent-prompt-submit:disabled {
+  color: #9ca3af;
+  cursor: default;
+}
+
+.agent-prompt-tool svg,
+.agent-prompt-submit svg {
+  width: 18px;
+  height: 18px;
+}
