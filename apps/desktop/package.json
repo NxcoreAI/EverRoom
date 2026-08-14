@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/dev.mjs",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "package:mac": "pnpm run build && electron-builder --mac dmg zip"
@@ -44,7 +44,7 @@
   },
   "build": {
     "appId": "com.nxcore.ce",
-    "productName": "Everroom",
+    "productName": "EverRoom",
     "electronDist": "node_modules/electron/dist",
     "asar": true,
     "directories": {
@@ -64,6 +64,7 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
       "target": [
         "dmg",
         "zip"
