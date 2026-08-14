@@ -1,12 +1,13 @@
 {
-  "name": "nexcore-ce",
+  "name": "nxcore-ce",
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@11.15.1",
   "scripts": {
-    "dev": "pnpm --filter @nexcore/desktop dev",
-    "build": "pnpm --filter @nexcore/desktop build",
-    "typecheck": "pnpm --filter @nexcore/desktop typecheck",
-    "package:mac": "pnpm --filter @nexcore/desktop package:mac"
+    "dev": "pnpm --filter @nxcore/desktop dev",
+    "build": "pnpm --filter @nxcore/gateway build && pnpm --filter @nxcore/desktop build",
+    "typecheck": "pnpm --filter @nxcore/agent-contract typecheck && pnpm --filter @nxcore/agent-runtime typecheck && pnpm --filter @nxcore/gateway typecheck && pnpm --filter @nxcore/desktop typecheck",
+    "test": "pnpm --filter @nxcore/agent-runtime test && pnpm --filter @nxcore/gateway test",
+    "package:mac": "pnpm --filter @nxcore/gateway build && pnpm --filter @nxcore/desktop package:mac"
   }
 }

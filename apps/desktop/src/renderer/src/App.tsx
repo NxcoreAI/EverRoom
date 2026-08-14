@@ -8,13 +8,13 @@ import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { pageLabels, type PageId } from '@/data/navigation'
 
-const THEME_STORAGE_KEY = 'nexcore-ce:appearance:v1'
-const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nexcore'])
+const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
+const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nxcore'])
 
 function detectMacDesktop(): boolean {
-  const isElectron = Boolean(window.nexcore) || navigator.userAgent.includes('Electron')
+  const isElectron = Boolean(window.nxcore) || navigator.userAgent.includes('Electron')
   const isMac =
-    window.nexcore?.platform === 'darwin' ||
+    window.nxcore?.platform === 'darwin' ||
     navigator.platform.startsWith('Mac') ||
     navigator.userAgent.includes('Macintosh')
 
@@ -24,9 +24,9 @@ function detectMacDesktop(): boolean {
 function readStoredTheme(): ThemeId {
   try {
     const storedTheme = localStorage.getItem(THEME_STORAGE_KEY)
-    return storedTheme && themeIds.has(storedTheme as ThemeId) ? (storedTheme as ThemeId) : 'nexcore'
+    return storedTheme && themeIds.has(storedTheme as ThemeId) ? (storedTheme as ThemeId) : 'nxcore'
   } catch {
-    return 'nexcore'
+    return 'nxcore'
   }
 }
 

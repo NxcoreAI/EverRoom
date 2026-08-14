@@ -8,6 +8,112 @@
   background: transparent;
 }
 
+.agent-conversation {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.agent-message {
+  display: flex;
+  max-width: 94%;
+  flex-direction: column;
+  gap: 5px;
+  align-self: flex-start;
+}
+
+.agent-message[data-role='user'] {
+  align-self: flex-end;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: var(--surface-alt);
+}
+
+.agent-message-meta {
+  display: flex;
+  height: 18px;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtle);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.agent-message-meta svg {
+  width: 12px;
+  height: 12px;
+}
+
+.agent-message p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-reasoning {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.agent-reasoning summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+  list-style: none;
+}
+
+.agent-reasoning summary svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-reasoning p {
+  margin: 7px 0 0 19px;
+  color: var(--subtle);
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.agent-loading,
+.agent-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.agent-loading svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-error {
+  color: #9c231a;
+}
+
+.spin {
+  animation: agent-spin 900ms linear infinite;
+}
+
+@keyframes agent-spin {
+  to { transform: rotate(360deg); }
+}
+
 .agent-chat-empty {
   display: flex;
   width: 100%;
@@ -120,6 +226,10 @@
   color: rgba(74, 85, 102, 0.62);
 }
 
+.agent-prompt textarea:disabled {
+  cursor: default;
+}
+
 .agent-prompt-actions {
   display: flex;
   min-height: 28px;
@@ -150,6 +260,17 @@
 .agent-prompt-submit:disabled {
   color: #9ca3af;
   cursor: default;
+}
+
+.agent-prompt-submit.is-stop {
+  background: var(--text);
+  color: var(--surface);
+}
+
+.agent-prompt-submit.is-stop svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
 }
 
 .agent-prompt-tool svg,

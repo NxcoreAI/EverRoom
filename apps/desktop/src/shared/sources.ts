@@ -103,8 +103,31 @@ export interface SourceChangeEvent {
   filesChanged: boolean
 }
 
-export interface NexcoreDesktopApi {
+export type GatewayState = 'starting' | 'ready' | 'stopped' | 'error'
+
+export interface GatewayStatus {
+  state: GatewayState
+  pid: number | null
+  baseUrl: string | null
+  version: string | null
+  message: string | null
+}
+
+export interface NxcoreDesktopApi {
   platform: string
+  gateway: {
+    status(): Promise<GatewayStatus>
+  }
+  agent: {
+    createSession(input: CreateAgentSessionInput): Promise<AgentSession>
+    getSession(sessionId: string): Promise<AgentSessionSnapshot>
+    getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
+    startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
+    cancelRun(runId: string): Promise<AgentRun>
+    subscribe(sessionId: string): Promise<void>
+    unsubscribe(): Promise<void>
+    onEvent(listener: (frame: AgentSocketFrame) => void): () => void
+  }
   sources: {
     list(): Promise<DataSourceSummary[]>
     listFiles(id: string): Promise<SourceFileSummary[]>
@@ -119,3 +142,12 @@ export interface NexcoreDesktopApi {
     disconnect(id: string, deleteLocalData: boolean): Promise<void>
   }
 }
+import type {
+  AgentEvent,
+  AgentRun,
+  AgentSession,
+  AgentSessionSnapshot,
+  AgentSocketFrame,
+  CreateAgentSessionInput,
+  StartAgentRunInput,
+} from '@nxcore/agent-contract'

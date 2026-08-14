@@ -97,7 +97,7 @@
   --raised-shadow: 0 4px 16px rgba(30, 18, 18, 0.08);
 }
 
-:root[data-theme='nexcore'] {
+:root[data-theme='nxcore'] {
   --bg: #f7f7f5;
   --chrome: #f1f1ef;
   --surface: #ffffff;

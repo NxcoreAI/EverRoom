@@ -586,6 +586,66 @@ summary:focus-visible {
   color: var(--nav-tone-slate);
 }
 
+.gateway-status {
+  --gateway-state-color: #7a8492;
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  gap: 10px;
+  margin: 0 8px 2px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.gateway-status[data-state='ready'] {
+  --gateway-state-color: #278447;
+}
+
+.gateway-status[data-state='starting'] {
+  --gateway-state-color: #ad7628;
+}
+
+.gateway-status[data-state='error'] {
+  --gateway-state-color: #c14452;
+}
+
+.gateway-status > svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  color: var(--gateway-state-color);
+}
+
+.gateway-status > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gateway-status strong {
+  font-size: 11px;
+}
+
+.gateway-status small {
+  overflow: hidden;
+  color: var(--subtle);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gateway-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--gateway-state-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gateway-state-color) 16%, transparent);
+}
+
 .account-row {
   display: flex;
   min-height: 58px;

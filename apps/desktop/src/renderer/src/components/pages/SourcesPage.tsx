@@ -24,7 +24,7 @@ const EMPTY_GITHUB_FORM: GitHubConnectionInput = {
 }
 
 export function SourcesPage() {
-  const api = window.nexcore?.sources
+  const api = window.nxcore?.sources
   const [sources, setSources] = useState<DataSourceSummary[]>([])
   const [loading, setLoading] = useState(Boolean(api))
   const [busyId, setBusyId] = useState<string | null>(null)

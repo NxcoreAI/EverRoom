@@ -3,7 +3,7 @@ import { useRef } from 'react'
 
 import { PRODUCT_NAME } from '@/components/ui/brand'
 
-export type ThemeId = 'soft' | 'mono' | 'crimson' | 'nexcore'
+export type ThemeId = 'soft' | 'mono' | 'crimson' | 'nxcore'
 
 const themes: Array<{
   id: ThemeId
@@ -30,7 +30,7 @@ const themes: Array<{
     colors: ['#f5f5f3', '#ffffff', '#b51f2e'],
   },
   {
-    id: 'nexcore',
+    id: 'nxcore',
     label: PRODUCT_NAME,
     description: '正式版暖灰米白',
     colors: ['#f7f7f5', '#f1f1ef', '#3d6ff6'],

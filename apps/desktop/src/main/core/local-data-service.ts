@@ -84,7 +84,7 @@ export class LocalDataService {
   ) {
     this.objectsDirectory = join(dataDirectory, 'objects', 'sha256')
     mkdirSync(join(dataDirectory, 'database'), { recursive: true })
-    this.database = new DatabaseSync(join(dataDirectory, 'database', 'nexcore.db'))
+    this.database = new DatabaseSync(join(dataDirectory, 'database', 'nxcore.db'))
     this.evidence = new EvidenceService(
       this.database,
       (hash) => this.objectPath(hash),

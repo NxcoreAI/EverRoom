@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1786714543323,
+      "tag": "0000_lush_maverick",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786721919374,
+      "tag": "0001_motionless_captain_marvel",
+      "breakpoints": true
+    }
+  ]
+}

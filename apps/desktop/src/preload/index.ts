@@ -1,9 +1,29 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { NexcoreDesktopApi } from '../shared/sources'
+import type { NxcoreDesktopApi } from '../shared/sources'
 
-const api: NexcoreDesktopApi = {
+const api: NxcoreDesktopApi = {
   platform: process.platform,
+  gateway: {
+    status: () => ipcRenderer.invoke('gateway:status'),
+  },
+  agent: {
+    createSession: (input) => ipcRenderer.invoke('agent:create-session', input),
+    getSession: (sessionId) => ipcRenderer.invoke('agent:get-session', sessionId),
+    getEvents: (sessionId, runId, afterSeq) =>
+      ipcRenderer.invoke('agent:get-events', sessionId, runId, afterSeq),
+    startRun: (sessionId, input) => ipcRenderer.invoke('agent:start-run', sessionId, input),
+    cancelRun: (runId) => ipcRenderer.invoke('agent:cancel-run', runId),
+    subscribe: (sessionId) => ipcRenderer.invoke('agent:subscribe', sessionId),
+    unsubscribe: () => ipcRenderer.invoke('agent:unsubscribe'),
+    onEvent: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
+        listener(frame)
+      }
+      ipcRenderer.on('agent:event', handleEvent)
+      return () => ipcRenderer.removeListener('agent:event', handleEvent)
+    },
+  },
   sources: {
     list: () => ipcRenderer.invoke('sources:list'),
     listFiles: (id) => ipcRenderer.invoke('sources:list-files', id),
@@ -26,4 +46,4 @@ const api: NexcoreDesktopApi = {
   },
 }
 
-contextBridge.exposeInMainWorld('nexcore', api)
+contextBridge.exposeInMainWorld('nxcore', api)

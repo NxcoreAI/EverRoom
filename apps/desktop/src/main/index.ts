@@ -7,6 +7,8 @@ import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
 import { LocalDataService } from './core/local-data-service'
 import { CredentialStore } from './security/credential-store'
+import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
+import { GatewaySupervisor } from './gateway/gateway-supervisor'
 
 const SOURCE_CHANNELS = {
   list: 'sources:list',
@@ -22,7 +24,23 @@ const SOURCE_CHANNELS = {
   disconnect: 'sources:disconnect',
 } as const
 
+const GATEWAY_CHANNELS = {
+  status: 'gateway:status',
+} as const
+
+const AGENT_CHANNELS = {
+  createSession: 'agent:create-session',
+  getSession: 'agent:get-session',
+  getEvents: 'agent:get-events',
+  startRun: 'agent:start-run',
+  cancelRun: 'agent:cancel-run',
+  subscribe: 'agent:subscribe',
+  unsubscribe: 'agent:unsubscribe',
+} as const
+
 let localDataService: LocalDataService | null = null
+let gatewaySupervisor: GatewaySupervisor | null = null
+let agentGatewayBridge: AgentGatewayBridge | null = null
 let shutdownStarted = false
 
 function requireSourceId(value: unknown): string {
@@ -114,6 +132,21 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
   )
 }
 
+function registerGatewayHandlers(supervisor: GatewaySupervisor): void {
+  ipcMain.handle(GATEWAY_CHANNELS.status, () => supervisor.getStatus())
+}
+
+function registerAgentHandlers(bridge: AgentGatewayBridge): void {
+  ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
+  ipcMain.handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))
+  ipcMain.handle(AGENT_CHANNELS.getEvents, (_event, sessionId, runId, afterSeq) =>
+    bridge.getEvents(sessionId, runId, afterSeq))
+  ipcMain.handle(AGENT_CHANNELS.startRun, (_event, sessionId, input) => bridge.startRun(sessionId, input))
+  ipcMain.handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
+  ipcMain.handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
+  ipcMain.handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+}
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1440,
@@ -153,13 +186,21 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light'
   try {
+    const dataDirectory = join(app.getPath('appData'), 'NxCore')
+    gatewaySupervisor = new GatewaySupervisor(dataDirectory)
+    const gateway = await gatewaySupervisor.start()
+    console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
+    registerGatewayHandlers(gatewaySupervisor)
+    agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
+    registerAgentHandlers(agentGatewayBridge)
+
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
       .register(new GitHubConnector((key) => credentials.get(key)))
     localDataService = new LocalDataService(
-      join(app.getPath('appData'), 'JiheCore'),
+      dataDirectory,
       connectors,
     )
     await localDataService.initialize()
@@ -169,7 +210,11 @@ app.whenReady().then(async () => {
     const service = localDataService
     localDataService = null
     await service?.shutdown()
-    console.error('Failed to initialize Everroom local data service', error)
+    agentGatewayBridge?.dispose()
+    agentGatewayBridge = null
+    await gatewaySupervisor?.shutdown()
+    gatewaySupervisor = null
+    console.error('Failed to initialize Everroom desktop services', error)
     app.quit()
     return
   }
@@ -180,11 +225,16 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
-  if (!localDataService || shutdownStarted) return
+  if ((!localDataService && !gatewaySupervisor) || shutdownStarted) return
   event.preventDefault()
   shutdownStarted = true
   const service = localDataService
+  const gateway = gatewaySupervisor
+  const agentBridge = agentGatewayBridge
   localDataService = null
-  void service.shutdown().finally(() => app.quit())
+  gatewaySupervisor = null
+  agentGatewayBridge = null
+  agentBridge?.dispose()
+  void Promise.allSettled([service?.shutdown(), gateway?.shutdown()]).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())
