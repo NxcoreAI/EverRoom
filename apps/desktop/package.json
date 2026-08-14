@@ -45,6 +45,14 @@
   "build": {
     "appId": "com.nxcore.ce",
     "productName": "EverRoom",
+    "protocols": [
+      {
+        "name": "EverRoom sign-in callback",
+        "schemes": [
+          "everroom"
+        ]
+      }
+    ],
     "electronDist": "node_modules/electron/dist",
     "asar": true,
     "directories": {

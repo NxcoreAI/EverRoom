@@ -2,8 +2,9 @@ import { AlertCircle, Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, Square 
 import { useEffect, useRef, useState } from 'react'
 
 import { PRODUCT_NAME } from '@/components/ui/brand'
+import { useAccount } from '@/state/AccountContext'
 
-import type { AsrJob, AsrResult, CloudAccountStatus, NxcoreDesktopApi } from '../../../../shared/sources'
+import type { AsrJob, AsrResult, NxcoreDesktopApi } from '../../../../shared/sources'
 import './RecordingPage.css'
 
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'saving' | 'transcribing' | 'completed' | 'error'
@@ -35,6 +36,10 @@ function errorMessage(error: unknown): string {
   return message
 }
 
+function isDesktopRequestError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('Error invoking remote method')
+}
+
 function desktopApi(): NxcoreDesktopApi {
   if (!window.nxcore) throw new Error(`录音转写仅在 ${PRODUCT_NAME} 桌面版中可用。`)
   return window.nxcore
@@ -57,7 +62,7 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
   const [contextPrompt, setContextPrompt] = useState('')
   const [result, setResult] = useState<AsrResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [account,setAccount]=useState<CloudAccountStatus|null>(null)
+  const { account } = useAccount()
   const [mode,setMode]=useState<'cloud'|'local'>('local')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -77,7 +82,10 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
     }
   }, [])
 
-  useEffect(()=>{void window.nxcore?.account.status().then(status=>{setAccount(status);if(status.authenticated)setMode('cloud')}).catch(()=>undefined)},[])
+  useEffect(() => {
+    if (account?.authenticated) setMode('cloud')
+    else if (account) setMode('local')
+  }, [account])
 
   useEffect(() => {
     if (state !== 'recording') return
@@ -141,7 +149,7 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
       const id = recordingIdRef.current
       recordingIdRef.current = null
       if (id) await desktopApi().asr.cancelRecording(id).catch(() => undefined)
-      setError(errorMessage(caught))
+      if (!isDesktopRequestError(caught)) setError(errorMessage(caught))
       setState('error')
     }
   }
@@ -179,7 +187,7 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
         await desktopApi().asr.cancelRecording(recordingIdRef.current).catch(() => undefined)
         recordingIdRef.current = null
       }
-      setError(errorMessage(caught))
+      if (!isDesktopRequestError(caught)) setError(errorMessage(caught))
       setState('error')
     }
   }

@@ -1,4 +1,4 @@
-import { AlertCircle, HardDrive, Plus } from 'lucide-react'
+import { HardDrive, Plus } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
 import type {
@@ -32,7 +32,6 @@ export function SourcesPage() {
   const [filesBySource, setFilesBySource] = useState<Record<string, SourceFileSummary[]>>({})
   const [filesLoadingId, setFilesLoadingId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<EvidenceSearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
@@ -50,10 +49,8 @@ export function SourcesPage() {
       setSources(nextSources)
       setExpandedSourceId((current) => current && sourceIds.has(current) ? current : null)
       setFilesBySource((current) => Object.fromEntries(Object.entries(current).filter(([sourceId]) => sourceIds.has(sourceId))))
-      setError(null)
       return nextSources
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '无法读取数据源。')
+    } catch {
       return null
     } finally {
       setLoading(false)
@@ -75,7 +72,7 @@ export function SourcesPage() {
           delete next[sourceId]
           return next
         })
-      } else setError(nextError)
+      }
     } finally {
       if (showLoading) setFilesLoadingId(null)
     }
@@ -100,13 +97,11 @@ export function SourcesPage() {
   const runAction = async (id: string, action: () => Promise<unknown>) => {
     setBusyId(id)
     setMessage(null)
-    setError(null)
     try {
       await action()
       const nextSources = await loadSources()
       if (expandedSourceId === id && nextSources?.some((source) => source.id === id)) await loadFiles(id)
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : '操作失败，请重试。')
+    } catch {
     } finally {
       setBusyId(null)
     }
@@ -116,15 +111,13 @@ export function SourcesPage() {
     if (!api) return setMessage(`网页版不读取本机文件夹。请在 ${PRODUCT_NAME} 桌面版中使用此功能。`)
     setBusyId('new')
     setMessage(null)
-    setError(null)
     try {
       const result = await api.addLocalFolder()
       if (result) {
         setMessage(describeSync(result))
         await loadSources()
       }
-    } catch (addError) {
-      setError(addError instanceof Error ? addError.message : '无法连接该文件夹。')
+    } catch {
     } finally {
       setBusyId(null)
       setConnectMenuOpen(false)
@@ -136,7 +129,6 @@ export function SourcesPage() {
     if (!api) return
     setBusyId('new')
     setMessage(null)
-    setError(null)
     try {
       const result = await api.addGitHub({
         repository: githubForm.repository,
@@ -149,8 +141,7 @@ export function SourcesPage() {
       setGithubForm((current) => ({ ...current, token: '' }))
       setMessage(describeSync(result))
       await loadSources()
-    } catch (addError) {
-      setError(addError instanceof Error ? addError.message : '无法连接 GitHub 仓库。')
+    } catch {
     } finally {
       setBusyId(null)
     }
@@ -161,9 +152,7 @@ export function SourcesPage() {
     setActiveEvidenceId(blockId)
     try {
       setEvidenceDocument(await api.listEvidence(sourceId, fileId))
-      setError(null)
-    } catch (viewError) {
-      setError(viewError instanceof Error ? viewError.message : '无法读取证据。')
+    } catch {
     }
   }, [api])
 
@@ -179,11 +168,9 @@ export function SourcesPage() {
     const query = searchQuery.trim()
     if (!query) return setSearchResults(null)
     setSearching(true)
-    setError(null)
     try {
       setSearchResults(await api.searchEvidence(query))
-    } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : '搜索失败，请重试。')
+    } catch {
     } finally {
       setSearching(false)
     }
@@ -196,7 +183,7 @@ export function SourcesPage() {
   }
 
   const showFile = (sourceId: string, fileId: string) => {
-    void api?.showFile(sourceId, fileId).catch((showError) => setError(showError instanceof Error ? showError.message : '无法定位原始文件。'))
+    void api?.showFile(sourceId, fileId).catch(() => undefined)
   }
 
   return (
@@ -205,7 +192,6 @@ export function SourcesPage() {
       {api && connectMenuOpen ? <ConnectSourceMenu busy={busyId === 'new'} onLocalFolder={() => void addLocalFolder()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} /> : null}
       {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>请在桌面版中连接本地文件夹</strong><span>网页版不会请求或读取本机文件权限。</span></div></div> : null}
       {message ? <div className="source-feedback" role="status">{message}</div> : null}
-      {error ? <div className="source-feedback error" role="alert"><AlertCircle aria-hidden="true" strokeWidth={1.8} />{error}</div> : null}
       {api && sources.length > 0 ? <EvidenceSearch query={searchQuery} results={searchResults} searching={searching} onQueryChange={setSearchQuery} onSearch={(event) => void searchEvidence(event)} onClear={() => { setSearchQuery(''); setSearchResults(null) }} onOpen={(result) => void openEvidence(result.sourceId, result.fileId, result.id)} /> : null}
       {api && !loading && sources.length === 0 ? <div className="sources-empty"><span className="sources-empty-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span><strong>还没有连接数据源</strong><p>连接一个数据源，{PRODUCT_NAME} 会保存受支持内容的版本与同步状态。</p><button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><Plus aria-hidden="true" strokeWidth={1.8} />连接文件夹</button></div> : null}
       {api && (loading || sources.length > 0) ? <SourceTable sources={sources} loading={loading} busyId={busyId} expandedSourceId={expandedSourceId} filesBySource={filesBySource} filesLoadingId={filesLoadingId} onToggleFiles={(id) => setExpandedSourceId((current) => current === id ? null : id)} onSync={(source) => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result)) })} onTogglePaused={(source) => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onDelete={deleteSource} onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)} onShowFile={showFile} /> : null}

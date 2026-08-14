@@ -157,16 +157,38 @@ export interface CloudAccountStatus {
   apiBaseUrl: string
   user?: { id:string;tenantId:string;email?:string|null;phone?:string|null;name?:string }
   device?: { id:string;name?:string;platform?:string }
+  subscription?: {
+    status: string
+    planCode: string
+    planName: string
+    periodStart: string
+    periodEnd: string
+    quotaSeconds: number
+    usedSeconds: number
+    remainingSeconds: number
+  }
+}
+
+export type CloudOidcProvider = 'apple' | 'google'
+
+export interface DesktopRequestError {
+  channel: string
+  message: string
 }
 
 export interface NxcoreDesktopApi {
   platform: string
+  errors: {
+    onRequestError(listener: (error: DesktopRequestError) => void): () => void
+  }
   gateway: {
     status(): Promise<GatewayStatus>
   }
   account: {
     status(): Promise<CloudAccountStatus>
     login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
+    loginWithOidc(provider: CloudOidcProvider): Promise<CloudAccountStatus>
+    cancelOidcLogin(): Promise<void>
     logout(): Promise<CloudAccountStatus>
   }
   asr: {

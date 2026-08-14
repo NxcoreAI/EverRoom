@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { AgentPanel } from '@/components/AgentPanel'
+import { AppErrorDialog } from '@/components/AppErrorDialog'
 import { PageCanvas } from '@/components/PageCanvas'
 import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
@@ -187,6 +188,7 @@ export function App() {
         />
       </main>
       {agentOpen ? <AgentPanel pageLabel={pageLabels[activePage]} focusRequest={agentFocusRequest} /> : null}
+      <AppErrorDialog />
     </div>
   )
 }
