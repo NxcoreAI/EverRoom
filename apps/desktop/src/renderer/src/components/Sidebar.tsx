@@ -1,7 +1,8 @@
-import { ChevronDown, CircleUserRound, CloudOff, Server } from 'lucide-react'
+import { ChevronDown, Server } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { navigationSections, type PageId } from '@/data/navigation'
+import { ProductBrand } from '@/components/ui/ProductBrand'
 import type { GatewayStatus } from '../../../shared/sources'
 
 const INITIAL_GATEWAY_STATUS: GatewayStatus = {
@@ -46,7 +47,7 @@ export function Sidebar({
             pid: null,
             baseUrl: null,
             version: null,
-            message: 'Gateway 仅在 NxCore 桌面版中运行',
+            message: 'Gateway 仅在 Everroom 桌面版中运行',
           })
         }
         return
@@ -86,6 +87,7 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
+      <ProductBrand className="sidebar-brand" />
       <nav className="sidebar-nav" aria-label="主导航">
         {navigationSections.map((section) => (
           <section
@@ -111,11 +113,14 @@ export function Sidebar({
                     type="button"
                     className="nav-item"
                     data-active={String(item.id === activePage)}
+                    data-nav-tone={item.tone}
                     aria-current={item.id === activePage ? 'page' : undefined}
                     onClick={() => onNavigate(item.id)}
                   >
-                    <Icon aria-hidden="true" />
-                    <span>{item.label}</span>
+                    <span className="nav-item-icon" aria-hidden="true">
+                      <Icon strokeWidth={1.8} />
+                    </span>
+                    <span className="nav-item-label">{item.label}</span>
                   </button>
                 )
               })}
@@ -124,20 +129,12 @@ export function Sidebar({
         ))}
       </nav>
 
-      <div className="sidebar-status">
-        <CloudOff aria-hidden="true" />
-        <span>
-          <strong>本地模式</strong>
-          <small>数据保存在这台 Mac</small>
-        </span>
-      </div>
-
       <div
         className="gateway-status"
         data-state={gatewayStatus.state}
         role="status"
         aria-live="polite"
-        title={gatewayStatus.message ?? gatewayStatus.baseUrl ?? 'NxCore Gateway'}
+        title={gatewayStatus.message ?? gatewayStatus.baseUrl ?? 'Everroom Gateway'}
       >
         <Server aria-hidden="true" />
         <span>
@@ -146,12 +143,11 @@ export function Sidebar({
         </span>
         <i className="gateway-status-dot" aria-hidden="true" />
       </div>
-
       <button type="button" className="account-row">
-        <CircleUserRound aria-hidden="true" />
-        <span>
+        <span className="account-avatar" aria-hidden="true">本</span>
+        <span className="account-copy">
           <strong>本地用户</strong>
-          <small>NxCore CE</small>
+          <small>本地模式</small>
         </span>
       </button>
     </aside>

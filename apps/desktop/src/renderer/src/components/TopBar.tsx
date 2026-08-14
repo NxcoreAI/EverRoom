@@ -1,28 +1,53 @@
-import { ChevronLeft, ChevronRight, PanelRightClose, PanelRightOpen, Plus, RotateCcw, X } from 'lucide-react'
+import {
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  LayoutGrid,
+  LockKeyhole,
+  PanelRightClose,
+  PanelRightOpen,
+  Plus,
+  RotateCcw,
+  X,
+} from 'lucide-react'
 
 import type { PageId } from '@/data/navigation'
+import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { pageIcons, pageLabels } from '@/data/navigation'
 import { ThemeSwitcher, type ThemeId } from '@/components/ThemeSwitcher'
+import { ProductBrand } from '@/components/ui/ProductBrand'
 
 export function TopBar({
   activePage,
   tabs,
+  contextRoomTabs,
+  activeContextRoomId,
   agentOpen,
   navCollapsed,
   theme,
   onActivate,
   onClose,
+  onActivateContextRoom,
+  onCloseContextRoom,
+  onRestoreContextRoom,
+  canRestoreContextRoom,
   onToggleAgent,
   onToggleNav,
   onThemeChange,
 }: {
   activePage: PageId
   tabs: PageId[]
+  contextRoomTabs: ContextRoomWorkspaceTab[]
+  activeContextRoomId: string | null
   agentOpen: boolean
   navCollapsed: boolean
   theme: ThemeId
   onActivate: (page: PageId) => void
   onClose: (page: PageId) => void
+  onActivateContextRoom: (roomId: string) => void
+  onCloseContextRoom: (roomId: string) => void
+  onRestoreContextRoom: () => void
+  canRestoreContextRoom: boolean
   onToggleAgent: () => void
   onToggleNav: () => void
   onThemeChange: (theme: ThemeId) => void
@@ -30,10 +55,7 @@ export function TopBar({
   return (
     <header className="topbar">
       <div className="brand-area">
-        <span className="brand-mark" aria-hidden="true">
-          <span />
-        </span>
-        <strong>极核</strong>
+        <ProductBrand className="topbar-brand" />
         <button
           className="icon-button no-drag nav-collapse"
           type="button"
@@ -41,24 +63,32 @@ export function TopBar({
           aria-label={navCollapsed ? '展开导航' : '收起导航'}
           onClick={onToggleNav}
         >
-          {navCollapsed ? <ChevronRight aria-hidden="true" /> : <ChevronLeft aria-hidden="true" />}
+          {navCollapsed ? <ChevronRight aria-hidden="true" strokeWidth={1.8} /> : <ChevronLeft aria-hidden="true" strokeWidth={1.8} />}
         </button>
       </div>
 
       <div className="tabs no-drag" role="tablist" aria-label="打开的页面">
         {tabs.map((tab) => {
           const TabIcon = pageIcons[tab]
+          const tabLabel = tab === 'home' ? '工作台' : pageLabels[tab]
+          const isActive = tab === activePage && (tab !== 'rooms' || activeContextRoomId === null)
           return (
             <div
               key={tab}
               className="tab"
-              data-active={String(tab === activePage)}
+              data-active={String(isActive)}
+              data-page={tab}
               role="tab"
-              aria-selected={tab === activePage}
+              aria-selected={isActive}
             >
               <button type="button" onClick={() => onActivate(tab)}>
-                <TabIcon aria-hidden="true" />
-                <span>{pageLabels[tab]}</span>
+                {tab === 'home' ? (
+                  <LayoutGrid aria-hidden="true" strokeWidth={1.8} />
+                ) : (
+                  <TabIcon aria-hidden="true" strokeWidth={1.8} />
+                )}
+                <span>{tabLabel}</span>
+                {tab === 'home' ? <LockKeyhole className="tab-lock" aria-hidden="true" strokeWidth={1.8} /> : null}
               </button>
               {tab !== 'home' ? (
                 <button
@@ -67,9 +97,36 @@ export function TopBar({
                   aria-label={`关闭${pageLabels[tab]}`}
                   onClick={() => onClose(tab)}
                 >
-                  <X aria-hidden="true" />
+                  <X aria-hidden="true" strokeWidth={1.8} />
                 </button>
               ) : null}
+            </div>
+          )
+        })}
+        {contextRoomTabs.map((room) => {
+          const isActive = activeContextRoomId === room.id
+          return (
+            <div
+              key={room.id}
+              className="tab"
+              data-active={String(isActive)}
+              data-room-id={room.id}
+              role="tab"
+              aria-label={room.title}
+              aria-selected={isActive}
+            >
+              <button type="button" onClick={() => onActivateContextRoom(room.id)}>
+                <BookOpen aria-hidden="true" strokeWidth={1.8} />
+                <span>{room.title}</span>
+              </button>
+              <button
+                type="button"
+                className="tab-close"
+                aria-label={`关闭 ${room.title}`}
+                onClick={() => onCloseContextRoom(room.id)}
+              >
+                <X aria-hidden="true" strokeWidth={1.8} />
+              </button>
             </div>
           )
         })}
@@ -77,10 +134,17 @@ export function TopBar({
 
       <div className="top-actions no-drag">
         <button type="button" className="icon-button" title="新建标签" aria-label="新建标签">
-          <Plus aria-hidden="true" />
+          <Plus aria-hidden="true" strokeWidth={1.8} />
         </button>
-        <button type="button" className="icon-button" title="恢复已关闭" aria-label="恢复已关闭">
-          <RotateCcw aria-hidden="true" />
+        <button
+          type="button"
+          className="icon-button"
+          title="恢复已关闭"
+          aria-label="恢复已关闭"
+          disabled={!canRestoreContextRoom}
+          onClick={onRestoreContextRoom}
+        >
+          <RotateCcw aria-hidden="true" strokeWidth={1.8} />
         </button>
         <ThemeSwitcher theme={theme} onChange={onThemeChange} />
         <button
@@ -90,7 +154,7 @@ export function TopBar({
           aria-label={agentOpen ? '收起 Agent' : '展开 Agent'}
           onClick={onToggleAgent}
         >
-          {agentOpen ? <PanelRightClose aria-hidden="true" /> : <PanelRightOpen aria-hidden="true" />}
+          {agentOpen ? <PanelRightClose aria-hidden="true" strokeWidth={1.8} /> : <PanelRightOpen aria-hidden="true" strokeWidth={1.8} />}
         </button>
       </div>
     </header>

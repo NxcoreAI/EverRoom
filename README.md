@@ -1,6 +1,6 @@
 <div align="center">
 
-# NxCore
+# Everroom
 
 **The local-first context layer between your data and AI agents.**
 
@@ -17,13 +17,13 @@ Connect data. Build evidence. Govern memory. Move work forward.
 </div>
 
 > [!IMPORTANT]
-> NxCore is under active development. macOS is the current development target, APIs and storage schemas may change, and several product modules described below are still being built.
+> Everroom is under active development. macOS is the current development target, APIs and storage schemas may change, and several product modules described below are still being built.
 
-## What is NxCore?
+## What is Everroom?
 
-NxCore is a personal context workspace for people who work across documents, repositories, conversations, and AI coding tools. It is not another general-purpose chat client, a thin RAG interface, or a passive second-brain notebook.
+Everroom is a personal context workspace for people who work across documents, repositories, conversations, and AI coding tools. It is not another general-purpose chat client, a thin RAG interface, or a passive second-brain notebook.
 
-NxCore sits between your personal data and AI agents. It turns connected sources into traceable evidence, promotes evidence into governed memory, projects relevant context into a **Context Room**, and gives documents and agents only the context they need to complete a task.
+Everroom sits between your personal data and AI agents. It turns connected sources into traceable evidence, promotes evidence into governed memory, projects relevant context into a **Context Room**, and gives documents and agents only the context they need to complete a task.
 
 ```mermaid
 flowchart LR
@@ -40,7 +40,7 @@ The product is guided by four principles:
 - **Local first:** data, indexes, working memory, and documents stay on the user's device by default.
 - **Evidence before conclusions:** important memories and generated output should remain traceable to their sources.
 - **Automation with control:** agents receive explicit, revocable context and tool boundaries.
-- **Replaceable foundations:** models, memory engines, connectors, and agent runtimes sit behind NxCore-owned interfaces.
+- **Replaceable foundations:** models, memory engines, connectors, and agent runtimes sit behind Everroom-owned interfaces.
 
 ## Current Status
 
@@ -63,7 +63,7 @@ Electron owns the desktop lifecycle and starts NxCore Gateway as an independent 
 
 ```mermaid
 flowchart TB
-    subgraph Desktop["NxCore Desktop"]
+    subgraph Desktop["Everroom Desktop"]
         UI["React Renderer"]
         IPC["Typed Preload IPC"]
         MAIN["Electron Main Process"]
@@ -216,4 +216,4 @@ Future SaaS connectors may use a Nango-compatible provider, but the Nango server
 
 ## Contributing
 
-NxCore is at an early stage, so interfaces are still moving. High-value contribution areas include connectors, Agent adapters, memory evaluators, Room templates, tests, documentation, and privacy reviews. Please open an issue before starting a large architectural change so the implementation can align with the current contracts and roadmap.
+Everroom is at an early stage, so interfaces are still moving. High-value contribution areas include connectors, Agent adapters, memory evaluators, Room templates, tests, documentation, and privacy reviews. Please open an issue before starting a large architectural change so the implementation can align with the current contracts and roadmap.

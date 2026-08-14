@@ -1,6 +1,8 @@
 import { AlertCircle, Check, LoaderCircle, Mic, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { PRODUCT_NAME } from '@/components/ui/brand'
+
 import type { AsrJob, AsrResult, NxcoreDesktopApi } from '../../../../shared/sources'
 import './RecordingPage.css'
 
@@ -26,7 +28,7 @@ function errorMessage(error: unknown): string {
 }
 
 function desktopApi(): NxcoreDesktopApi {
-  if (!window.nxcore) throw new Error('录音转写仅在 NxCore 桌面版中可用。')
+  if (!window.nxcore) throw new Error(`录音转写仅在 ${PRODUCT_NAME} 桌面版中可用。`)
   return window.nxcore
 }
 
@@ -93,7 +95,7 @@ export function RecordingPage() {
 
   const startRecording = async () => {
     if (!window.nxcore?.asr) {
-      setError('录音转写仅在 NxCore 桌面版中可用。')
+      setError(`录音转写仅在 ${PRODUCT_NAME} 桌面版中可用。`)
       setState('error')
       return
     }

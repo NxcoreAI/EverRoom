@@ -1,6 +1,6 @@
 <div align="center">
 
-# 极核 NxCore
+# Everroom
 
 **连接个人数据与 AI Agent 的本地优先上下文层。**
 
@@ -17,13 +17,13 @@
 </div>
 
 > [!IMPORTANT]
-> NxCore 正处于快速开发阶段。目前以 macOS 为主要开发目标，API 与存储结构仍可能调整，下文部分产品模块尚在建设中。
+> Everroom 正处于快速开发阶段。目前以 macOS 为主要开发目标，API 与存储结构仍可能调整，下文部分产品模块尚在建设中。
 
-## NxCore 是什么？
+## Everroom 是什么？
 
-NxCore 是面向个人的上下文工作空间，服务于同时使用文档、代码仓库、沟通记录和 AI 编程工具的人。它不是另一个通用聊天客户端、简单的 RAG 界面，也不是被动记录信息的第二大脑笔记。
+Everroom 是面向个人的上下文工作空间，服务于同时使用文档、代码仓库、沟通记录和 AI 编程工具的人。它不是另一个通用聊天客户端、简单的 RAG 界面，也不是被动记录信息的第二大脑笔记。
 
-NxCore 位于个人数据与 AI Agent 之间：将连接的数据转化为可追溯证据，将证据提升为受治理的记忆，再把与目标相关的上下文投影到 **Context Room**，最终让文档和 Agent 只获得完成任务所需的信息。
+Everroom 位于个人数据与 AI Agent 之间：将连接的数据转化为可追溯证据，将证据提升为受治理的记忆，再把与目标相关的上下文投影到 **Context Room**，最终让文档和 Agent 只获得完成任务所需的信息。
 
 ```mermaid
 flowchart LR
@@ -40,7 +40,7 @@ flowchart LR
 - **本地优先：** 数据、索引、工作记忆和文档默认保存在用户设备上。
 - **证据先于结论：** 关键记忆和生成内容应当能够回到原始来源。
 - **自动化但可治理：** Agent 获得明确、临时且可撤销的上下文和工具权限。
-- **底座可替换：** 模型、记忆引擎、连接器和 Agent runtime 均通过 NxCore 自有接口接入。
+- **底座可替换：** 模型、记忆引擎、连接器和 Agent runtime 均通过 Everroom 自有接口接入。
 
 ## 当前进度
 
@@ -63,7 +63,7 @@ Electron 负责桌面应用生命周期，并将 NxCore Gateway 作为独立本�
 
 ```mermaid
 flowchart TB
-    subgraph Desktop["NxCore Desktop"]
+    subgraph Desktop["Everroom Desktop"]
         UI["React Renderer"]
         IPC["Typed Preload IPC"]
         MAIN["Electron Main Process"]
@@ -236,4 +236,4 @@ Everroom/
 
 ## 参与贡献
 
-NxCore 仍处于早期阶段，接口会持续演进。当前有价值的贡献方向包括 Connector、Agent adapter、记忆评估器、Room 模板、测试、文档和隐私审查。开始大规模架构改动前，请先创建 Issue，确保实现与当前契约和路线图保持一致。
+Everroom 仍处于早期阶段，接口会持续演进。当前有价值的贡献方向包括 Connector、Agent adapter、记忆评估器、Room 模板、测试、文档和隐私审查。开始大规模架构改动前，请先创建 Issue，确保实现与当前契约和路线图保持一致。
