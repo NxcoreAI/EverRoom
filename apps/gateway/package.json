@@ -20,6 +20,7 @@
   "dependencies": {
     "@nxcore/agent-contract": "workspace:*",
     "@nxcore/agent-runtime": "workspace:*",
+    "@nxcore/agent-runtime-pi": "workspace:*",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
     "@fastify/type-provider-typebox": "^6.1.0",

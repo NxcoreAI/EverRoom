@@ -22,4 +22,76 @@ describe("loadConfig", () => {
 
     expect(config.port).toBe(4321);
   });
+
+  it("keeps the fake runtime isolated from AI configuration", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "fake",
+    });
+
+    expect(config.agentRuntime).toBe("fake");
+    expect(config.pi).toBeNull();
+  });
+
+  it("loads a validated Pi runtime configuration", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_AI_PROVIDER: "deepseek",
+      NXCORE_AI_MODEL: "deepseek-chat",
+      NXCORE_AI_BASE_URL: "https://api.deepseek.com",
+      NXCORE_AI_API_KEY: "test-key",
+      NXCORE_AI_API: "openai-completions",
+      NXCORE_AI_REASONING: "off",
+    });
+
+    expect(config.pi).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "test-key",
+      reasoning: "off",
+      temperature: 0.3,
+    });
+  });
+
+  it("rejects incomplete or unsafe Pi endpoint configuration", () => {
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+    })).toThrow("Pi runtime requires");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_AI_PROVIDER: "openai",
+      NXCORE_AI_MODEL: "gpt-test",
+      NXCORE_AI_BASE_URL: "file:///tmp/model",
+      NXCORE_AI_API_KEY: "test-key",
+    })).toThrow("expected an absolute HTTP(S) URL");
+  });
+
+  it("loads Aliyun ASR only when explicitly enabled", () => {
+    const disabled = loadConfig(["--token", "0123456789abcdef"], {});
+    expect(disabled.asr).toBeNull();
+
+    const enabled = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "aliyun",
+      NXCORE_ASR_ALIYUN_API_KEY: "test-asr-key",
+      NXCORE_ASR_ALIYUN_BASE_URL: "https://workspace.example.com/api/v1",
+    });
+    expect(enabled.asr).toMatchObject({
+      apiKey: "test-asr-key",
+      baseUrl: "https://workspace.example.com/api/v1",
+      model: "qwen-audio-3.0-asr-flash-filetrans",
+    });
+  });
+
+  it("rejects incomplete or unsafe Aliyun ASR configuration", () => {
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "aliyun",
+    })).toThrow("NXCORE_ASR_ALIYUN_API_KEY");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "aliyun",
+      NXCORE_ASR_ALIYUN_API_KEY: "test-key",
+      NXCORE_ASR_ALIYUN_BASE_URL: "http://insecure.example.com/api/v1",
+    })).toThrow("expected an absolute HTTPS URL");
+  });
 });

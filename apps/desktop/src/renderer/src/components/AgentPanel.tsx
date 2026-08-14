@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { AgentInfoView } from '@/components/agent/AgentInfoView'
+import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
 import { AgentToolbar, type AgentView } from '@/components/agent/AgentToolbar'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 
@@ -42,13 +43,26 @@ export function AgentPanel({
     <aside className="agent-panel">
       <AgentToolbar
         activeView={activeView}
+        sessionTitle={session.currentSession?.title}
         onCreateConversation={() => {
           setActiveView('chat')
           setDraft('')
-          session.reset()
+          void session.createSession().catch(() => undefined)
           focusComposer()
         }}
         onViewChange={setActiveView}
+      />
+
+      <AgentSessionSwitcher
+        activeRunId={session.activeRunId}
+        connected={session.connected}
+        currentSession={session.currentSession}
+        sessionId={session.sessionId}
+        sessions={session.sessions}
+        onCreate={session.createSession}
+        onDelete={session.deleteSession}
+        onRename={session.renameSession}
+        onSelect={session.selectSession}
       />
 
       <button

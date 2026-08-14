@@ -6,6 +6,7 @@ import type {
   AgentSocketFrame,
   CreateAgentSessionInput,
   StartAgentRunInput,
+  UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
 import { isAgentSocketFrame } from '@nxcore/agent-contract'
 import type { WebContents } from 'electron'
@@ -28,6 +29,22 @@ export class AgentGatewayBridge {
 
   createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
     return this.request('/v1/agent/sessions', { method: 'POST', body: JSON.stringify(input) })
+  }
+
+  listSessions(pageLabel: string): Promise<AgentSession[]> {
+    const query = new URLSearchParams({ pageLabel })
+    return this.request(`/v1/agent/sessions?${query}`)
+  }
+
+  updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    })
+  }
+
+  deleteSession(sessionId: string): Promise<void> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
   }
 
   getSession(sessionId: string): Promise<AgentSessionSnapshot> {
@@ -117,6 +134,7 @@ export class AgentGatewayBridge {
       const body = await response.json().catch(() => null) as { message?: unknown } | null
       throw new Error(typeof body?.message === 'string' ? body.message : `Agent 请求失败（${response.status}）`)
     }
+    if (response.status === 204) return undefined as T
     return response.json() as Promise<T>
   }
 }

@@ -64,6 +64,8 @@ export class FakeAgentRuntime implements AgentRuntime {
     this.activeRuns.get(runId)?.controller.abort(new Error("cancelled"));
   }
 
+  async deleteSession(): Promise<void> {}
+
   async dispose(): Promise<void> {
     for (const run of this.activeRuns.values()) run.controller.abort(new Error("disposed"));
     this.activeRuns.clear();

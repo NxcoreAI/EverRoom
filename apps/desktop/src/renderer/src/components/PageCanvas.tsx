@@ -12,6 +12,9 @@ import { TasksPage } from './pages/TasksPage'
 const ContextRoomPage = lazy(() =>
   import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
 )
+const RecordingPage = lazy(() =>
+  import('./recording/RecordingPage').then((module) => ({ default: module.RecordingPage })),
+)
 
 export function PageCanvas({
   page,
@@ -50,6 +53,11 @@ export function PageCanvas({
     )
   }
   if (page === 'docs') return <DocsPage />
+  if (page === 'recording') return (
+    <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载录音...</div></div>}>
+      <RecordingPage />
+    </Suspense>
+  )
   if (page === 'sources') return <SourcesPage />
   if (page === 'memory') return <MemoryPage />
   if (page === 'tasks') return <TasksPage />

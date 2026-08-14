@@ -45,12 +45,22 @@
   "build": {
     "appId": "com.nxcore.ce",
     "productName": "Everroom",
+    "electronDist": "node_modules/electron/dist",
     "asar": true,
     "directories": {
       "output": "../../release"
     },
     "files": [
       "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../gateway/dist",
+        "to": "gateway",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "mac": {
       "category": "public.app-category.productivity",

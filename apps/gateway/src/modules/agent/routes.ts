@@ -8,6 +8,19 @@ const SessionParams = Type.Object({ sessionId: Type.String({ minLength: 1, maxLe
 
 export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
   return async (app) => {
+    app.get(
+      "/v1/agent/sessions",
+      {
+        schema: {
+          tags: ["agent"],
+          querystring: Type.Object({
+            pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+          }),
+        },
+      },
+      async (request) => service.listSessions(request.query.pageLabel),
+    );
+
     app.post(
       "/v1/agent/sessions",
       {
@@ -28,6 +41,37 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
       async (request, reply) => {
         const snapshot = service.getSnapshot(request.params.sessionId);
         return snapshot ?? reply.code(404).send({ error: "not_found", message: "Agent session not found" });
+      },
+    );
+
+    app.patch(
+      "/v1/agent/sessions/:sessionId",
+      {
+        schema: {
+          tags: ["agent"],
+          params: SessionParams,
+          body: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }) }),
+        },
+      },
+      async (request, reply) => service.updateSession(request.params.sessionId, request.body)
+        ?? reply.code(404).send({ error: "not_found", message: "Agent session not found" }),
+    );
+
+    app.delete(
+      "/v1/agent/sessions/:sessionId",
+      { schema: { tags: ["agent"], params: SessionParams } },
+      async (request, reply) => {
+        try {
+          const deleted = await service.deleteSession(request.params.sessionId);
+          return deleted
+            ? reply.code(204).send()
+            : reply.code(404).send({ error: "not_found", message: "Agent session not found" });
+        } catch (error) {
+          if (error instanceof Error && error.message === "agent_session_busy") {
+            return reply.code(409).send({ error: "session_busy", message: "Running agent sessions cannot be deleted" });
+          }
+          throw error;
+        }
       },
     );
 

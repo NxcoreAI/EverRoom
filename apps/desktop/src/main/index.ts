@@ -8,7 +8,9 @@ import { GitHubConnector, type GitHubConfig } from './connectors/github-connecto
 import { LocalDataService } from './core/local-data-service'
 import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
+import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { RecordingStore } from './recording/recording-store'
 
 const SOURCE_CHANNELS = {
   list: 'sources:list',
@@ -29,7 +31,10 @@ const GATEWAY_CHANNELS = {
 } as const
 
 const AGENT_CHANNELS = {
+  listSessions: 'agent:list-sessions',
   createSession: 'agent:create-session',
+  updateSession: 'agent:update-session',
+  deleteSession: 'agent:delete-session',
   getSession: 'agent:get-session',
   getEvents: 'agent:get-events',
   startRun: 'agent:start-run',
@@ -38,9 +43,19 @@ const AGENT_CHANNELS = {
   unsubscribe: 'agent:unsubscribe',
 } as const
 
+const ASR_CHANNELS = {
+  beginRecording: 'asr:begin-recording',
+  appendRecording: 'asr:append-recording',
+  finishRecording: 'asr:finish-recording',
+  cancelRecording: 'asr:cancel-recording',
+  createJob: 'asr:create-job',
+  getJob: 'asr:get-job',
+} as const
+
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
+let recordingStore: RecordingStore | null = null
 let shutdownStarted = false
 
 function requireSourceId(value: unknown): string {
@@ -137,7 +152,10 @@ function registerGatewayHandlers(supervisor: GatewaySupervisor): void {
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
+  ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel) => bridge.listSessions(pageLabel))
   ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
+  ipcMain.handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
+  ipcMain.handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
   ipcMain.handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))
   ipcMain.handle(AGENT_CHANNELS.getEvents, (_event, sessionId, runId, afterSeq) =>
     bridge.getEvents(sessionId, runId, afterSeq))
@@ -145,6 +163,15 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   ipcMain.handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
   ipcMain.handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   ipcMain.handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+}
+
+function registerAsrHandlers(store: RecordingStore, bridge: AsrGatewayBridge): void {
+  ipcMain.handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
+  ipcMain.handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
+  ipcMain.handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
+  ipcMain.handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
+  ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
+  ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => bridge.getJob(id))
 }
 
 function createWindow(): void {
@@ -193,6 +220,8 @@ app.whenReady().then(async () => {
     registerGatewayHandlers(gatewaySupervisor)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    recordingStore = new RecordingStore(join(dataDirectory, 'recordings'))
+    registerAsrHandlers(recordingStore, new AsrGatewayBridge(gatewaySupervisor))
 
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
@@ -212,6 +241,8 @@ app.whenReady().then(async () => {
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    await recordingStore?.dispose()
+    recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
@@ -231,10 +262,12 @@ app.on('before-quit', (event) => {
   const service = localDataService
   const gateway = gatewaySupervisor
   const agentBridge = agentGatewayBridge
+  const recordings = recordingStore
   localDataService = null
   gatewaySupervisor = null
   agentGatewayBridge = null
+  recordingStore = null
   agentBridge?.dispose()
-  void Promise.allSettled([service?.shutdown(), gateway?.shutdown()]).finally(() => app.quit())
+  void Promise.allSettled([service?.shutdown(), recordings?.dispose(), gateway?.shutdown()]).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

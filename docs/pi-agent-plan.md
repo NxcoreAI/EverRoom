@@ -1,6 +1,6 @@
 # Pi Agent 集成计划
 
-状态：待实施
+状态：Phase 0 已完成，Phase 1 进行中
 目标项目：NxCore CE / Everroom 桌面端
 首选运行时：`@earendil-works/pi-coding-agent`
 架构原则：Pi 是可替换的 Agent 执行引擎，不是产品后端。

@@ -113,13 +113,59 @@ export interface GatewayStatus {
   message: string | null
 }
 
+export type AsrJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface AsrSegment {
+  text: string
+  beginTime: number
+  endTime: number
+  speakerId: number | null
+}
+
+export interface AsrResult {
+  transcript: string
+  segments: AsrSegment[]
+}
+
+export interface AsrJob {
+  id: string
+  provider: string
+  status: AsrJobStatus
+  fileName: string
+  languageHints: string[]
+  diarizationEnabled: boolean
+  contextPrompt: string
+  result: AsrResult | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateAsrJobInput {
+  filePath: string
+  languageHints?: string[]
+  diarizationEnabled: boolean
+  contextPrompt?: string
+}
+
 export interface NxcoreDesktopApi {
   platform: string
   gateway: {
     status(): Promise<GatewayStatus>
   }
+  asr: {
+    beginRecording(mimeType: string): Promise<{ id: string }>
+    appendRecording(id: string, chunk: Uint8Array): Promise<void>
+    finishRecording(id: string): Promise<{ filePath: string }>
+    cancelRecording(id: string): Promise<void>
+    createJob(input: CreateAsrJobInput): Promise<AsrJob>
+    getJob(id: string): Promise<AsrJob>
+  }
   agent: {
+    listSessions(pageLabel: string): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
+    updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession>
+    deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
     startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
@@ -150,4 +196,5 @@ import type {
   AgentSocketFrame,
   CreateAgentSessionInput,
   StartAgentRunInput,
+  UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'

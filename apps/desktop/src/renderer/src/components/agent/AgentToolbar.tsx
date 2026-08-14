@@ -21,10 +21,12 @@ const viewTitles: Record<AgentView, string> = {
 
 export function AgentToolbar({
   activeView,
+  sessionTitle,
   onCreateConversation,
   onViewChange,
 }: {
   activeView: AgentView
+  sessionTitle?: string | null
   onCreateConversation: () => void
   onViewChange: (view: AgentView) => void
 }) {
@@ -32,7 +34,9 @@ export function AgentToolbar({
 
   return (
     <header className="agent-chat-toolbar">
-      <strong className="agent-session-heading">{viewTitles[activeView]}</strong>
+      <strong className="agent-session-heading">
+        {activeView === 'chat' && sessionTitle ? sessionTitle : viewTitles[activeView]}
+      </strong>
       <div className="agent-chat-toolbar-actions">
         <button
           type="button"

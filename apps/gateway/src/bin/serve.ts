@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { loadConfig } from "../config.js";
+import { loadEnvironment } from "../load-environment.js";
 import { createServer } from "../server/create-server.js";
 import {
   removeRuntimeManifest,
@@ -8,6 +9,7 @@ import {
   writeRuntimeManifest,
 } from "../server/runtime-manifest.js";
 
+loadEnvironment();
 const config = loadConfig();
 const app = await createServer(config);
 

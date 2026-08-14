@@ -5,3 +5,6 @@ dist/
 out/
 release/
 *.log
+.env
+.env.*
+!.env.example

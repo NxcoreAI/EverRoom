@@ -9,6 +9,7 @@ import type {
   AgentSessionSnapshot,
   CreateAgentSessionInput,
   StartAgentRunInput,
+  UpdateAgentSessionInput,
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
@@ -21,6 +22,12 @@ import {
 } from "../../infrastructure/database/schema.js";
 import { AgentEventBroker } from "./event-broker.js";
 
+export interface AgentServiceLogger {
+  info(bindings: Record<string, unknown>, message: string): void;
+}
+
+const silentLogger: AgentServiceLogger = { info: () => undefined };
+
 function iso(value: Date | null): string | null {
   return value?.toISOString() ?? null;
 }
@@ -31,7 +38,6 @@ function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
     roomId: row.roomId,
     pageLabel: row.pageLabel,
     runtimeId: row.runtimeId,
-    runtimeSessionRef: row.runtimeSessionRef,
     title: row.title,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
@@ -71,6 +77,7 @@ export class AgentService {
     private readonly db: GatewayDatabase,
     private readonly runtime: AgentRuntime,
     readonly broker: AgentEventBroker,
+    private readonly logger: AgentServiceLogger = silentLogger,
   ) {}
 
   async dispose(): Promise<void> {
@@ -90,6 +97,37 @@ export class AgentService {
     };
     const created = this.db.insert(agentSessions).values(row).returning().get();
     return toSession(created);
+  }
+
+  listSessions(pageLabel?: string): AgentSession[] {
+    const query = this.db.select().from(agentSessions);
+    const rows = pageLabel === undefined
+      ? query.orderBy(desc(agentSessions.updatedAt), desc(agentSessions.createdAt)).all()
+      : query.where(eq(agentSessions.pageLabel, pageLabel)).orderBy(
+        desc(agentSessions.updatedAt),
+        desc(agentSessions.createdAt),
+      ).all();
+    return rows.map(toSession);
+  }
+
+  updateSession(sessionId: string, input: UpdateAgentSessionInput): AgentSession | null {
+    const updated = this.db.update(agentSessions)
+      .set({ title: input.title.trim(), updatedAt: new Date() })
+      .where(eq(agentSessions.id, sessionId))
+      .returning()
+      .get();
+    return updated ? toSession(updated) : null;
+  }
+
+  async deleteSession(sessionId: string): Promise<boolean> {
+    const session = this.db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+    if (!session) return false;
+    if (session.status === "running") throw new Error("agent_session_busy");
+    if (session.runtimeId === this.runtime.id && session.runtimeSessionRef) {
+      await this.runtime.deleteSession(session.runtimeSessionRef);
+    }
+    this.db.delete(agentSessions).where(eq(agentSessions.id, sessionId)).run();
+    return true;
   }
 
   getSnapshot(sessionId: string): AgentSessionSnapshot | null {
@@ -159,9 +197,17 @@ export class AgentService {
       .get();
     if (existing) return toRun(existing);
 
-    const session = this.db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+    let session = this.db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
     if (!session) throw new Error("agent_session_not_found");
     if (session.status === "running") throw new Error("agent_session_busy");
+
+    if (session.runtimeId !== this.runtime.id) {
+      session = this.db.update(agentSessions)
+        .set({ runtimeId: this.runtime.id, runtimeSessionRef: null, updatedAt: new Date() })
+        .where(eq(agentSessions.id, sessionId))
+        .returning()
+        .get();
+    }
 
     const now = new Date();
     const runId = randomUUID();
@@ -190,15 +236,28 @@ export class AgentService {
         .run();
     });
     this.sequences.set(runId, 0);
+    this.logger.info(
+      { event: "agent.input", sessionId, runId, content: input.prompt },
+      "agent user input",
+    );
     await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: {} });
 
-    const runtimeRun = await this.runtime.start({
-      runId,
-      sessionId,
-      runtimeSessionRef: session.runtimeSessionRef,
-      prompt: input.prompt,
-      pageLabel: session.pageLabel,
-    });
+    let runtimeRun;
+    try {
+      runtimeRun = await this.runtime.start({
+        runId,
+        sessionId,
+        runtimeSessionRef: session.runtimeSessionRef,
+        prompt: input.prompt,
+        pageLabel: session.pageLabel,
+      });
+    } catch (error) {
+      await this.appendEvent(sessionId, runId, {
+        type: "run.failed",
+        payload: { message: error instanceof Error ? error.message : "Runtime failed to start" },
+      });
+      return this.getRun(runId)!;
+    }
     this.db.update(agentSessions)
       .set({ runtimeSessionRef: runtimeRun.runtimeSessionRef, updatedAt: new Date() })
       .where(eq(agentSessions.id, sessionId))
@@ -230,6 +289,24 @@ export class AgentService {
   }
 
   private async appendEvent(sessionId: string, runId: string, runtimeEvent: RuntimeEvent): Promise<void> {
+    if (runtimeEvent.type === "message.delta") {
+      const delta = (runtimeEvent.payload as { delta?: unknown }).delta;
+      if (typeof delta === "string") {
+        this.logger.info(
+          { event: "agent.output.delta", sessionId, runId, delta },
+          "agent assistant output delta",
+        );
+      }
+    } else if (runtimeEvent.type === "message.completed") {
+      const content = (runtimeEvent.payload as { content?: unknown }).content;
+      if (typeof content === "string") {
+        this.logger.info(
+          { event: "agent.output.completed", sessionId, runId, content },
+          "agent assistant output completed",
+        );
+      }
+    }
+
     const seq = (this.sequences.get(runId) ?? this.getRun(runId)?.lastEventSeq ?? 0) + 1;
     this.sequences.set(runId, seq);
     const now = new Date();

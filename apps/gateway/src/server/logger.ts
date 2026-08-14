@@ -1,6 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import pino, { type Logger } from "pino";
+import pinoPretty from "pino-pretty";
+import pinoRoll from "pino-roll";
 import type { LogLevel } from "../config.js";
 
 const LOG_RETENTION_DAYS = 30;
@@ -18,34 +20,50 @@ export interface GatewayLogger {
   close(): Promise<void>;
 }
 
-export function createGatewayLogger(dataDirectory: string, level: LogLevel): GatewayLogger {
+function closeStream(stream: NodeJS.WritableStream): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = (): void => {
+      cleanup();
+      resolve();
+    };
+    const fail = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = (): void => {
+      stream.off("close", finish);
+      stream.off("finish", finish);
+      stream.off("error", fail);
+    };
+    stream.once("close", finish);
+    stream.once("finish", finish);
+    stream.once("error", fail);
+    stream.end();
+  });
+}
+
+export async function createGatewayLogger(dataDirectory: string, level: LogLevel): Promise<GatewayLogger> {
   const logsDirectory = join(dataDirectory, "logs");
   mkdirSync(logsDirectory, { recursive: true });
 
-  const transport = pino.transport({
-    targets: [
-      {
-        target: "pino-pretty",
-        options: {
-          colorize: process.stdout.isTTY,
-          destination: 1,
-          ignore: "pid,hostname",
-          singleLine: true,
-          translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l",
-        },
-      },
-      {
-        target: "pino-roll",
-        options: {
-          file: join(logsDirectory, "gateway.log"),
-          frequency: "daily",
-          dateFormat: "yyyy-MM-dd",
-          limit: { count: LOG_RETENTION_DAYS },
-          mkdir: true,
-        },
-      },
-    ],
+  const consoleStream = pinoPretty({
+    colorize: process.stdout.isTTY,
+    destination: 1,
+    ignore: "pid,hostname",
+    singleLine: true,
+    translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l",
   });
+  const fileStream = await pinoRoll({
+    file: join(logsDirectory, "gateway.log"),
+    frequency: "daily",
+    dateFormat: "yyyy-MM-dd",
+    limit: { count: LOG_RETENTION_DAYS },
+    mkdir: true,
+  });
+  const destination = pino.multistream([
+    { stream: consoleStream },
+    { stream: fileStream },
+  ]);
   const logger = pino(
     {
       level,
@@ -66,28 +84,15 @@ export function createGatewayLogger(dataDirectory: string, level: LogLevel): Gat
         err: pino.stdSerializers.err,
       },
     },
-    transport,
+    destination,
   );
 
   return {
     logger,
     logsDirectory,
-    close: () => new Promise<void>((resolve, reject) => {
-      const handleClose = (): void => {
-        cleanup();
-        resolve();
-      };
-      const handleError = (error: Error): void => {
-        cleanup();
-        reject(error);
-      };
-      const cleanup = (): void => {
-        transport.off("close", handleClose);
-        transport.off("error", handleError);
-      };
-      transport.once("close", handleClose);
-      transport.once("error", handleError);
-      transport.end();
-    }),
+    close: async () => {
+      logger.flush();
+      await Promise.all([closeStream(consoleStream), closeStream(fileStream)]);
+    },
   };
 }

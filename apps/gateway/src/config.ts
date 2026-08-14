@@ -17,6 +17,24 @@ const LogLevelSchema = Type.Union([
   Type.Literal("silent"),
 ]);
 
+const AgentRuntimeSchema = Type.Union([Type.Literal("fake"), Type.Literal("pi")]);
+const AsrProviderSchema = Type.Union([Type.Literal("disabled"), Type.Literal("aliyun")]);
+const AiApiSchema = Type.Union([
+  Type.Literal("openai-completions"),
+  Type.Literal("openai-responses"),
+  Type.Literal("anthropic-messages"),
+  Type.Literal("google-generative-ai"),
+]);
+const AiReasoningSchema = Type.Union([
+  Type.Literal("off"),
+  Type.Literal("minimal"),
+  Type.Literal("low"),
+  Type.Literal("medium"),
+  Type.Literal("high"),
+  Type.Literal("xhigh"),
+  Type.Literal("max"),
+]);
+
 const RawConfigSchema = Type.Object(
   {
     host: Type.String({ minLength: 1 }),
@@ -24,11 +42,49 @@ const RawConfigSchema = Type.Object(
     dataDir: Type.String({ minLength: 1 }),
     logLevel: LogLevelSchema,
     authToken: Type.String({ minLength: 16 }),
+    agentRuntime: AgentRuntimeSchema,
+    aiProvider: Type.String(),
+    aiModel: Type.String(),
+    aiBaseUrl: Type.String(),
+    aiApiKey: Type.String(),
+    aiApi: AiApiSchema,
+    aiMaxTokens: Type.Integer({ minimum: 1 }),
+    aiContextWindow: Type.Integer({ minimum: 1 }),
+    aiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
+    aiReasoning: AiReasoningSchema,
+    asrProvider: AsrProviderSchema,
+    asrAliyunApiKey: Type.String(),
+    asrAliyunBaseUrl: Type.String(),
+    asrAliyunModel: Type.String({ minLength: 1 }),
   },
   { additionalProperties: false },
 );
 
 export type LogLevel = typeof LogLevelSchema.static;
+export type AgentRuntimeMode = typeof AgentRuntimeSchema.static;
+export type AiApi = typeof AiApiSchema.static;
+export type AiReasoning = typeof AiReasoningSchema.static;
+
+export interface AliyunAsrConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+
+export interface PiRuntimeConfig {
+  provider: string;
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+  api: AiApi;
+  maxTokens: number;
+  contextWindow: number;
+  temperature: number;
+  reasoning: AiReasoning;
+  sessionsDir: string;
+  workingDirectory: string;
+  agentDirectory: string;
+}
 
 export interface GatewayConfig {
   host: string;
@@ -39,6 +95,10 @@ export interface GatewayConfig {
   runtimeManifestPath: string;
   logLevel: LogLevel;
   authToken: string;
+  agentRuntime: AgentRuntimeMode;
+  pi: PiRuntimeConfig | null;
+  asrInputDir: string;
+  asr: AliyunAsrConfig | null;
 }
 
 function defaultDataDir(): string {
@@ -58,6 +118,45 @@ function parsePort(value: string): number {
   }
 
   return Number(value);
+}
+
+function parsePositiveInteger(name: string, value: string): number {
+  if (!/^\d+$/.test(value) || Number(value) < 1) {
+    throw new Error(`Invalid ${name}: ${value}`);
+  }
+  return Number(value);
+}
+
+function parseTemperature(value: string): number {
+  const temperature = Number(value);
+  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
+    throw new Error(`Invalid NXCORE_AI_TEMPERATURE: ${value}`);
+  }
+  return temperature;
+}
+
+function validateAiEndpoint(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Invalid NXCORE_AI_BASE_URL: expected an absolute HTTP(S) URL");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Invalid NXCORE_AI_BASE_URL: expected an absolute HTTP(S) URL");
+  }
+}
+
+function validateHttpEndpoint(name: string, value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid ${name}: expected an absolute HTTPS URL`);
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(`Invalid ${name}: expected an absolute HTTPS URL`);
+  }
 }
 
 function defaultMigrationsDir(): string {
@@ -97,6 +196,25 @@ export function loadConfig(
     dataDir,
     logLevel: values["log-level"] ?? env.NXCORE_GATEWAY_LOG_LEVEL ?? "info",
     authToken: values.token ?? env.NXCORE_GATEWAY_TOKEN ?? randomBytes(32).toString("base64url"),
+    agentRuntime: env.NXCORE_AGENT_RUNTIME ?? "fake",
+    aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
+    aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
+    aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
+    aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
+    aiApi: env.NXCORE_AI_API ?? "openai-completions",
+    aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "8192"),
+    aiContextWindow: parsePositiveInteger(
+      "NXCORE_AI_CONTEXT_WINDOW",
+      env.NXCORE_AI_CONTEXT_WINDOW ?? "128000",
+    ),
+    aiTemperature: parseTemperature(env.NXCORE_AI_TEMPERATURE ?? "0.3"),
+    aiReasoning: env.NXCORE_AI_REASONING ?? "medium",
+    asrProvider: env.NXCORE_ASR_PROVIDER ?? "disabled",
+    asrAliyunApiKey: env.NXCORE_ASR_ALIYUN_API_KEY?.trim() ?? "",
+    asrAliyunBaseUrl: env.NXCORE_ASR_ALIYUN_BASE_URL?.trim()
+      ?? "https://dashscope.aliyuncs.com/api/v1",
+    asrAliyunModel: env.NXCORE_ASR_ALIYUN_MODEL?.trim()
+      ?? "qwen-audio-3.0-asr-flash-filetrans",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -106,12 +224,61 @@ export function loadConfig(
     throw new Error(`Invalid gateway configuration: ${details}`);
   }
 
+  if (rawConfig.agentRuntime === "pi") {
+    const missing = [
+      ["NXCORE_AI_PROVIDER", rawConfig.aiProvider],
+      ["NXCORE_AI_MODEL", rawConfig.aiModel],
+      ["NXCORE_AI_BASE_URL", rawConfig.aiBaseUrl],
+      ["NXCORE_AI_API_KEY", rawConfig.aiApiKey],
+    ].filter(([, value]) => !value).map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(`Pi runtime requires: ${missing.join(", ")}`);
+    }
+    validateAiEndpoint(rawConfig.aiBaseUrl);
+  }
+
+  if (rawConfig.asrProvider === "aliyun") {
+    if (!rawConfig.asrAliyunApiKey) {
+      throw new Error("Aliyun ASR requires: NXCORE_ASR_ALIYUN_API_KEY");
+    }
+    validateHttpEndpoint("NXCORE_ASR_ALIYUN_BASE_URL", rawConfig.asrAliyunBaseUrl);
+  }
+
   return {
-    ...rawConfig,
+    host: rawConfig.host,
+    port: rawConfig.port,
+    dataDir: rawConfig.dataDir,
+    logLevel: rawConfig.logLevel,
+    authToken: rawConfig.authToken,
+    agentRuntime: rawConfig.agentRuntime,
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
     ),
     runtimeManifestPath: join(dataDir, "runtime", "gateway.json"),
+    asrInputDir: join(dataDir, "recordings"),
+    asr: rawConfig.asrProvider === "aliyun"
+      ? {
+          apiKey: rawConfig.asrAliyunApiKey,
+          baseUrl: rawConfig.asrAliyunBaseUrl,
+          model: rawConfig.asrAliyunModel,
+        }
+      : null,
+    pi: rawConfig.agentRuntime === "pi"
+      ? {
+          provider: rawConfig.aiProvider,
+          model: rawConfig.aiModel,
+          baseUrl: rawConfig.aiBaseUrl,
+          apiKey: rawConfig.aiApiKey,
+          api: rawConfig.aiApi,
+          maxTokens: rawConfig.aiMaxTokens,
+          contextWindow: rawConfig.aiContextWindow,
+          temperature: rawConfig.aiTemperature,
+          reasoning: rawConfig.aiReasoning,
+          sessionsDir: join(dataDir, "agent", "pi-sessions"),
+          workingDirectory: join(dataDir, "agent", "workspace"),
+          agentDirectory: join(dataDir, "agent", "pi-config"),
+        }
+      : null,
   };
 }
