@@ -24,7 +24,7 @@ export default defineConfig({
   renderer: {
     server: {
       port: 5180,
-      strictPort: true,
+      strictPort: false,
     },
     resolve: {
       dedupe: ['react', 'react-dom'],

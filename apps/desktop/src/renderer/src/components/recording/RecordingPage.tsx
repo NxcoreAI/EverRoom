@@ -9,6 +9,7 @@ import './RecordingPage.css'
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'saving' | 'transcribing' | 'completed' | 'error'
 
 const MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+const MAX_TRANSCRIPTION_WAIT_MS = 30 * 60 * 1000
 
 function supportedMimeType(): string {
   return MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) ?? ''
@@ -24,7 +25,14 @@ function formatTimestamp(milliseconds: number): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '录音转写失败，请重试。'
+  const message = error instanceof Error ? error.message : '录音转写失败，请重试。'
+  if (message === 'SERVER_ERROR') {
+    return '阿里云未能读取或处理录音（SERVER_ERROR）。当前百炼临时存储链路不可用，请配置自有 OSS 后重试。'
+  }
+  if (message.includes('own OSS is required')) {
+    return '尚未配置阿里云 OSS。请配置 Bucket、Region 和访问凭证后再转写。'
+  }
+  return message
 }
 
 function desktopApi(): NxcoreDesktopApi {
@@ -81,7 +89,9 @@ export function RecordingPage() {
 
   const pollJob = async (initialJob: AsrJob): Promise<void> => {
     let job = initialJob
+    const deadline = Date.now() + MAX_TRANSCRIPTION_WAIT_MS
     while (job.status === 'pending' || job.status === 'running') {
+      if (Date.now() >= deadline) throw new Error('转写等待超过 30 分钟，请稍后重试。')
       await new Promise((resolve) => window.setTimeout(resolve, 1800))
       if (!mountedRef.current) return
       job = await desktopApi().asr.getJob(job.id)
@@ -176,6 +186,8 @@ export function RecordingPage() {
         ? '正在上传并转写'
         : state === 'completed'
           ? '转写完成'
+          : state === 'error'
+            ? '转写失败'
           : state === 'recording'
             ? '正在录音'
             : '准备录音'

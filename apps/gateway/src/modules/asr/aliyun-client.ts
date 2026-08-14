@@ -1,6 +1,5 @@
-import { openAsBlob } from "node:fs";
-import { basename } from "node:path";
 import { AliyunAsrError } from "./errors.js";
+import type { AsrAudioStorage } from "./audio-storage.js";
 import type { AsrResult, AsrSegment, AsrTaskSnapshot, SubmitAsrInput, SubmittedAsrTask } from "./types.js";
 
 interface DashScopeEnvelope<T> {
@@ -9,16 +8,6 @@ interface DashScopeEnvelope<T> {
   request_id?: string;
   code?: string;
   message?: string;
-}
-
-interface UploadCertificate {
-  oss_access_key_id: string;
-  signature: string;
-  policy: string;
-  upload_dir: string;
-  upload_host: string;
-  x_oss_object_acl: string;
-  x_oss_forbid_overwrite: string;
 }
 
 interface TaskOutput {
@@ -36,6 +25,7 @@ export interface AliyunAsrClientOptions {
   baseUrl: string;
   model: string;
   fetch?: typeof globalThis.fetch;
+  audioStorage?: AsrAudioStorage;
 }
 
 const TERMINAL_STATUS = new Map<string, AsrTaskSnapshot["status"]>([
@@ -45,35 +35,6 @@ const TERMINAL_STATUS = new Map<string, AsrTaskSnapshot["status"]>([
   ["CANCELED", "cancelled"],
   ["CANCELLED", "cancelled"],
 ]);
-
-function requireString(
-  value: unknown,
-  field: keyof UploadCertificate,
-): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new AliyunAsrError("get upload certificate", `missing ${field}`);
-  }
-  return value;
-}
-
-function parseUploadCertificate(value: unknown): UploadCertificate {
-  if (!value || typeof value !== "object") {
-    throw new AliyunAsrError("get upload certificate", "missing response output");
-  }
-  const output = value as Record<string, unknown>;
-  return {
-    oss_access_key_id: requireString(output.oss_access_key_id, "oss_access_key_id"),
-    signature: requireString(output.signature, "signature"),
-    policy: requireString(output.policy, "policy"),
-    upload_dir: requireString(output.upload_dir, "upload_dir"),
-    upload_host: requireString(output.upload_host, "upload_host"),
-    x_oss_object_acl: requireString(output.x_oss_object_acl, "x_oss_object_acl"),
-    x_oss_forbid_overwrite: requireString(
-      output.x_oss_forbid_overwrite,
-      "x_oss_forbid_overwrite",
-    ),
-  };
-}
 
 function contentType(fileName: string): string {
   const extension = fileName.split(".").pop()?.toLowerCase();
@@ -146,21 +107,31 @@ export class AliyunAsrClient {
   private readonly baseUrl: string;
   private readonly model: string;
   private readonly fetch: typeof globalThis.fetch;
+  private readonly audioStorage: AsrAudioStorage | undefined;
+  private readonly cleanupByTaskId = new Map<string, () => Promise<void>>();
 
   constructor(options: AliyunAsrClientOptions) {
     this.apiKey = options.apiKey;
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.model = options.model;
     this.fetch = options.fetch ?? globalThis.fetch;
+    this.audioStorage = options.audioStorage;
   }
 
   async submit(input: SubmitAsrInput): Promise<SubmittedAsrTask> {
-    const certificate = await this.getUploadCertificate();
-    const fileUrl = await this.uploadFile(input.filePath, certificate);
-    const response = await this.request<TaskOutput>(
-      "submit transcription",
-      `${this.baseUrl}/services/audio/asr/transcription`,
-      {
+    if (!this.audioStorage) {
+      throw new AliyunAsrError(
+        "upload file",
+        "own OSS is required; configure NXCORE_ASR_ALIYUN_OSS_*",
+      );
+    }
+    const uploaded = await this.audioStorage.upload(input.filePath, contentType(input.filePath));
+    let response: DashScopeEnvelope<TaskOutput>;
+    try {
+      response = await this.request<TaskOutput>(
+        "submit transcription",
+        `${this.baseUrl}/services/audio/asr/transcription`,
+        {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -169,7 +140,7 @@ export class AliyunAsrClient {
         body: JSON.stringify({
           model: this.model,
           input: {
-            file_urls: [fileUrl],
+            file_urls: [uploaded.url],
             ...(input.contextPrompt?.trim()
               ? {
                   context: [{
@@ -187,10 +158,18 @@ export class AliyunAsrClient {
             ...(input.languageHints?.length ? { language_hints: input.languageHints } : {}),
           },
         }),
-      },
-    );
+        },
+      );
+    } catch (error) {
+      await uploaded.cleanup?.().catch(() => undefined);
+      throw error;
+    }
     const taskId = response.output?.task_id;
-    if (!taskId) throw new AliyunAsrError("submit transcription", "missing task_id");
+    if (!taskId) {
+      await uploaded.cleanup?.().catch(() => undefined);
+      throw new AliyunAsrError("submit transcription", "missing task_id");
+    }
+    if (uploaded.cleanup) this.cleanupByTaskId.set(taskId, uploaded.cleanup);
     return { taskId };
   }
 
@@ -211,26 +190,19 @@ export class AliyunAsrClient {
         ?? (typeof response.output.code === "string" ? response.output.code : undefined)
         ?? "Transcription failed"
       : undefined;
-    const result = status === "completed"
-      ? await this.downloadTranscriptionResult(response.output)
-      : undefined;
-    return {
-      taskId,
-      status,
-      ...(result ? { result } : {}),
-      ...(error ? { error } : {}),
-    };
-  }
-
-  private async getUploadCertificate(): Promise<UploadCertificate> {
-    const url = new URL(`${this.baseUrl}/uploads`);
-    url.searchParams.set("action", "getPolicy");
-    url.searchParams.set("model", this.model);
-    const response = await this.request<UploadCertificate>(
-      "get upload certificate",
-      url,
-    );
-    return parseUploadCertificate(response.output ?? response.data);
+    try {
+      const result = status === "completed"
+        ? await this.downloadTranscriptionResult(response.output)
+        : undefined;
+      return {
+        taskId,
+        status,
+        ...(result ? { result } : {}),
+        ...(error ? { error } : {}),
+      };
+    } finally {
+      if (status !== "running") await this.cleanupUploadedAudio(taskId);
+    }
   }
 
   private async downloadTranscriptionResult(output: TaskOutput): Promise<AsrResult> {
@@ -263,30 +235,11 @@ export class AliyunAsrClient {
     return normalizeTranscriptionResults(results);
   }
 
-  private async uploadFile(filePath: string, certificate: UploadCertificate): Promise<string> {
-    const fileName = basename(filePath);
-    const mimeType = contentType(fileName);
-    const form = new FormData();
-    form.set("OSSAccessKeyId", certificate.oss_access_key_id);
-    form.set("Signature", certificate.signature);
-    form.set("policy", certificate.policy);
-    form.set("key", `${certificate.upload_dir}/${fileName}`);
-    form.set("x-oss-object-acl", certificate.x_oss_object_acl);
-    form.set("x-oss-forbid-overwrite", certificate.x_oss_forbid_overwrite);
-    form.set("success_action_status", "200");
-    form.set("x-oss-content-type", mimeType);
-    form.set("file", await openAsBlob(filePath, { type: mimeType }), fileName);
-
-    let response: Response;
-    try {
-      response = await this.fetch(certificate.upload_host, { method: "POST", body: form });
-    } catch (cause) {
-      throw new AliyunAsrError("upload file", "network request failed", { cause });
-    }
-    if (!response.ok) {
-      throw new AliyunAsrError("upload file", `HTTP ${response.status}`);
-    }
-    return `oss://${certificate.upload_dir}/${fileName}`;
+  private async cleanupUploadedAudio(taskId: string): Promise<void> {
+    const cleanup = this.cleanupByTaskId.get(taskId);
+    if (!cleanup) return;
+    this.cleanupByTaskId.delete(taskId);
+    await cleanup().catch(() => undefined);
   }
 
   private async request<T>(

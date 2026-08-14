@@ -78,8 +78,12 @@ export async function createGatewayLogger(dataDirectory: string, level: LogLevel
           return { method: serialized.method, url: serialized.url };
         },
         res: (response) => {
-          const serialized = pino.stdSerializers.res(response);
-          return { statusCode: serialized.statusCode };
+          const candidate = response as {
+            statusCode?: unknown;
+            raw?: { statusCode?: unknown };
+          };
+          const statusCode = candidate.statusCode ?? candidate.raw?.statusCode;
+          return { statusCode: typeof statusCode === "number" ? statusCode : null };
         },
         err: pino.stdSerializers.err,
       },

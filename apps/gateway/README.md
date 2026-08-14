@@ -29,9 +29,14 @@ NXCORE_ASR_PROVIDER=aliyun
 NXCORE_ASR_ALIYUN_API_KEY=
 NXCORE_ASR_ALIYUN_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 NXCORE_ASR_ALIYUN_MODEL=qwen-audio-3.0-asr-flash-filetrans
+NXCORE_ASR_ALIYUN_OSS_REGION=oss-cn-beijing
+NXCORE_ASR_ALIYUN_OSS_BUCKET=
+NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_ID=
+NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET=
+NXCORE_ASR_ALIYUN_OSS_PREFIX=nxcore-asr
 ```
 
-For an international workspace, set `NXCORE_ASR_ALIYUN_BASE_URL` to that workspace's regional HTTPS `/api/v1` endpoint. API keys are only read by the gateway and must not be exposed to the Electron renderer or committed to the repository.
+For an international workspace, set `NXCORE_ASR_ALIYUN_BASE_URL` and the OSS region to matching regional endpoints. API and OSS keys are only read by the gateway and must not be exposed to the Electron renderer or committed to the repository. Use a private Bucket and a RAM policy restricted to the configured Bucket and prefix. An STS token can be supplied with `NXCORE_ASR_ALIYUN_OSS_STS_TOKEN`.
 
 Recordings must be non-empty files under `<data-dir>/recordings`. Create a job with `POST /v1/asr/jobs`:
 
@@ -43,7 +48,7 @@ Recordings must be non-empty files under `<data-dir>/recordings`. Create a job w
 }
 ```
 
-The gateway returns a local job with HTTP 202. Poll `GET /v1/asr/jobs/:id`; while running, the gateway refreshes the Alibaba Cloud task. The Alibaba provider obtains a temporary upload policy, streams the local file to the returned OSS host, submits FileTrans, and stores the provider result in the existing SQLite `jobs` table.
+The gateway returns a local job with HTTP 202. Poll `GET /v1/asr/jobs/:id`; while running, the gateway refreshes the Alibaba Cloud task. The provider uploads to the private Bucket, submits a six-hour signed HTTPS URL to FileTrans, and deletes the object after the task reaches a terminal state. Configure a 24-hour Bucket lifecycle rule as cleanup fallback. FileTrans submission fails immediately with an actionable configuration error when OSS is missing; Model Studio's temporary private upload is not used because it is not readable by this model in every region.
 
 ## Checks
 

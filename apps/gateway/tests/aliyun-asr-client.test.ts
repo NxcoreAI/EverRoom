@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AliyunAsrClient } from "../src/modules/asr/aliyun-client.js";
+import type { AsrAudioStorage } from "../src/modules/asr/audio-storage.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -20,37 +21,24 @@ afterEach(async () => {
 });
 
 describe("AliyunAsrClient", () => {
-  it("uploads a local recording and submits a FileTrans task", async () => {
+  it("uploads a local recording through configured storage and submits a FileTrans task", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-aliyun-client-"));
     temporaryDirectories.push(directory);
     const filePath = join(directory, "meeting.wav");
     await writeFile(filePath, Buffer.from("test-audio"));
 
-    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
-      switch (fetchMock.mock.calls.length) {
-        case 1:
-          return jsonResponse({ data: {
-            oss_access_key_id: "temporary-id",
-            signature: "temporary-signature",
-            policy: "temporary-policy",
-            upload_dir: "dashscope-inference/a-random-directory",
-            upload_host: "https://upload.example.com",
-            x_oss_object_acl: "private",
-            x_oss_forbid_overwrite: "true",
-          } });
-        case 2:
-          return new Response(null, { status: 200 });
-        case 3:
-          return jsonResponse({ output: { task_id: "task-123", task_status: "PENDING" } });
-        default:
-          throw new Error("Unexpected request");
-      }
-    });
+    const audioStorage: AsrAudioStorage = {
+      upload: vi.fn(async () => ({ url: "https://upload.example.com/meeting.wav?signed=true" })),
+    };
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse({ output: { task_id: "task-123", task_status: "PENDING" } })
+    );
     const client = new AliyunAsrClient({
       apiKey: "test-api-key",
       baseUrl: "https://workspace.example.com/api/v1/",
       model: "qwen-audio-3.0-asr-flash-filetrans",
       fetch: fetchMock as typeof fetch,
+      audioStorage,
     });
 
     await expect(client.submit({
@@ -60,26 +48,13 @@ describe("AliyunAsrClient", () => {
       contextPrompt: "NxCore、Everroom",
     })).resolves.toEqual({ taskId: "task-123" });
 
-    const [policyUrl, policyInit] = fetchMock.mock.calls[0]!;
-    expect(String(policyUrl)).toBe(
-      "https://workspace.example.com/api/v1/uploads?action=getPolicy&model=qwen-audio-3.0-asr-flash-filetrans",
-    );
-    expect(new Headers(policyInit?.headers).get("Authorization")).toBe("Bearer test-api-key");
-
-    const [uploadUrl, uploadInit] = fetchMock.mock.calls[1]!;
-    expect(String(uploadUrl)).toBe("https://upload.example.com");
-    expect(new Headers(uploadInit?.headers).has("Authorization")).toBe(false);
-    const form = uploadInit?.body as FormData;
-    expect(form.get("key")).toBe("dashscope-inference/a-random-directory/meeting.wav");
-    expect(form.get("x-oss-content-type")).toBe("audio/wav");
-    expect(form.get("file")).toBeInstanceOf(Blob);
-
-    const [submitUrl, submitInit] = fetchMock.mock.calls[2]!;
+    expect(audioStorage.upload).toHaveBeenCalledWith(filePath, "audio/wav");
+    const [submitUrl, submitInit] = fetchMock.mock.calls[0]!;
     expect(String(submitUrl)).toBe("https://workspace.example.com/api/v1/services/audio/asr/transcription");
     expect(JSON.parse(String(submitInit?.body))).toEqual({
       model: "qwen-audio-3.0-asr-flash-filetrans",
       input: {
-        file_urls: ["oss://dashscope-inference/a-random-directory/meeting.wav"],
+        file_urls: ["https://upload.example.com/meeting.wav?signed=true"],
         context: [{
           role: "user",
           content: [{ type: "input_text", text: "NxCore、Everroom" }],
@@ -139,5 +114,50 @@ describe("AliyunAsrClient", () => {
       "https://results.example.com/result.json",
     );
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).has("Authorization")).toBe(false);
+  });
+
+  it("submits a signed OSS URL and removes the object after completion", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const audioStorage: AsrAudioStorage = {
+      upload: vi.fn(async () => ({
+        url: "https://private-recordings.oss-cn-beijing.aliyuncs.com/meeting.wav?signed=true",
+        cleanup,
+      })),
+    };
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        expect(JSON.parse(String(init?.body)).input.file_urls).toEqual([
+          "https://private-recordings.oss-cn-beijing.aliyuncs.com/meeting.wav?signed=true",
+        ]);
+        return jsonResponse({ output: { task_id: "task-oss-123" } });
+      }
+      if (fetchMock.mock.calls.length === 2) {
+        return jsonResponse({
+          output: {
+            task_id: "task-oss-123",
+            task_status: "SUCCEEDED",
+            results: [{ transcription_url: "https://results.example.com/result.json" }],
+          },
+        });
+      }
+      return jsonResponse({ transcripts: [{ transcript: "OSS works", sentences: [] }] });
+    });
+    const client = new AliyunAsrClient({
+      apiKey: "test-api-key",
+      baseUrl: "https://workspace.example.com/api/v1",
+      model: "qwen-audio-3.0-asr-flash-filetrans",
+      fetch: fetchMock as typeof fetch,
+      audioStorage,
+    });
+
+    await client.submit({
+      filePath: "/recordings/meeting.wav",
+      languageHints: [],
+      diarizationEnabled: false,
+    });
+    const snapshot = await client.getTask("task-oss-123");
+
+    expect(snapshot.status).toBe("completed");
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 });
