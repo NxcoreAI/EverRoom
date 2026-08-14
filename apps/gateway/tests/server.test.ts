@@ -19,6 +19,10 @@ async function testConfig(): Promise<GatewayConfig> {
     runtimeManifestPath: join(dataDir, "runtime", "gateway.json"),
     logLevel: "silent",
     authToken: "test-token-0123456789",
+    agentRuntime: "fake",
+    pi: null,
+    asrInputDir: join(dataDir, "recordings"),
+    asr: null,
   };
 }
 

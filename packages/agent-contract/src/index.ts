@@ -36,7 +36,6 @@ export interface AgentSession {
   roomId: string | null;
   pageLabel: string;
   runtimeId: string;
-  runtimeSessionRef: string | null;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -85,6 +84,10 @@ export interface RuntimeCapabilities {
 export interface CreateAgentSessionInput {
   pageLabel: string;
   roomId?: string | null;
+}
+
+export interface UpdateAgentSessionInput {
+  title: string;
 }
 
 export interface StartAgentRunInput {

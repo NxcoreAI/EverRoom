@@ -6,10 +6,11 @@ import {
   FolderSync,
   Home,
   ListChecks,
+  Mic,
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'sources' | 'memory' | 'tasks' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'memory' | 'tasks' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -31,6 +32,7 @@ export const navigationSections: NavigationSection[] = [
       { id: 'home', label: '首页', icon: Home },
       { id: 'rooms', label: 'Context Room', icon: BookOpen },
       { id: 'docs', label: '文档', icon: FileText },
+      { id: 'recording', label: '录音转写', icon: Mic },
     ],
   },
   {

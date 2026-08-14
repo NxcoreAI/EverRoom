@@ -1,5 +1,7 @@
 import type { AgentEventType, RuntimeCapabilities } from "@nxcore/agent-contract";
 
+export { AsyncEventQueue } from "./async-event-queue.js";
+
 export interface RuntimeEvent<T = unknown> {
   type: AgentEventType;
   payload: T;
@@ -30,5 +32,6 @@ export interface AgentRuntime {
   resume(input: ResumeRuntimeRunInput): Promise<RuntimeRun>;
   sendInput(runId: string, input: string): Promise<void>;
   cancel(runId: string): Promise<void>;
+  deleteSession(runtimeSessionRef: string): Promise<void>;
   dispose(): Promise<void>;
 }

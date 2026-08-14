@@ -7,8 +7,19 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
+  asr: {
+    beginRecording: (mimeType) => ipcRenderer.invoke('asr:begin-recording', mimeType),
+    appendRecording: (id, chunk) => ipcRenderer.invoke('asr:append-recording', id, chunk),
+    finishRecording: (id) => ipcRenderer.invoke('asr:finish-recording', id),
+    cancelRecording: (id) => ipcRenderer.invoke('asr:cancel-recording', id),
+    createJob: (input) => ipcRenderer.invoke('asr:create-job', input),
+    getJob: (id) => ipcRenderer.invoke('asr:get-job', id),
+  },
   agent: {
+    listSessions: (pageLabel) => ipcRenderer.invoke('agent:list-sessions', pageLabel),
     createSession: (input) => ipcRenderer.invoke('agent:create-session', input),
+    updateSession: (sessionId, input) => ipcRenderer.invoke('agent:update-session', sessionId, input),
+    deleteSession: (sessionId) => ipcRenderer.invoke('agent:delete-session', sessionId),
     getSession: (sessionId) => ipcRenderer.invoke('agent:get-session', sessionId),
     getEvents: (sessionId, runId, afterSeq) =>
       ipcRenderer.invoke('agent:get-events', sessionId, runId, afterSeq),

@@ -8,5 +8,16 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   splitting: false,
+  banner: {
+    js: [
+      "import { createRequire as __nxcoreCreateRequire } from 'node:module';",
+      "import { fileURLToPath as __nxcoreFileURLToPath } from 'node:url';",
+      "import { dirname as __nxcoreDirname } from 'node:path';",
+      "globalThis.require = __nxcoreCreateRequire(import.meta.url);",
+      "globalThis.__filename = __nxcoreFileURLToPath(import.meta.url);",
+      "globalThis.__dirname = __nxcoreDirname(globalThis.__filename);",
+    ].join("\n"),
+  },
+  noExternal: [/^(?!better-sqlite3$).*/],
   external: ["better-sqlite3"],
 });
