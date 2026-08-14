@@ -16,7 +16,6 @@ import {
   FolderOpen,
   HardDrive,
   ListChecks,
-  MoreHorizontal,
   Pause,
   Play,
   Plus,
@@ -27,7 +26,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import type { PageId } from '@/data/navigation'
 import type {
@@ -39,6 +38,10 @@ import type {
   SourceFileSummary,
   SyncResult,
 } from '../../../shared/sources'
+
+const ContextRoomPage = lazy(() =>
+  import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
+)
 
 function PageHeader({
   title,
@@ -154,46 +157,6 @@ function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void }) {
             <div><strong>0</strong><span>运行任务</span></div>
           </div>
         </section>
-      </div>
-    </div>
-  )
-}
-
-function RoomsPage() {
-  const rooms = [
-    { title: '极核开源 PC 版', meta: '项目', updated: '12 分钟前', sources: 18, memories: 46 },
-    { title: '连接器架构研究', meta: '议题', updated: '昨天', sources: 9, memories: 21 },
-    { title: '个人上下文产品设计', meta: '长期目标', updated: '3 天前', sources: 27, memories: 61 },
-  ]
-
-  return (
-    <div className="page">
-      <PageHeader title="Context Room" description="围绕项目、人物或目标组织动态上下文。" action="新建 Room" />
-      <div className="toolbar-row">
-        <label className="search-field">
-          <Search aria-hidden="true" />
-          <input aria-label="搜索 Room" placeholder="搜索 Room" />
-        </label>
-        <div className="segmented-control" aria-label="Room 筛选">
-          <button type="button" data-active="true">全部</button>
-          <button type="button">项目</button>
-          <button type="button">人物</button>
-          <button type="button">目标</button>
-        </div>
-      </div>
-      <div className="room-grid">
-        {rooms.map((room, index) => (
-          <article key={room.title} className="room-card">
-            <div className="room-card-top">
-              <span className="room-glyph" data-index={index}><BookOpen aria-hidden="true" /></span>
-              <button type="button" className="icon-button" aria-label="更多操作"><MoreHorizontal aria-hidden="true" /></button>
-            </div>
-            <div className="room-meta"><span>{room.meta}</span><span>{room.updated}</span></div>
-            <h2>{room.title}</h2>
-            <p>恢复目标、进展、关键决策和待解决问题。</p>
-            <div className="room-stats"><span>{room.sources} 个来源</span><span>{room.memories} 条记忆</span></div>
-          </article>
-        ))}
       </div>
     </div>
   )
@@ -871,7 +834,11 @@ function SettingsPage() {
 
 export function PageCanvas({ page, onNavigate }: { page: PageId; onNavigate: (page: PageId) => void }) {
   if (page === 'home') return <HomePage onNavigate={onNavigate} />
-  if (page === 'rooms') return <RoomsPage />
+  if (page === 'rooms') return (
+    <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载 Context Room...</div></div>}>
+      <ContextRoomPage />
+    </Suspense>
+  )
   if (page === 'docs') return <DocsPage />
   if (page === 'sources') return <SourcesPage />
   if (page === 'memory') return <MemoryPage />

@@ -56,3 +56,7 @@ export const navigationSections: NavigationSection[] = [
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
   navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.label]))
 ) as Record<PageId, string>
+
+export const pageIcons: Record<PageId, LucideIcon> = Object.fromEntries(
+  navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.icon]))
+) as Record<PageId, LucideIcon>

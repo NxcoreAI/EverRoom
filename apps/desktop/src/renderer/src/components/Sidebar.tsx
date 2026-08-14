@@ -1,4 +1,5 @@
 import { ChevronDown, CircleUserRound, CloudOff } from 'lucide-react'
+import { useState } from 'react'
 
 import { navigationSections, type PageId } from '@/data/navigation'
 
@@ -9,16 +10,36 @@ export function Sidebar({
   activePage: PageId
   onNavigate: (page: PageId) => void
 }) {
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
+
+  const toggleSection = (sectionId: string) => {
+    setCollapsedSections((current) => {
+      const next = new Set(current)
+      if (next.has(sectionId)) next.delete(sectionId)
+      else next.add(sectionId)
+      return next
+    })
+  }
+
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav" aria-label="主导航">
         {navigationSections.map((section) => (
-          <section key={section.id} className="nav-section">
-            <div className="nav-section-title">
+          <section
+            key={section.id}
+            className="nav-section"
+            data-collapsed={String(collapsedSections.has(section.id))}
+          >
+            <button
+              type="button"
+              className="nav-section-title"
+              aria-expanded={!collapsedSections.has(section.id)}
+              onClick={() => toggleSection(section.id)}
+            >
               <ChevronDown aria-hidden="true" />
               <span>{section.label}</span>
-            </div>
-            <div className="nav-items">
+            </button>
+            <div className="nav-items" hidden={collapsedSections.has(section.id)}>
               {section.items.map((item) => {
                 const Icon = item.icon
                 return (
