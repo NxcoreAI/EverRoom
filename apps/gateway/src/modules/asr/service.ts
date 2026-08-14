@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { eq } from "drizzle-orm";
+import type { Logger } from "pino";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { jobs } from "../../infrastructure/database/schema.js";
 import { AsrError } from "./errors.js";
@@ -46,6 +47,7 @@ export class AsrService {
     private readonly db: GatewayDatabase,
     private readonly inputDir: string,
     private readonly provider: AsrProvider | null,
+    private readonly logger?: Logger,
   ) {}
 
   async dispose(): Promise<void> {
@@ -75,6 +77,12 @@ export class AsrService {
       createdAt: now,
       updatedAt: now,
     }).run();
+
+    this.logger?.info({
+      asrJobId: id,
+      provider: payload.provider,
+      fileName: payload.fileName,
+    }, "ASR job created");
 
     this.track(this.submit(id));
     return this.getStoredJob(id)!;
@@ -106,6 +114,10 @@ export class AsrService {
         payload: { ...payload, remoteTaskId: submitted.taskId },
         updatedAt: new Date(),
       }).where(eq(jobs.id, id)).run();
+      this.logger?.info({
+        asrJobId: id,
+        remoteTaskId: submitted.taskId,
+      }, "ASR job submitted");
     } catch (error) {
       this.markFailed(id, error);
     }
@@ -122,6 +134,12 @@ export class AsrService {
         error: snapshot.error ? { message: snapshot.error } : null,
         updatedAt: new Date(),
       }).where(eq(jobs.id, id)).run();
+      this.logger?.info({
+        asrJobId: id,
+        remoteTaskId,
+        status: snapshot.status,
+        ...(snapshot.error ? { error: snapshot.error } : {}),
+      }, "ASR job reached terminal state");
     } catch (error) {
       this.markFailed(id, error);
     }
@@ -134,6 +152,7 @@ export class AsrService {
       error: { message },
       updatedAt: new Date(),
     }).where(eq(jobs.id, id)).run();
+    this.logger?.error({ err: error, asrJobId: id }, "ASR job failed");
   }
 
   private track(promise: Promise<void>): void {

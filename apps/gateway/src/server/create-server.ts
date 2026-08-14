@@ -99,8 +99,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const agentService = new AgentService(db, agentRuntime, new AgentEventBroker(), app.log);
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
-    : createAsrProvider(config);
-  const asrService = new AsrService(db, config.asrInputDir, asrProvider);
+    : createAsrProvider(config, app.log);
+  const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
   app.addHook("onClose", async () => {
     await agentService.dispose();
     await asrService.dispose();

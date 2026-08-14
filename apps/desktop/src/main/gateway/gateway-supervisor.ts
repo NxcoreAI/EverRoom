@@ -86,7 +86,7 @@ export class GatewaySupervisor {
       '--host',
       '127.0.0.1',
       '--port',
-      app.isPackaged ? '0' : (process.env.NXCORE_GATEWAY_DEV_PORT ?? '3210'),
+      app.isPackaged ? '0' : (process.env.NXCORE_GATEWAY_DEV_PORT ?? '0'),
       '--data-dir',
       this.dataDirectory,
       '--migrations-dir',

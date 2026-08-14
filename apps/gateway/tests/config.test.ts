@@ -80,6 +80,21 @@ describe("loadConfig", () => {
       apiKey: "test-asr-key",
       baseUrl: "https://workspace.example.com/api/v1",
       model: "qwen-audio-3.0-asr-flash-filetrans",
+      oss: null,
+    });
+
+    const withOss = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "aliyun",
+      NXCORE_ASR_ALIYUN_API_KEY: "test-asr-key",
+      NXCORE_ASR_ALIYUN_OSS_REGION: "oss-cn-beijing",
+      NXCORE_ASR_ALIYUN_OSS_BUCKET: "private-recordings",
+      NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_ID: "test-oss-id",
+      NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET: "test-oss-secret",
+    });
+    expect(withOss.asr?.oss).toMatchObject({
+      region: "oss-cn-beijing",
+      bucket: "private-recordings",
+      prefix: "nxcore-asr",
     });
   });
 
@@ -93,5 +108,11 @@ describe("loadConfig", () => {
       NXCORE_ASR_ALIYUN_API_KEY: "test-key",
       NXCORE_ASR_ALIYUN_BASE_URL: "http://insecure.example.com/api/v1",
     })).toThrow("expected an absolute HTTPS URL");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_ASR_PROVIDER: "aliyun",
+      NXCORE_ASR_ALIYUN_API_KEY: "test-key",
+      NXCORE_ASR_ALIYUN_OSS_BUCKET: "missing-other-fields",
+    })).toThrow("NXCORE_ASR_ALIYUN_OSS_REGION");
   });
 });

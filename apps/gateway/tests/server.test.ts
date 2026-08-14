@@ -69,6 +69,7 @@ describe("gateway server", () => {
     const config = await testConfig();
     config.logLevel = "info";
     const app = await createServer(config);
+    app.log.info({ res: { statusCode: 200 } }, "response serializer test");
     app.log.info({ testMarker: "gateway-log-test" }, "log persistence test");
     await app.close();
 
@@ -83,7 +84,11 @@ describe("gateway server", () => {
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     const markerEntry = entries.find((entry) => entry.testMarker === "gateway-log-test");
+    const requestEntry = entries.find((entry) => entry.msg === "response serializer test") as
+      | { res?: { statusCode?: number } }
+      | undefined;
     expect(markerEntry).toMatchObject({ msg: "log persistence test" });
     expect(markerEntry?.time).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
+    expect(requestEntry?.res?.statusCode).toBe(200);
   });
 });
