@@ -169,6 +169,12 @@
   z-index: 45;
 }
 
+.context-room-tiptap-drag-handle::before {
+  position: absolute;
+  inset: -14px 0 -14px -20px;
+  content: '';
+}
+
 .context-room-tiptap-block-controls {
   position: relative;
   display: flex;

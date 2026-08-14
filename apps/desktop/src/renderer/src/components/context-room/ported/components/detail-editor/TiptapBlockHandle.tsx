@@ -29,8 +29,9 @@ export function TiptapBlockHandle({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
+  const activePosRef = useRef(-1)
 
-  useTiptapBlockHandleVisibility(editor, controlsRef)
+  useTiptapBlockHandleVisibility(editor, controlsRef, activePosRef)
 
   useEffect(() => {
     if (!menuOpen) return
@@ -82,6 +83,7 @@ export function TiptapBlockHandle({
       }}
       onElementDragEnd={() => onDraggingChange(false)}
       onNodeChange={({ node, pos }) => {
+        activePosRef.current = pos
         setActiveNode(node)
         setActivePos(pos)
       }}
