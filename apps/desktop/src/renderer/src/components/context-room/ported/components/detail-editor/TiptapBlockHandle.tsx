@@ -14,6 +14,8 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+const BLOCK_HANDLE_POSITION = { placement: 'left-start' } as const
+
 export function TiptapBlockHandle({
   editor,
   onDraggingChange,
@@ -69,7 +71,7 @@ export function TiptapBlockHandle({
     <DragHandle
       editor={editor}
       className="context-room-tiptap-drag-handle"
-      computePositionConfig={{ placement: 'left-start' }}
+      computePositionConfig={BLOCK_HANDLE_POSITION}
       onElementDragStart={() => {
         setMenuOpen(false)
         onDraggingChange(true)
