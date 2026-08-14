@@ -4,7 +4,7 @@ import type { GatewaySupervisor } from './gateway-supervisor'
 export class AsrGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
-  createJob(input: CreateAsrJobInput): Promise<AsrJob> {
+  createJob(input: Omit<CreateAsrJobInput,'mode'|'recordingId'|'durationMs'>): Promise<AsrJob> {
     return this.request('/v1/asr/jobs', { method: 'POST', body: JSON.stringify(input) })
   }
 

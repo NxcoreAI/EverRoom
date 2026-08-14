@@ -11,6 +11,8 @@ import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { RecordingStore } from './recording/recording-store'
+import { SaasClient } from './cloud/saas-client'
+import { AsrCoordinator } from './asr/asr-coordinator'
 
 const APP_NAME = 'EverRoom'
 
@@ -59,6 +61,12 @@ const ASR_CHANNELS = {
   cancelRecording: 'asr:cancel-recording',
   createJob: 'asr:create-job',
   getJob: 'asr:get-job',
+} as const
+
+const ACCOUNT_CHANNELS = {
+  status: 'account:status',
+  login: 'account:login',
+  logout: 'account:logout',
 } as const
 
 let localDataService: LocalDataService | null = null
@@ -174,13 +182,19 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   ipcMain.handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
-function registerAsrHandlers(store: RecordingStore, bridge: AsrGatewayBridge): void {
+function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
   ipcMain.handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
   ipcMain.handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
   ipcMain.handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
   ipcMain.handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
-  ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
-  ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => bridge.getJob(id))
+  ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => coordinator.createJob(input))
+  ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
+}
+
+function registerAccountHandlers(client:SaasClient):void {
+  ipcMain.handle(ACCOUNT_CHANNELS.status,()=>client.status())
+  ipcMain.handle(ACCOUNT_CHANNELS.login,(_event,input:unknown)=>{if(!input||typeof input!=='object')throw new Error('无效的登录信息。');const value=input as {identifier?:unknown;password?:unknown};if(typeof value.identifier!=='string'||typeof value.password!=='string')throw new Error('请输入账号和密码。');return client.login(value.identifier,value.password)})
+  ipcMain.handle(ACCOUNT_CHANNELS.logout,()=>client.logout())
 }
 
 function createWindow(): void {
@@ -231,11 +245,15 @@ app.whenReady().then(async () => {
     registerGatewayHandlers(gatewaySupervisor)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
-    recordingStore = new RecordingStore(join(dataDirectory, 'recordings'))
-    registerAsrHandlers(recordingStore, new AsrGatewayBridge(gatewaySupervisor))
-
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
+    const recordingsDirectory=join(dataDirectory,'recordings')
+    recordingStore = new RecordingStore(recordingsDirectory)
+    const saasClient=new SaasClient(credentials,app,recordingsDirectory)
+    await saasClient.initialize()
+    registerAccountHandlers(saasClient)
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient))
+
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
       .register(new GitHubConnector((key) => credentials.get(key)))

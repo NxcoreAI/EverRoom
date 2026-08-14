@@ -129,6 +129,7 @@ export interface AsrResult {
 
 export interface AsrJob {
   id: string
+  source: 'local' | 'saas'
   provider: string
   status: AsrJobStatus
   fileName: string
@@ -143,15 +144,30 @@ export interface AsrJob {
 
 export interface CreateAsrJobInput {
   filePath: string
+  mode: 'local' | 'cloud'
+  recordingId?: string
+  durationMs?: number
   languageHints?: string[]
   diarizationEnabled: boolean
   contextPrompt?: string
+}
+
+export interface CloudAccountStatus {
+  authenticated: boolean
+  apiBaseUrl: string
+  user?: { id:string;tenantId:string;email?:string|null;phone?:string|null;name?:string }
+  device?: { id:string;name?:string;platform?:string }
 }
 
 export interface NxcoreDesktopApi {
   platform: string
   gateway: {
     status(): Promise<GatewayStatus>
+  }
+  account: {
+    status(): Promise<CloudAccountStatus>
+    login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
+    logout(): Promise<CloudAccountStatus>
   }
   asr: {
     beginRecording(mimeType: string): Promise<{ id: string }>

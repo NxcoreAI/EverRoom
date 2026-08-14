@@ -1,9 +1,9 @@
-import { AlertCircle, Check, LoaderCircle, Mic, Square } from 'lucide-react'
+import { AlertCircle, Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { PRODUCT_NAME } from '@/components/ui/brand'
 
-import type { AsrJob, AsrResult, NxcoreDesktopApi } from '../../../../shared/sources'
+import type { AsrJob, AsrResult, CloudAccountStatus, NxcoreDesktopApi } from '../../../../shared/sources'
 import './RecordingPage.css'
 
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'saving' | 'transcribing' | 'completed' | 'error'
@@ -49,7 +49,7 @@ async function waitForStop(recorder: MediaRecorder): Promise<void> {
   })
 }
 
-export function RecordingPage() {
+export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
   const [state, setState] = useState<RecordingState>('idle')
   const [elapsed, setElapsed] = useState(0)
   const [languages, setLanguages] = useState<string[]>(['zh', 'en'])
@@ -57,6 +57,8 @@ export function RecordingPage() {
   const [contextPrompt, setContextPrompt] = useState('')
   const [result, setResult] = useState<AsrResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [account,setAccount]=useState<CloudAccountStatus|null>(null)
+  const [mode,setMode]=useState<'cloud'|'local'>('local')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const recordingIdRef = useRef<string | null>(null)
@@ -74,6 +76,8 @@ export function RecordingPage() {
       if (id) void window.nxcore?.asr.cancelRecording(id)
     }
   }, [])
+
+  useEffect(()=>{void window.nxcore?.account.status().then(status=>{setAccount(status);if(status.authenticated)setMode('cloud')}).catch(()=>undefined)},[])
 
   useEffect(() => {
     if (state !== 'recording') return
@@ -159,6 +163,9 @@ export function RecordingPage() {
       setState('transcribing')
       const job = await desktopApi().asr.createJob({
         filePath,
+        mode,
+        recordingId:id,
+        durationMs:Math.max(1000,elapsed*1000),
         languageHints: languages,
         diarizationEnabled,
         ...(contextPrompt.trim() ? { contextPrompt: contextPrompt.trim() } : {}),
@@ -197,13 +204,18 @@ export function RecordingPage() {
       <header className="recording-header">
         <div>
           <h1>录音转写</h1>
-          <p>阿里云百炼 · 文件转写</p>
+          <p>{mode==='cloud'?'EverRoom SaaS · 订阅额度':'本地 Gateway · 自有阿里云配置'}</p>
         </div>
         <span className="recording-status" data-state={state} aria-live="polite">
           {busy ? <LoaderCircle aria-hidden="true" /> : state === 'completed' ? <Check aria-hidden="true" /> : null}
           {statusLabel}
         </span>
       </header>
+
+      <section className="asr-mode-bar" aria-label="转写服务">
+        <div className="segmented-control"><button type="button" data-active={String(mode==='cloud')} disabled={!account?.authenticated||busy||state==='recording'} onClick={()=>setMode('cloud')}><Cloud aria-hidden="true"/>云端托管</button><button type="button" data-active={String(mode==='local')} disabled={busy||state==='recording'} onClick={()=>setMode('local')}><HardDrive aria-hidden="true"/>本地配置</button></div>
+        {!account?.authenticated?<div className="asr-login-hint"><span>未登录。请自行配置本地阿里云，或登录后使用订阅额度。</span><button type="button" className="secondary-button" onClick={onOpenSettings}><LogIn aria-hidden="true"/>登录</button></div>:<span className="asr-account-name">{account.user?.name||account.user?.email||'已登录'}</span>}
+      </section>
 
       <section className="recording-controls" aria-label="录音控制">
         <button

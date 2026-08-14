@@ -33,7 +33,7 @@ export class CredentialStore {
 
   async set(value: string): Promise<string> {
     await this.initialize()
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('当前系统不支持安全保存 GitHub 凭证。')
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('当前系统不支持安全保存凭证。')
     const key = randomUUID()
     this.credentials.set(key, value)
     await this.persist()
@@ -43,6 +43,19 @@ export class CredentialStore {
   async get(key: string | undefined): Promise<string | undefined> {
     await this.initialize()
     return key ? this.credentials.get(key) : undefined
+  }
+
+  async setNamed(key: string, value: string): Promise<void> {
+    await this.initialize()
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('当前系统不支持安全保存凭证。')
+    this.credentials.set(key, value)
+    await this.persist()
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.initialize()
+    if (!this.credentials.delete(key)) return
+    await this.persist()
   }
 
   private async persist(): Promise<void> {
