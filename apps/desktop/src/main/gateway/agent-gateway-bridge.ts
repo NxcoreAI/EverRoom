@@ -131,7 +131,6 @@ export class AgentGatewayBridge {
       ...config,
       headers: {
         Authorization: `Bearer ${connection.token}`,
-        'Content-Type': 'application/json',
         ...config.headers,
       },
       validateStatus: () => true,

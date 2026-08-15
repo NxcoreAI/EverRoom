@@ -93,6 +93,9 @@ export interface UpdateAgentSessionInput {
 export interface StartAgentRunInput {
   prompt: string;
   idempotencyKey: string;
+  context?: {
+    selectedText: string;
+  };
 }
 
 export interface TiptapJsonContent {
