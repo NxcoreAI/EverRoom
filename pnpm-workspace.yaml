@@ -8,6 +8,8 @@ overrides:
 allowBuilds:
   '@google/genai': true
   '@parcel/watcher': false
+  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#906dd0f0f4b6263312dabf345ebeba37e6e8d3ae': set this to true or false
+  '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/906dd0f0f4b6263312dabf345ebeba37e6e8d3ae': set this to true or false
   better-sqlite3: true
   electron: true
   electron-winstaller: true
