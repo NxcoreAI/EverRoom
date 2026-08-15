@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import type { MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),
@@ -62,6 +63,15 @@ const RawConfigSchema = Type.Object(
     asrAliyunOssAccessKeySecret: Type.String(),
     asrAliyunOssStsToken: Type.String(),
     asrAliyunOssPrefix: Type.String({ minLength: 1 }),
+    memoryEnabled: Type.Boolean(),
+    memoryBaseUrl: Type.String(),
+    memoryApiKey: Type.String(),
+    memoryServiceId: Type.String({ minLength: 1 }),
+    memoryTeamId: Type.String({ minLength: 1 }),
+    memoryAgentId: Type.String({ minLength: 1 }),
+    memoryUserId: Type.String({ minLength: 1 }),
+    memoryRecallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
+    memoryCharBudget: Type.Integer({ minimum: 200 }),
   },
   { additionalProperties: false },
 );
@@ -100,6 +110,7 @@ export interface PiRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  memory?: MemoryRuntimeConfig;
 }
 
 export interface GatewayConfig {
@@ -175,6 +186,28 @@ function validateHttpEndpoint(name: string, value: string): void {
   }
 }
 
+/** MemoryCore 通常是本地/内网 HTTP 服务：允许 localhost/127.0.0.1 的 HTTP 与任意 HTTPS。 */
+function validateMemoryEndpoint(name: string, value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
+  }
+  const isLoopbackHttp = url.protocol === "http:"
+    && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1");
+  if (url.protocol !== "https:" && !isLoopbackHttp) {
+    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback addresses`);
+  }
+}
+
+function parseBoolean(name: string, value: string): boolean {
+  if (value !== "true" && value !== "false") {
+    throw new Error(`Invalid ${name}: expected "true" or "false"`);
+  }
+  return value === "true";
+}
+
 function defaultMigrationsDir(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -237,6 +270,23 @@ export function loadConfig(
     asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
     asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
     asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
+    memoryEnabled: env.NXCORE_MEMORY_ENABLED == null
+      ? false
+      : parseBoolean("NXCORE_MEMORY_ENABLED", env.NXCORE_MEMORY_ENABLED.trim()),
+    memoryBaseUrl: env.NXCORE_MEMORY_BASE_URL?.trim() ?? "http://127.0.0.1:8420",
+    memoryApiKey: env.NXCORE_MEMORY_API_KEY?.trim() ?? "",
+    memoryServiceId: env.NXCORE_MEMORY_SERVICE_ID?.trim() ?? "everroom",
+    memoryTeamId: env.NXCORE_MEMORY_TEAM_ID?.trim() ?? "everroom",
+    memoryAgentId: env.NXCORE_MEMORY_AGENT_ID?.trim() ?? "pi-agent",
+    memoryUserId: env.NXCORE_MEMORY_USER_ID?.trim() ?? "local-user",
+    memoryRecallLimit: parsePositiveInteger(
+      "NXCORE_MEMORY_RECALL_LIMIT",
+      env.NXCORE_MEMORY_RECALL_LIMIT ?? "5",
+    ),
+    memoryCharBudget: parsePositiveInteger(
+      "NXCORE_MEMORY_CHAR_BUDGET",
+      env.NXCORE_MEMORY_CHAR_BUDGET ?? "2000",
+    ),
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -274,6 +324,22 @@ export function loadConfig(
       const missing = ossFields.filter(([, value]) => !value).map(([name]) => name);
       throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
     }
+  }
+
+  const memory: MemoryRuntimeConfig | null = rawConfig.memoryEnabled
+    ? {
+        baseUrl: rawConfig.memoryBaseUrl,
+        apiKey: rawConfig.memoryApiKey,
+        serviceId: rawConfig.memoryServiceId,
+        teamId: rawConfig.memoryTeamId,
+        agentId: rawConfig.memoryAgentId,
+        userId: rawConfig.memoryUserId,
+        recallLimit: rawConfig.memoryRecallLimit,
+        charBudget: rawConfig.memoryCharBudget,
+      }
+    : null;
+  if (memory) {
+    validateMemoryEndpoint("NXCORE_MEMORY_BASE_URL", memory.baseUrl);
   }
 
   return {
@@ -322,6 +388,7 @@ export function loadConfig(
           sessionsDir: join(dataDir, "agent", "pi-sessions"),
           workingDirectory: join(dataDir, "agent", "workspace"),
           agentDirectory: join(dataDir, "agent", "pi-config"),
+          ...(memory ? { memory } : {}),
         }
       : null,
   };
