@@ -1,4 +1,10 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import type {
+  RealityCaptureDevice,
+  RealityInsights,
+  RealityMarker,
+  RealityTranscriptSegment,
+} from "@nxcore/reality-contract";
 
 export const gatewayMetadata = sqliteTable("gateway_metadata", {
   key: text("key").primaryKey(),
@@ -216,4 +222,42 @@ export const documentOps = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [uniqueIndex("doc_ops_transaction_sequence_idx").on(table.transactionId, table.sequence)],
+);
+
+export const realityEvents = sqliteTable(
+  "reality_events",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    status: text("status", {
+      enum: ["ongoing", "pending_confirmation", "completed", "failed", "pending_sync"],
+    }).notNull(),
+    processingState: text("processing_state", {
+      enum: ["capturing", "saving", "transcribing", "understanding", "ready", "failed"],
+    }).notNull(),
+    captureDevice: text("capture_device", { mode: "json" }).$type<RealityCaptureDevice>().notNull(),
+    processingDevice: text("processing_device").notNull(),
+    audioSource: text("audio_source", { enum: ["microphone", "system"] }).notNull(),
+    audioFileName: text("audio_file_name"),
+    audioMimeType: text("audio_mime_type"),
+    durationMs: integer("duration_ms").notNull().default(0),
+    currentTopic: text("current_topic"),
+    transcript: text("transcript").notNull().default(""),
+    transcriptSegments: text("transcript_segments", { mode: "json" })
+      .$type<RealityTranscriptSegment[]>().notNull(),
+    transcriptEditedAt: integer("transcript_edited_at", { mode: "timestamp_ms" }),
+    insights: text("insights", { mode: "json" }).$type<RealityInsights>().notNull(),
+    markers: text("markers", { mode: "json" }).$type<RealityMarker[]>().notNull(),
+    important: integer("important", { mode: "boolean" }).notNull().default(false),
+    asrJobId: text("asr_job_id"),
+    asrSource: text("asr_source", { enum: ["local", "saas"] }),
+    resultVersion: integer("result_version").notNull().default(0),
+    error: text("error"),
+    version: integer("version").notNull().default(1),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+    endedAt: integer("ended_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [uniqueIndex("reality_events_asr_job_idx").on(table.asrJobId)],
 );

@@ -63,6 +63,12 @@ const RawConfigSchema = Type.Object(
     asrAliyunApiKey: Type.String(),
     asrAliyunBaseUrl: Type.String(),
     asrAliyunModel: Type.String({ minLength: 1 }),
+    asrAliyunOssRegion: Type.String(),
+    asrAliyunOssBucket: Type.String(),
+    asrAliyunOssAccessKeyId: Type.String(),
+    asrAliyunOssAccessKeySecret: Type.String(),
+    asrAliyunOssStsToken: Type.String(),
+    asrAliyunOssPrefix: Type.String({ minLength: 1 }),
   },
   { additionalProperties: false },
 );
@@ -76,6 +82,16 @@ export interface AliyunAsrConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  oss: AliyunOssConfig | null;
+}
+
+export interface AliyunOssConfig {
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  accessKeySecret: string;
+  stsToken?: string;
+  prefix: string;
 }
 
 export interface PiRuntimeConfig {
@@ -242,6 +258,12 @@ export function loadConfig(
       ?? "https://dashscope.aliyuncs.com/api/v1",
     asrAliyunModel: env.NXCORE_ASR_ALIYUN_MODEL?.trim()
       ?? "qwen-audio-3.0-asr-flash-filetrans",
+    asrAliyunOssRegion: env.NXCORE_ASR_ALIYUN_OSS_REGION?.trim() ?? "",
+    asrAliyunOssBucket: env.NXCORE_ASR_ALIYUN_OSS_BUCKET?.trim() ?? "",
+    asrAliyunOssAccessKeyId: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_ID?.trim() ?? "",
+    asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
+    asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
+    asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -284,6 +306,16 @@ export function loadConfig(
       throw new Error("Aliyun ASR requires: NXCORE_ASR_ALIYUN_API_KEY");
     }
     validateHttpEndpoint("NXCORE_ASR_ALIYUN_BASE_URL", rawConfig.asrAliyunBaseUrl);
+    const ossFields = [
+      ["NXCORE_ASR_ALIYUN_OSS_REGION", rawConfig.asrAliyunOssRegion],
+      ["NXCORE_ASR_ALIYUN_OSS_BUCKET", rawConfig.asrAliyunOssBucket],
+      ["NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_ID", rawConfig.asrAliyunOssAccessKeyId],
+      ["NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET", rawConfig.asrAliyunOssAccessKeySecret],
+    ] as const;
+    if (ossFields.some(([, value]) => value) && ossFields.some(([, value]) => !value)) {
+      const missing = ossFields.filter(([, value]) => !value).map(([name]) => name);
+      throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
+    }
   }
 
   return {
@@ -311,6 +343,18 @@ export function loadConfig(
           apiKey: rawConfig.asrAliyunApiKey,
           baseUrl: rawConfig.asrAliyunBaseUrl,
           model: rawConfig.asrAliyunModel,
+          oss: rawConfig.asrAliyunOssRegion
+            ? {
+                region: rawConfig.asrAliyunOssRegion,
+                bucket: rawConfig.asrAliyunOssBucket,
+                accessKeyId: rawConfig.asrAliyunOssAccessKeyId,
+                accessKeySecret: rawConfig.asrAliyunOssAccessKeySecret,
+                ...(rawConfig.asrAliyunOssStsToken
+                  ? { stsToken: rawConfig.asrAliyunOssStsToken }
+                  : {}),
+                prefix: rawConfig.asrAliyunOssPrefix.replace(/^\/+|\/+$/g, ""),
+              }
+            : null,
         }
       : null,
     pi: rawConfig.agentRuntime === "pi"

@@ -185,8 +185,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       await hydrateSnapshot(snapshot, pendingMessages)
       storeSession(pageLabel, roomId, session.id)
       await api.subscribe(session.id)
-    } catch (selectError) {
-      setError(selectError instanceof Error ? selectError.message : '无法打开会话。')
+    } catch {
     } finally {
       setLoading(false)
     }
@@ -216,9 +215,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
             ?? listedSessions[0]
           if (selected) await selectSession(selected)
         })
-        .catch((loadError) => {
-          if (alive) setError(loadError instanceof Error ? loadError.message : '无法载入会话。')
-        })
+        .catch(() => undefined)
         .finally(() => {
           if (alive) setLoading(false)
         })
@@ -255,7 +252,6 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       await selectSession(session, pendingMessages)
       return session
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : '无法新建会话。')
       throw createError
     }
   }
@@ -271,8 +267,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       const updated = await api.updateSession(sessionIdToRename, { title: title.trim() })
       setSessions((current) => current.map((session) => session.id === updated.id ? updated : session))
       setCurrentSession((current) => current?.id === updated.id ? updated : current)
-    } catch (renameError) {
-      setError(renameError instanceof Error ? renameError.message : '无法重命名会话。')
+    } catch {
     }
   }
 
@@ -296,8 +291,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
           storeSession(pageLabel, roomId, null)
         }
       }
-    } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : '无法删除会话。')
+    } catch {
     }
   }
 
@@ -338,8 +332,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, runId: run.id }
         : item))
-    } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : '无法启动 Agent。')
+    } catch {
     } finally {
       setSending(false)
     }
@@ -349,8 +342,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
     if (!api || !activeRunId) return
     try {
       await api.cancelRun(activeRunId)
-    } catch (stopError) {
-      setError(stopError instanceof Error ? stopError.message : '无法停止 Agent。')
+    } catch {
     }
   }
 

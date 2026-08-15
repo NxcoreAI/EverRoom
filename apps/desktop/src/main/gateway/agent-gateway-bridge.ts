@@ -9,11 +9,14 @@ import type {
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
 import { isAgentSocketFrame } from '@nxcore/agent-contract'
+import type { AxiosRequestConfig } from 'axios'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
+import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
 const AGENT_EVENT_CHANNEL = 'agent:event'
+const http = createLoggedHttpClient('gateway-agent')
 
 interface Subscription {
   sessionId: string
@@ -28,7 +31,7 @@ export class AgentGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
   createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
-    return this.request('/v1/agent/sessions', { method: 'POST', body: JSON.stringify(input) })
+    return this.request('/v1/agent/sessions', { method: 'POST', data: input })
   }
 
   listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]> {
@@ -40,7 +43,7 @@ export class AgentGatewayBridge {
   updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession> {
     return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}`, {
       method: 'PATCH',
-      body: JSON.stringify(input),
+      data: input,
     })
   }
 
@@ -60,7 +63,7 @@ export class AgentGatewayBridge {
   startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun> {
     return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',
-      body: JSON.stringify(input),
+      data: input,
     })
   }
 
@@ -121,21 +124,26 @@ export class AgentGatewayBridge {
     return socket
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
-    const response = await fetch(`${connection.baseUrl}${path}`, {
-      ...init,
+    const response = await http.request<T & { message?: unknown }>({
+      url: `${connection.baseUrl}${path}`,
+      ...config,
       headers: {
         Authorization: `Bearer ${connection.token}`,
         'Content-Type': 'application/json',
-        ...init?.headers,
+        ...config.headers,
       },
+      validateStatus: () => true,
     })
-    if (!response.ok) {
-      const body = await response.json().catch(() => null) as { message?: unknown } | null
-      throw new Error(typeof body?.message === 'string' ? body.message : `Agent 请求失败（${response.status}）`)
+    if (response.status >= 400) {
+      throw new Error(
+        typeof response.data?.message === 'string'
+          ? response.data.message
+          : `Agent 请求失败（${response.status}）`,
+      )
     }
     if (response.status === 204) return undefined as T
-    return response.json() as Promise<T>
+    return response.data
   }
 }

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./everroom.svg" alt="Everroom logo" width="112" height="112">
+
 # Everroom
 
 **The local-first context layer between your data and AI agents.**
