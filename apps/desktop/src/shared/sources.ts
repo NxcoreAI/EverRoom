@@ -199,6 +199,20 @@ export interface NxcoreDesktopApi {
     createJob(input: CreateAsrJobInput): Promise<AsrJob>
     getJob(id: string): Promise<AsrJob>
   }
+  memory: {
+    overview(): Promise<MemoryOverviewDto>
+    listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
+    searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
+    updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
+    deleteAtomic(ids: string[]): Promise<{ deletedCount: number }>
+    listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }>
+    readScenario(path: string): Promise<MemoryScenarioContentDto>
+    readCore(): Promise<MemoryCoreDto>
+    writeCore(content: string): Promise<{ version: number; updatedAt: string }>
+    listConversations(options: MemoryConversationListOptions): Promise<MemoryConversationPageDto>
+    searchConversations(query: string, limit?: number, sessionId?: string): Promise<{ messages: MemoryConversationMessageDto[] }>
+    deleteConversations(target: { sessionIds?: string[]; messageIds?: string[] }): Promise<{ deletedCount: number }>
+  }
   agent: {
     listSessions(pageLabel: string): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
@@ -236,3 +250,15 @@ import type {
   StartAgentRunInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
+import type {
+  MemoryAtomicItemDto,
+  MemoryAtomicListOptions,
+  MemoryAtomicPageDto,
+  MemoryConversationListOptions,
+  MemoryConversationMessageDto,
+  MemoryConversationPageDto,
+  MemoryCoreDto,
+  MemoryOverviewDto,
+  MemoryScenarioContentDto,
+  MemoryScenarioEntryDto,
+} from './memory'

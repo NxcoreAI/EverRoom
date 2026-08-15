@@ -1,0 +1,1006 @@
+/* 记忆页（MemoryCore 浏览器）。类名统一 mem- 前缀，样式走 tokens.css 变量以适配主题。 */
+
+.mem-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.mem-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mem-header h1 {
+  font-size: 18px;
+  font-weight: 650;
+  margin: 0 0 4px;
+}
+
+.mem-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.mem-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mem-searchbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 240px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--subtle);
+}
+
+.mem-searchbox:focus-within {
+  border-color: var(--accent);
+}
+
+.mem-searchbox input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text);
+  width: 100%;
+}
+
+.mem-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mem-icon-button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.mem-spin {
+  animation: mem-spin 0.9s linear infinite;
+}
+
+@keyframes mem-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 顶部 tab 导航（页面内不再放竖向侧栏，避免与应用侧边栏重复） */
+.mem-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mem-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mem-tabs button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.mem-tabs button[data-active='true'] {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.mem-level-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-strong, var(--accent));
+  font-weight: 600;
+}
+
+:root[data-theme='mono'] .mem-level-badge {
+  color: var(--accent);
+}
+
+.mem-tab-count {
+  font-size: 11px;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 降级态与空态 */
+.mem-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.mem-status svg {
+  width: 28px;
+  height: 28px;
+  color: var(--subtle);
+}
+
+.mem-status h2 {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text);
+  margin: 0;
+}
+
+.mem-status p {
+  max-width: 420px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  margin: 0;
+}
+
+.mem-status code {
+  padding: 1px 5px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+
+.mem-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mem-retry:hover {
+  background: var(--hover);
+}
+
+/* 总览 */
+.mem-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mem-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.mem-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: 'icon level value' 'icon title title' 'icon detail detail';
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 14px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--raised-shadow);
+  cursor: pointer;
+}
+
+.mem-card:hover {
+  background: var(--surface-alt);
+  border-color: var(--border-strong);
+}
+
+.mem-card-icon {
+  grid-area: icon;
+  align-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mem-card-level {
+  grid-area: level;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--subtle);
+  letter-spacing: 0.4px;
+}
+
+.mem-card-value {
+  grid-area: value;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-card-title {
+  grid-area: title;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mem-card-detail {
+  grid-area: detail;
+  font-size: 11.5px;
+  color: var(--subtle);
+  line-height: 1.5;
+}
+
+.mem-pipeline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.mem-pipeline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mem-pipeline-state {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mem-pipeline-state[data-state='running'] {
+  color: var(--accent);
+}
+
+.mem-pipeline-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--subtle);
+}
+
+.mem-pipeline-chip[data-state='running'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mem-pipeline-chip[data-state='queued'] {
+  border-color: var(--border-strong);
+  color: var(--muted);
+}
+
+.mem-explain {
+  padding: 14px 16px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.mem-explain h3 {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.mem-explain ol {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mem-explain li {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* 通用工具条 */
+.mem-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mem-type-filters {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.mem-type-filters button {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mem-type-filters button[data-active='true'] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--raised-shadow);
+}
+
+.mem-count {
+  font-size: 12px;
+  color: var(--subtle);
+}
+
+.mem-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-pager button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mem-pager button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.mem-toolbar-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.mem-toolbar-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mem-toolbar-actions button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.mem-primary {
+  border-color: var(--accent) !important;
+  background: var(--accent) !important;
+  color: var(--accent-contrast) !important;
+}
+
+.mem-danger {
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+}
+
+/* L1 原子记忆列表 */
+.mem-atomic-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mem-atomic-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.mem-atomic-summary:hover {
+  background: var(--surface-alt);
+}
+
+.mem-atomic-summary[data-expanded='true'] {
+  border-color: var(--accent);
+  background: var(--surface-alt);
+}
+
+.mem-type-badge {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent-strong, var(--accent));
+}
+
+.mem-type-badge[data-type='persona'] {
+  background: rgba(139, 99, 199, 0.14);
+  color: #7a4fc0;
+}
+
+.mem-type-badge[data-type='instruction'] {
+  background: rgba(47, 172, 104, 0.14);
+  color: #1f7a4b;
+}
+
+.mem-atomic-text {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.55;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.mem-atomic-detail .mem-atomic-text {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+.mem-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-atomic-detail {
+  padding: 10px 14px;
+  margin-top: -2px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 9px 9px;
+}
+
+.mem-atomic-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.mem-source {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.mem-atomic-detail-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.mem-atomic-detail-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.mem-atomic-detail-actions button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.mem-atomic-content {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mem-atomic-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  line-height: 1.6;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
+.mem-atomic-editor textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.mem-atomic-editor-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.mem-atomic-editor-actions button {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mem-atomic-editor-actions button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* L2 场景：内容区内的左树右文分栏 */
+.mem-scenario {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 12px;
+  min-height: 0;
+}
+
+.mem-scenario-tree {
+  overflow: auto;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.mem-scenario-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mem-scenario-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mem-scenario-node:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.mem-scenario-node[data-selected='true'] {
+  background: var(--selected);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mem-scenario-caret {
+  flex-shrink: 0;
+}
+
+.mem-scenario-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mem-scenario-viewer {
+  overflow: auto;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.mem-scenario-viewer header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mem-scenario-viewer header strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.mem-scenario-viewer header small {
+  font-size: 11.5px;
+  color: var(--subtle);
+}
+
+/* Markdown 原文（场景正文 / 画像）以 pre-wrap 呈现 */
+.mem-markdown {
+  margin: 0;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* L3 画像 */
+.mem-core {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.mem-core-editor {
+  width: 100%;
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 320px;
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.7;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
+.mem-core-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.mem-core-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--subtle);
+}
+
+/* L0 对话 */
+.mem-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mem-session-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mem-session-filter select {
+  max-width: 260px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.mem-session {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mem-session-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
+}
+
+.mem-session-title {
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+
+.mem-session-title:hover,
+.mem-session-title[data-active='true'] {
+  background: var(--selected);
+  color: var(--text);
+}
+
+.mem-session-header small {
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+.mem-session-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.mem-session-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.mem-session-actions button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.mem-messages {
+  list-style: none;
+  margin: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mem-messages li {
+  display: flex;
+}
+
+.mem-messages li[data-role='user'] {
+  justify-content: flex-end;
+}
+
+.mem-bubble {
+  max-width: 72%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+}
+
+.mem-messages li[data-role='user'] .mem-bubble {
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.mem-bubble p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mem-bubble small {
+  display: block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--subtle);
+  text-align: right;
+}
+
+/* 全局搜索结果 */
+.mem-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mem-search-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mem-search-header button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.mem-search-empty {
+  color: var(--subtle);
+  font-size: 12.5px;
+}
+
+.mem-search-results h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.mem-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mem-search-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+button.mem-search-item:hover {
+  background: var(--surface-alt);
+}
+
+.mem-search-message {
+  cursor: default;
+}
+
+.mem-search-item mark {
+  background: transparent;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.mem-role-tag {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--muted);
+}
+
+/* 杂项 */
+.mem-loading {
+  color: var(--subtle);
+  font-size: 12.5px;
+  padding: 24px 0;
+  text-align: center;
+}
+
+.mem-pane-error {
+  padding: 14px 16px;
+  border: 1px solid var(--danger);
+  border-radius: 9px;
+  color: var(--danger);
+  font-size: 12.5px;
+  background: var(--surface);
+}
+
+.mem-inline-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
