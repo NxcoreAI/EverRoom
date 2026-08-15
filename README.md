@@ -127,6 +127,19 @@ pnpm dev
 
 The lower-left corner of the desktop sidebar shows the current Gateway state and process ID.
 
+### Agent Service
+
+Packaged builds default to the Remote HTTP runtime. Document MCP requires a separate working transport:
+
+```dotenv
+NXCORE_AGENT_RUNTIME=remote-http
+NXCORE_REMOTE_AGENT_BASE_URL=http://192.168.1.27:8280/ai/api
+NXCORE_REMOTE_AGENT_TOKEN=
+NXCORE_REMOTE_AGENT_MCP_WS_URL=ws://192.168.1.27:8280/ai/api/device-mcp
+```
+
+The direct service must provide `/session`, `/chat`, `/chat/abort`, and `/device-mcp`. The last endpoint is required for the Agent to call local document tools; set `NXCORE_REMOTE_AGENT_MCP_WS_URL` to an explicit empty value to keep chat-only mode when the deployment does not provide it yet. The CE Gateway also exposes the bearer-protected `/v1/mcp/documents/:sessionId` HTTP MCP endpoint. The `fake` and `pi` runtimes remain available for development and future switching; this version does not depend on Pi.
+
 ### Useful Commands
 
 ```bash

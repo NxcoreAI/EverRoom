@@ -10,6 +10,7 @@ import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 
 const SOURCE_CHANNELS = {
@@ -43,6 +44,17 @@ const AGENT_CHANNELS = {
   unsubscribe: 'agent:unsubscribe',
 } as const
 
+const DOCUMENT_CHANNELS = {
+  list: 'documents:list',
+  get: 'documents:get',
+  import: 'documents:import',
+  save: 'documents:save',
+  delete: 'documents:delete',
+  acknowledge: 'documents:acknowledge',
+  subscribe: 'documents:subscribe',
+  unsubscribe: 'documents:unsubscribe',
+} as const
+
 const ASR_CHANNELS = {
   beginRecording: 'asr:begin-recording',
   appendRecording: 'asr:append-recording',
@@ -55,6 +67,7 @@ const ASR_CHANNELS = {
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
+let documentGatewayBridge: DocumentGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let shutdownStarted = false
 
@@ -152,7 +165,7 @@ function registerGatewayHandlers(supervisor: GatewaySupervisor): void {
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
-  ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel) => bridge.listSessions(pageLabel))
+  ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
   ipcMain.handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
   ipcMain.handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
@@ -163,6 +176,18 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   ipcMain.handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
   ipcMain.handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   ipcMain.handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+}
+
+function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
+  ipcMain.handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
+  ipcMain.handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
+  ipcMain.handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
+    bridge.acknowledge(transactionId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
+  ipcMain.handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
 }
 
 function registerAsrHandlers(store: RecordingStore, bridge: AsrGatewayBridge): void {
@@ -220,6 +245,8 @@ app.whenReady().then(async () => {
     registerGatewayHandlers(gatewaySupervisor)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
+    registerDocumentHandlers(documentGatewayBridge)
     recordingStore = new RecordingStore(join(dataDirectory, 'recordings'))
     registerAsrHandlers(recordingStore, new AsrGatewayBridge(gatewaySupervisor))
 
@@ -241,6 +268,8 @@ app.whenReady().then(async () => {
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    documentGatewayBridge?.dispose()
+    documentGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -262,12 +291,15 @@ app.on('before-quit', (event) => {
   const service = localDataService
   const gateway = gatewaySupervisor
   const agentBridge = agentGatewayBridge
+  const documentBridge = documentGatewayBridge
   const recordings = recordingStore
   localDataService = null
   gatewaySupervisor = null
   agentGatewayBridge = null
+  documentGatewayBridge = null
   recordingStore = null
   agentBridge?.dispose()
+  documentBridge?.dispose()
   void Promise.allSettled([service?.shutdown(), recordings?.dispose(), gateway?.shutdown()]).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

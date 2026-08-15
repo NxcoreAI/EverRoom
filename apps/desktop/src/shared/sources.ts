@@ -11,6 +11,22 @@ export type SourceFileStatus =
   | 'error'
 export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' | 'unsupported'
 
+import type {
+  AcknowledgeDocumentTransactionInput,
+  AgentEvent,
+  AgentRun,
+  AgentSession,
+  AgentSessionSnapshot,
+  AgentSocketFrame,
+  CreateAgentSessionInput,
+  DocumentEventFrame,
+  ImportRoomDocumentInput,
+  RoomDocument,
+  SaveRoomDocumentInput,
+  StartAgentRunInput,
+  UpdateAgentSessionInput,
+} from '@nxcore/agent-contract'
+
 export interface EvidenceBlock {
   id: string
   kind: 'heading' | 'paragraph'
@@ -162,7 +178,7 @@ export interface NxcoreDesktopApi {
     getJob(id: string): Promise<AsrJob>
   }
   agent: {
-    listSessions(pageLabel: string): Promise<AgentSession[]>
+    listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
     updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession>
     deleteSession(sessionId: string): Promise<void>
@@ -173,6 +189,17 @@ export interface NxcoreDesktopApi {
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
+  }
+  documents: {
+    list(roomId: string): Promise<RoomDocument[]>
+    get(documentId: string): Promise<RoomDocument>
+    import(input: ImportRoomDocumentInput): Promise<RoomDocument>
+    save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
+    delete(documentId: string): Promise<void>
+    acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void>
+    subscribe(roomId: string): Promise<void>
+    unsubscribe(roomId?: string): Promise<void>
+    onEvent(listener: (frame: DocumentEventFrame) => void): () => void
   }
   sources: {
     list(): Promise<DataSourceSummary[]>
@@ -188,13 +215,3 @@ export interface NxcoreDesktopApi {
     disconnect(id: string, deleteLocalData: boolean): Promise<void>
   }
 }
-import type {
-  AgentEvent,
-  AgentRun,
-  AgentSession,
-  AgentSessionSnapshot,
-  AgentSocketFrame,
-  CreateAgentSessionInput,
-  StartAgentRunInput,
-  UpdateAgentSessionInput,
-} from '@nxcore/agent-contract'

@@ -16,7 +16,7 @@ const api: NxcoreDesktopApi = {
     getJob: (id) => ipcRenderer.invoke('asr:get-job', id),
   },
   agent: {
-    listSessions: (pageLabel) => ipcRenderer.invoke('agent:list-sessions', pageLabel),
+    listSessions: (pageLabel, roomId) => ipcRenderer.invoke('agent:list-sessions', pageLabel, roomId),
     createSession: (input) => ipcRenderer.invoke('agent:create-session', input),
     updateSession: (sessionId, input) => ipcRenderer.invoke('agent:update-session', sessionId, input),
     deleteSession: (sessionId) => ipcRenderer.invoke('agent:delete-session', sessionId),
@@ -33,6 +33,23 @@ const api: NxcoreDesktopApi = {
       }
       ipcRenderer.on('agent:event', handleEvent)
       return () => ipcRenderer.removeListener('agent:event', handleEvent)
+    },
+  },
+  documents: {
+    list: (roomId) => ipcRenderer.invoke('documents:list', roomId),
+    get: (documentId) => ipcRenderer.invoke('documents:get', documentId),
+    import: (input) => ipcRenderer.invoke('documents:import', input),
+    save: (documentId, input) => ipcRenderer.invoke('documents:save', documentId, input),
+    delete: (documentId) => ipcRenderer.invoke('documents:delete', documentId),
+    acknowledge: (transactionId, input) => ipcRenderer.invoke('documents:acknowledge', transactionId, input),
+    subscribe: (roomId) => ipcRenderer.invoke('documents:subscribe', roomId),
+    unsubscribe: (roomId) => ipcRenderer.invoke('documents:unsubscribe', roomId),
+    onEvent: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
+        listener(frame)
+      }
+      ipcRenderer.on('documents:event', handleEvent)
+      return () => ipcRenderer.removeListener('documents:event', handleEvent)
     },
   },
   sources: {

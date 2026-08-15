@@ -6,9 +6,11 @@ import {
   Folder,
   FolderOpen,
   Search,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import type { RoomDocument } from '@nxcore/agent-contract';
 import {
   createContextRoomResourceLibrary,
   getContextRoomOfficeFormat,
@@ -18,6 +20,7 @@ import type {
   ContextRoomRecord,
   ContextRoomResource,
 } from '../../types';
+import { ActionConfirmDialog } from '../shared';
 
 function EmptyState({ children }: { children: string }) {
   return <div className="context-room-workspace-empty">{children}</div>;
@@ -122,31 +125,120 @@ function HostFSOfficePicker({ onAdd, onClose }: { onAdd: (file: LocalOfficeFile)
   );
 }
 
-export function ResourceTree({ room, selectedId, onSelect, onAddFile }: {
+export function ResourceTree({
+  room,
+  backendDocuments,
+  selectedId,
+  onSelect,
+  onDeleteDocument,
+  onAddFile,
+}: {
   room: ContextRoomRecord;
+  backendDocuments: RoomDocument[];
   selectedId: string | null;
   onSelect: (resource: ContextRoomResource) => void;
+  onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
 }) {
-  const library = useMemo(() => createContextRoomResourceLibrary(room), [room]);
+  const library = useMemo(
+    () => createContextRoomResourceLibrary(room, backendDocuments),
+    [backendDocuments, room],
+  );
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(() => new Set(library.folders.map((folder) => folder.id)));
   const [showFilePicker, setShowFilePicker] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<RoomDocument | null>(null);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const normalized = query.trim().toLowerCase();
+  const backendById = useMemo(
+    () => new Map(backendDocuments.map((document) => [document.id, document])),
+    [backendDocuments],
+  );
+
+  const confirmDelete = (document: RoomDocument) => {
+    setDeleteError(null);
+    setDeletingDocumentId(document.id);
+    void onDeleteDocument(document)
+      .catch((error: unknown) => {
+        setDeleteError(error instanceof Error ? error.message : '删除文档失败');
+      })
+      .finally(() => setDeletingDocumentId(null));
+  };
+
   return (
     <div className="context-room-resource-tree">
       <label><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Room 内文档…" aria-label="搜索 Room 内文档" /></label>
       <button type="button" className="context-room-resource-add-file" onClick={() => setShowFilePicker((value) => !value)}><FolderOpen aria-hidden="true" />从文件系统添加 Office 文件</button>
       {showFilePicker ? <HostFSOfficePicker onAdd={(file) => { onAddFile(file); setShowFilePicker(false); }} onClose={() => setShowFilePicker(false)} /> : null}
+      {deleteError ? <div className="context-room-resource-error" role="alert">{deleteError}</div> : null}
       <div className="context-room-resource-scroll" role="tree" aria-label="Room 资源">
         {library.folders.map((folder) => {
           const resources = library.resources.filter((resource) => resource.folderId === folder.id && (!normalized || resource.name.toLowerCase().includes(normalized)));
           if (normalized && !resources.length) return null;
           const open = expanded.has(folder.id);
-          return <section key={folder.id}><button type="button" className="context-room-resource-folder" aria-expanded={open} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id); return next; })}><ChevronRight aria-hidden="true" className={open ? 'is-open' : ''} />{open ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}<span>{folder.name}</span><small>{resources.length}</small></button>{open ? resources.map((resource) => <button type="button" role="treeitem" aria-selected={selectedId === resource.id} key={resource.id} className={`context-room-resource-item${selectedId === resource.id ? ' is-selected' : ''}`} onClick={() => onSelect(resource)}>{resource.kind === 'cloud-doc' ? <FileText aria-hidden="true" /> : resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : <FileText aria-hidden="true" />}<span><b>{resource.name}</b><small>{resource.updatedAt}</small></span></button>) : null}</section>;
+          return (
+            <section key={folder.id}>
+              <button type="button" className="context-room-resource-folder" aria-expanded={open} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id); return next; })}>
+                <ChevronRight aria-hidden="true" className={open ? 'is-open' : ''} />
+                {open ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}
+                <span>{folder.name}</span><small>{resources.length}</small>
+              </button>
+              {open ? resources.map((resource) => {
+                const backendDocument = resource.kind === 'cloud-doc'
+                  ? backendById.get(resource.binding.docId)
+                  : undefined;
+                const deleting = backendDocument?.id === deletingDocumentId;
+                const busy = Boolean(backendDocument?.activeTransactionId);
+                return (
+                  <div className="context-room-resource-row" key={resource.id}>
+                    <button
+                      type="button"
+                      role="treeitem"
+                      aria-selected={selectedId === resource.id}
+                      className={`context-room-resource-item${selectedId === resource.id ? ' is-selected' : ''}`}
+                      onClick={() => onSelect(resource)}
+                    >
+                      {resource.kind === 'cloud-doc' ? <FileText aria-hidden="true" /> : resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : <FileText aria-hidden="true" />}
+                      <span><b>{resource.name}</b><small>{resource.updatedAt}</small></span>
+                    </button>
+                    {backendDocument ? (
+                      <button
+                        type="button"
+                        className="context-room-resource-delete"
+                        aria-label={`删除文档 ${resource.name}`}
+                        title={busy ? 'Agent 正在写入，暂时不能删除' : '删除文档'}
+                        disabled={busy || deleting}
+                        onClick={() => setDocumentToDelete(backendDocument)}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              }) : null}
+              {open && folder.id.endsWith(':folder:documents') && resources.length === 0 ? (
+                <p className="context-room-resource-folder-empty">暂无文档</p>
+              ) : null}
+            </section>
+          );
         })}
         {!library.resources.some((resource) => !normalized || resource.name.toLowerCase().includes(normalized)) ? <EmptyState>没有匹配的资源</EmptyState> : null}
       </div>
+      <ActionConfirmDialog
+        open={Boolean(documentToDelete)}
+        onOpenChange={(open) => { if (!open) setDocumentToDelete(null); }}
+        title="删除文档"
+        summary="文档正文和历史版本将被永久删除。"
+        rows={documentToDelete ? [{ label: '文档', value: documentToDelete.title }] : []}
+        risk="此操作无法撤销。"
+        confirmLabel="删除"
+        danger
+        onConfirm={() => {
+          if (documentToDelete) confirmDelete(documentToDelete);
+          setDocumentToDelete(null);
+        }}
+      />
     </div>
   );
 }

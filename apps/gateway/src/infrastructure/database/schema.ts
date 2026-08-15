@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const gatewayMetadata = sqliteTable("gateway_metadata", {
   key: text("key").primaryKey(),
@@ -117,4 +117,103 @@ export const agentEvents = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [uniqueIndex("agent_events_run_seq_idx").on(table.runId, table.seq)],
+);
+
+export const documents = sqliteTable("documents", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  contentJson: text("content_json", { mode: "json" }).notNull(),
+  version: integer("version").notNull().default(0),
+  status: text("status", { enum: ["draft", "active"] }).notNull().default("draft"),
+  activeTransactionId: text("active_transaction_id"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const roomDocumentLinks = sqliteTable(
+  "room_doc_links",
+  {
+    roomId: text("room_id").notNull(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    linkedAt: integer("linked_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_doc_links_room_document_idx").on(table.roomId, table.documentId),
+    index("room_doc_links_room_idx").on(table.roomId),
+  ],
+);
+
+export const documentVersions = sqliteTable(
+  "doc_versions",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    contentJson: text("content_json", { mode: "json" }).notNull(),
+    sourceTransactionId: text("source_transaction_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("doc_versions_document_version_idx").on(table.documentId, table.version)],
+);
+
+export const documentTransactions = sqliteTable(
+  "doc_transactions",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id").notNull(),
+    roomId: text("room_id").notNull(),
+    agentSessionId: text("agent_session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    runId: text("run_id").notNull(),
+    status: text("status", {
+      enum: ["open", "committed", "aborted", "expired", "interrupted"],
+    }).notNull().default("open"),
+    nextSequence: integer("next_sequence").notNull().default(1),
+    totalBytes: integer("total_bytes").notNull().default(0),
+    workingContentJson: text("working_content_json", { mode: "json" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("doc_transactions_session_idx").on(table.agentSessionId),
+    index("doc_transactions_expiry_idx").on(table.status, table.expiresAt),
+  ],
+);
+
+export const documentOps = sqliteTable(
+  "doc_ops",
+  {
+    id: text("id").primaryKey(),
+    transactionId: text("transaction_id")
+      .notNull()
+      .references(() => documentTransactions.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    markdown: text("markdown").notNull(),
+    sha256: text("sha256").notNull(),
+    byteLength: integer("byte_length").notNull(),
+    appliedContentJson: text("applied_content_json", { mode: "json" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("doc_ops_transaction_sequence_idx").on(table.transactionId, table.sequence)],
 );

@@ -10,34 +10,48 @@ export interface DisplayAgentMessage extends AgentMessage {
   streaming?: boolean
 }
 
+export function mergePendingAgentMessages(
+  messages: DisplayAgentMessage[],
+  pendingMessages: DisplayAgentMessage[],
+): DisplayAgentMessage[] {
+  if (pendingMessages.length === 0) return messages
+  const messageIds = new Set(messages.map((message) => message.id))
+  return [...messages, ...pendingMessages.filter((message) => !messageIds.has(message.id))]
+}
+
 const SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
 
-function readStoredSession(pageLabel: string): string | null {
+function sessionScope(pageLabel: string, roomId: string | null): string {
+  return `${pageLabel}:${roomId ?? 'global'}`
+}
+
+function readStoredSession(pageLabel: string, roomId: string | null): string | null {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}')
     if (!value || typeof value !== 'object') return null
-    const sessionId = (value as Record<string, unknown>)[pageLabel]
+    const sessionId = (value as Record<string, unknown>)[sessionScope(pageLabel, roomId)]
     return typeof sessionId === 'string' ? sessionId : null
   } catch {
     return null
   }
 }
 
-function storeSession(pageLabel: string, sessionId: string | null): void {
+function storeSession(pageLabel: string, roomId: string | null, sessionId: string | null): void {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}')
     const sessions = value && typeof value === 'object'
       ? { ...(value as Record<string, unknown>) }
       : {}
-    if (sessionId) sessions[pageLabel] = sessionId
-    else delete sessions[pageLabel]
+    const scope = sessionScope(pageLabel, roomId)
+    if (sessionId) sessions[scope] = sessionId
+    else delete sessions[scope]
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions))
   } catch {
     // Session persistence is optional when browser storage is unavailable.
   }
 }
 
-export function useAgentSession(pageLabel: string) {
+export function useAgentSession(pageLabel: string, roomId: string | null) {
   const api = window.nxcore?.agent
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
@@ -46,6 +60,7 @@ export function useAgentSession(pageLabel: string) {
   const [reasoning, setReasoning] = useState('')
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const sequenceByRun = useRef(new Map<string, number>())
@@ -136,10 +151,13 @@ export function useAgentSession(pageLabel: string) {
     }
   }, [])
 
-  const hydrateSnapshot = useCallback(async (snapshot: AgentSessionSnapshot) => {
+  const hydrateSnapshot = useCallback(async (
+    snapshot: AgentSessionSnapshot,
+    pendingMessages: DisplayAgentMessage[] = [],
+  ) => {
     sequenceByRun.current.clear()
     setReasoning('')
-    setMessages(snapshot.messages)
+    setMessages(mergePendingAgentMessages(snapshot.messages, pendingMessages))
     setActiveRunId(snapshot.activeRun?.id ?? null)
     setSessionId(snapshot.session.id)
     setCurrentSession(snapshot.session)
@@ -153,7 +171,10 @@ export function useAgentSession(pageLabel: string) {
     }
   }, [api, applyEvent])
 
-  const selectSession = useCallback(async (session: AgentSession): Promise<void> => {
+  const selectSession = useCallback(async (
+    session: AgentSession,
+    pendingMessages: DisplayAgentMessage[] = [],
+  ): Promise<void> => {
     if (!api) return
     setLoading(true)
     setConnected(false)
@@ -161,15 +182,15 @@ export function useAgentSession(pageLabel: string) {
     try {
       await api.unsubscribe()
       const snapshot = await api.getSession(session.id)
-      await hydrateSnapshot(snapshot)
-      storeSession(pageLabel, session.id)
+      await hydrateSnapshot(snapshot, pendingMessages)
+      storeSession(pageLabel, roomId, session.id)
       await api.subscribe(session.id)
     } catch (selectError) {
       setError(selectError instanceof Error ? selectError.message : '无法打开会话。')
     } finally {
       setLoading(false)
     }
-  }, [api, hydrateSnapshot, pageLabel])
+  }, [api, hydrateSnapshot, pageLabel, roomId])
 
   useEffect(() => {
     let alive = true
@@ -186,11 +207,11 @@ export function useAgentSession(pageLabel: string) {
 
     if (api) {
       setLoading(true)
-      void api.listSessions(pageLabel)
+      void api.listSessions(pageLabel, roomId)
         .then(async (listedSessions) => {
           if (!alive) return
           setSessions(listedSessions)
-          const storedSessionId = readStoredSession(pageLabel)
+          const storedSessionId = readStoredSession(pageLabel, roomId)
           const selected = listedSessions.find((session) => session.id === storedSessionId)
             ?? listedSessions[0]
           if (selected) await selectSession(selected)
@@ -221,15 +242,17 @@ export function useAgentSession(pageLabel: string) {
       removeListener?.()
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, pageLabel, selectSession])
+  }, [api, applyEvent, hydrateSnapshot, pageLabel, roomId, selectSession])
 
-  const createSession = async (): Promise<AgentSession> => {
+  const createSession = async (
+    pendingMessages: DisplayAgentMessage[] = [],
+  ): Promise<AgentSession> => {
     if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
     if (activeRunId) throw new Error('请先停止当前运行，再新建会话。')
     try {
-      const session = await api.createSession({ pageLabel })
+      const session = await api.createSession({ pageLabel, roomId })
       setSessions((current) => [session, ...current])
-      await selectSession(session)
+      await selectSession(session, pendingMessages)
       return session
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : '无法新建会话。')
@@ -237,9 +260,9 @@ export function useAgentSession(pageLabel: string) {
     }
   }
 
-  const ensureSession = async (): Promise<string> => {
+  const ensureSession = async (pendingMessages: DisplayAgentMessage[]): Promise<string> => {
     if (sessionIdRef.current) return sessionIdRef.current
-    return (await createSession()).id
+    return (await createSession(pendingMessages)).id
   }
 
   const renameSession = async (sessionIdToRename: string, title: string): Promise<void> => {
@@ -270,7 +293,7 @@ export function useAgentSession(pageLabel: string) {
           setMessages([])
           setReasoning('')
           setConnected(false)
-          storeSession(pageLabel, null)
+          storeSession(pageLabel, roomId, null)
         }
       }
     } catch (deleteError) {
@@ -280,21 +303,26 @@ export function useAgentSession(pageLabel: string) {
 
   const sendPrompt = async (prompt: string): Promise<void> => {
     const message = prompt.trim()
-    if (!message || activeRunId || loading) return
-    setLoading(true)
+    if (!message || activeRunId || loading || sending) return
+    const optimisticId = `user-${crypto.randomUUID()}`
+    const optimisticMessage: DisplayAgentMessage = {
+      id: optimisticId,
+      sessionId: sessionIdRef.current ?? 'pending',
+      runId: 'pending',
+      role: 'user',
+      content: message,
+      createdAt: new Date().toISOString(),
+    }
+
+    setMessages((current) => mergePendingAgentMessages(current, [optimisticMessage]))
+    setSending(true)
     setError(null)
     setReasoning('')
     try {
-      const currentSessionId = await ensureSession()
-      const optimisticId = `user-${crypto.randomUUID()}`
-      setMessages((current) => [...current, {
-        id: optimisticId,
-        sessionId: currentSessionId,
-        runId: 'pending',
-        role: 'user',
-        content: message,
-        createdAt: new Date().toISOString(),
-      }])
+      const currentSessionId = await ensureSession([optimisticMessage])
+      setMessages((current) => current.map((item) => item.id === optimisticId
+        ? { ...item, sessionId: currentSessionId }
+        : item))
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
@@ -313,7 +341,7 @@ export function useAgentSession(pageLabel: string) {
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : '无法启动 Agent。')
     } finally {
-      setLoading(false)
+      setSending(false)
     }
   }
 
@@ -333,7 +361,7 @@ export function useAgentSession(pageLabel: string) {
     currentSession,
     deleteSession,
     error,
-    loading,
+    loading: loading || sending,
     messages,
     reasoning,
     renameSession,

@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 
 import type { PageId } from '@/data/navigation'
 import type { ContextRoomWorkspaceTab } from './context-room/contextRoomTabs'
+import { ContextRoomHomeSkeleton } from './context-room/ContextRoomHomeSkeleton'
 import { DocsPage } from './pages/DocsPage'
 import { HomePage } from './pages/HomePage'
 import { MemoryPage } from './pages/MemoryPage'
@@ -40,7 +41,7 @@ export function PageCanvas({
   if (page === 'home') return <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
   if (page === 'rooms') {
     return (
-      <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载 Context Room...</div></div>}>
+      <Suspense fallback={<ContextRoomHomeSkeleton />}>
         <ContextRoomPage
           activeRoomId={activeContextRoomId}
           homeRequest={contextRoomHomeRequest}

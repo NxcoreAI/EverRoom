@@ -30,6 +30,28 @@
   height: 15px;
 }
 
+.context-room-tiptap-bubble > .context-room-tiptap-ask-ai {
+  display: inline-flex;
+  width: auto;
+  min-width: 70px;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  color: var(--cr-blue);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.context-room-tiptap-bubble > .context-room-tiptap-ask-ai:hover:not(:disabled) {
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-tiptap-bubble > .context-room-tiptap-ask-ai:disabled {
+  opacity: 0.42;
+}
+
 .context-room-tiptap-bubble-divider {
   width: 1px;
   height: 18px;
@@ -67,6 +89,191 @@
   display: flex;
   width: 264px;
   gap: 5px;
+}
+
+.context-room-tiptap-bubble-ai {
+  display: grid;
+  width: min(340px, calc(100vw - 32px));
+  grid-template-columns: 18px minmax(0, 1fr) 28px 28px;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-room-tiptap-bubble-ai > svg {
+  width: 15px;
+  height: 15px;
+  color: var(--cr-blue);
+}
+
+.context-room-tiptap-bubble-ai input {
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-tiptap-bubble-ai button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+}
+
+.context-room-tiptap-bubble-ai button[type='submit'] {
+  background: var(--cr-blue);
+  color: #fff;
+}
+
+.context-room-tiptap-bubble-ai button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-tiptap-bubble-ai button[type='submit']:hover {
+  background: color-mix(in srgb, var(--cr-blue) 88%, #000);
+  color: #fff;
+}
+
+.context-room-tiptap-rewrite-original {
+  border-radius: 3px;
+  background: rgba(248, 113, 113, 0.22);
+  box-shadow: inset 0 -1px rgba(200, 50, 50, 0.35);
+  text-decoration-color: rgba(200, 50, 50, 0.7);
+  text-decoration-line: line-through;
+}
+
+.context-room-tiptap-rewrite-preview {
+  position: fixed;
+  z-index: 100;
+  display: grid;
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(250px, calc(100vh - 24px));
+  grid-template-rows: auto minmax(36px, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 7px;
+  background: #f7fff9;
+  box-shadow: 0 12px 32px rgba(22, 27, 38, 0.16);
+  color: var(--cr-text);
+}
+
+.context-room-tiptap-rewrite-preview[data-phase='error'] {
+  border-color: color-mix(in srgb, var(--cr-danger) 36%, transparent);
+  background: #fffafa;
+}
+
+.context-room-tiptap-rewrite-preview header,
+.context-room-tiptap-rewrite-preview footer {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.context-room-tiptap-rewrite-preview header {
+  gap: 7px;
+  border-bottom: 1px solid rgba(34, 197, 94, 0.2);
+  color: #166534;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.context-room-tiptap-rewrite-preview[data-phase='error'] header {
+  border-bottom-color: color-mix(in srgb, var(--cr-danger) 18%, transparent);
+  color: var(--cr-danger);
+}
+
+.context-room-tiptap-rewrite-preview header > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-tiptap-rewrite-preview header > div {
+  display: flex;
+  margin-left: auto;
+  gap: 2px;
+}
+
+.context-room-tiptap-rewrite-preview button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+}
+
+.context-room-tiptap-rewrite-preview button:hover {
+  background: rgba(31, 31, 31, 0.07);
+}
+
+.context-room-tiptap-rewrite-preview button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-tiptap-rewrite-text {
+  min-width: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  color: #166534;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.context-room-tiptap-rewrite-preview[data-phase='error'] .context-room-tiptap-rewrite-text {
+  color: var(--cr-danger);
+}
+
+.context-room-tiptap-rewrite-preview footer {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.context-room-tiptap-rewrite-preview footer button {
+  background: #208a48;
+  color: #fff;
+}
+
+.context-room-tiptap-rewrite-preview footer button:hover {
+  background: #166534;
+}
+
+.context-room-tiptap-rewrite-caret {
+  display: inline-block;
+  width: 1px;
+  height: 1.15em;
+  background: #208a48;
+  vertical-align: -0.16em;
+  animation: context-room-tiptap-rewrite-caret 800ms steps(1) infinite;
+}
+
+.context-room-tiptap-rewrite-preview .is-spinning {
+  animation: context-room-tiptap-rewrite-spin 800ms linear infinite;
+}
+
+@keyframes context-room-tiptap-rewrite-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes context-room-tiptap-rewrite-caret {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-room-tiptap-rewrite-preview .is-spinning,
+  .context-room-tiptap-rewrite-caret {
+    animation: none;
+  }
 }
 
 .context-room-tiptap-bubble-link input {
@@ -169,6 +376,16 @@
   z-index: 45;
 }
 
+.context-room-tiptap-drag-handle[data-hover-visible='true']:not([data-dragging='true']) {
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+.context-room-tiptap-drag-handle[data-hover-visible='false'] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 .context-room-tiptap-drag-handle::before {
   position: absolute;
   inset: -14px 0 -14px -20px;
@@ -177,10 +394,15 @@
 
 .context-room-tiptap-block-controls {
   position: relative;
+  right: 4px;
   display: flex;
   align-items: center;
-  gap: 1px;
-  padding-right: 5px;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  box-shadow: 0 4px 12px rgba(22, 27, 38, 0.12);
 }
 
 .context-room-tiptap-block-controls > button {
@@ -267,7 +489,32 @@
   min-height: 0;
   overflow: auto;
   padding-right: 30px;
+  scrollbar-width: thin;
   container-type: inline-size;
+}
+
+.context-room-tiptap-scroll::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.context-room-tiptap-scroll::-webkit-scrollbar-track,
+.context-room-tiptap-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.context-room-tiptap-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: transparent;
+  background-clip: padding-box;
+  transition: background-color 220ms ease-out;
+}
+
+.context-room-tiptap-scroll[data-scrolling='true']::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--cr-muted) 44%, transparent);
+  background-clip: padding-box;
+  transition-duration: 70ms;
 }
 
 .context-room-tiptap-content-scale {
