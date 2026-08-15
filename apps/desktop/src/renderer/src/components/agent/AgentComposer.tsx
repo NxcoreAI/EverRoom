@@ -1,15 +1,27 @@
-import { ArrowUp, Sparkles, Square } from 'lucide-react'
+import { ArrowUp, Plus, Square, X } from 'lucide-react'
 import { forwardRef, type FormEvent, type KeyboardEvent } from 'react'
 
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary: string
+  hasSelectedText: boolean
   value: string
   active: boolean
   loading: boolean
   onChange: (value: string) => void
+  onClearContext: () => void
   onStop: () => void
   onSubmit: () => void
-}>(function AgentComposer({ active, contextSummary, loading, value, onChange, onStop, onSubmit }, ref) {
+}>(function AgentComposer({
+  active,
+  contextSummary,
+  hasSelectedText,
+  loading,
+  value,
+  onChange,
+  onClearContext,
+  onStop,
+  onSubmit,
+}, ref) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onSubmit()
@@ -24,12 +36,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   return (
     <form className="agent-composer-shell" onSubmit={submit}>
-      <div className="agent-composer-context">{contextSummary}</div>
       <div className="agent-prompt">
         <textarea
           ref={ref}
           aria-label="桌面 AI 工作台输入框"
-          placeholder={active ? 'Agent 正在处理…' : '问 Agent，或基于当前上下文继续…'}
+          placeholder={active ? 'Agent 正在处理...' : '基于当前 Room 提问，或描述要执行的动作'}
           rows={2}
           value={value}
           disabled={active}
@@ -38,8 +49,16 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         />
         <div className="agent-prompt-actions">
           <button type="button" className="agent-prompt-tool" title="打开输入工具" aria-label="打开输入工具">
-            <Sparkles aria-hidden="true" />
+            <Plus aria-hidden="true" />
           </button>
+          <span className="agent-composer-context" title={contextSummary}>
+            <span>{contextSummary}</span>
+            {hasSelectedText ? (
+              <button type="button" aria-label="移除选中文字" title="移除选中文字" onClick={onClearContext}>
+                <X aria-hidden="true" />
+              </button>
+            ) : null}
+          </span>
           {active ? (
             <button type="button" className="agent-prompt-submit is-stop" title="停止" aria-label="停止" onClick={onStop}>
               <Square aria-hidden="true" />
