@@ -15,6 +15,20 @@
       "when": 1786721919374,
       "tag": "0001_motionless_captain_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786741538906,
+      "tag": "0002_massive_epoch",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786797375393,
+      "tag": "0003_opposite_beast",
+      "breakpoints": true
     }
   ]
 }

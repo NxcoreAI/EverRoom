@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
+import { eq } from "drizzle-orm";
 import type { AgentEvent, AgentRun, AgentSession, AgentSessionSnapshot } from "@nxcore/agent-contract";
 import type { GatewayConfig } from "../src/config.js";
+import { agentRuns, agentSessions } from "../src/infrastructure/database/schema.js";
 import { createServer } from "../src/server/create-server.js";
 
 const temporaryDirectories: string[] = [];
@@ -22,6 +24,7 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
+    remoteAgent: null,
     pi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
@@ -260,5 +263,64 @@ describe("agent gateway", () => {
     expect(terminal.session.status).toBe("idle");
     expect(finalRun.status).toBe("cancelled");
     await app.close();
+  });
+
+  it("interrupts stale runs and releases their sessions after a restart", async () => {
+    const config = await testConfig();
+    const firstApp = await createServer(config);
+    const now = new Date();
+    const sessionId = "stale-session";
+    const runId = "stale-run";
+    firstApp.db.insert(agentSessions).values({
+      id: sessionId,
+      roomId: "room-1",
+      pageLabel: "Context Room",
+      runtimeId: "fake",
+      runtimeSessionRef: "stale-runtime-session",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+    firstApp.db.insert(agentRuns).values({
+      id: runId,
+      sessionId,
+      idempotencyKey: "stale-run-key",
+      status: "running",
+      prompt: "未完成的对话",
+      lastEventSeq: 2,
+      startedAt: now,
+      createdAt: now,
+    }).run();
+    await firstApp.close();
+
+    const restartedApp = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const snapshot = (await restartedApp.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${sessionId}`,
+      headers,
+    })).json<AgentSessionSnapshot>();
+    const run = (await restartedApp.inject({
+      method: "GET",
+      url: `/v1/agent/runs/${runId}`,
+      headers,
+    })).json<AgentRun>();
+    const events = (await restartedApp.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${sessionId}/events?runId=${runId}&afterSeq=0`,
+      headers,
+    })).json<AgentEvent[]>();
+
+    expect(snapshot.activeRun).toBeNull();
+    expect(snapshot.session.status).toBe("interrupted");
+    expect(run.status).toBe("interrupted");
+    expect(events).toContainEqual(expect.objectContaining({
+      seq: 3,
+      type: "run.interrupted",
+      payload: { reason: "gateway-restarted" },
+    }));
+    expect(restartedApp.db.select().from(agentSessions)
+      .where(eq(agentSessions.id, sessionId)).get()?.runtimeSessionRef).toBeNull();
+    await restartedApp.close();
   });
 });

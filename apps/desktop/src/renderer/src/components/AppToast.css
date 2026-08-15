@@ -1,0 +1,50 @@
+.app-toast {
+  position: fixed;
+  z-index: 900;
+  right: 24px;
+  bottom: 24px;
+  display: grid;
+  width: min(360px, calc(100vw - 32px));
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 10px 11px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: 0 10px 30px rgba(20, 23, 27, 0.14);
+  backdrop-filter: blur(16px);
+  animation: app-toast-in 180ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.app-toast > span,
+.app-toast > button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+}
+
+.app-toast > span { background: var(--surface-alt); color: var(--accent-strong); }
+.app-toast > span svg { width: 15px; height: 15px; }
+.app-toast > div { display: grid; min-width: 0; gap: 2px; }
+.app-toast strong { font-size: 12px; }
+.app-toast small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.app-toast > button { padding: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.app-toast > button:hover { background: var(--hover); color: var(--text); }
+.app-toast > button svg { width: 14px; height: 14px; }
+
+@keyframes app-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 620px) {
+  .app-toast { right: 16px; bottom: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-toast { animation: none; }
+}

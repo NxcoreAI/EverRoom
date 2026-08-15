@@ -1,3 +1,4 @@
+import type { RoomDocument } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import type { DetailPane } from '../RoomIconSidebar';
 import {
@@ -14,7 +15,9 @@ export function WorkspacePaneBody({
   pane,
   room,
   selectedResourceId,
+  backendDocuments,
   onSelectResource,
+  onDeleteDocument,
   onAddFile,
   onOpenMemory,
   onOpenObject,
@@ -26,7 +29,9 @@ export function WorkspacePaneBody({
   pane: DetailPane;
   room: ContextRoomRecord;
   selectedResourceId: string | null;
+  backendDocuments: RoomDocument[];
   onSelectResource: (resource: ContextRoomResource) => void;
+  onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (id: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
@@ -40,7 +45,9 @@ export function WorkspacePaneBody({
       <ResourceTree
         room={room}
         selectedId={selectedResourceId}
+        backendDocuments={backendDocuments}
         onSelect={onSelectResource}
+        onDeleteDocument={onDeleteDocument}
         onAddFile={onAddFile}
       />
     );

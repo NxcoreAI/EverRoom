@@ -80,6 +80,48 @@ export class AgentService {
     private readonly logger: AgentServiceLogger = silentLogger,
   ) {}
 
+  async initialize(): Promise<void> {
+    const staleRuns = this.db
+      .select()
+      .from(agentRuns)
+      .where(inArray(agentRuns.status, ["accepted", "running"]))
+      .orderBy(asc(agentRuns.createdAt))
+      .all();
+
+    for (const run of staleRuns) {
+      const session = this.db
+        .select()
+        .from(agentSessions)
+        .where(eq(agentSessions.id, run.sessionId))
+        .get();
+      if (session?.runtimeId === this.runtime.id && session.runtimeSessionRef) {
+        try {
+          await this.runtime.deleteSession(session.runtimeSessionRef);
+        } catch (error) {
+          this.logger.info({
+            event: "agent.recovery.remote_stop_failed",
+            sessionId: session.id,
+            runId: run.id,
+            error: error instanceof Error ? error.message : String(error),
+          }, "failed to stop stale remote Agent session");
+        }
+      }
+      await this.appendEvent(run.sessionId, run.id, {
+        type: "run.interrupted",
+        payload: { reason: "gateway-restarted" },
+      });
+      this.db.update(agentSessions)
+        .set({ runtimeSessionRef: null, updatedAt: new Date() })
+        .where(eq(agentSessions.id, run.sessionId))
+        .run();
+      this.logger.info({
+        event: "agent.recovery.interrupted",
+        sessionId: run.sessionId,
+        runId: run.id,
+      }, "interrupted stale Agent run during startup");
+    }
+  }
+
   async dispose(): Promise<void> {
     await this.runtime.dispose();
   }
@@ -99,15 +141,13 @@ export class AgentService {
     return toSession(created);
   }
 
-  listSessions(pageLabel?: string): AgentSession[] {
-    const query = this.db.select().from(agentSessions);
-    const rows = pageLabel === undefined
-      ? query.orderBy(desc(agentSessions.updatedAt), desc(agentSessions.createdAt)).all()
-      : query.where(eq(agentSessions.pageLabel, pageLabel)).orderBy(
-        desc(agentSessions.updatedAt),
-        desc(agentSessions.createdAt),
-      ).all();
-    return rows.map(toSession);
+  listSessions(pageLabel?: string, roomId?: string | null): AgentSession[] {
+    const rows = this.db.select().from(agentSessions)
+      .orderBy(desc(agentSessions.updatedAt), desc(agentSessions.createdAt)).all();
+    return rows
+      .filter((row) => pageLabel === undefined || row.pageLabel === pageLabel)
+      .filter((row) => roomId === undefined || row.roomId === roomId)
+      .map(toSession);
   }
 
   updateSession(sessionId: string, input: UpdateAgentSessionInput): AgentSession | null {
@@ -247,10 +287,11 @@ export class AgentService {
       runtimeRun = await this.runtime.start({
         runId,
         sessionId,
-        runtimeSessionRef: session.runtimeSessionRef,
-        prompt: input.prompt,
-        pageLabel: session.pageLabel,
-      });
+      runtimeSessionRef: session.runtimeSessionRef,
+      prompt: input.prompt,
+      pageLabel: session.pageLabel,
+      roomId: session.roomId,
+    });
     } catch (error) {
       await this.appendEvent(sessionId, runId, {
         type: "run.failed",

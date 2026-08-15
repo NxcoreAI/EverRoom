@@ -16,15 +16,19 @@ function errorMessage(error: unknown): string {
     .replace(/^Error:\s*/, '')
 }
 
+function reportRequestError(detail: DesktopRequestError): void {
+  console.error('[desktop-request] failed', detail)
+  ipcRenderer.send('app:request-error', detail)
+  if (requestErrorListeners.size === 0) pendingRequestError = detail
+  else for (const listener of requestErrorListeners) listener(detail)
+}
+
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   try {
     return await ipcRenderer.invoke(channel, ...args) as T
   } catch (error) {
     const detail = { channel, message: errorMessage(error) }
-    console.error('[desktop-request] failed', detail)
-    ipcRenderer.send('app:request-error', detail)
-    if (requestErrorListeners.size === 0) pendingRequestError = detail
-    else for (const listener of requestErrorListeners) listener(detail)
+    reportRequestError(detail)
     throw error
   }
 }
@@ -40,6 +44,7 @@ const api: NxcoreDesktopApi = {
       }
       return () => requestErrorListeners.delete(listener)
     },
+    report: reportRequestError,
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
@@ -52,6 +57,7 @@ const api: NxcoreDesktopApi = {
     logout: () => invoke('account:logout'),
   },
   asr: {
+    openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
     beginRecording: (mimeType) => invoke('asr:begin-recording', mimeType),
     appendRecording: (id, chunk) => invoke('asr:append-recording', id, chunk),
     finishRecording: (id) => invoke('asr:finish-recording', id),
@@ -77,8 +83,29 @@ const api: NxcoreDesktopApi = {
     deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
       invoke('memory:delete-conversations', target),
   },
+  reality: {
+    listEvents: (filters) => invoke('reality:list-events', filters),
+    getEvent: (id) => invoke('reality:get-event', id),
+    createEvent: (input) => invoke('reality:create-event', input),
+    finishCapture: (id, input) => invoke('reality:finish-capture', id, input),
+    updateTranscript: (id, input) => invoke('reality:update-transcript', id, input),
+    addMarker: (id, input) => invoke('reality:add-marker', id, input),
+    confirm: (id) => invoke('reality:confirm', id),
+    discard: (id) => invoke('reality:discard', id),
+    fail: (id, error) => invoke('reality:fail', id, error),
+    readAudio: (id) => invoke('reality:read-audio', id),
+    subscribe: () => invoke('reality:subscribe'),
+    unsubscribe: () => invoke('reality:unsubscribe'),
+    onEvent: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
+        listener(frame)
+      }
+      ipcRenderer.on('reality:event', handleEvent)
+      return () => ipcRenderer.removeListener('reality:event', handleEvent)
+    },
+  },
   agent: {
-    listSessions: (pageLabel) => invoke('agent:list-sessions', pageLabel),
+    listSessions: (pageLabel, roomId) => invoke('agent:list-sessions', pageLabel, roomId),
     createSession: (input) => invoke('agent:create-session', input),
     updateSession: (sessionId, input) => invoke('agent:update-session', sessionId, input),
     deleteSession: (sessionId) => invoke('agent:delete-session', sessionId),
@@ -95,6 +122,23 @@ const api: NxcoreDesktopApi = {
       }
       ipcRenderer.on('agent:event', handleEvent)
       return () => ipcRenderer.removeListener('agent:event', handleEvent)
+    },
+  },
+  documents: {
+    list: (roomId) => ipcRenderer.invoke('documents:list', roomId),
+    get: (documentId) => ipcRenderer.invoke('documents:get', documentId),
+    import: (input) => ipcRenderer.invoke('documents:import', input),
+    save: (documentId, input) => ipcRenderer.invoke('documents:save', documentId, input),
+    delete: (documentId) => ipcRenderer.invoke('documents:delete', documentId),
+    acknowledge: (transactionId, input) => ipcRenderer.invoke('documents:acknowledge', transactionId, input),
+    subscribe: (roomId) => ipcRenderer.invoke('documents:subscribe', roomId),
+    unsubscribe: (roomId) => ipcRenderer.invoke('documents:unsubscribe', roomId),
+    onEvent: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
+        listener(frame)
+      }
+      ipcRenderer.on('documents:event', handleEvent)
+      return () => ipcRenderer.removeListener('documents:event', handleEvent)
     },
   },
   sources: {

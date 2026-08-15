@@ -1,5 +1,8 @@
 import { Readable } from 'node:stream'
 
+import type { RawAxiosRequestHeaders } from 'axios'
+
+import { createLoggedHttpClient } from '../network/http-client'
 import type {
   Connector,
   ConnectorConnection,
@@ -16,7 +19,6 @@ export interface GitHubConfig {
 
 interface GitHubResponse<T> {
   data: T
-  headers: Headers
 }
 
 interface Repository {
@@ -57,6 +59,10 @@ interface Comment {
 }
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024
+const http = createLoggedHttpClient('github', {
+  baseURL: 'https://api.github.com',
+  timeout: 15_000,
+})
 const TEXT_EXTENSIONS = new Set([
   '.c', '.cc', '.cpp', '.css', '.go', '.h', '.hpp', '.html', '.java', '.js', '.json',
   '.jsx', '.md', '.mdx', '.py', '.rb', '.rs', '.sh', '.sql', '.swift', '.toml', '.ts',
@@ -128,22 +134,22 @@ export class GitHubConnector implements Connector<GitHubConfig> {
     return { remoteId, title, uri, path, extension, byteSize, modifiedAt, openContent: () => Readable.from([content]) }
   }
 
-  private headers(token: string | undefined): HeadersInit {
+  private headers(token: string | undefined): RawAxiosRequestHeaders {
     return { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'NxCore-CE', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
   }
 
-  private async request<T>(path: string, headers: HeadersInit): Promise<GitHubResponse<T>> {
-    const response = await fetch(`https://api.github.com${path}`, { headers })
-    if (!response.ok) {
+  private async request<T>(path: string, headers: RawAxiosRequestHeaders): Promise<GitHubResponse<T>> {
+    const response = await http.get<T>(path, { headers, validateStatus: () => true })
+    if (response.status >= 400) {
       if (response.status === 401) throw new Error('GitHub 凭证无效或已过期。')
       if (response.status === 403) throw new Error('GitHub 请求被拒绝，可能触发了速率限制。')
       if (response.status === 404) throw new Error('GitHub 仓库、分支或对象不存在。')
       throw new Error(`GitHub API 请求失败（${response.status}）。`)
     }
-    return { data: await response.json() as T, headers: response.headers }
+    return { data: response.data }
   }
 
-  private async listAll<T>(path: string, headers: HeadersInit): Promise<T[]> {
+  private async listAll<T>(path: string, headers: RawAxiosRequestHeaders): Promise<T[]> {
     const separator = path.includes('?') ? '&' : '?'
     const all: T[] = []
     for (let page = 1; page <= 100; page += 1) {

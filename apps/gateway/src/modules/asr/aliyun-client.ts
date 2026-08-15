@@ -1,3 +1,6 @@
+import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from "axios";
+import type { Logger } from "pino";
+import { createLoggedHttpClient } from "../../http/logged-axios.js";
 import { AliyunAsrError } from "./errors.js";
 import type { AsrAudioStorage } from "./audio-storage.js";
 import type { AsrResult, AsrSegment, AsrTaskSnapshot, SubmitAsrInput, SubmittedAsrTask } from "./types.js";
@@ -24,7 +27,8 @@ export interface AliyunAsrClientOptions {
   apiKey: string;
   baseUrl: string;
   model: string;
-  fetch?: typeof globalThis.fetch;
+  http?: AxiosInstance;
+  logger?: Logger;
   audioStorage?: AsrAudioStorage;
 }
 
@@ -106,7 +110,7 @@ export class AliyunAsrClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly model: string;
-  private readonly fetch: typeof globalThis.fetch;
+  private readonly http: AxiosInstance;
   private readonly audioStorage: AsrAudioStorage | undefined;
   private readonly cleanupByTaskId = new Map<string, () => Promise<void>>();
 
@@ -114,7 +118,7 @@ export class AliyunAsrClient {
     this.apiKey = options.apiKey;
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.model = options.model;
-    this.fetch = options.fetch ?? globalThis.fetch;
+    this.http = options.http ?? createLoggedHttpClient("aliyun-asr", options.logger);
     this.audioStorage = options.audioStorage;
   }
 
@@ -137,7 +141,7 @@ export class AliyunAsrClient {
           "Content-Type": "application/json",
           "X-DashScope-Async": "enable",
         },
-        body: JSON.stringify({
+        data: {
           model: this.model,
           input: {
             file_urls: [uploaded.url],
@@ -157,7 +161,7 @@ export class AliyunAsrClient {
             diarization_enabled: input.diarizationEnabled,
             ...(input.languageHints?.length ? { language_hints: input.languageHints } : {}),
           },
-        }),
+        },
         },
       );
     } catch (error) {
@@ -217,20 +221,23 @@ export class AliyunAsrClient {
     }
 
     const results = await Promise.all(urls.map(async (url) => {
-      let response: Response;
+      let response: AxiosResponse<unknown>;
       try {
-        response = await this.fetch(url, { headers: { Accept: "application/json" } });
+        response = await this.http.request({
+          url,
+          headers: { Accept: "application/json" },
+          validateStatus: () => true,
+        });
       } catch (cause) {
         throw new AliyunAsrError("download transcription", "network request failed", { cause });
       }
-      if (!response.ok) {
+      if (response.status >= 400) {
         throw new AliyunAsrError("download transcription", `HTTP ${response.status}`);
       }
-      try {
-        return await response.json() as unknown;
-      } catch (cause) {
-        throw new AliyunAsrError("download transcription", "invalid JSON response", { cause });
+      if (typeof response.data === "string") {
+        throw new AliyunAsrError("download transcription", "invalid JSON response");
       }
+      return response.data;
     }));
     return normalizeTranscriptionResults(results);
   }
@@ -245,29 +252,29 @@ export class AliyunAsrClient {
   private async request<T>(
     operation: string,
     url: string | URL,
-    init: RequestInit = {},
+    config: AxiosRequestConfig = {},
   ): Promise<DashScopeEnvelope<T>> {
-    let response: Response;
+    let response: AxiosResponse<DashScopeEnvelope<T>>;
     try {
-      response = await this.fetch(url, {
-        ...init,
+      response = await this.http.request<DashScopeEnvelope<T>>({
+        url: String(url),
+        ...config,
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
           Accept: "application/json",
-          ...init.headers,
+          ...config.headers,
         },
+        validateStatus: () => true,
       });
     } catch (cause) {
       throw new AliyunAsrError(operation, "network request failed", { cause });
     }
 
-    let body: DashScopeEnvelope<T>;
-    try {
-      body = await response.json() as DashScopeEnvelope<T>;
-    } catch (cause) {
-      throw new AliyunAsrError(operation, `invalid JSON response (HTTP ${response.status})`, { cause });
+    const body = response.data;
+    if (!body || typeof body !== "object") {
+      throw new AliyunAsrError(operation, `invalid JSON response (HTTP ${response.status})`);
     }
-    if (!response.ok || body.code) {
+    if (response.status >= 400 || body.code) {
       throw new AliyunAsrError(
         operation,
         body.message ?? body.code ?? `HTTP ${response.status}`,

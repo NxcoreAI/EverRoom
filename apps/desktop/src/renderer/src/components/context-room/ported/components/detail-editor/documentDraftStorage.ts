@@ -55,3 +55,11 @@ export function writeDocumentDraft(documentId: string, content: JSONContent): bo
     return false
   }
 }
+
+export function removeDocumentDraft(documentId: string): void {
+  try {
+    localStorage.removeItem(`${DOCUMENT_DRAFT_PREFIX}${documentId}`)
+  } catch {
+    // The Gateway remains authoritative when browser storage is unavailable.
+  }
+}
