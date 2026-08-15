@@ -19,6 +19,9 @@ import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
 import { AsrService } from "../modules/asr/service.js";
 import type { AsrProvider } from "../modules/asr/types.js";
+import { RealityError } from "../modules/reality/errors.js";
+import { realityRoutes } from "../modules/reality/routes.js";
+import { RealityService } from "../modules/reality/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -48,6 +51,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
     if (error instanceof AsrError) {
+      await reply.code(error.statusCode).send({
+        error: error.code,
+        message: error.message,
+        requestId: request.id,
+      });
+      return;
+    }
+    if (error instanceof RealityError) {
       await reply.code(error.statusCode).send({
         error: error.code,
         message: error.message,
@@ -101,6 +112,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
+  const realityService = new RealityService(db, config.asrInputDir, app.log);
+  const recoveredCaptures = realityService.recoverInterruptedCaptures();
+  if (recoveredCaptures > 0) {
+    app.log.info({ recoveredCaptures }, "interrupted reality captures recovered");
+  }
   app.addHook("onClose", async () => {
     await agentService.dispose();
     await asrService.dispose();
@@ -109,6 +125,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   await app.register(agentRoutes(agentService));
   await app.register(asrRoutes(asrService));
+  await app.register(realityRoutes(realityService));
 
   return app;
 }

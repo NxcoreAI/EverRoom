@@ -27,6 +27,10 @@ function gatewayStatusLabel(status: GatewayStatus): string {
   }
 }
 
+function remainingMinutes(seconds: number): string {
+  return Math.ceil(Math.max(0, seconds) / 60).toLocaleString('zh-CN')
+}
+
 export function Sidebar({
   activePage,
   onNavigate,
@@ -93,6 +97,8 @@ export function Sidebar({
   const accountDescription = account?.authenticated
     ? account.subscription?.planName ? `${account.subscription.planName} 套餐` : 'EverRoom SaaS 已连接'
     : account === null ? '账号状态' : '本地模式'
+  const subscription = account?.authenticated ? account.subscription : undefined
+  const remainingQuotaMinutes = subscription ? remainingMinutes(subscription.remainingSeconds) : null
 
   return (
     <aside className="sidebar">
@@ -157,6 +163,16 @@ export function Sidebar({
         <span className="account-copy">
           <strong>{accountName}</strong>
           <small>{accountDescription}</small>
+          {subscription ? (
+            <span className="account-quota">
+              <span>剩余 {remainingQuotaMinutes} 分钟</span>
+              <progress
+                aria-label={`剩余转写额度 ${remainingQuotaMinutes} 分钟`}
+                max={Math.max(1, subscription.quotaSeconds)}
+                value={Math.min(Math.max(0, subscription.remainingSeconds), subscription.quotaSeconds)}
+              />
+            </span>
+          ) : null}
         </span>
       </button>
     </aside>

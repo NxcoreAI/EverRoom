@@ -11,6 +11,14 @@ export function AppErrorDialog() {
 
   if (!error) return null
 
+  const handlePrimaryAction = () => {
+    const action = error.action
+    setError(null)
+    if (action === 'open-system-audio-settings') {
+      void window.nxcore?.asr.openSystemAudioSettings().catch(() => undefined)
+    }
+  }
+
   return (
     <div className="app-error-overlay" role="presentation" onMouseDown={() => setError(null)}>
       <section
@@ -32,10 +40,12 @@ export function AppErrorDialog() {
         </button>
         <span className="app-error-icon" aria-hidden="true"><CircleAlert /></span>
         <div className="app-error-copy">
-          <h2 id="app-error-title">请求未完成</h2>
+          <h2 id="app-error-title">{error.title ?? '请求未完成'}</h2>
           <p id="app-error-message">{error.message}</p>
         </div>
-        <button className="primary-button" type="button" onClick={() => setError(null)}>知道了</button>
+        <button className="primary-button" type="button" onClick={handlePrimaryAction}>
+          {error.actionLabel ?? '知道了'}
+        </button>
       </section>
     </div>
   )

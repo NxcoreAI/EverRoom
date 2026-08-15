@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { AgentPanel } from '@/components/AgentPanel'
 import { AppErrorDialog } from '@/components/AppErrorDialog'
+import { AppToast } from '@/components/AppToast'
 import { PageCanvas } from '@/components/PageCanvas'
 import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
@@ -57,6 +58,16 @@ export function App() {
       // Theme persistence is optional when storage is unavailable.
     }
   }, [theme])
+
+  useEffect(() => {
+    const compactWindow = window.matchMedia('(max-width: 1200px)')
+    const collapseNavigation = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setNavCollapsed(true)
+    }
+    collapseNavigation(compactWindow)
+    compactWindow.addEventListener('change', collapseNavigation)
+    return () => compactWindow.removeEventListener('change', collapseNavigation)
+  }, [])
 
   const navigate = (page: PageId) => {
     if (page === 'rooms' && activePage === 'rooms' && contextRoomDetailFocused) {
@@ -163,13 +174,21 @@ export function App() {
         onCloseContextRoom={closeContextRoomTab}
         onRestoreContextRoom={restoreContextRoomTab}
         canRestoreContextRoom={closedContextRoomTabs.length > 0}
-        onToggleAgent={() => setAgentOpen((open) => !open)}
+        onToggleAgent={() => setAgentOpen((open) => {
+          const next = !open
+          if (next && window.matchMedia('(max-width: 900px)').matches) setNavCollapsed(true)
+          return next
+        })}
         onToggleNav={() => {
           if (isContextRoomFocused) {
             setContextRoomNavRevealed((revealed) => !revealed)
             return
           }
-          setNavCollapsed((collapsed) => !collapsed)
+          setNavCollapsed((collapsed) => {
+            const next = !collapsed
+            if (!next && window.matchMedia('(max-width: 900px)').matches) setAgentOpen(false)
+            return next
+          })
         }}
         onThemeChange={setTheme}
       />
@@ -188,6 +207,7 @@ export function App() {
         />
       </main>
       {agentOpen ? <AgentPanel pageLabel={pageLabels[activePage]} focusRequest={agentFocusRequest} /> : null}
+      <AppToast />
       <AppErrorDialog />
     </div>
   )
