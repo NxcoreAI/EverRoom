@@ -7,6 +7,7 @@ overrides:
 
 allowBuilds:
   '@google/genai': true
+  '@parcel/watcher': false
   better-sqlite3: true
   electron: true
   electron-winstaller: true
