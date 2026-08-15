@@ -12,6 +12,7 @@ import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
@@ -97,6 +98,7 @@ const MEMORY_CHANNELS = {
 
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let saasClient: SaasClient | null = null
@@ -369,7 +371,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
   try {
-    gatewaySupervisor = new GatewaySupervisor(dataDirectory)
+    // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
+    // 让队友拉代码后无需手工部署即可使用记忆功能。
+    memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
+    const memoryCore = await memoryCoreSupervisor.start().catch((error) => {
+      console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
+      return null
+    })
+    gatewaySupervisor = new GatewaySupervisor(
+      dataDirectory,
+      memoryCore
+        ? {
+          NXCORE_MEMORY_ENABLED: 'true',
+          NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
+          NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
+        }
+        : {},
+    )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     registerGatewayHandlers(gatewaySupervisor)
@@ -410,6 +428,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
+    await memoryCoreSupervisor?.shutdown()
+    memoryCoreSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
     app.quit()
     return
@@ -426,16 +446,23 @@ app.on('before-quit', (event) => {
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
+  const memoryCore = memoryCoreSupervisor
   const agentBridge = agentGatewayBridge
   const recordings = recordingStore
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
+  memoryCoreSupervisor = null
   agentGatewayBridge = null
   recordingStore = null
   saasClient = null
   agentBridge?.dispose()
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
-  void Promise.allSettled([service?.shutdown(), recordings?.dispose(), gateway?.shutdown()]).finally(() => app.quit())
+  void Promise.allSettled([
+    service?.shutdown(),
+    recordings?.dispose(),
+    gateway?.shutdown(),
+    memoryCore?.shutdown(),
+  ]).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

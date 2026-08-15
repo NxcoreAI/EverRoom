@@ -59,7 +59,11 @@ export class GatewaySupervisor {
   private stopping = false
   private lastError: string | null = null
 
-  constructor(private readonly dataDirectory: string) {}
+  constructor(
+    private readonly dataDirectory: string,
+    /** 注入 gateway 子进程的额外环境变量(如托管 MemoryCore 的连接信息)。 */
+    private readonly extraEnvironment: Record<string, string> = {},
+  ) {}
 
   async start(): Promise<GatewayConnection> {
     if (this.connection) return this.connection
@@ -80,6 +84,7 @@ export class GatewaySupervisor {
     const environment = {
       ...process.env,
       NXCORE_GATEWAY_TOKEN: token,
+      ...this.extraEnvironment,
       ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     }
     const gatewayArguments = [

@@ -1,9 +1,9 @@
 # PC 端「记忆」应用改造 — 接入 MemoryCore 查看方案
 
-> 状态：已实施（2026-08-15，代码全部落地并通过类型检查 / 单测 / 构建；真实 MemoryCore 联调待验证）
+> 状态：已实施（2026-08-15，代码全部落地并通过类型检查 / 单测 / 构建；MemoryCore 已随应用托管启动，见 §11）
 > 日期：2026-08-15
 > 前置：`docs/pi-agent-memory-plan.md`（已实施，pi agent 已接入 MemoryCore 读写链路）
-> 范围：`apps/desktop`（渲染层 + main + preload）、`apps/gateway`（新增 memory 模块）、`packages/agent-runtime-pi`（扩展 MemoryCoreClient）。不改 MemoryCore 本身。
+> 范围：`apps/desktop`（渲染层 + main + preload）、`apps/gateway`（新增 memory 模块）、`packages/agent-runtime-pi`（扩展 MemoryCoreClient）。
 
 ## 1. 现状与问题
 
@@ -224,3 +224,42 @@ memory/
 1. **L0 默认浏览策略**：按时间倒序拉全量消息再前端按 session 聚合（简单，但会话切分依赖返回顺序），还是进页先 `conversation/query` 探测最近 24h 再向两侧扩展（Panel 的做法，复杂些）？倾向前者，量级大了再优化。
 2. **L3 编辑**：`core/write` 是全量覆盖且服务端会自动剥离 Scene Navigation 段——编辑器是否需要先 `read` 回显剥离后的内容？首版按"读什么编辑什么"处理，不做防冲突（单人桌面场景，version 冲突可接受）。
 3. **`/v2/pipeline/status` 的版本耦合**：该接口仅 v2 挂载（standalone 模式）。若用户的 MemoryCore 部署形态不同导致 404，总览页 pipeline 卡片静默隐藏即可，不作为硬依赖。
+
+## 11. MemoryCore 零配置托管（2026-08-15 追加实施）
+
+目标：队友拉下 EverRoom 代码、`pnpm install`、启动，即拥有本地记忆服务，无需手工部署 MemoryCore。
+
+### 11.1 依赖来源
+
+MemoryCore 以上游 [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) 的 fork 为依赖来源：
+
+- fork 仓库：`NxcoreAI/TencentDB-Agent-Memory`，`main` 与 `memory-core-package` 分支均指向打包内容（MemoryCore 子目录独立成包 + EverRoom 补丁），fork 其余分支保持上游镜像便于同步。
+- EverRoom 依赖（`apps/desktop/package.json`）**pinned 到 commit**：`https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#<commit>`，lockfile 全团队一致。
+- fork 相对上游的最小补丁（详见 fork 内 `FORK.md`）：`bin/memory-gateway.mjs` 启动器、package.json 的 bin/exports/files 条目、移除 prepack。
+
+### 11.2 托管链路（`apps/desktop/src/main/memory/memory-core-supervisor.ts`）
+
+```
+MemoryCoreSupervisor.start()
+  ├─ 外部模式：NXCORE_MEMORY_MANAGED=false / NXCORE_MEMORY_ENABLED=false /
+  │           显式配置了非默认 NXCORE_MEMORY_BASE_URL → 不托管
+  ├─ 复用模式：127.0.0.1:8420 /health 已有健康实例（如手工部署）→ 直接复用
+  └─ 托管模式：spawn node --import <tsx> <包内 src/gateway/server.ts>
+        env：TDAI_GATEWAY_PORT=8420、TDAI_GATEWAY_API_KEY=随机生成、
+             TDAI_LLM_* 复用桌面进程的 NXCORE_AI_*、数据目录用 MemoryCore 默认
+```
+
+启动成功后把 `NXCORE_MEMORY_ENABLED/BASE_URL/API_KEY` 注入 gateway 子进程（`GatewaySupervisor` 新增 `extraEnvironment` 参数），gateway 的记忆模块照常工作。启动失败不影响主程序——记忆页落到既有的「未启用/不可达」降级 UI。
+
+Windows + Node 22 的 spawn 参数陷阱（已写入代码注释）：`--import` 必须传 tsx loader 的 `file://` URL；主入口必须传正斜杠路径（`file://` 会被误判为 CJS 相对路径，反斜杠会被判为 URL scheme）。
+
+### 11.3 验证情况
+
+- 托管拉起（临时端口）：health ✓ Bearer 鉴权 ✓ v3 API ✓（使用 node_modules 内安装的包端到端验证）
+- 复用模式：探测到本机已运行实例时跳过 spawn ✓
+- 桌面 tsc / gateway tsc+22 测试 / agent-runtime-pi 26 测试 / electron-vite build 全绿
+
+### 11.4 遗留
+
+- 打包发布：electron-builder 需把 memory-core 包（含其 node_modules）加进 extraResources，出安装包时处理。
+- fork 同步上游：在 fork 的上游镜像分支 rebase 后，把 `memory-core-package` 重放补丁，再更新 EverRoom 依赖 commit。
