@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 
 import type { PageId } from '@/data/navigation'
 import type { ContextRoomWorkspaceTab } from './context-room/contextRoomTabs'
+import { DiaryPageSkeleton } from './diary/DiaryPageSkeleton'
 import { DocsPage } from './pages/DocsPage'
 import { HomePage } from './pages/HomePage'
 import { MemoryPage } from './pages/MemoryPage'
@@ -11,6 +12,9 @@ import { TasksPage } from './pages/TasksPage'
 
 const ContextRoomPage = lazy(() =>
   import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
+)
+const DiaryPage = lazy(() =>
+  import('./diary/DiaryPage').then((module) => ({ default: module.DiaryPage })),
 )
 const RealityPage = lazy(() =>
   import('./reality/RealityPage').then((module) => ({ default: module.RealityPage })),
@@ -57,6 +61,13 @@ export function PageCanvas({
   if (page === 'sources') content = <SourcesPage />
   if (page === 'memory') content = <MemoryPage />
   if (page === 'tasks') content = <TasksPage />
+  if (page === 'diary') {
+    content = (
+      <Suspense fallback={<DiaryPageSkeleton />}>
+        <DiaryPage />
+      </Suspense>
+    )
+  }
   if (page === 'settings') content = <SettingsPage />
   return (
     <>
