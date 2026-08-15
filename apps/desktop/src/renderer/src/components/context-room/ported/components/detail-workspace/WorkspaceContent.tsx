@@ -1,3 +1,4 @@
+import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract';
 import { ChevronLeft } from 'lucide-react';
 
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
@@ -13,6 +14,9 @@ export function WorkspaceContent({
   panels,
   selectedObject,
   selectedResource,
+  backendDocuments,
+  documentEvents,
+  onBackendDocumentChange,
   onOpenRoom,
   onMobileBack,
   onCloseObject,
@@ -23,6 +27,9 @@ export function WorkspaceContent({
   panels: DetailPane[];
   selectedObject: WorkspaceObjectPreview | null;
   selectedResource: ContextRoomResource | null;
+  backendDocuments: RoomDocument[];
+  documentEvents: Record<string, DocumentEvent[]>;
+  onBackendDocumentChange: (document: RoomDocument) => void;
   onOpenRoom: (roomId: string) => void;
   onMobileBack: () => void;
   onCloseObject: () => void;
@@ -39,9 +46,7 @@ export function WorkspaceContent({
     ? selectedObject
     : null;
   const visibleResource = panels.includes('documents') ? selectedResource : null;
-  const showCloudDocs =
-    !visibleObject &&
-    ((!visibleResource && panels.includes('documents')) || visibleResource?.kind === 'cloud-doc');
+  const showCloudDocs = !visibleObject && visibleResource?.kind === 'cloud-doc';
   const selectedTask = visibleObject?.kind === 'task'
     ? room.actionItems.find((item) => item.id === visibleObject.id)
     : null;
@@ -51,10 +56,12 @@ export function WorkspaceContent({
 
   return (
     <section className="context-room-workspace-content">
-      <button type="button" className="context-room-mobile-back" onClick={onMobileBack}>
-        <ChevronLeft aria-hidden="true" />
-        返回资源
-      </button>
+      {!selectedTask && !selectedMeeting ? (
+        <button type="button" className="context-room-mobile-back" onClick={onMobileBack}>
+          <ChevronLeft aria-hidden="true" />
+          返回资源
+        </button>
+      ) : null}
       {selectedTask ? (
         <ObjectDetailView
           embedded
@@ -79,9 +86,17 @@ export function WorkspaceContent({
           onOpenRoom={onOpenRoom}
         />
       ) : showCloudDocs ? (
-        <FakeDocumentContent room={room} resource={visibleResource} />
+        <FakeDocumentContent
+          room={room}
+          resource={visibleResource}
+          backendDocuments={backendDocuments}
+          documentEvents={documentEvents}
+          onBackendDocumentChange={onBackendDocumentChange}
+        />
       ) : visibleResource?.kind === 'office-file' ? (
         <OfficePreview resource={visibleResource} />
+      ) : panels.includes('documents') ? (
+        <div className="context-room-workspace-empty">暂无文档</div>
       ) : (
         <div className="context-room-workspace-empty">从左侧选择一个资源</div>
       )}

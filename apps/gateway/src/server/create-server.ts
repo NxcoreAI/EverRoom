@@ -13,6 +13,11 @@ import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
 import { AgentService } from "../modules/agent/service.js";
+import { DocumentEventBroker } from "../modules/documents/event-broker.js";
+import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
+import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
+import { documentRoutes } from "../modules/documents/routes.js";
+import { DocumentService } from "../modules/documents/service.js";
 import { createAgentRuntime } from "../modules/agent/runtime-factory.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
@@ -22,6 +27,9 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { RealityError } from "../modules/reality/errors.js";
+import { realityRoutes } from "../modules/reality/routes.js";
+import { RealityService } from "../modules/reality/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -58,7 +66,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
       return;
     }
-    if (error instanceof MemoryGatewayError) {
+    if (error instanceof MemoryGatewayError || error instanceof RealityError) {
       await reply.code(error.statusCode).send({
         error: error.code,
         message: error.message,
@@ -92,7 +100,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(websocket);
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
-  const agentRuntime = createAgentRuntime(config);
+  const documentService = new DocumentService(db, new DocumentEventBroker());
+  const documentMcpHost = new DocumentMcpHost(documentService);
+  const agentRuntime = createAgentRuntime(config, documentMcpHost);
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -108,20 +118,31 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "agent runtime configured",
   );
   const agentService = new AgentService(db, agentRuntime, new AgentEventBroker(), app.log);
+  await agentService.initialize();
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
   const memoryService = new MemoryService(config.pi?.memory ?? null, app.log);
+  const realityService = new RealityService(db, config.asrInputDir, app.log);
+  const recoveredCaptures = realityService.recoverInterruptedCaptures();
+  if (recoveredCaptures > 0) {
+    app.log.info({ recoveredCaptures }, "interrupted reality captures recovered");
+  }
   app.addHook("onClose", async () => {
     await agentService.dispose();
+    await documentMcpHost.close();
+    documentService.dispose();
     await asrService.dispose();
     sqlite.close();
     await gatewayLogger.close();
   });
   await app.register(agentRoutes(agentService));
+  await app.register(documentMcpRoutes(documentMcpHost));
+  await app.register(documentRoutes(documentService));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(realityRoutes(realityService));
 
   return app;
 }

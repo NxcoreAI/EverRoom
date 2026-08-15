@@ -245,10 +245,15 @@
 }
 
 .context-room-card-menu-button {
-  margin-right: 10px;
+  width: 52px;
+  height: auto;
+  align-self: stretch;
+  margin-right: 0;
+  border-radius: 0 9px 9px 0;
 }
 
 .context-room-card-menu-button:hover,
+.context-room-card-menu-button[data-state='open'],
 .context-room-add-room:hover {
   background: var(--cr-surface-hover);
   color: var(--cr-text);
@@ -500,15 +505,21 @@
 
 .context-room-room-graph-drawer > button:first-child {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 0;
+  right: 0;
   display: inline-flex;
-  width: 26px;
-  height: 26px;
+  width: 42px;
+  height: 42px;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 0 9px 0 8px;
+  background: transparent;
   color: var(--cr-tertiary);
+}
+
+.context-room-room-graph-drawer > button:first-child:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
 }
 
 .context-room-room-graph-drawer > button:first-child svg {
@@ -1172,6 +1183,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 8px;
+  background: transparent;
   color: var(--cr-muted);
   transition:
     background 120ms ease,
@@ -1336,12 +1348,19 @@
 
 .context-room-workspace-panel > header button {
   display: inline-flex;
-  width: 20px;
-  height: 20px;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  margin-right: -10px;
+  border-radius: 0;
+  background: transparent;
   color: var(--cr-tertiary);
+}
+
+.context-room-workspace-panel > header button:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
 }
 
 .context-room-workspace-panel > header svg {
@@ -1395,6 +1414,8 @@
   min-height: 0;
   overflow: hidden;
   background: var(--cr-surface);
+  container-name: context-room-detail-content;
+  container-type: inline-size;
 }
 
 .context-room-mobile-back {
@@ -1546,11 +1567,13 @@
 
 .context-room-hostfs-picker > header button {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
+  margin: -8px;
   place-items: center;
-  border-radius: 5px;
+  border-radius: 0 6px 0 6px;
+  background: transparent;
   color: var(--cr-tertiary);
 }
 
@@ -1626,6 +1649,17 @@
   flex: 1;
   overflow: auto;
   padding: 0 8px 12px;
+}
+
+.context-room-resource-error {
+  margin: 0 10px 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(181, 71, 50, 0.24);
+  border-radius: 6px;
+  background: rgba(181, 71, 50, 0.07);
+  color: #b54732;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .context-room-agent-resource {
@@ -1730,6 +1764,54 @@
   min-height: 42px;
   padding: 5px 8px 5px 28px;
   color: var(--cr-muted);
+}
+
+.context-room-resource-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+}
+
+.context-room-resource-row .context-room-resource-item {
+  min-width: 0;
+}
+
+.context-room-resource-delete {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--cr-tertiary);
+  opacity: 0;
+}
+
+.context-room-resource-row:hover .context-room-resource-delete,
+.context-room-resource-delete:focus-visible {
+  opacity: 1;
+}
+
+.context-room-resource-delete:hover:not(:disabled) {
+  background: rgba(181, 71, 50, 0.09);
+  color: #b54732;
+}
+
+.context-room-resource-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.context-room-resource-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-resource-folder-empty {
+  margin: 4px 8px 8px 28px;
+  color: var(--cr-tertiary);
+  font-size: 11px;
 }
 
 .context-room-resource-item.is-selected {
@@ -2438,58 +2520,6 @@
   font-size: 10px;
 }
 
-.context-room-task-pane > div:not(.context-room-workspace-empty) {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0 8px;
-  padding: 7px 4px;
-}
-
-.context-room-task-pane > div > button:first-child {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-}
-
-.context-room-task-pane > div > button:first-child > span {
-  width: 14px;
-  height: 14px;
-  border: 1px solid var(--cr-border-strong);
-  border-radius: 4px;
-}
-
-.context-room-task-pane > div > button:first-child > span.is-complete {
-  border-color: var(--cr-blue);
-  background: var(--cr-blue);
-}
-
-.context-room-task-pane > div > button:last-child {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-}
-
-.context-room-task-pane b {
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.context-room-task-pane b.is-complete {
-  color: var(--cr-tertiary);
-  text-decoration: line-through;
-}
-
-.context-room-task-pane small {
-  color: var(--cr-tertiary);
-  font-size: 10px;
-}
-
 .context-room-dashboard {
   min-width: 0;
   min-height: 0;
@@ -2848,6 +2878,10 @@
 
   .context-room-workspace-layout:not(.is-overview) {
     --context-room-middle-width: 260px !important;
+  }
+
+  .context-room-workspace-layout:not(.is-overview).has-task-pane {
+    --context-room-middle-width: 320px !important;
   }
 
   .context-room-dashboard {
@@ -3828,13 +3862,14 @@
 .context-room-dialog-close {
   position: absolute;
   z-index: 60;
-  top: calc(env(safe-area-inset-top) + 10px);
-  right: calc(env(safe-area-inset-right) + 10px);
+  top: env(safe-area-inset-top);
+  right: env(safe-area-inset-right);
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 0 7px 0 8px;
+  background: transparent;
   color: var(--cr-muted);
 }
 
@@ -3965,11 +4000,13 @@
 
 .context-room-schedule-popover > header button {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
+  margin: -8px -8px 0 0;
   place-items: center;
-  border-radius: 5px;
+  border-radius: 0 7px 0 7px;
+  background: transparent;
   color: var(--cr-tertiary);
 }
 
@@ -6335,7 +6372,7 @@
 }
 
 .context-room-workspace-tabs button[data-icon-tone][aria-pressed='true'] {
-  background: color-mix(in srgb, var(--cr-icon-tone) 8%, white);
+  background: var(--cr-surface);
   color: var(--cr-icon-tone);
 }
 
@@ -6672,8 +6709,17 @@
 }
 
 .context-room-task-section {
-  padding: 7px 8px 3px;
-  border-bottom: 1px solid var(--cr-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 12px 0;
+}
+
+.context-room-task-completed {
+  margin-top: 12px;
+  padding-top: 10px;
+  padding-bottom: 12px;
+  border-top: 1px solid var(--cr-border);
 }
 
 .context-room-task-section h3,
@@ -6681,19 +6727,27 @@
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin: 0;
-  padding: 4px;
+  padding: 0 4px 4px;
+  border-bottom: 1px solid var(--cr-border);
   color: var(--cr-muted);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 500;
   text-align: left;
 }
 
 .context-room-task-section h3 span,
 .context-room-task-section-toggle span {
+  min-width: 22px;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
   color: var(--cr-tertiary);
+  font-size: 10.5px;
   font-weight: 400;
+  text-align: center;
 }
 
 .context-room-task-section-toggle svg {
@@ -6708,49 +6762,548 @@
 
 .context-room-task-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  align-items: center;
-  padding: 5px 2px;
-  border-radius: 5px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
 .context-room-task-row:hover {
   background: var(--cr-surface-hover);
+  border-color: var(--cr-border-strong);
 }
 
-.context-room-task-row > button:first-child {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
+.context-room-task-check {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 
-.context-room-task-row > button:first-child span {
-  width: 13px;
-  height: 13px;
-  border: 1px solid var(--cr-border-strong);
-  border-radius: 3px;
+.context-room-task-check > span {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--cr-border-strong);
+  border-radius: 4px;
+  background: var(--cr-surface);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
-.context-room-task-row > button:first-child span.is-complete {
+.context-room-task-row:hover .context-room-task-check > span {
+  border-color: var(--cr-success);
+}
+
+.context-room-task-row.is-done .context-room-task-check > span {
   border-color: var(--cr-success);
   background: var(--cr-success);
+  color: #fff;
 }
 
-.context-room-task-row > button:last-child {
+.context-room-task-check svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-task-main {
   display: flex;
   min-width: 0;
   flex-direction: column;
   align-items: flex-start;
+  gap: 3px;
   text-align: left;
 }
 
 .context-room-task-row b,
-.context-room-task-row small {
+.context-room-task-source {
   overflow: hidden;
   max-width: 100%;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.context-room-task-row b {
+  color: var(--cr-text);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.context-room-task-row.is-done b {
+  color: var(--cr-tertiary);
+  text-decoration: line-through;
+}
+
+.context-room-task-source {
+  width: 100%;
+  color: var(--cr-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.context-room-task-meta {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.context-room-task-meta > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-room-task-meta > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-task-meta > span:last-child {
+  flex: 0 0 auto;
+}
+
+.context-room-task-meta svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-task-progress {
+  display: inline-flex;
+  min-width: 38px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cr-icon-tone) 10%, #fff);
+  color: var(--cr-icon-tone);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.context-room-task-reference {
+  width: min(100%, 1080px);
+  margin: 0 auto;
+  padding-bottom: 28px;
+}
+
+.context-room-task-reference .context-room-object-reference-header {
+  min-height: 0;
+  align-items: flex-end;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-task-reference .context-room-object-reference-titles .context-room-object-back {
+  min-height: 24px;
+  margin-bottom: 5px;
+  color: var(--cr-muted);
+}
+
+.context-room-task-reference .context-room-page-title {
+  font-size: 22px;
+  line-height: 30px;
+  font-weight: 650;
+}
+
+.context-room-task-reference .context-room-page-actions {
+  flex-wrap: nowrap;
+}
+
+.context-room-task-reference .context-room-page-actions > button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.context-room-task-reference .context-room-page-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-task-reference .context-room-object-detail-grid {
+  grid-template-columns: minmax(0, 1fr) 286px;
+  gap: 16px;
+  max-width: none;
+}
+
+.context-room-task-status-panel,
+.context-room-task-context-panel {
+  padding: 18px !important;
+}
+
+.context-room-task-status-panel .context-room-panel-head,
+.context-room-task-context-panel .context-room-panel-head {
+  margin-bottom: 16px !important;
+}
+
+.context-room-task-progress-overview {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr);
+  align-items: end;
+  gap: 16px;
+  padding-bottom: 16px;
+}
+
+.context-room-task-progress-overview > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.context-room-task-progress-overview span {
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.context-room-task-progress-overview strong {
+  color: var(--cr-blue);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.context-room-task-progress-overview .context-room-progress {
+  height: 6px;
+  margin-bottom: 5px;
+  background: var(--cr-surface-sunken);
+}
+
+.context-room-task-facts {
+  display: grid;
+  grid-template-columns: 0.8fr 0.8fr 1.4fr;
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-task-fact {
+  display: grid;
+  min-width: 0;
+  min-height: 62px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border-left: 1px solid var(--cr-border);
+}
+
+.context-room-task-fact:first-child {
+  border-left: 0;
+}
+
+.context-room-task-fact-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+}
+
+.context-room-task-fact-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-task-fact dt,
+.context-room-task-fact dd {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-task-fact dt {
+  color: var(--cr-tertiary);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.context-room-task-fact dd {
+  margin-top: 2px;
+  color: var(--cr-text);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.context-room-task-status-panel .context-room-subsection-heading {
+  margin-top: 18px;
+  padding-top: 16px;
+}
+
+.context-room-task-status-panel .context-room-subsection-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+}
+
+.context-room-task-status-panel .context-room-subsection-heading h2 span {
+  display: inline-flex;
+  min-width: 19px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--cr-surface-sunken);
+  color: var(--cr-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.context-room-task-status-panel .context-room-timeline {
+  margin-top: 6px;
+}
+
+.context-room-task-status-panel .context-room-timeline-item {
+  grid-template-columns: 58px minmax(0, 1fr);
+  min-height: 62px;
+  align-items: start;
+  padding: 11px 8px 11px 26px;
+}
+
+.context-room-task-status-panel .context-room-timeline-item::before {
+  z-index: 1;
+  top: 16px;
+  left: 5px;
+  box-sizing: border-box;
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-task-status-panel .context-room-timeline-item:not(:last-child)::after {
+  z-index: 0;
+  top: 21px;
+  bottom: -22px;
+  left: 10px;
+}
+
+.context-room-task-status-panel .context-room-timeline-time {
+  grid-row: auto;
+  padding-top: 1px;
+  font-size: 11px;
+}
+
+.context-room-task-timeline-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.context-room-task-timeline-copy b {
+  color: var(--cr-text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.context-room-task-timeline-copy span {
+  overflow: hidden;
+  color: var(--cr-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-task-reference aside {
+  position: sticky;
+  top: 0;
+}
+
+.context-room-task-context-label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--cr-tertiary);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.context-room-task-context-panel .context-room-source-card {
+  min-height: 64px;
+  align-items: center;
+  padding: 11px 12px;
+}
+
+.context-room-task-context-panel .context-room-source-card > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.context-room-task-room-context {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 12px 2px;
+  border-top: 1px solid var(--cr-border);
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-task-room-context > svg {
+  width: 15px;
+  height: 15px;
+  color: var(--cr-muted);
+}
+
+.context-room-task-room-context span,
+.context-room-task-room-context b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-task-room-context span {
+  color: var(--cr-tertiary);
+  font-size: 10.5px;
+}
+
+.context-room-task-room-context b {
+  margin-top: 2px;
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.context-room-task-context-panel .context-room-object-lifecycle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding-top: 12px;
+}
+
+.context-room-task-context-panel .context-room-object-lifecycle button {
+  min-width: 0;
+  justify-content: center;
+  padding-right: 6px;
+  padding-left: 6px;
+  white-space: nowrap;
+}
+
+.context-room-task-context-panel button svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.context-room-task-context-panel .context-room-agent-action {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+@container context-room-detail-content (max-width: 720px) {
+  .context-room-task-reference .context-room-object-reference-header {
+    align-items: flex-end;
+    flex-direction: row;
+  }
+
+  .context-room-task-reference .context-room-page-actions {
+    width: auto;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+
+  .context-room-task-reference .context-room-object-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .context-room-task-reference .context-room-task-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .context-room-task-reference .context-room-task-fact-wide {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--cr-border);
+    border-left: 0;
+  }
+
+  .context-room-task-reference aside {
+    position: static;
+  }
+}
+
+@container context-room-detail-content (max-width: 480px) {
+  .context-room-task-reference .context-room-object-reference-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .context-room-task-reference .context-room-page-actions {
+    width: 100%;
+  }
+
+  .context-room-task-reference .context-room-page-actions > button {
+    flex: 1 1 0;
+  }
+
+  .context-room-task-reference .context-room-task-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .context-room-task-reference .context-room-task-fact {
+    border-top: 1px solid var(--cr-border);
+    border-left: 0;
+  }
+
+  .context-room-task-reference .context-room-task-fact:first-child {
+    border-top: 0;
+  }
+
+  .context-room-task-reference .context-room-task-fact-wide {
+    grid-column: auto;
+  }
+
+  .context-room-task-progress-overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .context-room-task-context-panel .context-room-object-lifecycle {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .context-room-mail-pane > button {

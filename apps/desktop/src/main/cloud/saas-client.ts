@@ -3,17 +3,19 @@ import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
-import { Readable } from 'node:stream'
 
+import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import type { App } from 'electron'
 
 import type {
   AsrJob,
+  AsrResult,
   CloudAccountStatus,
   CloudOidcProvider,
   CreateAsrJobInput,
 } from '../../shared/sources'
 import type { CredentialStore } from '../security/credential-store'
+import { createLoggedHttpClient } from '../network/http-client'
 
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
@@ -21,6 +23,7 @@ const ACCOUNT_PROFILE_KEY = 'everroom:saas:account-profile'
 const REQUEST_TIMEOUT_MS = 15_000
 const UPLOAD_TIMEOUT_MS = 5 * 60_000
 const OIDC_LOGIN_TIMEOUT_MS = 3 * 60_000
+const http = createLoggedHttpClient('saas', { timeout: REQUEST_TIMEOUT_MS })
 
 export const OIDC_CALLBACK_URL = 'everroom://auth/callback'
 
@@ -38,6 +41,7 @@ interface CloudJob {
   fileName: string
   transcript?: string | null
   segments?: Array<{ text: string; beginTime: number; endTime: number; speakerId: number | null }>
+  insights?: AsrResult['insights']
   errorCode?: string | null
   errorMessage?: string | null
   createdAt: string
@@ -150,11 +154,11 @@ export class SaasClient {
     if (!identifier.trim() || !password) throw new Error('请输入账号和密码。')
     const data = await this.publicRequest<LoginResult>('/app/auth/password-login', {
       method: 'POST',
-      body: JSON.stringify({
+      data: {
         identifier: identifier.trim(),
         password,
         ...(await this.deviceDetails()),
-      }),
+      },
     })
     await this.acceptSession(data)
     await this.loadSubscription()
@@ -173,7 +177,7 @@ export class SaasClient {
     authorizationUrl.searchParams.set('client_id', this.logtoAppId)
     authorizationUrl.searchParams.set('redirect_uri', OIDC_CALLBACK_URL)
     authorizationUrl.searchParams.set('response_type', 'code')
-    authorizationUrl.searchParams.set('scope', 'openid')
+    authorizationUrl.searchParams.set('scope', 'openid email name')
     authorizationUrl.searchParams.set('code_challenge', codeChallenge)
     authorizationUrl.searchParams.set('code_challenge_method', 'S256')
     authorizationUrl.searchParams.set('state', state)
@@ -257,7 +261,7 @@ export class SaasClient {
     if (refreshToken) {
       await this.publicRequest('/app/auth/logout', {
         method: 'POST',
-        body: JSON.stringify({ refreshToken }),
+        data: { refreshToken },
       }).catch(() => undefined)
     }
     this.accessToken = null
@@ -278,7 +282,7 @@ export class SaasClient {
     const recordingId = input.recordingId ?? randomUUID()
     const job = await this.request<CloudJob>('/app/asr-jobs', {
       method: 'POST',
-      body: JSON.stringify({
+      data: {
         deviceId: this.account!.device.id,
         recordingId,
         originPlatform: 'desktop',
@@ -287,11 +291,11 @@ export class SaasClient {
         fileSize: info.size,
         contentHash,
         estimatedDurationMs: Math.max(1000, input.durationMs ?? 1000),
-        idempotencyKey: `recording:${recordingId}:asr:v1`,
+        idempotencyKey: `recording:${recordingId}:asr:${input.retryToken ?? 'v1'}`,
         languageHints: input.languageHints ?? [],
         diarizationEnabled: input.diarizationEnabled,
         ...(input.contextPrompt ? { contextPrompt: input.contextPrompt } : {}),
-      }),
+      },
     })
 
     if (job.status === 'awaiting_upload') {
@@ -302,7 +306,7 @@ export class SaasClient {
       await this.upload(filePath, info.size, authorization)
       const queued = await this.request<CloudJob>(
         `/app/asr-jobs/${this.requireCloudJobId(job.id)}/upload-complete`,
-        { method: 'POST', body: JSON.stringify({ objectKey: authorization.objectKey }) },
+        { method: 'POST', data: { objectKey: authorization.objectKey } },
       )
       return this.normalizeJob(queued)
     }
@@ -313,11 +317,16 @@ export class SaasClient {
     const id = this.cloudId(prefixedId)
     const job = await this.request<CloudJob>(`/app/asr-jobs/${id}`)
     if (job.status === 'completed') {
-      const result = await this.request<{ rawTranscript: string; segments: CloudJob['segments'] }>(
+      const result = await this.request<{
+        rawTranscript: string
+        segments: CloudJob['segments']
+        insights?: AsrResult['insights']
+      }>(
         `/app/asr-jobs/${id}/result`,
       )
       job.transcript = result.rawTranscript
       job.segments = result.segments
+      job.insights = result.insights
     }
     return this.normalizeJob(job)
   }
@@ -339,19 +348,19 @@ export class SaasClient {
 
   private async completeOidcLogin(code: string, pending: PendingOidcLogin): Promise<void> {
     try {
-      const tokenResponse = await this.fetchWithTimeout(`${this.logtoIssuer}/token`, {
+      const tokenResponse = await http.post<LogtoTokenResponse>(`${this.logtoIssuer}/token`, new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: this.logtoAppId,
+        code,
+        redirect_uri: OIDC_CALLBACK_URL,
+        code_verifier: pending.codeVerifier,
+      }), {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: this.logtoAppId,
-          code,
-          redirect_uri: OIDC_CALLBACK_URL,
-          code_verifier: pending.codeVerifier,
-        }),
+        validateStatus: () => true,
       })
-      const token = await tokenResponse.json().catch(() => null) as LogtoTokenResponse | null
-      if (!tokenResponse.ok || !token?.id_token) {
+      const token = tokenResponse.data
+      if (tokenResponse.status >= 400 || !token?.id_token) {
         throw new Error(token?.error_description || token?.error || 'Logto 未返回 ID Token。')
       }
       if (this.pendingOidcLogin !== pending) return
@@ -359,7 +368,7 @@ export class SaasClient {
       const data = await this.publicRequest<LoginResult>('/app/auth/oidc/logto', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token.id_token}` },
-        body: JSON.stringify(await this.deviceDetails()),
+        data: await this.deviceDetails(),
       })
       if (this.pendingOidcLogin !== pending) return
       if (claims.email_verified === true && typeof claims.email === 'string') {
@@ -418,20 +427,19 @@ export class SaasClient {
     size: number,
     authorization: UploadAuthorization,
   ): Promise<void> {
-    const body = Readable.toWeb(createReadStream(filePath)) as BodyInit
-    const response = await this.fetchWithTimeout(authorization.uploadUrl, {
-      method: 'PUT',
+    const response = await http.put(authorization.uploadUrl, createReadStream(filePath), {
       headers: { ...authorization.headers, 'Content-Length': String(size) },
-      body,
-      duplex: 'half',
-    } as RequestInit & { duplex: 'half' }, UPLOAD_TIMEOUT_MS)
-    if (!response.ok) throw new Error(`OSS 上传失败（${response.status}）`)
+      timeout: UPLOAD_TIMEOUT_MS,
+      maxBodyLength: Number.POSITIVE_INFINITY,
+      validateStatus: () => true,
+    })
+    if (response.status >= 400) throw new Error(`OSS 上传失败（${response.status}）`)
   }
 
   private async refresh(refreshToken: string): Promise<void> {
     const data = await this.publicRequest<LoginResult>('/app/auth/refresh', {
       method: 'POST',
-      body: JSON.stringify({ refreshToken }),
+      data: { refreshToken },
     })
     await this.acceptSession(data)
   }
@@ -499,55 +507,50 @@ export class SaasClient {
     return value
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     this.requireLogin()
-    let response = await this.fetch(path, init, this.accessToken!)
+    let response = await this.send(path, config, this.accessToken!)
     if (response.status === 401) {
       const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
       await this.refresh(refreshToken)
-      response = await this.fetch(path, init, this.accessToken!)
+      response = await this.send(path, config, this.accessToken!)
     }
     return this.unwrap<T>(response)
   }
 
-  private async publicRequest<T>(path: string, init: RequestInit): Promise<T> {
-    return this.unwrap<T>(await this.fetch(path, init))
+  private async publicRequest<T>(path: string, config: AxiosRequestConfig): Promise<T> {
+    return this.unwrap<T>(await this.send(path, config))
   }
 
-  private fetch(path: string, init: RequestInit, token?: string): Promise<Response> {
-    return this.fetchWithTimeout(`${this.baseUrl}${path}`, {
-      ...init,
+  private send(path: string, config: AxiosRequestConfig, token?: string): Promise<AxiosResponse> {
+    return http.request({
+      url: `${this.baseUrl}${path}`,
+      ...config,
       headers: {
         Accept: 'application/json',
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...init.headers,
+        ...config.headers,
       },
+      validateStatus: () => true,
     })
   }
 
-  private fetchWithTimeout(
-    url: string,
-    init: RequestInit,
-    timeoutMs = REQUEST_TIMEOUT_MS,
-  ): Promise<Response> {
-    return fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(timeoutMs) })
-  }
-
-  private async unwrap<T>(response: Response): Promise<T> {
-    const body = await response.json().catch(() => null) as {
+  private unwrap<T>(response: AxiosResponse): T {
+    const body = response.data as {
       data?: T
       detail?: string
       message?: string
     } | null
-    if (!response.ok) {
+    if (response.status >= 400) {
       throw new SaasRequestError(
         body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`,
         response.status,
       )
     }
-    if (!body || !('data' in body)) throw new Error('SaaS 返回了无效响应。')
+    if (!body || typeof body !== 'object' || !('data' in body)) {
+      throw new Error('SaaS 返回了无效响应。')
+    }
     return body.data as T
   }
 
@@ -623,7 +626,11 @@ export class SaasClient {
       diarizationEnabled: true,
       contextPrompt: '',
       result: job.status === 'completed' && job.transcript
-        ? { transcript: job.transcript, segments: job.segments ?? [] }
+        ? {
+            transcript: job.transcript,
+            segments: job.segments ?? [],
+            ...(job.insights ? { insights: job.insights } : {}),
+          }
         : null,
       error: job.errorMessage ?? job.errorCode ?? null,
       createdAt: job.createdAt,

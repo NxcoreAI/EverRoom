@@ -1,11 +1,16 @@
+import type { AxiosRequestConfig } from 'axios'
+
 import type { AsrJob, CreateAsrJobInput } from '../../shared/sources'
+import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
+
+const http = createLoggedHttpClient('gateway-asr')
 
 export class AsrGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
   createJob(input: Omit<CreateAsrJobInput,'mode'|'recordingId'|'durationMs'>): Promise<AsrJob> {
-    return this.request('/v1/asr/jobs', { method: 'POST', body: JSON.stringify(input) })
+    return this.request('/v1/asr/jobs', { method: 'POST', data: input })
   }
 
   getJob(id: string): Promise<AsrJob> {
@@ -13,19 +18,21 @@ export class AsrGatewayBridge {
     return this.request(`/v1/asr/jobs/${encodeURIComponent(id)}`)
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
-    const response = await fetch(`${connection.baseUrl}${path}`, {
-      ...init,
+    const response = await http.request<T & { message?: string }>({
+      url: `${connection.baseUrl}${path}`,
+      ...config,
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${connection.token}`,
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        ...init.headers,
+        ...config.headers,
       },
+      validateStatus: () => true,
     })
-    const body = await response.json() as T & { message?: string }
-    if (!response.ok) throw new Error(body.message ?? `转写服务请求失败（${response.status}）`)
-    return body
+    if (response.status >= 400) {
+      throw new Error(response.data?.message ?? `转写服务请求失败（${response.status}）`)
+    }
+    return response.data
   }
 }

@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
-import { Bold, Code2, Italic, Link2, Strikethrough, Underline, Unlink2 } from 'lucide-react'
+import { TextSelection } from '@tiptap/pm/state'
+import { ArrowUp, Bold, Code2, Italic, Link2, Sparkles, Strikethrough, Underline, Unlink2, X } from 'lucide-react'
 import { useState } from 'react'
 
 import { EditorIconButton } from './EditorIconButton'
@@ -12,9 +13,21 @@ function normalizeLink(value: string): string | null {
   return /^[a-z][a-z\d+.-]*:/i.test(link) ? link : `https://${link}`
 }
 
-export function TiptapBubbleToolbar({ editor }: { editor: Editor }) {
+export function TiptapBubbleToolbar({
+  editor,
+  dragging,
+  selecting,
+  onAskAi,
+}: {
+  editor: Editor
+  dragging: boolean
+  selecting: boolean
+  onAskAi: (instruction: string) => void
+}) {
   const [linkOpen, setLinkOpen] = useState(false)
   const [linkValue, setLinkValue] = useState('')
+  const [askAiOpen, setAskAiOpen] = useState(false)
+  const [askAiInstruction, setAskAiInstruction] = useState('')
 
   const openLink = () => {
     setLinkValue(editor.getAttributes('link').href ?? '')
@@ -28,16 +41,52 @@ export function TiptapBubbleToolbar({ editor }: { editor: Editor }) {
     setLinkOpen(false)
   }
 
+  const submitAskAi = () => {
+    onAskAi(askAiInstruction)
+    setAskAiInstruction('')
+    setAskAiOpen(false)
+  }
+
+  const selection = editor.state.selection
+  const askAiDisabled = !(selection instanceof TextSelection) ||
+    selection.empty ||
+    !selection.$from.sameParent(selection.$to)
+
   return (
     <BubbleMenu
       editor={editor}
       className="context-room-tiptap-bubble"
+      updateDelay={0}
       options={{ placement: 'top', offset: 8 }}
-      shouldShow={({ editor: currentEditor, from, to }) => (
-        from !== to && currentEditor.isEditable && !currentEditor.isActive('codeBlock')
+      shouldShow={({ editor: currentEditor, state }) => (
+        !dragging &&
+        !selecting &&
+        state.selection instanceof TextSelection &&
+        !state.selection.empty &&
+        currentEditor.isEditable &&
+        !currentEditor.isActive('codeBlock')
       )}
     >
-      {linkOpen ? (
+      {askAiOpen ? (
+        <form className="context-room-tiptap-bubble-ai" onSubmit={(event) => { event.preventDefault(); submitAskAi() }}>
+          <Sparkles aria-hidden="true" />
+          <input
+            autoFocus
+            aria-label="重写要求"
+            placeholder="如何重写？"
+            value={askAiInstruction}
+            onChange={(event) => setAskAiInstruction(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setAskAiOpen(false)
+              }
+            }}
+          />
+          <button type="submit" aria-label="开始重写" title="开始重写"><ArrowUp /></button>
+          <button type="button" aria-label="关闭" title="关闭" onClick={() => setAskAiOpen(false)}><X /></button>
+        </form>
+      ) : linkOpen ? (
         <form className="context-room-tiptap-bubble-link" onSubmit={(event) => { event.preventDefault(); applyLink() }}>
           <input
             autoFocus
@@ -60,6 +109,22 @@ export function TiptapBubbleToolbar({ editor }: { editor: Editor }) {
           {editor.isActive('link') ? (
             <EditorIconButton label="移除链接" onClick={() => editor.chain().focus().unsetLink().run()}><Unlink2 /></EditorIconButton>
           ) : null}
+          <span className="context-room-tiptap-bubble-divider" />
+          <button
+            type="button"
+            className="context-room-tiptap-ask-ai"
+            aria-label="Ask AI"
+            title={askAiDisabled ? '请选择单个段落中的文字' : 'Ask AI'}
+            disabled={askAiDisabled}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setLinkOpen(false)
+              setAskAiOpen(true)
+            }}
+          >
+            <Sparkles aria-hidden="true" />
+            <span>Ask AI</span>
+          </button>
         </>
       )}
     </BubbleMenu>

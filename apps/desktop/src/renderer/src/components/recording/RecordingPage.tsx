@@ -1,16 +1,21 @@
-import { AlertCircle, Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, Square } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, MonitorSpeaker, Square } from 'lucide-react'
+import { memo, useEffect, useRef, useState } from 'react'
 
 import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useAccount } from '@/state/AccountContext'
+import { loadRealitySettings, onRealitySettingsChanged } from '@/state/realitySettings'
+import { showToast } from '@/state/toast'
 
-import type { AsrJob, AsrResult, NxcoreDesktopApi } from '../../../../shared/sources'
+import type { AsrJob, AsrResult, NxcoreDesktopApi, RealityEvent } from '../../../../shared/sources'
 import './RecordingPage.css'
 
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'saving' | 'transcribing' | 'completed' | 'error'
+type AudioSource = 'microphone' | 'system'
 
 const MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
 const MAX_TRANSCRIPTION_WAIT_MS = 30 * 60 * 1000
+const MIN_TRANSCRIPTION_DURATION_MS = 10_000
+const TRANSCRIPTION_POLL_INTERVAL_MS = 6_000
 
 function supportedMimeType(): string {
   return MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) ?? ''
@@ -40,6 +45,20 @@ function isDesktopRequestError(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith('Error invoking remote method')
 }
 
+function reportRecordingError(error: unknown, audioSource: AudioSource): void {
+  if (isDesktopRequestError(error)) return
+  const message = errorMessage(error)
+  window.nxcore?.errors.report(audioSource === 'system'
+    ? {
+        channel: 'media:system-audio',
+        title: '需要系统音频权限',
+        message: '请在 macOS 系统设置中允许 EverRoom 使用“屏幕与系统音频录制”，然后完全退出并重新打开 EverRoom。',
+        action: 'open-system-audio-settings',
+        actionLabel: '打开系统设置',
+      }
+    : { channel: 'media:microphone', title: '录音未开始', message })
+}
+
 function desktopApi(): NxcoreDesktopApi {
   if (!window.nxcore) throw new Error(`录音转写仅在 ${PRODUCT_NAME} 桌面版中可用。`)
   return window.nxcore
@@ -54,21 +73,71 @@ async function waitForStop(recorder: MediaRecorder): Promise<void> {
   })
 }
 
-export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
+const CassetteListeningControl = memo(function CassetteListeningControl({
+  listening,
+  busy,
+  onToggle,
+}: {
+  listening: boolean
+  busy: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className="cassette-switch"
+      role="switch"
+      aria-checked={listening}
+      aria-label={listening ? '关闭聆听' : busy ? '正在处理录音' : '开启聆听'}
+      data-active={String(listening)}
+      data-busy={String(busy)}
+      disabled={busy}
+      onClick={onToggle}
+    >
+      <span className="cassette-topline" aria-hidden="true">
+        <span>ER-01</span>
+        <span className="cassette-state"><i />{listening ? 'REC' : busy ? 'WAIT' : 'READY'}</span>
+      </span>
+      <span className="cassette-window" aria-hidden="true">
+        <span className="cassette-reel cassette-reel-left"><i /></span>
+        <span className="cassette-tape"><i /></span>
+        <span className="cassette-reel cassette-reel-right"><i /></span>
+      </span>
+      <span className="cassette-footer" aria-hidden="true">
+        <span className="cassette-levels"><i /><i /><i /><i /></span>
+        <span className="cassette-key"><i /></span>
+      </span>
+    </button>
+  )
+})
+
+export function RecordingPage({
+  onOpenSettings,
+  onEventChanged,
+  embedded = false,
+  controlOnly = false,
+}: {
+  onOpenSettings: () => void
+  onEventChanged?: (event: RealityEvent) => void
+  embedded?: boolean
+  controlOnly?: boolean
+}) {
+  const initialSettings = loadRealitySettings()
   const [state, setState] = useState<RecordingState>('idle')
   const [elapsed, setElapsed] = useState(0)
-  const [languages, setLanguages] = useState<string[]>(['zh', 'en'])
-  const [diarizationEnabled, setDiarizationEnabled] = useState(true)
-  const [contextPrompt, setContextPrompt] = useState('')
+  const [languages, setLanguages] = useState<string[]>(initialSettings.languages)
   const [result, setResult] = useState<AsrResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [audioSource, setAudioSource] = useState<AudioSource>(initialSettings.audioSource)
   const { account } = useAccount()
   const [mode,setMode]=useState<'cloud'|'local'>('local')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const recordingIdRef = useRef<string | null>(null)
+  const realityEventIdRef = useRef<string | null>(null)
+  const recordingStartedAtRef = useRef<number | null>(null)
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve())
   const mountedRef = useRef(true)
+  const isMacDesktop = window.nxcore?.platform === 'darwin'
 
   useEffect(() => {
     mountedRef.current = true
@@ -77,15 +146,28 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
       const recorder = recorderRef.current
       if (recorder?.state === 'recording') recorder.stop()
       streamRef.current?.getTracks().forEach((track) => track.stop())
+      recordingStartedAtRef.current = null
       const id = recordingIdRef.current
-      if (id) void window.nxcore?.asr.cancelRecording(id)
+      if (id) {
+        void window.nxcore?.asr.cancelRecording(id)
+        if (realityEventIdRef.current) {
+          void window.nxcore?.reality.fail(realityEventIdRef.current, '采集已取消')
+        }
+      }
     }
   }, [])
 
   useEffect(() => {
-    if (account?.authenticated) setMode('cloud')
-    else if (account) setMode('local')
+    const settings = loadRealitySettings()
+    setMode(settings.mode === 'cloud' || (settings.mode === 'auto' && account?.authenticated) ? 'cloud' : 'local')
   }, [account])
+
+  useEffect(() => onRealitySettingsChanged((settings) => {
+    if (state !== 'idle' && state !== 'completed' && state !== 'error') return
+    setAudioSource(settings.audioSource)
+    setLanguages(settings.languages)
+    setMode(settings.mode === 'cloud' || (settings.mode === 'auto' && account?.authenticated) ? 'cloud' : 'local')
+  }), [account?.authenticated, state])
 
   useEffect(() => {
     if (state !== 'recording') return
@@ -99,12 +181,12 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
       : [...current, language])
   }
 
-  const pollJob = async (initialJob: AsrJob): Promise<void> => {
+  const pollJob = async (initialJob: AsrJob, eventId: string): Promise<void> => {
     let job = initialJob
     const deadline = Date.now() + MAX_TRANSCRIPTION_WAIT_MS
     while (job.status === 'pending' || job.status === 'running') {
       if (Date.now() >= deadline) throw new Error('转写等待超过 30 分钟，请稍后重试。')
-      await new Promise((resolve) => window.setTimeout(resolve, 1800))
+      await new Promise((resolve) => window.setTimeout(resolve, TRANSCRIPTION_POLL_INTERVAL_MS))
       if (!mountedRef.current) return
       job = await desktopApi().asr.getJob(job.id)
     }
@@ -113,23 +195,39 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
     }
     setResult(job.result)
     setState('completed')
+    const event = await desktopApi().reality.getEvent(eventId)
+    onEventChanged?.(event)
+    realityEventIdRef.current = null
   }
 
   const startRecording = async () => {
     if (!window.nxcore?.asr) {
-      setError(`录音转写仅在 ${PRODUCT_NAME} 桌面版中可用。`)
+      window.nxcore?.errors.report({
+        channel: 'media:recording',
+        title: '录音不可用',
+        message: `录音转写仅在 ${PRODUCT_NAME} 桌面版中可用。`,
+      })
       setState('error')
       return
     }
     setState('requesting')
-    setError(null)
     setResult(null)
     setElapsed(0)
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = audioSource === 'system'
+        ? await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true })
+        : await navigator.mediaDevices.getUserMedia({ audio: true })
+      const audioTracks = stream.getAudioTracks()
+      if (audioTracks.length === 0) {
+        stream.getTracks().forEach((track) => track.stop())
+        throw new Error(audioSource === 'system'
+          ? '未能获取电脑音频。请在 macOS 系统设置中允许 EverRoom 录制系统音频。'
+          : '未能获取麦克风音频。')
+      }
       const mimeType = supportedMimeType()
       const { id } = await desktopApi().asr.beginRecording(mimeType || 'audio/webm')
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+      const audioStream = new MediaStream(audioTracks)
+      const recorder = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream)
       streamRef.current = stream
       recorderRef.current = recorder
       recordingIdRef.current = id
@@ -142,14 +240,22 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
         })
       })
       recorder.start(1000)
+      recordingStartedAtRef.current = Date.now()
       setState('recording')
     } catch (caught) {
+      const recorder = recorderRef.current
+      if (recorder?.state === 'recording') await waitForStop(recorder).catch(() => undefined)
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
+      recorderRef.current = null
+      recordingStartedAtRef.current = null
       const id = recordingIdRef.current
       recordingIdRef.current = null
       if (id) await desktopApi().asr.cancelRecording(id).catch(() => undefined)
-      if (!isDesktopRequestError(caught)) setError(errorMessage(caught))
+      const eventId = realityEventIdRef.current
+      realityEventIdRef.current = null
+      if (eventId) await desktopApi().reality.fail(eventId, errorMessage(caught)).catch(() => undefined)
+      reportRecordingError(caught, audioSource)
       setState('error')
     }
   }
@@ -159,42 +265,78 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
     const id = recordingIdRef.current
     if (!recorder || !id) return
     setState('saving')
-    setError(null)
     try {
       await waitForStop(recorder)
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       recorderRef.current = null
       await writeQueueRef.current
+      const durationMs = Math.max(0, Date.now() - (recordingStartedAtRef.current ?? Date.now()))
+      recordingStartedAtRef.current = null
+      if (durationMs < MIN_TRANSCRIPTION_DURATION_MS) {
+        recordingIdRef.current = null
+        await desktopApi().asr.cancelRecording(id)
+        setElapsed(0)
+        setState('idle')
+        showToast({
+          title: '录音时间太短',
+          message: '少于 10 秒的录音不会转写，本次内容已丢弃。',
+        })
+        return
+      }
+      const capturedEvent = await desktopApi().reality.createEvent({
+        id,
+        title: `桌面感知 · ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`,
+        captureDevice: {
+          id: 'desktop-local',
+          name: desktopApi().platform === 'darwin' ? '这台 Mac' : '这台电脑',
+          kind: 'desktop',
+        },
+        audioSource,
+        audioMimeType: recorder.mimeType || 'audio/webm',
+      })
+      realityEventIdRef.current = id
+      onEventChanged?.(capturedEvent)
       const { filePath } = await desktopApi().asr.finishRecording(id)
       recordingIdRef.current = null
+      const finishedEvent = await desktopApi().reality.finishCapture(id, {
+        durationMs,
+        audioFileName: filePath,
+      })
+      onEventChanged?.(finishedEvent)
       setState('transcribing')
       const job = await desktopApi().asr.createJob({
         filePath,
         mode,
         recordingId:id,
-        durationMs:Math.max(1000,elapsed*1000),
+        durationMs,
         languageHints: languages,
-        diarizationEnabled,
-        ...(contextPrompt.trim() ? { contextPrompt: contextPrompt.trim() } : {}),
+        diarizationEnabled: true,
       })
-      await pollJob(job)
+      await pollJob(job, id)
     } catch (caught) {
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       recorderRef.current = null
+      recordingStartedAtRef.current = null
       if (recordingIdRef.current) {
         await desktopApi().asr.cancelRecording(recordingIdRef.current).catch(() => undefined)
         recordingIdRef.current = null
       }
-      if (!isDesktopRequestError(caught)) setError(errorMessage(caught))
+      const eventId = realityEventIdRef.current
+      realityEventIdRef.current = null
+      if (eventId) {
+        const failed = await desktopApi().reality.fail(eventId, errorMessage(caught)).catch(() => null)
+        if (failed) onEventChanged?.(failed)
+      }
+      reportRecordingError(caught, audioSource)
       setState('error')
     }
   }
 
   const busy = state === 'requesting' || state === 'saving' || state === 'transcribing'
   const statusLabel = state === 'requesting'
-    ? '正在请求麦克风权限'
+    ? audioSource === 'system' ? '正在请求电脑音频权限' : '正在请求麦克风权限'
     : state === 'saving'
       ? '正在保存录音'
       : state === 'transcribing'
@@ -207,11 +349,22 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
             ? '正在录音'
             : '准备录音'
 
+  if (controlOnly) {
+    const listening = state === 'recording'
+    return (
+      <CassetteListeningControl
+        listening={listening}
+        busy={busy}
+        onToggle={listening ? stopRecording : startRecording}
+      />
+    )
+  }
+
   return (
-    <div className="page recording-page">
+    <div className={`recording-page${embedded ? ' recording-page-embedded' : ' page'}`}>
       <header className="recording-header">
         <div>
-          <h1>录音转写</h1>
+          {embedded ? <h2>本机采集</h2> : <h1>录音转写</h1>}
           <p>{mode==='cloud'?'EverRoom SaaS · 订阅额度':'本地 Gateway · 自有阿里云配置'}</p>
         </div>
         <span className="recording-status" data-state={state} aria-live="polite">
@@ -243,31 +396,35 @@ export function RecordingPage({onOpenSettings}:{onOpenSettings:()=>void}) {
 
       <section className="recording-options">
         <div className="recording-option-row">
+          <span className="option-label">录制来源</span>
+          <div className="segmented-control recording-source-control" aria-label="录制来源">
+            <button
+              type="button"
+              data-active={String(audioSource === 'microphone')}
+              disabled={busy || state === 'recording'}
+              onClick={() => setAudioSource('microphone')}
+            >
+              <Mic aria-hidden="true" />麦克风
+            </button>
+            <button
+              type="button"
+              data-active={String(audioSource === 'system')}
+              disabled={!isMacDesktop || busy || state === 'recording'}
+              title={isMacDesktop ? '录制这台 Mac 正在播放的音频' : '电脑音频录制目前仅支持 macOS 桌面版'}
+              onClick={() => setAudioSource('system')}
+            >
+              <MonitorSpeaker aria-hidden="true" />电脑音频
+            </button>
+          </div>
+        </div>
+        <div className="recording-option-row">
           <span className="option-label">语言</span>
           <div className="segmented-control" aria-label="转写语言">
             <button type="button" data-active={String(languages.includes('zh'))} onClick={() => toggleLanguage('zh')}>中文</button>
             <button type="button" data-active={String(languages.includes('en'))} onClick={() => toggleLanguage('en')}>English</button>
           </div>
         </div>
-        <label className="recording-option-row toggle-row">
-          <span><strong>区分说话人</strong><small>在逐段结果中标记不同说话人</small></span>
-          <input type="checkbox" checked={diarizationEnabled} onChange={(event) => setDiarizationEnabled(event.target.checked)} />
-        </label>
-        <label className="context-field">
-          <span>转写上下文 <small>{contextPrompt.length}/400</small></span>
-          <textarea
-            value={contextPrompt}
-            maxLength={400}
-            rows={3}
-            placeholder="人名、产品名、专业术语"
-            onChange={(event) => setContextPrompt(event.target.value)}
-          />
-        </label>
       </section>
-
-      {error ? (
-        <div className="recording-error" role="alert"><AlertCircle aria-hidden="true" /><span>{error}</span></div>
-      ) : null}
 
       {result ? (
         <section className="transcript-output" aria-label="转写结果">

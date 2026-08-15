@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { AgentPanel } from '@/components/AgentPanel'
 import { AppErrorDialog } from '@/components/AppErrorDialog'
+import { AppToast } from '@/components/AppToast'
 import { PageCanvas } from '@/components/PageCanvas'
 import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
@@ -34,7 +35,6 @@ function readStoredTheme(): ThemeId {
 export function App() {
   const isMacDesktop = detectMacDesktop()
   const [activePage, setActivePage] = useState<PageId>('home')
-  const [tabs, setTabs] = useState<PageId[]>(['home'])
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [closedContextRoomTabs, setClosedContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
@@ -58,13 +58,22 @@ export function App() {
     }
   }, [theme])
 
+  useEffect(() => {
+    const compactWindow = window.matchMedia('(max-width: 1200px)')
+    const collapseNavigation = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setNavCollapsed(true)
+    }
+    collapseNavigation(compactWindow)
+    compactWindow.addEventListener('change', collapseNavigation)
+    return () => compactWindow.removeEventListener('change', collapseNavigation)
+  }, [])
+
   const navigate = (page: PageId) => {
     if (page === 'rooms' && activePage === 'rooms' && contextRoomDetailFocused) {
       setContextRoomHomeRequest((request) => request + 1)
     }
     if (page === 'rooms') setActiveContextRoomId(null)
     setActivePage(page)
-    setTabs((current) => (current.includes(page) ? current : [...current, page]))
   }
 
   const openContextRoomTab = useCallback((room: ContextRoomWorkspaceTab) => {
@@ -74,13 +83,11 @@ export function App() {
         : [...current, room]
     ))
     setClosedContextRoomTabs((current) => current.filter((tab) => tab.id !== room.id))
-    setTabs((current) => current.includes('rooms') ? current : [...current, 'rooms'])
     setActivePage('rooms')
     setActiveContextRoomId(room.id)
   }, [])
 
   const activateContextRoomTab = useCallback((roomId: string) => {
-    setTabs((current) => current.includes('rooms') ? current : [...current, 'rooms'])
     setActivePage('rooms')
     setActiveContextRoomId(roomId)
   }, [])
@@ -128,14 +135,6 @@ export function App() {
     if (!focused) setContextRoomNavRevealed(false)
   }, [])
 
-  const closeTab = (page: PageId) => {
-    setTabs((current) => {
-      const next = current.filter((item) => item !== page)
-      if (activePage === page) setActivePage(next.at(-1) ?? 'home')
-      return next
-    })
-  }
-
   const focusAgent = () => {
     setAgentOpen(true)
     setAgentFocusRequest((request) => request + 1)
@@ -150,26 +149,33 @@ export function App() {
       data-nav-collapsed={String(effectiveNavCollapsed)}
     >
       <TopBar
-        activePage={activePage}
-        tabs={tabs}
         contextRoomTabs={contextRoomTabs}
         activeContextRoomId={activePage === 'rooms' ? activeContextRoomId : null}
         agentOpen={agentOpen}
         navCollapsed={effectiveNavCollapsed}
         theme={theme}
-        onActivate={navigate}
-        onClose={closeTab}
+        onActivateWorkbench={() => {
+          if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
+        }}
         onActivateContextRoom={activateContextRoomTab}
         onCloseContextRoom={closeContextRoomTab}
         onRestoreContextRoom={restoreContextRoomTab}
         canRestoreContextRoom={closedContextRoomTabs.length > 0}
-        onToggleAgent={() => setAgentOpen((open) => !open)}
+        onToggleAgent={() => setAgentOpen((open) => {
+          const next = !open
+          if (next && window.matchMedia('(max-width: 900px)').matches) setNavCollapsed(true)
+          return next
+        })}
         onToggleNav={() => {
           if (isContextRoomFocused) {
             setContextRoomNavRevealed((revealed) => !revealed)
             return
           }
-          setNavCollapsed((collapsed) => !collapsed)
+          setNavCollapsed((collapsed) => {
+            const next = !collapsed
+            if (!next && window.matchMedia('(max-width: 900px)').matches) setAgentOpen(false)
+            return next
+          })
         }}
         onThemeChange={setTheme}
       />
@@ -187,7 +193,14 @@ export function App() {
           onFocusAgent={focusAgent}
         />
       </main>
-      {agentOpen ? <AgentPanel pageLabel={pageLabels[activePage]} focusRequest={agentFocusRequest} /> : null}
+      {agentOpen ? (
+        <AgentPanel
+          pageLabel={pageLabels[activePage]}
+          roomId={activePage === 'rooms' ? activeContextRoomId : null}
+          focusRequest={agentFocusRequest}
+        />
+      ) : null}
+      <AppToast />
       <AppErrorDialog />
     </div>
   )

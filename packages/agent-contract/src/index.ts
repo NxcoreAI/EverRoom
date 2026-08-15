@@ -95,6 +95,68 @@ export interface StartAgentRunInput {
   idempotencyKey: string;
 }
 
+export interface TiptapJsonContent {
+  type: string;
+  attrs?: Record<string, unknown>;
+  content?: TiptapJsonContent[];
+  marks?: Array<{ type: string; attrs?: Record<string, unknown> }>;
+  text?: string;
+}
+
+export interface RoomDocument {
+  id: string;
+  roomId: string;
+  title: string;
+  contentJson: TiptapJsonContent;
+  version: number;
+  status: "draft" | "active";
+  activeTransactionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DocumentEventType =
+  | "document.opened"
+  | "document.appended"
+  | "document.commit-requested"
+  | "document.committed"
+  | "document.aborted"
+  | "document.deleted"
+  | "document.updated";
+
+export interface DocumentEvent<T = unknown> {
+  id: string;
+  roomId: string;
+  documentId: string;
+  transactionId: string | null;
+  type: DocumentEventType;
+  occurredAt: string;
+  payload: T;
+}
+
+export interface DocumentEventFrame {
+  type: "document.event";
+  protocol: 1;
+  event: DocumentEvent;
+}
+
+export interface ImportRoomDocumentInput {
+  id: string;
+  roomId: string;
+  title: string;
+  contentJson: TiptapJsonContent;
+}
+
+export interface SaveRoomDocumentInput {
+  baseVersion: number;
+  contentJson: TiptapJsonContent;
+}
+
+export interface AcknowledgeDocumentTransactionInput {
+  sequence: number;
+  contentJson: TiptapJsonContent;
+}
+
 export interface AgentSessionSnapshot {
   session: AgentSession;
   activeRun: AgentRun | null;

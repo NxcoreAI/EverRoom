@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react'
+import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   createContextRoomFileItem,
@@ -18,19 +19,33 @@ import { WorkspaceLayout } from './detail-workspace/WorkspaceLayout'
 export function PortedDetail({
   room,
   rooms,
+  backendDocuments,
+  documentEvents,
+  focusedDocumentId,
+  initialActivePane,
   initialObject,
+  onActivePaneChange,
   onBack,
   onOpenRoom,
   onUpdateRoom,
+  onBackendDocumentChange,
+  onDeleteDocument,
 }: {
   room: ContextRoomRecord
   rooms: ContextRoomRecord[]
+  backendDocuments: RoomDocument[]
+  documentEvents: Record<string, DocumentEvent[]>
+  focusedDocumentId: string | null
+  initialActivePane: DetailPane
   initialObject?: { kind: 'file' | 'mail' | 'meeting'; id: string } | null
+  onActivePaneChange: (pane: DetailPane) => void
   onBack: () => void
   onOpenRoom: (roomId: string) => void
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void
+  onBackendDocumentChange: (document: RoomDocument) => void
+  onDeleteDocument: (document: RoomDocument) => Promise<void>
 }) {
-  const [activePane, setActivePane] = useState<DetailPane>('overview')
+  const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
   const [selectedMailId, setSelectedMailId] = useState<string | null>(null)
@@ -44,7 +59,14 @@ export function PortedDetail({
     const value = room.materials.find((item) => item.id === initialObject.id)
     return value ? { kind: initialObject.kind, value } : null
   })
-  const library = useMemo(() => createContextRoomResourceLibrary(room), [room])
+  const library = useMemo(
+    () => createContextRoomResourceLibrary(room, backendDocuments),
+    [backendDocuments, room],
+  )
+  const setActivePane = useCallback((pane: DetailPane) => {
+    setActivePaneState(pane)
+    onActivePaneChange(pane)
+  }, [onActivePaneChange])
   const layout = useContextRoomLayout({
     activePane,
     onActivePaneChange: setActivePane,
@@ -65,6 +87,20 @@ export function PortedDetail({
     if (!layout.panels.includes('documents')) layout.switchPane('documents')
     layout.setMobileContent(true)
   }, [layout, room.id])
+
+  useEffect(() => {
+    if (!focusedDocumentId) return
+    const resource = library.resources.find((candidate) =>
+      candidate.kind === 'cloud-doc' && candidate.binding.docId === focusedDocumentId)
+    if (!resource || resource.id === selectedResourceId) return
+    openResource(resource)
+  }, [focusedDocumentId, library.resources, openResource, selectedResourceId])
+
+  useEffect(() => {
+    if (selectedResourceId && getRoomResource(library, room.id, selectedResourceId)) return
+    const nextDocument = library.resources.find((resource) => resource.kind === 'cloud-doc')
+    setSelectedResourceId(nextDocument?.id ?? null)
+  }, [library, room.id, selectedResourceId])
 
   const openObject = useCallback((target: WorkspaceObjectPreview) => {
     if (target.kind === 'mail') {
@@ -141,6 +177,10 @@ export function PortedDetail({
           selectedResourceId={selectedResourceId}
           selectedObject={selectedObject}
           selectedResource={selectedResource}
+          backendDocuments={backendDocuments}
+          documentEvents={documentEvents}
+          onBackendDocumentChange={onBackendDocumentChange}
+          onDeleteDocument={onDeleteDocument}
           onSelectResource={openResource}
           onAddFile={addLocalFile}
           onOpenMemory={setSelectedMemoryId}

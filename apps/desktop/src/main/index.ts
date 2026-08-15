@@ -1,7 +1,6 @@
-import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell } from 'electron'
 
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -17,9 +16,12 @@ import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
 } from '../shared/memory'
+import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
+import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
+import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
 
 const APP_NAME = 'EverRoom'
 
@@ -28,6 +30,7 @@ const dataDirectory = join(appDataDirectory, APP_NAME)
 
 app.setPath('userData', dataDirectory)
 app.setName(APP_NAME)
+configureDesktopLogger(dataDirectory)
 if (process.platform === 'darwin') process.title = APP_NAME
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -64,13 +67,40 @@ const AGENT_CHANNELS = {
   unsubscribe: 'agent:unsubscribe',
 } as const
 
+const DOCUMENT_CHANNELS = {
+  list: 'documents:list',
+  get: 'documents:get',
+  import: 'documents:import',
+  save: 'documents:save',
+  delete: 'documents:delete',
+  acknowledge: 'documents:acknowledge',
+  subscribe: 'documents:subscribe',
+  unsubscribe: 'documents:unsubscribe',
+} as const
+
 const ASR_CHANNELS = {
+  openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
   appendRecording: 'asr:append-recording',
   finishRecording: 'asr:finish-recording',
   cancelRecording: 'asr:cancel-recording',
   createJob: 'asr:create-job',
   getJob: 'asr:get-job',
+} as const
+
+const REALITY_CHANNELS = {
+  listEvents: 'reality:list-events',
+  getEvent: 'reality:get-event',
+  createEvent: 'reality:create-event',
+  finishCapture: 'reality:finish-capture',
+  updateTranscript: 'reality:update-transcript',
+  addMarker: 'reality:add-marker',
+  confirm: 'reality:confirm',
+  discard: 'reality:discard',
+  fail: 'reality:fail',
+  readAudio: 'reality:read-audio',
+  subscribe: 'reality:subscribe',
+  unsubscribe: 'reality:unsubscribe',
 } as const
 
 const ACCOUNT_CHANNELS = {
@@ -100,17 +130,12 @@ let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
+let documentGatewayBridge: DocumentGatewayBridge | null = null
+let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let saasClient: SaasClient | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
-let requestLogWrite = Promise.resolve()
-
-function localDate(value: Date): string {
-  return [value.getFullYear(), value.getMonth() + 1, value.getDate()]
-    .map((part) => String(part).padStart(2, '0'))
-    .join('-')
-}
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -118,14 +143,7 @@ function logRendererRequestError(input: unknown): void {
   if (typeof value.channel !== 'string' || typeof value.message !== 'string') return
   const channel = value.channel.slice(0, 120)
   const message = value.message.slice(0, 2_000)
-  const now = new Date()
-  const entry = JSON.stringify({ time: now.toISOString(), level: 'error', channel, message })
-  console.error(`[desktop-request] ${channel}: ${message}`)
-  requestLogWrite = requestLogWrite.then(async () => {
-    const logsDirectory = join(dataDirectory, 'logs')
-    await mkdir(logsDirectory, { recursive: true })
-    await appendFile(join(logsDirectory, `desktop-${localDate(now)}.log`), `${entry}\n`, 'utf8')
-  }).catch((error) => console.error('Unable to write desktop request log.', error))
+  logDesktop('renderer', 'error', { event: 'renderer.request.error', channel, message })
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
@@ -252,7 +270,7 @@ function registerGatewayHandlers(supervisor: GatewaySupervisor): void {
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
-  ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel) => bridge.listSessions(pageLabel))
+  ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
   ipcMain.handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
   ipcMain.handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
@@ -265,7 +283,25 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   ipcMain.handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
+function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
+  ipcMain.handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
+  ipcMain.handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
+  ipcMain.handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
+    bridge.acknowledge(transactionId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
+  ipcMain.handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
+}
+
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
+  ipcMain.handle(ASR_CHANNELS.openSystemAudioSettings, () => {
+    if (process.platform !== 'darwin') throw new Error('系统音频录制设置仅适用于 macOS。')
+    return shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    )
+  })
   ipcMain.handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
   ipcMain.handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
   ipcMain.handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
@@ -307,7 +343,23 @@ function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
   )
 }
 
-function registerAccountHandlers(client: SaasClient): void {  ipcMain.handle(ACCOUNT_CHANNELS.status, () => client.status())
+function registerRealityHandlers(bridge: RealityGatewayBridge): void {
+  ipcMain.handle(REALITY_CHANNELS.listEvents, (_event, filters) => bridge.listEvents(filters))
+  ipcMain.handle(REALITY_CHANNELS.getEvent, (_event, id) => bridge.getEvent(id))
+  ipcMain.handle(REALITY_CHANNELS.createEvent, (_event, input) => bridge.createEvent(input))
+  ipcMain.handle(REALITY_CHANNELS.finishCapture, (_event, id, input) => bridge.finishCapture(id, input))
+  ipcMain.handle(REALITY_CHANNELS.updateTranscript, (_event, id, input) => bridge.updateTranscript(id, input))
+  ipcMain.handle(REALITY_CHANNELS.addMarker, (_event, id, input) => bridge.addMarker(id, input))
+  ipcMain.handle(REALITY_CHANNELS.confirm, (_event, id) => bridge.confirm(id))
+  ipcMain.handle(REALITY_CHANNELS.discard, (_event, id) => bridge.discard(id))
+  ipcMain.handle(REALITY_CHANNELS.fail, (_event, id, error) => bridge.fail(id, error))
+  ipcMain.handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
+  ipcMain.handle(REALITY_CHANNELS.subscribe, (event) => bridge.subscribe(event.sender))
+  ipcMain.handle(REALITY_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+}
+
+function registerAccountHandlers(client: SaasClient): void {
+  ipcMain.handle(ACCOUNT_CHANNELS.status, () => client.status())
   ipcMain.handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
     const value = input as { identifier?: unknown; password?: unknown }
@@ -346,6 +398,47 @@ function createWindow(): void {
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
   })
+  if (process.platform === 'darwin') {
+    window.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+      const respond = (streams: Parameters<typeof callback>[0]) => {
+        try {
+          callback(streams)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          console.info(`macOS system audio capture request ended: ${message}`)
+        }
+      }
+      if (
+        request.frame !== window.webContents.mainFrame
+        || !request.audioRequested
+        || !request.videoRequested
+      ) {
+        respond({})
+        return
+      }
+      try {
+        void desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width: 0, height: 0 },
+        }).then(
+          (sources) => {
+            const source = sources[0]
+            if (!source || window.isDestroyed()) respond({})
+            else respond({ video: source, audio: 'loopback' })
+          },
+          (error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            console.info(`macOS system audio capture permission was not granted: ${message}`)
+            respond({})
+          },
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.info(`macOS system audio capture permission was not granted: ${message}`)
+        respond({})
+      }
+    })
+  }
   window.once('ready-to-show', () => window.show())
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -391,9 +484,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     registerGatewayHandlers(gatewaySupervisor)
+    realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
+    registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
     registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
+    documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
+    registerDocumentHandlers(documentGatewayBridge)
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')
@@ -406,7 +503,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     registerAccountHandlers(saasClient)
-    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient))
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge))
 
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
@@ -424,6 +521,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    documentGatewayBridge?.dispose()
+    documentGatewayBridge = null
+    realityGatewayBridge?.dispose()
+    realityGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -441,28 +542,34 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
-  if ((!localDataService && !gatewaySupervisor) || shutdownStarted) return
+  if (shutdownStarted) return
   event.preventDefault()
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
   const memoryCore = memoryCoreSupervisor
   const agentBridge = agentGatewayBridge
+  const documentBridge = documentGatewayBridge
+  const realityBridge = realityGatewayBridge
   const recordings = recordingStore
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
   memoryCoreSupervisor = null
   agentGatewayBridge = null
+  documentGatewayBridge = null
+  realityGatewayBridge = null
   recordingStore = null
   saasClient = null
   agentBridge?.dispose()
+  documentBridge?.dispose()
+  realityBridge?.dispose()
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
   void Promise.allSettled([
     service?.shutdown(),
     recordings?.dispose(),
     gateway?.shutdown(),
     memoryCore?.shutdown(),
-  ]).finally(() => app.quit())
+  ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

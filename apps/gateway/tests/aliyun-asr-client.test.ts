@@ -1,17 +1,25 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from "axios";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AliyunAsrClient } from "../src/modules/asr/aliyun-client.js";
 import type { AsrAudioStorage } from "../src/modules/asr/audio-storage.js";
 
 const temporaryDirectories: string[] = [];
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  config: AxiosRequestConfig = {},
+): AxiosResponse {
+  return {
+    data: body,
     status,
-    headers: { "Content-Type": "application/json" },
-  });
+    statusText: status >= 400 ? "Error" : "OK",
+    headers: { "content-type": "application/json" },
+    config: config as InternalAxiosRequestConfig,
+  };
 }
 
 afterEach(async () => {
@@ -30,14 +38,14 @@ describe("AliyunAsrClient", () => {
     const audioStorage: AsrAudioStorage = {
       upload: vi.fn(async () => ({ url: "https://upload.example.com/meeting.wav?signed=true" })),
     };
-    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-      jsonResponse({ output: { task_id: "task-123", task_status: "PENDING" } })
+    const requestMock = vi.fn(async (config: AxiosRequestConfig) =>
+      jsonResponse({ output: { task_id: "task-123", task_status: "PENDING" } }, 200, config)
     );
     const client = new AliyunAsrClient({
       apiKey: "test-api-key",
       baseUrl: "https://workspace.example.com/api/v1/",
       model: "qwen-audio-3.0-asr-flash-filetrans",
-      fetch: fetchMock as typeof fetch,
+      http: { request: requestMock } as unknown as AxiosInstance,
       audioStorage,
     });
 
@@ -49,9 +57,9 @@ describe("AliyunAsrClient", () => {
     })).resolves.toEqual({ taskId: "task-123" });
 
     expect(audioStorage.upload).toHaveBeenCalledWith(filePath, "audio/wav");
-    const [submitUrl, submitInit] = fetchMock.mock.calls[0]!;
-    expect(String(submitUrl)).toBe("https://workspace.example.com/api/v1/services/audio/asr/transcription");
-    expect(JSON.parse(String(submitInit?.body))).toEqual({
+    const [submitConfig] = requestMock.mock.calls[0]!;
+    expect(submitConfig.url).toBe("https://workspace.example.com/api/v1/services/audio/asr/transcription");
+    expect(submitConfig.data).toEqual({
       model: "qwen-audio-3.0-asr-flash-filetrans",
       input: {
         file_urls: ["https://upload.example.com/meeting.wav?signed=true"],
@@ -65,15 +73,15 @@ describe("AliyunAsrClient", () => {
   });
 
   it("maps a successful provider task to a completed snapshot", async () => {
-    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
-      if (fetchMock.mock.calls.length === 1) {
+    const requestMock = vi.fn(async (config: AxiosRequestConfig) => {
+      if (requestMock.mock.calls.length === 1) {
         return jsonResponse({
           output: {
             task_id: "task-123",
             task_status: "SUCCEEDED",
             results: [{ transcription_url: "https://results.example.com/result.json" }],
           },
-        });
+        }, 200, config);
       }
       return jsonResponse({
         transcripts: [{
@@ -85,13 +93,13 @@ describe("AliyunAsrClient", () => {
             speaker_id: 0,
           }],
         }],
-      });
+      }, 200, config);
     });
     const client = new AliyunAsrClient({
       apiKey: "test-api-key",
       baseUrl: "https://workspace.example.com/api/v1",
       model: "qwen-audio-3.0-asr-flash-filetrans",
-      fetch: fetchMock as typeof fetch,
+      http: { request: requestMock } as unknown as AxiosInstance,
     });
 
     const snapshot = await client.getTask("task-123");
@@ -106,14 +114,14 @@ describe("AliyunAsrClient", () => {
         speakerId: 0,
       }],
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+    expect(requestMock.mock.calls[0]?.[0].url).toBe(
       "https://workspace.example.com/api/v1/tasks/task-123",
     );
-    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).has("X-DashScope-Async")).toBe(false);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+    expect(requestMock.mock.calls[0]?.[0].headers).not.toHaveProperty("X-DashScope-Async");
+    expect(requestMock.mock.calls[1]?.[0].url).toBe(
       "https://results.example.com/result.json",
     );
-    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).has("Authorization")).toBe(false);
+    expect(requestMock.mock.calls[1]?.[0].headers).not.toHaveProperty("Authorization");
   });
 
   it("submits a signed OSS URL and removes the object after completion", async () => {
@@ -124,29 +132,29 @@ describe("AliyunAsrClient", () => {
         cleanup,
       })),
     };
-    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      if (fetchMock.mock.calls.length === 1) {
-        expect(JSON.parse(String(init?.body)).input.file_urls).toEqual([
+    const requestMock = vi.fn(async (config: AxiosRequestConfig) => {
+      if (requestMock.mock.calls.length === 1) {
+        expect(config.data.input.file_urls).toEqual([
           "https://private-recordings.oss-cn-beijing.aliyuncs.com/meeting.wav?signed=true",
         ]);
-        return jsonResponse({ output: { task_id: "task-oss-123" } });
+        return jsonResponse({ output: { task_id: "task-oss-123" } }, 200, config);
       }
-      if (fetchMock.mock.calls.length === 2) {
+      if (requestMock.mock.calls.length === 2) {
         return jsonResponse({
           output: {
             task_id: "task-oss-123",
             task_status: "SUCCEEDED",
             results: [{ transcription_url: "https://results.example.com/result.json" }],
           },
-        });
+        }, 200, config);
       }
-      return jsonResponse({ transcripts: [{ transcript: "OSS works", sentences: [] }] });
+      return jsonResponse({ transcripts: [{ transcript: "OSS works", sentences: [] }] }, 200, config);
     });
     const client = new AliyunAsrClient({
       apiKey: "test-api-key",
       baseUrl: "https://workspace.example.com/api/v1",
       model: "qwen-audio-3.0-asr-flash-filetrans",
-      fetch: fetchMock as typeof fetch,
+      http: { request: requestMock } as unknown as AxiosInstance,
       audioStorage,
     });
 

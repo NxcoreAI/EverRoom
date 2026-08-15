@@ -11,6 +11,32 @@ export type SourceFileStatus =
   | 'error'
 export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' | 'unsupported'
 
+import type {
+  AcknowledgeDocumentTransactionInput,
+  AgentEvent,
+  AgentRun,
+  AgentSession,
+  AgentSessionSnapshot,
+  AgentSocketFrame,
+  CreateAgentSessionInput,
+  DocumentEventFrame,
+  ImportRoomDocumentInput,
+  RoomDocument,
+  SaveRoomDocumentInput,
+  StartAgentRunInput,
+  UpdateAgentSessionInput,
+} from '@nxcore/agent-contract'
+import type {
+  CreateRealityEventInput,
+  FinishRealityCaptureInput,
+  MarkRealityEventInput,
+  RealityEvent,
+  RealityInsights,
+  RealityEventStatus,
+  RealitySocketFrame,
+  UpdateRealityTranscriptInput,
+} from '@nxcore/reality-contract'
+
 export interface EvidenceBlock {
   id: string
   kind: 'heading' | 'paragraph'
@@ -125,6 +151,7 @@ export interface AsrSegment {
 export interface AsrResult {
   transcript: string
   segments: AsrSegment[]
+  insights?: RealityInsights
 }
 
 export interface AsrJob {
@@ -147,6 +174,7 @@ export interface CreateAsrJobInput {
   mode: 'local' | 'cloud'
   recordingId?: string
   durationMs?: number
+  retryToken?: string
   languageHints?: string[]
   diarizationEnabled: boolean
   contextPrompt?: string
@@ -174,12 +202,16 @@ export type CloudOidcProvider = 'apple' | 'google'
 export interface DesktopRequestError {
   channel: string
   message: string
+  title?: string
+  action?: 'open-system-audio-settings'
+  actionLabel?: string
 }
 
 export interface NxcoreDesktopApi {
   platform: string
   errors: {
     onRequestError(listener: (error: DesktopRequestError) => void): () => void
+    report(error: DesktopRequestError): void
   }
   gateway: {
     status(): Promise<GatewayStatus>
@@ -192,6 +224,7 @@ export interface NxcoreDesktopApi {
     logout(): Promise<CloudAccountStatus>
   }
   asr: {
+    openSystemAudioSettings(): Promise<void>
     beginRecording(mimeType: string): Promise<{ id: string }>
     appendRecording(id: string, chunk: Uint8Array): Promise<void>
     finishRecording(id: string): Promise<{ filePath: string }>
@@ -213,8 +246,23 @@ export interface NxcoreDesktopApi {
     searchConversations(query: string, limit?: number, sessionId?: string): Promise<{ messages: MemoryConversationMessageDto[] }>
     deleteConversations(target: { sessionIds?: string[]; messageIds?: string[] }): Promise<{ deletedCount: number }>
   }
+  reality: {
+    listEvents(filters?: { status?: RealityEventStatus; search?: string }): Promise<RealityEvent[]>
+    getEvent(id: string): Promise<RealityEvent>
+    createEvent(input: CreateRealityEventInput): Promise<RealityEvent>
+    finishCapture(id: string, input: FinishRealityCaptureInput): Promise<RealityEvent>
+    updateTranscript(id: string, input: UpdateRealityTranscriptInput): Promise<RealityEvent>
+    addMarker(id: string, input: MarkRealityEventInput): Promise<RealityEvent>
+    confirm(id: string): Promise<RealityEvent>
+    discard(id: string): Promise<void>
+    fail(id: string, error: string): Promise<RealityEvent>
+    readAudio(id: string): Promise<Uint8Array>
+    subscribe(): Promise<void>
+    unsubscribe(): Promise<void>
+    onEvent(listener: (frame: RealitySocketFrame) => void): () => void
+  }
   agent: {
-    listSessions(pageLabel: string): Promise<AgentSession[]>
+    listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
     updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession>
     deleteSession(sessionId: string): Promise<void>
@@ -225,6 +273,17 @@ export interface NxcoreDesktopApi {
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
+  }
+  documents: {
+    list(roomId: string): Promise<RoomDocument[]>
+    get(documentId: string): Promise<RoomDocument>
+    import(input: ImportRoomDocumentInput): Promise<RoomDocument>
+    save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
+    delete(documentId: string): Promise<void>
+    acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void>
+    subscribe(roomId: string): Promise<void>
+    unsubscribe(roomId?: string): Promise<void>
+    onEvent(listener: (frame: DocumentEventFrame) => void): () => void
   }
   sources: {
     list(): Promise<DataSourceSummary[]>
@@ -241,16 +300,6 @@ export interface NxcoreDesktopApi {
   }
 }
 import type {
-  AgentEvent,
-  AgentRun,
-  AgentSession,
-  AgentSessionSnapshot,
-  AgentSocketFrame,
-  CreateAgentSessionInput,
-  StartAgentRunInput,
-  UpdateAgentSessionInput,
-} from '@nxcore/agent-contract'
-import type {
   MemoryAtomicItemDto,
   MemoryAtomicListOptions,
   MemoryAtomicPageDto,
@@ -262,3 +311,14 @@ import type {
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from './memory'
+export type {
+  CreateRealityEventInput,
+  FinishRealityCaptureInput,
+  MarkRealityEventInput,
+  RealityEvent,
+  RealityEventType,
+  RealityInsights,
+  RealityEventStatus,
+  RealitySocketFrame,
+  UpdateRealityTranscriptInput,
+} from '@nxcore/reality-contract'
