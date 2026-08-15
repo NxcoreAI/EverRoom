@@ -2,6 +2,7 @@ import { cp, mkdir } from "node:fs/promises";
 
 await mkdir("dist/drizzle", { recursive: true });
 await cp("drizzle", "dist/drizzle", { recursive: true, force: true });
+await cp("package.json", "dist/package.json", { force: true });
 
 await cp("node_modules/@fastify/swagger-ui/static", "dist/static", {
   recursive: true,

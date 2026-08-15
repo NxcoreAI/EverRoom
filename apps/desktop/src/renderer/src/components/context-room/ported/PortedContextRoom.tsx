@@ -6,6 +6,8 @@ import type { ContextRoomKind, ContextRoomRecord } from './types'
 import type { ContextRoomWorkspaceTab } from '../contextRoomTabs'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
+import type { DetailPane } from './components/RoomIconSidebar'
+import { useRoomDocuments } from './hooks/useRoomDocuments'
 
 interface DraftRoom {
   kind: ContextRoomKind
@@ -64,12 +66,14 @@ export function PortedContextRoom({
 }) {
   const [state, setState] = useState(() => loadContextRoomLocalState(CONTEXT_ROOMS))
   const handledHomeRequest = useRef(homeRequest)
+  const detailPaneByRoomIdRef = useRef<Record<string, DetailPane>>({})
   const [initialObject, setInitialObject] = useState<{
     kind: 'file' | 'mail' | 'meeting'
     id: string
     roomId: string
   } | null>(null)
   const activeRoom = state.rooms.find((room) => room.id === activeRoomId) ?? null
+  const roomDocuments = useRoomDocuments(state.rooms.map((room) => room.id))
 
   useEffect(() => saveContextRoomLocalState(state), [state])
 
@@ -89,6 +93,11 @@ export function PortedContextRoom({
     setInitialObject(null)
     onShowHome()
   }, [homeRequest, onShowHome])
+
+  useEffect(() => {
+    if (!activeRoomId || initialObject?.roomId !== activeRoomId) return
+    setInitialObject(null)
+  }, [activeRoomId, initialObject])
 
   const updateRoom = (updater: (room: ContextRoomRecord) => ContextRoomRecord) => {
     if (!activeRoomId) return
@@ -111,7 +120,16 @@ export function PortedContextRoom({
         key={activeRoom.id}
         room={activeRoom}
         rooms={state.rooms}
+        backendDocuments={roomDocuments.documentsByRoom[activeRoom.id] ?? []}
+        documentEvents={roomDocuments.eventsByDocument}
+        focusedDocumentId={roomDocuments.focusedDocumentByRoom[activeRoom.id] ?? null}
+        onBackendDocumentChange={roomDocuments.upsertDocument}
+        onDeleteDocument={roomDocuments.deleteDocument}
+        initialActivePane={detailPaneByRoomIdRef.current[activeRoom.id] ?? 'overview'}
         initialObject={initialObject?.roomId === activeRoom.id ? initialObject : null}
+        onActivePaneChange={(pane) => {
+          detailPaneByRoomIdRef.current[activeRoom.id] = pane
+        }}
         onBack={() => {
           setInitialObject(null)
           onShowHome()

@@ -8,6 +8,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "package:mac": "pnpm run build && electron-builder --mac dmg zip"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
     "@tiptap/extension-task-item": "^3.30.1",
     "@tiptap/extension-task-list": "^3.30.1",
     "@tiptap/extensions": "^3.30.1",
+    "@tiptap/markdown": "^3.30.1",
     "@tiptap/pm": "^3.30.1",
     "@tiptap/react": "^3.30.1",
     "@tiptap/starter-kit": "^3.30.1",
@@ -43,7 +45,8 @@
     "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.0",
     "typescript": "~5.6.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "vitest": "^4.1.10"
   },
   "build": {
     "appId": "com.nxcore.ce",
@@ -68,6 +71,13 @@
       {
         "from": "../gateway/dist",
         "to": "gateway",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../gateway/dist/node_modules/better-sqlite3",
+        "to": "gateway/node_modules/better-sqlite3",
         "filter": [
           "**/*"
         ]
