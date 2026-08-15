@@ -22,6 +22,7 @@
     "@fastify/swagger-ui": "^6.1.1",
     "@fastify/type-provider-typebox": "^6.1.0",
     "@fastify/websocket": "^11.3.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@nxcore/agent-contract": "workspace:*",
     "@nxcore/agent-runtime": "workspace:*",
     "@nxcore/agent-runtime-pi": "workspace:*",

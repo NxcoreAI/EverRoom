@@ -15,10 +15,11 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
           tags: ["agent"],
           querystring: Type.Object({
             pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+            roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
           }),
         },
       },
-      async (request) => service.listSessions(request.query.pageLabel),
+      async (request) => service.listSessions(request.query.pageLabel, request.query.roomId),
     );
 
     app.post(

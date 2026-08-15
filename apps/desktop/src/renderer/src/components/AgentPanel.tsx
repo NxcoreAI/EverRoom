@@ -12,16 +12,18 @@ import './agent/AgentChat.css'
 
 export function AgentPanel({
   pageLabel,
+  roomId,
   focusRequest = 0,
 }: {
   pageLabel: string
+  roomId: string | null
   focusRequest?: number
 }) {
   const [activeView, setActiveView] = useState<AgentView>('chat')
   const [draft, setDraft] = useState('')
   const composerRef = useRef<HTMLTextAreaElement>(null)
-  const contextSummary = `${pageLabel} · 未选择文本`
-  const session = useAgentSession(pageLabel)
+  const contextSummary = roomId ? `${pageLabel} · 当前 Room` : `${pageLabel} · 未选择文本`
+  const session = useAgentSession(pageLabel, roomId)
 
   const focusComposer = () => {
     window.requestAnimationFrame(() => composerRef.current?.focus())

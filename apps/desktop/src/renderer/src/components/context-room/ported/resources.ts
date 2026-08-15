@@ -1,3 +1,4 @@
+import type { RoomDocument } from '@nxcore/agent-contract';
 import type {
   ContextRoomFileItem,
   ContextRoomOfficeFormat,
@@ -121,7 +122,8 @@ function previewFor(format: ContextRoomOfficeFormat, title: string, summary: str
 }
 
 export function createContextRoomResourceLibrary(
-  room: ContextRoomRecord
+  room: ContextRoomRecord,
+  backendDocuments: RoomDocument[] = [],
 ): ContextRoomResourceLibrary {
   const documentsFolderId = `${room.id}:folder:documents`;
   const officeFolderId = `${room.id}:folder:office`;
@@ -131,34 +133,6 @@ export function createContextRoomResourceLibrary(
     { id: officeFolderId, roomId: room.id, parentId: null, name: 'Office 文件' },
     { id: designFolderId, roomId: room.id, parentId: null, name: '设计与附件' },
   ];
-
-  const cloudResource: ContextRoomResource = {
-    id: `${room.id}:cloud:${room.cloudDoc.docId}`,
-    roomId: room.id,
-    folderId: documentsFolderId,
-    name: room.cloudDoc.title ?? room.title,
-    updatedAt: room.lastViewed,
-    kind: 'cloud-doc',
-    binding: room.cloudDoc,
-    version: room.materials.find((item) => item.type === '文档')?.version ?? 'V1.0',
-    saveState: '已保存',
-  };
-
-  const documentResources: ContextRoomResource[] = room.materials
-    .filter((item) => item.type === '文档' && item.title !== cloudResource.name)
-    .map((item, index) => {
-      const format: ContextRoomOfficeFormat = index % 2 === 0 ? 'markdown' : 'pdf';
-      return {
-        id: `${room.id}:material:${item.id}`,
-        roomId: room.id,
-        folderId: documentsFolderId,
-        name: item.title,
-        updatedAt: item.time,
-        kind: 'office-file',
-        format,
-        preview: previewFor(format, item.title, item.summary),
-      };
-    });
 
   const fileResources: ContextRoomResource[] = room.fileItems.map((item) => {
     const format = officeFormat(item.extension);
@@ -181,7 +155,25 @@ export function createContextRoomResourceLibrary(
     };
   });
 
-  return { folders, resources: [cloudResource, ...documentResources, ...fileResources] };
+  const backendResources: ContextRoomResource[] = backendDocuments.map((document) => ({
+    id: `${room.id}:cloud:${document.id}`,
+    roomId: room.id,
+    folderId: documentsFolderId,
+    name: document.title,
+    updatedAt: new Date(document.updatedAt).toLocaleString('zh-CN'),
+    kind: 'cloud-doc',
+    binding: {
+      workspaceId: 'gateway',
+      docId: document.id,
+      title: document.title,
+    },
+    version: document.version > 0 ? `V${String(document.version)}.0` : '草稿',
+    saveState: document.status === 'draft' ? 'Agent 正在写入' : '已保存',
+  }));
+  return {
+    folders,
+    resources: [...backendResources, ...fileResources],
+  };
 }
 
 export function getRoomResource(

@@ -24,7 +24,10 @@ export function AgentChatView({
   onSelectPrompt: (prompt: string) => void
   reasoning: string
 }) {
-  const hasConversation = messages.length > 0 || loading
+  const awaitingReply = Boolean(activeRunId) && !messages.some((message) => (
+    message.role === 'assistant' && message.runId === activeRunId
+  ))
+  const hasConversation = messages.length > 0 || loading || Boolean(error)
 
   return (
     <section className="agent-chat-conversation-frame">
@@ -58,8 +61,15 @@ export function AgentChatView({
               <p>{message.content || ' '}</p>
             </article>
           ))}
-          {loading && messages.length === 0 ? (
-            <div className="agent-loading"><LoaderCircle className="spin" />正在载入会话</div>
+          {loading ? (
+            <div className="agent-loading">
+              <LoaderCircle className="spin" />
+              {messages.length > 0 ? '正在连接 Agent，等待回复' : '正在载入会话'}
+            </div>
+          ) : awaitingReply ? (
+            <div className="agent-loading">
+              <LoaderCircle className="spin" />消息已发送，正在等待回复
+            </div>
           ) : null}
           {error ? <div className="agent-error" role="alert">{error}</div> : null}
         </div>
