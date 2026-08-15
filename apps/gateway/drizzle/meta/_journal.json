@@ -15,6 +15,13 @@
       "when": 1786721919374,
       "tag": "0001_motionless_captain_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786780256138,
+      "tag": "0002_broken_clint_barton",
+      "breakpoints": true
     }
   ]
 }

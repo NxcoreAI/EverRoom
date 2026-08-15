@@ -11,6 +11,7 @@ export class AliyunAsrProvider implements AsrProvider {
   constructor(config: AliyunAsrConfig, logger?: Logger) {
     this.client = new AliyunAsrClient({
       ...config,
+      ...(logger ? { logger } : {}),
       ...(config.oss ? { audioStorage: new AliyunOssAudioStorage(config.oss, logger) } : {}),
     });
   }

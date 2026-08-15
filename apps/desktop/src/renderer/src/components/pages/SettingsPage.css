@@ -7,6 +7,20 @@
   background: var(--surface);
 }
 
+.reality-settings-section { width: min(720px, 100%); margin-bottom: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.reality-settings-section > header { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
+.reality-settings-section > header > span { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--accent); }
+.reality-settings-section > header svg { width: 18px; height: 18px; }
+.reality-settings-section h2 { margin: 0; font-size: 14px; }
+.reality-settings-section header p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+.reality-setting-row { display: flex; min-height: 62px; align-items: center; justify-content: space-between; gap: 20px; padding: 11px 18px; border-bottom: 1px solid var(--border); }
+.reality-setting-row > div:first-child { display: grid; gap: 4px; }
+.reality-setting-row strong { font-size: 12px; }
+.reality-setting-row small { color: var(--muted); font-size: 10px; }
+.reality-setting-row > input { width: 16px; height: 16px; accent-color: var(--accent); }
+.reality-source-setting button { display: inline-flex; align-items: center; gap: 6px; }
+.reality-source-setting svg { width: 13px; height: 13px; }
+
 .cloud-account-header {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr) auto;
@@ -119,23 +133,38 @@
 .social-login-button {
   display: inline-flex;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
-  gap: 9px;
-  padding: 8px 14px;
+  gap: 10px;
+  padding: 9px 16px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   font: inherit;
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
 }
 
-.social-login-button svg {
-  width: 17px;
-  height: 17px;
+.brand-login-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-login-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.brand-login-icon img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .social-login-button:disabled {
@@ -144,35 +173,38 @@
 }
 
 .apple-login {
-  border-color: #171717;
-  background: #171717;
+  border-color: #000;
+  background: #000;
   color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
 }
 
 .apple-login:hover:not(:disabled) {
-  background: #2b2b2b;
+  border-color: #282828;
+  background: #282828;
+}
+
+.apple-login .brand-login-icon img {
+  width: 15px;
+  height: 20px;
 }
 
 .google-login {
-  background: var(--surface);
-  color: var(--text);
+  border-color: #747775;
+  background: #fff;
+  color: #1f1f1f;
+  font-family: Roboto, Arial, sans-serif;
+  font-weight: 500;
 }
 
 .google-login:hover:not(:disabled) {
-  border-color: #9ca3af;
-  background: var(--surface-alt);
+  border-color: #747775;
+  background: #f8faff;
 }
 
-.google-mark {
-  display: inline-flex;
+.google-login .brand-login-icon img {
   width: 18px;
   height: 18px;
-  align-items: center;
-  justify-content: center;
-  color: #4285f4;
-  font-family: Arial, sans-serif;
-  font-size: 16px;
-  font-weight: 700;
 }
 
 .oidc-login-note {

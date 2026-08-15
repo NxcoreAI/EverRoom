@@ -6,7 +6,7 @@ import {
   FolderSync,
   Home,
   ListChecks,
-  Mic,
+  AudioLines,
   Settings,
 } from 'lucide-react'
 
@@ -33,7 +33,7 @@ export const navigationSections: NavigationSection[] = [
       { id: 'home', label: '首页', icon: Home, tone: 'slate' },
       { id: 'rooms', label: 'Context Room', icon: BookOpen, tone: 'blue' },
       { id: 'docs', label: '文档', icon: FileText, tone: 'indigo' },
-      { id: 'recording', label: '录音转写', icon: Mic, tone: 'cyan' },
+      { id: 'recording', label: '智能感知', icon: AudioLines, tone: 'cyan' },
     ],
   },
   {

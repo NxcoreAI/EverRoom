@@ -1,7 +1,6 @@
-import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell } from 'electron'
 
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -11,9 +10,11 @@ import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
+import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
 
 const APP_NAME = 'EverRoom'
 
@@ -22,6 +23,7 @@ const dataDirectory = join(appDataDirectory, APP_NAME)
 
 app.setPath('userData', dataDirectory)
 app.setName(APP_NAME)
+configureDesktopLogger(dataDirectory)
 if (process.platform === 'darwin') process.title = APP_NAME
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -59,12 +61,28 @@ const AGENT_CHANNELS = {
 } as const
 
 const ASR_CHANNELS = {
+  openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
   appendRecording: 'asr:append-recording',
   finishRecording: 'asr:finish-recording',
   cancelRecording: 'asr:cancel-recording',
   createJob: 'asr:create-job',
   getJob: 'asr:get-job',
+} as const
+
+const REALITY_CHANNELS = {
+  listEvents: 'reality:list-events',
+  getEvent: 'reality:get-event',
+  createEvent: 'reality:create-event',
+  finishCapture: 'reality:finish-capture',
+  updateTranscript: 'reality:update-transcript',
+  addMarker: 'reality:add-marker',
+  confirm: 'reality:confirm',
+  discard: 'reality:discard',
+  fail: 'reality:fail',
+  readAudio: 'reality:read-audio',
+  subscribe: 'reality:subscribe',
+  unsubscribe: 'reality:unsubscribe',
 } as const
 
 const ACCOUNT_CHANNELS = {
@@ -78,17 +96,11 @@ const ACCOUNT_CHANNELS = {
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
+let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let saasClient: SaasClient | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
-let requestLogWrite = Promise.resolve()
-
-function localDate(value: Date): string {
-  return [value.getFullYear(), value.getMonth() + 1, value.getDate()]
-    .map((part) => String(part).padStart(2, '0'))
-    .join('-')
-}
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -96,14 +108,7 @@ function logRendererRequestError(input: unknown): void {
   if (typeof value.channel !== 'string' || typeof value.message !== 'string') return
   const channel = value.channel.slice(0, 120)
   const message = value.message.slice(0, 2_000)
-  const now = new Date()
-  const entry = JSON.stringify({ time: now.toISOString(), level: 'error', channel, message })
-  console.error(`[desktop-request] ${channel}: ${message}`)
-  requestLogWrite = requestLogWrite.then(async () => {
-    const logsDirectory = join(dataDirectory, 'logs')
-    await mkdir(logsDirectory, { recursive: true })
-    await appendFile(join(logsDirectory, `desktop-${localDate(now)}.log`), `${entry}\n`, 'utf8')
-  }).catch((error) => console.error('Unable to write desktop request log.', error))
+  logDesktop('renderer', 'error', { event: 'renderer.request.error', channel, message })
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
@@ -244,12 +249,33 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
+  ipcMain.handle(ASR_CHANNELS.openSystemAudioSettings, () => {
+    if (process.platform !== 'darwin') throw new Error('系统音频录制设置仅适用于 macOS。')
+    return shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    )
+  })
   ipcMain.handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
   ipcMain.handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
   ipcMain.handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
   ipcMain.handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
   ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => coordinator.createJob(input))
   ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
+}
+
+function registerRealityHandlers(bridge: RealityGatewayBridge): void {
+  ipcMain.handle(REALITY_CHANNELS.listEvents, (_event, filters) => bridge.listEvents(filters))
+  ipcMain.handle(REALITY_CHANNELS.getEvent, (_event, id) => bridge.getEvent(id))
+  ipcMain.handle(REALITY_CHANNELS.createEvent, (_event, input) => bridge.createEvent(input))
+  ipcMain.handle(REALITY_CHANNELS.finishCapture, (_event, id, input) => bridge.finishCapture(id, input))
+  ipcMain.handle(REALITY_CHANNELS.updateTranscript, (_event, id, input) => bridge.updateTranscript(id, input))
+  ipcMain.handle(REALITY_CHANNELS.addMarker, (_event, id, input) => bridge.addMarker(id, input))
+  ipcMain.handle(REALITY_CHANNELS.confirm, (_event, id) => bridge.confirm(id))
+  ipcMain.handle(REALITY_CHANNELS.discard, (_event, id) => bridge.discard(id))
+  ipcMain.handle(REALITY_CHANNELS.fail, (_event, id, error) => bridge.fail(id, error))
+  ipcMain.handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
+  ipcMain.handle(REALITY_CHANNELS.subscribe, (event) => bridge.subscribe(event.sender))
+  ipcMain.handle(REALITY_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
 function registerAccountHandlers(client: SaasClient): void {
@@ -292,6 +318,47 @@ function createWindow(): void {
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
   })
+  if (process.platform === 'darwin') {
+    window.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+      const respond = (streams: Parameters<typeof callback>[0]) => {
+        try {
+          callback(streams)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          console.info(`macOS system audio capture request ended: ${message}`)
+        }
+      }
+      if (
+        request.frame !== window.webContents.mainFrame
+        || !request.audioRequested
+        || !request.videoRequested
+      ) {
+        respond({})
+        return
+      }
+      try {
+        void desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width: 0, height: 0 },
+        }).then(
+          (sources) => {
+            const source = sources[0]
+            if (!source || window.isDestroyed()) respond({})
+            else respond({ video: source, audio: 'loopback' })
+          },
+          (error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            console.info(`macOS system audio capture permission was not granted: ${message}`)
+            respond({})
+          },
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.info(`macOS system audio capture permission was not granted: ${message}`)
+        respond({})
+      }
+    })
+  }
   window.once('ready-to-show', () => window.show())
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -321,6 +388,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     registerGatewayHandlers(gatewaySupervisor)
+    realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
+    registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
@@ -335,7 +404,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     registerAccountHandlers(saasClient)
-    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient))
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge))
 
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
@@ -353,6 +422,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    realityGatewayBridge?.dispose()
+    realityGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -368,21 +439,28 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
-  if ((!localDataService && !gatewaySupervisor) || shutdownStarted) return
+  if (shutdownStarted) return
   event.preventDefault()
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
   const agentBridge = agentGatewayBridge
+  const realityBridge = realityGatewayBridge
   const recordings = recordingStore
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
   agentGatewayBridge = null
+  realityGatewayBridge = null
   recordingStore = null
   saasClient = null
   agentBridge?.dispose()
+  realityBridge?.dispose()
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
-  void Promise.allSettled([service?.shutdown(), recordings?.dispose(), gateway?.shutdown()]).finally(() => app.quit())
+  void Promise.allSettled([
+    service?.shutdown(),
+    recordings?.dispose(),
+    gateway?.shutdown(),
+  ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

@@ -6,6 +6,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
 import type { GatewayStatus } from '../../shared/sources'
+import { createLoggedHttpClient } from '../network/http-client'
 
 interface GatewayManifest {
   pid: number
@@ -24,9 +25,26 @@ export interface GatewayConnection {
 
 const STARTUP_TIMEOUT_MS = 15_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
+const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 })
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function forwardGatewayOutput(
+  stream: NodeJS.ReadableStream,
+  destination: NodeJS.WriteStream,
+): void {
+  let pending = ''
+  stream.on('data', (chunk: string) => {
+    pending += chunk
+    const lines = pending.split(/\r?\n/)
+    pending = lines.pop() ?? ''
+    for (const line of lines) destination.write(`[gateway] ${line}\n`)
+  })
+  stream.on('end', () => {
+    if (pending) destination.write(`[gateway] ${pending}\n`)
+  })
 }
 
 function isGatewayManifest(value: unknown): value is GatewayManifest {
@@ -112,8 +130,8 @@ export class GatewaySupervisor {
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => process.stdout.write(`[gateway] ${chunk}`))
-    child.stderr.on('data', (chunk: string) => process.stderr.write(`[gateway] ${chunk}`))
+    forwardGatewayOutput(child.stdout, process.stdout)
+    forwardGatewayOutput(child.stderr, process.stderr)
     child.on('exit', (code, signal) => {
       this.child = null
       this.connection = null
@@ -157,10 +175,10 @@ export class GatewaySupervisor {
       if (!isGatewayManifest(parsed) || parsed.token !== connection.token) {
         throw new Error('Gateway runtime manifest 无效')
       }
-      const response = await fetch(`${parsed.baseUrl}/v1/health/ready`, {
-        signal: AbortSignal.timeout(1_000),
+      const response = await healthHttp.get(`${parsed.baseUrl}/v1/health/ready`, {
+        validateStatus: () => true,
       })
-      if (!response.ok) throw new Error(`Gateway 健康检查失败（${response.status}）`)
+      if (response.status >= 400) throw new Error(`Gateway 健康检查失败（${response.status}）`)
 
       this.connection = {
         pid: parsed.pid,
@@ -233,10 +251,10 @@ export class GatewaySupervisor {
       try {
         const parsed: unknown = JSON.parse(await readFile(manifestPath, 'utf8'))
         if (isGatewayManifest(parsed) && parsed.token === token) {
-          const response = await fetch(`${parsed.baseUrl}/v1/health/ready`, {
-            signal: AbortSignal.timeout(1_000),
+          const response = await healthHttp.get(`${parsed.baseUrl}/v1/health/ready`, {
+            validateStatus: () => true,
           })
-          if (response.ok) return parsed
+          if (response.status < 400) return parsed
         }
       } catch {
         // The manifest and listener become available at slightly different times.
