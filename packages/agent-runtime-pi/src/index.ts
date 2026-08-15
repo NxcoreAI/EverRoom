@@ -23,7 +23,24 @@ import { createMemoryExtension, type MemoryRunContext } from "./memory/extension
 import { createMemoryTools, MEMORY_TOOL_NAMES } from "./memory/tools.js";
 import type { MemoryRuntimeConfig } from "./memory/types.js";
 
+export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
+export type { MemoryCoreErrorKind } from "./memory/client.js";
 export type { MemoryRuntimeConfig } from "./memory/types.js";
+export type {
+  MemoryAtomicItem,
+  MemoryAtomicPage,
+  MemoryAtomicQuery,
+  MemoryCaptureMessage,
+  MemoryConversationHit,
+  MemoryConversationItem,
+  MemoryConversationPage,
+  MemoryConversationQuery,
+  MemoryCoreFile,
+  MemoryPipelineStage,
+  MemoryPipelineStatus,
+  MemoryScenarioEntry,
+  MemoryScenarioFile,
+} from "./memory/types.js";
 
 export type PiApi =
   | "openai-completions"

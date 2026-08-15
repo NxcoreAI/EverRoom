@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryCoreClient } from "../src/memory/client.js";
+import { MemoryCoreClient, MemoryCoreError } from "../src/memory/client.js";
 import { formatRecallResult } from "../src/memory/format.js";
 import { extractCapturableMessages } from "../src/memory/extension.js";
 import { createMemoryTools } from "../src/memory/tools.js";
@@ -95,6 +95,103 @@ describe("MemoryCoreClient", () => {
     }));
     const client = new MemoryCoreClient(config);
     await expect(client.readCore()).resolves.toBeNull();
+  });
+});
+
+describe("MemoryCoreClient browse APIs", () => {
+  it("queryAtomic sends pagination and type filters", async () => {
+    const fetchMock = mockFetch((_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({ type: "persona", limit: 50, offset: 100 });
+      return {
+        status: 200,
+        body: {
+          code: 0,
+          message: "ok",
+          data: { items: [{ id: "a1", type: "persona", content: "喜欢深色主题", created_at: "", updated_at: "" }], total: 1 },
+        },
+      };
+    });
+    const client = new MemoryCoreClient(config);
+    const page = await client.queryAtomic({ type: "persona", limit: 50, offset: 100 });
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://127.0.0.1:8420/v3/atomic/query");
+    expect(page.total).toBe(1);
+    expect(page.items[0]!.content).toBe("喜欢深色主题");
+  });
+
+  it("updateAtomic and deleteAtomic hit the expected endpoints", async () => {
+    const fetchMock = mockFetch((_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      return { status: 200, body: { code: 0, message: "ok", data: { id: body.id, version: 3, updated_at: "t", deleted_count: 2 } } };
+    });
+    const client = new MemoryCoreClient(config);
+    await client.updateAtomic("a1", "新内容");
+    await client.deleteAtomic(["a1", "a2"]);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/v3/atomic/update");
+    expect(String(fetchMock.mock.calls[1]![0])).toContain("/v3/atomic/delete");
+  });
+
+  it("queryConversation returns messages with totals", async () => {
+    mockFetch(() => ({
+      status: 200,
+      body: {
+        code: 0,
+        message: "ok",
+        data: { messages: [{ id: "m1", role: "user", content: "hi", session_id: "s1" }], total: 42 },
+      },
+    }));
+    const client = new MemoryCoreClient(config);
+    const page = await client.queryConversation({ limit: 50, offset: 0 });
+    expect(page.total).toBe(42);
+    expect(page.messages[0]!.session_id).toBe("s1");
+  });
+
+  it("readScenario normalizes a missing file to null content", async () => {
+    mockFetch(() => ({ status: 200, body: { code: 0, message: "ok", data: { content: null } } }));
+    const client = new MemoryCoreClient(config);
+    const file = await client.readScenario("工作/综述.md");
+    expect(file.path).toBe("工作/综述.md");
+    expect(file.content).toBeNull();
+  });
+
+  it("writeCore and count endpoints return normalized data", async () => {
+    mockFetch(() => ({ status: 200, body: { code: 0, message: "ok", data: { version: 2, updated_at: "t", total: 7 } } }));
+    const client = new MemoryCoreClient(config);
+    await expect(client.writeCore("# 画像")).resolves.toEqual({ version: 2, updated_at: "t" });
+    await expect(client.countAtomic()).resolves.toBe(7);
+    await expect(client.countScenario()).resolves.toBe(7);
+    await expect(client.countConversation()).resolves.toBe(7);
+  });
+
+  it("pipelineStatus reads /v2/pipeline/status", async () => {
+    const fetchMock = mockFetch(() => ({
+      status: 200,
+      body: {
+        code: 0,
+        message: "ok",
+        data: { l1: { queued: 1, running: 0, queued_sessions: ["s"], running_sessions: [], idle: false } },
+      },
+    }));
+    const client = new MemoryCoreClient(config);
+    const status = await client.pipelineStatus();
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://127.0.0.1:8420/v2/pipeline/status");
+    expect(status.l1.queued).toBe(1);
+  });
+
+  it("classifies network failures as unreachable MemoryCoreError", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connect ECONNREFUSED"); }));
+    const client = new MemoryCoreClient(config);
+    const error = await client.countAtomic().catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(MemoryCoreError);
+    expect((error as MemoryCoreError).kind).toBe("unreachable");
+  });
+
+  it("classifies envelope failures as api MemoryCoreError", async () => {
+    mockFetch(() => ({ status: 200, body: { code: 500, message: "boom" } }));
+    const client = new MemoryCoreClient(config);
+    const error = await client.countAtomic().catch((cause: unknown) => cause);
+    expect((error as MemoryCoreError).kind).toBe("api");
+    expect((error as MemoryCoreError).status).toBe(500);
   });
 });
 

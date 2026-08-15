@@ -1,6 +1,6 @@
 # PC 端「记忆」应用改造 — 接入 MemoryCore 查看方案
 
-> 状态：待评审
+> 状态：已实施（2026-08-15，代码全部落地并通过类型检查 / 单测 / 构建；真实 MemoryCore 联调待验证）
 > 日期：2026-08-15
 > 前置：`docs/pi-agent-memory-plan.md`（已实施，pi agent 已接入 MemoryCore 读写链路）
 > 范围：`apps/desktop`（渲染层 + main + preload）、`apps/gateway`（新增 memory 模块）、`packages/agent-runtime-pi`（扩展 MemoryCoreClient）。不改 MemoryCore 本身。

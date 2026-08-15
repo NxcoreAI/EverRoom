@@ -19,6 +19,9 @@ import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
 import { AsrService } from "../modules/asr/service.js";
 import type { AsrProvider } from "../modules/asr/types.js";
+import { MemoryGatewayError } from "../modules/memory/errors.js";
+import { memoryRoutes } from "../modules/memory/routes.js";
+import { MemoryService } from "../modules/memory/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -48,6 +51,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
     if (error instanceof AsrError) {
+      await reply.code(error.statusCode).send({
+        error: error.code,
+        message: error.message,
+        requestId: request.id,
+      });
+      return;
+    }
+    if (error instanceof MemoryGatewayError) {
       await reply.code(error.statusCode).send({
         error: error.code,
         message: error.message,
@@ -101,6 +112,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
+  const memoryService = new MemoryService(config.pi?.memory ?? null, app.log);
   app.addHook("onClose", async () => {
     await agentService.dispose();
     await asrService.dispose();
@@ -109,6 +121,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   await app.register(agentRoutes(agentService));
   await app.register(asrRoutes(asrService));
+  await app.register(memoryRoutes(memoryService));
 
   return app;
 }

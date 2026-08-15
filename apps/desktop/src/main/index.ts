@@ -11,6 +11,11 @@ import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import type {
+  MemoryAtomicListOptions,
+  MemoryConversationListOptions,
+} from '../shared/memory'
 import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -73,6 +78,21 @@ const ACCOUNT_CHANNELS = {
   oidcLogin: 'account:oidc-login',
   oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
+} as const
+
+const MEMORY_CHANNELS = {
+  overview: 'memory:overview',
+  listAtomic: 'memory:list-atomic',
+  searchAtomic: 'memory:search-atomic',
+  updateAtomic: 'memory:update-atomic',
+  deleteAtomic: 'memory:delete-atomic',
+  listScenarios: 'memory:list-scenarios',
+  readScenario: 'memory:read-scenario',
+  readCore: 'memory:read-core',
+  writeCore: 'memory:write-core',
+  listConversations: 'memory:list-conversations',
+  searchConversations: 'memory:search-conversations',
+  deleteConversations: 'memory:delete-conversations',
 } as const
 
 let localDataService: LocalDataService | null = null
@@ -252,8 +272,40 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
 }
 
-function registerAccountHandlers(client: SaasClient): void {
-  ipcMain.handle(ACCOUNT_CHANNELS.status, () => client.status())
+function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
+  ipcMain.handle(MEMORY_CHANNELS.overview, () => bridge.overview())
+  ipcMain.handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
+    bridge.listAtomic(options))
+  ipcMain.handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
+    bridge.searchAtomic(query, limit))
+  ipcMain.handle(
+    MEMORY_CHANNELS.updateAtomic,
+    (_event, id: string, content: string, background?: string) =>
+      bridge.updateAtomic(id, content, background),
+  )
+  ipcMain.handle(MEMORY_CHANNELS.deleteAtomic, (_event, ids: string[]) => bridge.deleteAtomic(ids))
+  ipcMain.handle(MEMORY_CHANNELS.listScenarios, (_event, pathPrefix?: string) =>
+    bridge.listScenarios(pathPrefix))
+  ipcMain.handle(MEMORY_CHANNELS.readScenario, (_event, path: string) => bridge.readScenario(path))
+  ipcMain.handle(MEMORY_CHANNELS.readCore, () => bridge.readCore())
+  ipcMain.handle(MEMORY_CHANNELS.writeCore, (_event, content: string) => bridge.writeCore(content))
+  ipcMain.handle(
+    MEMORY_CHANNELS.listConversations,
+    (_event, options: MemoryConversationListOptions) => bridge.listConversations(options),
+  )
+  ipcMain.handle(
+    MEMORY_CHANNELS.searchConversations,
+    (_event, query: string, limit?: number, sessionId?: string) =>
+      bridge.searchConversations(query, limit, sessionId),
+  )
+  ipcMain.handle(
+    MEMORY_CHANNELS.deleteConversations,
+    (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
+      bridge.deleteConversations(target),
+  )
+}
+
+function registerAccountHandlers(client: SaasClient): void {  ipcMain.handle(ACCOUNT_CHANNELS.status, () => client.status())
   ipcMain.handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
     const value = input as { identifier?: unknown; password?: unknown }
@@ -323,6 +375,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerGatewayHandlers(gatewaySupervisor)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')
