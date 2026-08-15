@@ -11,22 +11,17 @@ import {
   X,
 } from 'lucide-react'
 
-import type { PageId } from '@/data/navigation'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
-import { pageIcons, pageLabels } from '@/data/navigation'
 import { ThemeSwitcher, type ThemeId } from '@/components/ThemeSwitcher'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 
 export function TopBar({
-  activePage,
-  tabs,
   contextRoomTabs,
   activeContextRoomId,
   agentOpen,
   navCollapsed,
   theme,
-  onActivate,
-  onClose,
+  onActivateWorkbench,
   onActivateContextRoom,
   onCloseContextRoom,
   onRestoreContextRoom,
@@ -35,15 +30,12 @@ export function TopBar({
   onToggleNav,
   onThemeChange,
 }: {
-  activePage: PageId
-  tabs: PageId[]
   contextRoomTabs: ContextRoomWorkspaceTab[]
   activeContextRoomId: string | null
   agentOpen: boolean
   navCollapsed: boolean
   theme: ThemeId
-  onActivate: (page: PageId) => void
-  onClose: (page: PageId) => void
+  onActivateWorkbench: () => void
   onActivateContextRoom: (roomId: string) => void
   onCloseContextRoom: (roomId: string) => void
   onRestoreContextRoom: () => void
@@ -68,41 +60,20 @@ export function TopBar({
       </div>
 
       <div className="tabs no-drag" role="tablist" aria-label="打开的页面">
-        {tabs.map((tab) => {
-          const TabIcon = pageIcons[tab]
-          const tabLabel = tab === 'home' ? '工作台' : pageLabels[tab]
-          const isActive = tab === activePage && (tab !== 'rooms' || activeContextRoomId === null)
-          return (
-            <div
-              key={tab}
-              className="tab"
-              data-active={String(isActive)}
-              data-page={tab}
-              role="tab"
-              aria-selected={isActive}
-            >
-              <button type="button" onClick={() => onActivate(tab)}>
-                {tab === 'home' ? (
-                  <LayoutGrid aria-hidden="true" strokeWidth={1.8} />
-                ) : (
-                  <TabIcon aria-hidden="true" strokeWidth={1.8} />
-                )}
-                <span>{tabLabel}</span>
-                {tab === 'home' ? <LockKeyhole className="tab-lock" aria-hidden="true" strokeWidth={1.8} /> : null}
-              </button>
-              {tab !== 'home' ? (
-                <button
-                  type="button"
-                  className="tab-close"
-                  aria-label={`关闭${pageLabels[tab]}`}
-                  onClick={() => onClose(tab)}
-                >
-                  <X aria-hidden="true" strokeWidth={1.8} />
-                </button>
-              ) : null}
-            </div>
-          )
-        })}
+        <div
+          className="tab"
+          data-active={String(activeContextRoomId === null)}
+          data-page="home"
+          role="tab"
+          aria-label="工作台"
+          aria-selected={activeContextRoomId === null}
+        >
+          <button type="button" onClick={onActivateWorkbench}>
+            <LayoutGrid aria-hidden="true" strokeWidth={1.8} />
+            <span>工作台</span>
+            <LockKeyhole className="tab-lock" aria-hidden="true" strokeWidth={1.8} />
+          </button>
+        </div>
         {contextRoomTabs.map((room) => {
           const isActive = activeContextRoomId === room.id
           return (

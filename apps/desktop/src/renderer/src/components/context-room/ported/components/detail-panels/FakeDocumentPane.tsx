@@ -86,7 +86,13 @@ export function FakeDocumentPane({
         <button type="button" className="context-room-mobile-back" onClick={onBackToLibrary}>
           <ChevronLeft aria-hidden="true" />返回文档
         </button>
-        <FakeDocumentContent room={room} resource={selected} />
+        <FakeDocumentContent
+          room={room}
+          resource={selected}
+          backendDocuments={[]}
+          documentEvents={{}}
+          onBackendDocumentChange={() => undefined}
+        />
       </section>
     </>
   )
@@ -95,10 +101,27 @@ export function FakeDocumentPane({
 export function FakeDocumentContent({
   room,
   resource,
+  backendDocuments,
+  documentEvents,
+  onBackendDocumentChange,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
+  backendDocuments: RoomDocument[]
+  documentEvents: Record<string, DocumentEvent[]>
+  onBackendDocumentChange: (document: RoomDocument) => void
 }) {
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
-  return <TiptapDocumentEditor key={documentId} room={room} resource={resource} />
+  const backendDocument = backendDocuments.find((document) => document.id === documentId) ?? null
+  return (
+    <TiptapDocumentEditor
+      key={documentId}
+      room={room}
+      resource={resource}
+      backendDocument={backendDocument}
+      events={documentEvents[documentId] ?? []}
+      onBackendDocumentChange={onBackendDocumentChange}
+    />
+  )
 }
+import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract'

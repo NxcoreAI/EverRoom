@@ -3,11 +3,14 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock3,
+  ExternalLink,
   FileText,
+  FolderOpen,
   GitBranch,
   Inbox,
   Mic,
   Paperclip,
+  Pencil,
   Send,
   Slash,
   Sparkles,
@@ -69,6 +72,30 @@ function ObjectTopbar({
 }
 
 type RoomUpdater = (room: ContextRoomRecord) => ContextRoomRecord;
+
+function TaskFact({
+  icon: Icon,
+  label,
+  value,
+  wide = false,
+}: {
+  icon: typeof User;
+  label: string;
+  value: string;
+  wide?: boolean;
+}) {
+  return (
+    <div className={cn('context-room-task-fact', wide && 'context-room-task-fact-wide')}>
+      <span className="context-room-task-fact-icon" aria-hidden="true">
+        <Icon />
+      </span>
+      <div>
+        <dt>{uiText(label)}</dt>
+        <dd>{value}</dd>
+      </div>
+    </div>
+  );
+}
 
 function ExternalObjectState({ kind }: { kind: 'file' | 'mail' | 'meeting' }) {
   const values =
@@ -241,6 +268,9 @@ function TaskDetail({
   const progress =
     task.completed || task.status === '已完成' ? 100 : task.status === '进行中' ? 45 : 0;
   const progressLabel = `${String(progress)}%`;
+  const SourceIcon = task.source?.type === '会议' ? Mic : task.source?.type === '邮件' ? Inbox : Sparkles;
+  const sourceType = task.source?.type ?? 'Context Room';
+  const sourceName = task.source?.name ?? room.title;
 
   return (
     <section className="context-room-task-reference" data-testid="context-room-task-reference">
@@ -272,6 +302,7 @@ function TaskDetail({
               }))
             }
           >
+            <Pencil aria-hidden="true" />
             编辑
           </button>
           <button
@@ -292,6 +323,7 @@ function TaskDetail({
               }))
             }
           >
+            <CheckCircle2 aria-hidden="true" />
             {progress === 100 ? uiText('重新打开') : uiText('标记完成')}
           </button>
         </div>
@@ -300,25 +332,24 @@ function TaskDetail({
         <Panel
           title={uiText('执行状态')}
           action={<Tag variant={statusVariant(task.status)}>{task.status}</Tag>}
+          className="context-room-task-status-panel"
         >
-          <div className="context-room-progress" aria-label={`任务进度 ${progressLabel}`}>
-            <span style={{ width: progressLabel }} />
+          <div className="context-room-task-progress-overview">
+            <div>
+              <span>{uiText('当前进度')}</span>
+              <strong>{progressLabel}</strong>
+            </div>
+            <div className="context-room-progress" aria-label={`任务进度 ${progressLabel}`}>
+              <span style={{ width: progressLabel }} />
+            </div>
           </div>
-          <div className="context-room-brief-grid context-room-task-brief">
-            {[
-              ['负责人', task.owner],
-              ['截止日期', task.deadline],
-              ['关联 Room', room.title],
-              ['进度', progressLabel],
-            ].map(([label, value]) => (
-              <div key={uiText(label)} className="context-room-brief-item">
-                <div className="context-room-object-label">{uiText(label)}</div>
-                <div className="context-room-object-value">{value}</div>
-              </div>
-            ))}
-          </div>
+          <dl className="context-room-task-facts">
+            <TaskFact icon={User} label="负责人" value={task.owner} />
+            <TaskFact icon={Clock3} label="截止日期" value={task.deadline} />
+            <TaskFact icon={GitBranch} label="关联 Room" value={room.title} wide />
+          </dl>
           <div className="context-room-subsection-heading">
-            <h2>{uiText('进展记录')}</h2>
+            <h2>{uiText('进展记录')}<span>2</span></h2>
           </div>
           <div className="context-room-timeline">
             <div
@@ -328,21 +359,35 @@ function TaskDetail({
               )}
             >
               <div className="context-room-timeline-time">{uiText('当前')}</div>
-              <b className="text-sm font-semibold text-zinc-950">{task.status}</b>
+              <div className="context-room-task-timeline-copy">
+                <b>{task.status}</b>
+                <span>任务进度已更新至 {progressLabel}</span>
+              </div>
             </div>
             <div className="context-room-timeline-item context-room-timeline-done">
               <div className="context-room-timeline-time">{uiText('创建时')}</div>
-              <b className="text-sm font-semibold text-zinc-950">{uiText('任务已建立')}</b>
+              <div className="context-room-task-timeline-copy">
+                <b>{uiText('任务已建立')}</b>
+                <span>来源：{sourceName}</span>
+              </div>
             </div>
           </div>
         </Panel>
         <aside>
-          <Panel title="来源与上下文">
+          <Panel title="来源与上下文" className="context-room-task-context-panel">
+            <span className="context-room-task-context-label">原始来源</span>
             <div className="context-room-source-card" data-icon-tone="ai">
-              <Sparkles className="size-4" aria-hidden="true" />
+              <SourceIcon className="size-4" aria-hidden="true" />
               <div>
-                <b>Context Room</b>
-                <span>{room.title}</span>
+                <b>{sourceType}</b>
+                <span>{sourceName}</span>
+              </div>
+            </div>
+            <div className="context-room-task-room-context">
+              <GitBranch aria-hidden="true" />
+              <div>
+                <span>关联 Room</span>
+                <b>{room.title}</b>
               </div>
             </div>
             <div className="context-room-object-lifecycle">
@@ -351,6 +396,7 @@ function TaskDetail({
                 className="context-room-secondary context-room-small"
                 onClick={() => task.source?.objectId && onBack()}
               >
+                <ExternalLink aria-hidden="true" />
                 打开原始来源
               </button>
               <button
@@ -358,10 +404,12 @@ function TaskDetail({
                 className="context-room-secondary context-room-small"
                 onClick={onBack}
               >
+                <FolderOpen aria-hidden="true" />
                 {uiText('打开 Room ')}
               </button>
             </div>
             <button type="button" className="context-room-primary context-room-agent-action">
+              <Sparkles aria-hidden="true" />
               {uiText('让 Agent 协助推进 ')}
             </button>
           </Panel>

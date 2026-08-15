@@ -129,24 +129,18 @@ pnpm dev
 
 桌面端侧栏左下角会展示 Gateway 当前状态与进程 PID。
 
-### 启用 Pi Agent
+### Agent 服务
 
-Gateway 会读取仓库根目录的 `.env`，也兼容 `apps/gateway/.env` 和通过 `NXCORE_ENV_FILE` 指定的文件。默认使用 Fake Runtime，不会产生模型请求。启用 Pi 时配置以下变量：
+Gateway 会读取仓库根目录的 `.env`，也兼容 `apps/gateway/.env` 和通过 `NXCORE_ENV_FILE` 指定的文件。桌面安装包默认使用 Remote HTTP Runtime 连接 Agent 服务；文档 MCP 需要独立的可用传输：
 
 ```dotenv
-NXCORE_AGENT_RUNTIME=pi
-NXCORE_AI_PROVIDER=openai
-NXCORE_AI_MODEL=gpt-5.2
-NXCORE_AI_BASE_URL=https://api.openai.com/v1
-NXCORE_AI_API_KEY=your-api-key
-NXCORE_AI_API=openai-responses
-NXCORE_AI_MAX_TOKENS=8192
-NXCORE_AI_CONTEXT_WINDOW=128000
-NXCORE_AI_TEMPERATURE=0.3
-NXCORE_AI_REASONING=medium
+NXCORE_AGENT_RUNTIME=remote-http
+NXCORE_REMOTE_AGENT_BASE_URL=http://192.168.1.27:8280/ai/api
+NXCORE_REMOTE_AGENT_TOKEN=
+NXCORE_REMOTE_AGENT_MCP_WS_URL=ws://192.168.1.27:8280/ai/api/device-mcp
 ```
 
-DeepSeek 等 OpenAI Chat Completions 兼容端点使用 `NXCORE_AI_API=openai-completions`。模型凭据只在 Gateway 进程中读取，不会进入 Electron Renderer、运行时清单、WebSocket 事件或日志。当前 Pi 接入默认禁用文件、Shell、Extension、Skill 和项目上下文扫描；产品工具会在 Gateway 权限代理完成后逐项开放。
+直连服务需提供 `/session`、`/chat`、`/chat/abort` 和 `/device-mcp`。最后一个入口是 Agent 调用本机文档工具的必要条件；如果当前部署尚未提供，可将 `NXCORE_REMOTE_AGENT_MCP_WS_URL` 显式留空以保持纯对话模式。CE Gateway 同时提供受 Bearer 保护的 `/v1/mcp/documents/:sessionId` HTTP MCP 入口。`fake` 与 `pi` Runtime 代码仍保留用于开发和后续切换，本版本不依赖 Pi。
 
 ### 常用命令
 
