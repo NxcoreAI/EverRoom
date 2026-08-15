@@ -2,6 +2,34 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 describe("loadConfig", () => {
+  it("defaults packaged configuration to the remote HTTP runtime", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {});
+
+    expect(config.agentRuntime).toBe("remote-http");
+    expect(config.remoteAgent).toEqual({
+      baseUrl: "http://192.168.1.27:8280/ai/api",
+      token: null,
+      mcpWebSocketUrl: "ws://192.168.1.27:8280/ai/api/device-mcp",
+    });
+    expect(config.pi).toBeNull();
+  });
+
+  it("validates an explicitly configured remote MCP WebSocket", () => {
+    const configured = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_REMOTE_AGENT_MCP_WS_URL: "ws://agent.example.test/device-mcp",
+    });
+    expect(configured.remoteAgent?.mcpWebSocketUrl).toBe("ws://agent.example.test/device-mcp");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_REMOTE_AGENT_MCP_WS_URL: "http://agent.example.test/device-mcp",
+    })).toThrow("NXCORE_REMOTE_AGENT_MCP_WS_URL");
+
+    const disabled = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_REMOTE_AGENT_MCP_WS_URL: "",
+    });
+    expect(disabled.remoteAgent?.mcpWebSocketUrl).toBeNull();
+  });
+
   it("prefers command line arguments over environment variables", () => {
     const config = loadConfig(
       ["--host", "127.0.0.2", "--port", "4321", "--data-dir", ".data/test", "--token", "0123456789abcdef"],

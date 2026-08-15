@@ -1,6 +1,8 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
@@ -20,6 +22,7 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
+    remoteAgent: null,
     pi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
@@ -54,6 +57,120 @@ describe("gateway server", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
+  });
+
+  it("deletes documents through the authenticated REST API", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const imported = await app.inject({
+      method: "POST",
+      url: "/v1/documents/import",
+      headers,
+      payload: {
+        id: "document-to-delete",
+        roomId: "room-delete",
+        title: "待删除文档",
+        contentJson: { type: "doc", content: [] },
+      },
+    });
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/v1/documents/document-to-delete",
+      headers,
+    });
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/documents?roomId=room-delete",
+      headers,
+    });
+    const missing = await app.inject({
+      method: "DELETE",
+      url: "/v1/documents/document-to-delete",
+      headers,
+    });
+    await app.close();
+
+    expect(imported.statusCode).toBe(201);
+    expect(deleted.statusCode).toBe(204);
+    expect(listed.json()).toEqual([]);
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ error: "NOT_FOUND" });
+  });
+
+  it("serves the document MCP protocol over authenticated HTTP", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const url = "/v1/mcp/documents/mcp-test"
+      + "?agentSessionId=agent-test&runId=run-test&roomId=room-test";
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    const initialize = await app.inject({
+      method: "POST",
+      url,
+      headers,
+      payload: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "gateway-test", version: "1" },
+        },
+      },
+    });
+    const initialized = await app.inject({
+      method: "POST",
+      url,
+      headers,
+      payload: { jsonrpc: "2.0", method: "notifications/initialized" },
+    });
+    const tools = await app.inject({
+      method: "POST",
+      url,
+      headers,
+      payload: { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    });
+    await app.close();
+
+    expect(initialize.statusCode).toBe(200);
+    expect(initialize.json()).toMatchObject({ jsonrpc: "2.0", id: 1 });
+    expect(initialized.statusCode).toBe(202);
+    expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      "context_room_write_begin",
+      "context_room_write_append",
+      "context_room_write_commit",
+      "context_room_write_abort",
+    ]);
+  });
+
+  it("is compatible with the official Streamable HTTP MCP client", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const endpoint = new URL("/v1/mcp/documents/mcp-client-test", address);
+    endpoint.searchParams.set("agentSessionId", "agent-client-test");
+    endpoint.searchParams.set("runId", "run-client-test");
+    endpoint.searchParams.set("roomId", "room-client-test");
+    const client = new Client({ name: "gateway-test", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(endpoint, {
+      requestInit: { headers: { authorization: `Bearer ${config.authToken}` } },
+    });
+
+    try {
+      await client.connect(transport as unknown as Parameters<Client["connect"]>[0]);
+      const listed = await client.listTools();
+      expect(listed.tools.map((tool) => tool.name)).toEqual([
+        "context_room_write_begin",
+        "context_room_write_append",
+        "context_room_write_commit",
+        "context_room_write_abort",
+      ]);
+    } finally {
+      await client.close();
+      await app.close();
+    }
   });
 
   it("serves API documentation without authentication", async () => {
