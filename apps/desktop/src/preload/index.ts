@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+import type {
+  MemoryAtomicListOptions,
+  MemoryConversationListOptions,
+} from '../shared/memory'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
@@ -60,6 +64,24 @@ const api: NxcoreDesktopApi = {
     cancelRecording: (id) => invoke('asr:cancel-recording', id),
     createJob: (input) => invoke('asr:create-job', input),
     getJob: (id) => invoke('asr:get-job', id),
+  },
+  memory: {
+    overview: () => invoke('memory:overview'),
+    listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
+    searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
+    updateAtomic: (id: string, content: string, background?: string) =>
+      invoke('memory:update-atomic', id, content, background),
+    deleteAtomic: (ids: string[]) => invoke('memory:delete-atomic', ids),
+    listScenarios: (pathPrefix?: string) => invoke('memory:list-scenarios', pathPrefix),
+    readScenario: (path: string) => invoke('memory:read-scenario', path),
+    readCore: () => invoke('memory:read-core'),
+    writeCore: (content: string) => invoke('memory:write-core', content),
+    listConversations: (options: MemoryConversationListOptions) =>
+      invoke('memory:list-conversations', options),
+    searchConversations: (query: string, limit?: number, sessionId?: string) =>
+      invoke('memory:search-conversations', query, limit, sessionId),
+    deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
+      invoke('memory:delete-conversations', target),
   },
   reality: {
     listEvents: (filters) => invoke('reality:list-events', filters),
