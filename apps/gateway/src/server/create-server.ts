@@ -24,6 +24,9 @@ import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
 import { AsrService } from "../modules/asr/service.js";
 import type { AsrProvider } from "../modules/asr/types.js";
+import { MemoryGatewayError } from "../modules/memory/errors.js";
+import { memoryRoutes } from "../modules/memory/routes.js";
+import { MemoryService } from "../modules/memory/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
@@ -63,7 +66,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
       return;
     }
-    if (error instanceof RealityError) {
+    if (error instanceof MemoryGatewayError || error instanceof RealityError) {
       await reply.code(error.statusCode).send({
         error: error.code,
         message: error.message,
@@ -120,6 +123,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
+  const memoryService = new MemoryService(config.pi?.memory ?? null, app.log);
   const realityService = new RealityService(db, config.asrInputDir, app.log);
   const recoveredCaptures = realityService.recoverInterruptedCaptures();
   if (recoveredCaptures > 0) {
@@ -137,6 +141,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));
   await app.register(asrRoutes(asrService));
+  await app.register(memoryRoutes(memoryService));
   await app.register(realityRoutes(realityService));
 
   return app;

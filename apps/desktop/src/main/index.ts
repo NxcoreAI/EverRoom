@@ -10,6 +10,12 @@ import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
+import type {
+  MemoryAtomicListOptions,
+  MemoryConversationListOptions,
+} from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
@@ -105,8 +111,24 @@ const ACCOUNT_CHANNELS = {
   logout: 'account:logout',
 } as const
 
+const MEMORY_CHANNELS = {
+  overview: 'memory:overview',
+  listAtomic: 'memory:list-atomic',
+  searchAtomic: 'memory:search-atomic',
+  updateAtomic: 'memory:update-atomic',
+  deleteAtomic: 'memory:delete-atomic',
+  listScenarios: 'memory:list-scenarios',
+  readScenario: 'memory:read-scenario',
+  readCore: 'memory:read-core',
+  writeCore: 'memory:write-core',
+  listConversations: 'memory:list-conversations',
+  searchConversations: 'memory:search-conversations',
+  deleteConversations: 'memory:delete-conversations',
+} as const
+
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
@@ -288,6 +310,39 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
 }
 
+function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
+  ipcMain.handle(MEMORY_CHANNELS.overview, () => bridge.overview())
+  ipcMain.handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
+    bridge.listAtomic(options))
+  ipcMain.handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
+    bridge.searchAtomic(query, limit))
+  ipcMain.handle(
+    MEMORY_CHANNELS.updateAtomic,
+    (_event, id: string, content: string, background?: string) =>
+      bridge.updateAtomic(id, content, background),
+  )
+  ipcMain.handle(MEMORY_CHANNELS.deleteAtomic, (_event, ids: string[]) => bridge.deleteAtomic(ids))
+  ipcMain.handle(MEMORY_CHANNELS.listScenarios, (_event, pathPrefix?: string) =>
+    bridge.listScenarios(pathPrefix))
+  ipcMain.handle(MEMORY_CHANNELS.readScenario, (_event, path: string) => bridge.readScenario(path))
+  ipcMain.handle(MEMORY_CHANNELS.readCore, () => bridge.readCore())
+  ipcMain.handle(MEMORY_CHANNELS.writeCore, (_event, content: string) => bridge.writeCore(content))
+  ipcMain.handle(
+    MEMORY_CHANNELS.listConversations,
+    (_event, options: MemoryConversationListOptions) => bridge.listConversations(options),
+  )
+  ipcMain.handle(
+    MEMORY_CHANNELS.searchConversations,
+    (_event, query: string, limit?: number, sessionId?: string) =>
+      bridge.searchConversations(query, limit, sessionId),
+  )
+  ipcMain.handle(
+    MEMORY_CHANNELS.deleteConversations,
+    (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
+      bridge.deleteConversations(target),
+  )
+}
+
 function registerRealityHandlers(bridge: RealityGatewayBridge): void {
   ipcMain.handle(REALITY_CHANNELS.listEvents, (_event, filters) => bridge.listEvents(filters))
   ipcMain.handle(REALITY_CHANNELS.getEvent, (_event, id) => bridge.getEvent(id))
@@ -409,7 +464,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
   try {
-    gatewaySupervisor = new GatewaySupervisor(dataDirectory)
+    // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
+    // 让队友拉代码后无需手工部署即可使用记忆功能。
+    memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
+    const memoryCore = await memoryCoreSupervisor.start().catch((error) => {
+      console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
+      return null
+    })
+    gatewaySupervisor = new GatewaySupervisor(
+      dataDirectory,
+      memoryCore
+        ? {
+          NXCORE_MEMORY_ENABLED: 'true',
+          NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
+          NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
+        }
+        : {},
+    )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     registerGatewayHandlers(gatewaySupervisor)
@@ -417,6 +488,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge)
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
@@ -457,6 +529,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
+    await memoryCoreSupervisor?.shutdown()
+    memoryCoreSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
     app.quit()
     return
@@ -473,6 +547,7 @@ app.on('before-quit', (event) => {
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
+  const memoryCore = memoryCoreSupervisor
   const agentBridge = agentGatewayBridge
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
@@ -480,6 +555,7 @@ app.on('before-quit', (event) => {
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
+  memoryCoreSupervisor = null
   agentGatewayBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
@@ -493,6 +569,7 @@ app.on('before-quit', (event) => {
     service?.shutdown(),
     recordings?.dispose(),
     gateway?.shutdown(),
+    memoryCore?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())
