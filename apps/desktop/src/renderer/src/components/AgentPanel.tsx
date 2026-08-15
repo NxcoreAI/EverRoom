@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
-import { AgentInfoView } from '@/components/agent/AgentInfoView'
 import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
-import { AgentToolbar, type AgentView } from '@/components/agent/AgentToolbar'
+import { AgentToolbar } from '@/components/agent/AgentToolbar'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 
 import './agent/AgentPanel.css'
@@ -19,10 +18,14 @@ export function AgentPanel({
   roomId: string | null
   focusRequest?: number
 }) {
-  const [activeView, setActiveView] = useState<AgentView>('chat')
   const [draft, setDraft] = useState('')
+  const [selectedText, setSelectedText] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
-  const contextSummary = roomId ? `${pageLabel} · 当前 Room` : `${pageLabel} · 未选择文本`
+  const selectedTextSummary = selectedText.replace(/\s+/g, ' ').trim()
+  const contextSummary = selectedTextSummary
+    ? `${pageLabel} · “${selectedTextSummary}”`
+    : `${pageLabel} · 未选择文本`
   const session = useAgentSession(pageLabel, roomId)
 
   const focusComposer = () => {
@@ -31,79 +34,98 @@ export function AgentPanel({
 
   useEffect(() => {
     if (!focusRequest) return
-    setActiveView('chat')
     focusComposer()
   }, [focusRequest])
 
-  const sendPrompt = (prompt: string) => {
+  useEffect(() => {
+    setSelectedText('')
+  }, [pageLabel])
+
+  useEffect(() => {
+    const readWorkspaceSelection = () => {
+      const selection = document.getSelection()
+      if (!selection || selection.isCollapsed) return
+      const anchor = selection.anchorNode
+      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
+      if (!anchorElement?.closest('.workspace-main')) return
+      const text = selection.toString().trim()
+      if (text) setSelectedText(text.slice(0, 8_000))
+    }
+    document.addEventListener('selectionchange', readWorkspaceSelection)
+    return () => document.removeEventListener('selectionchange', readWorkspaceSelection)
+  }, [])
+
+  const sendPrompt = async (prompt: string) => {
     if (!prompt.trim()) return
+    const submittedPrompt = prompt.trim()
+    const submittedContext = selectedText
     setDraft('')
-    void session.sendPrompt(prompt)
+    setSubmitting(true)
+    try {
+      await session.sendPrompt(submittedPrompt, submittedContext)
+      setSelectedText('')
+    } catch {
+      setDraft(submittedPrompt)
+    } finally {
+      setSubmitting(false)
+    }
   }
+
+  const composer = (
+    <AgentComposer
+      ref={composerRef}
+      contextSummary={contextSummary}
+      hasSelectedText={Boolean(selectedText)}
+      value={draft}
+      active={Boolean(session.activeRunId)}
+      loading={session.loading || submitting}
+      onChange={setDraft}
+      onClearContext={() => setSelectedText('')}
+      onStop={() => void session.stop()}
+      onSubmit={() => void sendPrompt(draft)}
+    />
+  )
 
   return (
     <aside className="agent-panel">
       <AgentToolbar
-        activeView={activeView}
-        sessionTitle={session.currentSession?.title}
         onCreateConversation={() => {
-          setActiveView('chat')
           setDraft('')
+          setSelectedText('')
           void session.createSession().catch(() => undefined)
           focusComposer()
         }}
-        onViewChange={setActiveView}
-      />
-
-      <AgentSessionSwitcher
-        activeRunId={session.activeRunId}
-        connected={session.connected}
-        currentSession={session.currentSession}
-        sessionId={session.sessionId}
-        sessions={session.sessions}
-        onCreate={session.createSession}
-        onDelete={session.deleteSession}
-        onRename={session.renameSession}
-        onSelect={session.selectSession}
-      />
-
-      <button
-        type="button"
-        className="agent-context-summary"
-        aria-label="查看工作区上下文"
-        onClick={() => setActiveView('context')}
       >
-        {contextSummary}
-      </button>
-
-      {activeView === 'chat' ? (
-        <AgentChatView
-          activeRunId={session.activeRunId}
-          error={session.error}
-          loading={session.loading}
-          messages={session.messages}
-          reasoning={session.reasoning}
-          onSelectPrompt={sendPrompt}
-        />
-      ) : (
-        <AgentInfoView
+        <AgentSessionSwitcher
           activeRunId={session.activeRunId}
           connected={session.connected}
-          messageCount={session.messages.length}
-          pageLabel={pageLabel}
-          view={activeView}
+          currentSession={session.currentSession}
+          sessionId={session.sessionId}
+          sessions={session.sessions}
+          onCreate={session.createSession}
+          onDelete={session.deleteSession}
+          onRename={session.renameSession}
+          onSelect={session.selectSession}
         />
-      )}
+      </AgentToolbar>
 
-      <AgentComposer
-        ref={composerRef}
-        contextSummary={contextSummary}
-        value={draft}
-        active={Boolean(session.activeRunId)}
+      <AgentChatView
+        activeRunId={session.activeRunId}
+        composer={composer}
+        draftHasContent={Boolean(draft.trim())}
+        error={session.error}
         loading={session.loading}
-        onChange={setDraft}
-        onStop={() => void session.stop()}
-        onSubmit={() => sendPrompt(draft)}
+        messages={session.messages}
+        onRetryPrompt={(prompt) => void sendPrompt(prompt)}
+        onSelectPrompt={(prompt) => {
+          setDraft(prompt)
+          focusComposer()
+        }}
+        reasoningByRun={session.reasoningByRun}
+        runCompletedAtByRun={session.runCompletedAtByRun}
+        runStartedAtByRun={session.runStartedAtByRun}
+        submitting={submitting}
+        toolCallsByRun={session.toolCallsByRun}
       />
     </aside>
   )

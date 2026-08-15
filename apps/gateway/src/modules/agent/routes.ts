@@ -101,6 +101,9 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
           body: Type.Object({
             prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            context: Type.Optional(Type.Object({
+              selectedText: Type.String({ minLength: 1, maxLength: 8_000 }),
+            })),
           }),
         },
       },
