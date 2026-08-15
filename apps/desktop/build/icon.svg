@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title description">
+  <title id="title">NxCore</title>
+  <desc id="description">The NxCore orbit mark on a rounded light background.</desc>
+  <g transform="translate(5.5 5.5) scale(.89)">
+    <rect x="4" y="4" width="92" height="92" rx="23" fill="#F5F4F1"/>
+    <path d="M24 61C14 47 20 27 36 21c17-6 37 3 43 19 6 17-4 36-21 40-15 4-30-5-32-18-2-12 7-22 18-21 11 1 17 13 11 21-5 8-16 5-16-4 0-7 6-11 12-9 11 3 18 16 29 17" fill="none" stroke="#1857A5" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

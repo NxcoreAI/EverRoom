@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { safeStorage } from 'electron'
 
 interface StoredCredential {
-  encrypted: string
+  value: string
 }
 
 export class CredentialStore {
-  private readonly credentials = new Map<string, string>()
+  private readonly credentials = new Map<string, StoredCredential>()
   private loaded = false
 
   constructor(private readonly filePath: string) {}
@@ -19,12 +18,7 @@ export class CredentialStore {
     try {
       const raw = JSON.parse(await readFile(this.filePath, 'utf8')) as Record<string, StoredCredential>
       for (const [key, value] of Object.entries(raw)) {
-        if (!value?.encrypted || !safeStorage.isEncryptionAvailable()) continue
-        try {
-          this.credentials.set(key, safeStorage.decryptString(Buffer.from(value.encrypted, 'base64')))
-        } catch {
-          // Ignore credentials that cannot be decrypted on this machine.
-        }
+        if (typeof value?.value === 'string') this.credentials.set(key, value)
       }
     } catch {
       // The file is optional on first launch.
@@ -33,23 +27,41 @@ export class CredentialStore {
 
   async set(value: string): Promise<string> {
     await this.initialize()
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('当前系统不支持安全保存 GitHub 凭证。')
     const key = randomUUID()
-    this.credentials.set(key, value)
+    this.credentials.set(key, { value })
     await this.persist()
     return key
   }
 
   async get(key: string | undefined): Promise<string | undefined> {
     await this.initialize()
-    return key ? this.credentials.get(key) : undefined
+    return key ? this.credentials.get(key)?.value : undefined
+  }
+
+  async setNamed(key: string, value: string): Promise<void> {
+    await this.initialize()
+    this.credentials.set(key, { value })
+    await this.persist()
+  }
+
+  async getPlainText(key: string): Promise<string | undefined> {
+    await this.initialize()
+    return this.credentials.get(key)?.value
+  }
+
+  async setPlainText(key: string, value: string): Promise<void> {
+    await this.setNamed(key, value)
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.initialize()
+    if (!this.credentials.delete(key)) return
+    await this.persist()
   }
 
   private async persist(): Promise<void> {
     const output: Record<string, StoredCredential> = {}
-    for (const [key, value] of this.credentials) {
-      output[key] = { encrypted: safeStorage.encryptString(value).toString('base64') }
-    }
+    for (const [key, value] of this.credentials) output[key] = value
     await mkdir(dirname(this.filePath), { recursive: true })
     await writeFile(this.filePath, JSON.stringify(output), { mode: 0o600 })
   }

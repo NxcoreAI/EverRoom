@@ -22,6 +22,13 @@
       "when": 1786741538906,
       "tag": "0002_massive_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786797375393,
+      "tag": "0003_opposite_beast",
+      "breakpoints": true
     }
   ]
 }

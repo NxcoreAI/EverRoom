@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell } from 'electron'
 
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -11,7 +11,24 @@ import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
+import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
+import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
+import { AsrCoordinator } from './asr/asr-coordinator'
+import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
+
+const APP_NAME = 'EverRoom'
+
+const appDataDirectory = app.getPath('appData')
+const dataDirectory = join(appDataDirectory, APP_NAME)
+
+app.setPath('userData', dataDirectory)
+app.setName(APP_NAME)
+configureDesktopLogger(dataDirectory)
+if (process.platform === 'darwin') process.title = APP_NAME
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) app.quit()
 
 const SOURCE_CHANNELS = {
   list: 'sources:list',
@@ -56,6 +73,7 @@ const DOCUMENT_CHANNELS = {
 } as const
 
 const ASR_CHANNELS = {
+  openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
   appendRecording: 'asr:append-recording',
   finishRecording: 'asr:finish-recording',
@@ -64,12 +82,77 @@ const ASR_CHANNELS = {
   getJob: 'asr:get-job',
 } as const
 
+const REALITY_CHANNELS = {
+  listEvents: 'reality:list-events',
+  getEvent: 'reality:get-event',
+  createEvent: 'reality:create-event',
+  finishCapture: 'reality:finish-capture',
+  updateTranscript: 'reality:update-transcript',
+  addMarker: 'reality:add-marker',
+  confirm: 'reality:confirm',
+  discard: 'reality:discard',
+  fail: 'reality:fail',
+  readAudio: 'reality:read-audio',
+  subscribe: 'reality:subscribe',
+  unsubscribe: 'reality:unsubscribe',
+} as const
+
+const ACCOUNT_CHANNELS = {
+  status: 'account:status',
+  login: 'account:login',
+  oidcLogin: 'account:oidc-login',
+  oidcCancel: 'account:oidc-cancel',
+  logout: 'account:logout',
+} as const
+
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
+let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
+let saasClient: SaasClient | null = null
 let shutdownStarted = false
+const queuedProtocolUrls: string[] = []
+
+function logRendererRequestError(input: unknown): void {
+  if (!input || typeof input !== 'object') return
+  const value = input as { channel?: unknown; message?: unknown }
+  if (typeof value.channel !== 'string' || typeof value.message !== 'string') return
+  const channel = value.channel.slice(0, 120)
+  const message = value.message.slice(0, 2_000)
+  logDesktop('renderer', 'error', { event: 'renderer.request.error', channel, message })
+}
+
+ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
+
+function focusMainWindow(): void {
+  const window = BrowserWindow.getAllWindows()[0]
+  if (!window || window.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
+
+function handleProtocolUrl(url: string): void {
+  if (!url.startsWith(OIDC_CALLBACK_URL)) return
+  if (saasClient) saasClient.handleOidcCallback(url)
+  else queuedProtocolUrls.push(url)
+  focusMainWindow()
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  handleProtocolUrl(url)
+})
+
+if (hasSingleInstanceLock) {
+  app.on('second-instance', (_event, argv) => {
+    const protocolUrl = argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
+    if (protocolUrl) handleProtocolUrl(protocolUrl)
+    else focusMainWindow()
+  })
+}
 
 function requireSourceId(value: unknown): string {
   if (typeof value !== 'string' || value.length < 1 || value.length > 100) {
@@ -190,13 +273,52 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
   ipcMain.handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
 }
 
-function registerAsrHandlers(store: RecordingStore, bridge: AsrGatewayBridge): void {
+function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
+  ipcMain.handle(ASR_CHANNELS.openSystemAudioSettings, () => {
+    if (process.platform !== 'darwin') throw new Error('系统音频录制设置仅适用于 macOS。')
+    return shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    )
+  })
   ipcMain.handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
   ipcMain.handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
   ipcMain.handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
   ipcMain.handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
-  ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
-  ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => bridge.getJob(id))
+  ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => coordinator.createJob(input))
+  ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
+}
+
+function registerRealityHandlers(bridge: RealityGatewayBridge): void {
+  ipcMain.handle(REALITY_CHANNELS.listEvents, (_event, filters) => bridge.listEvents(filters))
+  ipcMain.handle(REALITY_CHANNELS.getEvent, (_event, id) => bridge.getEvent(id))
+  ipcMain.handle(REALITY_CHANNELS.createEvent, (_event, input) => bridge.createEvent(input))
+  ipcMain.handle(REALITY_CHANNELS.finishCapture, (_event, id, input) => bridge.finishCapture(id, input))
+  ipcMain.handle(REALITY_CHANNELS.updateTranscript, (_event, id, input) => bridge.updateTranscript(id, input))
+  ipcMain.handle(REALITY_CHANNELS.addMarker, (_event, id, input) => bridge.addMarker(id, input))
+  ipcMain.handle(REALITY_CHANNELS.confirm, (_event, id) => bridge.confirm(id))
+  ipcMain.handle(REALITY_CHANNELS.discard, (_event, id) => bridge.discard(id))
+  ipcMain.handle(REALITY_CHANNELS.fail, (_event, id, error) => bridge.fail(id, error))
+  ipcMain.handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
+  ipcMain.handle(REALITY_CHANNELS.subscribe, (event) => bridge.subscribe(event.sender))
+  ipcMain.handle(REALITY_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+}
+
+function registerAccountHandlers(client: SaasClient): void {
+  ipcMain.handle(ACCOUNT_CHANNELS.status, () => client.status())
+  ipcMain.handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
+    const value = input as { identifier?: unknown; password?: unknown }
+    if (typeof value.identifier !== 'string' || typeof value.password !== 'string') {
+      throw new Error('请输入账号和密码。')
+    }
+    return client.login(value.identifier, value.password)
+  })
+  ipcMain.handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
+    if (provider !== 'apple' && provider !== 'google') throw new Error('不支持的登录方式。')
+    return client.loginWithOidc(provider)
+  })
+  ipcMain.handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
+  ipcMain.handle(ACCOUNT_CHANNELS.logout, () => client.logout())
 }
 
 function createWindow(): void {
@@ -221,6 +343,47 @@ function createWindow(): void {
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
   })
+  if (process.platform === 'darwin') {
+    window.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+      const respond = (streams: Parameters<typeof callback>[0]) => {
+        try {
+          callback(streams)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          console.info(`macOS system audio capture request ended: ${message}`)
+        }
+      }
+      if (
+        request.frame !== window.webContents.mainFrame
+        || !request.audioRequested
+        || !request.videoRequested
+      ) {
+        respond({})
+        return
+      }
+      try {
+        void desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width: 0, height: 0 },
+        }).then(
+          (sources) => {
+            const source = sources[0]
+            if (!source || window.isDestroyed()) respond({})
+            else respond({ video: source, audio: 'loopback' })
+          },
+          (error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            console.info(`macOS system audio capture permission was not granted: ${message}`)
+            respond({})
+          },
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.info(`macOS system audio capture permission was not granted: ${message}`)
+        respond({})
+      }
+    })
+  }
   window.once('ready-to-show', () => window.show())
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -235,23 +398,41 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(async () => {
+if (hasSingleInstanceLock) app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light'
+  if (process.defaultApp && process.argv[1] && process.platform !== 'darwin') {
+    app.setAsDefaultProtocolClient('everroom', process.execPath, [process.argv[1]])
+  } else {
+    app.setAsDefaultProtocolClient('everroom')
+  }
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
+  }
   try {
-    const dataDirectory = join(app.getPath('appData'), 'NxCore')
     gatewaySupervisor = new GatewaySupervisor(dataDirectory)
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     registerGatewayHandlers(gatewaySupervisor)
+    realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
+    registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge)
-    recordingStore = new RecordingStore(join(dataDirectory, 'recordings'))
-    registerAsrHandlers(recordingStore, new AsrGatewayBridge(gatewaySupervisor))
-
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
+    const recordingsDirectory=join(dataDirectory,'recordings')
+    recordingStore = new RecordingStore(recordingsDirectory)
+    saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
+    void saasClient.initialize()
+    if (process.platform !== 'darwin') {
+      const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
+      if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
+    }
+    for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
+    registerAccountHandlers(saasClient)
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge))
+
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
       .register(new GitHubConnector((key) => credentials.get(key)))
@@ -270,6 +451,8 @@ app.whenReady().then(async () => {
     agentGatewayBridge = null
     documentGatewayBridge?.dispose()
     documentGatewayBridge = null
+    realityGatewayBridge?.dispose()
+    realityGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -285,21 +468,31 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
-  if ((!localDataService && !gatewaySupervisor) || shutdownStarted) return
+  if (shutdownStarted) return
   event.preventDefault()
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
   const agentBridge = agentGatewayBridge
   const documentBridge = documentGatewayBridge
+  const realityBridge = realityGatewayBridge
   const recordings = recordingStore
+  const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
   agentGatewayBridge = null
   documentGatewayBridge = null
+  realityGatewayBridge = null
   recordingStore = null
+  saasClient = null
   agentBridge?.dispose()
   documentBridge?.dispose()
-  void Promise.allSettled([service?.shutdown(), recordings?.dispose(), gateway?.shutdown()]).finally(() => app.quit())
+  realityBridge?.dispose()
+  cloud?.cancelOidcLogin('EverRoom 正在退出。')
+  void Promise.allSettled([
+    service?.shutdown(),
+    recordings?.dispose(),
+    gateway?.shutdown(),
+  ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

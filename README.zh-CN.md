@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./everroom.svg" alt="Everroom logo" width="112" height="112">
+
 # Everroom
 
 **连接个人数据与 AI Agent 的本地优先上下文层。**

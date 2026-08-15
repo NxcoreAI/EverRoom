@@ -26,6 +26,16 @@ import type {
   StartAgentRunInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
+import type {
+  CreateRealityEventInput,
+  FinishRealityCaptureInput,
+  MarkRealityEventInput,
+  RealityEvent,
+  RealityInsights,
+  RealityEventStatus,
+  RealitySocketFrame,
+  UpdateRealityTranscriptInput,
+} from '@nxcore/reality-contract'
 
 export interface EvidenceBlock {
   id: string
@@ -141,10 +151,12 @@ export interface AsrSegment {
 export interface AsrResult {
   transcript: string
   segments: AsrSegment[]
+  insights?: RealityInsights
 }
 
 export interface AsrJob {
   id: string
+  source: 'local' | 'saas'
   provider: string
   status: AsrJobStatus
   fileName: string
@@ -159,23 +171,81 @@ export interface AsrJob {
 
 export interface CreateAsrJobInput {
   filePath: string
+  mode: 'local' | 'cloud'
+  recordingId?: string
+  durationMs?: number
+  retryToken?: string
   languageHints?: string[]
   diarizationEnabled: boolean
   contextPrompt?: string
 }
 
+export interface CloudAccountStatus {
+  authenticated: boolean
+  apiBaseUrl: string
+  user?: { id:string;tenantId:string;email?:string|null;phone?:string|null;name?:string }
+  device?: { id:string;name?:string;platform?:string }
+  subscription?: {
+    status: string
+    planCode: string
+    planName: string
+    periodStart: string
+    periodEnd: string
+    quotaSeconds: number
+    usedSeconds: number
+    remainingSeconds: number
+  }
+}
+
+export type CloudOidcProvider = 'apple' | 'google'
+
+export interface DesktopRequestError {
+  channel: string
+  message: string
+  title?: string
+  action?: 'open-system-audio-settings'
+  actionLabel?: string
+}
+
 export interface NxcoreDesktopApi {
   platform: string
+  errors: {
+    onRequestError(listener: (error: DesktopRequestError) => void): () => void
+    report(error: DesktopRequestError): void
+  }
   gateway: {
     status(): Promise<GatewayStatus>
   }
+  account: {
+    status(): Promise<CloudAccountStatus>
+    login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
+    loginWithOidc(provider: CloudOidcProvider): Promise<CloudAccountStatus>
+    cancelOidcLogin(): Promise<void>
+    logout(): Promise<CloudAccountStatus>
+  }
   asr: {
+    openSystemAudioSettings(): Promise<void>
     beginRecording(mimeType: string): Promise<{ id: string }>
     appendRecording(id: string, chunk: Uint8Array): Promise<void>
     finishRecording(id: string): Promise<{ filePath: string }>
     cancelRecording(id: string): Promise<void>
     createJob(input: CreateAsrJobInput): Promise<AsrJob>
     getJob(id: string): Promise<AsrJob>
+  }
+  reality: {
+    listEvents(filters?: { status?: RealityEventStatus; search?: string }): Promise<RealityEvent[]>
+    getEvent(id: string): Promise<RealityEvent>
+    createEvent(input: CreateRealityEventInput): Promise<RealityEvent>
+    finishCapture(id: string, input: FinishRealityCaptureInput): Promise<RealityEvent>
+    updateTranscript(id: string, input: UpdateRealityTranscriptInput): Promise<RealityEvent>
+    addMarker(id: string, input: MarkRealityEventInput): Promise<RealityEvent>
+    confirm(id: string): Promise<RealityEvent>
+    discard(id: string): Promise<void>
+    fail(id: string, error: string): Promise<RealityEvent>
+    readAudio(id: string): Promise<Uint8Array>
+    subscribe(): Promise<void>
+    unsubscribe(): Promise<void>
+    onEvent(listener: (frame: RealitySocketFrame) => void): () => void
   }
   agent: {
     listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]>
@@ -215,3 +285,14 @@ export interface NxcoreDesktopApi {
     disconnect(id: string, deleteLocalData: boolean): Promise<void>
   }
 }
+export type {
+  CreateRealityEventInput,
+  FinishRealityCaptureInput,
+  MarkRealityEventInput,
+  RealityEvent,
+  RealityEventType,
+  RealityInsights,
+  RealityEventStatus,
+  RealitySocketFrame,
+  UpdateRealityTranscriptInput,
+} from '@nxcore/reality-contract'

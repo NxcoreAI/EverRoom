@@ -648,7 +648,7 @@ summary:focus-visible {
 
 .account-row {
   display: flex;
-  min-height: 58px;
+  min-height: 68px;
   align-items: center;
   gap: 10px;
   margin: 0;
@@ -705,6 +705,42 @@ summary:focus-visible {
   font-size: 11px;
 }
 
+.account-quota {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(36px, 1fr);
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.account-quota > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-quota progress {
+  display: block;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 2px;
+  appearance: none;
+}
+
+.account-quota progress::-webkit-progress-bar {
+  background: var(--border);
+}
+
+.account-quota progress::-webkit-progress-value {
+  background: var(--accent);
+}
+
 .workspace-main {
   position: relative;
   grid-area: main;
@@ -712,6 +748,11 @@ summary:focus-visible {
   min-height: 0;
   overflow: hidden;
   background: var(--bg);
+}
+
+.reality-page-host {
+  width: 100%;
+  height: 100%;
 }
 
 .page {

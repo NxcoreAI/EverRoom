@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 
 import { navigationSections, type PageId } from '@/data/navigation'
 import { ProductBrand } from '@/components/ui/ProductBrand'
+import { useAccount } from '@/state/AccountContext'
 import type { GatewayStatus } from '../../../shared/sources'
 
 const INITIAL_GATEWAY_STATUS: GatewayStatus = {
@@ -26,6 +27,10 @@ function gatewayStatusLabel(status: GatewayStatus): string {
   }
 }
 
+function remainingMinutes(seconds: number): string {
+  return Math.ceil(Math.max(0, seconds) / 60).toLocaleString('zh-CN')
+}
+
 export function Sidebar({
   activePage,
   onNavigate,
@@ -35,6 +40,7 @@ export function Sidebar({
 }) {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>(INITIAL_GATEWAY_STATUS)
+  const { account } = useAccount()
 
   useEffect(() => {
     let disposed = false
@@ -84,6 +90,15 @@ export function Sidebar({
       return next
     })
   }
+
+  const accountName = account?.authenticated
+    ? account.user?.email || account.user?.name || account.user?.phone || 'EverRoom 用户'
+    : account === null ? '正在检查' : '本地用户'
+  const accountDescription = account?.authenticated
+    ? account.subscription?.planName ? `${account.subscription.planName} 套餐` : 'EverRoom SaaS 已连接'
+    : account === null ? '账号状态' : '本地模式'
+  const subscription = account?.authenticated ? account.subscription : undefined
+  const remainingQuotaMinutes = subscription ? remainingMinutes(subscription.remainingSeconds) : null
 
   return (
     <aside className="sidebar">
@@ -143,11 +158,21 @@ export function Sidebar({
         </span>
         <i className="gateway-status-dot" aria-hidden="true" />
       </div>
-      <button type="button" className="account-row">
-        <span className="account-avatar" aria-hidden="true">本</span>
+      <button type="button" className="account-row" onClick={() => onNavigate('settings')}>
+        <span className="account-avatar" aria-hidden="true">{accountName.slice(0, 1).toUpperCase()}</span>
         <span className="account-copy">
-          <strong>本地用户</strong>
-          <small>本地模式</small>
+          <strong>{accountName}</strong>
+          <small>{accountDescription}</small>
+          {subscription ? (
+            <span className="account-quota">
+              <span>剩余 {remainingQuotaMinutes} 分钟</span>
+              <progress
+                aria-label={`剩余转写额度 ${remainingQuotaMinutes} 分钟`}
+                max={Math.max(1, subscription.quotaSeconds)}
+                value={Math.min(Math.max(0, subscription.remainingSeconds), subscription.quotaSeconds)}
+              />
+            </span>
+          ) : null}
         </span>
       </button>
     </aside>

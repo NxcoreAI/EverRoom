@@ -1,0 +1,87 @@
+.app-error-overlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 23, 27, 0.42);
+}
+
+.app-error-dialog {
+  position: relative;
+  display: grid;
+  width: min(420px, 100%);
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: 0 18px 60px rgba(20, 23, 27, 0.2);
+}
+
+.app-error-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(180, 35, 24, 0.09);
+  color: #b42318;
+}
+
+.app-error-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.app-error-copy {
+  min-width: 0;
+  padding-right: 24px;
+}
+
+.app-error-copy h2 {
+  margin: 1px 0 7px;
+  font-size: 15px;
+}
+
+.app-error-copy p {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.app-error-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.app-error-close:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.app-error-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.app-error-dialog > .primary-button {
+  grid-column: 2;
+  justify-self: end;
+  min-width: 82px;
+}
