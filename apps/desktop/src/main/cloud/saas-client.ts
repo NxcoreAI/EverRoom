@@ -177,7 +177,7 @@ export class SaasClient {
     authorizationUrl.searchParams.set('client_id', this.logtoAppId)
     authorizationUrl.searchParams.set('redirect_uri', OIDC_CALLBACK_URL)
     authorizationUrl.searchParams.set('response_type', 'code')
-    authorizationUrl.searchParams.set('scope', 'openid')
+    authorizationUrl.searchParams.set('scope', 'openid email name')
     authorizationUrl.searchParams.set('code_challenge', codeChallenge)
     authorizationUrl.searchParams.set('code_challenge_method', 'S256')
     authorizationUrl.searchParams.set('state', state)
