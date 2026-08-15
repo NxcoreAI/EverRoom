@@ -22,7 +22,7 @@ export interface GatewayConnection {
   version: string
 }
 
-const STARTUP_TIMEOUT_MS = 15_000
+const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 
 function delay(milliseconds: number): Promise<void> {
@@ -104,6 +104,7 @@ export class GatewaySupervisor {
         env: environment,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        shell: process.platform === 'win32',
       },
     )
     this.child = child

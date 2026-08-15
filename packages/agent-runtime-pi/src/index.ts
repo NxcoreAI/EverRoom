@@ -18,6 +18,12 @@ import {
   type RuntimeRun,
   type StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
+import { MemoryCoreClient } from "./memory/client.js";
+import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
+import { createMemoryTools, MEMORY_TOOL_NAMES } from "./memory/tools.js";
+import type { MemoryRuntimeConfig } from "./memory/types.js";
+
+export type { MemoryRuntimeConfig } from "./memory/types.js";
 
 export type PiApi =
   | "openai-completions"
@@ -40,11 +46,15 @@ export interface PiAgentRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  /** MemoryCore 记忆服务配置；缺省时记忆能力完全不启用。 */
+  memory?: MemoryRuntimeConfig;
 }
 
 interface PiSessionHandle {
   ref: string;
   session: AgentSession;
+  setMemoryRunContext: (context: MemoryRunContext | null) => void;
+  cancelMemoryRun: () => void;
 }
 
 interface ActivePiRun {
@@ -63,14 +73,17 @@ export class PiAgentRuntime implements AgentRuntime {
   private readonly sessions = new Map<string, PiSessionHandle>();
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
+  private readonly memoryClient: MemoryCoreClient | null;
 
-  constructor(private readonly config: PiAgentRuntimeConfig) {}
+  constructor(private readonly config: PiAgentRuntimeConfig) {
+    this.memoryClient = config.memory ? new MemoryCoreClient(config.memory) : null;
+  }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
     return {
       streaming: true,
       reasoning: this.config.reasoning !== "off",
-      tools: false,
+      tools: this.memoryClient !== null,
       steering: true,
       resume: false,
     };
@@ -112,6 +125,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active) return;
     active.cancelled = true;
+    active.handle.cancelMemoryRun();
     await active.handle.session.abort();
     this.finish(runId, "cancelled");
   }
@@ -188,6 +202,9 @@ export class PiAgentRuntime implements AgentRuntime {
       enableAnalytics: false,
       enableInstallTelemetry: false,
     });
+    let memoryRunContext: MemoryRunContext | null = null;
+    const memory = this.config.memory;
+    const memoryClient = this.memoryClient;
     const resourceLoader = new DefaultResourceLoader({
       cwd: this.config.workingDirectory,
       agentDir: this.config.agentDirectory,
@@ -197,10 +214,23 @@ export class PiAgentRuntime implements AgentRuntime {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
+      ...(memory && memoryClient
+        ? {
+            extensionFactories: [
+              createMemoryExtension({
+                client: memoryClient,
+                config: memory,
+                getRunContext: () => memoryRunContext,
+              }),
+            ],
+          }
+        : {}),
       systemPromptOverride: () => [
         "你是 NxCore 桌面工作区中的 AI 助手。",
         "回答应准确、简洁，并使用与用户相同的语言。",
-        "当前运行未授权任何文件、Shell 或外部产品工具；不要声称执行了未提供的操作。",
+        memory
+          ? "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话；除此之外没有其他工具授权，不要声称执行了未提供的操作。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入。"
+          : "当前运行未授权任何文件、Shell 或外部产品工具；不要声称执行了未提供的操作。",
       ].join("\n"),
       appendSystemPromptOverride: () => [],
     });
@@ -215,8 +245,12 @@ export class PiAgentRuntime implements AgentRuntime {
       modelRuntime,
       model,
       thinkingLevel: this.config.reasoning,
-      noTools: "all",
-      tools: [],
+      tools: memory && memoryClient
+        ? [...MEMORY_TOOL_NAMES]
+        : [],
+      ...(memory && memoryClient
+        ? { customTools: createMemoryTools(memoryClient, () => memoryRunContext?.sessionId) }
+        : {}),
       resourceLoader,
       sessionManager,
       settingsManager,
@@ -226,7 +260,16 @@ export class PiAgentRuntime implements AgentRuntime {
       session.dispose();
       throw new Error("Pi did not create a persistent session file");
     }
-    const handle = { ref, session };
+    const handle: PiSessionHandle = {
+      ref,
+      session,
+      setMemoryRunContext: (context) => {
+        memoryRunContext = context;
+      },
+      cancelMemoryRun: () => {
+        if (memoryRunContext) memoryRunContext.cancelled = true;
+      },
+    };
     this.sessions.set(ref, handle);
     return handle;
   }
@@ -240,6 +283,12 @@ export class PiAgentRuntime implements AgentRuntime {
 
   private async prompt(input: StartRuntimeRunInput, active: ActivePiRun): Promise<void> {
     try {
+      active.handle.setMemoryRunContext({
+        sessionId: input.sessionId,
+        originalPrompt: input.prompt,
+        pageLabel: input.pageLabel,
+        cancelled: false,
+      });
       const prompt = `当前工作区：${input.pageLabel}\n\n用户请求：${input.prompt}`;
       await active.handle.session.prompt(prompt, { expandPromptTemplates: false, source: "rpc" });
       if (!active.terminal) this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
