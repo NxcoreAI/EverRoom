@@ -7,10 +7,11 @@ import {
   Home,
   ListChecks,
   AudioLines,
+  NotebookPen,
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'memory' | 'tasks' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'memory' | 'tasks' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -52,7 +53,10 @@ export const navigationSections: NavigationSection[] = [
   {
     id: 'system',
     label: '系统',
-    items: [{ id: 'settings', label: '设置', icon: Settings, tone: 'slate' }],
+    items: [
+      { id: 'diary', label: '日记', icon: NotebookPen, tone: 'blue' },
+      { id: 'settings', label: '设置', icon: Settings, tone: 'slate' },
+    ],
   },
 ]
 
