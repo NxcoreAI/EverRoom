@@ -13,6 +13,7 @@ export interface StartRuntimeRunInput {
   runtimeSessionRef: string | null;
   prompt: string;
   pageLabel: string;
+  roomId: string | null;
 }
 
 export interface ResumeRuntimeRunInput extends StartRuntimeRunInput {

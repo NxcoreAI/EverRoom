@@ -6,10 +6,12 @@ import {
   type AgentSessionEvent,
   createAgentSession,
   DefaultResourceLoader,
+  defineTool,
   ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import {
   AsyncEventQueue,
   type AgentRuntime,
@@ -40,20 +42,62 @@ export interface PiAgentRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  retry?: {
+    enabled?: boolean;
+    maxRetries?: number;
+    baseDelayMs?: number;
+  };
+}
+
+export interface PiAgentRuntimeToolResult {
+  content: string;
+  details?: unknown;
+}
+
+export interface PiAgentRuntimeTool {
+  name: string;
+  label: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  promptSnippet?: string;
+  promptGuidelines?: string[];
+  executionMode?: "sequential" | "parallel";
+  execute: (
+    input: StartRuntimeRunInput,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => Promise<PiAgentRuntimeToolResult>;
+}
+
+export interface PiAgentRuntimeIntegration {
+  tools?: readonly PiAgentRuntimeTool[];
+  onRunFinished?: (
+    input: StartRuntimeRunInput,
+    outcome: "completed" | "failed" | "cancelled",
+  ) => Promise<void>;
+}
+
+interface PiRunContextRef {
+  current: StartRuntimeRunInput | null;
 }
 
 interface PiSessionHandle {
   ref: string;
   session: AgentSession;
+  context: PiRunContextRef;
+  activeRunId: string | null;
+  ownerSessionId: string | null;
 }
 
 interface ActivePiRun {
   queue: AsyncEventQueue<RuntimeEvent>;
   handle: PiSessionHandle;
+  input: StartRuntimeRunInput;
   unsubscribe: () => void;
   content: string;
   cancelled: boolean;
   terminal: boolean;
+  finishPromise: Promise<void> | null;
 }
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -64,13 +108,16 @@ export class PiAgentRuntime implements AgentRuntime {
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
 
-  constructor(private readonly config: PiAgentRuntimeConfig) {}
+  constructor(
+    private readonly config: PiAgentRuntimeConfig,
+    private readonly integration: PiAgentRuntimeIntegration = {},
+  ) {}
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
     return {
       streaming: true,
       reasoning: this.config.reasoning !== "off",
-      tools: false,
+      tools: (this.integration.tools?.length ?? 0) > 0,
       steering: true,
       resume: false,
     };
@@ -79,14 +126,23 @@ export class PiAgentRuntime implements AgentRuntime {
   async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
     if (this.activeRuns.has(input.runId)) throw new Error(`Pi run is already active: ${input.runId}`);
     const handle = await this.getSession(input.runtimeSessionRef);
+    if (handle.activeRunId) throw new Error(`Pi session is already active: ${handle.activeRunId}`);
+    if (handle.ownerSessionId && handle.ownerSessionId !== input.sessionId) {
+      throw new Error("Pi session belongs to a different Agent session");
+    }
+    handle.ownerSessionId = input.sessionId;
+    handle.context.current = input;
+    handle.activeRunId = input.runId;
     const queue = new AsyncEventQueue<RuntimeEvent>();
     const active: ActivePiRun = {
       queue,
       handle,
+      input,
       unsubscribe: () => undefined,
       content: "",
       cancelled: false,
       terminal: false,
+      finishPromise: null,
     };
     active.unsubscribe = handle.session.subscribe((event) => this.handleEvent(input.runId, event));
     this.activeRuns.set(input.runId, active);
@@ -112,8 +168,12 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active) return;
     active.cancelled = true;
-    await active.handle.session.abort();
-    this.finish(runId, "cancelled");
+    try {
+      await active.handle.session.abort();
+      await this.finish(runId, "cancelled");
+    } catch (error) {
+      await this.finish(runId, "failed", error);
+    }
   }
 
   async deleteSession(runtimeSessionRef: string): Promise<void> {
@@ -128,8 +188,12 @@ export class PiAgentRuntime implements AgentRuntime {
     const activeRuns = [...this.activeRuns.entries()];
     await Promise.all(activeRuns.map(async ([runId, active]) => {
       active.cancelled = true;
-      await active.handle.session.abort();
-      this.finish(runId, "cancelled");
+      try {
+        await active.handle.session.abort();
+        await this.finish(runId, "cancelled");
+      } catch (error) {
+        await this.finish(runId, "failed", error);
+      }
     }));
     for (const handle of this.sessions.values()) handle.session.dispose();
     this.sessions.clear();
@@ -180,11 +244,33 @@ export class PiAgentRuntime implements AgentRuntime {
     const model = modelRuntime.getModel(this.config.provider, this.config.model);
     if (!model) throw new Error(`Pi model is unavailable: ${this.config.provider}/${this.config.model}`);
 
+    const context: PiRunContextRef = { current: null };
+    const customTools = (this.integration.tools ?? []).map((tool) => defineTool({
+      name: tool.name,
+      label: tool.label,
+      description: tool.description,
+      ...(tool.promptSnippet ? { promptSnippet: tool.promptSnippet } : {}),
+      ...(tool.promptGuidelines ? { promptGuidelines: tool.promptGuidelines } : {}),
+      parameters: Type.Unsafe<Record<string, unknown>>(tool.parameters),
+      ...(tool.executionMode ? { executionMode: tool.executionMode } : {}),
+      execute: async (_toolCallId, params, signal) => {
+        const input = context.current;
+        if (!input) throw new Error("Pi document tool is not bound to an active run");
+        const result = await withAbortSignal(() => tool.execute(input, params, signal), signal);
+        return {
+          content: [{ type: "text" as const, text: result.content }],
+          details: result.details ?? {},
+        };
+      },
+    }));
+    const toolNames = customTools.map((tool) => tool.name);
+
     const settingsManager = SettingsManager.inMemory({
       defaultProvider: this.config.provider,
       defaultModel: this.config.model,
       defaultThinkingLevel: this.config.reasoning,
-      defaultTools: [],
+      defaultTools: toolNames,
+      ...(this.config.retry ? { retry: this.config.retry } : {}),
       enableAnalytics: false,
       enableInstallTelemetry: false,
     });
@@ -200,7 +286,14 @@ export class PiAgentRuntime implements AgentRuntime {
       systemPromptOverride: () => [
         "你是 NxCore 桌面工作区中的 AI 助手。",
         "回答应准确、简洁，并使用与用户相同的语言。",
-        "当前运行未授权任何文件、Shell 或外部产品工具；不要声称执行了未提供的操作。",
+        "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
+        ...(customTools.length > 0
+          ? [
+              "你只能使用当前会话提供的 Context Room 文档工具，不能使用文件、Shell 或其他外部产品工具。",
+              "当用户要求创建或撰写文档时，依次调用 context_room_write_begin、一个或多个 context_room_write_append，最后调用 context_room_write_commit。",
+              "正文必须使用 Markdown；append 的 sequence 从 1 开始并严格连续。工具调用失败时不要声称文档已经创建。",
+            ]
+          : ["当前运行未授权任何文件、Shell 或外部产品工具；不要声称执行了未提供的操作。"]),
       ].join("\n"),
       appendSystemPromptOverride: () => [],
     });
@@ -215,8 +308,9 @@ export class PiAgentRuntime implements AgentRuntime {
       modelRuntime,
       model,
       thinkingLevel: this.config.reasoning,
-      noTools: "all",
-      tools: [],
+      noTools: customTools.length > 0 ? "builtin" : "all",
+      tools: toolNames,
+      customTools,
       resourceLoader,
       sessionManager,
       settingsManager,
@@ -226,7 +320,7 @@ export class PiAgentRuntime implements AgentRuntime {
       session.dispose();
       throw new Error("Pi did not create a persistent session file");
     }
-    const handle = { ref, session };
+    const handle = { ref, session, context, activeRunId: null, ownerSessionId: null };
     this.sessions.set(ref, handle);
     return handle;
   }
@@ -242,12 +336,12 @@ export class PiAgentRuntime implements AgentRuntime {
     try {
       const prompt = `当前工作区：${input.pageLabel}\n\n用户请求：${input.prompt}`;
       await active.handle.session.prompt(prompt, { expandPromptTemplates: false, source: "rpc" });
-      if (!active.terminal) this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
+      if (!active.terminal) await this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
     } catch (error) {
       if (active.cancelled) {
-        this.finish(input.runId, "cancelled");
+        await this.finish(input.runId, "cancelled");
       } else {
-        this.finish(input.runId, "failed", error);
+        await this.finish(input.runId, "failed", error);
       }
     }
   }
@@ -283,32 +377,86 @@ export class PiAgentRuntime implements AgentRuntime {
         payload: { toolCallId: event.toolCallId, name: event.toolName, result: event.result },
       });
     } else if (event.type === "agent_settled") {
-      this.finish(runId, active.cancelled ? "cancelled" : "completed");
+      const sessionError = active.handle.session.state.errorMessage;
+      void this.finish(
+        runId,
+        active.cancelled ? "cancelled" : sessionError ? "failed" : "completed",
+        sessionError ? new Error(sessionError) : undefined,
+      );
     }
   }
 
-  private finish(runId: string, outcome: "completed" | "failed" | "cancelled", error?: unknown): void {
+  private finish(
+    runId: string,
+    outcome: "completed" | "failed" | "cancelled",
+    error?: unknown,
+  ): Promise<void> {
     const active = this.activeRuns.get(runId);
-    if (!active || active.terminal) return;
+    if (!active) return Promise.resolve();
+    if (active.finishPromise) return active.finishPromise;
     active.terminal = true;
+    active.finishPromise = (async () => {
+      let finalOutcome = outcome;
+      let finalError = error;
+      try {
+        await this.integration.onRunFinished?.(active.input, outcome);
+      } catch (cleanupError) {
+        finalOutcome = "failed";
+        finalError = cleanupError;
+      }
 
-    if (outcome === "completed") {
-      active.queue.push({
-        type: "message.completed",
-        payload: { role: "assistant", content: active.content },
-      });
-      active.queue.push({ type: "run.completed", payload: {} });
-    } else if (outcome === "cancelled") {
-      active.queue.push({ type: "run.cancelled", payload: {} });
-    } else {
-      active.queue.push({
-        type: "run.failed",
-        payload: { message: error instanceof Error ? error.message : "Pi runtime failed" },
-      });
-    }
+      if (finalOutcome === "completed") {
+        active.queue.push({
+          type: "message.completed",
+          payload: { role: "assistant", content: active.content },
+        });
+        active.queue.push({ type: "run.completed", payload: {} });
+      } else if (finalOutcome === "cancelled") {
+        active.queue.push({ type: "run.cancelled", payload: {} });
+      } else {
+        active.queue.push({
+          type: "run.failed",
+          payload: { message: finalError instanceof Error ? finalError.message : "Pi runtime failed" },
+        });
+      }
 
-    active.unsubscribe();
-    active.queue.end();
-    this.activeRuns.delete(runId);
+      active.handle.context.current = null;
+      active.handle.activeRunId = null;
+      active.unsubscribe();
+      active.queue.end();
+      this.activeRuns.delete(runId);
+    })();
+    return active.finishPromise;
   }
+}
+
+function withAbortSignal<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation();
+  if (signal.aborted) return Promise.reject(new Error("Pi tool execution aborted"));
+  return new Promise<T>((resolvePromise, reject) => {
+    let settled = false;
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      action();
+    };
+    const onAbort = () => settle(() => reject(new Error("Pi tool execution aborted")));
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    let promise: Promise<T>;
+    try {
+      promise = operation();
+    } catch (error) {
+      settle(() => reject(error));
+      return;
+    }
+    void promise.then(
+      (value) => settle(() => resolvePromise(value)),
+      (error) => settle(() => reject(error)),
+    );
+  });
 }

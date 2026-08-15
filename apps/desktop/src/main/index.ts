@@ -10,6 +10,7 @@ import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
@@ -60,6 +61,17 @@ const AGENT_CHANNELS = {
   unsubscribe: 'agent:unsubscribe',
 } as const
 
+const DOCUMENT_CHANNELS = {
+  list: 'documents:list',
+  get: 'documents:get',
+  import: 'documents:import',
+  save: 'documents:save',
+  delete: 'documents:delete',
+  acknowledge: 'documents:acknowledge',
+  subscribe: 'documents:subscribe',
+  unsubscribe: 'documents:unsubscribe',
+} as const
+
 const ASR_CHANNELS = {
   openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
@@ -96,6 +108,7 @@ const ACCOUNT_CHANNELS = {
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
+let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let saasClient: SaasClient | null = null
@@ -235,7 +248,7 @@ function registerGatewayHandlers(supervisor: GatewaySupervisor): void {
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
-  ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel) => bridge.listSessions(pageLabel))
+  ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
   ipcMain.handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
   ipcMain.handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
@@ -246,6 +259,18 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   ipcMain.handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
   ipcMain.handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   ipcMain.handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+}
+
+function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
+  ipcMain.handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
+  ipcMain.handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
+  ipcMain.handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
+    bridge.acknowledge(transactionId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
+  ipcMain.handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
@@ -392,6 +417,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
+    registerDocumentHandlers(documentGatewayBridge)
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')
@@ -422,6 +449,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    documentGatewayBridge?.dispose()
+    documentGatewayBridge = null
     realityGatewayBridge?.dispose()
     realityGatewayBridge = null
     await recordingStore?.dispose()
@@ -445,16 +474,19 @@ app.on('before-quit', (event) => {
   const service = localDataService
   const gateway = gatewaySupervisor
   const agentBridge = agentGatewayBridge
+  const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
   const recordings = recordingStore
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
   agentGatewayBridge = null
+  documentGatewayBridge = null
   realityGatewayBridge = null
   recordingStore = null
   saasClient = null
   agentBridge?.dispose()
+  documentBridge?.dispose()
   realityBridge?.dispose()
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
   void Promise.allSettled([

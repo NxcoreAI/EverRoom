@@ -1,6 +1,7 @@
 import * as Popover from '@radix-ui/react-popover';
 import {
   CalendarDays,
+  Check,
   CheckSquare2,
   ChevronDown,
   ChevronLeft,
@@ -85,8 +86,61 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
   const [completedOpen, setCompletedOpen] = useState(false);
   const completed = room.actionItems.filter((item) => item.completed || item.status === '已完成');
   const pending = room.actionItems.filter((item) => !item.completed && item.status !== '已完成');
-  const renderTask = (task: ContextRoomRecord['actionItems'][number], done: boolean) => <div className="context-room-task-row" key={task.id}><button type="button" aria-label={`${done ? '取消完成' : '完成'} ${task.title}`} onClick={() => onToggle(task.id)}><span className={done ? 'is-complete' : ''} /></button><button type="button" onClick={() => onSelect(task.id)}><b className={done ? 'is-complete' : ''}>{task.title}</b><small>{task.owner} · {task.deadline}</small></button></div>;
-  return <div className="context-room-task-pane"><header><h2>Room 任务</h2><span data-icon-tone={roomKindTone(room.kind)}>{completed.length}/{room.actionItems.length}</span></header><section className="context-room-task-section"><h3>未完成 <span>{pending.length}</span></h3>{pending.map((task) => renderTask(task, false))}</section><section className="context-room-task-section"><button type="button" className="context-room-task-section-toggle" aria-expanded={completedOpen} onClick={() => setCompletedOpen((value) => !value)}><ChevronDown aria-hidden="true" />已完成 <span>{completed.length}</span></button>{completedOpen ? completed.map((task) => renderTask(task, true)) : null}</section>{!room.actionItems.length ? <EmptyState>暂无任务</EmptyState> : null}</div>;
+  const renderTask = (task: ContextRoomRecord['actionItems'][number], done: boolean) => (
+    <div className={`context-room-task-row${done ? ' is-done' : ''}`} key={task.id}>
+      <button
+        type="button"
+        className="context-room-task-check"
+        aria-label={`${done ? '取消完成' : '完成'} ${task.title}`}
+        onClick={() => onToggle(task.id)}
+      >
+        <span>{done ? <Check aria-hidden="true" /> : null}</span>
+      </button>
+      <button
+        type="button"
+        className="context-room-task-main"
+        onClick={() => onSelect(task.id)}
+      >
+        <b>{task.title}</b>
+        <span className="context-room-task-source">
+          {task.source?.name ?? `负责人 ${task.owner}`}
+        </span>
+        <span className="context-room-task-meta">
+          <span>{task.owner}</span>
+          <span><CalendarDays aria-hidden="true" />截止 {task.deadline}</span>
+        </span>
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="context-room-task-pane">
+      <header>
+        <h2>Room 任务</h2>
+        <span className="context-room-task-progress" data-icon-tone={roomKindTone(room.kind)}>
+          {completed.length}/{room.actionItems.length}
+        </span>
+      </header>
+      <section className="context-room-task-section">
+        <h3>未完成 <span>{pending.length}</span></h3>
+        {pending.map((task) => renderTask(task, false))}
+      </section>
+      <section className="context-room-task-section context-room-task-completed">
+        <button
+          type="button"
+          className="context-room-task-section-toggle"
+          aria-expanded={completedOpen}
+          onClick={() => setCompletedOpen((value) => !value)}
+        >
+          <ChevronDown aria-hidden="true" />
+          已完成
+          <span>{completed.length}</span>
+        </button>
+        {completedOpen ? completed.map((task) => renderTask(task, true)) : null}
+      </section>
+      {!room.actionItems.length ? <EmptyState>暂无任务</EmptyState> : null}
+    </div>
+  );
 }
 
 export function MailsPane({ room, onSelect }: { room: ContextRoomRecord; onSelect: (id: string) => void }) {

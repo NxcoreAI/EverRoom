@@ -122,7 +122,7 @@ export class GatewaySupervisor {
         env: environment,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        shell: !app.isPackaged && process.platform === 'win32', 
+        shell: !app.isPackaged && process.platform === 'win32',
       },
     )
     this.child = child

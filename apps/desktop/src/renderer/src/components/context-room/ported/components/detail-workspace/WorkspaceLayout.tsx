@@ -1,4 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
+import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract';
 import { X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
@@ -50,6 +51,10 @@ export function WorkspaceLayout({
   selectedResourceId,
   selectedObject,
   selectedResource,
+  backendDocuments,
+  documentEvents,
+  onBackendDocumentChange,
+  onDeleteDocument,
   onSelectResource,
   onAddFile,
   onOpenMemory,
@@ -97,6 +102,10 @@ export function WorkspaceLayout({
   selectedResourceId: string | null;
   selectedObject: WorkspaceObjectPreview | null;
   selectedResource: ContextRoomResource | null;
+  backendDocuments: RoomDocument[];
+  documentEvents: Record<string, DocumentEvent[]>;
+  onBackendDocumentChange: (document: RoomDocument) => void;
+  onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onSelectResource: (resource: ContextRoomResource) => void;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (memoryId: string) => void;
@@ -131,7 +140,7 @@ export function WorkspaceLayout({
       })() : null}
       <div
         ref={layoutRef as React.RefObject<HTMLDivElement>}
-        className={`context-room-workspace-layout${overview ? ' is-overview' : ''}${middleHidden ? ' is-middle-hidden' : ''}${mobileContent ? ' is-mobile-content' : ''}`}
+        className={`context-room-workspace-layout${overview ? ' is-overview' : ''}${middleHidden ? ' is-middle-hidden' : ''}${mobileContent ? ' is-mobile-content' : ''}${panels.includes('tasks') ? ' has-task-pane' : ''}`}
         style={{ '--context-room-middle-width': `${String(middleWidth)}px` } as React.CSSProperties}
       >
         <nav className="context-room-workspace-tabs" aria-label="Context room detail">
@@ -271,9 +280,11 @@ export function WorkspaceLayout({
                         pane={pane}
                         room={room}
                         selectedResourceId={selectedResourceId}
+                        backendDocuments={backendDocuments}
                         rooms={rooms}
                         onOpenRoom={onOpenRoom}
                         onSelectResource={onSelectResource}
+                        onDeleteDocument={onDeleteDocument}
                         onAddFile={onAddFile}
                         onOpenMemory={onOpenMemory}
                         onToggleTask={onToggleTask}
@@ -314,6 +325,9 @@ export function WorkspaceLayout({
               panels={panels}
               selectedObject={selectedObject}
               selectedResource={selectedResource}
+              backendDocuments={backendDocuments}
+              documentEvents={documentEvents}
+              onBackendDocumentChange={onBackendDocumentChange}
               onOpenRoom={onOpenRoom}
               onMobileBack={() => setMobileContent(false)}
               onCloseObject={onCloseObject}

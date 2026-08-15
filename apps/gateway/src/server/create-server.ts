@@ -13,6 +13,11 @@ import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
 import { AgentService } from "../modules/agent/service.js";
+import { DocumentEventBroker } from "../modules/documents/event-broker.js";
+import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
+import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
+import { documentRoutes } from "../modules/documents/routes.js";
+import { DocumentService } from "../modules/documents/service.js";
 import { createAgentRuntime } from "../modules/agent/runtime-factory.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
@@ -92,7 +97,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(websocket);
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
-  const agentRuntime = createAgentRuntime(config);
+  const documentService = new DocumentService(db, new DocumentEventBroker());
+  const documentMcpHost = new DocumentMcpHost(documentService);
+  const agentRuntime = createAgentRuntime(config, documentMcpHost);
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -108,6 +115,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "agent runtime configured",
   );
   const agentService = new AgentService(db, agentRuntime, new AgentEventBroker(), app.log);
+  await agentService.initialize();
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
@@ -119,11 +127,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   app.addHook("onClose", async () => {
     await agentService.dispose();
+    await documentMcpHost.close();
+    documentService.dispose();
     await asrService.dispose();
     sqlite.close();
     await gatewayLogger.close();
   });
   await app.register(agentRoutes(agentService));
+  await app.register(documentMcpRoutes(documentMcpHost));
+  await app.register(documentRoutes(documentService));
   await app.register(asrRoutes(asrService));
   await app.register(realityRoutes(realityService));
 
