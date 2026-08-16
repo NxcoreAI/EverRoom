@@ -34,18 +34,25 @@ function toolKind(name: string): ToolKind {
 
 function toolLabel(tool: DisplayAgentToolCall): string {
   const name = tool.name.toLowerCase()
+  const done = tool.status === 'completed'
   if (name === 'tool_search') return tool.status === 'completed' ? '已选择所需工具' : '选择所需工具'
-  if (/photo|image/.test(name)) return '搜索图片'
-  if (/calendar/.test(name)) return /create|add/.test(name) ? '创建日程' : '查询日历'
+  if (/photo|image/.test(name)) return done ? '已查看图像' : '查看图像'
+  if (/calendar/.test(name)) {
+    if (/create|add/.test(name)) return done ? '已创建日程' : '创建日程'
+    return done ? '已查询日历' : '查询日历'
+  }
   if (/scheduler/.test(name)) return '管理定时任务'
-  if (/memory/.test(name)) return '查询个人记忆'
-  if (/email|mail/.test(name)) return /sync/.test(name) ? '同步邮件' : '查询邮件'
-  if (/meeting/.test(name)) return '查询会议'
-  if (/diary/.test(name)) return '查询日记'
-  if (/search|web/.test(name)) return '搜索网页'
-  if (/read/.test(name)) return '读取文件'
-  if (/write|edit|patch/.test(name)) return '修改文件'
-  if (/bash|command|terminal|shell/.test(name)) return '执行命令'
+  if (/memory/.test(name)) return done ? '已查询个人记忆' : '查询个人记忆'
+  if (/email|mail/.test(name)) {
+    if (/sync/.test(name)) return done ? '已同步邮件' : '同步邮件'
+    return done ? '已查询邮件' : '查询邮件'
+  }
+  if (/meeting/.test(name)) return done ? '已查询会议' : '查询会议'
+  if (/diary/.test(name)) return done ? '已查询日记' : '查询日记'
+  if (/search|web/.test(name)) return done ? '已搜索网页' : '搜索网页'
+  if (/read/.test(name)) return done ? '已读取文件' : '读取文件'
+  if (/write|edit|patch/.test(name)) return done ? '已修改文件' : '修改文件'
+  if (/bash|command|terminal|shell/.test(name)) return done ? '已运行命令' : '运行命令'
   return tool.name.replace(/[_-]+/g, ' ').trim() || '调用工具'
 }
 
@@ -53,11 +60,14 @@ function userText(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const text = value.trim()
   if (!text || text.startsWith('{') || text.startsWith('[')) return undefined
-  return text.slice(0, 160)
+  return text.slice(0, 600)
 }
 
 function toolSubject(tool: DisplayAgentToolCall): string | undefined {
-  for (const key of ['query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'title', 'url']) {
+  for (const key of [
+    'command', 'cmd', 'script', 'code', 'input',
+    'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'title', 'url',
+  ]) {
     const value = userText(tool.args[key])
     if (value) return value
   }
@@ -184,9 +194,9 @@ export function AgentExecutionTimeline({
           if (!running) setExpanded((current) => !current)
         }}
       >
-        <ChevronDown aria-hidden="true" />
-        <span className="agent-execution-pulse" aria-hidden="true" />
+        {running ? <LoaderCircle className="spin" aria-hidden="true" /> : <Wrench aria-hidden="true" />}
         <strong>{running ? '正在执行' : `已执行 ${tools.length} 个操作`}</strong>
+        <ChevronDown className="agent-execution-chevron" aria-hidden="true" />
         <span>{totalDuration ? formatDuration(totalDuration) : ''}</span>
       </button>
       <div
@@ -199,30 +209,37 @@ export function AgentExecutionTimeline({
             {tools.map((tool) => {
               const summary = resultSummary(tool.result ?? tool.partialResult)
               const subject = toolSubject(tool)
+              const preview = subject ?? summary ?? tool.error
               const duration = durationMs(tool.startedAt, tool.completedAt, now)
               const args = Object.keys(tool.args).length ? detailText(tool.args) : undefined
               const result = detailText(tool.result ?? tool.partialResult)
+              const label = toolLabel(tool)
               return (
-                <article key={tool.id} className="agent-tool-row" data-status={tool.status}>
-                  <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
-                  <div className="agent-tool-content">
-                    <div className="agent-tool-heading">
-                      <strong>{toolLabel(tool)}</strong>
-                      <span className="agent-tool-status"><StatusIcon status={tool.status} />{statusLabel(tool.status)}</span>
+                <details key={tool.id} className="agent-tool-row" data-status={tool.status}>
+                  <summary className="agent-tool-command" title={preview ? `${label} ${preview}` : label}>
+                    <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
+                    <span className="agent-tool-command-text">
+                      <strong>{label}</strong>
+                      {preview ? <span>{preview}</span> : null}
+                    </span>
+                    <span className="agent-tool-status" title={statusLabel(tool.status)}>
+                      <StatusIcon status={tool.status} />
+                    </span>
+                    <ChevronDown className="agent-tool-chevron" aria-hidden="true" />
+                  </summary>
+                  <div className="agent-tool-details">
+                    <div>
+                      <div className="agent-tool-meta">
+                        <code>{tool.name}</code>
+                        <span>{statusLabel(tool.status)} · {formatDuration(duration)}</span>
+                      </div>
+                      {tool.error ? <p className="agent-tool-error">{tool.error}</p> : null}
+                      {args ? <><small>参数</small><pre>{args}</pre></> : null}
+                      {result ? <><small>结果</small><pre>{result}</pre></> : null}
+                      {!args && !result && !tool.error ? <p>暂无更多详情</p> : null}
                     </div>
-                    {subject ? <span className="agent-tool-subject">“{subject}”</span> : null}
-                    {summary ? <span className="agent-tool-result">{summary}</span> : null}
-                    {tool.error ? <span className="agent-tool-error">{tool.error}</span> : null}
-                    <span className="agent-tool-duration">{formatDuration(duration)}</span>
-                    {args || result ? (
-                      <details className="agent-tool-details">
-                        <summary>查看详情</summary>
-                        {args ? <><small>参数</small><pre>{args}</pre></> : null}
-                        {result ? <><small>结果</small><pre>{result}</pre></> : null}
-                      </details>
-                    ) : null}
                   </div>
-                </article>
+                </details>
               )
             })}
           </div>
