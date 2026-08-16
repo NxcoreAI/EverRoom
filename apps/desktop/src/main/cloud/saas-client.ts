@@ -64,6 +64,54 @@ interface CloudSubscription {
   entitlements?: { asrSecondsPerPeriod?: number }
 }
 
+export interface KeyringDevicePackage {
+  algorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
+  ephemeralPublicKey: string
+  salt: string
+  ciphertext: string
+  umkId: string
+  umkVersion: number
+  createdAt?: string
+}
+
+export interface KeyringResponse {
+  userId: string
+  initialized: boolean
+  umkId: string | null
+  activeVersion: number | null
+  currentDevice: {
+    deviceId: string
+    status: 'unregistered' | 'pending' | 'ready'
+    publicKey: string
+    keyPackage: KeyringDevicePackage | null
+  }
+  pendingDevices: Array<{
+    deviceId: string
+    name?: string
+    platform?: string
+    publicKey: string
+    requestedAt?: string
+  }>
+}
+
+export interface PrivateRecordEnvelope {
+  cursor: number
+  operation: 'upsert' | 'delete'
+  recordId: string
+  algorithm?: 'AES-256-GCM'
+  schemaVersion?: number
+  keyId?: string
+  ciphertext?: string
+  contentHash?: string
+  wrappingAlgorithm?: 'AES-256-GCM'
+  wrappingKeyId?: string
+  wrappingKeyVersion?: number
+  wrappedKey?: string
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+
 interface StoredAccountProfile {
   userId: string
   email?: string | null
@@ -331,6 +379,57 @@ export class SaasClient {
     return this.normalizeJob(job)
   }
 
+  async registerKeyAgreement(publicKey: string): Promise<void> {
+    await this.request('/app/keyring/device', {
+      method: 'PUT',
+      data: { algorithm: 'X25519', publicKey },
+    })
+  }
+
+  async getKeyring(): Promise<KeyringResponse> {
+    return this.request<KeyringResponse>('/app/keyring')
+  }
+
+  async bootstrapKeyring(input: {
+    umkId: string
+    umkVersion: number
+    packageAlgorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
+    ephemeralPublicKey: string
+    salt: string
+    ciphertext: string
+  }): Promise<void> {
+    await this.request('/app/keyring/bootstrap', { method: 'POST', data: input })
+  }
+
+  async putDeviceKeyPackage(targetDeviceId: string, input: {
+    umkId: string
+    umkVersion: number
+    packageAlgorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
+    ephemeralPublicKey: string
+    salt: string
+    ciphertext: string
+  }): Promise<void> {
+    await this.request(`/app/keyring/devices/${encodeURIComponent(targetDeviceId)}/package`, {
+      method: 'PUT',
+      data: input,
+    })
+  }
+
+  async listPrivateRecords(cursor: number): Promise<{ records: PrivateRecordEnvelope[]; nextCursor: number }> {
+    const result = await this.requestWithMeta<PrivateRecordEnvelope[]>(`/app/private-records?cursor=${Math.max(0, Math.floor(cursor))}`)
+    return {
+      records: result.data,
+      nextCursor: typeof result.meta?.nextCursor === 'number' ? result.meta.nextCursor : cursor,
+    }
+  }
+
+  async acknowledgeSync(cursor: number): Promise<void> {
+    await this.request('/app/sync/ack', {
+      method: 'POST',
+      data: { deviceId: this.account!.device.id, cursor: Math.max(0, Math.floor(cursor)) },
+    })
+  }
+
   private async restoreSession(): Promise<void> {
     const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
     if (!refreshToken) return
@@ -517,6 +616,23 @@ export class SaasClient {
       response = await this.send(path, config, this.accessToken!)
     }
     return this.unwrap<T>(response)
+  }
+
+  private async requestWithMeta<T>(path: string, config: AxiosRequestConfig = {}): Promise<{ data: T; meta?: Record<string, unknown> }> {
+    this.requireLogin()
+    let response = await this.send(path, config, this.accessToken!)
+    if (response.status === 401) {
+      const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+      if (!refreshToken) throw new Error('登录已过期，请重新登录。')
+      await this.refresh(refreshToken)
+      response = await this.send(path, config, this.accessToken!)
+    }
+    const body = response.data as { data?: T; meta?: Record<string, unknown>; detail?: string; message?: string } | null
+    if (response.status >= 400) {
+      throw new SaasRequestError(body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`, response.status)
+    }
+    if (!body || typeof body !== 'object' || !('data' in body)) throw new Error('SaaS 返回了无效响应。')
+    return { data: body.data as T, meta: body.meta }
   }
 
   private async publicRequest<T>(path: string, config: AxiosRequestConfig): Promise<T> {

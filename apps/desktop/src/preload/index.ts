@@ -55,6 +55,7 @@ const api: NxcoreDesktopApi = {
     loginWithOidc: (provider) => invoke('account:oidc-login', provider),
     cancelOidcLogin: () => invoke('account:oidc-cancel'),
     logout: () => invoke('account:logout'),
+    keyringStatus: () => invoke('account:keyring-status'),
   },
   asr: {
     openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
@@ -64,6 +65,10 @@ const api: NxcoreDesktopApi = {
     cancelRecording: (id) => invoke('asr:cancel-recording', id),
     createJob: (input) => invoke('asr:create-job', input),
     getJob: (id) => invoke('asr:get-job', id),
+  },
+  transcriptions: {
+    syncPrivate: () => invoke('transcription:sync-private'),
+    listPrivate: () => invoke('transcription:list-private'),
   },
   memory: {
     overview: () => invoke('memory:overview'),

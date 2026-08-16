@@ -290,6 +290,54 @@
   display: grid;
 }
 
+.cloud-keyring {
+  display: grid;
+  gap: 12px;
+  margin: 0 18px 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cloud-keyring-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cloud-keyring-heading > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cloud-keyring-heading svg { width: 15px; height: 15px; }
+.cloud-keyring-heading div { display: grid; gap: 3px; }
+.cloud-keyring-heading strong { font-size: 12px; }
+.cloud-keyring-heading small, .cloud-keyring-pending small, .cloud-keyring-result { color: var(--muted); font-size: 10px; }
+
+.cloud-keyring-pending {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
+
+.cloud-keyring-pending > span { color: var(--muted); font-size: 10px; }
+.cloud-keyring-pending code { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+.cloud-keyring-sync { width: max-content; }
+.cloud-keyring-result { margin-left: 4px; }
+.cloud-keyring-records { display: grid; gap: 6px; }
+.cloud-keyring-record { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-alt); }
+.cloud-keyring-record strong { color: var(--muted); font-size: 10px; font-weight: 600; }
+.cloud-keyring-record span { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
 .cloud-subscription {
   display: grid;
   grid-template-columns: minmax(120px, 0.8fr) minmax(240px, 1.6fr) minmax(130px, 0.8fr);

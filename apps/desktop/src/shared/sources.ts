@@ -197,6 +197,36 @@ export interface CloudAccountStatus {
   }
 }
 
+export type KeyringDeviceStatus = 'unregistered' | 'pending' | 'ready'
+
+export interface AccountKeyringStatus {
+  enabled: boolean
+  reason?: string
+  initialized: boolean
+  umkId: string | null
+  activeVersion: number | null
+  deviceStatus: KeyringDeviceStatus
+  verificationCode: string | null
+}
+
+export interface PrivateTranscriptionRecord {
+  recordId: string
+  revision: number
+  createdAt: string
+  updatedAt: string
+  transcript: string
+  segments: AsrSegment[]
+  metadata?: Record<string, unknown>
+}
+
+export interface PrivateTranscriptionSyncResult {
+  status: AccountKeyringStatus
+  cursor: number
+  synced: number
+  removed: number
+  records: PrivateTranscriptionRecord[]
+}
+
 export type CloudOidcProvider = 'apple' | 'google'
 
 export interface DesktopRequestError {
@@ -222,6 +252,7 @@ export interface NxcoreDesktopApi {
     loginWithOidc(provider: CloudOidcProvider): Promise<CloudAccountStatus>
     cancelOidcLogin(): Promise<void>
     logout(): Promise<CloudAccountStatus>
+    keyringStatus(): Promise<AccountKeyringStatus>
   }
   asr: {
     openSystemAudioSettings(): Promise<void>
@@ -231,6 +262,10 @@ export interface NxcoreDesktopApi {
     cancelRecording(id: string): Promise<void>
     createJob(input: CreateAsrJobInput): Promise<AsrJob>
     getJob(id: string): Promise<AsrJob>
+  }
+  transcriptions: {
+    syncPrivate(): Promise<PrivateTranscriptionSyncResult>
+    listPrivate(): Promise<PrivateTranscriptionRecord[]>
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>

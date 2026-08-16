@@ -16,13 +16,13 @@ import {
   WalletCards,
   type LucideIcon,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 
 import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import type { CloudOidcProvider } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudOidcProvider, PrivateTranscriptionRecord } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import './SettingsPage.css'
 
@@ -33,7 +33,7 @@ const SETTINGS: Array<{ icon: LucideIcon; title: string; description: string }> 
   { icon: Settings, title: '通用', description: '语言、启动行为与界面偏好' },
 ]
 
-type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | null
+type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
 
 function formatMinutes(seconds: number, rounding: 'down' | 'up' = 'down'): string {
   const minutes = rounding === 'up' ? Math.ceil(seconds / 60) : Math.floor(seconds / 60)
@@ -55,7 +55,38 @@ export function SettingsPage() {
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState<PendingAction>(null)
+  const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
+  const [syncedCount, setSyncedCount] = useState<number | null>(null)
+  const [privateRecords, setPrivateRecords] = useState<PrivateTranscriptionRecord[]>([])
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
+
+  useEffect(() => {
+    if (!account?.authenticated || !window.nxcore) {
+      setKeyring(null)
+      return
+    }
+    const desktopApi = window.nxcore
+    let cancelled = false
+    const check = () => {
+      void desktopApi.account.keyringStatus()
+        .then(async (next) => {
+          if (cancelled) return
+          setKeyring(next)
+          if (next.deviceStatus === 'ready') {
+            setPrivateRecords(await desktopApi.transcriptions.listPrivate())
+          }
+        })
+        .catch(() => { if (!cancelled) setKeyring(null) })
+        .finally(() => setPending((current) => current === 'keyring' ? null : current))
+    }
+    setPending('keyring')
+    check()
+    const timer = window.setInterval(check, 5_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [account?.authenticated, account?.user?.id])
 
   const updateRealitySettings = (patch: Partial<RealitySettings>) => {
     setRealitySettings((current) => {
@@ -108,6 +139,21 @@ export function SettingsPage() {
     setPending('logout')
     try {
       setAccount(await window.nxcore.account.logout())
+    } catch {
+      // The preload request interceptor reports the error globally.
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const syncPrivate = async () => {
+    if (!window.nxcore) return
+    setPending('sync')
+    try {
+      const result = await window.nxcore.transcriptions.syncPrivate()
+      setKeyring(result.status)
+      setSyncedCount(result.synced)
+      setPrivateRecords(result.records)
     } catch {
       // The preload request interceptor reports the error globally.
     } finally {
@@ -203,6 +249,49 @@ export function SettingsPage() {
                 </div>
               </div>
             ) : null}
+
+            <div className="cloud-keyring" aria-label="端到端加密同步">
+              <div className="cloud-keyring-heading">
+                <span><ShieldCheck aria-hidden="true" /></span>
+                <div>
+                  <strong>端到端加密同步</strong>
+                  <small>{keyring?.enabled === false
+                    ? keyring.reason
+                    : keyring?.deviceStatus === 'ready'
+                      ? `UMK v${keyring.activeVersion} 已在本机安全保存`
+                      : keyring?.deviceStatus === 'pending'
+                        ? '等待 iPhone 批准此桌面设备'
+                        : pending === 'keyring' ? '正在检查密钥状态…' : '尚未初始化'}</small>
+                </div>
+              </div>
+              {keyring?.deviceStatus === 'pending' && keyring.verificationCode ? (
+                <div className="cloud-keyring-pending">
+                  <span>设备验证码</span>
+                  <code>{keyring.verificationCode}</code>
+                  <small>请在 iPhone 的账号设置中核对并批准，SaaS 无法读取你的密钥或转写内容。</small>
+                </div>
+              ) : null}
+              <button
+                className="secondary-button cloud-keyring-sync"
+                type="button"
+                disabled={isBusy || keyring?.deviceStatus !== 'ready'}
+                onClick={() => void syncPrivate()}
+              >
+                {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+                同步私密转写
+              </button>
+              {syncedCount !== null ? <small className="cloud-keyring-result">本次同步 {syncedCount} 条记录</small> : null}
+              {privateRecords.length ? (
+                <div className="cloud-keyring-records">
+                  {privateRecords.slice(0, 5).map((record) => (
+                    <div key={record.recordId} className="cloud-keyring-record">
+                      <strong>{new Date(record.updatedAt).toLocaleString('zh-CN')}</strong>
+                      <span>{record.transcript.slice(0, 120) || '（无文本内容）'}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : (
           <div className="cloud-login-content">

@@ -7,6 +7,7 @@ import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
 import { LocalDataService } from './core/local-data-service'
 import { CredentialStore } from './security/credential-store'
+import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
@@ -22,6 +23,7 @@ import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
+import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
 
 const APP_NAME = 'EverRoom'
 
@@ -112,6 +114,12 @@ const ACCOUNT_CHANNELS = {
   oidcLogin: 'account:oidc-login',
   oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
+  keyringStatus: 'account:keyring-status',
+} as const
+
+const TRANSCRIPTION_CHANNELS = {
+  syncPrivate: 'transcription:sync-private',
+  listPrivate: 'transcription:list-private',
 } as const
 
 const MEMORY_CHANNELS = {
@@ -137,6 +145,7 @@ let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let saasClient: SaasClient | null = null
+let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
 
@@ -383,6 +392,12 @@ function registerAccountHandlers(client: SaasClient): void {
   ipcMain.handle(ACCOUNT_CHANNELS.logout, () => client.logout())
 }
 
+function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncService): void {
+  ipcMain.handle(ACCOUNT_CHANNELS.keyringStatus, () => sync.keyringStatus())
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => sync.sync())
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
+}
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1440,
@@ -504,12 +519,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = new RecordingStore(recordingsDirectory)
     saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
     void saasClient.initialize()
+    const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
+    await keyring.initialize()
+    privateTranscriptionSync = new PrivateTranscriptionSyncService(
+      join(dataDirectory, 'private-transcription-sync.json'),
+      saasClient,
+      keyring,
+    )
+    await privateTranscriptionSync.initialize()
     if (process.platform !== 'darwin') {
       const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
       if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
     }
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     registerAccountHandlers(saasClient)
+    registerPrivateTranscriptionHandlers(privateTranscriptionSync)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge))
 
     const connectors = new ConnectorRegistry()
@@ -568,6 +592,7 @@ app.on('before-quit', (event) => {
   realityGatewayBridge = null
   recordingStore = null
   saasClient = null
+  privateTranscriptionSync = null
   agentBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()
