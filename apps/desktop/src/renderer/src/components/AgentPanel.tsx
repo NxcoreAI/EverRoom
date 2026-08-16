@@ -21,7 +21,9 @@ export function AgentPanel({
   const [draft, setDraft] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [composerResetKey, setComposerResetKey] = useState(0)
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const previousSessionIdRef = useRef<string | null>(null)
   const selectedTextSummary = selectedText.replace(/\s+/g, ' ').trim()
   const contextSummary = selectedTextSummary
     ? `${pageLabel} · “${selectedTextSummary}”`
@@ -39,7 +41,18 @@ export function AgentPanel({
 
   useEffect(() => {
     setSelectedText('')
+    setComposerResetKey((current) => current + 1)
   }, [pageLabel])
+
+  useEffect(() => {
+    if (previousSessionIdRef.current === session.sessionId) return
+    if (previousSessionIdRef.current !== null) {
+      setDraft('')
+      setSelectedText('')
+      setComposerResetKey((current) => current + 1)
+    }
+    previousSessionIdRef.current = session.sessionId
+  }, [session.sessionId])
 
   useEffect(() => {
     const readWorkspaceSelection = () => {
@@ -64,6 +77,7 @@ export function AgentPanel({
     try {
       await session.sendPrompt(submittedPrompt, submittedContext)
       setSelectedText('')
+      setComposerResetKey((current) => current + 1)
     } catch {
       setDraft(submittedPrompt)
     } finally {
@@ -76,6 +90,7 @@ export function AgentPanel({
       ref={composerRef}
       contextSummary={contextSummary}
       hasSelectedText={Boolean(selectedText)}
+      resetKey={composerResetKey}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
@@ -88,24 +103,27 @@ export function AgentPanel({
 
   return (
     <aside className="agent-panel">
-      <AgentToolbar
-        onCreateConversation={() => {
-          setDraft('')
-          setSelectedText('')
-          void session.createSession().catch(() => undefined)
-          focusComposer()
-        }}
-      >
+      <AgentToolbar>
         <AgentSessionSwitcher
           activeRunId={session.activeRunId}
           connected={session.connected}
           currentSession={session.currentSession}
           sessionId={session.sessionId}
           sessions={session.sessions}
-          onCreate={session.createSession}
+          onCreate={async () => {
+            setDraft('')
+            setSelectedText('')
+            setComposerResetKey((current) => current + 1)
+            return session.createSession()
+          }}
           onDelete={session.deleteSession}
           onRename={session.renameSession}
-          onSelect={session.selectSession}
+          onSelect={async (selectedSession) => {
+            setDraft('')
+            setSelectedText('')
+            setComposerResetKey((current) => current + 1)
+            await session.selectSession(selectedSession)
+          }}
         />
       </AgentToolbar>
 
