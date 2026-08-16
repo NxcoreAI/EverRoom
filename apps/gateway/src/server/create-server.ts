@@ -19,6 +19,8 @@ import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
 import { createAgentRuntime } from "../modules/agent/runtime-factory.js";
+import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
+import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
@@ -100,8 +102,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(websocket);
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
-  const documentService = new DocumentService(db, new DocumentEventBroker());
-  const documentMcpHost = new DocumentMcpHost(documentService);
+  const memoryService = new MemoryService(config.memory, app.log);
+  const contextRoomService = new ContextRoomService(db);
+  const documentService = new DocumentService(db, new DocumentEventBroker(), (document) => {
+    void memoryService.captureDocumentCreation(document).catch((error: unknown) => {
+      app.log.warn({ err: error, documentId: document.documentId }, "document memory capture failed");
+    });
+  });
+  const documentMcpHost = new DocumentMcpHost(documentService, contextRoomService);
   const agentRuntime = createAgentRuntime(config, documentMcpHost);
   app.log.info(
     {
@@ -117,13 +125,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
     "agent runtime configured",
   );
-  const agentService = new AgentService(db, agentRuntime, new AgentEventBroker(), app.log);
+  const agentService = new AgentService(
+    db,
+    agentRuntime,
+    new AgentEventBroker(),
+    app.log,
+    contextRoomService,
+  );
   await agentService.initialize();
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
-  const memoryService = new MemoryService(config.pi?.memory ?? null, app.log);
   const realityService = new RealityService(db, config.asrInputDir, app.log);
   const recoveredCaptures = realityService.recoverInterruptedCaptures();
   if (recoveredCaptures > 0) {
@@ -138,6 +151,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await gatewayLogger.close();
   });
   await app.register(agentRoutes(agentService));
+  await app.register(contextRoomRoutes(contextRoomService));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));
   await app.register(asrRoutes(asrService));

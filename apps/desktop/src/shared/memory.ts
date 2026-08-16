@@ -87,3 +87,12 @@ export interface MemoryConversationListOptions {
   timeStart?: string
   timeEnd?: string
 }
+
+export interface MemoryDocumentRewriteInput {
+  roomId: string
+  documentId: string
+  documentTitle: string
+  instruction: string
+  originalText: string
+  replacementText: string
+}

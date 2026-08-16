@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { CONTEXT_ROOMS } from './data'
-import { loadContextRoomLocalState, saveContextRoomLocalState } from './contextRoomLocalState'
 import type { ContextRoomKind, ContextRoomRecord } from './types'
 import type { ContextRoomWorkspaceTab } from '../contextRoomTabs'
+import { useContextRoomState } from '../ContextRoomStateProvider'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { DetailPane } from './components/RoomIconSidebar'
@@ -64,7 +64,7 @@ export function PortedContextRoom({
   onRoomsChange: (rooms: ContextRoomWorkspaceTab[]) => void
   onShowHome: () => void
 }) {
-  const [state, setState] = useState(() => loadContextRoomLocalState(CONTEXT_ROOMS))
+  const { state, setState } = useContextRoomState()
   const handledHomeRequest = useRef(homeRequest)
   const detailPaneByRoomIdRef = useRef<Record<string, DetailPane>>({})
   const [initialObject, setInitialObject] = useState<{
@@ -75,10 +75,8 @@ export function PortedContextRoom({
   const activeRoom = state.rooms.find((room) => room.id === activeRoomId) ?? null
   const roomDocuments = useRoomDocuments(state.rooms.map((room) => room.id))
 
-  useEffect(() => saveContextRoomLocalState(state), [state])
-
   useEffect(() => {
-    onRoomsChange(state.rooms.map(({ id, title }) => ({ id, title })))
+    onRoomsChange(state.rooms.map(({ id, title, kind }) => ({ id, title, kind })))
   }, [onRoomsChange, state.rooms])
 
   useEffect(() => {

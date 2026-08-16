@@ -36,6 +36,20 @@
       "when": 1786803180540,
       "tag": "0004_tearful_madame_hydra",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786868502397,
+      "tag": "0005_bitter_bromley",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786868616404,
+      "tag": "0006_freezing_ozymandias",
+      "breakpoints": true
     }
   ]
 }

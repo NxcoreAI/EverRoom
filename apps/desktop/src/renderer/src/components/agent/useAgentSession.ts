@@ -1,8 +1,10 @@
 import type {
   AgentEvent,
   AgentMessage,
+  AgentRoomReference,
   AgentSession,
   AgentSessionSnapshot,
+  StartAgentRunInput,
 } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -183,7 +185,27 @@ function requestErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
-export function useAgentSession(pageLabel: string, roomId: string | null) {
+export function buildAgentRunContext(
+  rooms: AgentRoomReference[],
+  selectedText?: string,
+  selectedRoomId?: string,
+): NonNullable<StartAgentRunInput['context']> {
+  return {
+    rooms: rooms.map(({ id, title, kind }) => ({
+      id,
+      title,
+      ...(kind ? { kind } : {}),
+    })),
+    ...(selectedText?.trim() ? { selectedText: selectedText.trim().slice(0, 8_000) } : {}),
+    ...(selectedRoomId?.trim() ? { selectedRoomId: selectedRoomId.trim() } : {}),
+  }
+}
+
+export function useAgentSession(
+  pageLabel: string,
+  roomId: string | null,
+  rooms: AgentRoomReference[],
+) {
   const api = window.nxcore?.agent
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
@@ -544,7 +566,11 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
     }
   }
 
-  const sendPrompt = async (prompt: string, selectedText?: string): Promise<void> => {
+  const sendPrompt = async (
+    prompt: string,
+    selectedText?: string,
+    selectedRoomId?: string,
+  ): Promise<void> => {
     const message = prompt.trim()
     if (!message || activeRunId || loading || sending) return
     const optimisticId = `user-${crypto.randomUUID()}`
@@ -568,9 +594,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
-        ...(selectedText?.trim()
-          ? { context: { selectedText: selectedText.trim().slice(0, 8_000) } }
-          : {}),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId),
       })
       const updatedAt = new Date().toISOString()
       setSessions((current) => current.map((session) => session.id === currentSessionId

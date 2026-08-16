@@ -343,6 +343,7 @@ export class PiAgentRuntime implements AgentRuntime {
           lines.push(
             "你只能使用当前会话提供的 Context Room 文档工具，不能使用文件、Shell 或其他外部产品工具。",
             "仅当用户明确要求新建、生成或撰写一篇独立文档时，依次调用 context_room_write_begin、一个或多个 context_room_write_append，最后调用 context_room_write_commit；局部选区重写、普通问答或聊天不得擅自创建新文档。",
+            "如果本轮提示说明当前视口未绑定具体 Context Room，必须先调用 context_room_list，列出工具返回的 Room 并让用户选择，然后结束本轮；在用户通过后续输入明确选择前，禁止调用 context_room_write_begin，禁止替用户猜测目标 Room。",
             "在调用 context_room_write_begin 前，先确定准备写入正文的实际核心内容、重点或结论，再据此拟定能够准确概括正文的具体、自然、有辨识度的标题。标题要随内容类型调整：教程突出学习路径或成果，分析突出对象与核心问题，方案突出目标与行动，报告突出主题与范围。除非用户明确指定必须使用的精确标题，否则不要复制用户的任务表述，也不要使用“后端学习文档”“项目介绍”“学习资料”等只描述文档形式、没有内容信息的泛标题；随后写出的正文必须与标题一致。",
             "除非用户明确要求简短版本，否则文档正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结。内容长度应与主题复杂度相称，不得空泛、重复或为了变长而凑字。",
             "正文必须使用 Markdown；append 的 sequence 从 1 开始并严格连续。每次 append 只能发送新增片段，严禁用新的 sequence 重发此前内容或累计全文。工具调用失败时不要声称文档已经创建。",
@@ -412,8 +413,22 @@ export class PiAgentRuntime implements AgentRuntime {
         originalPrompt: input.prompt,
         pageLabel: input.pageLabel,
         cancelled: false,
+        captureEnabled: input.captureMemory !== false,
       });
-      const prompt = `当前工作区：${input.pageLabel}\n\n用户请求：${input.prompt}`;
+      const selectedRoom = input.roomId
+        ? input.availableRooms?.find((room) => room.id === input.roomId)
+        : undefined;
+      const roomContext = input.roomSelectionRequired
+        ? "当前视口未绑定具体 Context Room。本轮若要新建文档，必须调用 context_room_list 展示可选 Room 并请用户选择；选择前不得创建文档。"
+        : input.roomId
+          ? `本轮文档目标 Room 已确认：${selectedRoom?.title ?? input.pageLabel}（ID: ${input.roomId}）。`
+          : "本轮没有可用的 Context Room 文档目标。";
+      const prompt = [
+        `当前工作区：${input.pageLabel}`,
+        roomContext,
+        "",
+        `用户请求：${input.prompt}`,
+      ].join("\n");
       await active.handle.session.prompt(prompt, { expandPromptTemplates: false, source: "rpc" });
       if (!active.terminal) await this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
     } catch (error) {

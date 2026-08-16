@@ -101,8 +101,18 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
           body: Type.Object({
             prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            captureMemory: Type.Optional(Type.Boolean()),
             context: Type.Optional(Type.Object({
-              selectedText: Type.String({ minLength: 1, maxLength: 8_000 }),
+              selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 8_000 })),
+              rooms: Type.Optional(Type.Array(Type.Object({
+                id: Type.String({ minLength: 1, maxLength: 100 }),
+                title: Type.String({ minLength: 1, maxLength: 120 }),
+                kind: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+              }), { maxItems: 200 })),
+              selectedRoomId: Type.Optional(Type.Union([
+                Type.String({ minLength: 1, maxLength: 100 }),
+                Type.Null(),
+              ])),
             })),
           }),
         },
@@ -116,6 +126,12 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
           }
           if (error instanceof Error && error.message === "agent_session_busy") {
             return reply.code(409).send({ error: "session_busy", message: "Agent session already has an active run" });
+          }
+          if (error instanceof Error && error.message === "agent_room_not_available") {
+            return reply.code(409).send({
+              error: "room_not_available",
+              message: "The selected Context Room is no longer available",
+            });
           }
           throw error;
         }

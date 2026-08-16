@@ -14,12 +14,16 @@ import {
 import { eq } from 'drizzle-orm'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { DocumentMcpHost } from '../src/modules/documents/mcp-host.js'
-import { DocumentService } from '../src/modules/documents/service.js'
+import { ContextRoomService } from '../src/modules/context-rooms/service.js'
+import {
+  DocumentService,
+  type DocumentCommittedHandler,
+} from '../src/modules/documents/service.js'
 
 const temporaryDirectories: string[] = []
 const disposables: Array<() => void | Promise<void>> = []
 
-async function createHarness() {
+async function createHarness(onDocumentCommitted?: DocumentCommittedHandler) {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-documents-test-'))
   temporaryDirectories.push(dataDir)
   const { db, sqlite } = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
@@ -29,7 +33,7 @@ async function createHarness() {
     pageLabel: 'Context Room',
     runtimeId: 'test',
   }).run()
-  const service = new DocumentService(db, new DocumentEventBroker())
+  const service = new DocumentService(db, new DocumentEventBroker(), onDocumentCommitted)
   disposables.push(() => {
     service.dispose()
     sqlite.close()
@@ -317,6 +321,57 @@ describe('document transactions', () => {
     await expect(commit).resolves.toMatchObject({ status: 'active', version: 1, contentJson: content })
   })
 
+  it('captures the final Agent document only after commit', async () => {
+    const captured: Parameters<DocumentCommittedHandler>[0][] = []
+    const { service } = await createHarness((document) => captured.push(document))
+    const started = await service.begin({
+      title: '认证服务演进路线',
+      roomId: 'room-1',
+      agentSessionId: 'session-1',
+      runId: 'run-memory',
+    })
+    const firstContent = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '第一段' }] }] }
+    const finalContent = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '第一段第二段' }] }] }
+
+    const firstAppend = service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 1,
+      text: '第一段',
+    })
+    await nextTurn()
+    await service.acknowledge(started.transactionId, { sequence: 1, contentJson: firstContent })
+    await firstAppend
+    const secondAppend = service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 2,
+      text: '第二段',
+    })
+    await nextTurn()
+    await service.acknowledge(started.transactionId, { sequence: 2, contentJson: finalContent })
+    await secondAppend
+    expect(captured).toEqual([])
+
+    const commit = service.commit({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      finalSequence: 2,
+    })
+    await nextTurn()
+    await service.acknowledge(started.transactionId, { sequence: 2, contentJson: finalContent })
+    await commit
+
+    expect(captured).toEqual([expect.objectContaining({
+      sessionId: 'session-1',
+      roomId: 'room-1',
+      runId: 'run-memory',
+      documentId: started.document.id,
+      title: '认证服务演进路线',
+      markdown: '第一段第二段',
+    })])
+  })
+
   it('enforces sequence, session, and size limits and removes aborted drafts', async () => {
     const { service } = await createHarness()
     const started = await service.begin({
@@ -401,7 +456,50 @@ describe('document transactions', () => {
     expect(recovered.list('room-1')).toHaveLength(0)
   })
 
-  it('publishes exactly the four approved MCP tools', async () => {
+  it('lists available Rooms and refuses to create a draft before the user selects one', async () => {
+    const { db, service } = await createHarness()
+    const roomRegistry = new ContextRoomService(db)
+    roomRegistry.saveSnapshot({
+      rooms: [
+        { id: 'room-1', title: '产品规划', kind: '项目', data: { id: 'room-1', title: '产品规划' } },
+        { id: 'room-2', title: '后端进阶', kind: '主题', data: { id: 'room-2', title: '后端进阶' } },
+      ],
+      deletedRooms: [],
+    })
+    const host = new DocumentMcpHost(service, roomRegistry)
+    disposables.push(() => host.close())
+    const globalContext = {
+      agentSessionId: 'session-1',
+      runId: 'run-global',
+      roomId: null,
+      availableRooms: [{ id: 'forged-room', title: '前端伪造 Room' }],
+    }
+
+    const listed = await host.callTool('context_room_list', {}, globalContext)
+    expect(listed.structuredContent).toEqual({
+      rooms: [
+        { id: 'room-1', title: '产品规划', kind: '项目' },
+        { id: 'room-2', title: '后端进阶', kind: '主题' },
+      ],
+      selectionRequired: true,
+      selectedRoomId: null,
+    })
+    await expect(host.callTool('context_room_write_begin', {
+      mode: 'create', title: '服务端学习路径', format: 'markdown',
+    }, globalContext)).rejects.toThrow('ROOM_SELECTION_REQUIRED')
+    expect(service.list('room-1')).toEqual([])
+    expect(service.list('room-2')).toEqual([])
+
+    const started = await host.callTool('context_room_write_begin', {
+      mode: 'create', title: '服务端学习路径', format: 'markdown',
+    }, { ...globalContext, roomId: 'room-2' })
+    expect(started.structuredContent).toMatchObject({ roomId: 'room-2', state: 'open' })
+    expect(service.list('room-2')).toEqual([
+      expect.objectContaining({ roomId: 'room-2', title: '服务端学习路径', status: 'draft' }),
+    ])
+  })
+
+  it('publishes exactly the five approved MCP tools', async () => {
     const { service } = await createHarness()
     const host = new DocumentMcpHost(service)
     disposables.push(() => host.close())
@@ -419,6 +517,7 @@ describe('document transactions', () => {
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
     const result = messages[0]?.result as { tools?: Array<{ name: string; description: string }> }
     expect(result.tools?.map((tool) => tool.name)).toEqual([
+      'context_room_list',
       'context_room_write_begin',
       'context_room_write_append',
       'context_room_write_commit',
@@ -440,6 +539,6 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(4)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(5)
   })
 })
