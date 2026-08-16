@@ -11,19 +11,12 @@ import type { PageId } from '@/data/navigation'
 
 import './HomePage.css'
 
-const RECENT_ITEMS = ['NexOS PC 端发布方案', 'NexOS PC 端 V1 发布计划', '新页面'] as const
+// 演示内容已移除：最近访问/今日工作/活动预告待接入真实数据源，空列表时整个面板不渲染。
+const RECENT_ITEMS: readonly string[] = []
 
-const TODAY_ITEMS = [
-  '整理发布方案并确认写入',
-  '回复张总报价确认邮件',
-  '处理 7 条记忆候选',
-] as const
+const TODAY_ITEMS: readonly string[] = []
 
-const UPCOMING_ITEMS = [
-  { time: '09:00', title: '晨会同步' },
-  { time: '10:30', title: '原型 V2 评审会' },
-  { time: '14:00', title: '客户跟进电话·张总' },
-] as const
+const UPCOMING_ITEMS: readonly { time: string; title: string }[] = []
 
 export function HomePage({
   onNavigate,
@@ -41,6 +34,7 @@ export function HomePage({
         </header>
 
         <div className="workspace-home-grid">
+          {RECENT_ITEMS.length > 0 ? (
           <section className="workspace-home-panel">
             <h2>最近访问</h2>
             <div className="workspace-home-list">
@@ -58,7 +52,9 @@ export function HomePage({
               ))}
             </div>
           </section>
+          ) : null}
 
+          {TODAY_ITEMS.length > 0 ? (
           <section className="workspace-home-panel">
             <h2>今日工作</h2>
             <div className="workspace-home-list">
@@ -70,7 +66,9 @@ export function HomePage({
               ))}
             </div>
           </section>
+          ) : null}
 
+          {UPCOMING_ITEMS.length > 0 ? (
           <section className="workspace-home-panel workspace-home-upcoming">
             <div className="workspace-home-panel-heading">
               <h2>活动预告</h2>
@@ -90,6 +88,7 @@ export function HomePage({
               ))}
             </div>
           </section>
+          ) : null}
 
           <section className="workspace-home-quick-start">
             <h2>快速开始</h2>

@@ -26,6 +26,7 @@ async function testConfig(): Promise<GatewayConfig> {
     agentRuntime: "fake",
     remoteAgent: null,
     pi: null,
+    knowledge: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
   };

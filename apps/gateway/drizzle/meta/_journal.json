@@ -29,6 +29,27 @@
       "when": 1786797375393,
       "tag": "0003_opposite_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786881066028,
+      "tag": "0004_public_blacklash",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786882705205,
+      "tag": "0005_misty_ronan",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786891946429,
+      "tag": "0006_romantic_texas_twister",
+      "breakpoints": true
     }
   ]
 }

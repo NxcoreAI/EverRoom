@@ -7,6 +7,7 @@ import {
   RelationsPane,
   SchedulePane,
   TasksPane,
+  WikiPane,
   type WorkspaceObjectPreview,
 } from '../detail-panels';
 import { ResourceTree, type LocalOfficeFile } from '../detail-panels/ResourcePanel';
@@ -65,6 +66,9 @@ export function WorkspacePaneBody({
     return (
       <MemoryPane room={room} onOpenMemory={onOpenMemory} onUpdateRoom={onUpdateRoom} />
     );
+  }
+  if (pane === 'wiki') {
+    return <WikiPane room={room} />;
   }
   if (pane === 'schedule') return <SchedulePane room={room} onOpen={onOpenObject} />;
   if (pane === 'tasks') {

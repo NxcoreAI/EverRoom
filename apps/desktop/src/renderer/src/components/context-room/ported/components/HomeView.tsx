@@ -16,6 +16,7 @@ import { useMemo, useRef, useState } from 'react';
 import { CONTEXT_ROOM_RECOMMENDATIONS } from '../data';
 import type { ContextRoomKind, ContextRoomRecommendation, ContextRoomRecord } from '../types';
 import { ActionConfirmDialog, ReferenceDialog } from './shared';
+import { KnowledgePendingPanel } from './KnowledgePendingPanel';
 import { RoomCard } from './RoomCard';
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from './RoomGraphCanvas';
 import { roomKindIcon, roomKindTone } from './utils';
@@ -318,6 +319,7 @@ export function HomeView({
     <div className="context-room-app">
       <main className="context-room-home" data-testid="context-room-page">
         <div className="context-room-home-layout">
+          {CONTEXT_ROOM_RECOMMENDATIONS.length > 0 ? (
           <section className="context-room-home-section" data-testid="context-room-recommendations">
             <div className="context-room-home-section-title">
               <span>推荐</span>
@@ -355,6 +357,7 @@ export function HomeView({
               })}
             </div>
           </section>
+          ) : null}
 
           <section className="context-room-home-section">
             <div className="context-room-my-toolbar" data-testid="context-room-list-toolbar">
@@ -416,6 +419,8 @@ export function HomeView({
               ) : null}
             </div>
           </section>
+
+          <KnowledgePendingPanel />
 
           <RoomGraph rooms={rooms} onOpen={onOpenDetail} />
         </div>

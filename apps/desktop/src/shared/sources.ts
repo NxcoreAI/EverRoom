@@ -36,6 +36,15 @@ import type {
   RealitySocketFrame,
   UpdateRealityTranscriptInput,
 } from '@nxcore/reality-contract'
+import type {
+  KnowledgeConfirmInput,
+  KnowledgeDecisionDto,
+  KnowledgeFileDto,
+  KnowledgeFileUploadResult,
+  KnowledgePendingItemDto,
+  KnowledgeRoomDto,
+  KnowledgeWikiPageDto,
+} from './knowledge'
 
 export interface EvidenceBlock {
   id: string
@@ -297,6 +306,25 @@ export interface NxcoreDesktopApi {
     sync(id: string): Promise<SyncResult>
     setPaused(id: string, paused: boolean): Promise<DataSourceSummary>
     disconnect(id: string, deleteLocalData: boolean): Promise<void>
+  }
+  knowledge: {
+    listRooms(origin?: 'user' | 'auto'): Promise<{ items: KnowledgeRoomDto[] }>
+    upsertRoom(input: { id: string; title: string; kind?: string }): Promise<KnowledgeRoomDto>
+    deleteRoom(roomId: string): Promise<void>
+    listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
+    readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }>
+    /** Room 的上传文件清单（含路由状态徽标数据）。 */
+    listRoomFiles(roomId: string): Promise<{ items: KnowledgeFileDto[] }>
+    /** 文件解析产物 markdown（预览）。 */
+    readFileMarkdown(fileId: string): Promise<{ markdown: string }>
+    /** 在系统文件管理器中定位文件本体。 */
+    revealFile(fileId: string): Promise<void>
+    listPending(): Promise<{ items: KnowledgePendingItemDto[] }>
+    listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
+    confirmDecision(decisionId: string, input: KnowledgeConfirmInput): Promise<{ ok: boolean; roomId: string }>
+    revertDecision(decisionId: string): Promise<{ ok: boolean }>
+    /** 系统文件选择框（仅 .md）→ 上传 gateway 走自动归类路由。 */
+    pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]>
   }
 }
 import type {

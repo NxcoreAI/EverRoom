@@ -18,6 +18,7 @@ import type {
   MemoryConversationListOptions,
 } from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
+import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
@@ -125,6 +126,22 @@ const MEMORY_CHANNELS = {
   listConversations: 'memory:list-conversations',
   searchConversations: 'memory:search-conversations',
   deleteConversations: 'memory:delete-conversations',
+} as const
+
+const KNOWLEDGE_CHANNELS = {
+  listRooms: 'knowledge:rooms:list',
+  upsertRoom: 'knowledge:rooms:upsert',
+  deleteRoom: 'knowledge:rooms:delete',
+  listWikiPages: 'knowledge:wiki:pages',
+  readWikiPage: 'knowledge:wiki:page-read',
+  listPending: 'knowledge:pending:list',
+  listRecentDecisions: 'knowledge:decisions:list',
+  confirmDecision: 'knowledge:route:confirm',
+  revertDecision: 'knowledge:route:revert',
+  pickAndUploadFiles: 'knowledge:files:pick-and-upload',
+  listRoomFiles: 'knowledge:files:list',
+  readFileMarkdown: 'knowledge:files:markdown',
+  revealFile: 'knowledge:files:reveal',
 } as const
 
 let localDataService: LocalDataService | null = null
@@ -295,6 +312,24 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
     bridge.acknowledge(transactionId, input))
   ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
+}
+
+function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
+  ipcMain.handle(KNOWLEDGE_CHANNELS.listRooms, (_event, origin?: 'user' | 'auto') => bridge.listRooms(origin))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.listPending, () => bridge.listPending())
+  ipcMain.handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
+    bridge.listRecentDecisions(limit))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.confirmDecision, (_event, decisionId, input) =>
+    bridge.confirmDecision(decisionId, input))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.pickAndUploadFiles, () => bridge.pickAndUploadFiles())
+  ipcMain.handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
@@ -495,7 +530,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_KNOWLEDGE_BASE_URL: knowledge.baseUrl,
             NXCORE_KNOWLEDGE_SERVICE_ID: knowledge.serviceId,
             NXCORE_KNOWLEDGE_TEAM_ID: knowledge.teamId,
-            NXCORE_KNOWLEDGE_WIKI_ID: knowledge.wikiId,
+            // Room 级 wiki 模式（docs/room-wiki-plan.md）：wiki 由 gateway 按
+            // Room 懒创建并随会话解析，桌面端不再注入全局 wiki_id。
+            NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: 'true',
           }
           : {}),
       },
@@ -510,6 +547,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge)
+    registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')

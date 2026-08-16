@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
 import type { GatewayStatus } from '../../shared/sources'
@@ -23,7 +23,9 @@ export interface GatewayConnection {
   version: string
 }
 
-const STARTUP_TIMEOUT_MS = 60_000
+// 冷启动（全新数据目录跑迁移 + electron/KS/MemoryCore 并行 tsx 编译争抢 IO）实测可达
+// 一分钟以上，60s 会误杀：拉长到 3 分钟只影响异常场景的失败反馈时延。
+const STARTUP_TIMEOUT_MS = 180_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 })
 
@@ -268,7 +270,9 @@ export class GatewaySupervisor {
       await delay(50)
     }
 
-    throw new Error(`NxCore Gateway did not become ready within ${STARTUP_TIMEOUT_MS}ms`)
+    throw new Error(
+      `NxCore Gateway did not become ready within ${STARTUP_TIMEOUT_MS}ms（首次启动需初始化数据库，可关闭应用后重试一次）`,
+    )
   }
 
   private runtimeManifestPath(): string {
@@ -283,6 +287,17 @@ export class GatewaySupervisor {
     if (processGroup && child.pid) {
       try {
         process.kill(-child.pid, signal)
+        return true
+      } catch {
+        return false
+      }
+    }
+    // dev 模式在 Windows 用 shell:true 拉起 pnpm 链：child.kill 只能到达 cmd 壳，
+    // pnpm→tsx→serve 会存活并继续锁着 sqlite（僵尸链）。必须 taskkill /T 整树强杀；
+    // manifest 清理由调用方的 rm(manifestPath) 兜底。
+    if (process.platform === 'win32' && !app.isPackaged && child.pid) {
+      try {
+        execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
         return true
       } catch {
         return false

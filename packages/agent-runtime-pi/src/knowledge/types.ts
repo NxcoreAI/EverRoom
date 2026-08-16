@@ -5,11 +5,22 @@ export interface KnowledgeRuntimeConfig {
   serviceId: string;
   /** 当前 wiki 归属 team；读接口为 id-only 不需要，保留用于后续管理操作。 */
   teamId: string;
-  /** agent 工具操作的固定 wiki。 */
-  wikiId: string;
+  /**
+   * 全局默认 wiki（旧单 wiki 模式）。Room 级 wiki 模式下留空，
+   * 由会话按 roomId 解析出 wikiIds；两者可并存（Room 未命中时回退默认）。
+   */
+  wikiId?: string;
+  /** 会话可用的 wiki 集合（Room 级模式）；未提供时取 wikiId 单元素集。 */
+  wikiIds?: string[];
   searchLimit: number;
   /** 单请求超时（毫秒），默认 3s。 */
   timeoutMs?: number;
+}
+
+/** 解析配置里的默认 wiki 集合：wikiIds 优先，回退到 wikiId 单元素集。 */
+export function resolveDefaultWikiIds(config: KnowledgeRuntimeConfig): string[] {
+  if (config.wikiIds && config.wikiIds.length > 0) return [...config.wikiIds];
+  return config.wikiId ? [config.wikiId] : [];
 }
 
 /** wiki/search 命中项（BM25 + 可选图扩展）。 */

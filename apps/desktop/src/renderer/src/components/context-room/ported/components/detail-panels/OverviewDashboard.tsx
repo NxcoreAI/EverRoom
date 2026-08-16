@@ -21,31 +21,14 @@ type WorkspaceObjectPreview =
 
 type TimelineView = 'day' | 'week' | 'month';
 
-const REFERENCE_TODAY = new Date(2026, 7, 11);
+// 时间轴的"今天"以会话启动时的真实日期为基准（原演示固定 2026-08-11 已移除）。
+const REFERENCE_TODAY = new Date();
 
+// 逐 Room 的 AI 状态文案覆盖表（原演示 Room 词条已移除）；缺省走下方真实数据派生。
 const DASHBOARD_COPY: Record<
   string,
   { aiStatus: string; nextSteps: string[]; entities: Array<{ label: string; description: string }> }
-> = {
-  'room-launch': {
-    aiStatus:
-      '客户沟通会后进入方案冲刺阶段。已完成 V0.2 方案生成与纪要写回，当前聚焦 4 项高风险动作确认与 Gmail 授权续期。整体节奏稳健，预计 07-30 可达成 V1 内测包目标。',
-    nextSteps: [
-      '跟进张总反馈，确认「来源可追溯」验收细节',
-      '完成《竞品分析》定稿并入库',
-      '联系 IT 续期 Gmail 连接器授权',
-      '准备 07-25 发布材料初稿评审',
-    ],
-    entities: [
-      { label: '张总', description: '关键客户决策人，关注 AI 输出可信度与来源可追溯性。' },
-      { label: '陆远', description: '产品负责人，主导 NexOS PC 端 V1 发布与方案输出。' },
-      { label: 'V1 发布', description: 'NexOS PC 端 V1 内测包，目标 2026-07-30 交付。' },
-      { label: '报价', description: '本期报价区间 ¥45-50w，分两期交付。' },
-      { label: '来源可追溯', description: '客户验收核心要求：AI 输出必须能点开到原始资料。' },
-      { label: 'Gmail 连接器', description: '客户邮件接入通道，当前授权即将过期。' },
-    ],
-  },
-};
+> = {};
 
 function parseRoomDate(value: string) {
   const date = new Date(REFERENCE_TODAY);
@@ -132,7 +115,7 @@ export function OverviewDashboard({
         <span data-icon-tone={roomKindTone(room.kind)}><Icon aria-hidden="true" /></span>
         <div>
           <h1>{room.title}</h1>
-          <p><CalendarDays aria-hidden="true" />创建于 2026-07-09 <i /> 更新于 {room.lastViewed} <i /> {room.materials.length + room.fileItems.length} 条资料</p>
+          <p><CalendarDays aria-hidden="true" />更新于 {room.lastViewed} <i /> {room.materials.length + room.fileItems.length} 条资料</p>
         </div>
         <b>{room.status}</b>
       </header>

@@ -18,6 +18,7 @@ import { app } from 'electron'
  *    MemoryCore)—— 直接复用,不再拉起进程。
  * 3. 托管模式:从 git 依赖安装的 memory-core 包拉起 standalone gateway,
  *    配置全部走 TDAI_* 环境变量,LLM 复用桌面进程的 NXCORE_AI_*。
+ *    数据落 <userData>/memory(TDAI_DATA_DIR,与 KS 的 knowledge/ 同款约定)。
  */
 export interface MemoryCoreConnection {
   baseUrl: string
@@ -29,7 +30,8 @@ export interface MemoryCoreConnection {
 const PACKAGE_NAME = '@tencentdb-agent-memory/memory-tencentdb-v2'
 const MEMORY_CORE_PORT = 8420
 const DEFAULT_BASE_URL = `http://127.0.0.1:${MEMORY_CORE_PORT}`
-const STARTUP_TIMEOUT_MS = 30_000
+// 全新数据目录 + 多服务并行冷启动（tsx 编译争抢 IO）时 30s 不够，实测可超一分钟。
+const STARTUP_TIMEOUT_MS = 120_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 
 function delay(milliseconds: number): Promise<void> {
@@ -67,6 +69,10 @@ export class MemoryCoreSupervisor {
     const apiKey = randomBytes(24).toString('base64url')
     const { packageDirectory, tsxEntryUrl } = this.resolvePackage()
     await mkdir(this.dataDirectory, { recursive: true })
+    // 数据目录收进应用数据(KS 的 knowledge/ 同款约定):不设 TDAI_DATA_DIR 时
+    // MemoryCore 默认落 ~/.memory-tencentdb/,卸载/清数据会留残骸。
+    const dataDir = join(this.dataDirectory, 'memory')
+    await mkdir(dataDir, { recursive: true })
 
     const command = app.isPackaged ? process.execPath : (process.env.NXCORE_MEMORY_NODE ?? 'node')
     // Windows + Node 22 的组合下:--import 必须是 file:// URL,而主入口必须是
@@ -76,12 +82,13 @@ export class MemoryCoreSupervisor {
       command,
       ['--import', tsxEntryUrl, serverEntry],
       {
-        cwd: this.dataDirectory,
+        cwd: dataDir,
         env: {
           ...process.env,
           TDAI_GATEWAY_HOST: '127.0.0.1',
           TDAI_GATEWAY_PORT: String(MEMORY_CORE_PORT),
           TDAI_GATEWAY_API_KEY: apiKey,
+          TDAI_DATA_DIR: dataDir,
           ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
           ...this.llmEnvironment(),
         },

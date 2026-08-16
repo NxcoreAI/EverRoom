@@ -16,14 +16,13 @@ import { app } from 'electron'
  * 3. 托管模式:从 git 依赖安装的 knowledge-service 包拉起服务,
  *    配置全部走环境变量(PORT/KNOWLEDGE_* / LLM_*),LLM 复用 NXCORE_AI_*。
  *
- * 无论托管还是复用,启动后都会幂等引导默认 wiki(everroom-wiki),
- * 把 wiki_id 注入 gateway 的 NXCORE_KNOWLEDGE_* 环境变量供 pi agent 使用。
+ * 只负责拉起 KS 进程与探活(docs/room-wiki-plan.md D4):wiki 的创建由
+ * gateway 按 Room 懒创建(ensureWikiForRoom),不再引导全局 everroom-wiki。
  */
 export interface KnowledgeServiceConnection {
   baseUrl: string
   serviceId: string
   teamId: string
-  wikiId: string
   /** 是否由本进程托管(决定退出时是否需要 kill)。 */
   managed: boolean
 }
@@ -32,10 +31,10 @@ const PACKAGE_NAME = '@tencentdb-agent-memory/knowledge-service'
 const MEMORY_PACKAGE_NAME = '@tencentdb-agent-memory/memory-tencentdb-v2'
 const KNOWLEDGE_PORT = 8421
 const DEFAULT_BASE_URL = `http://127.0.0.1:${KNOWLEDGE_PORT}`
-const WIKI_NAME = 'everroom-wiki'
 const SERVICE_ID = 'everroom'
 const TEAM_ID = 'everroom'
-const STARTUP_TIMEOUT_MS = 30_000
+// 全新数据目录 + 多服务并行冷启动（tsx 编译争抢 IO）时 30s 不够，实测可超一分钟。
+const STARTUP_TIMEOUT_MS = 120_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 /** 服务默认 32768,常见兼容端点(qwen-turbo 等)上限 16384,取安全缺省。 */
 const DEFAULT_LLM_MAX_TOKENS = 16_384
@@ -67,7 +66,12 @@ export class KnowledgeServiceSupervisor {
     // 复用已在运行的实例(用户手动部署的 Knowledge Service 等)。
     if (await this.probe()) {
       console.info(`[knowledge] reusing existing instance at ${DEFAULT_BASE_URL}`)
-      this.connection = await this.bootstrapWiki(false)
+      this.connection = {
+        baseUrl: DEFAULT_BASE_URL,
+        serviceId: SERVICE_ID,
+        teamId: TEAM_ID,
+        managed: false,
+      }
       return this.connection
     }
 
@@ -118,7 +122,12 @@ export class KnowledgeServiceSupervisor {
     try {
       await this.waitUntilReady(child)
       console.info(`[knowledge] managed instance ready at ${DEFAULT_BASE_URL} (pid=${child.pid})`)
-      this.connection = await this.bootstrapWiki(true)
+      this.connection = {
+        baseUrl: DEFAULT_BASE_URL,
+        serviceId: SERVICE_ID,
+        teamId: TEAM_ID,
+        managed: true,
+      }
       return this.connection
     } catch (error) {
       this.killChild(child, 'SIGTERM')
@@ -159,35 +168,6 @@ export class KnowledgeServiceSupervisor {
     })
     this.child = null
     this.lastError = null
-  }
-
-  /**
-   * 幂等引导默认 wiki:同 (service_id, team_id, name) 已存在则返回原行。
-   * 失败(服务异常 / 响应异常)抛错,由上层决定禁用 wiki 工具。
-   */
-  private async bootstrapWiki(managed: boolean): Promise<KnowledgeServiceConnection> {
-    const response = await fetch(`${DEFAULT_BASE_URL}/v3/wiki/create`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-tdai-service-id': SERVICE_ID,
-      },
-      body: JSON.stringify({ team_id: TEAM_ID, name: WIKI_NAME }),
-      signal: AbortSignal.timeout(5_000),
-    })
-    if (!response.ok) {
-      throw new Error(`wiki bootstrap failed: HTTP ${response.status}`)
-    }
-    const envelope = (await response.json()) as { code: number; message: string; data?: { wiki_id?: string } }
-    if (envelope.code !== 0 || !envelope.data?.wiki_id) {
-      throw new Error(`wiki bootstrap failed: code=${envelope.code} ${envelope.message}`)
-    }
-    const wikiId = envelope.data.wiki_id
-    if (!wikiId.startsWith('wiki-')) {
-      throw new Error(`wiki bootstrap returned unexpected wiki_id: ${wikiId}`)
-    }
-    console.info(`[knowledge] wiki ready (wiki_id=${wikiId}, managed=${String(managed)})`)
-    return { baseUrl: DEFAULT_BASE_URL, serviceId: SERVICE_ID, teamId: TEAM_ID, wikiId, managed }
   }
 
   /** 把桌面的 NXCORE_AI_* 映射为 Knowledge Service 使用的 LLM_*(注意与 MemoryCore 的 TDAI_LLM_* 不同名)。 */

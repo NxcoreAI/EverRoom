@@ -23,6 +23,7 @@ import {
 import { KnowledgeServiceClient } from "./knowledge/client.js";
 import { createKnowledgeTools, KNOWLEDGE_TOOL_NAMES } from "./knowledge/tools.js";
 import type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
+import { resolveDefaultWikiIds } from "./knowledge/types.js";
 import { MemoryCoreClient } from "./memory/client.js";
 import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
 import { createMemoryTools, MEMORY_TOOL_NAMES } from "./memory/tools.js";
@@ -31,11 +32,13 @@ import type { MemoryRuntimeConfig } from "./memory/types.js";
 export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
 export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
 export type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
+export { resolveDefaultWikiIds } from "./knowledge/types.js";
 export type {
   KnowledgePageEntry,
   KnowledgePageReadItem,
   KnowledgeSearchResult,
 } from "./knowledge/types.js";
+export type { KnowledgeToolScope } from "./knowledge/tools.js";
 export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
 export type { MemoryCoreErrorKind } from "./memory/client.js";
 export type { MemoryRuntimeConfig } from "./memory/types.js";
@@ -109,6 +112,11 @@ export interface PiAgentRuntimeTool {
 
 export interface PiAgentRuntimeIntegration {
   tools?: readonly PiAgentRuntimeTool[];
+  /**
+   * 会话级 wiki 作用域解析（Room 级 wiki 模式）：run 启动前按
+   * roomId 解析本 Room 的 wiki 集合；未提供或解析失败时回退配置默认集。
+   */
+  resolveKnowledgeWikiIds?: (input: StartRuntimeRunInput) => Promise<string[]>;
   onRunFinished?: (
     input: StartRuntimeRunInput,
     outcome: "completed" | "failed" | "cancelled",
@@ -124,6 +132,8 @@ interface PiSessionHandle {
   session: AgentSession;
   setMemoryRunContext: (context: MemoryRunContext | null) => void;
   cancelMemoryRun: () => void;
+  /** 会话级 wiki 作用域（Room wiki 优先，缺省为配置默认集）。 */
+  setKnowledgeWikiIds: (wikiIds: string[]) => void;
   context: PiRunContextRef;
   activeRunId: string | null;
   ownerSessionId: string | null;
@@ -179,6 +189,14 @@ export class PiAgentRuntime implements AgentRuntime {
       throw new Error("Pi session belongs to a different Agent session");
     }
     handle.ownerSessionId = input.sessionId;
+    if (this.knowledgeClient && this.integration.resolveKnowledgeWikiIds) {
+      try {
+        const wikiIds = await this.integration.resolveKnowledgeWikiIds(input);
+        handle.setKnowledgeWikiIds(wikiIds);
+      } catch {
+        handle.setKnowledgeWikiIds(this.knowledgeClient.defaultWikiIds);
+      }
+    }
     handle.context.current = input;
     handle.activeRunId = input.runId;
     const queue = new AsyncEventQueue<RuntimeEvent>();
@@ -328,6 +346,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const memoryClient = this.memoryClient;
     const knowledge = this.config.knowledge;
     const knowledgeClient = this.knowledgeClient;
+    let knowledgeWikiIds: string[] = knowledgeClient ? knowledgeClient.defaultWikiIds : [];
     const resourceLoader = new DefaultResourceLoader({
       cwd: this.config.workingDirectory,
       agentDir: this.config.agentDirectory,
@@ -361,7 +380,7 @@ export class PiAgentRuntime implements AgentRuntime {
         }
         if (knowledge && knowledgeClient) {
           lines.push(
-            "你可以使用 wiki_search 和 wiki_read 两个工具按需查询团队知识库（wiki）。问题涉及知识库沉淀的领域知识时先检索再回答；知识库没有相关内容时如实说明，不要编造。",
+            "你可以使用 wiki_search 和 wiki_read 两个工具按需查询当前 Room 的知识库（wiki，Room 内文档沉淀的结构化知识）。问题涉及知识库沉淀的领域知识时先检索再回答；知识库没有相关内容时如实说明，不要编造。",
           );
         }
         if (customTools.length > 0) {
@@ -401,7 +420,9 @@ export class PiAgentRuntime implements AgentRuntime {
       customTools: [
         ...customTools,
         ...(memory && memoryClient ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId) : []),
-        ...(knowledge && knowledgeClient ? createKnowledgeTools(knowledgeClient) : []),
+        ...(knowledge && knowledgeClient
+          ? createKnowledgeTools(knowledgeClient, () => ({ wikiIds: knowledgeWikiIds }))
+          : []),
       ],
       resourceLoader,
       sessionManager,
@@ -420,6 +441,9 @@ export class PiAgentRuntime implements AgentRuntime {
       },
       cancelMemoryRun: () => {
         if (memoryRunContext) memoryRunContext.cancelled = true;
+      },
+      setKnowledgeWikiIds: (wikiIds) => {
+        knowledgeWikiIds = wikiIds;
       },
       context,
       activeRunId: null,

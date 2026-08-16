@@ -161,6 +161,21 @@ const api: NxcoreDesktopApi = {
     disconnect: (id, deleteLocalData) =>
       invoke('sources:disconnect', id, deleteLocalData),
   },
+  knowledge: {
+    listRooms: (origin) => invoke('knowledge:rooms:list', origin),
+    upsertRoom: (input) => invoke('knowledge:rooms:upsert', input),
+    deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
+    listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
+    readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
+    listPending: () => invoke('knowledge:pending:list'),
+    listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
+    confirmDecision: (decisionId, input) => invoke('knowledge:route:confirm', decisionId, input),
+    revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
+    pickAndUploadFiles: () => invoke('knowledge:files:pick-and-upload'),
+    listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
+    readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
+    revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
+  },
 }
 
 contextBridge.exposeInMainWorld('nxcore', api)

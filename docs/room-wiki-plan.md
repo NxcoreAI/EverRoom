@@ -1,6 +1,6 @@
 # Room × Wiki：Room 级知识空间与自动归类 — 实施方案
 
-> 状态：草案（待评审）
+> 状态：M0/M1/M2 已实现（2026-08-16，含路由瀑布 ①-⑤、待归类队列与 create_new 自动建 Room）；M3a/M3b 已实现（2026-08-16，渲染器 Room 上报与 auto Room 同步/认领、Room 知识库 Tab、md 文件上传自动归类、待归类确认/撤销 UI）；资料模型修订已实现（2026-08-16，§3.3：uploaded_files/parsed_contents + 对象库 + 确定性身份 + 四道判重闸门，WikiPane 来源文件分区）；M3c（预检索注入、auto Room 合并与手动规则编辑）未实现
 > 日期：2026-08-16
 > 范围：`apps/desktop`、`apps/gateway`、`packages/agent-runtime-pi`；依赖 TencentDB-Agent-Memory 的 **MemoryKnowledge**（下称 KS，Knowledge Service，本地 8421，已由 `KnowledgeServiceSupervisor` 托管）
 > 前置阅读：`docs/pi-agent-memory-plan.md`（记忆接入，模式相同可类推）
@@ -141,6 +141,11 @@ export const routingRules = sqliteTable("routing_rules", {
 
 **设计决定：不做规则自动回写。** 待归类确认 / 撤销**不**生成规则——一次误确认会被固化成规则、静默带偏后续一批文档（复利式污染），风险大于收益。代价是同类模糊文档可能反复进待归类队列逐份确认；换来的是路由依据全部可追溯（每条规则都是用户显式写下的，每条 decision 记录当时的瀑布层级与分数）。表默认为空，整个 ②b 层是纯可选的逃生舱。
 
+> **实现与 §3.1 原稿的三处偏差（0005 迁移落地）**：
+> 1. `decided_by` 允许 NULL——M1 人审提案与 M2 低置信判决在得到结论前没有决策者（原稿 NOT NULL 的前提是"decision 行只在有结论时创建"；实现选择先落行后补结论，让待归类队列有实体可挂）。终态语义不变：confirmed/auto 行必有 decidedBy。
+> 2. 新增 `source_title` / `source_markdown` 快照列——外部信封（mail/cloud-doc 等）没有 documents 行可回查，确认/撤销的异步执行要靠快照还原内容（everroom-doc 不存，可随时重建，省库）。
+> 3. 新增 `new_room_kind` 列——⑤ 的 create_new 提议带 kind（渲染器按 kind 选图标），确认卡片需要完整提案。
+
 ### 3.2 复用的既有结构
 
 | 结构 | 用途 |
@@ -151,6 +156,52 @@ export const routingRules = sqliteTable("routing_rules", {
 > 注：原方案中 `gateway_metadata` 存全局 wiki_id 的用途随全局 wiki 取消而移除。
 
 > **资料聚合是派生视图，不进 rooms 行**："某 Room 聚合了哪些资料" = `room_doc_links` ⨝ `documents`（documents 表本身**无 roomId 列**，归属 100% 走链接表，多归属天然成立），经 `GET /knowledge/rooms/:id/materials` 输出；主/附归属看 route_decisions（可选优化：给 room_doc_links 加 role 列免 join）；知识层内容由 `room_wikis.knowledgeId` → KS `page/ls` 派生。不把清单快照存进 rooms——JSON 数组会与 documents 漂移（渲染器 `ContextRoomRecord.materials` 即反例）。
+
+### 3.3 上传文件的资料模型（0006 迁移，2026-08-16 修订）
+
+上传文件此前没有实体表：`file-<随机 UUID>` 的 sourceId 悬空（对应不到任何表），既无法判重（同名同内容重传全链路重跑），也没有统一查询面。修订为**三层存储 + 确定性身份**：
+
+```ts
+// 本体（字节）：对象库 files/sha256/<前2字符>/<hash>（gateway dataDir 下，内容寻址，
+// 与 reality evidence 的 objects/sha256 同款约定）——同内容天然只存一份。
+
+export const uploadedFiles = sqliteTable("uploaded_files", {
+  // 身份键：file-<规范化文件名 sha256 前 12 位>（B 案）
+  id: text("id").primaryKey(),
+  contentHash: text("content_hash").notNull(),   // 当前版本原始字节的 sha256
+  storagePath: text("storage_path").notNull(),   // 对象库相对路径
+  originalName: text("original_name").notNull(),
+  bytes: integer("bytes").notNull(),
+  mime: text("mime").notNull().default("text/markdown"),
+  currentParsedId: text("current_parsed_id"),   // → parsed_contents.id，后级只读 md
+  createdAt / updatedAt,
+});
+
+export const parsedContents = sqliteTable("parsed_contents", {
+  id: text("id").primaryKey(),
+  contentHash: text("content_hash").notNull(),
+  parserVersion: text("parser_version").notNull(),  // 当前 "md-v1"
+  markdown: text("markdown").notNull(),
+  parsedAt,
+}, (t) => [uniqueIndex("parsed_contents_hash_parser_idx").on(t.contentHash, t.parserVersion)]);
+```
+
+**身份（B 案）**：`sourceId = file-<sha256(规范化文件名)[0:12]>`，规范化 = basename + NFC + 去首尾空白/点 + 折叠空白 + 小写。同名重传 = 同 ID（版本更新，②a 链接层回原 Room + KS 同名覆盖，零 LLM 成本）；改名 = 新文件（符合直觉）。已知取舍：不同目录下同名不同内容的文件会归并成同一身份的版本序列——单用户桌面场景可接受。
+
+**四道判重闸门**（重复进入管线时的成本闸）：
+
+| 闸 | 位置 | 判定 | 效果 |
+| --- | --- | --- | --- |
+| 闸1 | `submitFileUpload`（service.ts） | 同 sourceId 且 content_hash 相同 | 全跳过：不存对象、不解析、不入队 |
+| 闸2 | `parsed_contents` 唯一索引 | (content_hash, parser_version) 已有 | 解析是纯函数，零重复解析；解析器升级（版本号变）是唯一合法重解析场景 |
+| 闸3 | ②a 链接层 | file_id 已有归属决策 | 归属不变 → 版本更新走原 Room，不重新路由 |
+| 闸4 | KS 确定性文件名 | `${kind}-${id}__title.md` 同名覆盖 + merge 判重 | wiki 侧覆盖而非追加，不产生重复页面 |
+
+**后级只处理 md**：路由瀑布与 ingest 从 `parsed_contents.markdown` 读内容（经 route job 的信封快照透传），本体字节只服务"显示原件"（`shell.showItemInFolder`）。
+
+**存量回填**（`backfillUploadedFiles`，gateway_metadata 键 `knowledge.files_backfill_v1` 打标一次性执行）：旧随机 sourceId 的 file 决策改写为确定性 ID，决策快照 markdown 补落 parsed、字节补落对象库——重传旧文件即可被闸 1/闸 3 认出。
+
+**查询面**：`GET /knowledge/rooms/:id/files`（uploaded_files ⨝ 该 Room 最新归属决策，含状态徽标数据）、`GET /knowledge/files/:id/markdown`（预览）、`GET /knowledge/files/:id/storage`（reveal 本体）。渲染器 WikiPane "来源文件" 分区消费。
 
 ## 4. Wiki 生命周期管理
 
@@ -278,9 +329,14 @@ interface DocEnvelope {
           new_room: { name, summary },         // action=create_new 时
           confidence: 0~1, reason }
       裁判规则：按主题归属判，不只看字面重叠；可多归；拿不准就低 confidence；
-      create_new 仅当"内容构成连贯新主题且确无现有 Room 匹配"且 confidence ≥ 0.8
-      才允许（防碎片化，见 §4.2）；低置信 + 无匹配 → 低 confidence 输出，
+      只有候选确实是资料的主题归属才选它，弱相关不硬塞——内容构成连贯新主题时
+      判 create_new（confidence ≥ 0.8 才自动执行，防碎片化见 §4.2）；
+      低置信 + 无合适归属 → 低 confidence 输出，
       由待归类队列处理（卡片附"按建议新建 Room"按钮）。
+      ※ 2026-08-17 提示词修订：原判据"确无现有 Room 匹配才可新建"门槛过高，
+      叠加候选菜单的呈现偏差，导致有 Room 后几乎不再新建、异构资料被硬塞进
+      先到的 Room（"大杂烩"倾向）。改为质量门槛式表述，并明确通用词命中
+      （用户/API/系统等）不构成主题相关。
   ▼
 （阈值只作用于 ⑤ 的输出）
 confidence < 0.6 → status=awaiting_review（待归类队列，reason 作为给用户的建议）
@@ -370,6 +426,7 @@ agent_end 写 L0 前:
 | `NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS` | `600000` | 文档 commit 防抖窗口 |
 | `NXCORE_KNOWLEDGE_AUTO_CREATE_ROOM_ENABLED` | `false` | ⑤ 的 create_new 自动建 Room 开关（独立灰度，可只在 LLM 仲裁稳定后放开） |
 | `NXCORE_KNOWLEDGE_LLM_BASE_URL/KEY/MODEL` | 空 | ④⑤ 层与摘要抽取用的 LLM（可复用 NXCORE_AI_*） |
+| `NXCORE_KNOWLEDGE_EMBEDDING_MODEL` | 空 | ④ 层 embedding 模型（端点复用 LLM 配置）；空 = 关闭向量层 |
 
 `NXCORE_KNOWLEDGE_WIKI_ID` **废弃**（全局 wiki 取消，仅作旧配置兼容读取并告警提示）。desktop supervisor 不再引导 `everroom-wiki`，只负责拉起 KS 进程并探活。
 
@@ -384,6 +441,9 @@ agent_end 写 L0 前:
 | PATCH | `/knowledge/rooms/:id` | 重命名 / 合并进其他 Room（M3，auto Room 治理） |
 | GET | `/knowledge/wikis` | Room↔wiki 映射列表（含状态、页面数） |
 | GET | `/knowledge/wikis/:roomId` | 单 Room wiki 详情（KS `/get` 透传） |
+| GET | `/knowledge/rooms/:id/files` | Room 的上传文件清单（uploaded_files ⨝ 最新归属决策，§3.3） |
+| GET | `/knowledge/files/:id/markdown` | 文件解析产物 md（预览） |
+| GET | `/knowledge/files/:id/storage` | 文件本体绝对路径（"显示原件"reveal 用） |
 | GET | `/knowledge/pending` | 待归类队列 |
 | POST | `/knowledge/route/:decisionId/confirm` | 用户确认路由（body: `roomIds[]` 或 `createRoom: {name}`） |
 | POST | `/knowledge/route/:decisionId/revert` | 撤销路由（清源 + 重路由） |
@@ -408,10 +468,12 @@ agent_end 写 L0 前:
 
 | 阶段 | 内容 | 出口标准 |
 | --- | --- | --- |
-| **M0 基线**（~3 天） | room_wikis 表 + `ensureWikiForRoom` + 会话级 wikiId 解析 + pi 双 wiki 客户端。**无自动路由**，Room 内文档手动/入口直连 ingest | Room A 文档问 Room B agent 查不到；Room A agent 命中本 Room wiki |
-| **M1 路由 MVP**（1~2 周） | committed 触发 + ①② 决策层 + ③ 候选层 + ingest-worker（jobs 队列、防抖、409 重试）+ 待归类 REST。⑤ 未上线，**人工即仲裁者**（确认时展示③的候选建议） | 内部试用：Room 文档自动进对 wiki，错分可撤销 |
-| **M2 智能路由** | ④ embedding 候选层（gateway 侧自算，质心存 room_wikis）+ ⑤ LLM 终审上线（③④ 分数进卷宗作证据）+ wiki summary 缓存 + confidence 阈值调优 + **create_new 自动建 Room**（先以 `AUTO_CREATE_ROOM_ENABLED=false` 观察 ⑤ 判决质量，再放开） | 外部无 roomId 信封（模拟会议纪要）≥80% 由 LLM 正确归类或低置信进队列；**不存在 ③④ 直接终态的决策**；放开 auto-create 后连续 20 份孤立文档产生的 auto Room 无重复主题（防碎片化验收） |
-| **M3 消费增强** | 预检索注入（§6.3）+ Room 面板管理 UI（含 auto Room 重命名/合并、手动规则编辑） | "不提 wiki 也能答文档内容" 的内部演示 |
+| **M0 基线**（~3 天）✅ 已实现 | room_wikis 表 + `ensureWikiForRoom` + 会话级 wikiId 解析 + pi 双 wiki 客户端。**无自动路由**，Room 内文档手动/入口直连 ingest | Room A 文档问 Room B agent 查不到；Room A agent 命中本 Room wiki |
+| **M1 路由 MVP**（1~2 周）✅ 已实现 | committed 触发 + ①② 决策层 + ③ 候选层 + ingest-worker（jobs 队列、防抖、409 重试）+ 待归类 REST。⑤ 未上线，**人工即仲裁者**（确认时展示③的候选建议） | 内部试用：Room 文档自动进对 wiki，错分可撤销 |
+| **M2 智能路由** ✅ 已实现 | ④ embedding 候选层（gateway 侧自算，质心存 room_wikis）+ ⑤ LLM 终审上线（③④ 分数进卷宗作证据）+ wiki summary 缓存 + confidence 阈值调优 + **create_new 自动建 Room**（先以 `AUTO_CREATE_ROOM_ENABLED=false` 观察 ⑤ 判决质量，再放开） | 外部无 roomId 信封（模拟会议纪要）≥80% 由 LLM 正确归类或低置信进队列；**不存在 ③④ 直接终态的决策**；放开 auto-create 后连续 20 份孤立文档产生的 auto Room 无重复主题（防碎片化验收） |
+| **M3a/M3b 闭环 UI** ✅ 已实现 | 渲染器 Room 上报登记（origin=user，幂等）+ auto Room 单向同步与"打开/改名即认领"+ RoomCard 角标 + Room 知识库 Tab（页面列表/阅读/上传）+ 首页"资料归类"面板（待归类确认/按建议新建/最近归类撤销）+ md 文件上传（`POST /v1/knowledge/files`，主进程文件选择框） | 上传 md → 自动进 Room wiki 或进队列确认；错分可撤销重路由 |
+| **资料模型修订** ✅ 已实现 | §3.3：uploaded_files/parsed_contents 两表 + `files/sha256` 对象库 + 确定性身份（B 案：规范化文件名）+ 四道判重闸门 + 存量决策回填 + WikiPane"来源文件"分区（预览/显示原件） | 同名同内容重传零成本（闸 1）；同名新内容为版本更新（闸 3 回原 Room）；Room 文件清单单一查询面 |
+| **M3c 消费增强**（剩余） | 预检索注入（§6.3）+ auto Room 合并、手动规则编辑 | "不提 wiki 也能答文档内容" 的内部演示 |
 | **后续** | 会议纪要/邮件/云盘连接器 → 以 `route/manual` 契约接入 router | —— |
 
 ## 10. 风险与对策

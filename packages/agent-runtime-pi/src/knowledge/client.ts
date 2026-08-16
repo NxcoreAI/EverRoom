@@ -4,6 +4,7 @@ import type {
   KnowledgeRuntimeConfig,
   KnowledgeSearchResult,
 } from "./types.js";
+import { resolveDefaultWikiIds } from "./types.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 /** 服务端 page/read 单批上限（WriteOutcome 校验 PAGE_READ_MAX）。 */
@@ -41,7 +42,7 @@ export class KnowledgeServiceError extends Error {
 export class KnowledgeServiceClient {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
-  private readonly wikiId: string;
+  private readonly configuredWikiIds: string[];
   private readonly timeoutMs: number;
 
   constructor(config: KnowledgeRuntimeConfig) {
@@ -50,14 +51,28 @@ export class KnowledgeServiceClient {
       "content-type": "application/json",
       "x-tdai-service-id": config.serviceId,
     };
-    this.wikiId = config.wikiId;
+    this.configuredWikiIds = resolveDefaultWikiIds(config);
     this.timeoutMs = config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
+  /** 配置携带的默认 wiki 集合（会话未解析出 Room wiki 时的回退）。 */
+  get defaultWikiIds(): string[] {
+    return this.configuredWikiIds;
+  }
+
+  /** 单次请求的目标 wiki；缺省取默认集合首个，两者皆空视为未配置。 */
+  private resolveWikiId(wikiId?: string): string {
+    const target = wikiId ?? this.configuredWikiIds[0];
+    if (!target) {
+      throw new KnowledgeServiceError("api", "Knowledge wiki is not configured for this request");
+    }
+    return target;
+  }
+
   /** wiki 页面混合检索（BM25 种子 + 可选多跳图扩展）。 */
-  async searchWiki(query: string, limit: number): Promise<KnowledgeSearchResult[]> {
+  async searchWiki(query: string, limit: number, wikiId?: string): Promise<KnowledgeSearchResult[]> {
     const data = await this.post<{ results?: KnowledgeSearchResult[] }>("/v3/wiki/search", {
-      wiki_id: this.wikiId,
+      wiki_id: this.resolveWikiId(wikiId),
       query,
       limit,
     });
@@ -65,18 +80,18 @@ export class KnowledgeServiceClient {
   }
 
   /** 列出 wiki 全部页面（目录元信息）；wiki 未 ready 时为空数组。 */
-  async listPages(): Promise<KnowledgePageEntry[]> {
+  async listPages(wikiId?: string): Promise<KnowledgePageEntry[]> {
     const data = await this.post<{ items?: KnowledgePageEntry[] }>("/v3/wiki/page/ls", {
-      wiki_id: this.wikiId,
+      wiki_id: this.resolveWikiId(wikiId),
     });
     return data?.items ?? [];
   }
 
   /** 批量读取页面正文；超出单批上限时截断（not_found 由服务端逐项标注）。 */
-  async readPages(refs: string[]): Promise<KnowledgePageReadItem[]> {
+  async readPages(refs: string[], wikiId?: string): Promise<KnowledgePageReadItem[]> {
     if (refs.length === 0) return [];
     const data = await this.post<{ items?: KnowledgePageReadItem[] }>("/v3/wiki/page/read", {
-      wiki_id: this.wikiId,
+      wiki_id: this.resolveWikiId(wikiId),
       refs: refs.slice(0, PAGE_READ_MAX),
     });
     return data?.items ?? [];

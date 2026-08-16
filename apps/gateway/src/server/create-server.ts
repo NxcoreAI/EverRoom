@@ -27,6 +27,8 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { knowledgeRoutes } from "../modules/knowledge/routes.js";
+import { KnowledgeService } from "../modules/knowledge/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
@@ -102,7 +104,38 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(systemRoutes);
   const documentService = new DocumentService(db, new DocumentEventBroker());
   const documentMcpHost = new DocumentMcpHost(documentService);
-  const agentRuntime = createAgentRuntime(config, documentMcpHost);
+  // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
+  const knowledgeService = new KnowledgeService(
+    db,
+    {
+      baseUrl: config.knowledge?.baseUrl ?? "",
+      serviceId: config.knowledge?.serviceId ?? "everroom",
+      teamId: config.knowledge?.teamId ?? "everroom",
+      dataDir: config.dataDir,
+      roomWikisEnabled: config.knowledge?.roomWikisEnabled ?? false,
+      ingestDebounceMs: config.knowledge?.ingestDebounceMs ?? 600_000,
+      routerEnabled: config.knowledge?.routerEnabled ?? false,
+      routeThresholdAuto: config.knowledge?.routeThresholdAuto ?? 0.8,
+      routeThresholdReview: config.knowledge?.routeThresholdReview ?? 0.6,
+      autoCreateRoomEnabled: config.knowledge?.autoCreateRoomEnabled ?? false,
+      llm: config.knowledge?.llm ?? null,
+      embeddingLlm: config.knowledge?.embeddingLlm ?? null,
+      embeddingModel: config.knowledge?.embeddingModel ?? "",
+    },
+    app.log,
+  );
+  const agentRuntime = createAgentRuntime(config, documentMcpHost, {
+    // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
+    ...(config.knowledge?.roomWikisEnabled
+      ? {
+          resolveKnowledgeWikiIds: async (input) => {
+            if (!input.roomId) return [];
+            const wikiId = knowledgeService.resolveRoomWikiId(input.roomId);
+            return wikiId ? [wikiId] : [];
+          },
+        }
+      : {}),
+  });
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -129,10 +162,25 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (recoveredCaptures > 0) {
     app.log.info({ recoveredCaptures }, "interrupted reality captures recovered");
   }
+  // knowledge 路由层接管 documents 事件（committed/updated → 入队 ingest，deleted → 清理）。
+  if (config.knowledge?.roomWikisEnabled) {
+    documentService.broker.listen((event) => knowledgeService.handleDocumentEvent(event));
+    knowledgeService.start();
+    app.log.info(
+      {
+        debounceMs: config.knowledge.ingestDebounceMs,
+        router: config.knowledge.routerEnabled,
+        autoCreateRoom: config.knowledge.autoCreateRoomEnabled,
+        embedding: Boolean(config.knowledge.embeddingModel),
+      },
+      "knowledge room-wiki routing enabled",
+    );
+  }
   app.addHook("onClose", async () => {
     await agentService.dispose();
     await documentMcpHost.close();
     documentService.dispose();
+    knowledgeService.dispose();
     await asrService.dispose();
     sqlite.close();
     await gatewayLogger.close();
@@ -143,6 +191,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
   await app.register(realityRoutes(realityService));
+  if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
 
   return app;
 }
