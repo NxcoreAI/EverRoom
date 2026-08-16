@@ -29,6 +29,34 @@
       "when": 1786797375393,
       "tag": "0003_opposite_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786803180540,
+      "tag": "0004_tearful_madame_hydra",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786868502397,
+      "tag": "0005_bitter_bromley",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786868616404,
+      "tag": "0006_freezing_ozymandias",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786876223933,
+      "tag": "0007_lethal_lizard",
+      "breakpoints": true
     }
   ]
 }

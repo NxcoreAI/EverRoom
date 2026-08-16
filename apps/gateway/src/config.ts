@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import type { MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),
@@ -20,7 +21,6 @@ const LogLevelSchema = Type.Union([
 const AgentRuntimeSchema = Type.Union([
   Type.Literal("fake"),
   Type.Literal("pi"),
-  Type.Literal("remote-http"),
 ]);
 const AsrProviderSchema = Type.Union([Type.Literal("disabled"), Type.Literal("aliyun")]);
 const AiApiSchema = Type.Union([
@@ -47,9 +47,6 @@ const RawConfigSchema = Type.Object(
     logLevel: LogLevelSchema,
     authToken: Type.String({ minLength: 16 }),
     agentRuntime: AgentRuntimeSchema,
-    remoteAgentBaseUrl: Type.String({ minLength: 1 }),
-    remoteAgentToken: Type.String(),
-    remoteAgentMcpWebSocketUrl: Type.String(),
     aiProvider: Type.String(),
     aiModel: Type.String(),
     aiBaseUrl: Type.String(),
@@ -72,6 +69,15 @@ const RawConfigSchema = Type.Object(
     nangoUrl: Type.String(),
     nangoSecret: Type.String(),
     connectorPollMs: Type.Integer({ minimum: 1000 }),
+    memoryEnabled: Type.Boolean(),
+    memoryBaseUrl: Type.String(),
+    memoryApiKey: Type.String(),
+    memoryServiceId: Type.String({ minLength: 1 }),
+    memoryTeamId: Type.String({ minLength: 1 }),
+    memoryAgentId: Type.String({ minLength: 1 }),
+    memoryUserId: Type.String({ minLength: 1 }),
+    memoryRecallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
+    memoryCharBudget: Type.Integer({ minimum: 200 }),
   },
   { additionalProperties: false },
 );
@@ -110,6 +116,7 @@ export interface PiRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  memory?: MemoryRuntimeConfig;
 }
 
 export interface GatewayConfig {
@@ -122,11 +129,7 @@ export interface GatewayConfig {
   logLevel: LogLevel;
   authToken: string;
   agentRuntime: AgentRuntimeMode;
-  remoteAgent: {
-    baseUrl: string;
-    token: string | null;
-    mcpWebSocketUrl: string | null;
-  } | null;
+  memory: MemoryRuntimeConfig | null;
   pi: PiRuntimeConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
@@ -199,6 +202,28 @@ function validateHttpEndpoint(name: string, value: string): void {
   }
 }
 
+/** MemoryCore 通常是本地/内网 HTTP 服务：允许 localhost/127.0.0.1 的 HTTP 与任意 HTTPS。 */
+function validateMemoryEndpoint(name: string, value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
+  }
+  const isLoopbackHttp = url.protocol === "http:"
+    && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1");
+  if (url.protocol !== "https:" && !isLoopbackHttp) {
+    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback addresses`);
+  }
+}
+
+function parseBoolean(name: string, value: string): boolean {
+  if (value !== "true" && value !== "false") {
+    throw new Error(`Invalid ${name}: expected "true" or "false"`);
+  }
+  return value === "true";
+}
+
 function inferMcpWebSocketUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -239,19 +264,13 @@ export function loadConfig(
   });
 
   const dataDir = resolve(values["data-dir"] ?? env.NXCORE_GATEWAY_DATA_DIR ?? defaultDataDir());
-  const remoteAgentBaseUrl = env.NXCORE_REMOTE_AGENT_BASE_URL?.trim()
-    ?? "http://192.168.1.27:8280/ai/api";
   const rawConfig = {
     host: values.host ?? env.NXCORE_GATEWAY_HOST ?? "127.0.0.1",
     port: parsePort(values.port ?? env.NXCORE_GATEWAY_PORT ?? "0"),
     dataDir,
     logLevel: values["log-level"] ?? env.NXCORE_GATEWAY_LOG_LEVEL ?? "info",
     authToken: values.token ?? env.NXCORE_GATEWAY_TOKEN ?? randomBytes(32).toString("base64url"),
-    agentRuntime: env.NXCORE_AGENT_RUNTIME ?? "remote-http",
-    remoteAgentBaseUrl,
-    remoteAgentToken: env.NXCORE_REMOTE_AGENT_TOKEN?.trim() ?? "",
-    remoteAgentMcpWebSocketUrl: env.NXCORE_REMOTE_AGENT_MCP_WS_URL?.trim()
-      ?? inferMcpWebSocketUrl(remoteAgentBaseUrl),
+    agentRuntime: env.NXCORE_AGENT_RUNTIME ?? "fake",
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
@@ -279,6 +298,23 @@ export function loadConfig(
     nangoUrl: env.NXCORE_NANGO_URL?.trim() ?? "",
     nangoSecret: env.NXCORE_NANGO_SECRET?.trim() ?? "",
     connectorPollMs: parsePositiveInteger("NXCORE_CONNECTOR_POLL_MS", env.NXCORE_CONNECTOR_POLL_MS ?? "300000"),
+    memoryEnabled: env.NXCORE_MEMORY_ENABLED == null
+      ? false
+      : parseBoolean("NXCORE_MEMORY_ENABLED", env.NXCORE_MEMORY_ENABLED.trim()),
+    memoryBaseUrl: env.NXCORE_MEMORY_BASE_URL?.trim() ?? "http://127.0.0.1:8420",
+    memoryApiKey: env.NXCORE_MEMORY_API_KEY?.trim() ?? "",
+    memoryServiceId: env.NXCORE_MEMORY_SERVICE_ID?.trim() ?? "everroom",
+    memoryTeamId: env.NXCORE_MEMORY_TEAM_ID?.trim() ?? "everroom",
+    memoryAgentId: env.NXCORE_MEMORY_AGENT_ID?.trim() ?? "pi-agent",
+    memoryUserId: env.NXCORE_MEMORY_USER_ID?.trim() ?? "local-user",
+    memoryRecallLimit: parsePositiveInteger(
+      "NXCORE_MEMORY_RECALL_LIMIT",
+      env.NXCORE_MEMORY_RECALL_LIMIT ?? "5",
+    ),
+    memoryCharBudget: parsePositiveInteger(
+      "NXCORE_MEMORY_CHAR_BUDGET",
+      env.NXCORE_MEMORY_CHAR_BUDGET ?? "2000",
+    ),
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -301,21 +337,6 @@ export function loadConfig(
     validateAiEndpoint(rawConfig.aiBaseUrl);
   }
 
-  if (rawConfig.agentRuntime === "remote-http") {
-    validateAiEndpoint(rawConfig.remoteAgentBaseUrl);
-    if (rawConfig.remoteAgentMcpWebSocketUrl) {
-      let mcpUrl: URL;
-      try {
-        mcpUrl = new URL(rawConfig.remoteAgentMcpWebSocketUrl);
-      } catch {
-        throw new Error("Invalid NXCORE_REMOTE_AGENT_MCP_WS_URL: expected an absolute WS(S) URL");
-      }
-      if (mcpUrl.protocol !== "ws:" && mcpUrl.protocol !== "wss:") {
-        throw new Error("Invalid NXCORE_REMOTE_AGENT_MCP_WS_URL: expected an absolute WS(S) URL");
-      }
-    }
-  }
-
   if (rawConfig.asrProvider === "aliyun") {
     if (!rawConfig.asrAliyunApiKey) {
       throw new Error("Aliyun ASR requires: NXCORE_ASR_ALIYUN_API_KEY");
@@ -335,6 +356,22 @@ export function loadConfig(
   if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_URL and NXCORE_NANGO_SECRET");
   if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_URL must use HTTPS except for loopback development"); }
 
+  const memory: MemoryRuntimeConfig | null = rawConfig.memoryEnabled
+    ? {
+        baseUrl: rawConfig.memoryBaseUrl,
+        apiKey: rawConfig.memoryApiKey,
+        serviceId: rawConfig.memoryServiceId,
+        teamId: rawConfig.memoryTeamId,
+        agentId: rawConfig.memoryAgentId,
+        userId: rawConfig.memoryUserId,
+        recallLimit: rawConfig.memoryRecallLimit,
+        charBudget: rawConfig.memoryCharBudget,
+      }
+    : null;
+  if (memory) {
+    validateMemoryEndpoint("NXCORE_MEMORY_BASE_URL", memory.baseUrl);
+  }
+
   return {
     host: rawConfig.host,
     port: rawConfig.port,
@@ -342,13 +379,7 @@ export function loadConfig(
     logLevel: rawConfig.logLevel,
     authToken: rawConfig.authToken,
     agentRuntime: rawConfig.agentRuntime,
-    remoteAgent: rawConfig.agentRuntime === "remote-http"
-      ? {
-          baseUrl: rawConfig.remoteAgentBaseUrl,
-          token: rawConfig.remoteAgentToken || null,
-          mcpWebSocketUrl: rawConfig.remoteAgentMcpWebSocketUrl || null,
-        }
-      : null,
+    memory,
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
@@ -397,6 +428,7 @@ export function loadConfig(
           sessionsDir: join(dataDir, "agent", "pi-sessions"),
           workingDirectory: join(dataDir, "agent", "workspace"),
           agentDirectory: join(dataDir, "agent", "pi-config"),
+          ...(memory ? { memory } : {}),
         }
       : null,
   };

@@ -16,13 +16,17 @@ import type {
   AgentEvent,
   AgentRun,
   AgentSession,
+  AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
+  ContextRoomSnapshot,
   CreateAgentSessionInput,
+  CreateAgentSessionLinkInput,
   DocumentEventFrame,
   ImportRoomDocumentInput,
   RoomDocument,
   SaveRoomDocumentInput,
+  SaveContextRoomSnapshotInput,
   StartAgentRunInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
@@ -242,6 +246,10 @@ export interface NxcoreDesktopApi {
     failures(query?: { connectionId?: string; runId?: string; limit?: number }): Promise<Array<{ id: string; scopeId: string | null; runId: string | null; category: string; message: string; itemKey: string | null; createdAt: string }>>
     armFault(point: string): Promise<void>
   }
+  contextRooms: {
+    list(): Promise<ContextRoomSnapshot>
+    syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
+  }
   account: {
     status(): Promise<CloudAccountStatus>
     login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
@@ -257,6 +265,21 @@ export interface NxcoreDesktopApi {
     cancelRecording(id: string): Promise<void>
     createJob(input: CreateAsrJobInput): Promise<AsrJob>
     getJob(id: string): Promise<AsrJob>
+  }
+  memory: {
+    overview(): Promise<MemoryOverviewDto>
+    listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
+    searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
+    updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
+    deleteAtomic(ids: string[]): Promise<{ deletedCount: number }>
+    listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }>
+    readScenario(path: string): Promise<MemoryScenarioContentDto>
+    readCore(): Promise<MemoryCoreDto>
+    writeCore(content: string): Promise<{ version: number; updatedAt: string }>
+    listConversations(options: MemoryConversationListOptions): Promise<MemoryConversationPageDto>
+    searchConversations(query: string, limit?: number, sessionId?: string): Promise<{ messages: MemoryConversationMessageDto[] }>
+    deleteConversations(target: { sessionIds?: string[]; messageIds?: string[] }): Promise<{ deletedCount: number }>
+    captureDocumentRewrite(input: MemoryDocumentRewriteInput): Promise<{ captured: boolean }>
   }
   reality: {
     listEvents(filters?: { status?: RealityEventStatus; search?: string }): Promise<RealityEvent[]>
@@ -276,6 +299,9 @@ export interface NxcoreDesktopApi {
   agent: {
     listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
+    createSessionLink(input: CreateAgentSessionLinkInput): Promise<AgentSessionLink>
+    listSessionLinks(sessionId: string): Promise<AgentSessionLink[]>
+    markSessionLinkReturned(linkId: string): Promise<AgentSessionLink>
     updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession>
     deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
@@ -288,10 +314,14 @@ export interface NxcoreDesktopApi {
   }
   documents: {
     list(roomId: string): Promise<RoomDocument[]>
+    listTrash(roomId: string): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
     import(input: ImportRoomDocumentInput): Promise<RoomDocument>
     save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
     delete(documentId: string): Promise<void>
+    restore(documentId: string): Promise<RoomDocument>
+    deletePermanently(documentId: string): Promise<void>
+    emptyTrash(roomId: string): Promise<void>
     acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void>
     subscribe(roomId: string): Promise<void>
     unsubscribe(roomId?: string): Promise<void>
@@ -311,6 +341,19 @@ export interface NxcoreDesktopApi {
     disconnect(id: string, deleteLocalData: boolean): Promise<void>
   }
 }
+import type {
+  MemoryAtomicItemDto,
+  MemoryAtomicListOptions,
+  MemoryAtomicPageDto,
+  MemoryConversationListOptions,
+  MemoryConversationMessageDto,
+  MemoryConversationPageDto,
+  MemoryCoreDto,
+  MemoryDocumentRewriteInput,
+  MemoryOverviewDto,
+  MemoryScenarioContentDto,
+  MemoryScenarioEntryDto,
+} from './memory'
 export type {
   CreateRealityEventInput,
   FinishRealityCaptureInput,

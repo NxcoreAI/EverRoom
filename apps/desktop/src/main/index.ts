@@ -10,7 +10,15 @@ import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
+import type {
+  MemoryAtomicListOptions,
+  MemoryConversationListOptions,
+  MemoryDocumentRewriteInput,
+} from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
+import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
@@ -52,10 +60,17 @@ const GATEWAY_CHANNELS = {
 const CONNECTOR_CHANNELS = {
   status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', armFault: 'connector:arm-fault',
 } as const
+const CONTEXT_ROOM_CHANNELS = {
+  list: 'context-rooms:list',
+  syncSnapshot: 'context-rooms:sync-snapshot',
+} as const
 
 const AGENT_CHANNELS = {
   listSessions: 'agent:list-sessions',
   createSession: 'agent:create-session',
+  createSessionLink: 'agent:create-session-link',
+  listSessionLinks: 'agent:list-session-links',
+  markSessionLinkReturned: 'agent:mark-session-link-returned',
   updateSession: 'agent:update-session',
   deleteSession: 'agent:delete-session',
   getSession: 'agent:get-session',
@@ -68,10 +83,14 @@ const AGENT_CHANNELS = {
 
 const DOCUMENT_CHANNELS = {
   list: 'documents:list',
+  listTrash: 'documents:list-trash',
   get: 'documents:get',
   import: 'documents:import',
   save: 'documents:save',
   delete: 'documents:delete',
+  restore: 'documents:restore',
+  deletePermanently: 'documents:delete-permanently',
+  emptyTrash: 'documents:empty-trash',
   acknowledge: 'documents:acknowledge',
   subscribe: 'documents:subscribe',
   unsubscribe: 'documents:unsubscribe',
@@ -110,8 +129,25 @@ const ACCOUNT_CHANNELS = {
   logout: 'account:logout',
 } as const
 
+const MEMORY_CHANNELS = {
+  overview: 'memory:overview',
+  listAtomic: 'memory:list-atomic',
+  searchAtomic: 'memory:search-atomic',
+  updateAtomic: 'memory:update-atomic',
+  deleteAtomic: 'memory:delete-atomic',
+  listScenarios: 'memory:list-scenarios',
+  readScenario: 'memory:read-scenario',
+  readCore: 'memory:read-core',
+  writeCore: 'memory:write-core',
+  listConversations: 'memory:list-conversations',
+  searchConversations: 'memory:search-conversations',
+  deleteConversations: 'memory:delete-conversations',
+  captureDocumentRewrite: 'memory:capture-document-rewrite',
+} as const
+
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
@@ -271,10 +307,17 @@ function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
     return bridge.armFault(point)
   })
 }
+function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
+  ipcMain.handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
+  ipcMain.handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
+}
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
+  ipcMain.handle(AGENT_CHANNELS.createSessionLink, (_event, input) => bridge.createSessionLink(input))
+  ipcMain.handle(AGENT_CHANNELS.listSessionLinks, (_event, sessionId) => bridge.listSessionLinks(sessionId))
+  ipcMain.handle(AGENT_CHANNELS.markSessionLinkReturned, (_event, linkId) => bridge.markSessionLinkReturned(linkId))
   ipcMain.handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
   ipcMain.handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
   ipcMain.handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))
@@ -288,10 +331,15 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
 
 function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
   ipcMain.handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
+  ipcMain.handle(DOCUMENT_CHANNELS.listTrash, (_event, roomId) => bridge.listTrash(roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
   ipcMain.handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
   ipcMain.handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
   ipcMain.handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.restore, (_event, documentId) => bridge.restore(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.deletePermanently, (_event, documentId) =>
+    bridge.deletePermanently(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.emptyTrash, (_event, roomId) => bridge.emptyTrash(roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
     bridge.acknowledge(transactionId, input))
   ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
@@ -311,6 +359,43 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   ipcMain.handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
   ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => coordinator.createJob(input))
   ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
+}
+
+function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
+  ipcMain.handle(MEMORY_CHANNELS.overview, () => bridge.overview())
+  ipcMain.handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
+    bridge.listAtomic(options))
+  ipcMain.handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
+    bridge.searchAtomic(query, limit))
+  ipcMain.handle(
+    MEMORY_CHANNELS.updateAtomic,
+    (_event, id: string, content: string, background?: string) =>
+      bridge.updateAtomic(id, content, background),
+  )
+  ipcMain.handle(MEMORY_CHANNELS.deleteAtomic, (_event, ids: string[]) => bridge.deleteAtomic(ids))
+  ipcMain.handle(MEMORY_CHANNELS.listScenarios, (_event, pathPrefix?: string) =>
+    bridge.listScenarios(pathPrefix))
+  ipcMain.handle(MEMORY_CHANNELS.readScenario, (_event, path: string) => bridge.readScenario(path))
+  ipcMain.handle(MEMORY_CHANNELS.readCore, () => bridge.readCore())
+  ipcMain.handle(MEMORY_CHANNELS.writeCore, (_event, content: string) => bridge.writeCore(content))
+  ipcMain.handle(
+    MEMORY_CHANNELS.listConversations,
+    (_event, options: MemoryConversationListOptions) => bridge.listConversations(options),
+  )
+  ipcMain.handle(
+    MEMORY_CHANNELS.searchConversations,
+    (_event, query: string, limit?: number, sessionId?: string) =>
+      bridge.searchConversations(query, limit, sessionId),
+  )
+  ipcMain.handle(
+    MEMORY_CHANNELS.deleteConversations,
+    (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
+      bridge.deleteConversations(target),
+  )
+  ipcMain.handle(
+    MEMORY_CHANNELS.captureDocumentRewrite,
+    (_event, input: MemoryDocumentRewriteInput) => bridge.captureDocumentRewrite(input),
+  )
 }
 
 function registerRealityHandlers(bridge: RealityGatewayBridge): void {
@@ -434,16 +519,34 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
   try {
-    gatewaySupervisor = new GatewaySupervisor(dataDirectory)
+    // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
+    // 让队友拉代码后无需手工部署即可使用记忆功能。
+    memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
+    const memoryCore = await memoryCoreSupervisor.start().catch((error) => {
+      console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
+      return null
+    })
+    gatewaySupervisor = new GatewaySupervisor(
+      dataDirectory,
+      memoryCore
+        ? {
+          NXCORE_MEMORY_ENABLED: 'true',
+          NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
+          NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
+        }
+        : {},
+    )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     registerGatewayHandlers(gatewaySupervisor)
+    registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
     if (process.env.NXCORE_CONNECTOR_DEBUG_UI === '1') registerConnectorHandlers(connectorGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge)
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
@@ -485,6 +588,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
+    await memoryCoreSupervisor?.shutdown()
+    memoryCoreSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
     app.quit()
     return
@@ -501,6 +606,7 @@ app.on('before-quit', (event) => {
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
+  const memoryCore = memoryCoreSupervisor
   const agentBridge = agentGatewayBridge
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
@@ -508,6 +614,7 @@ app.on('before-quit', (event) => {
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
+  memoryCoreSupervisor = null
   agentGatewayBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
@@ -522,6 +629,7 @@ app.on('before-quit', (event) => {
     service?.shutdown(),
     recordings?.dispose(),
     gateway?.shutdown(),
+    memoryCore?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

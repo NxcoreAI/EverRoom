@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract';
+import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
@@ -52,9 +52,14 @@ export function WorkspaceLayout({
   selectedObject,
   selectedResource,
   backendDocuments,
+  trashedDocuments,
   documentEvents,
   onBackendDocumentChange,
+  onCreateDocument,
   onDeleteDocument,
+  onRestoreDocument,
+  onDeleteDocumentPermanently,
+  onEmptyTrash,
   onSelectResource,
   onAddFile,
   onOpenMemory,
@@ -103,9 +108,14 @@ export function WorkspaceLayout({
   selectedObject: WorkspaceObjectPreview | null;
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
+  trashedDocuments: RoomDocument[];
   documentEvents: Record<string, DocumentEvent[]>;
   onBackendDocumentChange: (document: RoomDocument) => void;
+  onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
+  onRestoreDocument: (document: RoomDocument) => Promise<void>;
+  onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
+  onEmptyTrash: (roomId: string) => Promise<void>;
   onSelectResource: (resource: ContextRoomResource) => void;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (memoryId: string) => void;
@@ -281,10 +291,15 @@ export function WorkspaceLayout({
                         room={room}
                         selectedResourceId={selectedResourceId}
                         backendDocuments={backendDocuments}
+                        trashedDocuments={trashedDocuments}
                         rooms={rooms}
                         onOpenRoom={onOpenRoom}
                         onSelectResource={onSelectResource}
+                        onCreateDocument={onCreateDocument}
                         onDeleteDocument={onDeleteDocument}
+                        onRestoreDocument={onRestoreDocument}
+                        onDeleteDocumentPermanently={onDeleteDocumentPermanently}
+                        onEmptyTrash={onEmptyTrash}
                         onAddFile={onAddFile}
                         onOpenMemory={onOpenMemory}
                         onToggleTask={onToggleTask}

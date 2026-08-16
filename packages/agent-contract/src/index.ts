@@ -90,9 +90,67 @@ export interface UpdateAgentSessionInput {
   title: string;
 }
 
+export type AgentNavigationAction = "created" | "updated" | "opened" | "referenced";
+export type AgentNavigationObjectType = "room" | "document" | "source" | "memory" | "task" | "diary";
+
+export interface AgentNavigationTarget {
+  pageId: string;
+  title: string;
+  action: AgentNavigationAction;
+  roomId?: string | null;
+  objectId?: string;
+  objectType?: AgentNavigationObjectType;
+}
+
+export interface CreateAgentSessionLinkInput {
+  sourceSessionId: string;
+  targetSessionId: string;
+  sourceRunId: string;
+  sourcePageId: string;
+  sourcePageLabel: string;
+  sourceRoomId?: string | null;
+  target: AgentNavigationTarget;
+}
+
+export interface AgentSessionLink extends CreateAgentSessionLinkInput {
+  id: string;
+  createdAt: string;
+  returnedAt: string | null;
+}
+
+export interface AgentRoomReference {
+  id: string;
+  title: string;
+  kind?: string;
+}
+
+export interface ContextRoomSnapshotItem extends AgentRoomReference {
+  data: Record<string, unknown>;
+}
+
+export interface ContextRoomSnapshot {
+  rooms: ContextRoomSnapshotItem[];
+  deletedRooms: ContextRoomSnapshotItem[];
+  updatedAt: string | null;
+}
+
+export interface SaveContextRoomSnapshotInput {
+  rooms: ContextRoomSnapshotItem[];
+  deletedRooms: ContextRoomSnapshotItem[];
+}
+
 export interface StartAgentRunInput {
   prompt: string;
   idempotencyKey: string;
+  /** Defaults to true. Temporary preview runs can defer capture until user confirmation. */
+  captureMemory?: boolean;
+  context?: {
+    selectedText?: string;
+    /** Current, non-deleted Rooms visible to the desktop when this run starts. */
+    rooms?: AgentRoomReference[];
+    /** Explicit UI-confirmed target for a global Agent session. */
+    selectedRoomId?: string | null;
+  };
 }
 
 export interface TiptapJsonContent {
@@ -111,6 +169,7 @@ export interface RoomDocument {
   version: number;
   status: "draft" | "active";
   activeTransactionId: string | null;
+  deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -121,6 +180,8 @@ export type DocumentEventType =
   | "document.commit-requested"
   | "document.committed"
   | "document.aborted"
+  | "document.trashed"
+  | "document.restored"
   | "document.deleted"
   | "document.updated";
 
@@ -132,6 +193,19 @@ export interface DocumentEvent<T = unknown> {
   type: DocumentEventType;
   occurredAt: string;
   payload: T;
+}
+
+export interface DocumentSnapshotEventPayload {
+  document: RoomDocument;
+}
+
+export interface DocumentAppendedEventPayload extends DocumentSnapshotEventPayload {
+  sequence: number;
+  text: string;
+}
+
+export interface DocumentCommitRequestedEventPayload extends DocumentSnapshotEventPayload {
+  finalSequence: number;
 }
 
 export interface DocumentEventFrame {

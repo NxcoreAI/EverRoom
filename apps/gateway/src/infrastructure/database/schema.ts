@@ -1,4 +1,5 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import type { AgentNavigationTarget } from "@nxcore/agent-contract";
 import type {
   RealityCaptureDevice,
   RealityInsights,
@@ -64,6 +65,56 @@ export const agentSessions = sqliteTable("agent_sessions", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+export const agentSessionLinks = sqliteTable(
+  "agent_session_links",
+  {
+    id: text("id").primaryKey(),
+    sourceSessionId: text("source_session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    targetSessionId: text("target_session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    sourceRunId: text("source_run_id").notNull(),
+    sourcePageId: text("source_page_id").notNull(),
+    sourcePageLabel: text("source_page_label").notNull(),
+    sourceRoomId: text("source_room_id"),
+    targetKey: text("target_key").notNull(),
+    target: text("target", { mode: "json" }).$type<AgentNavigationTarget>().notNull(),
+    returnedAt: integer("returned_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("agent_session_links_source_target_idx").on(table.sourceRunId, table.targetKey),
+    index("agent_session_links_source_session_idx").on(table.sourceSessionId),
+    index("agent_session_links_target_session_idx").on(table.targetSessionId),
+  ],
+);
+
+export const contextRooms = sqliteTable(
+  "context_rooms",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    kind: text("kind"),
+    data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    position: integer("position").notNull().default(0),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("context_rooms_deleted_idx").on(table.deletedAt),
+    index("context_rooms_updated_idx").on(table.updatedAt),
+  ],
+);
 
 export const agentRuns = sqliteTable(
   "agent_runs",
@@ -132,6 +183,7 @@ export const documents = sqliteTable("documents", {
   version: integer("version").notNull().default(0),
   status: text("status", { enum: ["draft", "active"] }).notNull().default("draft"),
   activeTransactionId: text("active_transaction_id"),
+  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

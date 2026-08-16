@@ -7,7 +7,11 @@ import type {
   SaveRoomDocumentInput,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
-import { and, asc, eq, lt } from "drizzle-orm";
+import TaskItem from "@tiptap/extension-task-item";
+import TaskList from "@tiptap/extension-task-list";
+import { MarkdownManager } from "@tiptap/markdown";
+import StarterKit from "@tiptap/starter-kit";
+import { and, asc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   documentOps,
@@ -22,7 +26,16 @@ const EMPTY_DOCUMENT: TiptapJsonContent = { type: "doc", content: [] };
 const CHUNK_MAX_BYTES = 64 * 1024;
 const TRANSACTION_MAX_BYTES = 2 * 1024 * 1024;
 const TRANSACTION_TTL_MS = 10 * 60 * 1000;
-const RENDERER_ACK_TIMEOUT_MS = 180_000;
+const STABLE_BLOCK_TYPES = new Set([
+  "paragraph",
+  "heading",
+  "bulletList",
+  "orderedList",
+  "taskList",
+  "blockquote",
+  "codeBlock",
+  "horizontalRule",
+]);
 
 export class DocumentServiceError extends Error {
   constructor(
@@ -44,12 +57,17 @@ class DocumentWriteQueue {
   }
 }
 
-interface PendingAcknowledgement {
-  promise: Promise<TiptapJsonContent>;
-  resolve: (content: TiptapJsonContent) => void;
-  reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
+export interface CommittedAgentDocument {
+  sessionId: string;
+  roomId: string;
+  runId: string;
+  transactionId: string;
+  documentId: string;
+  title: string;
+  markdown: string;
 }
+
+export type DocumentCommittedHandler = (document: CommittedAgentDocument) => void;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -73,6 +91,7 @@ function toDocument(
     version: row.version,
     status: row.status,
     activeTransactionId: row.activeTransactionId,
+    deletedAt: row.deletedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -80,12 +99,15 @@ function toDocument(
 
 export class DocumentService {
   private readonly queue = new DocumentWriteQueue();
-  private readonly pending = new Map<string, PendingAcknowledgement>();
+  private readonly markdown = new MarkdownManager({
+    extensions: [StarterKit, TaskList, TaskItem],
+  });
   private readonly expiryTimer: NodeJS.Timeout;
 
   constructor(
     private readonly db: GatewayDatabase,
     readonly broker: DocumentEventBroker,
+    private readonly onDocumentCommitted?: DocumentCommittedHandler,
   ) {
     this.recoverInterruptedTransactions();
     this.expiryTimer = setInterval(() => void this.expireTransactions(), 30_000);
@@ -94,18 +116,16 @@ export class DocumentService {
 
   dispose(): void {
     clearInterval(this.expiryTimer);
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error("Document service stopped"));
-    }
-    this.pending.clear();
   }
 
-  list(roomId: string): RoomDocument[] {
+  list(roomId: string, trashed = false): RoomDocument[] {
     return this.db.select({ document: documents })
       .from(roomDocumentLinks)
       .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
-      .where(eq(roomDocumentLinks.roomId, roomId))
+      .where(and(
+        eq(roomDocumentLinks.roomId, roomId),
+        trashed ? isNotNull(documents.deletedAt) : isNull(documents.deletedAt),
+      ))
       .orderBy(asc(roomDocumentLinks.linkedAt))
       .all()
       .map(({ document }) => toDocument(document, roomId));
@@ -120,38 +140,8 @@ export class DocumentService {
     return result ? toDocument(result.document, result.roomId) : null;
   }
 
-  replayPending(roomId: string): DocumentEvent[] {
-    const transactions = this.db.select().from(documentTransactions).where(and(
-      eq(documentTransactions.roomId, roomId),
-      eq(documentTransactions.status, "open"),
-    )).all();
-    const events: DocumentEvent[] = [];
-    for (const transaction of transactions) {
-      const operations = this.db.select().from(documentOps).where(eq(
-        documentOps.transactionId,
-        transaction.id,
-      )).orderBy(asc(documentOps.sequence)).all();
-      for (const operation of operations) {
-        if (operation.appliedContentJson) continue;
-        events.push(this.createEvent(
-          transaction.roomId,
-          transaction.documentId,
-          transaction.id,
-          "document.appended",
-          { sequence: operation.sequence, text: operation.markdown },
-        ));
-      }
-      if (this.pending.has(`${transaction.id}:commit`)) {
-        events.push(this.createEvent(
-          transaction.roomId,
-          transaction.documentId,
-          transaction.id,
-          "document.commit-requested",
-          { finalSequence: transaction.nextSequence - 1 },
-        ));
-      }
-    }
-    return events;
+  replayPending(_roomId: string): DocumentEvent[] {
+    return [];
   }
 
   import(input: ImportRoomDocumentInput): Promise<RoomDocument> {
@@ -195,9 +185,13 @@ export class DocumentService {
     return this.queue.enqueue(() => {
       const current = this.get(documentId);
       if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (current.deletedAt) {
+        throw new DocumentServiceError("DOCUMENT_TRASHED", "Restore the document before editing it", 409);
+      }
       if (current.activeTransactionId) {
         throw new DocumentServiceError("DOCUMENT_BUSY", "Agent is writing this document", 409);
       }
+      if (JSON.stringify(current.contentJson) === JSON.stringify(input.contentJson)) return current;
       if (current.version !== input.baseVersion) {
         throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409);
       }
@@ -224,24 +218,60 @@ export class DocumentService {
     return this.queue.enqueue(() => {
       const current = this.get(documentId);
       if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (current.deletedAt) return;
       if (current.activeTransactionId) {
         throw new DocumentServiceError("DOCUMENT_BUSY", "Agent is writing this document", 409);
       }
-      const transactions = this.db.select({ id: documentTransactions.id })
-        .from(documentTransactions)
-        .where(eq(documentTransactions.documentId, documentId))
-        .all();
-      for (const transaction of transactions) {
-        this.rejectTransactionAcknowledgements(
-          transaction.id,
-          new DocumentServiceError("DOCUMENT_DELETED", "Document was deleted", 410),
-        );
+      const now = new Date();
+      this.db.update(documents).set({ deletedAt: now, updatedAt: now })
+        .where(eq(documents.id, documentId)).run();
+      const trashed = this.get(documentId)!;
+      this.publish(current.roomId, documentId, null, "document.trashed", { document: trashed });
+    });
+  }
+
+  restore(documentId: string): Promise<RoomDocument> {
+    return this.queue.enqueue(() => {
+      const current = this.get(documentId);
+      if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (!current.deletedAt) return current;
+      const now = new Date();
+      this.db.update(documents).set({ deletedAt: null, updatedAt: now })
+        .where(eq(documents.id, documentId)).run();
+      const restored = this.get(documentId)!;
+      this.publish(restored.roomId, documentId, null, "document.restored", { document: restored });
+      return restored;
+    });
+  }
+
+  deletePermanently(documentId: string): Promise<void> {
+    return this.queue.enqueue(() => {
+      const current = this.get(documentId);
+      if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (!current.deletedAt) {
+        throw new DocumentServiceError("DOCUMENT_NOT_TRASHED", "Move the document to trash first", 409);
       }
       this.db.transaction((tx) => {
         tx.delete(documentTransactions).where(eq(documentTransactions.documentId, documentId)).run();
         tx.delete(documents).where(eq(documents.id, documentId)).run();
       });
       this.publish(current.roomId, documentId, null, "document.deleted", { documentId });
+    });
+  }
+
+  emptyTrash(roomId: string): Promise<void> {
+    return this.queue.enqueue(() => {
+      const trashed = this.list(roomId, true);
+      if (trashed.length === 0) return;
+      this.db.transaction((tx) => {
+        for (const document of trashed) {
+          tx.delete(documentTransactions).where(eq(documentTransactions.documentId, document.id)).run();
+          tx.delete(documents).where(eq(documents.id, document.id)).run();
+        }
+      });
+      for (const document of trashed) {
+        this.publish(roomId, document.id, null, "document.deleted", { documentId: document.id });
+      }
     });
   }
 
@@ -287,45 +317,46 @@ export class DocumentService {
     });
   }
 
-  async append(input: {
+  append(input: {
     transactionId: string;
     sessionId: string;
     sequence: number;
     text: string;
   }): Promise<{ duplicate: boolean; totalBytes: number; nextSequence: number }> {
-    const prepared = await this.queue.enqueue(() => this.prepareAppend(input));
-    if (prepared.appliedContent) return prepared.result;
-    const acknowledgement = this.waitForAcknowledgement(`${input.transactionId}:${String(input.sequence)}`);
-    this.publish(
-      prepared.transaction.roomId,
-      prepared.transaction.documentId,
-      input.transactionId,
-      "document.appended",
-      { sequence: input.sequence, text: input.text },
-    );
-    await acknowledgement;
-    return prepared.result;
+    return this.queue.enqueue(() => {
+      const prepared = this.prepareAppend(input);
+      if (!prepared.result.duplicate) {
+        this.publish(
+          prepared.transaction.roomId,
+          prepared.transaction.documentId,
+          input.transactionId,
+          "document.appended",
+          {
+            sequence: input.sequence,
+            text: input.text,
+            document: this.get(prepared.transaction.documentId)!,
+          },
+        );
+      }
+      return prepared.result;
+    });
   }
 
-  async commit(input: {
+  commit(input: {
     transactionId: string;
     sessionId: string;
     finalSequence: number;
   }): Promise<RoomDocument> {
-    const transaction = await this.queue.enqueue(() => {
+    return this.queue.enqueue(() => {
       const current = this.requireTransaction(input.transactionId, input.sessionId);
       if (input.finalSequence !== current.nextSequence - 1) {
         throw new DocumentServiceError("SEQUENCE_GAP", "Final sequence does not match received chunks");
       }
-      return current;
-    });
-    const acknowledgement = this.waitForAcknowledgement(`${input.transactionId}:commit`);
-    this.publish(transaction.roomId, transaction.documentId, transaction.id, "document.commit-requested", {
-      finalSequence: input.finalSequence,
-    });
-    const finalContent = await acknowledgement;
-    return this.queue.enqueue(() => {
-      const current = this.requireTransaction(input.transactionId, input.sessionId);
+      const finalContent = current.workingContentJson as TiptapJsonContent;
+      this.publish(current.roomId, current.documentId, current.id, "document.commit-requested", {
+        finalSequence: input.finalSequence,
+        document: this.get(current.documentId)!,
+      });
       const now = new Date();
       this.db.transaction((tx) => {
         tx.update(documentTransactions).set({
@@ -352,6 +383,22 @@ export class DocumentService {
       });
       const document = this.get(current.documentId)!;
       this.publish(current.roomId, current.documentId, current.id, "document.committed", { document });
+      const markdown = this.db.select({ markdown: documentOps.markdown })
+        .from(documentOps)
+        .where(eq(documentOps.transactionId, current.id))
+        .orderBy(asc(documentOps.sequence))
+        .all()
+        .map((operation) => operation.markdown)
+        .join("");
+      this.onDocumentCommitted?.({
+        sessionId: current.agentSessionId,
+        roomId: current.roomId,
+        runId: current.runId,
+        transactionId: current.id,
+        documentId: current.documentId,
+        title: document.title,
+        markdown,
+      });
       return document;
     });
   }
@@ -374,25 +421,15 @@ export class DocumentService {
     return this.queue.enqueue(() => {
       const transaction = this.db.select().from(documentTransactions)
         .where(eq(documentTransactions.id, transactionId)).get();
-      if (!transaction || transaction.status !== "open") {
-        throw new DocumentServiceError("TRANSACTION_NOT_FOUND", "Open transaction not found", 404);
+      if (!transaction) {
+        throw new DocumentServiceError("TRANSACTION_NOT_FOUND", "Document transaction not found", 404);
       }
-      const now = new Date();
       if (input.sequence > 0) {
         const op = this.db.select().from(documentOps).where(and(
           eq(documentOps.transactionId, transactionId),
           eq(documentOps.sequence, input.sequence),
         )).get();
         if (!op) throw new DocumentServiceError("SEQUENCE_GAP", "Document operation not found", 409);
-        this.db.update(documentOps).set({ appliedContentJson: input.contentJson }).where(eq(documentOps.id, op.id)).run();
-      }
-      this.db.update(documentTransactions).set({ workingContentJson: input.contentJson, updatedAt: now })
-        .where(eq(documentTransactions.id, transactionId)).run();
-      this.db.update(documents).set({ contentJson: input.contentJson, updatedAt: now })
-        .where(eq(documents.id, transaction.documentId)).run();
-      this.resolveAcknowledgement(`${transactionId}:${String(input.sequence)}`, input.contentJson);
-      if (input.sequence === transaction.nextSequence - 1) {
-        this.resolveAcknowledgement(`${transactionId}:commit`, input.contentJson);
       }
     });
   }
@@ -419,7 +456,6 @@ export class DocumentService {
       }
       return {
         transaction,
-        appliedContent: existing.appliedContentJson as TiptapJsonContent | null,
         result: {
           duplicate: true,
           totalBytes: transaction.totalBytes,
@@ -437,6 +473,14 @@ export class DocumentService {
     const nextSequence = input.sequence + 1;
     const totalBytes = transaction.totalBytes + bytes;
     const expiresAt = new Date(now.getTime() + TRANSACTION_TTL_MS);
+    const markdown = this.db.select({ markdown: documentOps.markdown })
+      .from(documentOps)
+      .where(eq(documentOps.transactionId, input.transactionId))
+      .orderBy(asc(documentOps.sequence))
+      .all()
+      .map((operation) => operation.markdown)
+      .join("") + input.text;
+    const content = this.parseMarkdown(markdown, input.transactionId);
     this.db.transaction((tx) => {
       tx.insert(documentOps).values({
         id: randomUUID(),
@@ -445,14 +489,22 @@ export class DocumentService {
         markdown: input.text,
         sha256: hash,
         byteLength: bytes,
+        appliedContentJson: content,
         createdAt: now,
       }).run();
-      tx.update(documentTransactions).set({ nextSequence, totalBytes, expiresAt, updatedAt: now })
+      tx.update(documentTransactions).set({
+        nextSequence,
+        totalBytes,
+        workingContentJson: content,
+        expiresAt,
+        updatedAt: now,
+      })
         .where(eq(documentTransactions.id, input.transactionId)).run();
+      tx.update(documents).set({ contentJson: content, updatedAt: now })
+        .where(eq(documents.id, transaction.documentId)).run();
     });
     return {
       transaction: { ...transaction, nextSequence, totalBytes, expiresAt },
-      appliedContent: null,
       result: { duplicate: false, totalBytes, nextSequence },
     };
   }
@@ -490,7 +542,6 @@ export class DocumentService {
   ): void {
     const now = new Date();
     this.publish(transaction.roomId, transaction.documentId, transaction.id, "document.aborted", { reason });
-    this.rejectTransactionAcknowledgements(transaction.id, new Error(`Document transaction ${status}`));
     this.db.transaction((tx) => {
       tx.update(documentTransactions).set({ status, completedAt: now, updatedAt: now })
         .where(eq(documentTransactions.id, transaction.id)).run();
@@ -498,43 +549,18 @@ export class DocumentService {
     });
   }
 
-  private waitForAcknowledgement(key: string): Promise<TiptapJsonContent> {
-    const existing = this.pending.get(key);
-    if (existing) return existing.promise;
-    let resolvePromise!: (content: TiptapJsonContent) => void;
-    let rejectPromise!: (error: Error) => void;
-    const promise = new Promise<TiptapJsonContent>((resolve, reject) => {
-      resolvePromise = resolve;
-      rejectPromise = reject;
-    });
-    const timer = setTimeout(() => {
-      this.pending.delete(key);
-      rejectPromise(new DocumentServiceError("EDITOR_TIMEOUT", "Editor did not acknowledge document content", 504));
-    }, RENDERER_ACK_TIMEOUT_MS);
-    this.pending.set(key, {
-      promise,
-      resolve: resolvePromise,
-      reject: rejectPromise,
-      timer,
-    });
-    return promise;
-  }
-
-  private resolveAcknowledgement(key: string, content: TiptapJsonContent): void {
-    const pending = this.pending.get(key);
-    if (!pending) return;
-    this.pending.delete(key);
-    clearTimeout(pending.timer);
-    pending.resolve(content);
-  }
-
-  private rejectTransactionAcknowledgements(transactionId: string, error: Error): void {
-    for (const [key, pending] of this.pending) {
-      if (!key.startsWith(`${transactionId}:`)) continue;
-      this.pending.delete(key);
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
+  private parseMarkdown(markdown: string, transactionId: string): TiptapJsonContent {
+    const parsed = this.markdown.parse(markdown) as TiptapJsonContent;
+    const content = parsed.content;
+    if (!content) return parsed;
+    return {
+      ...parsed,
+      content: content.map((node, ordinal) => (
+        STABLE_BLOCK_TYPES.has(node.type)
+          ? { ...node, attrs: { ...node.attrs, id: `${transactionId}:${String(ordinal)}` } }
+          : node
+      )),
+    } as TiptapJsonContent;
   }
 
   private recoverInterruptedTransactions(): void {

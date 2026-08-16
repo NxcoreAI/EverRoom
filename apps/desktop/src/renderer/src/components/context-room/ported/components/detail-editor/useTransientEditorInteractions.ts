@@ -1,30 +1,114 @@
 import type { Editor } from '@tiptap/react'
-import { useEffect, useRef, useState } from 'react'
+import { TextSelection } from '@tiptap/pm/state'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const SCROLLBAR_HIDE_DELAY = 700
-const SELECTION_KEYS = new Set([
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'ArrowUp',
-  'End',
-  'Home',
-  'PageDown',
-  'PageUp',
-])
+const DOCUMENT_STREAM_FOLLOW_THRESHOLD = 96
 
-export function useTransientEditorInteractions(editor: Editor | null) {
+export function isNearDocumentStreamEnd({
+  scrollTop,
+  scrollHeight,
+  clientHeight,
+}: {
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+}): boolean {
+  return scrollHeight - scrollTop - clientHeight <= DOCUMENT_STREAM_FOLLOW_THRESHOLD
+}
+
+export function nextDocumentStreamFollowState({
+  wasFollowing,
+  previousScrollTop,
+  scrollTop,
+  scrollHeight,
+  clientHeight,
+}: {
+  wasFollowing: boolean
+  previousScrollTop: number
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+}): boolean {
+  if (scrollTop < previousScrollTop) return false
+  return wasFollowing || isNearDocumentStreamEnd({ scrollTop, scrollHeight, clientHeight })
+}
+
+export function isSelectionOutsideViewport({
+  startTop,
+  startBottom,
+  endTop,
+  endBottom,
+  viewportTop,
+  viewportBottom,
+}: {
+  startTop: number
+  startBottom: number
+  endTop: number
+  endBottom: number
+  viewportTop: number
+  viewportBottom: number
+}): boolean {
+  const selectionTop = Math.min(startTop, endTop)
+  const selectionBottom = Math.max(startBottom, endBottom)
+  return selectionBottom <= viewportTop || selectionTop >= viewportBottom
+}
+
+export function useTransientEditorInteractions(
+  editor: Editor | null,
+  onSelectionCleared?: () => void,
+) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrollbarTimer = useRef<number | null>(null)
+  const followingDocumentStream = useRef(true)
+  const previousScrollTop = useRef(0)
   const [scrolling, setScrolling] = useState(false)
-  const [selecting, setSelecting] = useState(false)
+
+  const shouldFollowDocumentStream = useCallback(() => followingDocumentStream.current, [])
+  const followDocumentStream = useCallback(() => {
+    const scrollElement = scrollRef.current
+    if (!scrollElement || !followingDocumentStream.current) return
+    scrollElement.scrollTo({ top: scrollElement.scrollHeight, behavior: 'auto' })
+  }, [])
 
   useEffect(() => {
     const scrollElement = scrollRef.current
     if (!editor || !scrollElement) return
+    followingDocumentStream.current = isNearDocumentStreamEnd(scrollElement)
+    previousScrollTop.current = scrollElement.scrollTop
 
-    const stopSelecting = () => setSelecting(false)
     const handleScroll = () => {
+      const selection = editor.state.selection
+      if (selection instanceof TextSelection && !selection.empty) {
+        try {
+          const start = editor.view.coordsAtPos(selection.from)
+          const end = editor.view.coordsAtPos(selection.to)
+          const viewport = scrollElement.getBoundingClientRect()
+          if (isSelectionOutsideViewport({
+            startTop: start.top,
+            startBottom: start.bottom,
+            endTop: end.top,
+            endBottom: end.bottom,
+            viewportTop: viewport.top,
+            viewportBottom: viewport.bottom,
+          })) {
+            editor.view.dispatch(editor.state.tr.setSelection(
+              TextSelection.create(editor.state.doc, selection.from),
+            ))
+            onSelectionCleared?.()
+          }
+        } catch {
+          // The editor can be between document updates while a scroll event fires.
+        }
+      }
+      followingDocumentStream.current = nextDocumentStreamFollowState({
+        wasFollowing: followingDocumentStream.current,
+        previousScrollTop: previousScrollTop.current,
+        scrollTop: scrollElement.scrollTop,
+        scrollHeight: scrollElement.scrollHeight,
+        clientHeight: scrollElement.clientHeight,
+      })
+      previousScrollTop.current = scrollElement.scrollTop
       setScrolling(true)
       if (scrollbarTimer.current !== null) window.clearTimeout(scrollbarTimer.current)
       scrollbarTimer.current = window.setTimeout(() => {
@@ -32,38 +116,13 @@ export function useTransientEditorInteractions(editor: Editor | null) {
         setScrolling(false)
       }, SCROLLBAR_HIDE_DELAY)
     }
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (event.button === 0 && target instanceof Node && editor.view.dom.contains(target)) {
-        setSelecting(true)
-      }
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.shiftKey && SELECTION_KEYS.has(event.key)) setSelecting(true)
-    }
-    const handleKeyUp = (event: KeyboardEvent) => {
-      if (event.key === 'Shift' || SELECTION_KEYS.has(event.key)) stopSelecting()
-    }
-
     scrollElement.addEventListener('scroll', handleScroll, { passive: true })
-    scrollElement.addEventListener('pointerdown', handlePointerDown, true)
-    editor.view.dom.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('pointerup', stopSelecting, true)
-    window.addEventListener('pointercancel', stopSelecting, true)
-    window.addEventListener('keyup', handleKeyUp, true)
-    window.addEventListener('blur', stopSelecting)
 
     return () => {
       if (scrollbarTimer.current !== null) window.clearTimeout(scrollbarTimer.current)
       scrollElement.removeEventListener('scroll', handleScroll)
-      scrollElement.removeEventListener('pointerdown', handlePointerDown, true)
-      editor.view.dom.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('pointerup', stopSelecting, true)
-      window.removeEventListener('pointercancel', stopSelecting, true)
-      window.removeEventListener('keyup', handleKeyUp, true)
-      window.removeEventListener('blur', stopSelecting)
     }
-  }, [editor])
+  }, [editor, onSelectionCleared])
 
-  return { scrollRef, scrolling, selecting }
+  return { scrollRef, scrolling, shouldFollowDocumentStream, followDocumentStream }
 }

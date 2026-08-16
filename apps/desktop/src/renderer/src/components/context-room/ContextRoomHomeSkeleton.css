@@ -11,6 +11,78 @@
   display: none;
 }
 
+.context-room-all-skeleton {
+  container: context-room-all-skeleton / inline-size;
+  height: 100%;
+  overflow: hidden;
+  background: #fafafa;
+}
+
+.context-room-all-skeleton-layout {
+  width: min(calc(100% - 64px), 1280px);
+  margin: 28px auto 44px;
+}
+
+.context-room-all-skeleton-layout > header {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(220px, 300px);
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.context-room-all-skeleton-back {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #c5c9ce;
+}
+
+.context-room-all-skeleton-back svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-all-skeleton-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.context-room-all-skeleton-heading > span:nth-child(1) {
+  width: 68px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.context-room-all-skeleton-heading > span:nth-child(2) {
+  width: 112px;
+  height: 18px;
+  border-radius: 3px;
+}
+
+.context-room-all-skeleton-heading > span:nth-child(3) {
+  width: 54px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.context-room-all-skeleton-search {
+  height: 34px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.context-room-all-skeleton-grid {
+  margin-top: 18px;
+}
+
 .context-room-home-loading-layout {
   display: flex;
   width: min(calc(100% - 64px), 1280px);
@@ -212,6 +284,31 @@
 
   .context-room-skeleton-search {
     width: 100%;
+  }
+}
+
+@container context-room-all-skeleton (max-width: 860px) {
+  .context-room-all-skeleton-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container context-room-all-skeleton (max-width: 620px) {
+  .context-room-all-skeleton-layout {
+    width: calc(100% - 32px);
+    margin: 18px auto 32px;
+  }
+
+  .context-room-all-skeleton-layout > header {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .context-room-all-skeleton-search {
+    grid-column: 1 / -1;
+  }
+
+  .context-room-all-skeleton-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

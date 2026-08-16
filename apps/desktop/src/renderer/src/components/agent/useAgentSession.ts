@@ -1,10 +1,14 @@
 import type {
   AgentEvent,
   AgentMessage,
+  AgentRoomReference,
   AgentSession,
+  AgentSessionLink,
   AgentSessionSnapshot,
+  CreateAgentSessionLinkInput,
+  StartAgentRunInput,
 } from '@nxcore/agent-contract'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface DisplayAgentMessage extends AgentMessage {
   streaming?: boolean
@@ -17,6 +21,134 @@ export function mergePendingAgentMessages(
   if (pendingMessages.length === 0) return messages
   const messageIds = new Set(messages.map((message) => message.id))
   return [...messages, ...pendingMessages.filter((message) => !messageIds.has(message.id))]
+}
+
+export type DisplayAgentToolStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped'
+
+export interface DisplayAgentToolCall {
+  id: string
+  runId: string
+  name: string
+  args: Record<string, unknown>
+  partialResult?: unknown
+  result?: unknown
+  error?: string
+  status: DisplayAgentToolStatus
+  startedAt: string
+  completedAt?: string
+}
+
+export interface ReducedAgentRunEvents {
+  tools: DisplayAgentToolCall[]
+  reasoning: string
+  startedAt?: string
+  completedAt?: string
+  streamingContent: string
+  messageStarted: boolean
+  messageCompleted: boolean
+  lastSequence: number
+}
+
+const terminalToolStatuses = new Set<DisplayAgentToolStatus>(['completed', 'error', 'stopped'])
+
+export function mergeAgentToolEvent(
+  tools: DisplayAgentToolCall[],
+  event: AgentEvent,
+): DisplayAgentToolCall[] {
+  const payload = event.payload as {
+    toolCallId?: unknown
+    name?: unknown
+    args?: unknown
+    partialResult?: unknown
+    result?: unknown
+    message?: unknown
+  }
+  if (typeof payload.toolCallId !== 'string') return tools
+
+  const existing = tools.find((tool) => tool.id === payload.toolCallId)
+  if (existing && terminalToolStatuses.has(existing.status)) return tools
+
+  const status: DisplayAgentToolStatus = event.type === 'tool.completed'
+    ? 'completed'
+    : event.type === 'tool.failed'
+      ? 'error'
+      : event.type === 'tool.requested'
+        ? 'pending'
+        : 'running'
+  const args = payload.args && typeof payload.args === 'object' && !Array.isArray(payload.args)
+    ? payload.args as Record<string, unknown>
+    : existing?.args ?? {}
+  const failureMessage = typeof payload.message === 'string'
+    ? payload.message
+    : typeof payload.result === 'string' ? payload.result : '工具调用失败。'
+  const next: DisplayAgentToolCall = {
+    id: payload.toolCallId,
+    runId: event.runId,
+    name: typeof payload.name === 'string' ? payload.name : existing?.name ?? 'tool',
+    args,
+    partialResult: payload.partialResult !== undefined ? payload.partialResult : existing?.partialResult,
+    result: payload.result !== undefined ? payload.result : existing?.result,
+    error: event.type === 'tool.failed' ? failureMessage : existing?.error,
+    status,
+    startedAt: existing?.startedAt ?? event.occurredAt,
+    completedAt: terminalToolStatuses.has(status) ? event.occurredAt : existing?.completedAt,
+  }
+
+  return existing
+    ? tools.map((tool) => tool.id === next.id ? next : tool)
+    : [...tools, next]
+}
+
+export function reduceAgentRunEvents(events: AgentEvent[]): ReducedAgentRunEvents {
+  const reduced: ReducedAgentRunEvents = {
+    tools: [],
+    reasoning: '',
+    streamingContent: '',
+    messageStarted: false,
+    messageCompleted: false,
+    lastSequence: 0,
+  }
+  for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
+    reduced.lastSequence = Math.max(reduced.lastSequence, event.seq)
+    if (event.type === 'run.accepted' && !reduced.startedAt) reduced.startedAt = event.occurredAt
+    if (event.type === 'run.started') reduced.startedAt = event.occurredAt
+    if (
+      event.type === 'run.completed' ||
+      event.type === 'run.cancelled' ||
+      event.type === 'run.failed' ||
+      event.type === 'run.interrupted'
+    ) {
+      reduced.completedAt = event.occurredAt
+      if (event.type !== 'run.completed') {
+        const terminalStatus: DisplayAgentToolStatus = event.type === 'run.failed' ? 'error' : 'stopped'
+        reduced.tools = reduced.tools.map((tool) => tool.status === 'pending' || tool.status === 'running'
+          ? { ...tool, status: terminalStatus, completedAt: event.occurredAt }
+          : tool)
+      }
+    }
+    if (
+      event.type === 'tool.requested' ||
+      event.type === 'tool.started' ||
+      event.type === 'tool.updated' ||
+      event.type === 'tool.completed' ||
+      event.type === 'tool.failed'
+    ) reduced.tools = mergeAgentToolEvent(reduced.tools, event)
+    if (event.type === 'reasoning.delta') {
+      const delta = (event.payload as { delta?: unknown }).delta
+      if (typeof delta === 'string') reduced.reasoning += delta
+    }
+    if (event.type === 'message.started') reduced.messageStarted = true
+    if (event.type === 'message.delta') {
+      const delta = (event.payload as { delta?: unknown }).delta
+      if (typeof delta === 'string') reduced.streamingContent += delta
+    }
+    if (event.type === 'message.completed') {
+      const content = (event.payload as { content?: unknown }).content
+      if (typeof content === 'string') reduced.streamingContent = content
+      reduced.messageCompleted = true
+    }
+  }
+  return reduced
 }
 
 const SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
@@ -51,13 +183,41 @@ function storeSession(pageLabel: string, roomId: string | null, sessionId: strin
   }
 }
 
-export function useAgentSession(pageLabel: string, roomId: string | null) {
+function requestErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
+export function buildAgentRunContext(
+  rooms: AgentRoomReference[],
+  selectedText?: string,
+  selectedRoomId?: string,
+): NonNullable<StartAgentRunInput['context']> {
+  return {
+    rooms: rooms.map(({ id, title, kind }) => ({
+      id,
+      title,
+      ...(kind ? { kind } : {}),
+    })),
+    ...(selectedText?.trim() ? { selectedText: selectedText.trim().slice(0, 8_000) } : {}),
+    ...(selectedRoomId?.trim() ? { selectedRoomId: selectedRoomId.trim() } : {}),
+  }
+}
+
+export function useAgentSession(
+  pageLabel: string,
+  roomId: string | null,
+  rooms: AgentRoomReference[],
+) {
   const api = window.nxcore?.agent
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [currentSession, setCurrentSession] = useState<AgentSession | null>(null)
+  const [sessionLinks, setSessionLinks] = useState<AgentSessionLink[]>([])
   const [messages, setMessages] = useState<DisplayAgentMessage[]>([])
-  const [reasoning, setReasoning] = useState('')
+  const [toolCallsByRun, setToolCallsByRun] = useState<Record<string, DisplayAgentToolCall[]>>({})
+  const [runStartedAtByRun, setRunStartedAtByRun] = useState<Record<string, string>>({})
+  const [runCompletedAtByRun, setRunCompletedAtByRun] = useState<Record<string, string>>({})
+  const [reasoningByRun, setReasoningByRun] = useState<Record<string, string>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
@@ -65,6 +225,15 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
   const [error, setError] = useState<string | null>(null)
   const sequenceByRun = useRef(new Map<string, number>())
   const sessionIdRef = useRef<string | null>(null)
+  const activeScopeRef = useRef(sessionScope(pageLabel, roomId))
+
+  const updateToolCall = useCallback((event: AgentEvent) => {
+    setToolCallsByRun((current) => {
+      const tools = current[event.runId] ?? []
+      const next = mergeAgentToolEvent(tools, event)
+      return next === tools ? current : { ...current, [event.runId]: next }
+    })
+  }, [])
 
   const applyEvent = useCallback((event: AgentEvent) => {
     const lastSequence = sequenceByRun.current.get(event.runId) ?? 0
@@ -73,6 +242,9 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
 
     if (event.type === 'run.accepted' || event.type === 'run.started') {
       setActiveRunId(event.runId)
+      setRunStartedAtByRun((current) => current[event.runId]
+        ? current
+        : { ...current, [event.runId]: event.occurredAt })
       setSessions((current) => current.map((session) => session.id === event.sessionId
         ? { ...session, status: 'running' }
         : session))
@@ -81,9 +253,22 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
         : current)
       return
     }
+    if (
+      event.type === 'tool.requested' ||
+      event.type === 'tool.started' ||
+      event.type === 'tool.updated' ||
+      event.type === 'tool.completed' ||
+      event.type === 'tool.failed'
+    ) {
+      updateToolCall(event)
+      return
+    }
     if (event.type === 'reasoning.delta') {
       const delta = (event.payload as { delta?: unknown }).delta
-      if (typeof delta === 'string') setReasoning((current) => current + delta)
+      if (typeof delta === 'string') setReasoningByRun((current) => ({
+        ...current,
+        [event.runId]: (current[event.runId] ?? '') + delta,
+      }))
       return
     }
     if (event.type === 'message.started') {
@@ -125,9 +310,24 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
     }
     if (event.type === 'message.completed') {
       const content = (event.payload as { content?: unknown }).content
-      setMessages((current) => current.map((message) => message.id === `stream-${event.runId}`
-        ? { ...message, content: typeof content === 'string' ? content : message.content, streaming: false }
-        : message))
+      setMessages((current) => {
+        const streamId = `stream-${event.runId}`
+        const existing = current.find((message) => message.id === streamId)
+        if (!existing && typeof content === 'string') {
+          return [...current, {
+            id: streamId,
+            sessionId: event.sessionId,
+            runId: event.runId,
+            role: 'assistant',
+            content,
+            createdAt: event.occurredAt,
+            streaming: false,
+          }]
+        }
+        return current.map((message) => message.id === streamId
+          ? { ...message, content: typeof content === 'string' ? content : message.content, streaming: false }
+          : message)
+      })
       return
     }
     if (
@@ -137,6 +337,21 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       event.type === 'run.interrupted'
     ) {
       setActiveRunId((current) => current === event.runId ? null : current)
+      setMessages((current) => current.map((message) => message.runId === event.runId && message.streaming
+        ? { ...message, streaming: false }
+        : message))
+      setRunCompletedAtByRun((current) => ({ ...current, [event.runId]: event.occurredAt }))
+      setToolCallsByRun((current) => {
+        const tools = current[event.runId]
+        if (!tools || event.type === 'run.completed') return current
+        const status: DisplayAgentToolStatus = event.type === 'run.failed' ? 'error' : 'stopped'
+        return {
+          ...current,
+          [event.runId]: tools.map((tool) => tool.status === 'pending' || tool.status === 'running'
+            ? { ...tool, status, completedAt: event.occurredAt }
+            : tool),
+        }
+      })
       const status = event.type === 'run.interrupted' ? 'interrupted' : 'idle'
       setSessions((current) => current.map((session) => session.id === event.sessionId
         ? { ...session, status, updatedAt: event.occurredAt }
@@ -149,15 +364,69 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
         setError(typeof message === 'string' ? message : 'Agent 运行失败。')
       }
     }
-  }, [])
+  }, [updateToolCall])
 
   const hydrateSnapshot = useCallback(async (
     snapshot: AgentSessionSnapshot,
     pendingMessages: DisplayAgentMessage[] = [],
+    expectedScope = activeScopeRef.current,
   ) => {
+    if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
     sequenceByRun.current.clear()
-    setReasoning('')
-    setMessages(mergePendingAgentMessages(snapshot.messages, pendingMessages))
+    const runIds = [...new Set([
+      ...snapshot.messages.map((message) => message.runId),
+      ...(snapshot.activeRun ? [snapshot.activeRun.id] : []),
+    ].filter((runId) => runId && runId !== 'pending'))]
+    const eventGroups = api
+      ? await Promise.all(runIds.map(async (runId) => ({
+        runId,
+        events: await api.getEvents(snapshot.session.id, runId, 0),
+      })))
+      : []
+    const nextSessionLinks = api ? await api.listSessionLinks(snapshot.session.id) : []
+    const nextTools: Record<string, DisplayAgentToolCall[]> = {}
+    const nextReasoning: Record<string, string> = {}
+    const nextStartedAt: Record<string, string> = {}
+    const nextCompletedAt: Record<string, string> = {}
+    const reducedByRun = new Map<string, ReducedAgentRunEvents>()
+    for (const group of eventGroups) {
+      const reduced = reduceAgentRunEvents(group.events)
+      reducedByRun.set(group.runId, reduced)
+      sequenceByRun.current.set(group.runId, reduced.lastSequence)
+      if (reduced.tools.length) nextTools[group.runId] = reduced.tools
+      if (reduced.reasoning) nextReasoning[group.runId] = reduced.reasoning
+      if (reduced.startedAt) nextStartedAt[group.runId] = reduced.startedAt
+      if (reduced.completedAt) nextCompletedAt[group.runId] = reduced.completedAt
+    }
+    if (snapshot.activeRun?.startedAt) nextStartedAt[snapshot.activeRun.id] = snapshot.activeRun.startedAt
+
+    if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
+
+    const nextMessages = mergePendingAgentMessages(snapshot.messages, pendingMessages)
+    if (snapshot.activeRun) {
+      const reduced = reducedByRun.get(snapshot.activeRun.id)
+      const hasAssistant = nextMessages.some((message) => (
+        message.runId === snapshot.activeRun?.id && message.role === 'assistant'
+      ))
+      if (!hasAssistant && reduced && (reduced.messageStarted || reduced.streamingContent)) {
+        nextMessages.push({
+          id: `stream-${snapshot.activeRun.id}`,
+          sessionId: snapshot.session.id,
+          runId: snapshot.activeRun.id,
+          role: 'assistant',
+          content: reduced.streamingContent,
+          createdAt: reduced.startedAt ?? snapshot.activeRun.createdAt,
+          streaming: !reduced.messageCompleted,
+        })
+      }
+    }
+
+    setMessages(nextMessages)
+    setSessionLinks(nextSessionLinks)
+    setToolCallsByRun(nextTools)
+    setReasoningByRun(nextReasoning)
+    setRunStartedAtByRun(nextStartedAt)
+    setRunCompletedAtByRun(nextCompletedAt)
     setActiveRunId(snapshot.activeRun?.id ?? null)
     setSessionId(snapshot.session.id)
     setCurrentSession(snapshot.session)
@@ -165,40 +434,48 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       ? current.map((session) => session.id === snapshot.session.id ? snapshot.session : session)
       : [snapshot.session, ...current])
     sessionIdRef.current = snapshot.session.id
-    if (snapshot.activeRun && api) {
-      const events = await api.getEvents(snapshot.session.id, snapshot.activeRun.id, 0)
-      for (const event of events) applyEvent(event)
-    }
-  }, [api, applyEvent])
+    return true
+  }, [api])
 
   const selectSession = useCallback(async (
     session: AgentSession,
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<void> => {
     if (!api) return
+    const expectedScope = sessionScope(pageLabel, roomId)
     setLoading(true)
     setConnected(false)
     setError(null)
+    setSessionId(session.id)
+    sessionIdRef.current = session.id
     try {
       await api.unsubscribe()
       const snapshot = await api.getSession(session.id)
-      await hydrateSnapshot(snapshot, pendingMessages)
+      const hydrated = await hydrateSnapshot(snapshot, pendingMessages, expectedScope)
+      if (!hydrated || expectedScope !== activeScopeRef.current) return
       storeSession(pageLabel, roomId, session.id)
       await api.subscribe(session.id)
-    } catch {
+    } catch (requestError) {
+      if (expectedScope === activeScopeRef.current) {
+        setError(requestErrorMessage(requestError, '切换会话失败。'))
+      }
     } finally {
-      setLoading(false)
+      if (expectedScope === activeScopeRef.current) setLoading(false)
     }
   }, [api, hydrateSnapshot, pageLabel, roomId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let alive = true
+    activeScopeRef.current = sessionScope(pageLabel, roomId)
     setMessages([])
-    setReasoning('')
+    setToolCallsByRun({})
+    setRunStartedAtByRun({})
+    setRunCompletedAtByRun({})
+    setReasoningByRun({})
     setActiveRunId(null)
     setSessionId(null)
     setSessions([])
-    setCurrentSession(null)
+    setSessionLinks([])
     sessionIdRef.current = null
     sequenceByRun.current.clear()
     setConnected(false)
@@ -214,8 +491,11 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
           const selected = listedSessions.find((session) => session.id === storedSessionId)
             ?? listedSessions[0]
           if (selected) await selectSession(selected)
+          else if (alive) setCurrentSession(null)
         })
-        .catch(() => undefined)
+        .catch((requestError) => {
+          if (alive) setError(requestError instanceof Error ? requestError.message : '会话加载失败。')
+        })
         .finally(() => {
           if (alive) setLoading(false)
         })
@@ -227,7 +507,9 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       if (frame.type === 'ready') {
         setConnected(true)
         if (frame.lastEventSeq > 0) {
-          void api.getSession(frame.sessionId).then(hydrateSnapshot).catch(() => undefined)
+          void api.getSession(frame.sessionId).then(hydrateSnapshot).catch((requestError) => {
+            setError(requestError instanceof Error ? requestError.message : '会话恢复失败。')
+          })
         }
       } else {
         applyEvent(frame.event)
@@ -252,6 +534,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       await selectSession(session, pendingMessages)
       return session
     } catch (createError) {
+      setError(requestErrorMessage(createError, '新建会话失败。'))
       throw createError
     }
   }
@@ -267,7 +550,9 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       const updated = await api.updateSession(sessionIdToRename, { title: title.trim() })
       setSessions((current) => current.map((session) => session.id === updated.id ? updated : session))
       setCurrentSession((current) => current?.id === updated.id ? updated : current)
-    } catch {
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, '重命名会话失败。'))
+      throw requestError
     }
   }
 
@@ -285,19 +570,66 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
           sessionIdRef.current = null
           setSessionId(null)
           setCurrentSession(null)
+          setSessionLinks([])
           setMessages([])
-          setReasoning('')
+          setToolCallsByRun({})
+          setReasoningByRun({})
+          setRunStartedAtByRun({})
+          setRunCompletedAtByRun({})
           setConnected(false)
           storeSession(pageLabel, roomId, null)
         }
       }
-    } catch {
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, '删除会话失败。'))
+      throw requestError
     }
   }
 
-  const sendPrompt = async (prompt: string): Promise<void> => {
+  const selectSessionById = async (sessionIdToSelect: string): Promise<void> => {
+    if (!api || sessionIdToSelect === sessionIdRef.current) return
+    const listed = sessions.find((session) => session.id === sessionIdToSelect)
+    if (listed) {
+      await selectSession(listed)
+      return
+    }
+    const snapshot = await api.getSession(sessionIdToSelect)
+    await selectSession(snapshot.session)
+  }
+
+  const createSessionLink = async (input: CreateAgentSessionLinkInput): Promise<AgentSessionLink> => {
+    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
+    try {
+      const link = await api.createSessionLink(input)
+      if (link.sourceSessionId === sessionIdRef.current || link.targetSessionId === sessionIdRef.current) {
+        setSessionLinks((current) => current.some((item) => item.id === link.id) ? current : [...current, link])
+      }
+      return link
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, '创建会话引用失败。'))
+      throw requestError
+    }
+  }
+
+  const markSessionLinkReturned = async (linkId: string): Promise<AgentSessionLink> => {
+    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
+    try {
+      const link = await api.markSessionLinkReturned(linkId)
+      setSessionLinks((current) => current.map((item) => item.id === link.id ? link : item))
+      return link
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, '返回原会话失败。'))
+      throw requestError
+    }
+  }
+
+  const sendPrompt = async (
+    prompt: string,
+    selectedText?: string,
+    selectedRoomId?: string,
+  ): Promise<string | null> => {
     const message = prompt.trim()
-    if (!message || activeRunId || loading || sending) return
+    if (!message || activeRunId || loading || sending) return null
     const optimisticId = `user-${crypto.randomUUID()}`
     const optimisticMessage: DisplayAgentMessage = {
       id: optimisticId,
@@ -311,7 +643,6 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
     setMessages((current) => mergePendingAgentMessages(current, [optimisticMessage]))
     setSending(true)
     setError(null)
-    setReasoning('')
     try {
       const currentSessionId = await ensureSession([optimisticMessage])
       setMessages((current) => current.map((item) => item.id === optimisticId
@@ -320,6 +651,7 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId),
       })
       const updatedAt = new Date().toISOString()
       setSessions((current) => current.map((session) => session.id === currentSessionId
@@ -329,10 +661,17 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
         ? { ...current, title: current.title ?? message.slice(0, 48), status: 'running', updatedAt }
         : current)
       setActiveRunId(run.id)
+      setReasoningByRun((current) => ({ ...current, [run.id]: '' }))
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, runId: run.id }
         : item))
-    } catch {
+      return run.id
+    } catch (requestError) {
+      if (optimisticId) {
+        setMessages((current) => current.filter((message) => message.id !== optimisticId))
+      }
+      setError(requestErrorMessage(requestError, '发送消息失败。'))
+      throw requestError
     } finally {
       setSending(false)
     }
@@ -342,7 +681,8 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
     if (!api || !activeRunId) return
     try {
       await api.cancelRun(activeRunId)
-    } catch {
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, '停止 Agent 失败。'))
     }
   }
 
@@ -350,17 +690,24 @@ export function useAgentSession(pageLabel: string, roomId: string | null) {
     activeRunId,
     connected,
     createSession,
+    createSessionLink,
     currentSession,
     deleteSession,
     error,
     loading: loading || sending,
     messages,
-    reasoning,
+    reasoningByRun,
+    runCompletedAtByRun,
+    runStartedAtByRun,
     renameSession,
+    markSessionLinkReturned,
     selectSession,
+    selectSessionById,
     sendPrompt,
     sessionId,
+    sessionLinks,
     sessions,
     stop,
+    toolCallsByRun,
   }
 }

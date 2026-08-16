@@ -24,7 +24,7 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
-    remoteAgent: null,
+    memory: null,
     pi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
@@ -219,6 +219,46 @@ describe("agent gateway", () => {
     expect(events.some((event) => event.type === "message.delta")).toBe(true);
     expect(events.at(-1)?.type).toBe("run.completed");
     expect(events.map((event) => event.seq)).toEqual(events.map((_event, index) => index + 1));
+    await app.close();
+  });
+
+  it("rejects a stale Room selection before creating an Agent run", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "首页", roomId: null },
+    })).json<AgentSession>();
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: {
+        prompt: "在已删除的 Room 中创建文档",
+        idempotencyKey: "stale-room-selection-key",
+        context: {
+          rooms: [{ id: "room-current", title: "当前 Room" }],
+          selectedRoomId: "room-deleted",
+        },
+      },
+    });
+    const snapshot = (await app.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${session.id}`,
+      headers,
+    })).json<AgentSessionSnapshot>();
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: "room_not_available",
+      message: "The selected Context Room is no longer available",
+    });
+    expect(snapshot.messages).toEqual([]);
+    expect(snapshot.activeRun).toBeNull();
     await app.close();
   });
 

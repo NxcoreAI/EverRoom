@@ -44,7 +44,7 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
-    remoteAgent: null,
+    memory: null,
     pi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,

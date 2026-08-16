@@ -1,21 +1,101 @@
-import type { TiptapJsonContent } from '@nxcore/agent-contract'
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 
-const STREAM_CHARACTERS_PER_FRAME = 24
-const STREAM_FRAME_DELAY_MIN_MS = 12
-const STREAM_FRAME_DELAY_JITTER_MS = 9
-const STREAM_NEWLINE_PAUSE_MS = 8
-const STREAM_BLOCK_DELAY_MAX_MS = 180
+const STREAM_CHARACTERS_PER_FRAME = 2
+const STREAM_MAX_FRAMES_PER_APPEND = 800
+const STREAM_FRAME_DELAY_MIN_MS = 38
+const STREAM_FRAME_DELAY_JITTER_MS = 17
+const STREAM_CLAUSE_PAUSE_MS = 30
+const STREAM_SENTENCE_PAUSE_MS = 75
+const STREAM_NEWLINE_PAUSE_MS = 105
+
+function textCharacters(text: string): string[] {
+  return Array.from(text)
+}
+
+export function tiptapTextContent(node: TiptapJsonContent): string {
+  if (typeof node.text === 'string') return node.text
+  return node.content?.map(tiptapTextContent).join('') ?? ''
+}
+
+export function countTiptapTextCharacters(node: TiptapJsonContent): number {
+  return textCharacters(tiptapTextContent(node)).length
+}
+
+export function hasVisibleTiptapContent(node: TiptapJsonContent): boolean {
+  if (typeof node.text === 'string' && node.text.trim().length > 0) return true
+  if (node.type === 'horizontalRule' || node.type === 'image') return true
+  return node.content?.some(hasVisibleTiptapContent) ?? false
+}
+
+export function isAgentDocumentAwaitingContent(
+  document: Pick<RoomDocument, 'activeTransactionId' | 'contentJson' | 'status'> | null,
+): boolean {
+  return Boolean(
+    document?.status === 'draft'
+    && document.activeTransactionId
+    && !hasVisibleTiptapContent(document.contentJson),
+  )
+}
+
+export function isEmptyTiptapParagraph(node: TiptapJsonContent | undefined): boolean {
+  return node?.type === 'paragraph' && (node.content?.length ?? 0) === 0
+}
+
+function cloneTiptapNode(node: TiptapJsonContent): TiptapJsonContent {
+  return {
+    ...node,
+    ...(node.attrs ? { attrs: { ...node.attrs } } : {}),
+    ...(node.marks ? {
+      marks: node.marks.map((mark) => ({
+        ...mark,
+        ...(mark.attrs ? { attrs: { ...mark.attrs } } : {}),
+      })),
+    } : {}),
+    ...(node.content ? { content: node.content.map(cloneTiptapNode) } : {}),
+  }
+}
+
+export function revealTiptapNode(
+  node: TiptapJsonContent,
+  characterLimit: number,
+): TiptapJsonContent {
+  const totalCharacters = countTiptapTextCharacters(node)
+  const safeLimit = Math.max(0, Math.floor(characterLimit))
+  if (totalCharacters === 0 || safeLimit >= totalCharacters) return cloneTiptapNode(node)
+
+  if (typeof node.text === 'string') {
+    return { ...cloneTiptapNode(node), text: textCharacters(node.text).slice(0, safeLimit).join('') }
+  }
+
+  let remaining = safeLimit
+  const content: TiptapJsonContent[] = []
+  for (const child of node.content ?? []) {
+    if (remaining <= 0) break
+    const childCharacters = countTiptapTextCharacters(child)
+    content.push(revealTiptapNode(child, remaining))
+    remaining -= Math.min(remaining, childCharacters)
+  }
+  return { ...cloneTiptapNode(node), content }
+}
+
+export function documentStreamCharactersPerFrame(totalCharacters: number): number {
+  return Math.max(
+    STREAM_CHARACTERS_PER_FRAME,
+    Math.ceil(Math.max(0, totalCharacters) / STREAM_MAX_FRAMES_PER_APPEND),
+  )
+}
 
 export function documentStreamRevealDelay(
-  markdown: string,
+  revealedText: string,
   random: () => number = Math.random,
 ): number {
-  const frameCount = Math.max(1, Math.ceil(markdown.length / STREAM_CHARACTERS_PER_FRAME))
   const randomValue = Math.max(0, Math.min(0.999999, random()))
   const frameDelay = STREAM_FRAME_DELAY_MIN_MS
     + Math.floor(randomValue * STREAM_FRAME_DELAY_JITTER_MS)
-  const structuralPause = markdown.endsWith('\n') ? STREAM_NEWLINE_PAUSE_MS : 0
-  return Math.min(STREAM_BLOCK_DELAY_MAX_MS, frameCount * frameDelay + structuralPause)
+  if (/\n$/.test(revealedText)) return frameDelay + STREAM_NEWLINE_PAUSE_MS
+  if (/[。！？.!?]$/.test(revealedText)) return frameDelay + STREAM_SENTENCE_PAUSE_MS
+  if (/[，、；：,;:]$/.test(revealedText)) return frameDelay + STREAM_CLAUSE_PAUSE_MS
+  return frameDelay
 }
 
 function isFence(line: string): string | null {
@@ -104,6 +184,18 @@ export class AppliedSequenceTracker {
     this.sequences.add(sequence)
     return true
   }
+}
+
+export function eventsAfterLastDocumentTerminal<T extends { type: string }>(events: T[]): T[] {
+  let terminalIndex = -1
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const type = events[index]?.type
+    if (type === 'document.committed' || type === 'document.aborted') {
+      terminalIndex = index
+      break
+    }
+  }
+  return terminalIndex >= 0 ? events.slice(terminalIndex) : events
 }
 
 export function assignStableBlockIds(

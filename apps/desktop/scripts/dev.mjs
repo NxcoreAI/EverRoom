@@ -24,7 +24,7 @@ function prepareMacElectron() {
   const brandedApp = join(cacheDirectory, 'EverRoom.app')
   const markerPath = join(cacheDirectory, 'build.json')
   const marker = JSON.stringify({
-    brandingVersion: 4,
+    brandingVersion: 5,
     electronExecutable,
     electronPlistModifiedAt: statSync(sourcePlist).mtimeMs,
     iconModifiedAt: statSync(iconPath).mtimeMs,

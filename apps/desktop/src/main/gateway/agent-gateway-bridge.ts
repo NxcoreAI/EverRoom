@@ -2,9 +2,11 @@ import type {
   AgentEvent,
   AgentRun,
   AgentSession,
+  AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
   CreateAgentSessionInput,
+  CreateAgentSessionLinkInput,
   StartAgentRunInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
@@ -32,6 +34,18 @@ export class AgentGatewayBridge {
 
   createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
     return this.request('/v1/agent/sessions', { method: 'POST', data: input })
+  }
+
+  createSessionLink(input: CreateAgentSessionLinkInput): Promise<AgentSessionLink> {
+    return this.request('/v1/agent/session-links', { method: 'POST', data: input })
+  }
+
+  listSessionLinks(sessionId: string): Promise<AgentSessionLink[]> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/links`)
+  }
+
+  markSessionLinkReturned(linkId: string): Promise<AgentSessionLink> {
+    return this.request(`/v1/agent/session-links/${encodeURIComponent(linkId)}/return`, { method: 'POST' })
   }
 
   listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]> {
@@ -126,12 +140,13 @@ export class AgentGatewayBridge {
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
+    const hasBody = config.data !== undefined && config.data !== null
     const response = await http.request<T & { message?: unknown }>({
       url: `${connection.baseUrl}${path}`,
       ...config,
       headers: {
         Authorization: `Bearer ${connection.token}`,
-        'Content-Type': 'application/json',
+        'Content-Type': hasBody ? 'application/json' : false,
         ...config.headers,
       },
       validateStatus: () => true,

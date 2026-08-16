@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { AgentSessionLink } from '@nxcore/agent-contract'
 
 import { AgentPanel } from '@/components/AgentPanel'
+import {
+  resolveAgentSessionLinkRoute,
+  type AgentNavigationRequest,
+  type AgentSessionRouteRequest,
+} from '@/components/agent/agentNavigation'
 import { AppErrorDialog } from '@/components/AppErrorDialog'
 import { AppToast } from '@/components/AppToast'
 import { PageCanvas } from '@/components/PageCanvas'
@@ -8,6 +14,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
 import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
+import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
@@ -43,6 +50,7 @@ function readInitialPage(): PageId {
 }
 
 export function App() {
+  const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
   const [activePage, setActivePage] = useState<PageId>(readInitialPage)
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
@@ -50,14 +58,21 @@ export function App() {
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
   const [agentOpen, setAgentOpen] = useState(() => readInitialPage() !== 'connector-debug')
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
+  const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
+  const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
+  const [agentDocumentFocus, setAgentDocumentFocus] = useState<{ roomId: string; documentId: string } | null>(null)
+  const agentNavigationTimerRef = useRef<number | null>(null)
   const [navCollapsed, setNavCollapsed] = useState(() => window.matchMedia('(max-width: 1200px)').matches)
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
-  const [theme, setTheme] = useState<ThemeId>(readStoredTheme)
+  const [theme] = useState<ThemeId>(readStoredTheme)
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
   const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
+  const availableContextRooms = useMemo(() => (
+    contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
+  ), [contextRoomState.rooms])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -67,6 +82,10 @@ export function App() {
       // Theme persistence is optional when storage is unavailable.
     }
   }, [theme])
+
+  useEffect(() => () => {
+    if (agentNavigationTimerRef.current !== null) window.clearTimeout(agentNavigationTimerRef.current)
+  }, [])
 
   useEffect(() => {
     const compactWindow = window.matchMedia('(max-width: 1200px)')
@@ -79,6 +98,10 @@ export function App() {
   }, [])
 
   const navigate = (page: PageId) => {
+    if (agentNavigationTimerRef.current !== null) {
+      window.clearTimeout(agentNavigationTimerRef.current)
+      agentNavigationTimerRef.current = null
+    }
     if (page === 'rooms' && activePage === 'rooms' && contextRoomDetailFocused) {
       setContextRoomHomeRequest((request) => request + 1)
     }
@@ -150,6 +173,56 @@ export function App() {
     setAgentFocusRequest((request) => request + 1)
   }
 
+  const navigateFromAgent = (request: AgentNavigationRequest) => {
+    setAgentNavigationRequest(request)
+    setAgentSessionRouteRequest(null)
+    setAgentOpen(true)
+    if (agentNavigationTimerRef.current !== null) window.clearTimeout(agentNavigationTimerRef.current)
+    const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180
+    agentNavigationTimerRef.current = window.setTimeout(() => {
+      agentNavigationTimerRef.current = null
+      const { target } = request
+      if (target.pageId === 'rooms' && target.roomId) {
+        const room = availableContextRooms.find((item) => item.id === target.roomId)
+        if (room) openContextRoomTab(room)
+        else {
+          setActivePage('rooms')
+          setActiveContextRoomId(target.roomId)
+        }
+        setAgentDocumentFocus(target.objectType === 'document' && target.objectId
+          ? { roomId: target.roomId, documentId: target.objectId }
+          : null)
+        return
+      }
+      setAgentDocumentFocus(null)
+      navigate(target.pageId)
+    }, delay)
+  }
+
+  const openAgentSessionLink = (link: AgentSessionLink, destination: 'source' | 'target') => {
+    const route = resolveAgentSessionLinkRoute(link, destination)
+    if (!route) return
+    if (agentNavigationTimerRef.current !== null) {
+      window.clearTimeout(agentNavigationTimerRef.current)
+      agentNavigationTimerRef.current = null
+    }
+    setAgentNavigationRequest(null)
+    setAgentSessionRouteRequest(route)
+    setAgentDocumentFocus(route.pageId === 'rooms' && route.roomId && route.documentId
+      ? { roomId: route.roomId, documentId: route.documentId }
+      : null)
+    if (route.pageId === 'rooms' && route.roomId) {
+      const room = availableContextRooms.find((item) => item.id === route.roomId)
+      if (room) openContextRoomTab(room)
+      else {
+        setActivePage('rooms')
+        setActiveContextRoomId(route.roomId)
+      }
+      return
+    }
+    navigate(route.pageId)
+  }
+
   return (
     <div
       className="app-shell"
@@ -163,7 +236,6 @@ export function App() {
         activeContextRoomId={activePage === 'rooms' ? activeContextRoomId : null}
         agentOpen={agentOpen}
         navCollapsed={effectiveNavCollapsed}
-        theme={theme}
         onActivateWorkbench={() => {
           if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
         }}
@@ -187,13 +259,13 @@ export function App() {
             return next
           })
         }}
-        onThemeChange={setTheme}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
       <main className="workspace-main">
         <PageCanvas
           page={activePage}
           activeContextRoomId={activeContextRoomId}
+          agentDocumentFocus={agentDocumentFocus}
           contextRoomHomeRequest={contextRoomHomeRequest}
           onContextRoomDetailFocusChange={handleContextRoomDetailFocusChange}
           onContextRoomOpenTab={openContextRoomTab}
@@ -209,8 +281,17 @@ export function App() {
       </main>
       {agentOpen ? (
         <AgentPanel
+          pageId={activePage}
           pageLabel={pageLabels[activePage]}
           roomId={activePage === 'rooms' ? activeContextRoomId : null}
+          rooms={availableContextRooms}
+          roomBackendReady={contextRoomBackendReady}
+          navigationRequest={agentNavigationRequest}
+          sessionRouteRequest={agentSessionRouteRequest}
+          onNavigate={navigateFromAgent}
+          onNavigationConsumed={(key) => setAgentNavigationRequest((current) => current?.key === key ? null : current)}
+          onOpenSessionLink={openAgentSessionLink}
+          onSessionRouteConsumed={(key) => setAgentSessionRouteRequest((current) => current?.key === key ? null : current)}
           focusRequest={agentFocusRequest}
         />
       ) : null}

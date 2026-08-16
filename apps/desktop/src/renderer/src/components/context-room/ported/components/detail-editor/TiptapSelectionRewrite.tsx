@@ -5,38 +5,45 @@ import { Check, LoaderCircle, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { streamSelectionRewrite } from './selectionRewriteAgent'
+import type { SelectionRewriteFormatContext } from './selectionRewriteAgent'
 
 interface RewriteAnchor {
   from: number
   to: number
 }
 
+interface RewriteDecoration extends RewriteAnchor {
+  variant: 'prompt' | 'original'
+}
+
 interface RewritePreviewState extends RewriteAnchor {
   originalText: string
   replacementText: string
   instruction: string
+  formatContext: SelectionRewriteFormatContext
   phase: 'requesting' | 'ready' | 'error'
   error: string | null
   left: number
   top: number
 }
 
-const rewriteDecorationKey = new PluginKey<RewriteAnchor | null>('selectionRewritePreview')
+const rewriteDecorationKey = new PluginKey<RewriteDecoration | null>('selectionRewritePreview')
 
 export const SelectionRewritePreviewExtension = Extension.create({
   name: 'selectionRewritePreview',
   addProseMirrorPlugins() {
-    return [new Plugin<RewriteAnchor | null>({
+    return [new Plugin<RewriteDecoration | null>({
       key: rewriteDecorationKey,
       state: {
         init: () => null,
         apply(transaction, current) {
-          const next = transaction.getMeta(rewriteDecorationKey) as RewriteAnchor | null | undefined
+          const next = transaction.getMeta(rewriteDecorationKey) as RewriteDecoration | null | undefined
           if (next !== undefined) return next
           if (!current) return null
           return {
             from: transaction.mapping.map(current.from, 1),
             to: transaction.mapping.map(current.to, -1),
+            variant: current.variant,
           }
         },
       },
@@ -46,8 +53,10 @@ export const SelectionRewritePreviewExtension = Extension.create({
           if (!anchor || anchor.from >= anchor.to || anchor.to > state.doc.content.size) return null
           return DecorationSet.create(state.doc, [
             Decoration.inline(anchor.from, anchor.to, {
-              class: 'context-room-tiptap-rewrite-original',
-              'data-selection-rewrite': 'original',
+              class: anchor.variant === 'prompt'
+                ? 'context-room-tiptap-rewrite-prompt'
+                : 'context-room-tiptap-rewrite-original',
+              'data-selection-rewrite': anchor.variant,
             }),
           ])
         },
@@ -56,9 +65,28 @@ export const SelectionRewritePreviewExtension = Extension.create({
   },
 })
 
-function setRewriteDecoration(editor: Editor, anchor: RewriteAnchor | null): void {
+function setRewriteDecoration(editor: Editor, anchor: RewriteDecoration | null): void {
   if (editor.isDestroyed) return
   editor.view.dispatch(editor.state.tr.setMeta(rewriteDecorationKey, anchor))
+}
+
+export function showSelectionRewritePromptDecoration(editor: Editor): boolean {
+  if (editor.isDestroyed) return false
+  const { selection } = editor.state
+  if (!(selection instanceof TextSelection) || selection.empty) {
+    return false
+  }
+  setRewriteDecoration(editor, {
+    from: selection.from,
+    to: selection.to,
+    variant: 'prompt',
+  })
+  return true
+}
+
+export function clearSelectionRewritePromptDecoration(editor: Editor): void {
+  if (editor.isDestroyed || rewriteDecorationKey.getState(editor.state)?.variant !== 'prompt') return
+  setRewriteDecoration(editor, null)
 }
 
 function previewPosition(editor: Editor, to: number): { left: number; top: number } {
@@ -78,14 +106,65 @@ function selectionText(editor: Editor, from: number, to: number): string {
   return editor.state.doc.textBetween(from, to, '\n', '\n')
 }
 
+interface SelectedTextBlockRange {
+  from: number
+  to: number
+}
+
+function selectedTextBlockRanges(editor: Editor, from: number, to: number): SelectedTextBlockRange[] {
+  const ranges: SelectedTextBlockRange[] = []
+  editor.state.doc.nodesBetween(from, to, (node, position) => {
+    if (!node.isTextblock) return
+    const contentFrom = Math.max(from, position + 1)
+    const contentTo = Math.min(to, position + node.nodeSize - 1)
+    if (contentFrom < contentTo) ranges.push({ from: contentFrom, to: contentTo })
+  })
+  return ranges
+}
+
+function replaceSelectionText(editor: Editor, from: number, to: number, replacementText: string) {
+  const ranges = selectedTextBlockRanges(editor, from, to)
+  if (ranges.length <= 1) return editor.state.tr.insertText(replacementText, from, to)
+
+  const lines = replacementText.replace(/\r\n?/g, '\n').split('\n')
+  if (lines.length !== ranges.length) return editor.state.tr.insertText(replacementText, from, to)
+
+  // Replace from the end so earlier document positions stay valid. This keeps
+  // list-item and paragraph wrappers intact while each selected block changes.
+  const transaction = editor.state.tr
+  for (let index = ranges.length - 1; index >= 0; index -= 1) {
+    const range = ranges[index]
+    transaction.insertText(lines[index], range.from, range.to)
+  }
+  return transaction
+}
+
+function selectionFormatContext(editor: Editor, from: number): SelectionRewriteFormatContext {
+  const resolved = editor.state.doc.resolve(from)
+  const ancestorTypes: string[] = []
+  for (let depth = 1; depth <= resolved.depth; depth += 1) {
+    ancestorTypes.push(resolved.node(depth).type.name)
+  }
+  const parent = resolved.parent
+  const codeBlock = [parent, ...Array.from({ length: resolved.depth }, (_, index) => resolved.node(resolved.depth - index))]
+    .find((node) => node.type.name === 'codeBlock')
+  return {
+    blockType: parent.type.name,
+    ancestorTypes,
+    ...(codeBlock ? { codeLanguage: codeBlock.attrs.language ?? null } : {}),
+  }
+}
+
 export function useTiptapSelectionRewrite({
   editor,
   roomId,
+  documentId,
   documentName,
   externallyLocked,
 }: {
   editor: Editor | null
   roomId: string
+  documentId: string
   documentName: string
   externallyLocked: boolean
 }) {
@@ -108,16 +187,23 @@ export function useTiptapSelectionRewrite({
     setPreview(null)
   }, [editor, restoreEditor])
 
-  const runRewrite = useCallback((anchor: RewriteAnchor, originalText: string, instruction: string) => {
+  const runRewrite = useCallback((
+    anchor: RewriteAnchor,
+    originalText: string,
+    instruction: string,
+    formatContext: SelectionRewriteFormatContext,
+  ) => {
     if (!editor || editor.isDestroyed) return
     const api = window.nxcore?.agent
     const position = previewPosition(editor, anchor.to)
+    setRewriteDecoration(editor, { ...anchor, variant: 'original' })
     if (!api) {
       setPreview({
         ...anchor,
         originalText,
         replacementText: '',
         instruction,
+        formatContext,
         phase: 'error',
         error: 'Agent 服务仅在桌面应用中可用。',
         ...position,
@@ -133,13 +219,13 @@ export function useTiptapSelectionRewrite({
       wasEditable: previous?.wasEditable ?? editor.isEditable,
     }
     operationRef.current = operation
-    setRewriteDecoration(editor, anchor)
     editor.setEditable(false)
     setPreview({
       ...anchor,
       originalText,
       replacementText: '',
       instruction,
+      formatContext,
       phase: 'requesting',
       error: null,
       ...position,
@@ -158,6 +244,7 @@ export function useTiptapSelectionRewrite({
       instruction,
       contextBefore,
       contextAfter,
+      formatContext,
     }, {
       signal: operation.controller.signal,
       onText: (replacementText) => {
@@ -186,10 +273,15 @@ export function useTiptapSelectionRewrite({
   const requestRewrite = useCallback((instruction: string) => {
     if (!editor || editor.isDestroyed || externallyLocked) return
     const { selection } = editor.state
-    if (!(selection instanceof TextSelection) || selection.empty || !selection.$from.sameParent(selection.$to)) return
+    if (!(selection instanceof TextSelection) || selection.empty) return
     const originalText = selectionText(editor, selection.from, selection.to)
     if (!originalText.trim()) return
-    runRewrite({ from: selection.from, to: selection.to }, originalText, instruction)
+    runRewrite(
+      { from: selection.from, to: selection.to },
+      originalText,
+      instruction,
+      selectionFormatContext(editor, selection.from),
+    )
   }, [editor, externallyLocked, runRewrite])
 
   const retry = useCallback(() => {
@@ -199,7 +291,7 @@ export function useTiptapSelectionRewrite({
       setPreview({ ...current, phase: 'error', error: '原选区已经变化，请重新选择。' })
       return
     }
-    runRewrite(current, current.originalText, current.instruction)
+    runRewrite(current, current.originalText, current.instruction, current.formatContext)
   }, [editor, runRewrite])
 
   const accept = useCallback(() => {
@@ -211,15 +303,22 @@ export function useTiptapSelectionRewrite({
       setPreview({ ...current, phase: 'error', error: '原选区已经变化，请重新选择。' })
       return
     }
-    const transaction = editor.state.tr
-      .insertText(current.replacementText, current.from, current.to)
+    const transaction = replaceSelectionText(editor, current.from, current.to, current.replacementText)
       .setMeta(rewriteDecorationKey, null)
     editor.view.dispatch(transaction)
+    void window.nxcore?.memory.captureDocumentRewrite({
+      roomId,
+      documentId,
+      documentTitle: documentName,
+      instruction: current.instruction.trim() || '保持原意，重写得更清晰、自然。',
+      originalText: current.originalText,
+      replacementText: current.replacementText,
+    }).catch(() => undefined)
     operationRef.current = null
     restoreEditor(operation?.wasEditable ?? true)
     setPreview(null)
     editor.commands.focus(Math.min(current.from + current.replacementText.length, editor.state.doc.content.size))
-  }, [editor, restoreEditor])
+  }, [documentId, documentName, editor, restoreEditor, roomId])
 
   useEffect(() => {
     if (!preview || !editor) return

@@ -21,6 +21,13 @@ export interface SelectionRewriteRequest {
   instruction: string
   contextBefore: string
   contextAfter: string
+  formatContext?: SelectionRewriteFormatContext
+}
+
+export interface SelectionRewriteFormatContext {
+  blockType: string
+  ancestorTypes: string[]
+  codeLanguage?: string | null
 }
 
 interface StreamSelectionRewriteOptions {
@@ -38,21 +45,28 @@ export function buildSelectionRewritePrompt(input: SelectionRewriteRequest): str
     selectedText: input.selectedText,
     contextBefore: input.contextBefore,
     contextAfter: input.contextAfter,
+    ...(input.formatContext ? { formatContext: input.formatContext } : {}),
   }
   return [
     '重写文档中的指定选区。',
     '严格遵守 instruction，只输出可直接替换 selectedText 的最终纯文本。',
     '不要调用任何工具，不要解释，不要添加标题、引号、Markdown 代码围栏或前后缀。',
+    '必须保持 selectedText 所在的文档结构：代码块只输出原始代码并保留缩进、空格和换行，不得添加或删除代码围栏、语言标记或解释文字；标题只输出标题文字，不要添加 #；列表项、引用和任务项只输出内容文字，不要添加 -, *, > 或复选框标记；保留原有的内联格式语义，不要把结构符号写进替换文本。',
     'contextBefore 和 contextAfter 只用于保持语气与衔接，不得复述到输出中。',
     '',
     JSON.stringify(payload),
   ].join('\n')
 }
 
-export function sanitizeSelectionRewriteOutput(value: string): string {
-  let output = value.trimStart()
-  output = output.replace(/^```[^\n]*\n?/, '')
-  output = output.replace(/\n?```\s*$/, '')
+export function sanitizeSelectionRewriteOutput(
+  value: string,
+  options: { preserveWhitespace?: boolean } = {},
+): string {
+  const preserveWhitespace = options.preserveWhitespace === true
+  let output = preserveWhitespace ? value : value.trimStart()
+  output = output.replace(/^```[^\r\n]*(?:\r?\n|$)/, '')
+  output = output.replace(/(\r?\n)```[ \t]*$/, '$1')
+  if (preserveWhitespace) return output
   output = output.replace(/^(?:改写|重写)(?:后的文本|结果)?\s*[:：]\s*/i, '')
   output = output.replace(/^replacement\s*[:：]\s*/i, '')
   return output.trimEnd()
@@ -112,6 +126,8 @@ export async function streamSelectionRewrite(
   let runSettled = false
   let rawText = ''
   let afterSeq = 0
+  const preserveWhitespace = input.formatContext?.blockType === 'codeBlock'
+    || input.formatContext?.ancestorTypes.includes('codeBlock') === true
 
   const cancelRun = () => {
     if (!runId || cancelPromise) return
@@ -131,6 +147,7 @@ export async function streamSelectionRewrite(
     const run = await api.startRun(session.id, {
       prompt: buildSelectionRewritePrompt(input),
       idempotencyKey: crypto.randomUUID(),
+      captureMemory: false,
     })
     runId = run.id
     if (options.signal.aborted) {
@@ -147,15 +164,15 @@ export async function streamSelectionRewrite(
           const delta = eventText(event, 'delta')
           if (delta) {
             rawText += delta
-            options.onText(sanitizeSelectionRewriteOutput(rawText))
+            options.onText(sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace }))
           }
         } else if (event.type === 'message.completed') {
           const content = eventText(event, 'content')
           if (content !== null) rawText = content
-          options.onText(sanitizeSelectionRewriteOutput(rawText))
+          options.onText(sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace }))
         } else if (event.type === 'run.completed') {
           runSettled = true
-          const output = sanitizeSelectionRewriteOutput(rawText)
+          const output = sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace })
           if (!output) throw new Error('Agent 没有返回可替换的文本。')
           return output
         } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {

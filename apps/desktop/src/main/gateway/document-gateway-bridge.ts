@@ -45,6 +45,10 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents?${new URLSearchParams({ roomId })}`)
   }
 
+  listTrash(roomId: string): Promise<RoomDocument[]> {
+    return this.request(`/v1/documents?${new URLSearchParams({ roomId, trashed: 'true' })}`)
+  }
+
   get(documentId: string): Promise<RoomDocument> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}`)
   }
@@ -62,6 +66,18 @@ export class DocumentGatewayBridge {
 
   delete(documentId: string): Promise<void> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' })
+  }
+
+  restore(documentId: string): Promise<RoomDocument> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/restore`, { method: 'POST' })
+  }
+
+  deletePermanently(documentId: string): Promise<void> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/permanent`, { method: 'DELETE' })
+  }
+
+  emptyTrash(roomId: string): Promise<void> {
+    return this.request(`/v1/documents/trash?${new URLSearchParams({ roomId })}`, { method: 'DELETE' })
   }
 
   acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void> {
@@ -135,16 +151,17 @@ export class DocumentGatewayBridge {
 
   private async request<T>(path: string, init?: RequestInit, retryWhenUnavailable = false): Promise<T> {
     const connection = this.supervisor.getConnection()
+    const headers = new Headers(init?.headers)
+    headers.set('Authorization', `Bearer ${connection.token}`)
+    if (init?.body !== undefined && init.body !== null && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
     let response: Response | null = null
     for (let attempt = 0; response === null; attempt += 1) {
       try {
         response = await fetch(`${connection.baseUrl}${path}`, {
           ...init,
-          headers: {
-            Authorization: `Bearer ${connection.token}`,
-            'Content-Type': 'application/json',
-            ...init?.headers,
-          },
+          headers,
         })
       } catch (error) {
         const retryDelay = SAVE_RETRY_DELAYS_MS[attempt]

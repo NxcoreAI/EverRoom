@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+import type {
+  SaveContextRoomSnapshotInput,
+} from '@nxcore/agent-contract'
+import type {
+  MemoryAtomicListOptions,
+  MemoryConversationListOptions,
+  MemoryDocumentRewriteInput,
+} from '../shared/memory'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
@@ -25,7 +33,15 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   } catch (error) {
     const detail = { channel, message: errorMessage(error) }
     reportRequestError(detail)
-    throw error
+    throw new Error(detail.message)
+  }
+}
+
+async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T> {
+  try {
+    return await ipcRenderer.invoke(channel, ...args) as T
+  } catch (error) {
+    throw new Error(errorMessage(error))
   }
 }
 
@@ -62,6 +78,11 @@ const api: NxcoreDesktopApi = {
     failures: (query) => invoke('connector:list-failures', query),
     armFault: (point) => invoke('connector:arm-fault', point),
   },
+  contextRooms: {
+    list: () => invokeQuietly('context-rooms:list'),
+    syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
+      invokeQuietly('context-rooms:sync-snapshot', input),
+  },
   account: {
     status: () => invoke('account:status'),
     login: (input) => invoke('account:login', input),
@@ -77,6 +98,26 @@ const api: NxcoreDesktopApi = {
     cancelRecording: (id) => invoke('asr:cancel-recording', id),
     createJob: (input) => invoke('asr:create-job', input),
     getJob: (id) => invoke('asr:get-job', id),
+  },
+  memory: {
+    overview: () => invoke('memory:overview'),
+    listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
+    searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
+    updateAtomic: (id: string, content: string, background?: string) =>
+      invoke('memory:update-atomic', id, content, background),
+    deleteAtomic: (ids: string[]) => invoke('memory:delete-atomic', ids),
+    listScenarios: (pathPrefix?: string) => invoke('memory:list-scenarios', pathPrefix),
+    readScenario: (path: string) => invoke('memory:read-scenario', path),
+    readCore: () => invoke('memory:read-core'),
+    writeCore: (content: string) => invoke('memory:write-core', content),
+    listConversations: (options: MemoryConversationListOptions) =>
+      invoke('memory:list-conversations', options),
+    searchConversations: (query: string, limit?: number, sessionId?: string) =>
+      invoke('memory:search-conversations', query, limit, sessionId),
+    deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
+      invoke('memory:delete-conversations', target),
+    captureDocumentRewrite: (input: MemoryDocumentRewriteInput) =>
+      invoke('memory:capture-document-rewrite', input),
   },
   reality: {
     listEvents: (filters) => invoke('reality:list-events', filters),
@@ -102,6 +143,9 @@ const api: NxcoreDesktopApi = {
   agent: {
     listSessions: (pageLabel, roomId) => invoke('agent:list-sessions', pageLabel, roomId),
     createSession: (input) => invoke('agent:create-session', input),
+    createSessionLink: (input) => invoke('agent:create-session-link', input),
+    listSessionLinks: (sessionId) => invoke('agent:list-session-links', sessionId),
+    markSessionLinkReturned: (linkId) => invoke('agent:mark-session-link-returned', linkId),
     updateSession: (sessionId, input) => invoke('agent:update-session', sessionId, input),
     deleteSession: (sessionId) => invoke('agent:delete-session', sessionId),
     getSession: (sessionId) => invoke('agent:get-session', sessionId),
@@ -120,14 +164,18 @@ const api: NxcoreDesktopApi = {
     },
   },
   documents: {
-    list: (roomId) => ipcRenderer.invoke('documents:list', roomId),
-    get: (documentId) => ipcRenderer.invoke('documents:get', documentId),
-    import: (input) => ipcRenderer.invoke('documents:import', input),
-    save: (documentId, input) => ipcRenderer.invoke('documents:save', documentId, input),
-    delete: (documentId) => ipcRenderer.invoke('documents:delete', documentId),
-    acknowledge: (transactionId, input) => ipcRenderer.invoke('documents:acknowledge', transactionId, input),
-    subscribe: (roomId) => ipcRenderer.invoke('documents:subscribe', roomId),
-    unsubscribe: (roomId) => ipcRenderer.invoke('documents:unsubscribe', roomId),
+    list: (roomId) => invoke('documents:list', roomId),
+    listTrash: (roomId) => invoke('documents:list-trash', roomId),
+    get: (documentId) => invoke('documents:get', documentId),
+    import: (input) => invoke('documents:import', input),
+    save: (documentId, input) => invoke('documents:save', documentId, input),
+    delete: (documentId) => invoke('documents:delete', documentId),
+    restore: (documentId) => invoke('documents:restore', documentId),
+    deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
+    emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
+    acknowledge: (transactionId, input) => invoke('documents:acknowledge', transactionId, input),
+    subscribe: (roomId) => invoke('documents:subscribe', roomId),
+    unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)

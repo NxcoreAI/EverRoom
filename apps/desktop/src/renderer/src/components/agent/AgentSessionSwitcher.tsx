@@ -1,11 +1,15 @@
 import type { AgentSession } from '@nxcore/agent-contract'
 import { Check, ChevronDown, History, Pencil, Plus, Trash2, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+
+import { showToast } from '@/state/toast'
 
 export function AgentSessionSwitcher({
   activeRunId,
   connected,
   currentSession,
+  loading,
+  transitionTitle,
   sessionId,
   sessions,
   onCreate,
@@ -16,6 +20,8 @@ export function AgentSessionSwitcher({
   activeRunId: string | null
   connected: boolean
   currentSession: AgentSession | null
+  loading: boolean
+  transitionTitle?: string | null
   sessionId: string | null
   sessions: AgentSession[]
   onCreate: () => Promise<AgentSession>
@@ -26,18 +32,42 @@ export function AgentSessionSwitcher({
   const [menuOpen, setMenuOpen] = useState(false)
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
+  const navigationRef = useRef<HTMLDivElement>(null)
+
+  const reportError = (title: string, error: unknown) => showToast({
+    title,
+    message: error instanceof Error ? error.message : '请稍后重试。',
+  })
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const close = (event: PointerEvent) => {
+      if (!navigationRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [menuOpen])
 
   const create = () => {
-    void onCreate().then(() => setMenuOpen(false)).catch(() => undefined)
+    void onCreate().then(() => setMenuOpen(false)).catch((error) => reportError('新建会话失败', error))
   }
 
   const saveTitle = (id: string) => {
     if (!editingTitle.trim()) return
-    void onRename(id, editingTitle).then(() => setEditingSessionId(null))
+    void onRename(id, editingTitle)
+      .then(() => setEditingSessionId(null))
+      .catch((error) => reportError('重命名会话失败', error))
   }
 
   return (
-    <div className="agent-session-nav">
+    <div ref={navigationRef} className="agent-session-nav">
       <button
         type="button"
         className="agent-session-trigger"
@@ -47,14 +77,18 @@ export function AgentSessionSwitcher({
       >
         <History aria-hidden="true" />
         <span>
-          <small>{connected ? '已连接' : sessionId ? '连接中' : '本地会话'}</small>
-          <strong>{currentSession?.title || '新会话'}</strong>
+          <small>{connected ? '已连接' : '本地会话'}</small>
+          <strong>{transitionTitle || currentSession?.title || (loading ? '\u00a0' : '新会话')}</strong>
         </span>
         <ChevronDown aria-hidden="true" />
       </button>
 
-      {menuOpen ? (
-        <div className="agent-session-menu">
+      <div
+        className="agent-session-menu"
+        data-open={String(menuOpen)}
+        aria-hidden={!menuOpen}
+        {...(!menuOpen ? { inert: '' } : {})}
+      >
           <div className="agent-session-menu-header">
             <strong>会话</strong>
             <button type="button" title="新建会话" aria-label="新建会话" disabled={Boolean(activeRunId)} onClick={create}>
@@ -85,7 +119,9 @@ export function AgentSessionSwitcher({
                       className="agent-session-select"
                       disabled={Boolean(activeRunId) && session.id !== sessionId}
                       onClick={() => {
-                        if (session.id !== sessionId) void onSelect(session)
+                        if (session.id !== sessionId) {
+                          void onSelect(session).catch((error) => reportError('切换会话失败', error))
+                        }
                         setMenuOpen(false)
                       }}
                     >
@@ -110,7 +146,15 @@ export function AgentSessionSwitcher({
                           setEditingSessionId(session.id)
                           setEditingTitle(session.title || '新会话')
                         }}><Pencil /></button>
-                        <button type="button" title={isRunning ? '运行中的会话不能删除' : '删除'} aria-label="删除" disabled={isRunning} onClick={() => void onDelete(session)}><Trash2 /></button>
+                        <button
+                          type="button"
+                          title={isRunning ? '运行中的会话不能删除' : '删除'}
+                          aria-label="删除"
+                          disabled={isRunning}
+                          onClick={() => void onDelete(session)
+                            .then(() => setMenuOpen(false))
+                            .catch((error) => reportError('删除会话失败', error))}
+                        ><Trash2 /></button>
                       </>
                     )}
                   </div>
@@ -118,8 +162,7 @@ export function AgentSessionSwitcher({
               )
             })}
           </div>
-        </div>
-      ) : null}
+      </div>
     </div>
   )
 }
