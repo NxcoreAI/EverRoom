@@ -126,11 +126,13 @@ export class AgentGatewayBridge {
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
+    const hasBody = config.data !== undefined && config.data !== null
     const response = await http.request<T & { message?: unknown }>({
       url: `${connection.baseUrl}${path}`,
       ...config,
       headers: {
         Authorization: `Bearer ${connection.token}`,
+        'Content-Type': hasBody ? 'application/json' : false,
         ...config.headers,
       },
       validateStatus: () => true,

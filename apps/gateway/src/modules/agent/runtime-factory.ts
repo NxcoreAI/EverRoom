@@ -4,14 +4,9 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import type { GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
-import { RemoteHttpAgentRuntime } from "./remote-http-runtime.js";
 
 export function createAgentRuntime(config: GatewayConfig, mcpHost: DocumentMcpHost): AgentRuntime {
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  if (config.agentRuntime === "remote-http") {
-    if (!config.remoteAgent) throw new Error("Remote HTTP runtime configuration is missing");
-    return new RemoteHttpAgentRuntime(config.remoteAgent, mcpHost);
-  }
   if (!config.pi) throw new Error("Pi runtime configuration is missing");
   return new PiAgentRuntime(config.pi, {
     tools: createDocumentPiTools(mcpHost),

@@ -140,6 +140,14 @@
   color: #fff;
 }
 
+.context-room-tiptap-rewrite-prompt {
+  text-decoration-color: var(--cr-blue);
+  text-decoration-line: underline;
+  text-decoration-skip-ink: auto;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
 .context-room-tiptap-rewrite-original {
   border-radius: 3px;
   background: rgba(248, 113, 113, 0.22);

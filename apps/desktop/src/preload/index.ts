@@ -29,7 +29,7 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   } catch (error) {
     const detail = { channel, message: errorMessage(error) }
     reportRequestError(detail)
-    throw error
+    throw new Error(detail.message)
   }
 }
 
@@ -125,14 +125,17 @@ const api: NxcoreDesktopApi = {
     },
   },
   documents: {
-    list: (roomId) => ipcRenderer.invoke('documents:list', roomId),
-    get: (documentId) => ipcRenderer.invoke('documents:get', documentId),
-    import: (input) => ipcRenderer.invoke('documents:import', input),
-    save: (documentId, input) => ipcRenderer.invoke('documents:save', documentId, input),
-    delete: (documentId) => ipcRenderer.invoke('documents:delete', documentId),
-    acknowledge: (transactionId, input) => ipcRenderer.invoke('documents:acknowledge', transactionId, input),
-    subscribe: (roomId) => ipcRenderer.invoke('documents:subscribe', roomId),
-    unsubscribe: (roomId) => ipcRenderer.invoke('documents:unsubscribe', roomId),
+    list: (roomId) => invoke('documents:list', roomId),
+    listTrash: (roomId) => invoke('documents:list-trash', roomId),
+    get: (documentId) => invoke('documents:get', documentId),
+    import: (input) => invoke('documents:import', input),
+    save: (documentId, input) => invoke('documents:save', documentId, input),
+    delete: (documentId) => invoke('documents:delete', documentId),
+    restore: (documentId) => invoke('documents:restore', documentId),
+    deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
+    acknowledge: (transactionId, input) => invoke('documents:acknowledge', transactionId, input),
+    subscribe: (roomId) => invoke('documents:subscribe', roomId),
+    unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)

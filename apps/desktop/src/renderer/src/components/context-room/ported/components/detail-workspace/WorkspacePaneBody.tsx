@@ -16,8 +16,12 @@ export function WorkspacePaneBody({
   room,
   selectedResourceId,
   backendDocuments,
+  trashedDocuments,
   onSelectResource,
+  onCreateDocument,
   onDeleteDocument,
+  onRestoreDocument,
+  onDeleteDocumentPermanently,
   onAddFile,
   onOpenMemory,
   onOpenObject,
@@ -30,8 +34,12 @@ export function WorkspacePaneBody({
   room: ContextRoomRecord;
   selectedResourceId: string | null;
   backendDocuments: RoomDocument[];
+  trashedDocuments: RoomDocument[];
   onSelectResource: (resource: ContextRoomResource) => void;
+  onCreateDocument: (title: string) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
+  onRestoreDocument: (document: RoomDocument) => Promise<void>;
+  onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (id: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
@@ -46,8 +54,12 @@ export function WorkspacePaneBody({
         room={room}
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments}
+        trashedDocuments={trashedDocuments}
         onSelect={onSelectResource}
+        onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}
+        onRestoreDocument={onRestoreDocument}
+        onDeleteDocumentPermanently={onDeleteDocumentPermanently}
         onAddFile={onAddFile}
       />
     );

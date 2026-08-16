@@ -244,7 +244,13 @@ describe("PiAgentRuntime", () => {
       expect(secondEvents.map((event) => event.type)).toContain("tool.completed");
       expect(requestBodies).toHaveLength(4);
       expect(JSON.stringify(requestBodies[0]?.tools)).toContain("context_room_write_begin");
-      expect(JSON.stringify(requestBodies[0])).toContain("必须使用简体中文");
+      const firstRequest = JSON.stringify(requestBodies[0]);
+      expect(firstRequest).toContain("必须使用简体中文");
+      expect(firstRequest).toContain("准备写入正文的实际核心内容、重点或结论");
+      expect(firstRequest).toContain("标题要随内容类型调整");
+      expect(firstRequest).toContain("随后写出的正文必须与标题一致");
+      expect(firstRequest).toContain("充实、完整的长篇内容");
+      expect(firstRequest).toContain("局部选区重写、普通问答或聊天不得擅自创建新文档");
       expect(requestBodies[1]?.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: "tool", content: '{"roomId":"room-a","state":"open"}' }),
       ]));

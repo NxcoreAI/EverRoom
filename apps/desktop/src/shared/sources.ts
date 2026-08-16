@@ -276,10 +276,13 @@ export interface NxcoreDesktopApi {
   }
   documents: {
     list(roomId: string): Promise<RoomDocument[]>
+    listTrash(roomId: string): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
     import(input: ImportRoomDocumentInput): Promise<RoomDocument>
     save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
     delete(documentId: string): Promise<void>
+    restore(documentId: string): Promise<RoomDocument>
+    deletePermanently(documentId: string): Promise<void>
     acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void>
     subscribe(roomId: string): Promise<void>
     unsubscribe(roomId?: string): Promise<void>

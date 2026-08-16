@@ -4,6 +4,22 @@ import type { ContextRoomRecord } from '../../types'
 
 const DOCUMENT_DRAFT_PREFIX = 'everroom:context-room:document:v1:'
 
+export interface DocumentDraft {
+  content: JSONContent
+  baseVersion: number | null
+  updatedAt: string
+}
+
+export function shouldRecoverDocumentDraft(
+  draft: DocumentDraft | null,
+  backend: { version: number; updatedAt: string; contentJson: JSONContent } | null,
+): boolean {
+  if (!draft || !backend || draft.baseVersion === null || draft.content.type !== 'doc') return false
+  if (JSON.stringify(draft.content) === JSON.stringify(backend.contentJson)) return false
+  if (draft.baseVersion === backend.version) return true
+  return draft.baseVersion < backend.version && draft.updatedAt > backend.updatedAt
+}
+
 function textNode(text: string): JSONContent {
   return { type: 'text', text }
 }
@@ -33,22 +49,37 @@ export function createRoomDocumentContent(
   }
 }
 
-export function readDocumentDraft(documentId: string): JSONContent | null {
+export function readDocumentDraftRecord(documentId: string): DocumentDraft | null {
   try {
     const raw = localStorage.getItem(`${DOCUMENT_DRAFT_PREFIX}${documentId}`)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as { content?: JSONContent }
-    return parsed.content?.type === 'doc' ? parsed.content : null
+    const parsed = JSON.parse(raw) as Partial<DocumentDraft>
+    if (parsed.content?.type !== 'doc') return null
+    return {
+      content: parsed.content,
+      baseVersion: Number.isSafeInteger(parsed.baseVersion) && Number(parsed.baseVersion) >= 0
+        ? Number(parsed.baseVersion)
+        : null,
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString(),
+    }
   } catch {
     return null
   }
 }
 
-export function writeDocumentDraft(documentId: string, content: JSONContent): boolean {
+export function readDocumentDraft(documentId: string): JSONContent | null {
+  return readDocumentDraftRecord(documentId)?.content ?? null
+}
+
+export function writeDocumentDraft(
+  documentId: string,
+  content: JSONContent,
+  baseVersion: number | null = null,
+): boolean {
   try {
     localStorage.setItem(
       `${DOCUMENT_DRAFT_PREFIX}${documentId}`,
-      JSON.stringify({ content, updatedAt: new Date().toISOString() }),
+      JSON.stringify({ content, baseVersion, updatedAt: new Date().toISOString() }),
     )
     return true
   } catch {
