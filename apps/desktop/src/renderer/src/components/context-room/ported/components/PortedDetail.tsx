@@ -35,6 +35,7 @@ export function PortedDetail({
   onDeleteDocument,
   onRestoreDocument,
   onDeleteDocumentPermanently,
+  onEmptyTrash,
 }: {
   room: ContextRoomRecord
   rooms: ContextRoomRecord[]
@@ -53,6 +54,7 @@ export function PortedDetail({
   onDeleteDocument: (document: RoomDocument) => Promise<void>
   onRestoreDocument: (document: RoomDocument) => Promise<void>
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>
+  onEmptyTrash: (roomId: string) => Promise<void>
 }) {
   const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
@@ -207,6 +209,7 @@ export function PortedDetail({
           onDeleteDocument={onDeleteDocument}
           onRestoreDocument={onRestoreDocument}
           onDeleteDocumentPermanently={onDeleteDocumentPermanently}
+          onEmptyTrash={onEmptyTrash}
           onSelectResource={openResource}
           onAddFile={addLocalFile}
           onOpenMemory={setSelectedMemoryId}

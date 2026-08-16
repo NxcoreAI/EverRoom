@@ -1,15 +1,15 @@
 :root {
   color-scheme: light;
-  --bg: #f7f7f5;
-  --chrome: #f1f1ef;
+  --bg: #f6f7f9;
+  --chrome: #eef1f4;
   --surface: #ffffff;
-  --surface-alt: #fbfbfa;
-  --text: #10151e;
-  --muted: #4a5566;
-  --subtle: #78839a;
-  --border: #e3e7ed;
-  --border-strong: #cfd6e0;
-  --hover: #e7e7e4;
+  --surface-alt: #f9fafb;
+  --text: #151a22;
+  --muted: #536070;
+  --subtle: #8490a0;
+  --border: #e1e5eb;
+  --border-strong: #ccd3dd;
+  --hover: #e8ecf1;
   --selected: #e7edfc;
   --accent: #3d6ff6;
   --accent-strong: #1e47c4;
@@ -31,9 +31,9 @@
   --nav-tone-indigo: #6172c8;
   --nav-tone-orange: #d9954f;
   --nav-tone-slate: #7c817f;
-  --shadow: 0 1px 1px rgba(16, 21, 30, 0.04), 0 8px 22px rgba(16, 21, 30, 0.07);
-  --raised-shadow: 0 1px 2px rgba(16, 21, 30, 0.06);
-  --inset-shadow: inset 0 1px 1px rgba(16, 21, 30, 0.04);
+  --shadow: 0 1px 1px rgba(21, 26, 34, 0.04), 0 8px 22px rgba(21, 26, 34, 0.07);
+  --raised-shadow: 0 1px 2px rgba(21, 26, 34, 0.06);
+  --inset-shadow: inset 0 1px 1px rgba(21, 26, 34, 0.04);
   --nav-width: 270px;
   --agent-width: 360px;
   --topbar-height: 48px;
@@ -98,21 +98,21 @@
 }
 
 :root[data-theme='nxcore'] {
-  --bg: #f7f7f5;
-  --chrome: #f1f1ef;
+  --bg: #f6f7f9;
+  --chrome: #eef1f4;
   --surface: #ffffff;
-  --surface-alt: #fbfbfa;
-  --text: #10151e;
-  --muted: #4a5566;
-  --subtle: #78839a;
-  --border: #e3e7ed;
-  --border-strong: #cfd6e0;
-  --hover: #e7e7e4;
+  --surface-alt: #f9fafb;
+  --text: #151a22;
+  --muted: #536070;
+  --subtle: #8490a0;
+  --border: #e1e5eb;
+  --border-strong: #ccd3dd;
+  --hover: #e8ecf1;
   --selected: #e7edfc;
   --accent: #3d6ff6;
   --accent-strong: #1e47c4;
   --accent-soft: rgba(61, 111, 246, 0.14);
-  --shadow: 0 1px 1px rgba(16, 21, 30, 0.04), 0 8px 22px rgba(16, 21, 30, 0.07);
-  --raised-shadow: 0 1px 2px rgba(16, 21, 30, 0.06);
-  --inset-shadow: inset 0 1px 1px rgba(16, 21, 30, 0.04);
+  --shadow: 0 1px 1px rgba(21, 26, 34, 0.04), 0 8px 22px rgba(21, 26, 34, 0.07);
+  --raised-shadow: 0 1px 2px rgba(21, 26, 34, 0.06);
+  --inset-shadow: inset 0 1px 1px rgba(21, 26, 34, 0.04);
 }

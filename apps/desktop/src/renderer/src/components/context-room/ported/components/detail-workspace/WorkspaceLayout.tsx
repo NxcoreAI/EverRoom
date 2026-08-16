@@ -59,6 +59,7 @@ export function WorkspaceLayout({
   onDeleteDocument,
   onRestoreDocument,
   onDeleteDocumentPermanently,
+  onEmptyTrash,
   onSelectResource,
   onAddFile,
   onOpenMemory,
@@ -114,6 +115,7 @@ export function WorkspaceLayout({
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
+  onEmptyTrash: (roomId: string) => Promise<void>;
   onSelectResource: (resource: ContextRoomResource) => void;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (memoryId: string) => void;
@@ -297,6 +299,7 @@ export function WorkspaceLayout({
                         onDeleteDocument={onDeleteDocument}
                         onRestoreDocument={onRestoreDocument}
                         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
+                        onEmptyTrash={onEmptyTrash}
                         onAddFile={onAddFile}
                         onOpenMemory={onOpenMemory}
                         onToggleTask={onToggleTask}

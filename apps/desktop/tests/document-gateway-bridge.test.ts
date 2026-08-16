@@ -83,6 +83,7 @@ describe('DocumentGatewayBridge CRUD', () => {
     await expect(bridge.delete('doc-crud')).resolves.toBeUndefined()
     await expect(bridge.restore('doc-crud')).resolves.toMatchObject({ id: 'doc-crud' })
     await expect(bridge.deletePermanently('doc-crud')).resolves.toBeUndefined()
+    await expect(bridge.emptyTrash('room-crud')).resolves.toBeUndefined()
 
     expect(requests.map(({ method, path }) => [method, path])).toEqual([
       ['POST', '/v1/documents/import'],
@@ -93,6 +94,7 @@ describe('DocumentGatewayBridge CRUD', () => {
       ['DELETE', '/v1/documents/doc-crud'],
       ['POST', '/v1/documents/doc-crud/restore'],
       ['DELETE', '/v1/documents/doc-crud/permanent'],
+      ['DELETE', '/v1/documents/trash?roomId=room-crud'],
     ])
     expect(requests[0]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('doc-crud') })
     expect(requests[1]).toMatchObject({ body: '' })
@@ -100,7 +102,7 @@ describe('DocumentGatewayBridge CRUD', () => {
     expect(requests[2]).not.toHaveProperty('contentType')
     expect(requests[3]).not.toHaveProperty('contentType')
     expect(requests[4]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('baseVersion') })
-    for (const index of [5, 6, 7]) {
+    for (const index of [5, 6, 7, 8]) {
       expect(requests[index]).toMatchObject({ body: '' })
       expect(requests[index]).not.toHaveProperty('contentType')
     }

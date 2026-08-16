@@ -152,6 +152,7 @@ const api: NxcoreDesktopApi = {
     delete: (documentId) => invoke('documents:delete', documentId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
+    emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
     acknowledge: (transactionId, input) => invoke('documents:acknowledge', transactionId, input),
     subscribe: (roomId) => invoke('documents:subscribe', roomId),
     unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),

@@ -119,7 +119,7 @@ async function collect(events: AsyncIterable<RuntimeEvent>): Promise<RuntimeEven
 }
 
 describe('Pi document tool integration', () => {
-  it('waits for renderer ACK, commits, and refreshes Room context on a reused Pi session', async () => {
+  it('commits without renderer ACK and refreshes Room context on a reused Pi session', async () => {
     let requestStep = 0
     const endpoint = createServer((request, response) => {
       void (async () => {
@@ -213,39 +213,6 @@ describe('Pi document tool integration', () => {
       sqlite.close()
     })
 
-    const contentJson = {
-      type: 'doc',
-      content: [{
-        type: 'heading',
-        attrs: { level: 1, id: 'pi-test:0' },
-        content: [{ type: 'text', text: 'Room A 文档' }],
-      }],
-    }
-    let appendAcknowledged = false
-    const unsubscribe = service.broker.subscribe('room-a', {
-      readyState: 1,
-      send(data) {
-        const frame = JSON.parse(data) as {
-          event?: { type?: string; transactionId?: string | null; payload?: Record<string, unknown> }
-        }
-        const event = frame.event
-        if (!event?.transactionId) return
-        if (event.type === 'document.appended') {
-          setTimeout(() => {
-            appendAcknowledged = true
-            void service.acknowledge(event.transactionId!, {
-              sequence: Number(event.payload?.sequence), contentJson,
-            })
-          }, 25)
-        } else if (event.type === 'document.commit-requested') {
-          void service.acknowledge(event.transactionId, {
-            sequence: Number(event.payload?.finalSequence), contentJson,
-          })
-        }
-      },
-    })
-    disposables.push(unsubscribe)
-
     const firstInput: StartRuntimeRunInput = {
       runId: 'run-a',
       sessionId: 'session-shared',
@@ -257,7 +224,6 @@ describe('Pi document tool integration', () => {
     const firstRun = await runtime.start(firstInput)
     const firstEvents = await collect(firstRun.events)
 
-    expect(appendAcknowledged).toBe(true)
     expect(firstEvents.filter((event) => event.type === 'tool.completed').map((event) =>
       (event.payload as { name?: string }).name)).toEqual([
       'context_room_write_begin',
@@ -304,7 +270,7 @@ describe('Pi document tool integration', () => {
       .where(eq(documentTransactions.runId, 'run-forbidden')).all()).toEqual([])
   }, 20_000)
 
-  it('cancels an append waiting for Renderer ACK and rolls back the draft', async () => {
+  it('cancels a run after a persisted append and rolls back the draft', async () => {
     let requestStep = 0
     const endpoint = createServer((request, response) => {
       void (async () => {
