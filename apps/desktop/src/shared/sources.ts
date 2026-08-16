@@ -36,6 +36,15 @@ import type {
   RealitySocketFrame,
   UpdateRealityTranscriptInput,
 } from '@nxcore/reality-contract'
+import type {
+  ConnectorAuthorizationAttempt,
+  ConnectorConnection,
+  ConnectorStatus,
+  MailMessage,
+  SyncMode,
+  SyncRun,
+  SyncScope,
+} from '@nxcore/connector-contract'
 
 export interface EvidenceBlock {
   id: string
@@ -215,6 +224,23 @@ export interface NxcoreDesktopApi {
   }
   gateway: {
     status(): Promise<GatewayStatus>
+  }
+  connectorDebug: {
+    enabled: boolean
+    faultsEnabled: boolean
+    status(): Promise<ConnectorStatus>
+    startAuthorization(provider: 'gmail' | 'outlook'): Promise<ConnectorAuthorizationAttempt>
+    authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
+    registerConnection(input: { provider: 'gmail' | 'outlook'; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
+    disableConnection(id: string): Promise<void>
+    purgeConnection(id: string): Promise<void>
+    triggerSync(id: string, mode: SyncMode): Promise<SyncRun>
+    cancelRun(id: string): Promise<SyncRun>
+    scopes(connectionId?: string): Promise<SyncScope[]>
+    runs(connectionId?: string): Promise<SyncRun[]>
+    mail(query?: { connectionId?: string; scopeId?: string; search?: string; limit?: number; cursor?: string }): Promise<MailMessage[]>
+    failures(query?: { connectionId?: string; runId?: string; limit?: number }): Promise<Array<{ id: string; scopeId: string | null; runId: string | null; category: string; message: string; itemKey: string | null; createdAt: string }>>
+    armFault(point: string): Promise<void>
   }
   account: {
     status(): Promise<CloudAccountStatus>

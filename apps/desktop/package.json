@@ -14,6 +14,7 @@
   "dependencies": {
     "@antv/g6": "^5.1.1",
     "@nxcore/agent-contract": "workspace:*",
+    "@nxcore/connector-contract": "workspace:*",
     "@nxcore/reality-contract": "workspace:*",
     "@radix-ui/react-context-menu": "^2.3.7",
     "@radix-ui/react-dialog": "^1.1.23",

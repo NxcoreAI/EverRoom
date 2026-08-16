@@ -32,13 +32,23 @@ function readStoredTheme(): ThemeId {
   }
 }
 
+function readInitialPage(): PageId {
+  try {
+    return window.nxcore?.connectorDebug.enabled && new URLSearchParams(window.location.search).get('page') === 'connector-debug'
+      ? 'connector-debug'
+      : 'home'
+  } catch {
+    return 'home'
+  }
+}
+
 export function App() {
   const isMacDesktop = detectMacDesktop()
-  const [activePage, setActivePage] = useState<PageId>('home')
+  const [activePage, setActivePage] = useState<PageId>(readInitialPage)
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [closedContextRoomTabs, setClosedContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
-  const [agentOpen, setAgentOpen] = useState(true)
+  const [agentOpen, setAgentOpen] = useState(() => readInitialPage() !== 'connector-debug')
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
   const [navCollapsed, setNavCollapsed] = useState(() => window.matchMedia('(max-width: 1200px)').matches)
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
@@ -191,6 +201,10 @@ export function App() {
           onContextRoomShowHome={showContextRoomHome}
           onNavigate={navigate}
           onFocusAgent={focusAgent}
+          onOpenConnectorDebug={() => {
+            setAgentOpen(false)
+            setActivePage('connector-debug')
+          }}
         />
       </main>
       {agentOpen ? (

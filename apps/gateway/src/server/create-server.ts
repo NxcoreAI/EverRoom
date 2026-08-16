@@ -30,6 +30,12 @@ import { RealityService } from "../modules/reality/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
+import { createConnectorDatabase } from "../infrastructure/connectors/client.js";
+import { ConnectorRepository } from "../modules/connectors/repository.js";
+import { ConnectorManager } from "../modules/connectors/manager.js";
+import { connectorRoutes } from "../modules/connectors/routes.js";
+import { NangoExecutor } from "../modules/connectors/nango-executor.js";
+import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
 
 function swaggerAssetsDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +58,21 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
+  const connectorConfig = config.connectors ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"" };
+  const connectorDb = createConnectorDatabase(connectorConfig.enabled ? connectorConfig.databasePath : ":memory:");
+  const connectorManager = new ConnectorManager(new ConnectorRepository(connectorDb.sqlite), connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, connectorConfig.nangoSecret) : null);
+  const connectorAuthorization = connectorConfig.enabled && "gmailConfigKey" in connectorConfig
+    ? new NangoAuthorizationService(
+        connectorConfig.nangoUrl,
+        connectorConfig.nangoSecret,
+        {
+          gmail: connectorConfig.gmailConfigKey,
+          outlook: connectorConfig.outlookConfigKey,
+        },
+        connectorManager,
+      )
+    : undefined;
+  if (connectorConfig.enabled) connectorManager.startPolling("pollingIntervalMs" in connectorConfig ? connectorConfig.pollingIntervalMs : 300_000);
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
@@ -126,6 +147,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log.info({ recoveredCaptures }, "interrupted reality captures recovered");
   }
   app.addHook("onClose", async () => {
+    await connectorManager.dispose();
+    connectorDb.close();
     await agentService.dispose();
     await documentMcpHost.close();
     documentService.dispose();
@@ -138,6 +161,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(documentRoutes(documentService));
   await app.register(asrRoutes(asrService));
   await app.register(realityRoutes(realityService));
+  await app.register(connectorRoutes(connectorManager, connectorConfig.enabled, connectorAuthorization));
 
   return app;
 }

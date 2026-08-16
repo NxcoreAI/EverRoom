@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @nxcore/desktop dev",
     "build": "pnpm --filter @nxcore/gateway build && pnpm --filter @nxcore/desktop build",
-    "typecheck": "pnpm --filter @nxcore/agent-contract typecheck && pnpm --filter @nxcore/reality-contract typecheck && pnpm --filter @nxcore/agent-runtime typecheck && pnpm --filter @nxcore/agent-runtime-pi typecheck && pnpm --filter @nxcore/gateway typecheck && pnpm --filter @nxcore/desktop typecheck",
+    "typecheck": "pnpm --filter @nxcore/agent-contract typecheck && pnpm --filter @nxcore/connector-contract typecheck && pnpm --filter @nxcore/reality-contract typecheck && pnpm --filter @nxcore/agent-runtime typecheck && pnpm --filter @nxcore/agent-runtime-pi typecheck && pnpm --filter @nxcore/gateway typecheck && pnpm --filter @nxcore/desktop typecheck",
     "test": "pnpm --filter @nxcore/agent-runtime test && pnpm --filter @nxcore/agent-runtime-pi test && pnpm --filter @nxcore/gateway test && pnpm --filter @nxcore/desktop test",
     "package:mac": "pnpm --filter @nxcore/gateway build && pnpm --filter @nxcore/desktop package:mac"
   }

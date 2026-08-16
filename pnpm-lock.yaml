@@ -19,6 +19,9 @@ importers:
       '@nxcore/agent-contract':
         specifier: workspace:*
         version: link:../../packages/agent-contract
+      '@nxcore/connector-contract':
+        specifier: workspace:*
+        version: link:../../packages/connector-contract
       '@nxcore/reality-contract':
         specifier: workspace:*
         version: link:../../packages/reality-contract
@@ -140,6 +143,9 @@ importers:
       '@nxcore/agent-runtime-pi':
         specifier: workspace:*
         version: link:../../packages/agent-runtime-pi
+      '@nxcore/connector-contract':
+        specifier: workspace:*
+        version: link:../../packages/connector-contract
       '@nxcore/reality-contract':
         specifier: workspace:*
         version: link:../../packages/reality-contract
@@ -254,6 +260,12 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.2.0)(vite@6.4.3(@types/node@26.2.0)(jiti@2.7.0)(sass-embedded@1.102.0)(sass@1.102.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/connector-contract:
+    devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
 
   packages/reality-contract:
     devDependencies:
@@ -6024,7 +6036,7 @@ snapshots:
       fs-extra: 8.1.0
       got: 11.8.5
       progress: 2.0.3
-      semver: 6.3.1
+      semver: 6.2.0
       sumchecker: 3.0.1(supports-color@8.1.1)
     optionalDependencies:
       global-agent: 3.0.0
@@ -6505,7 +6517,7 @@ snapshots:
 
   '@jridgewell/gen-mapping@0.3.12':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.5.0
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/remapping@2.3.5':
@@ -6522,7 +6534,7 @@ snapshots:
   '@jridgewell/trace-mapping@0.3.31':
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.5.0
 
   '@lukeed/ms@2.0.2': {}
 

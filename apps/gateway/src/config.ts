@@ -69,6 +69,9 @@ const RawConfigSchema = Type.Object(
     asrAliyunOssAccessKeySecret: Type.String(),
     asrAliyunOssStsToken: Type.String(),
     asrAliyunOssPrefix: Type.String({ minLength: 1 }),
+    nangoUrl: Type.String(),
+    nangoSecret: Type.String(),
+    connectorPollMs: Type.Integer({ minimum: 1000 }),
   },
   { additionalProperties: false },
 );
@@ -127,6 +130,15 @@ export interface GatewayConfig {
   pi: PiRuntimeConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
+  connectors?: {
+    enabled: boolean;
+    databasePath: string;
+    nangoUrl: string;
+    nangoSecret: string;
+    gmailConfigKey: string;
+    outlookConfigKey: string;
+    pollingIntervalMs: number;
+  };
 }
 
 function defaultDataDir(): string {
@@ -264,6 +276,9 @@ export function loadConfig(
     asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
     asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
     asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
+    nangoUrl: env.NXCORE_NANGO_URL?.trim() ?? "",
+    nangoSecret: env.NXCORE_NANGO_SECRET?.trim() ?? "",
+    connectorPollMs: parsePositiveInteger("NXCORE_CONNECTOR_POLL_MS", env.NXCORE_CONNECTOR_POLL_MS ?? "300000"),
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -317,6 +332,8 @@ export function loadConfig(
       throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
     }
   }
+  if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_URL and NXCORE_NANGO_SECRET");
+  if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_URL must use HTTPS except for loopback development"); }
 
   return {
     host: rawConfig.host,
@@ -357,6 +374,15 @@ export function loadConfig(
             : null,
         }
       : null,
+    connectors: {
+      enabled: Boolean(rawConfig.nangoUrl),
+      databasePath: join(dataDir,"database","connectors.sqlite"),
+      nangoUrl: rawConfig.nangoUrl,
+      nangoSecret: rawConfig.nangoSecret,
+      gmailConfigKey: env.NXCORE_NANGO_GMAIL_CONFIG_KEY?.trim() ?? "google-mail",
+      outlookConfigKey: env.NXCORE_NANGO_OUTLOOK_CONFIG_KEY?.trim() ?? "microsoft-mail",
+      pollingIntervalMs: rawConfig.connectorPollMs,
+    },
     pi: rawConfig.agentRuntime === "pi"
       ? {
           provider: rawConfig.aiProvider,

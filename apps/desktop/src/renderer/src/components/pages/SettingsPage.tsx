@@ -50,7 +50,7 @@ function formatPeriodEnd(value: string): string {
   }).format(date)
 }
 
-export function SettingsPage() {
+export function SettingsPage({ onOpenConnectorDebug }: { onOpenConnectorDebug?: () => void }) {
   const { account, refreshAccount, setAccount } = useAccount()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
@@ -321,6 +321,12 @@ export function SettingsPage() {
           </button>
         ))}
       </div>
+      {window.nxcore?.connectorDebug.enabled ? (
+        <section className="developer-settings-section" aria-labelledby="connector-debug-title">
+          <header><span><Settings aria-hidden="true" /></span><div><h2 id="connector-debug-title">开发者工具</h2><p>仅用于本地连接器同步排障，不会显示凭据或原始游标。</p></div></header>
+          <button type="button" className="secondary-button" onClick={onOpenConnectorDebug}><Settings aria-hidden="true" />打开连接器调试台</button>
+        </section>
+      ) : null}
     </div>
   )
 }

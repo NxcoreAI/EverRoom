@@ -438,3 +438,9 @@
     border-bottom: 0;
   }
 }
+.developer-settings-section { display: flex; width: min(720px, 100%); align-items: center; gap: 16px; margin-top: 18px; padding: 14px 16px; border: 1px dashed var(--border-strong); border-radius: 6px; background: var(--surface-alt); }
+.developer-settings-section header { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; }
+.developer-settings-section header > span { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--muted); }
+.developer-settings-section header svg, .developer-settings-section button svg { width: 15px; height: 15px; }
+.developer-settings-section h2 { margin: 0; font-size: 13px; }
+.developer-settings-section p { margin: 3px 0 0; color: var(--subtle); font-size: 10px; }

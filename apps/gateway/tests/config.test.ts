@@ -143,4 +143,13 @@ describe("loadConfig", () => {
       NXCORE_ASR_ALIYUN_OSS_BUCKET: "missing-other-fields",
     })).toThrow("NXCORE_ASR_ALIYUN_OSS_REGION");
   });
+
+  it("loads Nango connectors only from complete, safe configuration", () => {
+    expect(loadConfig(["--token", "0123456789abcdef"], {}).connectors?.enabled).toBe(false);
+    const enabled=loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"http://127.0.0.1:3003",NXCORE_NANGO_SECRET:"secret"});
+    expect(enabled.connectors).toMatchObject({enabled:true,nangoUrl:"http://127.0.0.1:3003",pollingIntervalMs:300000});
+    expect(enabled.connectors?.databasePath).toContain("connectors.sqlite");
+    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"https://nango.example.com"})).toThrow("requires both");
+    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"http://nango.example.com",NXCORE_NANGO_SECRET:"secret"})).toThrow("must use HTTPS");
+  });
 });

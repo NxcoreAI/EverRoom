@@ -12,6 +12,7 @@ import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
+import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -46,6 +47,10 @@ const SOURCE_CHANNELS = {
 
 const GATEWAY_CHANNELS = {
   status: 'gateway:status',
+} as const
+
+const CONNECTOR_CHANNELS = {
+  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', armFault: 'connector:arm-fault',
 } as const
 
 const AGENT_CHANNELS = {
@@ -110,6 +115,7 @@ let gatewaySupervisor: GatewaySupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
+let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let saasClient: SaasClient | null = null
 let shutdownStarted = false
@@ -245,6 +251,25 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
 
 function registerGatewayHandlers(supervisor: GatewaySupervisor): void {
   ipcMain.handle(GATEWAY_CHANNELS.status, () => supervisor.getStatus())
+}
+
+function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
+  ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
+  ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
+  ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
+  ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
+  ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listRuns, (_event, connectionId) => bridge.runs(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listMail, (_event, query) => bridge.mail(query))
+  ipcMain.handle(CONNECTOR_CHANNELS.listFailures, (_event, query) => bridge.failures(query))
+  ipcMain.handle(CONNECTOR_CHANNELS.armFault, (_event, point) => {
+    if (process.env.NXCORE_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
+    return bridge.armFault(point)
+  })
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
@@ -415,6 +440,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerGatewayHandlers(gatewaySupervisor)
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
+    connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
+    if (process.env.NXCORE_CONNECTOR_DEBUG_UI === '1') registerConnectorHandlers(connectorGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
@@ -453,6 +480,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
     realityGatewayBridge = null
+    connectorGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -483,6 +511,7 @@ app.on('before-quit', (event) => {
   agentGatewayBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
+  connectorGatewayBridge = null
   recordingStore = null
   saasClient = null
   agentBridge?.dispose()

@@ -53,7 +53,12 @@ function prepareMacElectron() {
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string everroom', plistPath])
   copyFileSync(iconPath, join(brandedApp, 'Contents/Resources/icon.icns'))
-  run('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', brandedApp])
+  const signing = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', brandedApp], { stdio: 'inherit' })
+  if (signing.status !== 0) {
+    console.warn('[desktop] ad-hoc Electron signing is unavailable; using the stock Electron executable for development.')
+    rmSync(brandedApp, { recursive: true, force: true })
+    return electronExecutable
+  }
   writeFileSync(markerPath, marker)
 
   return join(brandedApp, 'Contents/MacOS/Electron')

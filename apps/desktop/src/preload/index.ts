@@ -45,6 +45,23 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
+  connectorDebug: {
+    enabled: process.env.NXCORE_CONNECTOR_DEBUG_UI === '1',
+    faultsEnabled: process.env.NXCORE_CONNECTOR_DEBUG_FAULTS === '1',
+    status: () => invoke('connector:status'),
+    startAuthorization: (provider) => invoke('connector:start-authorization', provider),
+    authorizationStatus: (id) => invoke('connector:authorization-status', id),
+    registerConnection: (input) => invoke('connector:register-connection', input),
+    disableConnection: (id) => invoke('connector:disable-connection', id),
+    purgeConnection: (id) => invoke('connector:purge-connection', id),
+    triggerSync: (id, mode) => invoke('connector:trigger-sync', id, mode),
+    cancelRun: (id) => invoke('connector:cancel-run', id),
+    scopes: (connectionId) => invoke('connector:list-scopes', connectionId),
+    runs: (connectionId) => invoke('connector:list-runs', connectionId),
+    mail: (query) => invoke('connector:list-mail', query),
+    failures: (query) => invoke('connector:list-failures', query),
+    armFault: (point) => invoke('connector:arm-fault', point),
+  },
   account: {
     status: () => invoke('account:status'),
     login: (input) => invoke('account:login', input),

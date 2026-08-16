@@ -26,6 +26,7 @@
     "@nxcore/agent-contract": "workspace:*",
     "@nxcore/agent-runtime": "workspace:*",
     "@nxcore/agent-runtime-pi": "workspace:*",
+    "@nxcore/connector-contract": "workspace:*",
     "@nxcore/reality-contract": "workspace:*",
     "@sinclair/typebox": "^0.34.52",
     "ali-oss": "^6.23.0",
