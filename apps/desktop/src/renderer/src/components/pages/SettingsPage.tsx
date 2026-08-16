@@ -8,21 +8,25 @@ import {
   LockKeyhole,
   LogIn,
   LogOut,
+  Laptop,
   Mic,
   MonitorSpeaker,
   RefreshCw,
   Settings,
   ShieldCheck,
+  Smartphone,
   WalletCards,
   type LucideIcon,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import './SettingsPage.css'
 
@@ -33,7 +37,8 @@ const SETTINGS: Array<{ icon: LucideIcon; title: string; description: string }> 
   { icon: Settings, title: '通用', description: '语言、启动行为与界面偏好' },
 ]
 
-type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | null
+type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
+type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, rounding: 'down' | 'up' = 'down'): string {
   const minutes = rounding === 'up' ? Math.ceil(seconds / 60) : Math.floor(seconds / 60)
@@ -50,12 +55,105 @@ function formatPeriodEnd(value: string): string {
   }).format(date)
 }
 
+function deviceLastSeen(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '最近在线时间未知'
+  return `最近在线 ${date.toLocaleString('zh-CN')}`
+}
+
 export function SettingsPage() {
   const { account, refreshAccount, setAccount } = useAccount()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState<PendingAction>(null)
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
+  const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
+  const [syncedCount, setSyncedCount] = useState<number | null>(null)
+  const [devices, setDevices] = useState<CloudDevice[]>([])
+  const [pairing, setPairing] = useState<PairingSession | null>(null)
+  const [pairingQr, setPairingQr] = useState<string | null>(null)
+  const [pairingError, setPairingError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!account?.authenticated || !window.nxcore) {
+      setKeyring(null)
+      setDevices([])
+      return
+    }
+    const desktopApi = window.nxcore
+    let cancelled = false
+    const check = async () => {
+      try {
+        const [next, nextDevices] = await Promise.all([
+          desktopApi.account.keyringStatus(),
+          desktopApi.account.devices(),
+        ])
+        if (cancelled) return
+        setKeyring(next)
+        setDevices(nextDevices)
+      } catch {
+        if (!cancelled) setKeyring(null)
+      } finally {
+        setPending((current) => current === 'keyring' ? null : current)
+      }
+    }
+    setPending('keyring')
+    void check()
+    const timer = window.setInterval(() => void check(), 5_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [account?.authenticated, account?.user?.id])
+
+  useEffect(() => {
+    if (!pairing || !window.nxcore) return
+    let cancelled = false
+    const poll = async () => {
+      if (cancelled) return
+      try {
+        const next = await window.nxcore!.account.getPairingSession(pairing.pairingSessionId)
+        if (!cancelled) setPairing((current) => current ? { ...current, ...next } : current)
+      } catch (error) {
+        cancelled = true
+        setPairingError(`${error instanceof Error ? error.message : '配对会话读取失败。'} 请重启 SaaS 服务后重新创建二维码。`)
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), 2_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [pairing?.pairingSessionId])
+
+  const createPairing = async () => {
+    if (!window.nxcore) return
+    setPairingError(null)
+    try {
+      const session = await window.nxcore.account.createPairingSession()
+      const payload = JSON.stringify({ version: 1, origin: session.origin, pairingSessionId: session.pairingSessionId, pairingToken: session.pairingToken })
+      const dataUrl = await QRCode.toDataURL(payload, { margin: 1, width: 220, errorCorrectionLevel: 'M' })
+      setPairingQr(dataUrl)
+      setPairing(session)
+    } catch (error) {
+      setPairingError(error instanceof Error ? error.message : '无法创建配对会话。')
+    }
+  }
+
+  const resetPairing = () => {
+    setPairing(null)
+    setPairingQr(null)
+    setPairingError(null)
+  }
+
+  const approvePairing = async () => {
+    if (!window.nxcore || !pairing) return
+    setPending('keyring')
+    try {
+      await window.nxcore.account.approvePairingSession(pairing.pairingSessionId)
+      setPairingError(null)
+    } catch (error) {
+      setPairingError(error instanceof Error ? error.message : '批准设备失败。')
+    } finally { setPending(null) }
+  }
 
   const updateRealitySettings = (patch: Partial<RealitySettings>) => {
     setRealitySettings((current) => {
@@ -108,6 +206,20 @@ export function SettingsPage() {
     setPending('logout')
     try {
       setAccount(await window.nxcore.account.logout())
+    } catch {
+      // The preload request interceptor reports the error globally.
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const syncPrivate = async () => {
+    if (!window.nxcore) return
+    setPending('sync')
+    try {
+      const result = await window.nxcore.transcriptions.syncPrivate()
+      setKeyring(result.status)
+      setSyncedCount(result.synced)
     } catch {
       // The preload request interceptor reports the error globally.
     } finally {
@@ -203,6 +315,84 @@ export function SettingsPage() {
                 </div>
               </div>
             ) : null}
+
+            <div className="cloud-devices" aria-label="已绑定设备">
+              <div className="cloud-devices-heading">
+                <div>
+                  <strong>已绑定设备</strong>
+                  <small>{devices.length ? `${devices.length} 台设备可同步私密数据` : '正在读取设备列表'}</small>
+                </div>
+                <Laptop aria-hidden="true" />
+              </div>
+              {devices.length ? (
+                <div className="cloud-device-list">
+                  {devices.map((device) => {
+                    const isCurrent = device.id === account.device?.id
+                    const isOnline = device.status === 'online'
+                    return (
+                      <div key={device.id} className="cloud-device-row">
+                        <span className="cloud-device-icon" aria-hidden="true">
+                          {device.platform.toLowerCase().includes('ios') ? <Smartphone /> : <Laptop />}
+                        </span>
+                        <div className="cloud-device-info">
+                          <strong>{device.name || (device.platform.toLowerCase().includes('ios') ? 'iPhone' : 'Mac')}</strong>
+                          <span>{device.platform}{device.appVersion ? ` · v${device.appVersion}` : ''}{isCurrent ? ' · 本机' : ''}</span>
+                        </div>
+                        <div className="cloud-device-status" data-online={String(isOnline)}>
+                          <span aria-hidden="true" />
+                          <small>{isOnline ? '在线' : '离线'}</small>
+                          <em>{deviceLastSeen(device.lastSeenAt)}</em>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : <small className="cloud-device-empty">暂未找到已绑定设备</small>}
+            </div>
+
+            <div className="cloud-keyring" aria-label="端到端加密同步">
+              <div className="cloud-keyring-heading">
+                <span><ShieldCheck aria-hidden="true" /></span>
+                <div>
+                  <strong>端到端加密同步</strong>
+                  <small>{keyring?.enabled === false
+                    ? keyring.reason
+                    : keyring?.deviceStatus === 'ready'
+                      ? `UMK v${keyring.activeVersion} 已在本机安全保存`
+                      : keyring?.deviceStatus === 'pending'
+                        ? '等待 iPhone 批准此桌面设备'
+                        : pending === 'keyring' ? '正在检查密钥状态…' : '尚未初始化'}</small>
+                </div>
+              </div>
+              {keyring?.deviceStatus === 'pending' && keyring.verificationCode ? (
+                <div className="cloud-keyring-pending">
+                  <span>设备验证码</span>
+                  <code>{keyring.verificationCode}</code>
+                  <small>请在 iPhone 的账号设置中核对并批准，SaaS 无法读取你的密钥或转写内容。</small>
+                </div>
+              ) : null}
+              {keyring?.deviceStatus === 'ready' ? (
+                <div className="cloud-keyring-pairing">
+                  {!pairing ? <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void createPairing()}><ShieldCheck aria-hidden="true" />添加 iPhone</button> : null}
+                  {pairingQr && pairing?.status !== 'expired' ? <img className="cloud-keyring-qr" src={pairingQr} alt="iPhone 配对二维码" /> : null}
+                  {pairing ? <div className="cloud-keyring-pairing-info"><span>请用 iPhone 扫码，并核对确认码</span><code>{pairing.confirmationCode}</code><small>{pairing.targetDeviceName ? `待批准设备：${pairing.targetDeviceName}` : pairing.status === 'waiting_for_scan' ? '等待 iPhone 扫描' : '等待 iPhone 信息'}</small></div> : null}
+                  {pairing?.status === 'waiting_for_approval' ? <button className="primary-button" type="button" disabled={pending === 'keyring'} onClick={() => void approvePairing()}><ShieldCheck aria-hidden="true" />批准此 iPhone</button> : null}
+                  {pairing?.status === 'completed' ? <small className="cloud-keyring-result">iPhone 已完成授权</small> : null}
+                  {pairing?.status === 'expired' ? <><small className="cloud-keyring-result">二维码已过期，请重新生成</small><button className="secondary-button" type="button" onClick={resetPairing}><RefreshCw aria-hidden="true" />重新生成二维码</button></> : null}
+                  {pairingError ? <small className="cloud-keyring-result">{pairingError}</small> : null}
+                </div>
+              ) : null}
+              <button
+                className="secondary-button cloud-keyring-sync"
+                type="button"
+                disabled={isBusy || keyring?.deviceStatus !== 'ready'}
+                onClick={() => void syncPrivate()}
+              >
+                {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+                同步私密转写
+              </button>
+              {syncedCount !== null ? <small className="cloud-keyring-result">本次同步 {syncedCount} 条记录</small> : null}
+            </div>
           </div>
         ) : (
           <div className="cloud-login-content">

@@ -238,14 +238,6 @@ export function useAgentSession(
     })
   }, [])
 
-  const updateToolCall = useCallback((event: AgentEvent) => {
-    setToolCallsByRun((current) => {
-      const tools = current[event.runId] ?? []
-      const next = mergeAgentToolEvent(tools, event)
-      return next === tools ? current : { ...current, [event.runId]: next }
-    })
-  }, [])
-
   const applyEvent = useCallback((event: AgentEvent) => {
     const lastSequence = sequenceByRun.current.get(event.runId) ?? 0
     if (event.seq <= lastSequence) return

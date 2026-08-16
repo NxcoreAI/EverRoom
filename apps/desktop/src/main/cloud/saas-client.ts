@@ -11,6 +11,7 @@ import type {
   AsrJob,
   AsrResult,
   CloudAccountStatus,
+  CloudDevice,
   CloudOidcProvider,
   CreateAsrJobInput,
 } from '../../shared/sources'
@@ -64,6 +65,133 @@ interface CloudSubscription {
   entitlements?: { asrSecondsPerPeriod?: number }
 }
 
+export interface KeyringDevicePackage {
+  algorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
+  ephemeralPublicKey: string
+  salt: string
+  ciphertext: string
+  umkId: string
+  umkVersion: number
+  createdAt?: string
+}
+
+export interface KeyringResponse {
+  userId: string
+  initialized: boolean
+  umkId: string | null
+  activeVersion: number | null
+  currentDevice: {
+    deviceId: string
+    status: 'unregistered' | 'pending' | 'ready'
+    publicKey: string
+    keyPackage: KeyringDevicePackage | null
+  }
+  pendingDevices: Array<{
+    deviceId: string
+    name?: string
+    platform?: string
+    publicKey: string
+    requestedAt?: string
+  }>
+}
+
+export interface PairingSessionResponse {
+  pairingSessionId: string
+  pairingToken?: string
+  status: 'waiting_for_scan' | 'waiting_for_approval' | 'approved' | 'completed' | 'expired' | 'cancelled'
+  confirmationCode: string
+  expiresAt: string
+  targetDeviceId?: string | null
+  targetDeviceName?: string | null
+  targetPublicKey?: string | null
+  targetAlgorithm?: 'X25519' | null
+  umkId?: string | null
+  umkVersion?: number | null
+  packageAlgorithm?: 'X25519-HKDF-SHA256-AES-256-GCM'
+  ephemeralPublicKey?: string
+  salt?: string
+  ciphertext?: string
+  origin?: string
+}
+
+export interface PrivateRecordEnvelope {
+  cursor: number
+  operation: 'upsert' | 'delete'
+  recordId: string
+  recordType?: 'legacy_transcription' | 'transcription_source' | 'transcription_summary'
+  algorithm?: 'AES-256-GCM'
+  schemaVersion?: number
+  keyId?: string
+  ciphertext?: string
+  contentHash?: string
+  wrappingAlgorithm?: 'AES-256-GCM'
+  wrappingKeyId?: string
+  wrappingKeyVersion?: number
+  wrappedKey?: string
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PrivateAudioAsset {
+  cursor?: number
+  operation?: 'upsert' | 'delete'
+  id: string
+  recordingId: string
+  fileName: string
+  mimeType: string
+  durationMs: number | null
+  plainSize: number
+  cipherSize: number
+  plainContentHash: string
+  cipherContentHash: string
+  encryptionAlgorithm: 'AES-256-GCM'
+  schemaVersion: number
+  dataKeyId: string
+  wrappingAlgorithm: 'AES-256-GCM'
+  wrappingKeyId: string
+  wrappingKeyVersion: number
+  wrappedKey: string
+  objectKey?: string | null
+  status: 'created' | 'uploaded' | 'deleted'
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProcessingJob {
+  id: string
+  workflow: 'transcription.summary.v1'
+  workflowVersion: number
+  sourceRecordId: string
+  sourceRevision: number
+  sourceContentHash: string
+  status: 'pending' | 'leased' | 'running' | 'retry_wait' | 'succeeded' | 'superseded' | 'cancelled' | 'dead_letter'
+  attemptCount: number
+  maxAttempts: number
+  leaseExpiresAt: string | null
+  resultRecordId: string | null
+  lastErrorCode: string | null
+  lastErrorClass: 'retryable' | 'permanent' | 'user_action' | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export interface CompleteProcessingJobInput {
+  leaseToken: string
+  resultRecordId: string
+  algorithm: 'AES-256-GCM'
+  schemaVersion: number
+  keyId: string
+  ciphertext: string
+  contentHash: string
+  wrappingAlgorithm: 'AES-256-GCM'
+  wrappingKeyId: string
+  wrappingKeyVersion: number
+  wrappedKey: string
+}
+
 interface StoredAccountProfile {
   userId: string
   email?: string | null
@@ -95,6 +223,12 @@ class SaasRequestError extends Error {
 
 function env(name: string, fallback: string): string {
   return process.env[name]?.trim() || fallback
+}
+
+export function normalizeSaasApiUrl(value: string): string {
+  const url = new URL(value.trim())
+  if (url.pathname === '' || url.pathname === '/') url.pathname = '/api/v1'
+  return url.toString().replace(/\/+$/, '')
 }
 
 function randomBase64Url(size = 32): string {
@@ -129,7 +263,7 @@ export class SaasClient {
     private readonly recordingsDirectory: string,
     private readonly openExternal: (url: string) => Promise<void>,
   ) {
-    this.baseUrl = env('NXCORE_SAAS_API_URL', 'http://127.0.0.1:4100/api/v1').replace(/\/+$/, '')
+    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://127.0.0.1:4100/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
     this.connectorIds = {
@@ -147,6 +281,12 @@ export class SaasClient {
     await this.initialize()
     if (this.account) await this.loadSubscription()
     return this.currentStatus()
+  }
+
+  async listDevices(): Promise<CloudDevice[]> {
+    await this.initialize()
+    this.requireLogin()
+    return this.request<CloudDevice[]>('/app/devices')
   }
 
   async login(identifier: string, password: string): Promise<CloudAccountStatus> {
@@ -329,6 +469,148 @@ export class SaasClient {
       job.insights = result.insights
     }
     return this.normalizeJob(job)
+  }
+
+  async registerKeyAgreement(publicKey: string): Promise<void> {
+    await this.request('/app/keyring/device', {
+      method: 'PUT',
+      data: { algorithm: 'X25519', publicKey },
+    })
+  }
+
+  async getKeyring(): Promise<KeyringResponse> {
+    return this.request<KeyringResponse>('/app/keyring')
+  }
+
+  async bootstrapKeyring(input: {
+    umkId: string
+    umkVersion: number
+    packageAlgorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
+    ephemeralPublicKey: string
+    salt: string
+    ciphertext: string
+  }): Promise<void> {
+    await this.request('/app/keyring/bootstrap', { method: 'POST', data: input })
+  }
+
+  async putDeviceKeyPackage(targetDeviceId: string, input: {
+    umkId: string
+    umkVersion: number
+    packageAlgorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
+    ephemeralPublicKey: string
+    salt: string
+    ciphertext: string
+  }): Promise<void> {
+    await this.request(`/app/keyring/devices/${encodeURIComponent(targetDeviceId)}/package`, {
+      method: 'PUT',
+      data: input,
+    })
+  }
+
+  async createPairingSession(): Promise<PairingSessionResponse> {
+    const result = await this.request<PairingSessionResponse>('/app/keyring/pairing-sessions', { method: 'POST' })
+    return { ...result, origin: new URL(this.baseUrl).origin }
+  }
+
+  async getPairingSession(id: string): Promise<PairingSessionResponse> {
+    return this.request<PairingSessionResponse>(`/app/keyring/pairing-sessions/${encodeURIComponent(id)}`)
+  }
+
+  async approvePairingSession(id: string): Promise<PairingSessionResponse> {
+    return this.request<PairingSessionResponse>(`/app/keyring/pairing-sessions/${encodeURIComponent(id)}/approve`, { method: 'POST' })
+  }
+
+  async packagePairingSession(id: string, input: {
+    umkId: string
+    umkVersion: number
+    packageAlgorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
+    ephemeralPublicKey: string
+    salt: string
+    ciphertext: string
+  }): Promise<PairingSessionResponse> {
+    return this.request<PairingSessionResponse>(`/app/keyring/pairing-sessions/${encodeURIComponent(id)}/package`, { method: 'PUT', data: input })
+  }
+
+  async listPrivateRecords(cursor: number): Promise<{ records: PrivateRecordEnvelope[]; nextCursor: number }> {
+    const result = await this.requestWithMeta<PrivateRecordEnvelope[]>(`/app/private-records?cursor=${Math.max(0, Math.floor(cursor))}`)
+    return {
+      records: result.data,
+      nextCursor: typeof result.meta?.nextCursor === 'number' ? result.meta.nextCursor : cursor,
+    }
+  }
+
+  async getPrivateRecord(recordId: string): Promise<PrivateRecordEnvelope> {
+    return this.request(`/app/private-records/${encodeURIComponent(recordId)}`)
+  }
+
+  async createPrivateAudio(input: Omit<PrivateAudioAsset, 'id'|'status'|'revision'|'createdAt'|'updatedAt'|'objectKey'>): Promise<PrivateAudioAsset> {
+    return this.request('/app/private-audio', { method: 'POST', data: input })
+  }
+  async authorizePrivateAudioUpload(id: string): Promise<PrivateAudioAsset & { uploadUrl: string; headers: Record<string,string>; expiresAt: string }> {
+    return this.request(`/app/private-audio/${encodeURIComponent(id)}/upload-authorization`, { method: 'POST' })
+  }
+  async completePrivateAudioUpload(id: string): Promise<PrivateAudioAsset> {
+    return this.request(`/app/private-audio/${encodeURIComponent(id)}/upload-complete`, { method: 'POST' })
+  }
+  async listPrivateAudio(cursor: number): Promise<{ assets: PrivateAudioAsset[]; nextCursor: number }> {
+    const result = await this.requestWithMeta<PrivateAudioAsset[]>(`/app/private-audio?cursor=${Math.max(0, Math.floor(cursor))}`)
+    return { assets: result.data, nextCursor: typeof result.meta?.nextCursor === 'number' ? result.meta.nextCursor : cursor }
+  }
+  async authorizePrivateAudioDownload(id: string): Promise<{ assetId: string; downloadUrl: string; expiresAt: string }> {
+    return this.request(`/app/private-audio/${encodeURIComponent(id)}/download-authorization`, { method: 'POST' })
+  }
+  async deletePrivateAudio(id: string): Promise<void> {
+    await this.request(`/app/private-audio/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  }
+
+  async registerProcessorDevice(): Promise<void> {
+    await this.request('/app/processing/device', {
+      method: 'PUT',
+      data: { capabilities: ['transcription.summary.v1'], maxConcurrency: 1 },
+    })
+  }
+
+  async claimProcessingJob(): Promise<{ job: ProcessingJob; leaseToken: string } | null> {
+    return this.request('/app/processing/jobs/claim', { method: 'POST', data: {} })
+  }
+
+  async startProcessingJob(jobId: string, leaseToken: string): Promise<ProcessingJob> {
+    return this.request(`/app/processing/jobs/${encodeURIComponent(jobId)}/start`, {
+      method: 'POST',
+      data: { leaseToken },
+    })
+  }
+
+  async renewProcessingJob(jobId: string, leaseToken: string): Promise<ProcessingJob> {
+    return this.request(`/app/processing/jobs/${encodeURIComponent(jobId)}/renew`, {
+      method: 'POST',
+      data: { leaseToken },
+    })
+  }
+
+  async completeProcessingJob(jobId: string, input: CompleteProcessingJobInput): Promise<void> {
+    await this.request(`/app/processing/jobs/${encodeURIComponent(jobId)}/complete`, {
+      method: 'POST',
+      data: input,
+    })
+  }
+
+  async failProcessingJob(jobId: string, input: {
+    leaseToken: string
+    errorCode: string
+    errorClass: 'retryable' | 'permanent' | 'user_action'
+  }): Promise<void> {
+    await this.request(`/app/processing/jobs/${encodeURIComponent(jobId)}/fail`, {
+      method: 'POST',
+      data: input,
+    })
+  }
+
+  async acknowledgeSync(cursor: number): Promise<void> {
+    await this.request('/app/sync/ack', {
+      method: 'POST',
+      data: { deviceId: this.account!.device.id, cursor: Math.max(0, Math.floor(cursor)) },
+    })
   }
 
   private async restoreSession(): Promise<void> {
@@ -517,6 +799,23 @@ export class SaasClient {
       response = await this.send(path, config, this.accessToken!)
     }
     return this.unwrap<T>(response)
+  }
+
+  private async requestWithMeta<T>(path: string, config: AxiosRequestConfig = {}): Promise<{ data: T; meta?: { nextCursor?: number } }> {
+    this.requireLogin()
+    let response = await this.send(path, config, this.accessToken!)
+    if (response.status === 401) {
+      const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
+      if (!refreshToken) throw new Error('登录已过期，请重新登录。')
+      await this.refresh(refreshToken)
+      response = await this.send(path, config, this.accessToken!)
+    }
+    const body = response.data as { data?: T; meta?: { nextCursor?: number }; detail?: string; message?: string } | null
+    if (response.status >= 400) {
+      throw new SaasRequestError(body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`, response.status)
+    }
+    if (!body || typeof body !== 'object' || !('data' in body)) throw new Error('SaaS 返回了无效响应。')
+    return { data: body.data as T, meta: body.meta }
   }
 
   private async publicRequest<T>(path: string, config: AxiosRequestConfig): Promise<T> {

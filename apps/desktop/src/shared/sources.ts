@@ -201,13 +201,53 @@ export interface CloudAccountStatus {
   }
 }
 
+export interface CloudDevice {
+  id: string
+  name: string
+  platform: string
+  appVersion?: string | null
+  status: string
+  lastSeenAt: string
+  createdAt?: string
+}
+
+export type KeyringDeviceStatus = 'unregistered' | 'pending' | 'ready'
+
+export interface AccountKeyringStatus {
+  enabled: boolean
+  reason?: string
+  initialized: boolean
+  umkId: string | null
+  activeVersion: number | null
+  deviceStatus: KeyringDeviceStatus
+  verificationCode: string | null
+}
+
+export interface PrivateTranscriptionRecord {
+  recordId: string
+  revision: number
+  createdAt: string
+  updatedAt: string
+  transcript: string
+  segments: AsrSegment[]
+  metadata?: Record<string, unknown>
+}
+
+export interface PrivateTranscriptionSyncResult {
+  status: AccountKeyringStatus
+  cursor: number
+  synced: number
+  removed: number
+  records: PrivateTranscriptionRecord[]
+}
+
 export type CloudOidcProvider = 'apple' | 'google'
 
 export interface DesktopRequestError {
   channel: string
   message: string
   title?: string
-  action?: 'open-system-audio-settings'
+  action?: 'open-microphone-settings' | 'open-system-audio-settings'
   actionLabel?: string
 }
 
@@ -226,12 +266,19 @@ export interface NxcoreDesktopApi {
   }
   account: {
     status(): Promise<CloudAccountStatus>
+    devices(): Promise<CloudDevice[]>
     login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
     loginWithOidc(provider: CloudOidcProvider): Promise<CloudAccountStatus>
     cancelOidcLogin(): Promise<void>
     logout(): Promise<CloudAccountStatus>
+    keyringStatus(): Promise<AccountKeyringStatus>
+    createPairingSession(): Promise<{ pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string }>
+    getPairingSession(id: string): Promise<{ pairingSessionId: string; status: string; confirmationCode: string; expiresAt: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null; targetAlgorithm?: string | null }>
+    approvePairingSession(id: string): Promise<{ pairingSessionId: string; status: string; targetDeviceId?: string | null }>
   }
   asr: {
+    requestMicrophoneAccess(): Promise<boolean>
+    openMicrophoneSettings(): Promise<void>
     openSystemAudioSettings(): Promise<void>
     beginRecording(mimeType: string): Promise<{ id: string }>
     appendRecording(id: string, chunk: Uint8Array): Promise<void>
@@ -239,6 +286,14 @@ export interface NxcoreDesktopApi {
     cancelRecording(id: string): Promise<void>
     createJob(input: CreateAsrJobInput): Promise<AsrJob>
     getJob(id: string): Promise<AsrJob>
+  }
+  privateAudio: {
+    list(cursor?: number): Promise<{ assets: Array<Record<string, unknown>>; nextCursor: number }>
+    download(assetId: string, outputPath: string): Promise<string>
+  }
+  transcriptions: {
+    syncPrivate(): Promise<PrivateTranscriptionSyncResult>
+    listPrivate(): Promise<PrivateTranscriptionRecord[]>
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>

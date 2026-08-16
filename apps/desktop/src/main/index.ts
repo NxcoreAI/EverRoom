@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell, systemPreferences } from 'electron'
 
 import type { CloudAccountStatus } from '../shared/sources'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -27,6 +27,9 @@ import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
+import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
+import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
+import { PrivateAudioSyncService } from './transcription/private-audio-sync'
 
 const APP_NAME = 'EverRoom'
 
@@ -97,6 +100,8 @@ const DOCUMENT_CHANNELS = {
 } as const
 
 const ASR_CHANNELS = {
+  requestMicrophoneAccess: 'asr:request-microphone-access',
+  openMicrophoneSettings: 'asr:open-microphone-settings',
   openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
   appendRecording: 'asr:append-recording',
@@ -104,6 +109,10 @@ const ASR_CHANNELS = {
   cancelRecording: 'asr:cancel-recording',
   createJob: 'asr:create-job',
   getJob: 'asr:get-job',
+} as const
+const PRIVATE_AUDIO_CHANNELS = {
+  list: 'private-audio:list',
+  download: 'private-audio:download',
 } as const
 
 const REALITY_CHANNELS = {
@@ -123,10 +132,20 @@ const REALITY_CHANNELS = {
 
 const ACCOUNT_CHANNELS = {
   status: 'account:status',
+  devices: 'account:devices',
   login: 'account:login',
   oidcLogin: 'account:oidc-login',
   oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
+  keyringStatus: 'account:keyring-status',
+  createPairingSession: 'account:create-pairing-session',
+  getPairingSession: 'account:get-pairing-session',
+  approvePairingSession: 'account:approve-pairing-session',
+} as const
+
+const TRANSCRIPTION_CHANNELS = {
+  syncPrivate: 'transcription:sync-private',
+  listPrivate: 'transcription:list-private',
 } as const
 
 const MEMORY_CHANNELS = {
@@ -152,7 +171,10 @@ let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
+let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
+let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
+let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
 
@@ -328,6 +350,19 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
+  ipcMain.handle(ASR_CHANNELS.requestMicrophoneAccess, async () => {
+    if (process.platform !== 'darwin') return true
+    const status = systemPreferences.getMediaAccessStatus('microphone')
+    if (status === 'granted') return true
+    if (status === 'denied' || status === 'restricted') return false
+    return systemPreferences.askForMediaAccess('microphone')
+  })
+  ipcMain.handle(ASR_CHANNELS.openMicrophoneSettings, () => {
+    if (process.platform !== 'darwin') throw new Error('麦克风隐私设置仅适用于 macOS。')
+    return shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+    )
+  })
   ipcMain.handle(ASR_CHANNELS.openSystemAudioSettings, () => {
     if (process.platform !== 'darwin') throw new Error('系统音频录制设置仅适用于 macOS。')
     return shell.openExternal(
@@ -340,6 +375,11 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   ipcMain.handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
   ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => coordinator.createJob(input))
   ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
+}
+
+function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
+  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => service.list(cursor ?? 0))
+  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => service.downloadById(assetId, outputPath))
 }
 
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
@@ -402,6 +442,7 @@ async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promi
 
 function registerAccountHandlers(client: SaasClient): void {
   ipcMain.handle(ACCOUNT_CHANNELS.status, () => syncAccountMonitoring(client.status()))
+  ipcMain.handle(ACCOUNT_CHANNELS.devices, () => client.listDevices())
   ipcMain.handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
     const value = input as { identifier?: unknown; password?: unknown }
@@ -416,6 +457,21 @@ function registerAccountHandlers(client: SaasClient): void {
   })
   ipcMain.handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
   ipcMain.handle(ACCOUNT_CHANNELS.logout, () => syncAccountMonitoring(client.logout()))
+}
+
+function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncService): void {
+  ipcMain.handle(ACCOUNT_CHANNELS.keyringStatus, () => sync.keyringStatus())
+  ipcMain.handle(ACCOUNT_CHANNELS.createPairingSession, () => sync.createPairingSession())
+  ipcMain.handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('无效的配对会话。')
+    return sync.getPairingSession(id)
+  })
+  ipcMain.handle(ACCOUNT_CHANNELS.approvePairingSession, (_event, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('无效的配对会话。')
+    return sync.approvePairingSession(id)
+  })
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => sync.sync())
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
 }
 
 function createWindow(): void {
@@ -439,6 +495,16 @@ function createWindow(): void {
 
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
+  })
+  window.webContents.session.setPermissionCheckHandler((_webContents, permission, _origin, details) => {
+    return permission === 'media' && details.mediaType === 'audio'
+  })
+  window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    if (permission !== 'media' || !('mediaTypes' in details)) {
+      callback(false)
+      return
+    }
+    callback(details.mediaTypes?.includes('audio') ?? false)
   })
   if (process.platform === 'darwin') {
     window.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
@@ -540,13 +606,36 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = new RecordingStore(recordingsDirectory)
     saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
     void saasClient.initialize()
+    const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
+    await keyring.initialize()
+    privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory)
+    privateTranscriptionSync = new PrivateTranscriptionSyncService(
+      join(dataDirectory, 'private-transcription-sync.json'),
+      saasClient,
+      keyring,
+      realityGatewayBridge,
+    )
+    await privateTranscriptionSync.initialize()
+    void privateTranscriptionSync.materializeCached().catch((error) => {
+      console.warn('Unable to import cached private transcriptions into Reality.', error)
+    })
+    transcriptionProcessingCoordinator = new TranscriptionProcessingCoordinator(
+      join(dataDirectory, 'transcription-processing-state.json'),
+      saasClient,
+      keyring,
+      agentGatewayBridge,
+    )
+    await transcriptionProcessingCoordinator.initialize()
+    transcriptionProcessingCoordinator.start()
     if (process.platform !== 'darwin') {
       const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
       if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
     }
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     registerAccountHandlers(saasClient)
-    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge))
+    registerPrivateTranscriptionHandlers(privateTranscriptionSync)
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync))
+    registerPrivateAudioHandlers(privateAudioSync)
 
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())

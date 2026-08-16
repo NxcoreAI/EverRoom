@@ -3,6 +3,7 @@ import { extname } from "node:path";
 import { REALITY_PROTOCOL_VERSION } from "@nxcore/reality-contract";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
+import { RealityError } from "./errors.js";
 import type { RealityService } from "./service.js";
 
 const IdParams = Type.Object({
@@ -52,6 +53,22 @@ const StatusSchema = Type.Union([
   Type.Literal("failed"),
   Type.Literal("pending_sync"),
 ]);
+
+const InsightsSchema = Type.Object({
+  source: Type.Optional(Type.Union([Type.Literal("mock"), Type.Literal("generated")])),
+  eventType: Type.Optional(Type.Union([
+    Type.Literal("MEETING"), Type.Literal("MEAL"), Type.Literal("WORK"),
+    Type.Literal("REST"), Type.Literal("EXERCISE"), Type.Literal("OTHER"),
+  ])),
+  currentTopic: Type.Union([Type.String(), Type.Null()]),
+  summary: Type.Union([Type.String(), Type.Null()]),
+  keyPoints: Type.Array(Type.String()),
+  decisions: Type.Array(Type.String()),
+  actionItems: Type.Array(Type.String()),
+  people: Type.Array(Type.String()),
+  projects: Type.Array(Type.String()),
+  unresolvedQuestions: Type.Array(Type.String()),
+});
 
 function audioType(path: string): string {
   const types: Record<string, string> = {
@@ -103,6 +120,44 @@ export function realityRoutes(service: RealityService): FastifyPluginAsyncTypebo
         },
       },
       async (request, reply) => reply.code(201).send(service.createEvent(request.body)),
+    );
+
+    app.put(
+      "/v1/reality/events/:id/import",
+      {
+        schema: {
+          tags: ["reality"],
+          params: IdParams,
+          body: Type.Object({
+            id: Type.String({ format: "uuid" }),
+            title: Type.String({ minLength: 1, maxLength: 120 }),
+            captureDevice: Type.Object({
+              id: Type.String({ minLength: 1, maxLength: 120 }),
+              name: Type.String({ minLength: 1, maxLength: 120 }),
+              kind: Type.Union([Type.Literal("desktop"), Type.Literal("iphone"), Type.Literal("apple_watch")]),
+            }),
+            audioSource: Type.Union([Type.Literal("microphone"), Type.Literal("system")]),
+            durationMs: Type.Integer({ minimum: 0 }),
+            transcript: Type.String({ maxLength: 2_000_000 }),
+            transcriptSegments: Type.Array(Type.Object({
+              text: Type.String(),
+              beginTime: Type.Number({ minimum: 0 }),
+              endTime: Type.Number({ minimum: 0 }),
+              speakerId: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+            })),
+            insights: Type.Optional(InsightsSchema),
+            resultVersion: Type.Integer({ minimum: 1 }),
+            startedAt: Type.String({ format: "date-time" }),
+            endedAt: Type.String({ format: "date-time" }),
+          }),
+        },
+      },
+      async (request) => {
+        if (request.params.id !== request.body.id) {
+          throw new RealityError("import_id_mismatch", "Imported reality event id does not match the route", 400);
+        }
+        return service.importEvent(request.body);
+      },
     );
 
     app.get(

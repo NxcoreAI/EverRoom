@@ -23,7 +23,6 @@ function errorMessage(error: unknown): string {
 }
 
 function reportRequestError(detail: DesktopRequestError): void {
-  console.error('[desktop-request] failed', detail)
   ipcRenderer.send('app:request-error', detail)
   if (requestErrorListeners.size === 0) pendingRequestError = detail
   else for (const listener of requestErrorListeners) listener(detail)
@@ -70,12 +69,19 @@ const api: NxcoreDesktopApi = {
   },
   account: {
     status: () => invoke('account:status'),
+    devices: () => invoke('account:devices'),
     login: (input) => invoke('account:login', input),
     loginWithOidc: (provider) => invoke('account:oidc-login', provider),
     cancelOidcLogin: () => invoke('account:oidc-cancel'),
     logout: () => invoke('account:logout'),
+    keyringStatus: () => invoke('account:keyring-status'),
+    createPairingSession: () => invoke('account:create-pairing-session'),
+    getPairingSession: (id) => invoke('account:get-pairing-session', id),
+    approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
   },
   asr: {
+    requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
+    openMicrophoneSettings: () => invoke('asr:open-microphone-settings'),
     openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
     beginRecording: (mimeType) => invoke('asr:begin-recording', mimeType),
     appendRecording: (id, chunk) => invoke('asr:append-recording', id, chunk),
@@ -83,6 +89,14 @@ const api: NxcoreDesktopApi = {
     cancelRecording: (id) => invoke('asr:cancel-recording', id),
     createJob: (input) => invoke('asr:create-job', input),
     getJob: (id) => invoke('asr:get-job', id),
+  },
+  privateAudio: {
+    list: (cursor?: number) => invoke('private-audio:list', cursor ?? 0),
+    download: (assetId: string, outputPath: string) => invoke('private-audio:download', assetId, outputPath),
+  },
+  transcriptions: {
+    syncPrivate: () => invoke('transcription:sync-private'),
+    listPrivate: () => invoke('transcription:list-private'),
   },
   memory: {
     overview: () => invoke('memory:overview'),

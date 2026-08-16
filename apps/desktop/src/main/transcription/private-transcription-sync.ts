@@ -2,12 +2,147 @@ import { createHash } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
+import type { ImportRealityEventInput, RealityInsights } from '@nxcore/reality-contract'
 import type { AccountKeyringStatus, AsrSegment, PrivateTranscriptionRecord, PrivateTranscriptionSyncResult } from '../../shared/sources'
 import type { PairingSessionResponse, PrivateRecordEnvelope, SaasClient } from '../cloud/saas-client'
+import type { RealityGatewayBridge } from '../gateway/reality-gateway-bridge'
 import { AccountKeyringService, combinedDecrypt, keyId } from '../security/account-keyring-service'
 
 interface StoredSyncState {
-  accounts: Record<string, { cursor: number; records: Record<string, PrivateTranscriptionRecord> }>
+  accounts: Record<string, {
+    cursor: number
+    records: Record<string, PrivateTranscriptionRecord>
+    materialized?: Record<string, string>
+  }>
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function metadata(record: PrivateTranscriptionRecord): Record<string, unknown> {
+  return record.metadata ?? {}
+}
+
+function metadataString(record: PrivateTranscriptionRecord, key: string): string | null {
+  const value = metadata(record)[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function validIso(value: string | null, fallback: string): string {
+  const date = new Date(value ?? fallback)
+  const fallbackDate = new Date(fallback)
+  return (Number.isNaN(date.getTime()) ? fallbackDate : date).toISOString()
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
+    : []
+}
+
+function importedInsights(record: PrivateTranscriptionRecord | undefined, transcript: string): RealityInsights | undefined {
+  const value = record ? metadata(record).summary : null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const summary = value as Record<string, unknown>
+  const title = typeof summary.title === 'string' ? summary.title.trim() : ''
+  const overview = typeof summary.overview === 'string' ? summary.overview.trim() : ''
+  const keyPoints = stringArray(summary.keyPoints)
+  const decisions = stringArray(summary.decisions)
+  const topics = stringArray(summary.topics)
+  const actionItems = Array.isArray(summary.actionItems) ? summary.actionItems.flatMap((item): string[] => {
+    if (typeof item === 'string') return item.trim() ? [item.trim()] : []
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const action = item as Record<string, unknown>
+    if (typeof action.text !== 'string' || !action.text.trim()) return []
+    const details = [
+      typeof action.owner === 'string' && action.owner.trim() ? `负责人：${action.owner.trim()}` : '',
+      typeof action.dueDate === 'string' && action.dueDate.trim() ? `截止：${action.dueDate.trim()}` : '',
+    ].filter(Boolean)
+    return [`${action.text.trim()}${details.length ? `（${details.join('；')}）` : ''}`]
+  }) : []
+  if (!title && !overview && !keyPoints.length && !decisions.length && !actionItems.length && !topics.length) return undefined
+  const firstSentence = transcript.split(/(?<=[。！？!?])|\n+/).map((item) => item.trim()).find(Boolean) ?? ''
+  return {
+    source: 'generated',
+    currentTopic: topics[0] || title || firstSentence.replace(/[。！？!?]$/, '').slice(0, 50) || null,
+    summary: overview || null,
+    keyPoints,
+    decisions,
+    actionItems,
+    people: [],
+    projects: [],
+    unresolvedQuestions: [],
+  }
+}
+
+function speakerId(value: unknown): number | null {
+  if (typeof value !== 'string') return null
+  const match = value.match(/\d+/)
+  return match ? Number(match[0]) : null
+}
+
+export function toImportedRealityEvent(
+  source: PrivateTranscriptionRecord,
+  summary?: PrivateTranscriptionRecord,
+): ImportRealityEventInput | null {
+  const sourceMetadata = metadata(source)
+  const id = metadataString(source, 'eventId') ?? source.recordId
+  if (!UUID_PATTERN.test(id)) return null
+  const startedAt = validIso(metadataString(source, 'startedAt'), source.createdAt)
+  const durationMs = typeof sourceMetadata.durationMillis === 'number' && Number.isFinite(sourceMetadata.durationMillis)
+    ? Math.max(0, Math.round(sourceMetadata.durationMillis))
+    : Math.max(0, Date.parse(metadataString(source, 'endedAt') ?? source.updatedAt) - Date.parse(startedAt))
+  const endedAt = metadataString(source, 'endedAt')
+    ? validIso(metadataString(source, 'endedAt'), source.updatedAt)
+    : new Date(Date.parse(startedAt) + durationMs).toISOString()
+  const transcriptLines = Array.isArray(sourceMetadata.transcriptLines) ? sourceMetadata.transcriptLines : []
+  const normalizedLines = transcriptLines.flatMap((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+    const line = value as Record<string, unknown>
+    if (typeof line.text !== 'string' || !line.text.trim()) return []
+    return [{
+      text: line.text.trim(),
+      beginTime: typeof line.startOffsetMillis === 'number' ? Math.max(0, line.startOffsetMillis) : 0,
+      speakerId: speakerId(line.speaker),
+    }]
+  })
+  const transcript = normalizedLines.map((line) => line.text).join('\n')
+    || source.transcript.trim().replace(/^#\s*转写结果\s*/u, '')
+  const transcriptSegments = normalizedLines.length
+    ? normalizedLines.map((line, index) => ({
+      ...line,
+      endTime: Math.max(line.beginTime, normalizedLines[index + 1]?.beginTime ?? durationMs),
+    }))
+    : source.segments.map((segment) => ({
+      text: segment.text,
+      beginTime: Math.max(0, segment.beginTime),
+      endTime: Math.max(segment.beginTime, segment.endTime),
+      speakerId: segment.speakerId,
+    }))
+  const insights = importedInsights(summary, transcript)
+  const summaryTitle = summary && metadata(summary).summary && typeof metadata(summary).summary === 'object'
+    ? (metadata(summary).summary as Record<string, unknown>).title
+    : null
+  const title = typeof summaryTitle === 'string' && summaryTitle.trim()
+    ? summaryTitle.trim().slice(0, 120)
+    : insights?.currentTopic?.slice(0, 120) || 'iPhone 录音'
+  const resultVersion = Math.max(
+    1,
+    Date.parse(source.updatedAt) || source.revision,
+    summary ? Date.parse(summary.updatedAt) || summary.revision : 0,
+  )
+  return {
+    id,
+    title,
+    captureDevice: { id: 'synced-iphone', name: 'iPhone', kind: 'iphone' },
+    audioSource: 'microphone',
+    durationMs,
+    transcript,
+    transcriptSegments,
+    ...(insights ? { insights } : {}),
+    resultVersion,
+    startedAt,
+    endedAt,
+  }
 }
 
 function hashBase64(value: string): string {
@@ -68,6 +203,7 @@ export class PrivateTranscriptionSyncService {
     private readonly filePath: string,
     private readonly client: SaasClient,
     private readonly keyring: AccountKeyringService,
+    private readonly reality: RealityGatewayBridge,
   ) {}
 
   async initialize(): Promise<void> {
@@ -118,6 +254,16 @@ export class PrivateTranscriptionSyncService {
     return Object.values(this.state.accounts[account.user.id]?.records ?? {}).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   }
 
+  async materializeCached(): Promise<void> {
+    await this.initialize()
+    const account = await this.client.status()
+    if (!account.authenticated || !account.user) return
+    const current = this.state.accounts[account.user.id]
+    if (!current) return
+    await this.materialize(current)
+    await this.persist()
+  }
+
   private async performSync(): Promise<PrivateTranscriptionSyncResult> {
     await this.initialize()
     const account = await this.client.status()
@@ -157,6 +303,8 @@ export class PrivateTranscriptionSyncService {
     current.cursor = cursor
     this.state.accounts[userId] = current
     await this.persist()
+    await this.materialize(current)
+    await this.persist()
     if (cursor > 0) await this.client.acknowledgeSync(cursor)
     return { status, cursor, synced, removed, records: Object.values(current.records).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)) }
   }
@@ -167,6 +315,34 @@ export class PrivateTranscriptionSyncService {
       decryptPrivateRecordPayload(envelope, umk, umkId, umkVersion),
       envelope,
     )
+  }
+
+  private async materialize(current: StoredSyncState['accounts'][string]): Promise<void> {
+    const materialized = current.materialized ?? {}
+    const summaries = new Map<string, PrivateTranscriptionRecord>()
+    for (const record of Object.values(current.records)) {
+      if (metadataString(record, 'kind') !== 'everroom.transcription-summary') continue
+      const sourceRecordId = metadataString(record, 'sourceRecordId')
+      if (sourceRecordId) summaries.set(sourceRecordId, record)
+    }
+    const activeEventIds = new Set<string>()
+    for (const source of Object.values(current.records)) {
+      if (metadataString(source, 'kind') === 'everroom.transcription-summary') continue
+      const summary = summaries.get(source.recordId)
+      const input = toImportedRealityEvent(source, summary)
+      if (!input) continue
+      activeEventIds.add(input.id)
+      const fingerprint = `${source.revision}:${source.updatedAt}:${summary?.revision ?? 0}:${summary?.updatedAt ?? ''}`
+      if (materialized[input.id] === fingerprint) continue
+      await this.reality.importEvent(input)
+      materialized[input.id] = fingerprint
+    }
+    for (const eventId of Object.keys(materialized)) {
+      if (activeEventIds.has(eventId)) continue
+      await this.reality.discard(eventId).catch(() => undefined)
+      delete materialized[eventId]
+    }
+    current.materialized = materialized
   }
 
   private async persist(): Promise<void> {

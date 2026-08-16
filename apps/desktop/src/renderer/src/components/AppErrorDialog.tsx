@@ -14,7 +14,9 @@ export function AppErrorDialog() {
   const handlePrimaryAction = () => {
     const action = error.action
     setError(null)
-    if (action === 'open-system-audio-settings') {
+    if (action === 'open-microphone-settings') {
+      void window.nxcore?.asr.openMicrophoneSettings().catch(() => undefined)
+    } else if (action === 'open-system-audio-settings') {
       void window.nxcore?.asr.openSystemAudioSettings().catch(() => undefined)
     }
   }

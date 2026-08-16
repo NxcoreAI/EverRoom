@@ -101,6 +101,25 @@ export interface FinishRealityCaptureInput {
   endedAt?: string;
 }
 
+export interface ImportRealityEventInput {
+  id: string;
+  title: string;
+  captureDevice: RealityCaptureDevice;
+  audioSource: RealityAudioSource;
+  durationMs: number;
+  transcript: string;
+  transcriptSegments: Array<{
+    text: string;
+    beginTime: number;
+    endTime: number;
+    speakerId: number | null;
+  }>;
+  insights?: RealityInsights;
+  resultVersion: number;
+  startedAt: string;
+  endedAt: string;
+}
+
 export interface ApplyRealityAsrInput {
   jobId: string;
   source: "local" | "saas";
