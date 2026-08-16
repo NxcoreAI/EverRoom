@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
 
 import type { AccountKeyringStatus } from '../../shared/sources'
-import type { KeyringResponse, SaasClient } from '../cloud/saas-client'
+import type { KeyringResponse, PairingSessionResponse, SaasClient } from '../cloud/saas-client'
 
 const PACKAGE_ALGORITHM = 'X25519-HKDF-SHA256-AES-256-GCM' as const
 const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex')
@@ -146,6 +146,23 @@ export class AccountKeyringService {
     return this.file?.publicKey ? verificationCode(this.file.publicKey) : null
   }
 
+  async createPairingSession(client: SaasClient, userId: string): Promise<PairingSessionResponse> {
+    const status = await this.status(client, userId)
+    if (!status.enabled || status.deviceStatus !== 'ready') throw new Error('请先完成本机的端到端密钥初始化。')
+    return client.createPairingSession()
+  }
+
+  async approvePairingSession(client: SaasClient, userId: string, sessionId: string): Promise<PairingSessionResponse> {
+    const approved = await client.approvePairingSession(sessionId)
+    if (!approved.targetDeviceId || !approved.targetPublicKey) throw new Error('配对目标信息不完整。')
+    const keyring = await client.getKeyring()
+    if (!keyring.umkId || !keyring.activeVersion) throw new Error('账号密钥状态无效。')
+    const material = await this.getUmk(userId)
+    if (!material || material.umkId !== keyring.umkId || material.version !== keyring.activeVersion) throw new Error('本机账号主密钥不可用。')
+    const keyPackage = this.makePackage(approved.targetPublicKey, material.value, keyring.umkId, keyring.activeVersion, approved.targetDeviceId)
+    return client.packagePairingSession(sessionId, { ...keyPackage, packageAlgorithm: PACKAGE_ALGORITHM })
+  }
+
   private async ensureMaterial(): Promise<KeyringMaterial> {
     if (this.file?.privateKey && this.file.publicKey) {
       return { publicKey: this.file.publicKey, privateKey: Buffer.from(safeStorage.decryptString(Buffer.from(this.file.privateKey, 'base64')), 'base64') }
@@ -158,7 +175,7 @@ export class AccountKeyringService {
     return { publicKey, privateKey }
   }
 
-  private makePackage(targetPublicKey: string, umk: Buffer, umkId: string, version: number, deviceId: string) {
+  makePackage(targetPublicKey: string, umk: Buffer, umkId: string, version: number, deviceId: string) {
     const pair = generateKeyPairSync('x25519')
     const ephemeralPublicKey = rawPublicKey(pair.publicKey)
     const salt = randomBytes(32)

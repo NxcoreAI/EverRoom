@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
+import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
@@ -34,6 +35,7 @@ const SETTINGS: Array<{ icon: LucideIcon; title: string; description: string }> 
 ]
 
 type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
+type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, rounding: 'down' | 'up' = 'down'): string {
   const minutes = rounding === 'up' ? Math.ceil(seconds / 60) : Math.floor(seconds / 60)
@@ -59,6 +61,9 @@ export function SettingsPage() {
   const [syncedCount, setSyncedCount] = useState<number | null>(null)
   const [privateRecords, setPrivateRecords] = useState<PrivateTranscriptionRecord[]>([])
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
+  const [pairing, setPairing] = useState<PairingSession | null>(null)
+  const [pairingQr, setPairingQr] = useState<string | null>(null)
+  const [pairingError, setPairingError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -87,6 +92,47 @@ export function SettingsPage() {
       window.clearInterval(timer)
     }
   }, [account?.authenticated, account?.user?.id])
+
+  useEffect(() => {
+    if (!pairing || !window.nxcore) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const next = await window.nxcore!.account.getPairingSession(pairing.pairingSessionId)
+        if (!cancelled) setPairing((current) => current ? { ...current, ...next } : current)
+      } catch (error) {
+        if (!cancelled) setPairingError(error instanceof Error ? error.message : '配对会话读取失败。')
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), 2_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [pairing?.pairingSessionId])
+
+  const createPairing = async () => {
+    if (!window.nxcore) return
+    setPairingError(null)
+    try {
+      const session = await window.nxcore.account.createPairingSession()
+      const payload = JSON.stringify({ version: 1, origin: session.origin, pairingSessionId: session.pairingSessionId, pairingToken: session.pairingToken })
+      const dataUrl = await QRCode.toDataURL(payload, { margin: 1, width: 220, errorCorrectionLevel: 'M' })
+      setPairingQr(dataUrl)
+      setPairing(session)
+    } catch (error) {
+      setPairingError(error instanceof Error ? error.message : '无法创建配对会话。')
+    }
+  }
+
+  const approvePairing = async () => {
+    if (!window.nxcore || !pairing) return
+    setPending('keyring')
+    try {
+      await window.nxcore.account.approvePairingSession(pairing.pairingSessionId)
+      setPairingError(null)
+    } catch (error) {
+      setPairingError(error instanceof Error ? error.message : '批准设备失败。')
+    } finally { setPending(null) }
+  }
 
   const updateRealitySettings = (patch: Partial<RealitySettings>) => {
     setRealitySettings((current) => {
@@ -269,6 +315,16 @@ export function SettingsPage() {
                   <span>设备验证码</span>
                   <code>{keyring.verificationCode}</code>
                   <small>请在 iPhone 的账号设置中核对并批准，SaaS 无法读取你的密钥或转写内容。</small>
+                </div>
+              ) : null}
+              {keyring?.deviceStatus === 'ready' ? (
+                <div className="cloud-keyring-pairing">
+                  {!pairing ? <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void createPairing()}><ShieldCheck aria-hidden="true" />添加 iPhone</button> : null}
+                  {pairingQr ? <img className="cloud-keyring-qr" src={pairingQr} alt="iPhone 配对二维码" /> : null}
+                  {pairing ? <div className="cloud-keyring-pairing-info"><span>请用 iPhone 扫码，并核对确认码</span><code>{pairing.confirmationCode}</code><small>{pairing.targetDeviceName ? `待批准设备：${pairing.targetDeviceName}` : pairing.status === 'waiting_for_scan' ? '等待 iPhone 扫描' : '等待 iPhone 信息'}</small></div> : null}
+                  {pairing?.status === 'waiting_for_approval' ? <button className="primary-button" type="button" disabled={pending === 'keyring'} onClick={() => void approvePairing()}><ShieldCheck aria-hidden="true" />批准此 iPhone</button> : null}
+                  {pairing?.status === 'completed' ? <small className="cloud-keyring-result">iPhone 已完成授权</small> : null}
+                  {pairingError ? <small className="cloud-keyring-result">{pairingError}</small> : null}
                 </div>
               ) : null}
               <button

@@ -94,6 +94,25 @@ export interface KeyringResponse {
   }>
 }
 
+export interface PairingSessionResponse {
+  pairingSessionId: string
+  pairingToken?: string
+  status: 'waiting_for_scan' | 'waiting_for_approval' | 'approved' | 'completed' | 'expired' | 'cancelled'
+  confirmationCode: string
+  expiresAt: string
+  targetDeviceId?: string | null
+  targetDeviceName?: string | null
+  targetPublicKey?: string | null
+  targetAlgorithm?: 'X25519' | null
+  umkId?: string | null
+  umkVersion?: number | null
+  packageAlgorithm?: 'X25519-HKDF-SHA256-AES-256-GCM'
+  ephemeralPublicKey?: string
+  salt?: string
+  ciphertext?: string
+  origin?: string
+}
+
 export interface PrivateRecordEnvelope {
   cursor: number
   operation: 'upsert' | 'delete'
@@ -179,6 +198,12 @@ function env(name: string, fallback: string): string {
   return process.env[name]?.trim() || fallback
 }
 
+export function normalizeSaasApiUrl(value: string): string {
+  const url = new URL(value.trim())
+  if (url.pathname === '' || url.pathname === '/') url.pathname = '/api/v1'
+  return url.toString().replace(/\/+$/, '')
+}
+
 function randomBase64Url(size = 32): string {
   return randomBytes(size).toString('base64url')
 }
@@ -211,7 +236,7 @@ export class SaasClient {
     private readonly recordingsDirectory: string,
     private readonly openExternal: (url: string) => Promise<void>,
   ) {
-    this.baseUrl = env('NXCORE_SAAS_API_URL', 'http://127.0.0.1:4100/api/v1').replace(/\/+$/, '')
+    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://127.0.0.1:4100/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
     this.connectorIds = {
@@ -447,6 +472,30 @@ export class SaasClient {
       method: 'PUT',
       data: input,
     })
+  }
+
+  async createPairingSession(): Promise<PairingSessionResponse> {
+    const result = await this.request<PairingSessionResponse>('/app/keyring/pairing-sessions', { method: 'POST' })
+    return { ...result, origin: new URL(this.baseUrl).origin }
+  }
+
+  async getPairingSession(id: string): Promise<PairingSessionResponse> {
+    return this.request<PairingSessionResponse>(`/app/keyring/pairing-sessions/${encodeURIComponent(id)}`)
+  }
+
+  async approvePairingSession(id: string): Promise<PairingSessionResponse> {
+    return this.request<PairingSessionResponse>(`/app/keyring/pairing-sessions/${encodeURIComponent(id)}/approve`, { method: 'POST' })
+  }
+
+  async packagePairingSession(id: string, input: {
+    umkId: string
+    umkVersion: number
+    packageAlgorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
+    ephemeralPublicKey: string
+    salt: string
+    ciphertext: string
+  }): Promise<PairingSessionResponse> {
+    return this.request<PairingSessionResponse>(`/app/keyring/pairing-sessions/${encodeURIComponent(id)}/package`, { method: 'PUT', data: input })
   }
 
   async listPrivateRecords(cursor: number): Promise<{ records: PrivateRecordEnvelope[]; nextCursor: number }> {

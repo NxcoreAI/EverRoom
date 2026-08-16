@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { AccountKeyringStatus, AsrSegment, PrivateTranscriptionRecord, PrivateTranscriptionSyncResult } from '../../shared/sources'
-import type { PrivateRecordEnvelope, SaasClient } from '../cloud/saas-client'
+import type { PairingSessionResponse, PrivateRecordEnvelope, SaasClient } from '../cloud/saas-client'
 import { AccountKeyringService, combinedDecrypt, keyId } from '../security/account-keyring-service'
 
 interface StoredSyncState {
@@ -87,6 +87,22 @@ export class PrivateTranscriptionSyncService {
       return { enabled: false, reason: '请先登录 EverRoom。', initialized: false, umkId: null, activeVersion: null, deviceStatus: 'unregistered', verificationCode: null }
     }
     return this.keyring.status(this.client, account.user.id)
+  }
+
+  async createPairingSession(): Promise<PairingSessionResponse> {
+    const account = await this.client.status()
+    if (!account.authenticated || !account.user) throw new Error('请先登录 EverRoom。')
+    return this.keyring.createPairingSession(this.client, account.user.id)
+  }
+
+  async getPairingSession(id: string): Promise<PairingSessionResponse> {
+    return this.client.getPairingSession(id)
+  }
+
+  async approvePairingSession(id: string): Promise<PairingSessionResponse> {
+    const account = await this.client.status()
+    if (!account.authenticated || !account.user) throw new Error('请先登录 EverRoom。')
+    return this.keyring.approvePairingSession(this.client, account.user.id, id)
   }
 
   async sync(): Promise<PrivateTranscriptionSyncResult> {

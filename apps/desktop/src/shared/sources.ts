@@ -259,6 +259,9 @@ export interface NxcoreDesktopApi {
     cancelOidcLogin(): Promise<void>
     logout(): Promise<CloudAccountStatus>
     keyringStatus(): Promise<AccountKeyringStatus>
+    createPairingSession(): Promise<{ pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string }>
+    getPairingSession(id: string): Promise<{ pairingSessionId: string; status: string; confirmationCode: string; expiresAt: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null; targetAlgorithm?: string | null }>
+    approvePairingSession(id: string): Promise<{ pairingSessionId: string; status: string; targetDeviceId?: string | null }>
   }
   asr: {
     openSystemAudioSettings(): Promise<void>

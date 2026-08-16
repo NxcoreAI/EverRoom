@@ -333,6 +333,10 @@
 .cloud-keyring-pending code { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 1px; }
 .cloud-keyring-sync { width: max-content; }
 .cloud-keyring-result { margin-left: 4px; }
+.cloud-keyring-pairing { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.cloud-keyring-pairing-info { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
+.cloud-keyring-pairing-info code { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+.cloud-keyring-qr { width: 220px; height: 220px; padding: 8px; background: #fff; border-radius: 6px; }
 .cloud-keyring-records { display: grid; gap: 6px; }
 .cloud-keyring-record { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-alt); }
 .cloud-keyring-record strong { color: var(--muted); font-size: 10px; font-weight: 600; }

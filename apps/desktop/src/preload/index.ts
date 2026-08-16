@@ -73,6 +73,9 @@ const api: NxcoreDesktopApi = {
     cancelOidcLogin: () => invoke('account:oidc-cancel'),
     logout: () => invoke('account:logout'),
     keyringStatus: () => invoke('account:keyring-status'),
+    createPairingSession: () => invoke('account:create-pairing-session'),
+    getPairingSession: (id) => invoke('account:get-pairing-session', id),
+    approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
   },
   asr: {
     openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),

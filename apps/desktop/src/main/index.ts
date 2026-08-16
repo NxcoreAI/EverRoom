@@ -124,6 +124,9 @@ const ACCOUNT_CHANNELS = {
   oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
   keyringStatus: 'account:keyring-status',
+  createPairingSession: 'account:create-pairing-session',
+  getPairingSession: 'account:get-pairing-session',
+  approvePairingSession: 'account:approve-pairing-session',
 } as const
 
 const TRANSCRIPTION_CHANNELS = {
@@ -415,6 +418,9 @@ function registerAccountHandlers(client: SaasClient): void {
 
 function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncService): void {
   ipcMain.handle(ACCOUNT_CHANNELS.keyringStatus, () => sync.keyringStatus())
+  ipcMain.handle(ACCOUNT_CHANNELS.createPairingSession, () => sync.createPairingSession())
+  ipcMain.handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => { if (typeof id !== 'string') throw new Error('无效的配对会话。'); return sync.getPairingSession(id) })
+  ipcMain.handle(ACCOUNT_CHANNELS.approvePairingSession, (_event, id: unknown) => { if (typeof id !== 'string') throw new Error('无效的配对会话。'); return sync.approvePairingSession(id) })
   ipcMain.handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => sync.sync())
   ipcMain.handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
 }
@@ -442,6 +448,16 @@ function createWindow(): void {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
   })
   if (process.platform === 'darwin') {
+    window.webContents.session.setPermissionCheckHandler((_webContents, permission, _origin, details) => {
+      return permission === 'media' && details.mediaType === 'audio'
+    })
+    window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+      if (permission !== 'media' || !('mediaTypes' in details)) {
+        callback(false)
+        return
+      }
+      callback(details.mediaTypes?.includes('audio') ?? false)
+    })
     window.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
       const respond = (streams: Parameters<typeof callback>[0]) => {
         try {
