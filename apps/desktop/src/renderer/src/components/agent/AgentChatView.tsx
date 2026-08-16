@@ -68,6 +68,9 @@ export function AgentChatView({
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const conversationRef = useRef<HTMLDivElement>(null)
   const hasConversation = messages.length > 0 || Boolean(activeRunId) || loading || submitting || Boolean(error)
+  const empty = !hasConversation
+  const previousEmptyRef = useRef(empty)
+  const [quickPromptsReady, setQuickPromptsReady] = useState(empty)
 
   const latestStreamingMessage = useMemo(
     () => [...messages].reverse().find((message) => (
@@ -99,6 +102,20 @@ export function AgentChatView({
     element.scrollTop = element.scrollHeight
   }, [activeRunId, messages, toolCallsByRun])
 
+  useEffect(() => {
+    const wasEmpty = previousEmptyRef.current
+    previousEmptyRef.current = empty
+    if (!empty) {
+      setQuickPromptsReady(false)
+      return
+    }
+    if (wasEmpty || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setQuickPromptsReady(true)
+      return
+    }
+    setQuickPromptsReady(false)
+  }, [empty])
+
   const copyMessage = async (message: DisplayAgentMessage) => {
     try {
       await navigator.clipboard.writeText(message.content)
@@ -112,7 +129,15 @@ export function AgentChatView({
     <section
       className="agent-chat-conversation-frame"
       data-drafting={String(draftHasContent)}
-      data-empty={String(!hasConversation)}
+      data-empty={String(empty)}
+      data-prompts-ready={String(quickPromptsReady)}
+      onTransitionEnd={(event) => {
+        if (
+          empty
+          && event.propertyName === 'top'
+          && (event.target as HTMLElement).classList.contains('agent-composer-shell')
+        ) setQuickPromptsReady(true)
+      }}
     >
       <div className="agent-chat-empty-heading"><h2>开始一段新对话</h2></div>
       <div ref={conversationRef} className="agent-conversation" aria-live="polite">
@@ -177,7 +202,7 @@ export function AgentChatView({
           {error ? <div className="agent-error" role="alert">{error}</div> : null}
       </div>
       {composer}
-      <div className="agent-chat-quick-prompts" aria-label="快捷提示">
+      <div className="agent-chat-quick-prompts" aria-label="快捷提示" aria-hidden={!quickPromptsReady}>
         {quickPrompts.map(([label, prompt]) => (
           <button key={label} type="button" onClick={() => onSelectPrompt(prompt)}>{label}</button>
         ))}

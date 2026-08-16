@@ -20,11 +20,10 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  min-height: 56px;
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(227, 231, 237, 0.82);
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(18px);
+  min-height: 52px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #eceef1;
+  background: #fff;
 }
 
 .agent-chat-toolbar-actions {
@@ -51,9 +50,8 @@
 }
 
 .agent-icon-button:hover {
-  border-color: rgba(61, 111, 246, 0.24);
-  background: rgba(255, 255, 255, 0.48);
-  color: var(--accent-strong);
+  background: #f3f4f6;
+  color: var(--text);
 }
 
 .agent-icon-button svg {
@@ -140,7 +138,7 @@
 .agent-session-trigger > svg:first-child {
   width: 15px;
   height: 15px;
-  color: var(--accent);
+  color: #737b87;
 }
 
 .agent-session-trigger > svg:last-child {
@@ -204,7 +202,7 @@
   border: 1px solid #e2e7ee;
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.08), 0 18px 44px rgba(16, 24, 40, 0.14);
+  box-shadow: 0 2px 7px rgba(16, 24, 40, 0.06), 0 16px 36px rgba(16, 24, 40, 0.11);
   opacity: 0;
   pointer-events: none;
   transform: translateY(-6px) scale(0.98);
@@ -301,8 +299,8 @@
 }
 
 .agent-session-row[data-active='true'] {
-  background: #f3f6fc;
-  box-shadow: inset 2px 0 0 rgba(61, 111, 246, 0.58);
+  background: #f3f5f8;
+  box-shadow: inset 2px 0 0 rgba(76, 100, 171, 0.58);
 }
 
 .agent-session-select {
