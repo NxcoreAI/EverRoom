@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell, systemPreferences } from 'electron'
 
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -93,6 +93,8 @@ const DOCUMENT_CHANNELS = {
 } as const
 
 const ASR_CHANNELS = {
+  requestMicrophoneAccess: 'asr:request-microphone-access',
+  openMicrophoneSettings: 'asr:open-microphone-settings',
   openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
   appendRecording: 'asr:append-recording',
@@ -332,6 +334,19 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
+  ipcMain.handle(ASR_CHANNELS.requestMicrophoneAccess, async () => {
+    if (process.platform !== 'darwin') return true
+    const status = systemPreferences.getMediaAccessStatus('microphone')
+    if (status === 'granted') return true
+    if (status === 'denied' || status === 'restricted') return false
+    return systemPreferences.askForMediaAccess('microphone')
+  })
+  ipcMain.handle(ASR_CHANNELS.openMicrophoneSettings, () => {
+    if (process.platform !== 'darwin') throw new Error('麦克风隐私设置仅适用于 macOS。')
+    return shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+    )
+  })
   ipcMain.handle(ASR_CHANNELS.openSystemAudioSettings, () => {
     if (process.platform !== 'darwin') throw new Error('系统音频录制设置仅适用于 macOS。')
     return shell.openExternal(
@@ -447,17 +462,17 @@ function createWindow(): void {
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
   })
+  window.webContents.session.setPermissionCheckHandler((_webContents, permission, _origin, details) => {
+    return permission === 'media' && details.mediaType === 'audio'
+  })
+  window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    if (permission !== 'media' || !('mediaTypes' in details)) {
+      callback(false)
+      return
+    }
+    callback(details.mediaTypes?.includes('audio') ?? false)
+  })
   if (process.platform === 'darwin') {
-    window.webContents.session.setPermissionCheckHandler((_webContents, permission, _origin, details) => {
-      return permission === 'media' && details.mediaType === 'audio'
-    })
-    window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
-      if (permission !== 'media' || !('mediaTypes' in details)) {
-        callback(false)
-        return
-      }
-      callback(details.mediaTypes?.includes('audio') ?? false)
-    })
     window.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
       const respond = (streams: Parameters<typeof callback>[0]) => {
         try {
