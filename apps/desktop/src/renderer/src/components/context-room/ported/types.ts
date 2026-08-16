@@ -178,6 +178,7 @@ export interface ContextRoomCloudDocResource extends ContextRoomResourceBase {
   binding: CloudDocBinding;
   version: string;
   saveState: string;
+  trashed?: boolean;
 }
 
 export type ContextRoomOfficeFormat =

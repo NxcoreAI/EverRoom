@@ -11,6 +11,10 @@ interface RewriteAnchor {
   to: number
 }
 
+interface RewriteDecoration extends RewriteAnchor {
+  variant: 'prompt' | 'original'
+}
+
 interface RewritePreviewState extends RewriteAnchor {
   originalText: string
   replacementText: string
@@ -21,22 +25,23 @@ interface RewritePreviewState extends RewriteAnchor {
   top: number
 }
 
-const rewriteDecorationKey = new PluginKey<RewriteAnchor | null>('selectionRewritePreview')
+const rewriteDecorationKey = new PluginKey<RewriteDecoration | null>('selectionRewritePreview')
 
 export const SelectionRewritePreviewExtension = Extension.create({
   name: 'selectionRewritePreview',
   addProseMirrorPlugins() {
-    return [new Plugin<RewriteAnchor | null>({
+    return [new Plugin<RewriteDecoration | null>({
       key: rewriteDecorationKey,
       state: {
         init: () => null,
         apply(transaction, current) {
-          const next = transaction.getMeta(rewriteDecorationKey) as RewriteAnchor | null | undefined
+          const next = transaction.getMeta(rewriteDecorationKey) as RewriteDecoration | null | undefined
           if (next !== undefined) return next
           if (!current) return null
           return {
             from: transaction.mapping.map(current.from, 1),
             to: transaction.mapping.map(current.to, -1),
+            variant: current.variant,
           }
         },
       },
@@ -46,8 +51,10 @@ export const SelectionRewritePreviewExtension = Extension.create({
           if (!anchor || anchor.from >= anchor.to || anchor.to > state.doc.content.size) return null
           return DecorationSet.create(state.doc, [
             Decoration.inline(anchor.from, anchor.to, {
-              class: 'context-room-tiptap-rewrite-original',
-              'data-selection-rewrite': 'original',
+              class: anchor.variant === 'prompt'
+                ? 'context-room-tiptap-rewrite-prompt'
+                : 'context-room-tiptap-rewrite-original',
+              'data-selection-rewrite': anchor.variant,
             }),
           ])
         },
@@ -56,9 +63,28 @@ export const SelectionRewritePreviewExtension = Extension.create({
   },
 })
 
-function setRewriteDecoration(editor: Editor, anchor: RewriteAnchor | null): void {
+function setRewriteDecoration(editor: Editor, anchor: RewriteDecoration | null): void {
   if (editor.isDestroyed) return
   editor.view.dispatch(editor.state.tr.setMeta(rewriteDecorationKey, anchor))
+}
+
+export function showSelectionRewritePromptDecoration(editor: Editor): boolean {
+  if (editor.isDestroyed) return false
+  const { selection } = editor.state
+  if (!(selection instanceof TextSelection) || selection.empty || !selection.$from.sameParent(selection.$to)) {
+    return false
+  }
+  setRewriteDecoration(editor, {
+    from: selection.from,
+    to: selection.to,
+    variant: 'prompt',
+  })
+  return true
+}
+
+export function clearSelectionRewritePromptDecoration(editor: Editor): void {
+  if (editor.isDestroyed || rewriteDecorationKey.getState(editor.state)?.variant !== 'prompt') return
+  setRewriteDecoration(editor, null)
 }
 
 function previewPosition(editor: Editor, to: number): { left: number; top: number } {
@@ -112,6 +138,7 @@ export function useTiptapSelectionRewrite({
     if (!editor || editor.isDestroyed) return
     const api = window.nxcore?.agent
     const position = previewPosition(editor, anchor.to)
+    setRewriteDecoration(editor, { ...anchor, variant: 'original' })
     if (!api) {
       setPreview({
         ...anchor,
@@ -133,7 +160,6 @@ export function useTiptapSelectionRewrite({
       wasEditable: previous?.wasEditable ?? editor.isEditable,
     }
     operationRef.current = operation
-    setRewriteDecoration(editor, anchor)
     editor.setEditable(false)
     setPreview({
       ...anchor,

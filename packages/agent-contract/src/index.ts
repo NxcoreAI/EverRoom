@@ -114,6 +114,7 @@ export interface RoomDocument {
   version: number;
   status: "draft" | "active";
   activeTransactionId: string | null;
+  deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -124,6 +125,8 @@ export type DocumentEventType =
   | "document.commit-requested"
   | "document.committed"
   | "document.aborted"
+  | "document.trashed"
+  | "document.restored"
   | "document.deleted"
   | "document.updated";
 

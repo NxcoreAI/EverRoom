@@ -1,0 +1,157 @@
+import type { AgentEvent, AgentRun, AgentSession } from '@nxcore/agent-contract'
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  buildSelectionRewritePrompt,
+  sanitizeSelectionRewriteOutput,
+  streamSelectionRewrite,
+  type SelectionRewriteAgentApi,
+} from '../src/renderer/src/components/context-room/ported/components/detail-editor/selectionRewriteAgent'
+
+function session(): AgentSession {
+  return {
+    id: 'rewrite-session',
+    roomId: 'room-1',
+    pageLabel: 'AI 重写',
+    runtimeId: 'pi',
+    title: null,
+    status: 'idle',
+    createdAt: '2026-08-15T00:00:00.000Z',
+    updatedAt: '2026-08-15T00:00:00.000Z',
+  }
+}
+
+function run(): AgentRun {
+  return {
+    id: 'rewrite-run',
+    sessionId: 'rewrite-session',
+    status: 'running',
+    prompt: 'rewrite',
+    lastEventSeq: 0,
+    error: null,
+    startedAt: '2026-08-15T00:00:00.000Z',
+    completedAt: null,
+    createdAt: '2026-08-15T00:00:00.000Z',
+  }
+}
+
+function event(seq: number, type: AgentEvent['type'], payload: unknown): AgentEvent {
+  return {
+    id: `event-${String(seq)}`,
+    sessionId: 'rewrite-session',
+    runId: 'rewrite-run',
+    seq,
+    type,
+    occurredAt: '2026-08-15T00:00:00.000Z',
+    payload,
+  }
+}
+
+describe('selection rewrite Agent stream', () => {
+  it('builds a bounded output-only prompt and cleans common model wrappers', () => {
+    const prompt = buildSelectionRewritePrompt({
+      roomId: 'room-1',
+      documentName: '计划',
+      selectedText: '原文',
+      instruction: '更简洁',
+      contextBefore: '前文',
+      contextAfter: '后文',
+    })
+
+    expect(prompt).toContain('"selectedText":"原文"')
+    expect(prompt).toContain('不要调用任何工具')
+    expect(sanitizeSelectionRewriteOutput('```text\n改写后的文本：新文本\n```')).toBe('新文本')
+  })
+
+  it('streams deltas, resolves the final text, and removes its temporary session', async () => {
+    const batches = [
+      [event(1, 'message.delta', { delta: '改写后的' })],
+      [
+        event(2, 'message.delta', { delta: '内容' }),
+        event(3, 'message.completed', { content: '改写后的内容' }),
+        event(4, 'run.completed', {}),
+      ],
+    ]
+    const api: SelectionRewriteAgentApi = {
+      createSession: vi.fn().mockResolvedValue(session()),
+      startRun: vi.fn().mockResolvedValue(run()),
+      getEvents: vi.fn().mockImplementation(async () => batches.shift() ?? []),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    }
+    const received: string[] = []
+
+    const result = await streamSelectionRewrite(api, {
+      roomId: 'room-1',
+      documentName: '计划',
+      selectedText: '原文',
+      instruction: '重写',
+      contextBefore: '',
+      contextAfter: '',
+    }, {
+      signal: new AbortController().signal,
+      onText: (text) => received.push(text),
+      pollIntervalMs: 0,
+    })
+
+    expect(result).toBe('改写后的内容')
+    expect(received).toEqual(['改写后的', '改写后的内容', '改写后的内容'])
+    expect(api.deleteSession).toHaveBeenCalledWith('rewrite-session')
+    expect(api.cancelRun).not.toHaveBeenCalled()
+  })
+
+  it('cancels the active run and removes its session when aborted', async () => {
+    const controller = new AbortController()
+    const api: SelectionRewriteAgentApi = {
+      createSession: vi.fn().mockResolvedValue(session()),
+      startRun: vi.fn().mockResolvedValue(run()),
+      getEvents: vi.fn().mockImplementation(async () => {
+        controller.abort()
+        return []
+      }),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    }
+
+    await expect(streamSelectionRewrite(api, {
+      roomId: 'room-1',
+      documentName: '计划',
+      selectedText: '原文',
+      instruction: '重写',
+      contextBefore: '',
+      contextAfter: '',
+    }, {
+      signal: controller.signal,
+      onText: () => undefined,
+      pollIntervalMs: 0,
+    })).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(api.cancelRun).toHaveBeenCalledWith('rewrite-run')
+    expect(api.deleteSession).toHaveBeenCalledWith('rewrite-session')
+  })
+
+  it('cancels the run when event polling fails', async () => {
+    const api: SelectionRewriteAgentApi = {
+      createSession: vi.fn().mockResolvedValue(session()),
+      startRun: vi.fn().mockResolvedValue(run()),
+      getEvents: vi.fn().mockRejectedValue(new Error('gateway unavailable')),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    }
+
+    await expect(streamSelectionRewrite(api, {
+      roomId: 'room-1',
+      documentName: '计划',
+      selectedText: '原文',
+      instruction: '重写',
+      contextBefore: '',
+      contextAfter: '',
+    }, {
+      signal: new AbortController().signal,
+      onText: () => undefined,
+    })).rejects.toThrow('gateway unavailable')
+
+    expect(api.cancelRun).toHaveBeenCalledWith('rewrite-run')
+    expect(api.deleteSession).toHaveBeenCalledWith('rewrite-session')
+  })
+})

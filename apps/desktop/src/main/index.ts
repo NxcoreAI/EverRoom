@@ -69,10 +69,13 @@ const AGENT_CHANNELS = {
 
 const DOCUMENT_CHANNELS = {
   list: 'documents:list',
+  listTrash: 'documents:list-trash',
   get: 'documents:get',
   import: 'documents:import',
   save: 'documents:save',
   delete: 'documents:delete',
+  restore: 'documents:restore',
+  deletePermanently: 'documents:delete-permanently',
   acknowledge: 'documents:acknowledge',
   subscribe: 'documents:subscribe',
   unsubscribe: 'documents:unsubscribe',
@@ -285,10 +288,14 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
 
 function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
   ipcMain.handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
+  ipcMain.handle(DOCUMENT_CHANNELS.listTrash, (_event, roomId) => bridge.listTrash(roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
   ipcMain.handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
   ipcMain.handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
   ipcMain.handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.restore, (_event, documentId) => bridge.restore(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.deletePermanently, (_event, documentId) =>
+    bridge.deletePermanently(documentId))
   ipcMain.handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
     bridge.acknowledge(transactionId, input))
   ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
