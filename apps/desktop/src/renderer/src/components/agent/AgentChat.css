@@ -62,6 +62,10 @@
   transition: opacity 220ms ease, transform 220ms cubic-bezier(.22, 1, .36, 1);
 }
 
+.agent-conversation > * {
+  flex: 0 0 auto;
+}
+
 .agent-chat-conversation-frame[data-content-ready='false']:not([data-empty='true']) .agent-conversation {
   opacity: 0;
   pointer-events: none;
@@ -184,10 +188,10 @@
   display: inline-flex;
   width: fit-content;
   max-width: 100%;
+  min-height: 22px;
   align-items: center;
   gap: 7px;
   padding: 2px 0;
-  overflow: hidden;
   border: 0;
   background: transparent;
   color: #7b838d;
@@ -232,10 +236,6 @@
   margin-left: 8px;
   padding-left: 10px;
   border-left: 1px solid #e2e6ec;
-}
-
-.agent-linked-run .agent-message {
-  max-width: 100%;
 }
 
 .agent-linked-status {
