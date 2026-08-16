@@ -1,4 +1,4 @@
-import { Brain, Check, ChevronRight, Copy, Folder, FolderKanban, RotateCcw, X } from 'lucide-react'
+import { Brain, Check, ChevronRight, Copy, FileText, Folder, FolderKanban, RotateCcw, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
@@ -83,6 +83,31 @@ function RoomSelection({
         }) : <p>暂无可用 Room</p>}
       </div>
     </section>
+  )
+}
+
+const generatedDocumentPattern = /文档已成功生成[，,]\s*您可以查看：?\s*\[([^\]]+)\]\s*\(?([0-9a-f]{8}-[0-9a-f-]{27,})\)?/iu
+
+function AssistantMessageContent({ content }: { content: string }) {
+  const match = generatedDocumentPattern.exec(content)
+  if (!match || match.index === undefined) return <p>{content}</p>
+
+  const before = content.slice(0, match.index).trim()
+  const after = content.slice(match.index + match[0].length).trim()
+  const title = match[1].trim()
+
+  return (
+    <>
+      {before ? <p>{before}</p> : null}
+      <div className="agent-artifact" role="status" aria-label={`文档已生成：${title}`}>
+        <span className="agent-artifact-icon" aria-hidden="true"><FileText /></span>
+        <span className="agent-artifact-copy">
+          <strong>{title}</strong>
+          <small>文档已生成</small>
+        </span>
+      </div>
+      {after ? <p>{after}</p> : null}
+    </>
   )
 }
 
@@ -235,7 +260,7 @@ export function AgentChatView({
                   runCompletedAt={runCompletedAtByRun[message.runId]}
                 />
                 {message.content ? (
-                  <article className="agent-message" data-role="assistant"><p>{message.content}</p></article>
+                  <article className="agent-message" data-role="assistant"><AssistantMessageContent content={message.content} /></article>
                 ) : null}
                 {showActions ? (
                   <div className="agent-message-actions">

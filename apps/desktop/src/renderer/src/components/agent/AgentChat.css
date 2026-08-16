@@ -96,6 +96,60 @@
   line-height: 1.55;
 }
 
+.agent-artifact {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 10px;
+  margin-top: 3px;
+  padding: 9px 12px 9px 9px;
+  border: 1px solid #e5e8ed;
+  border-radius: 10px;
+  background: #fbfcfd;
+  color: #303640;
+}
+
+.agent-artifact-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #f0f3f8;
+  color: #667085;
+}
+
+.agent-artifact-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.agent-artifact-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agent-artifact-copy strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: #303640;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-artifact-copy small {
+  color: #8a929d;
+  font-size: 10px;
+  line-height: 14px;
+}
+
 .agent-assistant-turn {
   display: flex;
   width: 100%;
