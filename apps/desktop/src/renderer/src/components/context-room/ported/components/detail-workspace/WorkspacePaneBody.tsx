@@ -22,6 +22,7 @@ export function WorkspacePaneBody({
   onDeleteDocument,
   onRestoreDocument,
   onDeleteDocumentPermanently,
+  onEmptyTrash,
   onAddFile,
   onOpenMemory,
   onOpenObject,
@@ -40,6 +41,7 @@ export function WorkspacePaneBody({
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
+  onEmptyTrash: (roomId: string) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (id: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
@@ -60,6 +62,7 @@ export function WorkspacePaneBody({
         onDeleteDocument={onDeleteDocument}
         onRestoreDocument={onRestoreDocument}
         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
+        onEmptyTrash={onEmptyTrash}
         onAddFile={onAddFile}
       />
     );

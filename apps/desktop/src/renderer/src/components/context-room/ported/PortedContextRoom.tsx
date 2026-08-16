@@ -4,10 +4,10 @@ import { CONTEXT_ROOMS } from './data'
 import type { ContextRoomKind, ContextRoomRecord } from './types'
 import type { ContextRoomWorkspaceTab } from '../contextRoomTabs'
 import { useContextRoomState } from '../ContextRoomStateProvider'
+import { useRoomDocumentsState } from '../RoomDocumentsProvider'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { DetailPane } from './components/RoomIconSidebar'
-import { useRoomDocuments } from './hooks/useRoomDocuments'
 
 interface DraftRoom {
   kind: ContextRoomKind
@@ -73,7 +73,7 @@ export function PortedContextRoom({
     roomId: string
   } | null>(null)
   const activeRoom = state.rooms.find((room) => room.id === activeRoomId) ?? null
-  const roomDocuments = useRoomDocuments(state.rooms.map((room) => room.id))
+  const roomDocuments = useRoomDocumentsState()
 
   useEffect(() => {
     onRoomsChange(state.rooms.map(({ id, title, kind }) => ({ id, title, kind })))
@@ -84,6 +84,11 @@ export function PortedContextRoom({
     onDetailFocusChange(focused)
     return () => onDetailFocusChange(false)
   }, [activeRoomId, onDetailFocusChange])
+
+  useEffect(() => {
+    if (!activeRoomId) return
+    void roomDocuments.refreshRoom(activeRoomId).catch(() => undefined)
+  }, [activeRoomId, roomDocuments.refreshRoom])
 
   useEffect(() => {
     if (homeRequest === handledHomeRequest.current) return
@@ -127,6 +132,7 @@ export function PortedContextRoom({
         onDeleteDocument={roomDocuments.deleteDocument}
         onRestoreDocument={roomDocuments.restoreDocument}
         onDeleteDocumentPermanently={roomDocuments.deleteDocumentPermanently}
+        onEmptyTrash={roomDocuments.emptyTrash}
         initialActivePane={detailPaneByRoomIdRef.current[activeRoom.id] ?? 'overview'}
         initialObject={initialObject?.roomId === activeRoom.id ? initialObject : null}
         onActivePaneChange={(pane) => {

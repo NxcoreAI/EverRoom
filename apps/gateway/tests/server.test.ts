@@ -176,6 +176,32 @@ describe("gateway server", () => {
       url: "/v1/documents/document-to-delete",
       headers,
     });
+    const trashImported = await app.inject({
+      method: "POST",
+      url: "/v1/documents/import",
+      headers,
+      payload: {
+        id: "document-to-empty",
+        roomId: "room-delete",
+        title: "待清空文档",
+        contentJson: { type: "doc", content: [] },
+      },
+    });
+    const trashMarked = await app.inject({
+      method: "DELETE",
+      url: "/v1/documents/document-to-empty",
+      headers,
+    });
+    const emptied = await app.inject({
+      method: "DELETE",
+      url: "/v1/documents/trash?roomId=room-delete",
+      headers,
+    });
+    const trashAfterEmpty = await app.inject({
+      method: "GET",
+      url: "/v1/documents?roomId=room-delete&trashed=true",
+      headers,
+    });
     await app.close();
 
     expect(imported.statusCode).toBe(201);
@@ -196,6 +222,10 @@ describe("gateway server", () => {
     expect(listedAfterRestore.json()).toEqual([expect.objectContaining({ id: "document-to-delete" })]);
     expect(permanentlyDeleted.statusCode).toBe(204);
     expect(readAfterPermanentDelete.statusCode).toBe(404);
+    expect(trashImported.statusCode).toBe(201);
+    expect(trashMarked.statusCode).toBe(204);
+    expect(emptied.statusCode).toBe(204);
+    expect(trashAfterEmpty.json()).toEqual([]);
   });
 
   it("serves the document MCP protocol over authenticated HTTP", async () => {

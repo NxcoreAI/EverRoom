@@ -56,14 +56,17 @@ export const DOCUMENT_MCP_TOOL_DEFINITIONS = [
   {
     name: "context_room_write_append",
     title: "流式追加 Room 文档正文",
-    description: "按严格连续的 sequence 向文档事务追加新的 Markdown 片段。除非用户明确要求简短版本，否则正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结；不得空泛、重复或为了变长而凑字。每次只能发送此前未发送的正文，不得用新 sequence 重发累计全文；正文完成后必须调用 write_commit。",
+    description: "按严格连续的 sequence 向文档事务追加新的 Markdown 片段。除非用户明确要求简短版本，否则正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结；不得空泛、重复或为了变长而凑字。正文不得重复文档名称或使用一级标题（#）；主章节统一使用二级标题（##），子章节使用三级标题（###），继续细分时才使用四级标题（####）。同一语义层级必须使用相同数量的 #，不得跳级或为了强调临时放大标题，普通强调应使用加粗。每次只能发送此前未发送的正文，不得用新 sequence 重发累计全文；正文完成后必须调用 write_commit。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         transactionId: { type: "string" },
         sequence: { type: "integer", minimum: 1 },
-        text: { type: "string" },
+        text: {
+          type: "string",
+          description: "仅包含本次新增的 Markdown 正文；正文禁用一级标题，同级章节必须使用一致的标题层级。",
+        },
       },
       required: ["transactionId", "sequence", "text"],
     },
@@ -246,6 +249,7 @@ export class DocumentMcpHost {
           "If the current viewport has no bound Room, call context_room_list and ask the user to choose. Do not begin a document until a later run carries the user's explicit selection.",
           "Before calling write_begin, determine the actual core content, emphasis, or conclusion of the body you are about to write, then derive a specific, natural title that accurately summarizes that planned body. Adapt the title to the content type: emphasize the path or outcome for a tutorial, the subject and central question for an analysis, the goal and actions for a plan, and the subject and scope for a report. Unless the user explicitly supplies an exact title, never copy the task wording or use a generic form-only title such as 'Backend Learning Document', 'Project Introduction', or 'Study Notes'.",
           "Unless the user explicitly asks for brevity, write a substantial, well-developed long-form document with useful detail, examples, and structure, without repetition or padding.",
+          "Keep Markdown heading levels semantically consistent. The document title is stored separately, so never use an H1 (#) in the body. Use H2 (##) for every top-level section, H3 (###) for subsections, and H4 (####) only for further subdivision. Never skip levels or enlarge one peer heading for emphasis; use bold for ordinary emphasis.",
         ].join(" "),
       },
     );

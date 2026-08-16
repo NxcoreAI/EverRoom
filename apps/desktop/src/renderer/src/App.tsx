@@ -46,7 +46,7 @@ export function App() {
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
-  const [theme, setTheme] = useState<ThemeId>(readStoredTheme)
+  const [theme] = useState<ThemeId>(readStoredTheme)
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
   const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
@@ -158,7 +158,6 @@ export function App() {
         activeContextRoomId={activePage === 'rooms' ? activeContextRoomId : null}
         agentOpen={agentOpen}
         navCollapsed={effectiveNavCollapsed}
-        theme={theme}
         onActivateWorkbench={() => {
           if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
         }}
@@ -182,7 +181,6 @@ export function App() {
             return next
           })
         }}
-        onThemeChange={setTheme}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
       <main className="workspace-main">

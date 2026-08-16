@@ -32,8 +32,8 @@ const themes: Array<{
   {
     id: 'nxcore',
     label: PRODUCT_NAME,
-    description: '正式版暖灰米白',
-    colors: ['#f7f7f5', '#f1f1ef', '#3d6ff6'],
+    description: '正式版冷灰白',
+    colors: ['#f6f7f9', '#eef1f4', '#3d6ff6'],
   },
 ]
 

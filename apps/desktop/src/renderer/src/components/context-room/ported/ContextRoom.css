@@ -1754,6 +1754,11 @@
   color: var(--cr-blue);
 }
 
+.context-room-resource-folder-add.is-danger:hover:not(:disabled) {
+  background: rgba(181, 71, 50, 0.09);
+  color: #b54732;
+}
+
 .context-room-resource-folder-add:disabled {
   cursor: wait;
   opacity: 0.55;

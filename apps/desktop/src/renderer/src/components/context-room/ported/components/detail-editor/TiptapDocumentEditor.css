@@ -5,6 +5,40 @@
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--cr-surface);
 }
+
+.context-room-agent-write-overlay {
+  position: absolute;
+  z-index: 40;
+  inset: 44px 0 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--cr-surface) 92%, transparent);
+  backdrop-filter: blur(3px);
+  cursor: progress;
+}
+
+.context-room-agent-write-overlay > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cr-muted);
+}
+
+.context-room-agent-write-overlay svg {
+  width: 18px;
+  height: 18px;
+  color: var(--cr-blue);
+  animation: context-room-agent-write-spin 850ms linear infinite;
+}
+
+.context-room-agent-write-overlay strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@keyframes context-room-agent-write-spin {
+  to { transform: rotate(360deg); }
+}
 .context-room-tiptap-bubble > button {
   display: grid;
   width: 28px;
@@ -278,6 +312,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .context-room-agent-write-overlay svg,
   .context-room-tiptap-rewrite-preview .is-spinning,
   .context-room-tiptap-rewrite-caret {
     animation: none;
