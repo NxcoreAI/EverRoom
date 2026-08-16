@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 
 import { App } from '@/App'
+import { ContextRoomStateProvider } from '@/components/context-room/ContextRoomStateProvider'
 import { AccountProvider } from '@/state/AccountContext'
 import '@/styles/tokens.css'
 import '@/styles.css'
@@ -9,7 +10,9 @@ import '@/styles.css'
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <AccountProvider>
-      <App />
+      <ContextRoomStateProvider>
+        <App />
+      </ContextRoomStateProvider>
     </AccountProvider>
   </React.StrictMode>
 )

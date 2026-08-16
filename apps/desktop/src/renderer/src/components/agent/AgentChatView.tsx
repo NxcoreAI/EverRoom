@@ -1,8 +1,10 @@
-import { Brain, Check, Copy, RotateCcw } from 'lucide-react'
+import { Brain, Check, ChevronRight, Copy, Folder, FolderKanban, RotateCcw, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
+import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
+import type { AgentRoomReference } from '@nxcore/agent-contract'
 
 const quickPrompts = [
   ['总结当前页面的重点，并列出下一步', '总结当前页面最重要的内容，并按优先级列出下一步。'],
@@ -36,14 +38,64 @@ function getThinkingLabel(message: DisplayAgentMessage | undefined, tools: Displ
   return '正在分析问题...'
 }
 
+function RoomSelection({
+  availableRooms,
+  busy,
+  onCancel,
+  onSelect,
+  rooms,
+}: {
+  availableRooms: AgentRoomReference[]
+  busy: boolean
+  onCancel: () => void
+  onSelect: (room: AgentRoomReference) => void
+  rooms: AgentRoomReference[]
+}) {
+  const availableById = new Map(availableRooms.map((room) => [room.id, room]))
+  return (
+    <section className="agent-room-selection" aria-label="选择文档所在 Room">
+      <header>
+        <span><FolderKanban aria-hidden="true" /><strong>选择文档所在 Room</strong></span>
+        <button type="button" aria-label="取消选择 Room" title="取消" disabled={busy} onClick={onCancel}>
+          <X aria-hidden="true" />
+        </button>
+      </header>
+      <div className="agent-room-selection-list">
+        {rooms.length ? rooms.map((listedRoom) => {
+          const currentRoom = availableById.get(listedRoom.id)
+          const room = currentRoom ?? listedRoom
+          return (
+            <button
+              key={listedRoom.id}
+              type="button"
+              disabled={busy || !currentRoom}
+              title={currentRoom ? room.title : `${listedRoom.title}（已不可用）`}
+              onClick={() => currentRoom && onSelect(room)}
+            >
+              <Folder aria-hidden="true" />
+              <span>
+                <strong>{room.title}</strong>
+                <small>{currentRoom ? room.kind ?? 'Room' : '已不可用'}</small>
+              </span>
+              <ChevronRight aria-hidden="true" />
+            </button>
+          )
+        }) : <p>暂无可用 Room</p>}
+      </div>
+    </section>
+  )
+}
+
 export function AgentChatView({
   activeRunId,
+  availableRooms,
   composer,
   draftHasContent,
   error,
   loading,
   messages,
   onRetryPrompt,
+  onSelectRoom,
   onSelectPrompt,
   reasoningByRun,
   runCompletedAtByRun,
@@ -52,12 +104,14 @@ export function AgentChatView({
   toolCallsByRun,
 }: {
   activeRunId: string | null
+  availableRooms: AgentRoomReference[]
   composer: ReactNode
   draftHasContent: boolean
   error: string | null
   loading: boolean
   messages: DisplayAgentMessage[]
   onRetryPrompt: (prompt: string) => void
+  onSelectRoom: (room: AgentRoomReference) => void
   onSelectPrompt: (prompt: string) => void
   reasoningByRun: Record<string, string>
   runCompletedAtByRun: Record<string, string>
@@ -66,6 +120,7 @@ export function AgentChatView({
   toolCallsByRun: Record<string, DisplayAgentToolCall[]>
 }) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [dismissedRoomSelections, setDismissedRoomSelections] = useState<Set<string>>(() => new Set())
   const conversationRef = useRef<HTMLDivElement>(null)
   const hasConversation = messages.length > 0 || Boolean(activeRunId) || loading || submitting || Boolean(error)
   const empty = !hasConversation
@@ -82,6 +137,23 @@ export function AgentChatView({
   const activeHasAssistant = activeRunId
     ? messages.some((message) => message.runId === activeRunId && message.role === 'assistant')
     : false
+  const pendingRoomSelection = useMemo(() => {
+    const candidates = Object.values(toolCallsByRun)
+      .flat()
+      .filter((tool) => tool.name === 'context_room_list' && tool.status === 'completed')
+      .sort((left, right) => Date.parse(right.completedAt ?? right.startedAt) - Date.parse(left.completedAt ?? left.startedAt))
+    for (const tool of candidates) {
+      if (dismissedRoomSelections.has(tool.id)) continue
+      const result = parseAgentRoomSelectionResult(tool.result)
+      if (!result) continue
+      const completedAt = Date.parse(tool.completedAt ?? tool.startedAt)
+      const hasLaterUserMessage = messages.some((message) => (
+        message.role === 'user' && Date.parse(message.createdAt) > completedAt
+      ))
+      if (!hasLaterUserMessage) return { tool, rooms: result.rooms }
+    }
+    return null
+  }, [dismissedRoomSelections, messages, toolCallsByRun])
 
   useEffect(() => {
     const reset = () => setCopiedMessageId(null)
@@ -198,6 +270,17 @@ export function AgentChatView({
           {activeRunId && activeHasAssistant && !latestStreamingMessage
             ? <ThinkingStatus label={getThinkingLabel(undefined, latestTools)} />
             : null}
+          {pendingRoomSelection ? (
+            <RoomSelection
+              availableRooms={availableRooms}
+              busy={loading || submitting || Boolean(activeRunId)}
+              rooms={pendingRoomSelection.rooms}
+              onCancel={() => {
+                setDismissedRoomSelections((current) => new Set(current).add(pendingRoomSelection.tool.id))
+              }}
+              onSelect={onSelectRoom}
+            />
+          ) : null}
           {loading && messages.length === 0 ? <div className="agent-loading">正在载入会话...</div> : null}
           {error ? <div className="agent-error" role="alert">{error}</div> : null}
       </div>

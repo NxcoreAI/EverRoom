@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { AgentPanel } from '@/components/AgentPanel'
 import { AppErrorDialog } from '@/components/AppErrorDialog'
@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
 import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
+import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
@@ -33,6 +34,7 @@ function readStoredTheme(): ThemeId {
 }
 
 export function App() {
+  const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
   const [activePage, setActivePage] = useState<PageId>('home')
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
@@ -48,6 +50,9 @@ export function App() {
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
   const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
+  const availableContextRooms = useMemo(() => (
+    contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
+  ), [contextRoomState.rooms])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -197,6 +202,8 @@ export function App() {
         <AgentPanel
           pageLabel={pageLabels[activePage]}
           roomId={activePage === 'rooms' ? activeContextRoomId : null}
+          rooms={availableContextRooms}
+          roomBackendReady={contextRoomBackendReady}
           focusRequest={agentFocusRequest}
         />
       ) : null}

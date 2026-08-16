@@ -39,6 +39,19 @@ describe("loadConfig", () => {
     expect(config.pi).toBeNull();
   });
 
+  it("keeps MemoryCore available independently of the Agent runtime", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "fake",
+      NXCORE_MEMORY_ENABLED: "true",
+    });
+
+    expect(config.pi).toBeNull();
+    expect(config.memory).toMatchObject({
+      baseUrl: "http://127.0.0.1:8420",
+      userId: "local-user",
+    });
+  });
+
   it("loads a validated Pi runtime configuration", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {
       NXCORE_AGENT_RUNTIME: "pi",

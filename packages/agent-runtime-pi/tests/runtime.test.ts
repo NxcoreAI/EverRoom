@@ -251,6 +251,8 @@ describe("PiAgentRuntime", () => {
       expect(firstRequest).toContain("随后写出的正文必须与标题一致");
       expect(firstRequest).toContain("充实、完整的长篇内容");
       expect(firstRequest).toContain("局部选区重写、普通问答或聊天不得擅自创建新文档");
+      expect(firstRequest).toContain("必须先调用 context_room_list");
+      expect(firstRequest).toContain("禁止替用户猜测目标 Room");
       expect(requestBodies[1]?.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: "tool", content: '{"roomId":"room-a","state":"open"}' }),
       ]));

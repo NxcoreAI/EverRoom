@@ -3,6 +3,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import TableOfContents, { type TableOfContentData } from '@tiptap/extension-table-of-contents'
 import { Markdown } from '@tiptap/markdown'
+import { TextSelection } from '@tiptap/pm/state'
 import { EditorContent, Extension, useEditor, type Editor, type JSONContent } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
 import StarterKit from '@tiptap/starter-kit'
@@ -99,6 +100,8 @@ async function insertMarkdownBlocks(
   transactionId: string,
   markdownBlocks: string[],
   applyingRemote: { current: boolean },
+  shouldFollowStream: () => boolean,
+  followStream: () => void,
 ): Promise<void> {
   const nodes: TiptapJsonContent[] = []
   for (const markdown of markdownBlocks) {
@@ -140,7 +143,14 @@ async function insertMarkdownBlocks(
           .replaceWith(previewFrom, previewTo, proseMirrorNode)
           .setMeta('preventUpdate', true)
         if (frame > 1) transaction.setMeta('addToHistory', false)
+        const followingStream = shouldFollowStream()
+        if (followingStream && editor.view.hasFocus()) {
+          transaction
+            .setSelection(TextSelection.atEnd(transaction.doc))
+            .scrollIntoView()
+        }
         editor.view.dispatch(transaction)
+        if (followingStream) followStream()
         previewTo = previewFrom + proseMirrorNode.nodeSize
       } finally {
         applyingRemote.current = false
@@ -288,6 +298,7 @@ export function TiptapDocumentEditor({
       queueDocumentSave(currentEditor.getJSON() as TiptapJsonContent)
     },
   }, [documentId])
+  const editorInteractions = useTransientEditorInteractions(editor)
 
   useEffect(() => {
     if (!editor || backendDocument || importedRef.current) return
@@ -370,7 +381,15 @@ export function TiptapDocumentEditor({
           const text = eventText(event)
           if (sequence === null || text === null) throw new Error('Invalid document append event')
           if (!state!.sequences.has(sequence)) {
-            await insertMarkdownBlocks(editor, state!, transactionId, state!.buffer.append(text), applyingRemote)
+            await insertMarkdownBlocks(
+              editor,
+              state!,
+              transactionId,
+              state!.buffer.append(text),
+              applyingRemote,
+              editorInteractions.shouldFollowDocumentStream,
+              editorInteractions.followDocumentStream,
+            )
             state!.sequences.record(sequence)
           }
           const contentJson = editor.getJSON() as TiptapJsonContent
@@ -387,7 +406,15 @@ export function TiptapDocumentEditor({
         } else if (event.type === 'document.commit-requested') {
           const finalSequence = eventNumber(event, 'finalSequence')
           if (finalSequence === null) throw new Error('Invalid document commit event')
-          await insertMarkdownBlocks(editor, state!, transactionId, state!.buffer.append('', true), applyingRemote)
+          await insertMarkdownBlocks(
+            editor,
+            state!,
+            transactionId,
+            state!.buffer.append('', true),
+            applyingRemote,
+            editorInteractions.shouldFollowDocumentStream,
+            editorInteractions.followDocumentStream,
+          )
           const contentJson = editor.getJSON() as TiptapJsonContent
           const currentDocument = backendRef.current
           if (currentDocument?.activeTransactionId === transactionId) {
@@ -415,7 +442,12 @@ export function TiptapDocumentEditor({
         setSaveState(error instanceof Error ? error.message : '流式写入失败')
       })
     }
-  }, [editor, events])
+  }, [
+    editor,
+    editorInteractions.followDocumentStream,
+    editorInteractions.shouldFollowDocumentStream,
+    events,
+  ])
 
   useEffect(() => () => {
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
@@ -441,10 +473,10 @@ export function TiptapDocumentEditor({
   const selectionRewrite = useTiptapSelectionRewrite({
     editor,
     roomId: room.id,
+    documentId,
     documentName,
     externallyLocked: writing,
   })
-  const editorInteractions = useTransientEditorInteractions(editor)
   return (
     <div
       className="context-room-embedded-cloud-doc context-room-tiptap-editor"

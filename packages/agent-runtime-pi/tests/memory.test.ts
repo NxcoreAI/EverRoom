@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryCoreClient, MemoryCoreError } from "../src/memory/client.js";
 import { formatRecallResult } from "../src/memory/format.js";
-import { extractCapturableMessages } from "../src/memory/extension.js";
+import { createMemoryExtension, extractCapturableMessages } from "../src/memory/extension.js";
 import { createMemoryTools } from "../src/memory/tools.js";
 import type { MemoryRuntimeConfig } from "../src/memory/types.js";
 
@@ -281,6 +281,47 @@ describe("extractCapturableMessages", () => {
 
   it("returns empty when no user/assistant text is present", () => {
     expect(extractCapturableMessages([{ role: "custom", customType: "x", content: "c", display: true, timestamp: 1 }], run)).toEqual([]);
+  });
+});
+
+describe("memory extension capture policy", () => {
+  it("recalls memory but skips automatic capture for deferred preview runs", async () => {
+    const client = new MemoryCoreClient(config);
+    const searchAtomic = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
+    const readCore = vi.spyOn(client, "readCore").mockResolvedValue(null);
+    const listScenarios = vi.spyOn(client, "listScenarios").mockResolvedValue([]);
+    const addConversation = vi.spyOn(client, "addConversation").mockResolvedValue();
+    const handlers = new Map<string, (event: unknown) => Promise<unknown>>();
+    const extension = createMemoryExtension({
+      client,
+      config,
+      getRunContext: () => ({
+        sessionId: "rewrite-preview",
+        originalPrompt: "把选区改得更简洁",
+        pageLabel: "AI 重写",
+        cancelled: false,
+        captureEnabled: false,
+      }),
+    });
+    if (!("factory" in extension)) throw new Error("Expected an inline extension object");
+    extension.factory({
+      on: (event: string, handler: (event: unknown) => Promise<unknown>) => {
+        handlers.set(event, handler);
+      },
+    } as never);
+
+    await handlers.get("before_agent_start")?.({});
+    await handlers.get("agent_end")?.({
+      messages: [
+        { role: "user", content: "把选区改得更简洁" },
+        { role: "assistant", content: "改写后的预览内容" },
+      ],
+    });
+
+    expect(searchAtomic).toHaveBeenCalled();
+    expect(readCore).toHaveBeenCalled();
+    expect(listScenarios).toHaveBeenCalled();
+    expect(addConversation).not.toHaveBeenCalled();
   });
 });
 

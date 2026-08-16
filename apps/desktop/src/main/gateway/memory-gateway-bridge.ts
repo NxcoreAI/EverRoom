@@ -4,6 +4,7 @@ import type {
   MemoryConversationListOptions,
   MemoryConversationPageDto,
   MemoryCoreDto,
+  MemoryDocumentRewriteInput,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
@@ -97,6 +98,13 @@ export class MemoryGatewayBridge {
     messageIds?: string[]
   }): Promise<{ deletedCount: number }> {
     return this.request('/v1/memory/conversation', { method: 'DELETE', body: JSON.stringify(target) })
+  }
+
+  captureDocumentRewrite(input: MemoryDocumentRewriteInput): Promise<{ captured: boolean }> {
+    return this.request('/v1/memory/document-rewrite', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
   }
 
   private query(
