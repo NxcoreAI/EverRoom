@@ -38,6 +38,7 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@sentry/vite-plugin": "5.4.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
@@ -62,33 +63,36 @@
         ]
       }
     ],
-    "electronDist": "node_modules/electron/dist",
     "asar": true,
     "directories": {
       "output": "../../release"
     },
     "files": [
-      "out/**/*"
+      "out/**/*",
+      "!**/.env*",
+      "!**/{test,tests,__tests__}/**",
+      "!**/{test,spec}.*",
+      "!**/*.{test,spec}.*",
+      "!**/*.{map,ts,tsx,mts,cts}"
     ],
     "extraResources": [
       {
         "from": "../gateway/dist",
         "to": "gateway",
         "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "../gateway/dist/node_modules/better-sqlite3",
-        "to": "gateway/node_modules/better-sqlite3",
-        "filter": [
-          "**/*"
+          "**/*",
+          "!**/.env*",
+          "!**/{test,tests,__tests__}/**",
+          "!**/{test,spec}.*",
+          "!**/*.{test,spec}.*",
+          "!**/*.{map,ts,tsx,mts,cts}"
         ]
       }
     ],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
         "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac."
