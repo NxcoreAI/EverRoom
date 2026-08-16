@@ -64,6 +64,9 @@ const CONTEXT_ROOM_CHANNELS = {
 const AGENT_CHANNELS = {
   listSessions: 'agent:list-sessions',
   createSession: 'agent:create-session',
+  createSessionLink: 'agent:create-session-link',
+  listSessionLinks: 'agent:list-session-links',
+  markSessionLinkReturned: 'agent:mark-session-link-returned',
   updateSession: 'agent:update-session',
   deleteSession: 'agent:delete-session',
   getSession: 'agent:get-session',
@@ -289,6 +292,9 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
+  ipcMain.handle(AGENT_CHANNELS.createSessionLink, (_event, input) => bridge.createSessionLink(input))
+  ipcMain.handle(AGENT_CHANNELS.listSessionLinks, (_event, sessionId) => bridge.listSessionLinks(sessionId))
+  ipcMain.handle(AGENT_CHANNELS.markSessionLinkReturned, (_event, linkId) => bridge.markSessionLinkReturned(linkId))
   ipcMain.handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
   ipcMain.handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
   ipcMain.handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))

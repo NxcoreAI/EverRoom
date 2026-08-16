@@ -8,6 +8,8 @@ export function AgentSessionSwitcher({
   activeRunId,
   connected,
   currentSession,
+  loading,
+  transitionTitle,
   sessionId,
   sessions,
   onCreate,
@@ -18,6 +20,8 @@ export function AgentSessionSwitcher({
   activeRunId: string | null
   connected: boolean
   currentSession: AgentSession | null
+  loading: boolean
+  transitionTitle?: string | null
   sessionId: string | null
   sessions: AgentSession[]
   onCreate: () => Promise<AgentSession>
@@ -73,8 +77,8 @@ export function AgentSessionSwitcher({
       >
         <History aria-hidden="true" />
         <span>
-          <small>{connected ? '已连接' : sessionId ? '连接中' : '本地会话'}</small>
-          <strong>{currentSession?.title || '新会话'}</strong>
+          <small>{connected ? '已连接' : '本地会话'}</small>
+          <strong>{transitionTitle || currentSession?.title || (loading ? '\u00a0' : '新会话')}</strong>
         </span>
         <ChevronDown aria-hidden="true" />
       </button>

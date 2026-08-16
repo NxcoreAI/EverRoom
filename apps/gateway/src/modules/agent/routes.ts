@@ -5,6 +5,26 @@ import type { AgentService } from "./service.js";
 
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
 const SessionParams = Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 100 }) });
+const NavigationTarget = Type.Object({
+  pageId: Type.String({ minLength: 1, maxLength: 40 }),
+  title: Type.String({ minLength: 1, maxLength: 200 }),
+  action: Type.Union([
+    Type.Literal("created"),
+    Type.Literal("updated"),
+    Type.Literal("opened"),
+    Type.Literal("referenced"),
+  ]),
+  roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
+  objectId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+  objectType: Type.Optional(Type.Union([
+    Type.Literal("room"),
+    Type.Literal("document"),
+    Type.Literal("source"),
+    Type.Literal("memory"),
+    Type.Literal("task"),
+    Type.Literal("diary"),
+  ])),
+});
 
 export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -34,6 +54,50 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
         },
       },
       async (request, reply) => reply.code(201).send(service.createSession(request.body)),
+    );
+
+    app.post(
+      "/v1/agent/session-links",
+      {
+        schema: {
+          tags: ["agent"],
+          body: Type.Object({
+            sourceSessionId: Type.String({ minLength: 1, maxLength: 100 }),
+            targetSessionId: Type.String({ minLength: 1, maxLength: 100 }),
+            sourceRunId: Type.String({ minLength: 1, maxLength: 100 }),
+            sourcePageId: Type.String({ minLength: 1, maxLength: 40 }),
+            sourcePageLabel: Type.String({ minLength: 1, maxLength: 120 }),
+            sourceRoomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
+            target: NavigationTarget,
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return reply.code(201).send(service.createSessionLink(request.body));
+        } catch (error) {
+          if (error instanceof Error && error.message === "agent_session_link_target_not_found") {
+            return reply.code(404).send({ error: "not_found", message: "Linked Agent session or run not found" });
+          }
+          if (error instanceof Error && error.message === "agent_session_link_invalid_target") {
+            return reply.code(400).send({ error: "invalid_target", message: "Agent navigation target is invalid" });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/agent/sessions/:sessionId/links",
+      { schema: { tags: ["agent"], params: SessionParams } },
+      async (request) => service.listSessionLinks(request.params.sessionId),
+    );
+
+    app.post(
+      "/v1/agent/session-links/:id/return",
+      { schema: { tags: ["agent"], params: IdParams } },
+      async (request, reply) => service.markSessionLinkReturned(request.params.id)
+        ?? reply.code(404).send({ error: "not_found", message: "Agent session link not found" }),
     );
 
     app.get(

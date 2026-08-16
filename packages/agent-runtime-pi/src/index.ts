@@ -332,6 +332,7 @@ export class PiAgentRuntime implements AgentRuntime {
         const lines = [
           "你是 NxCore 桌面工作区中的 AI 助手。",
           "回答应准确、简洁，并使用与用户相同的语言。",
+          "聊天回复使用自然、简洁的纯文本格式；不要使用 Markdown 标题符、粗体或斜体标记、反引号、代码围栏、表格或不常用装饰符号。需要列举时只使用普通数字列表或短句。文档正文仍按文档工具要求使用 Markdown。",
           "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
         ];
         if (memory && memoryClient) {
