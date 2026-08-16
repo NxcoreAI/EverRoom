@@ -1,4 +1,4 @@
-import type { ContextRoomRecommendation, ContextRoomRecord } from './types';
+import type { ContextRoomRecord } from './types';
 
 const cloudWorkspaceId = '5fc9205a-8077-4e39-bf77-aa5ae6262b93';
 
@@ -925,56 +925,3 @@ export const CONTEXT_ROOMS: ContextRoomRecord[] = [
     },
   },
 ];
-
-export const CONTEXT_ROOM_RECOMMENDATIONS: ContextRoomRecommendation[] = [
-  {
-    id: 'rec-room-pricing',
-    name: 'V1 报价与交付',
-    kind: '议题',
-    reason: '最近 7 天出现 2 封报价邮件、1 次客户会议和 3 个相关任务。',
-    dataCount: 6,
-    triggered: '今天 10:42',
-    confidence: '待确认',
-    anchorEntity: {
-      name: '张总',
-      type: '人物',
-      description: '客户对来源追溯和交付范围的要求在最近资料中反复出现。',
-    },
-    factCount: 12,
-    sources: [
-      {
-        type: '邮件',
-        name: '关于 NexOS PC 端报价确认',
-        roomId: 'room-launch',
-        objectId: 'mail-quote',
-      },
-      { type: '会议', name: '客户沟通会', roomId: 'room-launch', objectId: 'mtg-client' },
-    ],
-  },
-  {
-    id: 'rec-room-design',
-    name: 'PC 原型评审',
-    kind: '事件',
-    reason: '设计稿、评审日程和晨会录音围绕同一交付节点持续更新。',
-    dataCount: 4,
-    triggered: '昨天',
-    confidence: '较高',
-    anchorEntity: {
-      name: '原型 V2 评审',
-      type: '事件',
-      description: '设计稿、评审日程和晨会录音正在围绕同一个交付节点收敛。',
-    },
-    factCount: 8,
-    sources: [
-      {
-        type: '文件',
-        name: 'V2-评审稿.fig',
-        roomId: 'room-launch',
-        objectId: 'file-prototype-review',
-      },
-      { type: '会议', name: '原型 V2 评审会' },
-    ],
-  },
-];
-
-export const RECENT_ROOM_IDS = ['room-launch', 'room-zhang', 'room-pkm'];

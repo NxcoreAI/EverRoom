@@ -2,11 +2,11 @@ import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 
 const STREAM_CHARACTERS_PER_FRAME = 2
 const STREAM_MAX_FRAMES_PER_APPEND = 800
-const STREAM_FRAME_DELAY_MIN_MS = 42
-const STREAM_FRAME_DELAY_JITTER_MS = 19
-const STREAM_CLAUSE_PAUSE_MS = 35
-const STREAM_SENTENCE_PAUSE_MS = 85
-const STREAM_NEWLINE_PAUSE_MS = 120
+const STREAM_FRAME_DELAY_MIN_MS = 38
+const STREAM_FRAME_DELAY_JITTER_MS = 17
+const STREAM_CLAUSE_PAUSE_MS = 30
+const STREAM_SENTENCE_PAUSE_MS = 75
+const STREAM_NEWLINE_PAUSE_MS = 105
 
 function textCharacters(text: string): string[] {
   return Array.from(text)

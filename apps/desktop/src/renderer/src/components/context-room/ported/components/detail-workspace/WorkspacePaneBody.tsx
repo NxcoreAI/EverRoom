@@ -1,4 +1,4 @@
-import type { RoomDocument } from '@nxcore/agent-contract';
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import type { DetailPane } from '../RoomIconSidebar';
 import {
@@ -37,7 +37,7 @@ export function WorkspacePaneBody({
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
   onSelectResource: (resource: ContextRoomResource) => void;
-  onCreateDocument: (title: string) => Promise<void>;
+  onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;

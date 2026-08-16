@@ -15,6 +15,7 @@ import {
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/markdownStream'
 import {
   isNearDocumentStreamEnd,
+  isSelectionOutsideViewport,
   nextDocumentStreamFollowState,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/useTransientEditorInteractions'
 
@@ -148,10 +149,10 @@ describe('Markdown stream buffering', () => {
   it('uses fast human typing cadence and adapts very large appends', () => {
     expect(documentStreamCharactersPerFrame(200)).toBe(2)
     expect(documentStreamCharactersPerFrame(2_400)).toBe(3)
-    expect(documentStreamRevealDelay('ab', () => 0)).toBe(42)
-    expect(documentStreamRevealDelay('好。', () => 0)).toBe(127)
-    expect(documentStreamRevealDelay('line\n', () => 0)).toBe(162)
-    expect(documentStreamRevealDelay('ab', () => 0.999)).toBe(60)
+    expect(documentStreamRevealDelay('ab', () => 0)).toBe(38)
+    expect(documentStreamRevealDelay('好。', () => 0)).toBe(113)
+    expect(documentStreamRevealDelay('line\n', () => 0)).toBe(143)
+    expect(documentStreamRevealDelay('ab', () => 0.999)).toBe(54)
   })
 
   it('follows streamed content only while the reader remains near the document end', () => {
@@ -172,6 +173,31 @@ describe('Markdown stream buffering', () => {
       scrollTop: 1_320,
       clientHeight: 600,
       scrollHeight: 2_000,
+    })).toBe(true)
+  })
+
+  it('clears a selection only after the whole selection leaves the scroll viewport', () => {
+    const viewport = { viewportTop: 100, viewportBottom: 500 }
+    expect(isSelectionOutsideViewport({
+      ...viewport,
+      startTop: 120,
+      startBottom: 145,
+      endTop: 460,
+      endBottom: 485,
+    })).toBe(false)
+    expect(isSelectionOutsideViewport({
+      ...viewport,
+      startTop: 40,
+      startBottom: 75,
+      endTop: 70,
+      endBottom: 95,
+    })).toBe(true)
+    expect(isSelectionOutsideViewport({
+      ...viewport,
+      startTop: 505,
+      startBottom: 530,
+      endTop: 560,
+      endBottom: 585,
     })).toBe(true)
   })
 })

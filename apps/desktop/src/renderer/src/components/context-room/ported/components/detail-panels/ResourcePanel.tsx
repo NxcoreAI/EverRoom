@@ -4,17 +4,19 @@ import {
   ChevronRight,
   FileSpreadsheet,
   FileText,
+  FileUp,
   Folder,
   FolderOpen,
   LoaderCircle,
   Plus,
   RotateCcw,
   Search,
+  SearchX,
   Trash2,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import type { RoomDocument } from '@nxcore/agent-contract';
+import { useMemo, useRef, useState } from 'react';
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import {
   createContextRoomResourceLibrary,
   getContextRoomOfficeFormat,
@@ -24,10 +26,8 @@ import type {
   ContextRoomRecord,
   ContextRoomResource,
 } from '../../types';
-
-function EmptyState({ children }: { children: string }) {
-  return <div className="context-room-workspace-empty">{children}</div>;
-}
+import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/markdownImport';
+import { PanelEmptyState } from './PanelEmptyState';
 
 export function OfficePreview({ resource }: { resource: ContextRoomOfficeResource }) {
   const preview = resource.preview;
@@ -146,7 +146,7 @@ export function ResourceTree({
   trashedDocuments: RoomDocument[];
   selectedId: string | null;
   onSelect: (resource: ContextRoomResource) => void;
-  onCreateDocument: (title: string) => Promise<void>;
+  onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
@@ -166,6 +166,7 @@ export function ResourceTree({
   const [newDocumentTitle, setNewDocumentTitle] = useState('');
   const [creatingDocument, setCreatingDocument] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const markdownInputRef = useRef<HTMLInputElement>(null);
   const [clearTrashPopoverOpen, setClearTrashPopoverOpen] = useState(false);
   const [clearingTrash, setClearingTrash] = useState(false);
   const [clearTrashError, setClearTrashError] = useState<string | null>(null);
@@ -180,6 +181,9 @@ export function ResourceTree({
     [backendDocuments, trashedDocuments],
   );
   const trashDocumentCount = trashedDocuments.length;
+  const matchingResourceCount = library.resources.filter((resource) =>
+    !normalized || resource.name.toLowerCase().includes(normalized)
+  ).length;
 
   const confirmDelete = async (document: RoomDocument) => {
     setDeleteError(null);
@@ -204,6 +208,26 @@ export function ResourceTree({
       setNewDocumentTitle('');
     } catch (error: unknown) {
       setCreateError(error instanceof Error ? error.message : '创建文档失败');
+    } finally {
+      setCreatingDocument(false);
+    }
+  };
+
+  const importMarkdownDocument = async (file: File) => {
+    if (!/\.(?:md|markdown)$/i.test(file.name)) {
+      setCreateError('请选择 .md 或 .markdown 文件');
+      return;
+    }
+    setCreateError(null);
+    setCreatingDocument(true);
+    try {
+      const markdown = await file.text();
+      const title = newDocumentTitle.trim() || markdownDocumentTitle(file.name);
+      await onCreateDocument(title, parseMarkdownDocument(markdown));
+      setCreatePopoverOpen(false);
+      setNewDocumentTitle('');
+    } catch (error: unknown) {
+      setCreateError(error instanceof Error ? error.message : '导入 Markdown 文档失败');
     } finally {
       setCreatingDocument(false);
     }
@@ -315,6 +339,28 @@ export function ResourceTree({
                             onChange={(event) => setNewDocumentTitle(event.target.value)}
                             disabled={creatingDocument}
                           />
+                          <input
+                            ref={markdownInputRef}
+                            className="context-room-document-import-input"
+                            type="file"
+                            accept=".md,.markdown,text/markdown"
+                            tabIndex={-1}
+                            aria-hidden="true"
+                            onChange={(event) => {
+                              const file = event.currentTarget.files?.[0];
+                              event.currentTarget.value = '';
+                              if (file) void importMarkdownDocument(file);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="context-room-document-import"
+                            disabled={creatingDocument}
+                            onClick={() => markdownInputRef.current?.click()}
+                          >
+                            <FileUp aria-hidden="true" />
+                            {creatingDocument ? '处理中…' : '导入本地 Markdown'}
+                          </button>
                           {createError ? <small role="alert">{createError}</small> : null}
                           <footer>
                             <Popover.Close asChild>
@@ -525,7 +571,7 @@ export function ResourceTree({
                   </div>
                 );
               }) : null}
-              {open && folder.id.endsWith(':folder:documents') && resources.length === 0 ? (
+              {open && library.resources.length > 0 && folder.id.endsWith(':folder:documents') && resources.length === 0 ? (
                 <p className="context-room-resource-folder-empty">暂无文档</p>
               ) : null}
               {open && trashFolder && resources.length === 0 ? (
@@ -534,7 +580,22 @@ export function ResourceTree({
             </section>
           );
         })}
-        {!library.resources.some((resource) => !normalized || resource.name.toLowerCase().includes(normalized)) ? <EmptyState>没有匹配的资源</EmptyState> : null}
+        {!normalized && !library.resources.length ? (
+          <PanelEmptyState
+            compact
+            icon={FileText}
+            title="还没有文档"
+            description="新建文档或添加本地 Office 文件后会显示在这里。"
+          />
+        ) : null}
+        {normalized && !matchingResourceCount ? (
+          <PanelEmptyState
+            compact
+            icon={SearchX}
+            title="没有匹配的资源"
+            description="换一个关键词试试。"
+          />
+        ) : null}
       </div>
     </div>
   );

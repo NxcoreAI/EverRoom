@@ -6,12 +6,12 @@ import {
   isContextRoomSnapshotEmpty,
   restoreContextRoomSnapshot,
 } from '../src/renderer/src/components/context-room/ported/contextRoomLocalState'
-import { CONTEXT_ROOMS } from '../src/renderer/src/components/context-room/ported/data'
+import { createContextRoomFixture } from './context-room-fixture'
 
 describe('Context Room backend snapshots', () => {
   it('serializes complete active and deleted Room records in order', () => {
-    const active = structuredClone(CONTEXT_ROOMS[0])
-    const deleted = structuredClone(CONTEXT_ROOMS[1])
+    const active = createContextRoomFixture('room-active', '活跃 Room')
+    const deleted = createContextRoomFixture('room-deleted', '已删除 Room')
     const input = createContextRoomSnapshotInput({ rooms: [active], deletedRooms: [deleted] })
 
     expect(input.rooms[0]).toMatchObject({
@@ -24,8 +24,8 @@ describe('Context Room backend snapshots', () => {
   })
 
   it('restores backend order and lets top-level identity fields override data', () => {
-    const first = structuredClone(CONTEXT_ROOMS[0])
-    const second = structuredClone(CONTEXT_ROOMS[1])
+    const first = createContextRoomFixture('room-first', '第一个 Room')
+    const second = createContextRoomFixture('room-second', '第二个 Room')
     const serialized = createContextRoomSnapshotInput({ rooms: [first], deletedRooms: [second] })
     const snapshot: ContextRoomSnapshot = {
       rooms: [{
@@ -49,7 +49,7 @@ describe('Context Room backend snapshots', () => {
   it('recognizes first import and rejects corrupt or duplicate snapshots', () => {
     expect(isContextRoomSnapshotEmpty({ rooms: [], deletedRooms: [], updatedAt: null })).toBe(true)
 
-    const valid = createContextRoomSnapshotInput({ rooms: [CONTEXT_ROOMS[0]], deletedRooms: [] }).rooms[0]
+    const valid = createContextRoomSnapshotInput({ rooms: [createContextRoomFixture()], deletedRooms: [] }).rooms[0]
     expect(restoreContextRoomSnapshot({
       rooms: [{ id: 'broken', title: '损坏', kind: '主题', data: {} }],
       deletedRooms: [],

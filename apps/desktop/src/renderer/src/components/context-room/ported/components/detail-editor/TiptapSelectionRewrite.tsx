@@ -5,6 +5,7 @@ import { Check, LoaderCircle, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { streamSelectionRewrite } from './selectionRewriteAgent'
+import type { SelectionRewriteFormatContext } from './selectionRewriteAgent'
 
 interface RewriteAnchor {
   from: number
@@ -19,6 +20,7 @@ interface RewritePreviewState extends RewriteAnchor {
   originalText: string
   replacementText: string
   instruction: string
+  formatContext: SelectionRewriteFormatContext
   phase: 'requesting' | 'ready' | 'error'
   error: string | null
   left: number
@@ -71,7 +73,7 @@ function setRewriteDecoration(editor: Editor, anchor: RewriteDecoration | null):
 export function showSelectionRewritePromptDecoration(editor: Editor): boolean {
   if (editor.isDestroyed) return false
   const { selection } = editor.state
-  if (!(selection instanceof TextSelection) || selection.empty || !selection.$from.sameParent(selection.$to)) {
+  if (!(selection instanceof TextSelection) || selection.empty) {
     return false
   }
   setRewriteDecoration(editor, {
@@ -102,6 +104,55 @@ function previewPosition(editor: Editor, to: number): { left: number; top: numbe
 
 function selectionText(editor: Editor, from: number, to: number): string {
   return editor.state.doc.textBetween(from, to, '\n', '\n')
+}
+
+interface SelectedTextBlockRange {
+  from: number
+  to: number
+}
+
+function selectedTextBlockRanges(editor: Editor, from: number, to: number): SelectedTextBlockRange[] {
+  const ranges: SelectedTextBlockRange[] = []
+  editor.state.doc.nodesBetween(from, to, (node, position) => {
+    if (!node.isTextblock) return
+    const contentFrom = Math.max(from, position + 1)
+    const contentTo = Math.min(to, position + node.nodeSize - 1)
+    if (contentFrom < contentTo) ranges.push({ from: contentFrom, to: contentTo })
+  })
+  return ranges
+}
+
+function replaceSelectionText(editor: Editor, from: number, to: number, replacementText: string) {
+  const ranges = selectedTextBlockRanges(editor, from, to)
+  if (ranges.length <= 1) return editor.state.tr.insertText(replacementText, from, to)
+
+  const lines = replacementText.replace(/\r\n?/g, '\n').split('\n')
+  if (lines.length !== ranges.length) return editor.state.tr.insertText(replacementText, from, to)
+
+  // Replace from the end so earlier document positions stay valid. This keeps
+  // list-item and paragraph wrappers intact while each selected block changes.
+  const transaction = editor.state.tr
+  for (let index = ranges.length - 1; index >= 0; index -= 1) {
+    const range = ranges[index]
+    transaction.insertText(lines[index], range.from, range.to)
+  }
+  return transaction
+}
+
+function selectionFormatContext(editor: Editor, from: number): SelectionRewriteFormatContext {
+  const resolved = editor.state.doc.resolve(from)
+  const ancestorTypes: string[] = []
+  for (let depth = 1; depth <= resolved.depth; depth += 1) {
+    ancestorTypes.push(resolved.node(depth).type.name)
+  }
+  const parent = resolved.parent
+  const codeBlock = [parent, ...Array.from({ length: resolved.depth }, (_, index) => resolved.node(resolved.depth - index))]
+    .find((node) => node.type.name === 'codeBlock')
+  return {
+    blockType: parent.type.name,
+    ancestorTypes,
+    ...(codeBlock ? { codeLanguage: codeBlock.attrs.language ?? null } : {}),
+  }
 }
 
 export function useTiptapSelectionRewrite({
@@ -136,7 +187,12 @@ export function useTiptapSelectionRewrite({
     setPreview(null)
   }, [editor, restoreEditor])
 
-  const runRewrite = useCallback((anchor: RewriteAnchor, originalText: string, instruction: string) => {
+  const runRewrite = useCallback((
+    anchor: RewriteAnchor,
+    originalText: string,
+    instruction: string,
+    formatContext: SelectionRewriteFormatContext,
+  ) => {
     if (!editor || editor.isDestroyed) return
     const api = window.nxcore?.agent
     const position = previewPosition(editor, anchor.to)
@@ -147,6 +203,7 @@ export function useTiptapSelectionRewrite({
         originalText,
         replacementText: '',
         instruction,
+        formatContext,
         phase: 'error',
         error: 'Agent 服务仅在桌面应用中可用。',
         ...position,
@@ -168,6 +225,7 @@ export function useTiptapSelectionRewrite({
       originalText,
       replacementText: '',
       instruction,
+      formatContext,
       phase: 'requesting',
       error: null,
       ...position,
@@ -186,6 +244,7 @@ export function useTiptapSelectionRewrite({
       instruction,
       contextBefore,
       contextAfter,
+      formatContext,
     }, {
       signal: operation.controller.signal,
       onText: (replacementText) => {
@@ -214,10 +273,15 @@ export function useTiptapSelectionRewrite({
   const requestRewrite = useCallback((instruction: string) => {
     if (!editor || editor.isDestroyed || externallyLocked) return
     const { selection } = editor.state
-    if (!(selection instanceof TextSelection) || selection.empty || !selection.$from.sameParent(selection.$to)) return
+    if (!(selection instanceof TextSelection) || selection.empty) return
     const originalText = selectionText(editor, selection.from, selection.to)
     if (!originalText.trim()) return
-    runRewrite({ from: selection.from, to: selection.to }, originalText, instruction)
+    runRewrite(
+      { from: selection.from, to: selection.to },
+      originalText,
+      instruction,
+      selectionFormatContext(editor, selection.from),
+    )
   }, [editor, externallyLocked, runRewrite])
 
   const retry = useCallback(() => {
@@ -227,7 +291,7 @@ export function useTiptapSelectionRewrite({
       setPreview({ ...current, phase: 'error', error: '原选区已经变化，请重新选择。' })
       return
     }
-    runRewrite(current, current.originalText, current.instruction)
+    runRewrite(current, current.originalText, current.instruction, current.formatContext)
   }, [editor, runRewrite])
 
   const accept = useCallback(() => {
@@ -239,8 +303,7 @@ export function useTiptapSelectionRewrite({
       setPreview({ ...current, phase: 'error', error: '原选区已经变化，请重新选择。' })
       return
     }
-    const transaction = editor.state.tr
-      .insertText(current.replacementText, current.from, current.to)
+    const transaction = replaceSelectionText(editor, current.from, current.to, current.replacementText)
       .setMeta(rewriteDecorationKey, null)
     editor.view.dispatch(transaction)
     void window.nxcore?.memory.captureDocumentRewrite({

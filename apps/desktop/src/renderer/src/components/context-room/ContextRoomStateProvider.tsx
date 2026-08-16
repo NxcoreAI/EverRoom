@@ -42,8 +42,19 @@ function fingerprint(input: SaveContextRoomSnapshotInput): string {
   return JSON.stringify(input)
 }
 
+function withDemoRooms(state: ContextRoomLocalState): ContextRoomLocalState {
+  const knownRoomIds = new Set([
+    ...state.rooms.map((room) => room.id),
+    ...state.deletedRooms.map((room) => room.id),
+  ])
+  const missingDemoRooms = CONTEXT_ROOMS.filter((room) => !knownRoomIds.has(room.id))
+  return missingDemoRooms.length
+    ? { ...state, rooms: [...state.rooms, ...missingDemoRooms] }
+    : state
+}
+
 export function ContextRoomStateProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState(() => loadContextRoomLocalState(CONTEXT_ROOMS))
+  const [state, setState] = useState(() => withDemoRooms(loadContextRoomLocalState(CONTEXT_ROOMS)))
   const [backendReady, setBackendReady] = useState(false)
   const stateRef = useRef(state)
   const mountedRef = useRef(true)
@@ -168,8 +179,9 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
           const importInput = remoteEmpty ? createContextRoomSnapshotInput(stateRef.current) : null
           const snapshot = importInput ? await api.syncSnapshot(importInput) : remote
           if (cancelled) return
-          const restored = restoreContextRoomSnapshot(snapshot)
-          if (!restored) throw new Error('Room 快照格式无效')
+          const restoredSnapshot = restoreContextRoomSnapshot(snapshot)
+          if (!restoredSnapshot) throw new Error('Room 快照格式无效')
+          const restored = withDemoRooms(restoredSnapshot)
           const restoredInput = createContextRoomSnapshotInput(restored)
           lastSyncedFingerprintRef.current = fingerprint(restoredInput)
           bootstrappedRef.current = true

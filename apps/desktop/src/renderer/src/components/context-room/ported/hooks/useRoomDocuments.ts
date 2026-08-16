@@ -1,4 +1,4 @@
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract'
+import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 export function documentFromEvent(event: DocumentEvent): RoomDocument | null {
@@ -267,14 +267,18 @@ export function useRoomDocuments(roomIds: string[]) {
       : current)
   }, [upsertDocument])
 
-  const createDocument = useCallback(async (roomId: string, title: string) => {
+  const createDocument = useCallback(async (
+    roomId: string,
+    title: string,
+    contentJson: TiptapJsonContent = { type: 'doc', content: [{ type: 'paragraph' }] },
+  ) => {
     const documents = window.nxcore?.documents
     if (!documents) throw new Error('文档服务不可用')
     const document = await documents.import({
       id: crypto.randomUUID(),
       roomId,
       title,
-      contentJson: { type: 'doc', content: [{ type: 'paragraph' }] },
+      contentJson,
     })
     upsertDocument(document)
     return document

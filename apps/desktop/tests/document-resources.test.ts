@@ -1,14 +1,16 @@
 import type { RoomDocument } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
-import { CONTEXT_ROOMS } from '../src/renderer/src/components/context-room/ported/data'
 import { consumeDocumentFocusRequest } from '../src/renderer/src/components/context-room/ported/documentFocus'
 import { createContextRoomResourceLibrary } from '../src/renderer/src/components/context-room/ported/resources'
+import { createContextRoomFixture } from './context-room-fixture'
+
+const room = createContextRoomFixture()
 
 function backendDocument(id: string, title: string): RoomDocument {
   return {
     id,
-    roomId: CONTEXT_ROOMS[0]!.id,
+    roomId: room.id,
     title,
     contentJson: { type: 'doc', content: [] },
     version: 2,
@@ -22,7 +24,6 @@ function backendDocument(id: string, title: string): RoomDocument {
 
 describe('Context Room document resource mapping', () => {
   it('shows only Gateway documents in the cloud document folder', () => {
-    const room = CONTEXT_ROOMS[0]!
     const document = backendDocument('gateway-doc-1', '真实文档')
     const library = createContextRoomResourceLibrary(room, [document])
     const documentFolder = library.folders.find((folder) => folder.name === '云文档')!
@@ -38,7 +39,6 @@ describe('Context Room document resource mapping', () => {
   })
 
   it('does not create a placeholder cloud document when the Gateway list is empty', () => {
-    const room = CONTEXT_ROOMS[0]!
     const library = createContextRoomResourceLibrary(room, [])
     const documentFolder = library.folders.find((folder) => folder.name === '云文档')!
 
@@ -46,7 +46,6 @@ describe('Context Room document resource mapping', () => {
   })
 
   it('places persisted trashed documents in a recycle bin after design attachments', () => {
-    const room = CONTEXT_ROOMS[0]!
     const trashed = {
       ...backendDocument('gateway-doc-trash', '已删除文档'),
       deletedAt: '2026-08-15T12:00:00.000Z',

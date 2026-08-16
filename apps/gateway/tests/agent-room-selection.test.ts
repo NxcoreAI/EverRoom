@@ -105,7 +105,7 @@ describe('Agent Room selection', () => {
       deletedRooms: [],
     })
 
-    await service.startRun(session.id, {
+    const listRun = await service.startRun(session.id, {
       prompt: '创建一份后端学习文档',
       idempotencyKey: 'global-list-run',
       context: { rooms },
@@ -119,17 +119,62 @@ describe('Agent Room selection', () => {
 
     expect(runtime.starts).toEqual([
       expect.objectContaining({
-        roomId: null,
-        availableRooms: rooms,
-        roomSelectionRequired: true,
-      }),
-      expect.objectContaining({
         roomId: 'room-b',
         availableRooms: rooms,
         roomSelectionRequired: false,
       }),
     ])
+    expect(listRun.status).toBe('completed')
+    expect(service.listEvents(session.id, listRun.id, 0).map((event) => event.type)).toEqual([
+      'run.accepted',
+      'tool.requested',
+      'tool.started',
+      'tool.completed',
+      'run.completed',
+    ])
+    expect(service.listEvents(session.id, listRun.id, 0)[3]?.payload).toMatchObject({
+      name: 'context_room_list',
+      result: { rooms, selectionRequired: true },
+    })
     expect(service.getSnapshot(session.id)?.session.roomId).toBeNull()
+    sqlite.close()
+  })
+
+  it('keeps document discussion in the Agent instead of opening the Room picker', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '如何创建一篇结构清晰的文档？',
+      idempotencyKey: 'document-discussion-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toEqual([
+      expect.objectContaining({
+        prompt: '如何创建一篇结构清晰的文档？',
+        roomId: null,
+        roomSelectionRequired: true,
+      }),
+    ])
+    sqlite.close()
+  })
+
+  it('does not open the Room picker when document creation is explicitly declined', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '不要创建文档，直接在聊天里回答。',
+      idempotencyKey: 'declined-document-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toEqual([
+      expect.objectContaining({ prompt: '不要创建文档，直接在聊天里回答。' }),
+    ])
     sqlite.close()
   })
 
