@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
+import type { KnowledgeRuntimeConfig, MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),
@@ -79,6 +79,11 @@ const RawConfigSchema = Type.Object(
     memoryUserId: Type.String({ minLength: 1 }),
     memoryRecallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
     memoryCharBudget: Type.Integer({ minimum: 200 }),
+    knowledgeEnabled: Type.Boolean(),
+    knowledgeBaseUrl: Type.String(),
+    knowledgeServiceId: Type.String({ minLength: 1 }),
+    knowledgeTeamId: Type.String({ minLength: 1 }),
+    knowledgeWikiId: Type.String(),
   },
   { additionalProperties: false },
 );
@@ -118,6 +123,7 @@ export interface PiRuntimeConfig {
   workingDirectory: string;
   agentDirectory: string;
   memory?: MemoryRuntimeConfig;
+  knowledge?: KnowledgeRuntimeConfig;
 }
 
 export interface GatewayConfig {
@@ -314,6 +320,13 @@ export function loadConfig(
       "NXCORE_MEMORY_CHAR_BUDGET",
       env.NXCORE_MEMORY_CHAR_BUDGET ?? "2000",
     ),
+    knowledgeEnabled: env.NXCORE_KNOWLEDGE_ENABLED == null
+      ? false
+      : parseBoolean("NXCORE_KNOWLEDGE_ENABLED", env.NXCORE_KNOWLEDGE_ENABLED.trim()),
+    knowledgeBaseUrl: env.NXCORE_KNOWLEDGE_BASE_URL?.trim() ?? "http://127.0.0.1:8421",
+    knowledgeServiceId: env.NXCORE_KNOWLEDGE_SERVICE_ID?.trim() ?? "everroom",
+    knowledgeTeamId: env.NXCORE_KNOWLEDGE_TEAM_ID?.trim() ?? "everroom",
+    knowledgeWikiId: env.NXCORE_KNOWLEDGE_WIKI_ID?.trim() ?? "",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -384,6 +397,22 @@ export function loadConfig(
     validateMemoryEndpoint("NXCORE_MEMORY_BASE_URL", memory.baseUrl);
   }
 
+  const knowledge: KnowledgeRuntimeConfig | null = rawConfig.knowledgeEnabled
+    ? {
+        baseUrl: rawConfig.knowledgeBaseUrl,
+        serviceId: rawConfig.knowledgeServiceId,
+        teamId: rawConfig.knowledgeTeamId,
+        wikiId: rawConfig.knowledgeWikiId,
+        searchLimit: 5,
+      }
+    : null;
+  if (knowledge) {
+    validateMemoryEndpoint("NXCORE_KNOWLEDGE_BASE_URL", knowledge.baseUrl);
+    if (!knowledge.wikiId) {
+      throw new Error("Knowledge service requires: NXCORE_KNOWLEDGE_WIKI_ID");
+    }
+  }
+
   return {
     host: rawConfig.host,
     port: rawConfig.port,
@@ -438,6 +467,7 @@ export function loadConfig(
           workingDirectory: join(dataDir, "agent", "workspace"),
           agentDirectory: join(dataDir, "agent", "pi-config"),
           ...(memory ? { memory } : {}),
+          ...(knowledge ? { knowledge } : {}),
         }
       : null,
   };

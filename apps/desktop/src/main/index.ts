@@ -11,6 +11,7 @@ import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import type {
   MemoryAtomicListOptions,
@@ -129,6 +130,7 @@ const MEMORY_CHANNELS = {
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
+let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
@@ -471,15 +473,32 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
       return null
     })
+    // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
+    knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
+    const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
+      console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
+      return null
+    })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
-      memoryCore
-        ? {
-          NXCORE_MEMORY_ENABLED: 'true',
-          NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
-          NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
-        }
-        : {},
+      {
+        ...(memoryCore
+          ? {
+            NXCORE_MEMORY_ENABLED: 'true',
+            NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
+            NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
+          }
+          : {}),
+        ...(knowledge
+          ? {
+            NXCORE_KNOWLEDGE_ENABLED: 'true',
+            NXCORE_KNOWLEDGE_BASE_URL: knowledge.baseUrl,
+            NXCORE_KNOWLEDGE_SERVICE_ID: knowledge.serviceId,
+            NXCORE_KNOWLEDGE_TEAM_ID: knowledge.teamId,
+            NXCORE_KNOWLEDGE_WIKI_ID: knowledge.wikiId,
+          }
+          : {}),
+      },
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
@@ -531,6 +550,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     gatewaySupervisor = null
     await memoryCoreSupervisor?.shutdown()
     memoryCoreSupervisor = null
+    await knowledgeServiceSupervisor?.shutdown()
+    knowledgeServiceSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
     app.quit()
     return
@@ -548,6 +569,7 @@ app.on('before-quit', (event) => {
   const service = localDataService
   const gateway = gatewaySupervisor
   const memoryCore = memoryCoreSupervisor
+  const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
@@ -556,6 +578,7 @@ app.on('before-quit', (event) => {
   localDataService = null
   gatewaySupervisor = null
   memoryCoreSupervisor = null
+  knowledgeServiceSupervisor = null
   agentGatewayBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
@@ -570,6 +593,7 @@ app.on('before-quit', (event) => {
     recordings?.dispose(),
     gateway?.shutdown(),
     memoryCore?.shutdown(),
+    knowledgeService?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())
