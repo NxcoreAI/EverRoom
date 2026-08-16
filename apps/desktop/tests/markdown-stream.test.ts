@@ -7,10 +7,16 @@ import {
   documentStreamCharactersPerFrame,
   documentStreamRevealDelay,
   eventsAfterLastDocumentTerminal,
+  hasVisibleTiptapContent,
+  isAgentDocumentAwaitingContent,
   isEmptyTiptapParagraph,
   MarkdownBlockBuffer,
   revealTiptapNode,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/markdownStream'
+import {
+  isNearDocumentStreamEnd,
+  nextDocumentStreamFollowState,
+} from '../src/renderer/src/components/context-room/ported/components/detail-editor/useTransientEditorInteractions'
 
 describe('Markdown stream buffering', () => {
   it('buffers incomplete content across chunks and flushes final Chinese text', () => {
@@ -49,6 +55,28 @@ describe('Markdown stream buffering', () => {
       content: [{ type: 'text', text: '正文' }],
     })).toBe(false)
     expect(isEmptyTiptapParagraph({ type: 'heading' })).toBe(false)
+  })
+
+  it('shows the Agent overlay only before the first visible content is persisted', () => {
+    const emptyDraft = {
+      status: 'draft' as const,
+      activeTransactionId: 'tx-1',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph' }] },
+    }
+    expect(hasVisibleTiptapContent(emptyDraft.contentJson)).toBe(false)
+    expect(isAgentDocumentAwaitingContent(emptyDraft)).toBe(true)
+    expect(isAgentDocumentAwaitingContent({
+      ...emptyDraft,
+      contentJson: {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: '正文开始' }] }],
+      },
+    })).toBe(false)
+    expect(isAgentDocumentAwaitingContent({
+      ...emptyDraft,
+      status: 'active',
+      activeTransactionId: null,
+    })).toBe(false)
   })
 
   it('deduplicates retried transaction sequences independently of event IDs', () => {
@@ -124,5 +152,26 @@ describe('Markdown stream buffering', () => {
     expect(documentStreamRevealDelay('好。', () => 0)).toBe(127)
     expect(documentStreamRevealDelay('line\n', () => 0)).toBe(162)
     expect(documentStreamRevealDelay('ab', () => 0.999)).toBe(60)
+  })
+
+  it('follows streamed content only while the reader remains near the document end', () => {
+    expect(isNearDocumentStreamEnd({ scrollTop: 0, clientHeight: 500, scrollHeight: 500 })).toBe(true)
+    expect(isNearDocumentStreamEnd({ scrollTop: 1_320, clientHeight: 600, scrollHeight: 2_000 })).toBe(true)
+    expect(isNearDocumentStreamEnd({ scrollTop: 900, clientHeight: 600, scrollHeight: 2_000 })).toBe(false)
+
+    expect(nextDocumentStreamFollowState({
+      wasFollowing: true,
+      previousScrollTop: 1_400,
+      scrollTop: 1_380,
+      clientHeight: 600,
+      scrollHeight: 2_000,
+    })).toBe(false)
+    expect(nextDocumentStreamFollowState({
+      wasFollowing: false,
+      previousScrollTop: 900,
+      scrollTop: 1_320,
+      clientHeight: 600,
+      scrollHeight: 2_000,
+    })).toBe(true)
   })
 })

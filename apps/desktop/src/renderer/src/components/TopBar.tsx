@@ -12,7 +12,6 @@ import {
 } from 'lucide-react'
 
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
-import { ThemeSwitcher, type ThemeId } from '@/components/ThemeSwitcher'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 
 export function TopBar({
@@ -20,7 +19,6 @@ export function TopBar({
   activeContextRoomId,
   agentOpen,
   navCollapsed,
-  theme,
   onActivateWorkbench,
   onActivateContextRoom,
   onCloseContextRoom,
@@ -28,13 +26,11 @@ export function TopBar({
   canRestoreContextRoom,
   onToggleAgent,
   onToggleNav,
-  onThemeChange,
 }: {
   contextRoomTabs: ContextRoomWorkspaceTab[]
   activeContextRoomId: string | null
   agentOpen: boolean
   navCollapsed: boolean
-  theme: ThemeId
   onActivateWorkbench: () => void
   onActivateContextRoom: (roomId: string) => void
   onCloseContextRoom: (roomId: string) => void
@@ -42,7 +38,6 @@ export function TopBar({
   canRestoreContextRoom: boolean
   onToggleAgent: () => void
   onToggleNav: () => void
-  onThemeChange: (theme: ThemeId) => void
 }) {
   return (
     <header className="topbar">
@@ -117,7 +112,6 @@ export function TopBar({
         >
           <RotateCcw aria-hidden="true" strokeWidth={1.8} />
         </button>
-        <ThemeSwitcher theme={theme} onChange={onThemeChange} />
         <button
           type="button"
           className="icon-button"

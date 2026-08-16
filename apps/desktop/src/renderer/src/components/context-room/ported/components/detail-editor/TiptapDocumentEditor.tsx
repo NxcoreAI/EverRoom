@@ -3,11 +3,14 @@ import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import TableOfContents, { type TableOfContentData } from '@tiptap/extension-table-of-contents'
 import { Markdown } from '@tiptap/markdown'
+import { TextSelection } from '@tiptap/pm/state'
 import { EditorContent, Extension, useEditor, type Editor, type JSONContent } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
 import StarterKit from '@tiptap/starter-kit'
+import { LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { useRoomDocumentsState } from '../../../RoomDocumentsProvider'
 import type { ContextRoomRecord, ContextRoomResource } from '../../types'
 import { TiptapBlockHandle } from './TiptapBlockHandle'
 import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
@@ -32,7 +35,7 @@ import {
   countTiptapTextCharacters,
   documentStreamCharactersPerFrame,
   documentStreamRevealDelay,
-  eventsAfterLastDocumentTerminal,
+  isAgentDocumentAwaitingContent,
   isEmptyTiptapParagraph,
   MarkdownBlockBuffer,
   revealTiptapNode,
@@ -99,7 +102,9 @@ async function insertMarkdownBlocks(
   transactionId: string,
   markdownBlocks: string[],
   applyingRemote: { current: boolean },
-): Promise<void> {
+  shouldFollowStream: () => boolean,
+  followStream: () => void,
+): Promise<boolean> {
   const nodes: TiptapJsonContent[] = []
   for (const markdown of markdownBlocks) {
     const parsed = editor.storage.markdown.manager.parse(markdown) as TiptapJsonContent
@@ -116,6 +121,7 @@ async function insertMarkdownBlocks(
   const charactersPerFrame = documentStreamCharactersPerFrame(totalCharacters)
 
   for (const node of nodes) {
+    if (state.closed || editor.isDestroyed) return false
     const nodeCharacters = countTiptapTextCharacters(node)
     const nodeText = Array.from(tiptapTextContent(node))
     const initialDocumentSize = editor.state.doc.content.size
@@ -129,7 +135,7 @@ async function insertMarkdownBlocks(
     const frameCount = Math.max(1, Math.ceil(nodeCharacters / charactersPerFrame))
 
     for (let frame = 1; frame <= frameCount; frame += 1) {
-      if (editor.isDestroyed) throw new Error('Editor closed while Agent was writing')
+      if (state.closed || editor.isDestroyed) return false
       const revealedCharacters = Math.min(nodeCharacters, frame * charactersPerFrame)
       const previousCharacters = Math.max(0, (frame - 1) * charactersPerFrame)
       const preview = revealTiptapNode(node, revealedCharacters)
@@ -140,7 +146,14 @@ async function insertMarkdownBlocks(
           .replaceWith(previewFrom, previewTo, proseMirrorNode)
           .setMeta('preventUpdate', true)
         if (frame > 1) transaction.setMeta('addToHistory', false)
+        const followingStream = shouldFollowStream()
+        if (followingStream && editor.view.hasFocus()) {
+          transaction
+            .setSelection(TextSelection.atEnd(transaction.doc))
+            .scrollIntoView()
+        }
         editor.view.dispatch(transaction)
+        if (followingStream) followStream()
         previewTo = previewFrom + proseMirrorNode.nodeSize
       } finally {
         applyingRemote.current = false
@@ -151,6 +164,7 @@ async function insertMarkdownBlocks(
       ))
     }
   }
+  return true
 }
 
 export function TiptapDocumentEditor({
@@ -169,7 +183,8 @@ export function TiptapDocumentEditor({
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const documentName = backendDocument?.title ?? resource?.name ?? room.cloudDoc.title ?? room.title
   const initialDraft = useState(() => readDocumentDraftRecord(documentId))[0]
-  const canRecoverInitialDraft = shouldRecoverDocumentDraft(initialDraft, backendDocument)
+  const canRecoverInitialDraft = !backendDocument?.activeTransactionId
+    && shouldRecoverDocumentDraft(initialDraft, backendDocument)
   const initialContent = useState<JSONContent>(() => (
     canRecoverInitialDraft
       ? initialDraft!.content
@@ -189,6 +204,10 @@ export function TiptapDocumentEditor({
   const [saveState, setSaveState] = useState(backendDocument?.status === 'draft' ? 'Agent 正在写入' : '已保存')
   const [tableOfContents, setTableOfContents] = useState<TableOfContentData>([])
   const [blockDragging, setBlockDragging] = useState(false)
+  const { dismissDocumentPresentation, registerVisibleDocument } = useRoomDocumentsState()
+  const presentingStream = events.some(
+    (event) => event.type === 'document.appended' || event.type === 'document.commit-requested',
+  )
 
   backendRef.current = backendDocument
   onBackendChangeRef.current = onBackendDocumentChange
@@ -288,6 +307,12 @@ export function TiptapDocumentEditor({
       queueDocumentSave(currentEditor.getJSON() as TiptapJsonContent)
     },
   }, [documentId])
+  const editorInteractions = useTransientEditorInteractions(editor)
+
+  useEffect(
+    () => registerVisibleDocument(documentId),
+    [documentId, registerVisibleDocument],
+  )
 
   useEffect(() => {
     if (!editor || backendDocument || importedRef.current) return
@@ -318,7 +343,7 @@ export function TiptapDocumentEditor({
     if (!editor || !backendDocument) return
     versionRef.current = backendDocument.version
     importedRef.current = true
-    const writing = Boolean(backendDocument.activeTransactionId)
+    const writing = Boolean(backendDocument.activeTransactionId) || presentingStream
     if (editor.isEditable === writing) editor.setEditable(!writing, false)
     setSaveState(writing ? 'Agent 正在写入' : '已保存')
     if (!writing && recoveringDraft.current) {
@@ -326,7 +351,13 @@ export function TiptapDocumentEditor({
         recoverySaveScheduled.current = true
         queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0)
       }
-    } else if (!writing && !sameContent(editor.getJSON(), backendDocument.contentJson)) {
+      return
+    }
+    if (
+      !recoveringDraft.current
+      && !presentingStream
+      && !sameContent(editor.getJSON(), backendDocument.contentJson)
+    ) {
       applyingRemote.current = true
       try {
         editor.commands.setContent(backendDocument.contentJson, { emitUpdate: false })
@@ -334,12 +365,11 @@ export function TiptapDocumentEditor({
         applyingRemote.current = false
       }
     }
-  }, [backendDocument, editor])
+  }, [backendDocument, editor, presentingStream])
 
   useEffect(() => {
     if (!editor) return
-    const pendingEvents = eventsAfterLastDocumentTerminal(events)
-    for (const event of pendingEvents) {
+    for (const event of events) {
       const transactionId = event.transactionId
       if (!transactionId) continue
       let state = streamStates.get(transactionId)
@@ -370,7 +400,19 @@ export function TiptapDocumentEditor({
           const text = eventText(event)
           if (sequence === null || text === null) throw new Error('Invalid document append event')
           if (!state!.sequences.has(sequence)) {
-            await insertMarkdownBlocks(editor, state!, transactionId, state!.buffer.append(text), applyingRemote)
+            const completed = await insertMarkdownBlocks(
+              editor,
+              state!,
+              transactionId,
+              state!.buffer.append(text),
+              applyingRemote,
+              editorInteractions.shouldFollowDocumentStream,
+              editorInteractions.followDocumentStream,
+            )
+            if (!completed) {
+              state!.scheduled.delete(event.id)
+              return
+            }
             state!.sequences.record(sequence)
           }
           const contentJson = editor.getJSON() as TiptapJsonContent
@@ -380,14 +422,22 @@ export function TiptapDocumentEditor({
             backendRef.current = updated
             onBackendChangeRef.current(updated)
           }
-          await window.nxcore?.documents.acknowledge(transactionId, {
-            sequence,
-            contentJson,
-          })
         } else if (event.type === 'document.commit-requested') {
           const finalSequence = eventNumber(event, 'finalSequence')
           if (finalSequence === null) throw new Error('Invalid document commit event')
-          await insertMarkdownBlocks(editor, state!, transactionId, state!.buffer.append('', true), applyingRemote)
+          const completed = await insertMarkdownBlocks(
+            editor,
+            state!,
+            transactionId,
+            state!.buffer.append('', true),
+            applyingRemote,
+            editorInteractions.shouldFollowDocumentStream,
+            editorInteractions.followDocumentStream,
+          )
+          if (!completed) {
+            state!.scheduled.delete(event.id)
+            return
+          }
           const contentJson = editor.getJSON() as TiptapJsonContent
           const currentDocument = backendRef.current
           if (currentDocument?.activeTransactionId === transactionId) {
@@ -395,18 +445,16 @@ export function TiptapDocumentEditor({
             backendRef.current = updated
             onBackendChangeRef.current(updated)
           }
-          await window.nxcore?.documents.acknowledge(transactionId, {
-            sequence: finalSequence,
-            contentJson,
-          })
         } else if (event.type === 'document.aborted') {
           state!.buffer.reset()
           state!.closed = true
           if (!editor.isEditable) editor.setEditable(true, false)
+          dismissDocumentPresentation(event.documentId, transactionId)
         } else if (event.type === 'document.committed') {
           state!.buffer.reset()
           state!.closed = true
           if (!editor.isEditable) editor.setEditable(true, false)
+          dismissDocumentPresentation(event.documentId, transactionId)
         }
         state!.processed.add(event.id)
         state!.scheduled.delete(event.id)
@@ -415,7 +463,13 @@ export function TiptapDocumentEditor({
         setSaveState(error instanceof Error ? error.message : '流式写入失败')
       })
     }
-  }, [editor, events])
+  }, [
+    dismissDocumentPresentation,
+    editor,
+    editorInteractions.followDocumentStream,
+    editorInteractions.shouldFollowDocumentStream,
+    events,
+  ])
 
   useEffect(() => () => {
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
@@ -432,19 +486,28 @@ export function TiptapDocumentEditor({
     }
   }, [documentId, editor])
 
+  useEffect(() => () => {
+    const transactionId = backendRef.current?.activeTransactionId
+    if (!transactionId) return
+    const state = streamStates.get(transactionId)
+    if (state) state.closed = true
+    streamStates.delete(transactionId)
+  }, [documentId])
+
   const handleBlockDraggingChange = (dragging: boolean) => {
     setBlockDragging(dragging)
     if (!dragging && editor && !editor.isDestroyed) editor.view.dom.dispatchEvent(new Event('dragend'))
   }
 
-  const writing = Boolean(backendDocument?.activeTransactionId)
+  const writing = Boolean(backendDocument?.activeTransactionId) || presentingStream
+  const awaitingFirstContent = isAgentDocumentAwaitingContent(backendDocument)
   const selectionRewrite = useTiptapSelectionRewrite({
     editor,
     roomId: room.id,
+    documentId,
     documentName,
     externallyLocked: writing,
   })
-  const editorInteractions = useTransientEditorInteractions(editor)
   return (
     <div
       className="context-room-embedded-cloud-doc context-room-tiptap-editor"
@@ -455,6 +518,14 @@ export function TiptapDocumentEditor({
         <b>{saveState}</b>
         <em>{documentName}</em>
       </div>
+      {awaitingFirstContent ? (
+        <div className="context-room-agent-write-overlay" role="status" aria-live="polite">
+          <span>
+            <LoaderCircle aria-hidden="true" />
+            <strong>Agent 正在写入内容</strong>
+          </span>
+        </div>
+      ) : null}
       <div
         ref={editorInteractions.scrollRef}
         className="context-room-tiptap-scroll"

@@ -90,11 +90,38 @@ export interface UpdateAgentSessionInput {
   title: string;
 }
 
+export interface AgentRoomReference {
+  id: string;
+  title: string;
+  kind?: string;
+}
+
+export interface ContextRoomSnapshotItem extends AgentRoomReference {
+  data: Record<string, unknown>;
+}
+
+export interface ContextRoomSnapshot {
+  rooms: ContextRoomSnapshotItem[];
+  deletedRooms: ContextRoomSnapshotItem[];
+  updatedAt: string | null;
+}
+
+export interface SaveContextRoomSnapshotInput {
+  rooms: ContextRoomSnapshotItem[];
+  deletedRooms: ContextRoomSnapshotItem[];
+}
+
 export interface StartAgentRunInput {
   prompt: string;
   idempotencyKey: string;
+  /** Defaults to true. Temporary preview runs can defer capture until user confirmation. */
+  captureMemory?: boolean;
   context?: {
-    selectedText: string;
+    selectedText?: string;
+    /** Current, non-deleted Rooms visible to the desktop when this run starts. */
+    rooms?: AgentRoomReference[];
+    /** Explicit UI-confirmed target for a global Agent session. */
+    selectedRoomId?: string | null;
   };
 }
 
@@ -138,6 +165,19 @@ export interface DocumentEvent<T = unknown> {
   type: DocumentEventType;
   occurredAt: string;
   payload: T;
+}
+
+export interface DocumentSnapshotEventPayload {
+  document: RoomDocument;
+}
+
+export interface DocumentAppendedEventPayload extends DocumentSnapshotEventPayload {
+  sequence: number;
+  text: string;
+}
+
+export interface DocumentCommitRequestedEventPayload extends DocumentSnapshotEventPayload {
+  finalSequence: number;
 }
 
 export interface DocumentEventFrame {

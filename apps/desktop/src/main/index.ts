@@ -16,8 +16,10 @@ import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
+  MemoryDocumentRewriteInput,
 } from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
+import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
@@ -57,6 +59,11 @@ const GATEWAY_CHANNELS = {
   status: 'gateway:status',
 } as const
 
+const CONTEXT_ROOM_CHANNELS = {
+  list: 'context-rooms:list',
+  syncSnapshot: 'context-rooms:sync-snapshot',
+} as const
+
 const AGENT_CHANNELS = {
   listSessions: 'agent:list-sessions',
   createSession: 'agent:create-session',
@@ -79,6 +86,7 @@ const DOCUMENT_CHANNELS = {
   delete: 'documents:delete',
   restore: 'documents:restore',
   deletePermanently: 'documents:delete-permanently',
+  emptyTrash: 'documents:empty-trash',
   acknowledge: 'documents:acknowledge',
   subscribe: 'documents:subscribe',
   unsubscribe: 'documents:unsubscribe',
@@ -136,6 +144,7 @@ const MEMORY_CHANNELS = {
   listConversations: 'memory:list-conversations',
   searchConversations: 'memory:search-conversations',
   deleteConversations: 'memory:delete-conversations',
+  captureDocumentRewrite: 'memory:capture-document-rewrite',
 } as const
 
 let localDataService: LocalDataService | null = null
@@ -283,6 +292,11 @@ function registerGatewayHandlers(supervisor: GatewaySupervisor): void {
   ipcMain.handle(GATEWAY_CHANNELS.status, () => supervisor.getStatus())
 }
 
+function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
+  ipcMain.handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
+  ipcMain.handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
+}
+
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
@@ -307,6 +321,7 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
   ipcMain.handle(DOCUMENT_CHANNELS.restore, (_event, documentId) => bridge.restore(documentId))
   ipcMain.handle(DOCUMENT_CHANNELS.deletePermanently, (_event, documentId) =>
     bridge.deletePermanently(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.emptyTrash, (_event, roomId) => bridge.emptyTrash(roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
     bridge.acknowledge(transactionId, input))
   ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
@@ -358,6 +373,10 @@ function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
     MEMORY_CHANNELS.deleteConversations,
     (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
       bridge.deleteConversations(target),
+  )
+  ipcMain.handle(
+    MEMORY_CHANNELS.captureDocumentRewrite,
+    (_event, input: MemoryDocumentRewriteInput) => bridge.captureDocumentRewrite(input),
   )
 }
 
@@ -508,6 +527,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     registerGatewayHandlers(gatewaySupervisor)
+    registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)

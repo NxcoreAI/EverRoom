@@ -1,8 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
+  SaveContextRoomSnapshotInput,
+} from '@nxcore/agent-contract'
+import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
+  MemoryDocumentRewriteInput,
 } from '../shared/memory'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
 
@@ -33,6 +37,14 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   }
 }
 
+async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T> {
+  try {
+    return await ipcRenderer.invoke(channel, ...args) as T
+  } catch (error) {
+    throw new Error(errorMessage(error))
+  }
+}
+
 const api: NxcoreDesktopApi = {
   platform: process.platform,
   errors: {
@@ -48,6 +60,11 @@ const api: NxcoreDesktopApi = {
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
+  },
+  contextRooms: {
+    list: () => invokeQuietly('context-rooms:list'),
+    syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
+      invokeQuietly('context-rooms:sync-snapshot', input),
   },
   account: {
     status: () => invoke('account:status'),
@@ -87,6 +104,8 @@ const api: NxcoreDesktopApi = {
       invoke('memory:search-conversations', query, limit, sessionId),
     deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
       invoke('memory:delete-conversations', target),
+    captureDocumentRewrite: (input: MemoryDocumentRewriteInput) =>
+      invoke('memory:capture-document-rewrite', input),
   },
   reality: {
     listEvents: (filters) => invoke('reality:list-events', filters),
@@ -138,6 +157,7 @@ const api: NxcoreDesktopApi = {
     delete: (documentId) => invoke('documents:delete', documentId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
+    emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
     acknowledge: (transactionId, input) => invoke('documents:acknowledge', transactionId, input),
     subscribe: (roomId) => invoke('documents:subscribe', roomId),
     unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),

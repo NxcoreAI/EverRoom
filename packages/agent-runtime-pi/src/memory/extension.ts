@@ -15,6 +15,8 @@ export interface MemoryRunContext {
   pageLabel: string;
   /** 回合被取消时置位，agent_end 不再回写。 */
   cancelled: boolean;
+  /** 临时预览类运行关闭自动沉淀，由用户确认后的领域事件负责写入。 */
+  captureEnabled: boolean;
 }
 
 export interface MemoryLogger {
@@ -86,7 +88,7 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
 
       pi.on("agent_end", async (event) => {
         const run = getRunContext();
-        if (!run || run.cancelled) return;
+        if (!run || run.cancelled || !run.captureEnabled) return;
 
         const messages = extractCapturableMessages(event.messages, run);
         if (messages.length === 0) return;

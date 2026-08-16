@@ -14,12 +14,16 @@ import {
 import { eq } from 'drizzle-orm'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { DocumentMcpHost } from '../src/modules/documents/mcp-host.js'
-import { DocumentService } from '../src/modules/documents/service.js'
+import { ContextRoomService } from '../src/modules/context-rooms/service.js'
+import {
+  DocumentService,
+  type DocumentCommittedHandler,
+} from '../src/modules/documents/service.js'
 
 const temporaryDirectories: string[] = []
 const disposables: Array<() => void | Promise<void>> = []
 
-async function createHarness() {
+async function createHarness(onDocumentCommitted?: DocumentCommittedHandler) {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-documents-test-'))
   temporaryDirectories.push(dataDir)
   const { db, sqlite } = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
@@ -29,16 +33,12 @@ async function createHarness() {
     pageLabel: 'Context Room',
     runtimeId: 'test',
   }).run()
-  const service = new DocumentService(db, new DocumentEventBroker())
+  const service = new DocumentService(db, new DocumentEventBroker(), onDocumentCommitted)
   disposables.push(() => {
     service.dispose()
     sqlite.close()
   })
   return { db, service }
-}
-
-async function nextTurn(): Promise<void> {
-  await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
 }
 
 afterEach(async () => {
@@ -225,24 +225,17 @@ describe('document transactions', () => {
     await expect(service.delete(started.document.id)).rejects.toMatchObject({ code: 'DOCUMENT_BUSY' })
     expect(service.get(started.document.id)).not.toBeNull()
 
-    const contentJson = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '已提交' }] }] }
-    const append = service.append({
+    await service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
       sequence: 1,
       text: '已提交',
     })
-    await nextTurn()
-    await service.acknowledge(started.transactionId, { sequence: 1, contentJson })
-    await append
-    const commit = service.commit({
+    await service.commit({
       transactionId: started.transactionId,
       sessionId: 'session-1',
       finalSequence: 1,
     })
-    await nextTurn()
-    await service.acknowledge(started.transactionId, { sequence: 1, contentJson })
-    await commit
 
     await service.delete(started.document.id)
     expect(db.select().from(documentTransactions).all()).toHaveLength(1)
@@ -254,7 +247,27 @@ describe('document transactions', () => {
     expect(db.select().from(roomDocumentLinks).all()).toEqual([])
   })
 
-  it('persists acknowledged chunks, handles duplicates, and commits atomically', async () => {
+  it('empties a Room recycle bin and cascades document history', async () => {
+    const { db, service } = await createHarness()
+    for (const id of ['doc-trash-a', 'doc-trash-b']) {
+      const imported = await service.import({
+        id,
+        roomId: 'room-1',
+        title: id,
+        contentJson: { type: 'doc', content: [] },
+      })
+      await service.delete(imported.id)
+    }
+
+    await service.emptyTrash('room-1')
+
+    expect(service.list('room-1', true)).toEqual([])
+    expect(db.select().from(documents).all()).toEqual([])
+    expect(db.select().from(roomDocumentLinks).all()).toEqual([])
+    expect(db.select().from(documentVersions).all()).toEqual([])
+  })
+
+  it('persists and commits complete Markdown without a renderer subscriber', async () => {
     const { service } = await createHarness()
     const started = await service.begin({
       title: 'Agent 周报',
@@ -264,35 +277,44 @@ describe('document transactions', () => {
     })
     expect(service.list('room-1')[0]).toMatchObject({ status: 'draft', version: 0 })
 
-    const content = {
-      type: 'doc',
-      content: [{ type: 'heading', attrs: { level: 1, id: `${started.transactionId}:0` }, content: [{ type: 'text', text: '中文周报' }] }],
-    }
-    const append = service.append({
+    await expect(service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
       sequence: 1,
-      text: '# 中文周报\n',
-    })
-    await nextTurn()
-    expect(service.replayPending('room-1')).toEqual([
+      text: '# 中文周报\n\n本周完成了 **服务解耦**。\n\n',
+    })).resolves.toMatchObject({ duplicate: false, nextSequence: 2 })
+    await expect(service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 2,
+      text: '- [x] 后台落盘\n- [ ] UI 动画\n',
+    })).resolves.toMatchObject({ duplicate: false, nextSequence: 3 })
+
+    const persistedDraft = service.list('room-1')[0]
+    expect(persistedDraft).toMatchObject({ status: 'draft', version: 0 })
+    expect(persistedDraft?.contentJson.content).toEqual([
       expect.objectContaining({
-        documentId: started.document.id,
-        transactionId: started.transactionId,
-        type: 'document.appended',
-        payload: { sequence: 1, text: '# 中文周报\n' },
+        type: 'heading',
+        attrs: { level: 1, id: `${started.transactionId}:0` },
+      }),
+      expect.objectContaining({
+        type: 'paragraph',
+        attrs: { id: `${started.transactionId}:1` },
+      }),
+      expect.objectContaining({
+        type: 'taskList',
+        attrs: { id: `${started.transactionId}:2` },
       }),
     ])
-    await service.acknowledge(started.transactionId, { sequence: 1, contentJson: content })
-    await expect(append).resolves.toMatchObject({ duplicate: false, nextSequence: 2 })
-    expect(service.list('room-1')[0]?.contentJson).toEqual(content)
+    expect(JSON.stringify(persistedDraft?.contentJson)).toContain('服务解耦')
+    expect(JSON.stringify(persistedDraft?.contentJson)).toContain('后台落盘')
     expect(service.replayPending('room-1')).toEqual([])
 
     await expect(service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
       sequence: 1,
-      text: '# 中文周报\n',
+      text: '# 中文周报\n\n本周完成了 **服务解耦**。\n\n',
     })).resolves.toMatchObject({ duplicate: true })
     await expect(service.append({
       transactionId: started.transactionId,
@@ -301,20 +323,134 @@ describe('document transactions', () => {
       text: '# 不同内容\n',
     })).rejects.toMatchObject({ code: 'SEQUENCE_CONFLICT' })
 
-    const commit = service.commit({
+    const committed = await service.commit({
       transactionId: started.transactionId,
       sessionId: 'session-1',
-      finalSequence: 1,
+      finalSequence: 2,
     })
-    await nextTurn()
-    expect(service.replayPending('room-1')).toEqual([
-      expect.objectContaining({
-        type: 'document.commit-requested',
-        payload: { finalSequence: 1 },
-      }),
+    expect(committed).toMatchObject({
+      status: 'active',
+      version: 1,
+      contentJson: persistedDraft?.contentJson,
+    })
+
+    const staleRendererContent = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '旧 UI 内容' }] }],
+    }
+    await service.acknowledge(started.transactionId, { sequence: 2, contentJson: staleRendererContent })
+    expect(service.get(started.document.id)?.contentJson).toEqual(committed.contentJson)
+  })
+
+  it('does not replay persisted content after a subscriber disconnects and reconnects', async () => {
+    const { service } = await createHarness()
+    const firstConnectionFrames: string[] = []
+    const unsubscribe = service.broker.subscribe('room-1', {
+      readyState: 1,
+      send: (frame) => firstConnectionFrames.push(frame),
+    })
+    const started = await service.begin({
+      title: '断线续写',
+      roomId: 'room-1',
+      agentSessionId: 'session-1',
+      runId: 'run-reconnect',
+    })
+    await service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 1,
+      text: '# 断线续写\n\n第一段。',
+    })
+    unsubscribe()
+    await service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 2,
+      text: '\n\n第二段。',
+    })
+
+    const reconnectedFrames: string[] = []
+    const unsubscribeReconnect = service.broker.subscribe('room-1', {
+      readyState: 1,
+      send: (frame) => reconnectedFrames.push(frame),
+    })
+    disposables.push(unsubscribeReconnect)
+    for (const event of service.replayPending('room-1')) {
+      reconnectedFrames.push(JSON.stringify({ type: 'document.event', protocol: 1, event }))
+    }
+
+    expect(firstConnectionFrames.map((frame) => JSON.parse(frame).event.type)).toEqual([
+      'document.opened',
+      'document.appended',
     ])
-    await service.acknowledge(started.transactionId, { sequence: 1, contentJson: content })
-    await expect(commit).resolves.toMatchObject({ status: 'active', version: 1, contentJson: content })
+    const appendEvent = JSON.parse(firstConnectionFrames[1]!).event
+    expect(appendEvent.payload).toMatchObject({
+      sequence: 1,
+      text: '# 断线续写\n\n第一段。',
+      document: {
+        id: started.document.id,
+        status: 'draft',
+        activeTransactionId: started.transactionId,
+      },
+    })
+    expect(JSON.stringify(appendEvent.payload.document.contentJson)).toContain('第一段。')
+    expect(reconnectedFrames).toEqual([])
+    expect(JSON.stringify(service.get(started.document.id)?.contentJson)).toContain('第一段。')
+    expect(JSON.stringify(service.get(started.document.id)?.contentJson)).toContain('第二段。')
+
+    const committed = await service.commit({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      finalSequence: 2,
+    })
+    expect(committed).toMatchObject({ status: 'active', version: 1 })
+    expect(reconnectedFrames.map((frame) => JSON.parse(frame).event.type)).toEqual([
+      'document.commit-requested',
+      'document.committed',
+    ])
+    expect(JSON.parse(reconnectedFrames[0]!).event.payload).toMatchObject({
+      finalSequence: 2,
+      document: { status: 'draft', activeTransactionId: started.transactionId },
+    })
+  })
+
+  it('captures the final Agent document only after commit', async () => {
+    const captured: Parameters<DocumentCommittedHandler>[0][] = []
+    const { service } = await createHarness((document) => captured.push(document))
+    const started = await service.begin({
+      title: '认证服务演进路线',
+      roomId: 'room-1',
+      agentSessionId: 'session-1',
+      runId: 'run-memory',
+    })
+    await service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 1,
+      text: '第一段',
+    })
+    await service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 2,
+      text: '第二段',
+    })
+    expect(captured).toEqual([])
+
+    await service.commit({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      finalSequence: 2,
+    })
+
+    expect(captured).toEqual([expect.objectContaining({
+      sessionId: 'session-1',
+      roomId: 'room-1',
+      runId: 'run-memory',
+      documentId: started.document.id,
+      title: '认证服务演进路线',
+      markdown: '第一段第二段',
+    })])
   })
 
   it('enforces sequence, session, and size limits and removes aborted drafts', async () => {
@@ -357,17 +493,13 @@ describe('document transactions', () => {
       agentSessionId: 'session-1',
       runId: 'run-large',
     })
-    const contentJson = { type: 'doc', content: [] }
     for (let sequence = 1; sequence <= 32; sequence += 1) {
-      const append = service.append({
+      await service.append({
         transactionId: started.transactionId,
         sessionId: 'session-1',
         sequence,
         text: 'x'.repeat(64 * 1024),
       })
-      await nextTurn()
-      await service.acknowledge(started.transactionId, { sequence, contentJson })
-      await append
     }
     await expect(service.append({
       transactionId: started.transactionId,
@@ -401,7 +533,50 @@ describe('document transactions', () => {
     expect(recovered.list('room-1')).toHaveLength(0)
   })
 
-  it('publishes exactly the four approved MCP tools', async () => {
+  it('lists available Rooms and refuses to create a draft before the user selects one', async () => {
+    const { db, service } = await createHarness()
+    const roomRegistry = new ContextRoomService(db)
+    roomRegistry.saveSnapshot({
+      rooms: [
+        { id: 'room-1', title: '产品规划', kind: '项目', data: { id: 'room-1', title: '产品规划' } },
+        { id: 'room-2', title: '后端进阶', kind: '主题', data: { id: 'room-2', title: '后端进阶' } },
+      ],
+      deletedRooms: [],
+    })
+    const host = new DocumentMcpHost(service, roomRegistry)
+    disposables.push(() => host.close())
+    const globalContext = {
+      agentSessionId: 'session-1',
+      runId: 'run-global',
+      roomId: null,
+      availableRooms: [{ id: 'forged-room', title: '前端伪造 Room' }],
+    }
+
+    const listed = await host.callTool('context_room_list', {}, globalContext)
+    expect(listed.structuredContent).toEqual({
+      rooms: [
+        { id: 'room-1', title: '产品规划', kind: '项目' },
+        { id: 'room-2', title: '后端进阶', kind: '主题' },
+      ],
+      selectionRequired: true,
+      selectedRoomId: null,
+    })
+    await expect(host.callTool('context_room_write_begin', {
+      mode: 'create', title: '服务端学习路径', format: 'markdown',
+    }, globalContext)).rejects.toThrow('ROOM_SELECTION_REQUIRED')
+    expect(service.list('room-1')).toEqual([])
+    expect(service.list('room-2')).toEqual([])
+
+    const started = await host.callTool('context_room_write_begin', {
+      mode: 'create', title: '服务端学习路径', format: 'markdown',
+    }, { ...globalContext, roomId: 'room-2' })
+    expect(started.structuredContent).toMatchObject({ roomId: 'room-2', state: 'open' })
+    expect(service.list('room-2')).toEqual([
+      expect.objectContaining({ roomId: 'room-2', title: '服务端学习路径', status: 'draft' }),
+    ])
+  })
+
+  it('publishes exactly the five approved MCP tools', async () => {
     const { service } = await createHarness()
     const host = new DocumentMcpHost(service)
     disposables.push(() => host.close())
@@ -419,6 +594,7 @@ describe('document transactions', () => {
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
     const result = messages[0]?.result as { tools?: Array<{ name: string; description: string }> }
     expect(result.tools?.map((tool) => tool.name)).toEqual([
+      'context_room_list',
       'context_room_write_begin',
       'context_room_write_append',
       'context_room_write_commit',
@@ -430,6 +606,10 @@ describe('document transactions', () => {
       .toContain('准确概括正文')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
       .toContain('充实、完整的长篇内容')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
+      .toContain('主章节统一使用二级标题（##）')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
+      .toContain('同一语义层级必须使用相同数量的 #')
 
     await host.exchange('mcp-session', {
       jsonrpc: '2.0',
@@ -440,6 +620,6 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(4)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(5)
   })
 })

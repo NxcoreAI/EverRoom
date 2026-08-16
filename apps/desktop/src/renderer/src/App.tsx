@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { AgentPanel } from '@/components/AgentPanel'
 import { AppErrorDialog } from '@/components/AppErrorDialog'
@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
 import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
+import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
@@ -33,6 +34,7 @@ function readStoredTheme(): ThemeId {
 }
 
 export function App() {
+  const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
   const [activePage, setActivePage] = useState<PageId>('home')
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
@@ -44,10 +46,13 @@ export function App() {
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
-  const [theme, setTheme] = useState<ThemeId>(readStoredTheme)
+  const [theme] = useState<ThemeId>(readStoredTheme)
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
   const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
+  const availableContextRooms = useMemo(() => (
+    contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
+  ), [contextRoomState.rooms])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -153,7 +158,6 @@ export function App() {
         activeContextRoomId={activePage === 'rooms' ? activeContextRoomId : null}
         agentOpen={agentOpen}
         navCollapsed={effectiveNavCollapsed}
-        theme={theme}
         onActivateWorkbench={() => {
           if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
         }}
@@ -177,7 +181,6 @@ export function App() {
             return next
           })
         }}
-        onThemeChange={setTheme}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
       <main className="workspace-main">
@@ -197,6 +200,8 @@ export function App() {
         <AgentPanel
           pageLabel={pageLabels[activePage]}
           roomId={activePage === 'rooms' ? activeContextRoomId : null}
+          rooms={availableContextRooms}
+          roomBackendReady={contextRoomBackendReady}
           focusRequest={agentFocusRequest}
         />
       ) : null}
