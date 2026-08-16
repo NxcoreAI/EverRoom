@@ -107,11 +107,13 @@ function selectionText(editor: Editor, from: number, to: number): string {
 export function useTiptapSelectionRewrite({
   editor,
   roomId,
+  documentId,
   documentName,
   externallyLocked,
 }: {
   editor: Editor | null
   roomId: string
+  documentId: string
   documentName: string
   externallyLocked: boolean
 }) {
@@ -241,11 +243,19 @@ export function useTiptapSelectionRewrite({
       .insertText(current.replacementText, current.from, current.to)
       .setMeta(rewriteDecorationKey, null)
     editor.view.dispatch(transaction)
+    void window.nxcore?.memory.captureDocumentRewrite({
+      roomId,
+      documentId,
+      documentTitle: documentName,
+      instruction: current.instruction.trim() || '保持原意，重写得更清晰、自然。',
+      originalText: current.originalText,
+      replacementText: current.replacementText,
+    }).catch(() => undefined)
     operationRef.current = null
     restoreEditor(operation?.wasEditable ?? true)
     setPreview(null)
     editor.commands.focus(Math.min(current.from + current.replacementText.length, editor.state.doc.content.size))
-  }, [editor, restoreEditor])
+  }, [documentId, documentName, editor, restoreEditor, roomId])
 
   useEffect(() => {
     if (!preview || !editor) return

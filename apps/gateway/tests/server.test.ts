@@ -22,6 +22,7 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
+    memory: null,
     pi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
@@ -56,6 +57,43 @@ describe("gateway server", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
+  });
+
+  it("persists and serves the complete Context Room snapshot", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const empty = await app.inject({ method: "GET", url: "/v1/context-rooms", headers });
+    const saved = await app.inject({
+      method: "PUT",
+      url: "/v1/context-rooms/snapshot",
+      headers,
+      payload: {
+        rooms: [{
+          id: "room-active",
+          title: "活动 Room",
+          kind: "项目",
+          data: { id: "room-active", title: "活动 Room", materials: [] },
+        }],
+        deletedRooms: [{
+          id: "room-deleted",
+          title: "回收站 Room",
+          kind: "主题",
+          data: { id: "room-deleted", title: "回收站 Room", materials: ["资料"] },
+        }],
+      },
+    });
+    const loaded = await app.inject({ method: "GET", url: "/v1/context-rooms", headers });
+    await app.close();
+
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({ rooms: [], deletedRooms: [], updatedAt: null });
+    expect(saved.statusCode).toBe(200);
+    expect(loaded.json()).toMatchObject({
+      rooms: [{ id: "room-active", title: "活动 Room", kind: "项目" }],
+      deletedRooms: [{ id: "room-deleted", title: "回收站 Room", kind: "主题" }],
+      updatedAt: expect.any(String),
+    });
   });
 
   it("supports the complete authenticated document CRUD lifecycle", async () => {
@@ -200,6 +238,7 @@ describe("gateway server", () => {
     expect(initialize.json()).toMatchObject({ jsonrpc: "2.0", id: 1 });
     expect(initialized.statusCode).toBe(202);
     expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      "context_room_list",
       "context_room_write_begin",
       "context_room_write_append",
       "context_room_write_commit",
@@ -224,6 +263,7 @@ describe("gateway server", () => {
       await client.connect(transport as unknown as Parameters<Client["connect"]>[0]);
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name)).toEqual([
+        "context_room_list",
         "context_room_write_begin",
         "context_room_write_append",
         "context_room_write_commit",

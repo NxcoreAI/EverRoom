@@ -131,6 +131,7 @@ export async function streamSelectionRewrite(
     const run = await api.startRun(session.id, {
       prompt: buildSelectionRewritePrompt(input),
       idempotencyKey: crypto.randomUUID(),
+      captureMemory: false,
     })
     runId = run.id
     if (options.signal.aborted) {

@@ -58,6 +58,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   resetKey: number
   value: string
   active: boolean
+  available: boolean
   loading: boolean
   onChange: (value: string) => void
   onClearContext: () => void
@@ -65,6 +66,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onSubmit: () => void
 }>(function AgentComposer({
   active,
+  available,
   contextSummary,
   hasSelectedText,
   loading,
@@ -182,13 +184,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (voiceState === 'idle') onSubmit()
+    if (available && voiceState === 'idle') onSubmit()
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      if (voiceState === 'idle') onSubmit()
+      if (available && voiceState === 'idle') onSubmit()
     }
   }
 
@@ -338,7 +340,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   const voiceBusy = voiceState !== 'idle'
-  const controlsDisabled = active || loading
+  const controlsDisabled = active || loading || !available
   const voiceLabel = voiceState === 'recording'
     ? `录音 ${formatDuration(elapsed)}`
     : voiceState === 'requesting'
@@ -355,10 +357,14 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         <textarea
           ref={textareaRef}
           aria-label="桌面 AI 工作台输入框"
-          placeholder={active ? 'Agent 正在处理...' : '基于当前页面提问，或描述需要执行的操作'}
+          placeholder={active
+            ? 'Agent 正在处理...'
+            : available
+              ? '基于当前页面提问，或描述需要执行的操作'
+              : '正在同步 Room 数据...'}
           rows={2}
           value={value}
-          disabled={active || voiceState === 'saving' || voiceState === 'transcribing'}
+          disabled={!available || active || voiceState === 'saving' || voiceState === 'transcribing'}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}
         />
@@ -430,7 +436,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title="发送" aria-label="发送" disabled={!value.trim() || loading || voiceBusy}>
+            <button type="submit" className="agent-prompt-submit" title="发送" aria-label="发送" disabled={!available || !value.trim() || loading || voiceBusy}>
               <ArrowUp aria-hidden="true" />
             </button>
           )}

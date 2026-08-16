@@ -6,19 +6,36 @@ import {
   type JSONRPCMessage,
   type RequestId,
 } from "@modelcontextprotocol/sdk/types.js";
+import type { AgentRoomReference } from "@nxcore/agent-contract";
 import type { DocumentService } from "./service.js";
 
 export interface DocumentMcpContext {
   agentSessionId: string;
   runId: string;
   roomId: string | null;
+  availableRooms?: AgentRoomReference[];
+}
+
+export interface DocumentRoomRegistry {
+  listReferences(): AgentRoomReference[];
 }
 
 export const DOCUMENT_MCP_TOOL_DEFINITIONS = [
   {
+    name: "context_room_list",
+    title: "列出可写入的 Context Room",
+    description: "当当前视口未绑定具体 Context Room 且用户要求创建文档时，必须先调用此只读工具取得当前 Room 列表，并让用户明确选择目标 Room。本轮没有已确认的目标 Room 时，到此停止，不得调用 write_begin，也不得替用户猜测或选择。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
     name: "context_room_write_begin",
     title: "开始创建 Room 文档",
-    description: "在当前 Agent 会话绑定的 Context Room 中创建文档并开始事务。调用前先确定准备写入正文的核心内容、重点或结论，再据此拟定能够准确概括正文的具体标题：教程突出学习路径或成果，分析突出对象与核心问题，方案突出目标与行动，报告突出主题与范围。除非用户明确指定必须使用的精确标题，否则不得照抄用户的任务表述，也不得使用“后端学习文档”“项目介绍”“学习资料”等只描述文档形式、没有内容信息的泛标题。成功后从 sequence=1 调用 write_append，最后调用 write_commit。",
+    description: "仅在当前 Agent 会话已绑定具体 Context Room，或用户已通过 Room 列表明确选择目标后，创建文档并开始事务；未选择时必须先调用 context_room_list，禁止猜测 Room。调用前先确定准备写入正文的核心内容、重点或结论，再据此拟定能够准确概括正文的具体标题：教程突出学习路径或成果，分析突出对象与核心问题，方案突出目标与行动，报告突出主题与范围。除非用户明确指定必须使用的精确标题，否则不得照抄用户的任务表述，也不得使用“后端学习文档”“项目介绍”“学习资料”等只描述文档形式、没有内容信息的泛标题。成功后从 sequence=1 调用 write_append，最后调用 write_commit。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -174,7 +191,10 @@ interface HostSession {
 export class DocumentMcpHost {
   private readonly sessions = new Map<string, Promise<HostSession>>();
 
-  constructor(private readonly documents: DocumentService) {}
+  constructor(
+    private readonly documents: DocumentService,
+    private readonly rooms?: DocumentRoomRegistry,
+  ) {}
 
   listTools(): readonly DocumentMcpToolDefinition[] {
     return DOCUMENT_MCP_TOOL_DEFINITIONS;
@@ -222,7 +242,8 @@ export class DocumentMcpHost {
       {
         capabilities: { tools: {} },
         instructions: [
-          "Document tools create Markdown documents only in the Context Room bound to this Agent session.",
+          "Document tools create Markdown documents only in a Context Room bound to this run.",
+          "If the current viewport has no bound Room, call context_room_list and ask the user to choose. Do not begin a document until a later run carries the user's explicit selection.",
           "Before calling write_begin, determine the actual core content, emphasis, or conclusion of the body you are about to write, then derive a specific, natural title that accurately summarizes that planned body. Adapt the title to the content type: emphasize the path or outcome for a tutorial, the subject and central question for an analysis, the goal and actions for a plan, and the subject and scope for a report. Unless the user explicitly supplies an exact title, never copy the task wording or use a generic form-only title such as 'Backend Learning Document', 'Project Introduction', or 'Study Notes'.",
           "Unless the user explicitly asks for brevity, write a substantial, well-developed long-form document with useful detail, examples, and structure, without repetition or padding.",
         ].join(" "),
@@ -251,9 +272,17 @@ export class DocumentMcpHost {
     args: Record<string, unknown>,
     context: DocumentMcpContext,
   ): Promise<DocumentMcpToolResult> {
-    if (!context.roomId) throw new Error("ROOM_REQUIRED: Open a Context Room first");
     switch (name) {
+      case "context_room_list":
+        return success({
+          rooms: this.rooms?.listReferences() ?? context.availableRooms ?? [],
+          selectionRequired: !context.roomId,
+          selectedRoomId: context.roomId,
+        });
       case "context_room_write_begin": {
+        if (!context.roomId) {
+          throw new Error("ROOM_SELECTION_REQUIRED: List the available Context Rooms and ask the user to choose one before creating a document");
+        }
         if (stringArg(args, "mode") !== "create" || stringArg(args, "format") !== "markdown") {
           throw new Error("INVALID_REQUEST: only create/markdown is supported");
         }

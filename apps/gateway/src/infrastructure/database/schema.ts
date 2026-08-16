@@ -65,6 +65,28 @@ export const agentSessions = sqliteTable("agent_sessions", {
     .$defaultFn(() => new Date()),
 });
 
+export const contextRooms = sqliteTable(
+  "context_rooms",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    kind: text("kind"),
+    data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    position: integer("position").notNull().default(0),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("context_rooms_deleted_idx").on(table.deletedAt),
+    index("context_rooms_updated_idx").on(table.updatedAt),
+  ],
+);
+
 export const agentRuns = sqliteTable(
   "agent_runs",
   {

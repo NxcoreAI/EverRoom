@@ -96,6 +96,7 @@ describe('selection rewrite Agent stream', () => {
 
     expect(result).toBe('改写后的内容')
     expect(received).toEqual(['改写后的', '改写后的内容', '改写后的内容'])
+    expect(api.startRun).toHaveBeenCalledWith('rewrite-session', expect.objectContaining({ captureMemory: false }))
     expect(api.deleteSession).toHaveBeenCalledWith('rewrite-session')
     expect(api.cancelRun).not.toHaveBeenCalled()
   })

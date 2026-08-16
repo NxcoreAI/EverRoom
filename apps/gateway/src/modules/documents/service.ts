@@ -51,6 +51,18 @@ interface PendingAcknowledgement {
   timer: NodeJS.Timeout;
 }
 
+export interface CommittedAgentDocument {
+  sessionId: string;
+  roomId: string;
+  runId: string;
+  transactionId: string;
+  documentId: string;
+  title: string;
+  markdown: string;
+}
+
+export type DocumentCommittedHandler = (document: CommittedAgentDocument) => void;
+
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -87,6 +99,7 @@ export class DocumentService {
   constructor(
     private readonly db: GatewayDatabase,
     readonly broker: DocumentEventBroker,
+    private readonly onDocumentCommitted?: DocumentCommittedHandler,
   ) {
     this.recoverInterruptedTransactions();
     this.expiryTimer = setInterval(() => void this.expireTransactions(), 30_000);
@@ -390,6 +403,22 @@ export class DocumentService {
       });
       const document = this.get(current.documentId)!;
       this.publish(current.roomId, current.documentId, current.id, "document.committed", { document });
+      const markdown = this.db.select({ markdown: documentOps.markdown })
+        .from(documentOps)
+        .where(eq(documentOps.transactionId, current.id))
+        .orderBy(asc(documentOps.sequence))
+        .all()
+        .map((operation) => operation.markdown)
+        .join("");
+      this.onDocumentCommitted?.({
+        sessionId: current.agentSessionId,
+        roomId: current.roomId,
+        runId: current.runId,
+        transactionId: current.id,
+        documentId: current.documentId,
+        title: document.title,
+        markdown,
+      });
       return document;
     });
   }
