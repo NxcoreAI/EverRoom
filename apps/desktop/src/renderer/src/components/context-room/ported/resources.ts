@@ -124,14 +124,17 @@ function previewFor(format: ContextRoomOfficeFormat, title: string, summary: str
 export function createContextRoomResourceLibrary(
   room: ContextRoomRecord,
   backendDocuments: RoomDocument[] = [],
+  trashedDocuments: RoomDocument[] = [],
 ): ContextRoomResourceLibrary {
   const documentsFolderId = `${room.id}:folder:documents`;
   const officeFolderId = `${room.id}:folder:office`;
   const designFolderId = `${room.id}:folder:design`;
+  const trashFolderId = `${room.id}:folder:trash`;
   const folders: ContextRoomResourceFolder[] = [
     { id: documentsFolderId, roomId: room.id, parentId: null, name: '云文档' },
     { id: officeFolderId, roomId: room.id, parentId: null, name: 'Office 文件' },
     { id: designFolderId, roomId: room.id, parentId: null, name: '设计与附件' },
+    { id: trashFolderId, roomId: room.id, parentId: null, name: '回收站' },
   ];
 
   const fileResources: ContextRoomResource[] = room.fileItems.map((item) => {
@@ -170,9 +173,27 @@ export function createContextRoomResourceLibrary(
     version: document.version > 0 ? `V${String(document.version)}.0` : '草稿',
     saveState: document.status === 'draft' ? 'Agent 正在写入' : '已保存',
   }));
+  const trashResources: ContextRoomResource[] = trashedDocuments.map((document) => ({
+    id: `${room.id}:trash:${document.id}`,
+    roomId: room.id,
+    folderId: trashFolderId,
+    name: document.title,
+    updatedAt: document.deletedAt
+      ? new Date(document.deletedAt).toLocaleString('zh-CN')
+      : new Date(document.updatedAt).toLocaleString('zh-CN'),
+    kind: 'cloud-doc',
+    binding: {
+      workspaceId: 'gateway',
+      docId: document.id,
+      title: document.title,
+    },
+    version: document.version > 0 ? `V${String(document.version)}.0` : '草稿',
+    saveState: '回收站',
+    trashed: true,
+  }));
   return {
     folders,
-    resources: [...backendResources, ...fileResources],
+    resources: [...backendResources, ...fileResources, ...trashResources],
   };
 }
 

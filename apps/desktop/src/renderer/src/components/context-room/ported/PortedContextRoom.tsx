@@ -121,10 +121,14 @@ export function PortedContextRoom({
         room={activeRoom}
         rooms={state.rooms}
         backendDocuments={roomDocuments.documentsByRoom[activeRoom.id] ?? []}
+        trashedDocuments={roomDocuments.trashedDocumentsByRoom[activeRoom.id] ?? []}
         documentEvents={roomDocuments.eventsByDocument}
         focusedDocumentId={roomDocuments.focusedDocumentByRoom[activeRoom.id] ?? null}
         onBackendDocumentChange={roomDocuments.upsertDocument}
+        onCreateDocument={roomDocuments.createDocument}
         onDeleteDocument={roomDocuments.deleteDocument}
+        onRestoreDocument={roomDocuments.restoreDocument}
+        onDeleteDocumentPermanently={roomDocuments.deleteDocumentPermanently}
         initialActivePane={detailPaneByRoomIdRef.current[activeRoom.id] ?? 'overview'}
         initialObject={initialObject?.roomId === activeRoom.id ? initialObject : null}
         onActivePaneChange={(pane) => {

@@ -17,12 +17,28 @@ function mergeDocuments(current: RoomDocument[], incoming: RoomDocument[]): Room
 
 export function useRoomDocuments(roomIds: string[]) {
   const [documentsByRoom, setDocumentsByRoom] = useState<Record<string, RoomDocument[]>>({})
+  const [trashedDocumentsByRoom, setTrashedDocumentsByRoom] = useState<Record<string, RoomDocument[]>>({})
   const [eventsByDocument, setEventsByDocument] = useState<Record<string, DocumentEvent[]>>({})
   const [focusedDocumentByRoom, setFocusedDocumentByRoom] = useState<Record<string, string | null>>({})
   const subscribedRooms = useRef(new Set<string>())
   const roomKey = useMemo(() => [...roomIds].sort().join('\u0000'), [roomIds])
 
   const upsertDocument = useCallback((document: RoomDocument) => {
+    if (document.deletedAt) {
+      setDocumentsByRoom((current) => ({
+        ...current,
+        [document.roomId]: (current[document.roomId] ?? []).filter((candidate) => candidate.id !== document.id),
+      }))
+      setTrashedDocumentsByRoom((current) => ({
+        ...current,
+        [document.roomId]: mergeDocuments(current[document.roomId] ?? [], [document]),
+      }))
+      return
+    }
+    setTrashedDocumentsByRoom((current) => ({
+      ...current,
+      [document.roomId]: (current[document.roomId] ?? []).filter((candidate) => candidate.id !== document.id),
+    }))
     setDocumentsByRoom((current) => ({
       ...current,
       [document.roomId]: mergeDocuments(current[document.roomId] ?? [], [document]),
@@ -43,8 +59,26 @@ export function useRoomDocuments(roomIds: string[]) {
       if (document) upsertDocument(document)
       if (event.type === 'document.opened') {
         setFocusedDocumentByRoom((current) => ({ ...current, [event.roomId]: event.documentId }))
+      } else if (event.type === 'document.committed') {
+        setEventsByDocument((current) => ({ ...current, [event.documentId]: [event] }))
+        setFocusedDocumentByRoom((current) => current[event.roomId] === event.documentId
+          ? { ...current, [event.roomId]: null }
+          : current)
+      } else if (event.type === 'document.trashed') {
+        setEventsByDocument((current) => {
+          const next = { ...current }
+          delete next[event.documentId]
+          return next
+        })
+        setFocusedDocumentByRoom((current) => current[event.roomId] === event.documentId
+          ? { ...current, [event.roomId]: null }
+          : current)
       } else if (event.type === 'document.aborted' || event.type === 'document.deleted') {
         setDocumentsByRoom((current) => ({
+          ...current,
+          [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
+        }))
+        setTrashedDocumentsByRoom((current) => ({
           ...current,
           [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
         }))
@@ -70,10 +104,14 @@ export function useRoomDocuments(roomIds: string[]) {
       if (subscribedRooms.current.has(roomId)) continue
       subscribedRooms.current.add(roomId)
       void documents.subscribe(roomId)
-      void documents.list(roomId).then((listed) => {
+      void Promise.all([documents.list(roomId), documents.listTrash(roomId)]).then(([listed, trashed]) => {
         setDocumentsByRoom((current) => ({
           ...current,
           [roomId]: mergeDocuments([], listed),
+        }))
+        setTrashedDocumentsByRoom((current) => ({
+          ...current,
+          [roomId]: mergeDocuments([], trashed),
         }))
         const activeDraft = listed.find((document) => document.status === 'draft' && document.activeTransactionId)
         if (activeDraft) {
@@ -87,6 +125,11 @@ export function useRoomDocuments(roomIds: string[]) {
       subscribedRooms.current.delete(roomId)
       void documents.unsubscribe(roomId)
       setDocumentsByRoom((current) => {
+        const next = { ...current }
+        delete next[roomId]
+        return next
+      })
+      setTrashedDocumentsByRoom((current) => {
         const next = { ...current }
         delete next[roomId]
         return next
@@ -105,10 +148,7 @@ export function useRoomDocuments(roomIds: string[]) {
     const documents = window.nxcore?.documents
     if (!documents) throw new Error('文档服务不可用')
     await documents.delete(document.id)
-    setDocumentsByRoom((current) => ({
-      ...current,
-      [document.roomId]: (current[document.roomId] ?? []).filter((candidate) => candidate.id !== document.id),
-    }))
+    upsertDocument({ ...document, deletedAt: new Date().toISOString() })
     setEventsByDocument((current) => {
       const next = { ...current }
       delete next[document.id]
@@ -117,13 +157,51 @@ export function useRoomDocuments(roomIds: string[]) {
     setFocusedDocumentByRoom((current) => current[document.roomId] === document.id
       ? { ...current, [document.roomId]: null }
       : current)
+  }, [upsertDocument])
+
+  const createDocument = useCallback(async (roomId: string, title: string) => {
+    const documents = window.nxcore?.documents
+    if (!documents) throw new Error('文档服务不可用')
+    const document = await documents.import({
+      id: crypto.randomUUID(),
+      roomId,
+      title,
+      contentJson: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    upsertDocument(document)
+    return document
+  }, [upsertDocument])
+
+  const restoreDocument = useCallback(async (document: RoomDocument) => {
+    const documents = window.nxcore?.documents
+    if (!documents) throw new Error('文档服务不可用')
+    upsertDocument(await documents.restore(document.id))
+  }, [upsertDocument])
+
+  const deleteDocumentPermanently = useCallback(async (document: RoomDocument) => {
+    const documents = window.nxcore?.documents
+    if (!documents) throw new Error('文档服务不可用')
+    await documents.deletePermanently(document.id)
+    setTrashedDocumentsByRoom((current) => ({
+      ...current,
+      [document.roomId]: (current[document.roomId] ?? []).filter((candidate) => candidate.id !== document.id),
+    }))
+    setEventsByDocument((current) => {
+      const next = { ...current }
+      delete next[document.id]
+      return next
+    })
   }, [])
 
   return {
     documentsByRoom,
+    trashedDocumentsByRoom,
     eventsByDocument,
     focusedDocumentByRoom,
     upsertDocument,
+    createDocument,
     deleteDocument,
+    restoreDocument,
+    deleteDocumentPermanently,
   }
 }

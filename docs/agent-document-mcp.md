@@ -55,33 +55,15 @@ An MCP append does not complete merely because the Gateway stored its Markdown.
 It completes only after the renderer applies the content and acknowledges the
 resulting Tiptap document. Commit similarly waits for the final editor state.
 
-## Direct Agent endpoint
+## Runtime integration
 
-The configured chat endpoint is:
+The built-in Pi runtime receives the document tools directly through
+`createDocumentPiTools`. It does not require a separate chat or device-MCP
+transport. Gateway defaults to the `fake` runtime until Pi model credentials
+are explicitly configured.
 
-```text
-http://192.168.1.27:8280/ai/api
-```
-
-Verified on 2026-08-15:
-
-- `GET/POST /session` works.
-- `POST /chat` returns SSE.
-- `POST /chat/abort` is available.
-- `/device-mcp` is not available in the current deployment and a WebSocket upgrade returns 404.
-- A temporary Agent capability probe could not see
-  `v2_desktop_context_room_write_begin`.
-
-This differs from PC because PC transports device MCP through WebRTC/P2P, not
-through the direct HTTP chat endpoint. CE defaults the expected endpoint to
-`ws://192.168.1.27:8280/ai/api/device-mcp`, waits for MCP initialization and
-`tools/list` before starting chat, and reconnects automatically. The current
-8280 deployment must add that endpoint before remote document tools can work.
-Set `NXCORE_REMOTE_AGENT_MCP_WS_URL` to an explicit empty value only when a
-chat-only deployment is intentional.
-
-The CE HTTP MCP endpoint is ready for registration by that external gateway.
-Its URL must include the bound context:
+The CE HTTP MCP endpoint remains available to authenticated MCP clients. Its
+URL must include the bound context:
 
 ```text
 /v1/mcp/documents/{mcpSessionId}
@@ -117,5 +99,5 @@ pnpm build
 ```
 
 Gateway tests include the official MCP Streamable HTTP client performing
-initialization and `tools/list`, document transaction persistence and replay,
-and both chat-only and explicitly configured MCP remote-runtime behavior.
+initialization and `tools/list`, plus document transaction persistence and
+replay.

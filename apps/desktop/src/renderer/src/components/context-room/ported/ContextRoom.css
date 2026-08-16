@@ -1722,6 +1722,52 @@
   text-align: left;
 }
 
+.context-room-resource-folder-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+}
+
+.context-room-resource-folder-add {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--cr-tertiary);
+  opacity: 0;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.context-room-resource-folder-row:hover .context-room-resource-folder-add,
+.context-room-resource-folder-row:focus-within .context-room-resource-folder-add {
+  opacity: 1;
+}
+
+.context-room-resource-folder-add:hover:not(:disabled) {
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-resource-folder-add:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.context-room-resource-folder-add svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-resource-folder-add svg.is-spinning {
+  animation: context-room-spin 900ms linear infinite;
+}
+
 .context-room-resource-folder {
   min-height: 30px;
   padding: 4px 6px;
@@ -1773,8 +1819,17 @@
   align-items: center;
 }
 
+.context-room-resource-row.is-trash {
+  grid-template-columns: minmax(0, 1fr) 56px;
+}
+
 .context-room-resource-row .context-room-resource-item {
   min-width: 0;
+}
+
+.context-room-resource-item.is-trashed {
+  cursor: default;
+  color: var(--cr-muted);
 }
 
 .context-room-resource-delete {
@@ -1786,9 +1841,14 @@
   border-radius: 6px;
   color: var(--cr-tertiary);
   opacity: 0;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
 }
 
 .context-room-resource-row:hover .context-room-resource-delete,
+.context-room-resource-row:focus-within .context-room-resource-delete,
 .context-room-resource-delete:focus-visible {
   opacity: 1;
 }
@@ -1806,6 +1866,226 @@
 .context-room-resource-delete svg {
   width: 14px;
   height: 14px;
+}
+
+.context-room-resource-trash-actions {
+  display: flex;
+  width: 56px;
+  align-items: center;
+}
+
+.context-room-resource-trash-actions > button,
+.context-room-resource-trash-actions > span > button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--cr-tertiary);
+}
+
+.context-room-resource-trash-actions > button:hover:not(:disabled) {
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-resource-trash-actions > span > button:hover:not(:disabled) {
+  background: rgba(181, 71, 50, 0.09);
+  color: #b54732;
+}
+
+.context-room-resource-trash-actions button:disabled {
+  cursor: wait;
+  opacity: 0.4;
+}
+
+.context-room-resource-trash-actions svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-document-delete-popover {
+  --cr-surface: #ffffff;
+  --cr-surface-hover: #f1f2f3;
+  --cr-text: #1f1f1f;
+  --cr-muted: #6b7280;
+  --cr-border: #e5e7eb;
+  z-index: 1050;
+  width: min(232px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  box-shadow: 0 8px 24px rgba(31, 31, 31, 0.14);
+  color: var(--cr-text);
+  font-family: 'Context Room Inter', 'HarmonyOS Sans SC', 'PingFang SC', sans-serif;
+}
+
+.context-room-document-delete-popover p {
+  overflow: hidden;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-document-delete-popover > span {
+  display: block;
+  margin-top: 2px;
+  color: var(--cr-muted);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.context-room-document-delete-popover > small {
+  display: block;
+  margin-top: 6px;
+  color: #b54732;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.context-room-document-delete-popover footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.context-room-document-delete-popover footer button {
+  min-width: 48px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.context-room-document-delete-popover footer button:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-document-delete-popover footer button.is-danger {
+  border-color: #c83232;
+  background: #c83232;
+  color: #ffffff;
+}
+
+.context-room-document-delete-popover footer button.is-danger:hover:not(:disabled) {
+  background: #ad2929;
+  color: #ffffff;
+}
+
+.context-room-document-delete-popover footer button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.context-room-document-delete-arrow {
+  fill: #ffffff;
+}
+
+.context-room-document-create-popover {
+  --cr-surface: #ffffff;
+  --cr-surface-hover: #f1f2f3;
+  --cr-text: #1f1f1f;
+  --cr-muted: #6b7280;
+  --cr-border: #e5e7eb;
+  --cr-blue: #408cf0;
+  z-index: 1050;
+  width: min(224px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  box-shadow: 0 8px 24px rgba(31, 31, 31, 0.14);
+  color: var(--cr-text);
+  font-family: 'Context Room Inter', 'HarmonyOS Sans SC', 'PingFang SC', sans-serif;
+}
+
+.context-room-document-create-popover label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--cr-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.context-room-document-create-popover input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  outline: none;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.context-room-document-create-popover input:focus {
+  border-color: var(--cr-blue);
+  box-shadow: 0 0 0 2px rgba(64, 140, 240, 0.12);
+}
+
+.context-room-document-create-popover small {
+  display: block;
+  margin-top: 6px;
+  color: #b54732;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.context-room-document-create-popover footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.context-room-document-create-popover footer button {
+  min-width: 48px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.context-room-document-create-popover footer button:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-document-create-popover footer button.is-primary {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue);
+  color: #ffffff;
+}
+
+.context-room-document-create-popover footer button.is-primary:hover:not(:disabled) {
+  background: #327bd6;
+  color: #ffffff;
+}
+
+.context-room-document-create-popover footer button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.context-room-document-create-arrow {
+  fill: #ffffff;
 }
 
 .context-room-resource-folder-empty {

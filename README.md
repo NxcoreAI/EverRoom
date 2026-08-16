@@ -131,16 +131,18 @@ The lower-left corner of the desktop sidebar shows the current Gateway state and
 
 ### Agent Service
 
-Packaged builds default to the Remote HTTP runtime. Document MCP requires a separate working transport:
+Gateway defaults to the isolated `fake` runtime so the desktop app can start without model credentials. Configure the built-in Pi runtime to use a real model and expose the Context Room document tools directly to the Agent:
 
 ```dotenv
-NXCORE_AGENT_RUNTIME=remote-http
-NXCORE_REMOTE_AGENT_BASE_URL=http://192.168.1.27:8280/ai/api
-NXCORE_REMOTE_AGENT_TOKEN=
-NXCORE_REMOTE_AGENT_MCP_WS_URL=ws://192.168.1.27:8280/ai/api/device-mcp
+NXCORE_AGENT_RUNTIME=pi
+NXCORE_AI_PROVIDER=openai
+NXCORE_AI_MODEL=gpt-5.2
+NXCORE_AI_BASE_URL=https://api.openai.com/v1
+NXCORE_AI_API_KEY=
+NXCORE_AI_API=openai-responses
 ```
 
-The direct service must provide `/session`, `/chat`, `/chat/abort`, and `/device-mcp`. The last endpoint is required for the Agent to call local document tools; set `NXCORE_REMOTE_AGENT_MCP_WS_URL` to an explicit empty value to keep chat-only mode when the deployment does not provide it yet. The CE Gateway also exposes the bearer-protected `/v1/mcp/documents/:sessionId` HTTP MCP endpoint. The `fake` and `pi` runtimes remain available for development and future switching; this version does not depend on Pi.
+The CE Gateway also exposes the bearer-protected `/v1/mcp/documents/:sessionId` Streamable HTTP MCP endpoint for authenticated MCP clients. The retired remote chat transport is not part of the runtime configuration.
 
 ### Useful Commands
 

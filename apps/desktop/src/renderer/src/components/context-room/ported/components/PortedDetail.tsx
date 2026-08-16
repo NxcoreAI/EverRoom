@@ -1,6 +1,7 @@
 import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { consumeDocumentFocusRequest } from '../documentFocus'
 import {
   createContextRoomFileItem,
   createContextRoomResourceLibrary,
@@ -20,6 +21,7 @@ export function PortedDetail({
   room,
   rooms,
   backendDocuments,
+  trashedDocuments,
   documentEvents,
   focusedDocumentId,
   initialActivePane,
@@ -29,11 +31,15 @@ export function PortedDetail({
   onOpenRoom,
   onUpdateRoom,
   onBackendDocumentChange,
+  onCreateDocument,
   onDeleteDocument,
+  onRestoreDocument,
+  onDeleteDocumentPermanently,
 }: {
   room: ContextRoomRecord
   rooms: ContextRoomRecord[]
   backendDocuments: RoomDocument[]
+  trashedDocuments: RoomDocument[]
   documentEvents: Record<string, DocumentEvent[]>
   focusedDocumentId: string | null
   initialActivePane: DetailPane
@@ -43,13 +49,17 @@ export function PortedDetail({
   onOpenRoom: (roomId: string) => void
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void
   onBackendDocumentChange: (document: RoomDocument) => void
+  onCreateDocument: (roomId: string, title: string) => Promise<RoomDocument>
   onDeleteDocument: (document: RoomDocument) => Promise<void>
+  onRestoreDocument: (document: RoomDocument) => Promise<void>
+  onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>
 }) {
   const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
   const [selectedMailId, setSelectedMailId] = useState<string | null>(null)
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
+  const handledDocumentFocusKey = useRef<string | null>(null)
   const [standaloneObject, setStandaloneObject] = useState<DetailObject | null>(() => {
     if (!initialObject) return null
     if (initialObject.kind === 'file') {
@@ -88,13 +98,25 @@ export function PortedDetail({
     layout.setMobileContent(true)
   }, [layout, room.id])
 
+  const createDocument = useCallback(async (title: string) => {
+    const document = await onCreateDocument(room.id, title)
+    const resource = createContextRoomResourceLibrary(room, [document]).resources.find((candidate) =>
+      candidate.kind === 'cloud-doc' && candidate.binding.docId === document.id)
+    if (resource) openResource(resource)
+  }, [onCreateDocument, openResource, room])
+
   useEffect(() => {
-    if (!focusedDocumentId) return
     const resource = library.resources.find((candidate) =>
       candidate.kind === 'cloud-doc' && candidate.binding.docId === focusedDocumentId)
-    if (!resource || resource.id === selectedResourceId) return
-    openResource(resource)
-  }, [focusedDocumentId, library.resources, openResource, selectedResourceId])
+    const decision = consumeDocumentFocusRequest(
+      handledDocumentFocusKey.current,
+      room.id,
+      focusedDocumentId,
+      Boolean(resource),
+    )
+    handledDocumentFocusKey.current = decision.handledKey
+    if (decision.shouldOpen && resource && resource.id !== selectedResourceId) openResource(resource)
+  }, [focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
 
   useEffect(() => {
     if (selectedResourceId && getRoomResource(library, room.id, selectedResourceId)) return
@@ -178,9 +200,13 @@ export function PortedDetail({
           selectedObject={selectedObject}
           selectedResource={selectedResource}
           backendDocuments={backendDocuments}
+          trashedDocuments={trashedDocuments}
           documentEvents={documentEvents}
           onBackendDocumentChange={onBackendDocumentChange}
+          onCreateDocument={createDocument}
           onDeleteDocument={onDeleteDocument}
+          onRestoreDocument={onRestoreDocument}
+          onDeleteDocumentPermanently={onDeleteDocumentPermanently}
           onSelectResource={openResource}
           onAddFile={addLocalFile}
           onOpenMemory={setSelectedMemoryId}
