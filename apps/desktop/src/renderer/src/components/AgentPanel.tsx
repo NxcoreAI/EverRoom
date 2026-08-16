@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import type { AgentRoomReference } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
 import { AgentToolbar } from '@/components/agent/AgentToolbar'
 import { useAgentSession } from '@/components/agent/useAgentSession'
+import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 
 import './agent/AgentPanel.css'
 import './agent/AgentChat.css'
@@ -12,10 +14,14 @@ import './agent/AgentChat.css'
 export function AgentPanel({
   pageLabel,
   roomId,
+  rooms,
+  roomBackendReady,
   focusRequest = 0,
 }: {
   pageLabel: string
   roomId: string | null
+  rooms: ContextRoomWorkspaceTab[]
+  roomBackendReady: boolean
   focusRequest?: number
 }) {
   const [draft, setDraft] = useState('')
@@ -28,7 +34,7 @@ export function AgentPanel({
   const contextSummary = selectedTextSummary
     ? `${pageLabel} · “${selectedTextSummary}”`
     : `${pageLabel} · 未选择文本`
-  const session = useAgentSession(pageLabel, roomId)
+  const session = useAgentSession(pageLabel, roomId, rooms)
 
   const focusComposer = () => {
     window.requestAnimationFrame(() => composerRef.current?.focus())
@@ -69,7 +75,7 @@ export function AgentPanel({
   }, [])
 
   const sendPrompt = async (prompt: string) => {
-    if (!prompt.trim()) return
+    if (!prompt.trim() || !roomBackendReady) return
     const submittedPrompt = prompt.trim()
     const submittedContext = selectedText
     setDraft('')
@@ -85,6 +91,18 @@ export function AgentPanel({
     }
   }
 
+  const selectDocumentRoom = async (room: AgentRoomReference) => {
+    if (!roomBackendReady) return
+    setSubmitting(true)
+    try {
+      await session.sendPrompt(`在「${room.title}」中创建。`, undefined, room.id)
+    } catch {
+      // useAgentSession exposes the request error inside the conversation.
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const composer = (
     <AgentComposer
       ref={composerRef}
@@ -94,6 +112,7 @@ export function AgentPanel({
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
+      available={roomBackendReady}
       onChange={setDraft}
       onClearContext={() => setSelectedText('')}
       onStop={() => void session.stop()}
@@ -129,12 +148,14 @@ export function AgentPanel({
 
       <AgentChatView
         activeRunId={session.activeRunId}
+        availableRooms={rooms}
         composer={composer}
         draftHasContent={Boolean(draft.trim())}
         error={session.error}
         loading={session.loading}
         messages={session.messages}
         onRetryPrompt={(prompt) => void sendPrompt(prompt)}
+        onSelectRoom={(room) => void selectDocumentRoom(room)}
         onSelectPrompt={(prompt) => {
           setDraft(prompt)
           focusComposer()
@@ -142,7 +163,7 @@ export function AgentPanel({
         reasoningByRun={session.reasoningByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}
         runStartedAtByRun={session.runStartedAtByRun}
-        submitting={submitting}
+        submitting={submitting || !roomBackendReady}
         toolCallsByRun={session.toolCallsByRun}
       />
     </aside>

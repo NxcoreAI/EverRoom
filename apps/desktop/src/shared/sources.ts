@@ -18,11 +18,13 @@ import type {
   AgentSession,
   AgentSessionSnapshot,
   AgentSocketFrame,
+  ContextRoomSnapshot,
   CreateAgentSessionInput,
   DocumentEventFrame,
   ImportRoomDocumentInput,
   RoomDocument,
   SaveRoomDocumentInput,
+  SaveContextRoomSnapshotInput,
   StartAgentRunInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
@@ -216,6 +218,10 @@ export interface NxcoreDesktopApi {
   gateway: {
     status(): Promise<GatewayStatus>
   }
+  contextRooms: {
+    list(): Promise<ContextRoomSnapshot>
+    syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
+  }
   account: {
     status(): Promise<CloudAccountStatus>
     login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
@@ -245,6 +251,7 @@ export interface NxcoreDesktopApi {
     listConversations(options: MemoryConversationListOptions): Promise<MemoryConversationPageDto>
     searchConversations(query: string, limit?: number, sessionId?: string): Promise<{ messages: MemoryConversationMessageDto[] }>
     deleteConversations(target: { sessionIds?: string[]; messageIds?: string[] }): Promise<{ deletedCount: number }>
+    captureDocumentRewrite(input: MemoryDocumentRewriteInput): Promise<{ captured: boolean }>
   }
   reality: {
     listEvents(filters?: { status?: RealityEventStatus; search?: string }): Promise<RealityEvent[]>
@@ -310,6 +317,7 @@ import type {
   MemoryConversationMessageDto,
   MemoryConversationPageDto,
   MemoryCoreDto,
+  MemoryDocumentRewriteInput,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,

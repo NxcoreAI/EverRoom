@@ -126,6 +126,7 @@ export interface GatewayConfig {
   logLevel: LogLevel;
   authToken: string;
   agentRuntime: AgentRuntimeMode;
+  memory: MemoryRuntimeConfig | null;
   pi: PiRuntimeConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
@@ -361,6 +362,7 @@ export function loadConfig(
     logLevel: rawConfig.logLevel,
     authToken: rawConfig.authToken,
     agentRuntime: rawConfig.agentRuntime,
+    memory,
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
