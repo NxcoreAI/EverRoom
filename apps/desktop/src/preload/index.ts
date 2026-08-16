@@ -1,3 +1,5 @@
+import '@sentry/electron/preload'
+
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
@@ -72,10 +74,6 @@ const api: NxcoreDesktopApi = {
     loginWithOidc: (provider) => invoke('account:oidc-login', provider),
     cancelOidcLogin: () => invoke('account:oidc-cancel'),
     logout: () => invoke('account:logout'),
-    keyringStatus: () => invoke('account:keyring-status'),
-    createPairingSession: () => invoke('account:create-pairing-session'),
-    getPairingSession: (id) => invoke('account:get-pairing-session', id),
-    approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
   },
   asr: {
     openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
@@ -85,10 +83,6 @@ const api: NxcoreDesktopApi = {
     cancelRecording: (id) => invoke('asr:cancel-recording', id),
     createJob: (input) => invoke('asr:create-job', input),
     getJob: (id) => invoke('asr:get-job', id),
-  },
-  transcriptions: {
-    syncPrivate: () => invoke('transcription:sync-private'),
-    listPrivate: () => invoke('transcription:list-private'),
   },
   memory: {
     overview: () => invoke('memory:overview'),
@@ -134,6 +128,9 @@ const api: NxcoreDesktopApi = {
   agent: {
     listSessions: (pageLabel, roomId) => invoke('agent:list-sessions', pageLabel, roomId),
     createSession: (input) => invoke('agent:create-session', input),
+    createSessionLink: (input) => invoke('agent:create-session-link', input),
+    listSessionLinks: (sessionId) => invoke('agent:list-session-links', sessionId),
+    markSessionLinkReturned: (linkId) => invoke('agent:mark-session-link-returned', linkId),
     updateSession: (sessionId, input) => invoke('agent:update-session', sessionId, input),
     deleteSession: (sessionId) => invoke('agent:delete-session', sessionId),
     getSession: (sessionId) => invoke('agent:get-session', sessionId),

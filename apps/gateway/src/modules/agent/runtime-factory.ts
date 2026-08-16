@@ -4,7 +4,6 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import type { GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
-import { join } from "node:path";
 
 export function createAgentRuntime(config: GatewayConfig, mcpHost: DocumentMcpHost): AgentRuntime {
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();

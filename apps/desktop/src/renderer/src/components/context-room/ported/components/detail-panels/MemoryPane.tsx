@@ -4,6 +4,7 @@ import {
   Link2,
   Maximize2,
   MessageSquareText,
+  Network,
   Target,
   UserRound,
 } from 'lucide-react';
@@ -13,10 +14,7 @@ import type { ContextRoomRecord } from '../../types';
 import { EntityFactGraphCanvas } from '../EntityFactGraphCanvas';
 import { createEntityFactGraphData } from '../entityFactGraphModel';
 import { ActionConfirmDialog } from '../shared';
-
-function EmptyState({ children }: { children: string }) {
-  return <div className="context-room-workspace-empty">{children}</div>;
-}
+import { PanelEmptyState } from './PanelEmptyState';
 
 export function MemoryPane({
   room,
@@ -31,13 +29,16 @@ export function MemoryPane({
   const [showFullGraph, setShowFullGraph] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(() => graphData.rootId);
   const [disableConfirmOpen, setDisableConfirmOpen] = useState(false);
+  const hasGraphContent = Boolean(
+    room.memoryItems.length || room.people.length || room.graphEdges.length
+  );
 
   useEffect(() => {
     setSelectedId(graphData.rootId);
     setDisableConfirmOpen(false);
   }, [graphData.rootId, room.id]);
 
-  if (showFullGraph) {
+  if (showFullGraph && hasGraphContent) {
     return (
       <div className="context-room-memory-pane">
         <header>
@@ -90,12 +91,14 @@ export function MemoryPane({
     <div className="context-room-memory-pane">
       <header>
         <h2>实体与事实</h2>
-        <button type="button" onClick={() => setShowFullGraph(true)}>
-          <Maximize2 aria-hidden="true" />
-          完整图谱
-        </button>
+        {hasGraphContent ? (
+          <button type="button" onClick={() => setShowFullGraph(true)}>
+            <Maximize2 aria-hidden="true" />
+            完整图谱
+          </button>
+        ) : null}
       </header>
-      {graphData.nodes.length ? (
+      {hasGraphContent ? (
         <div className="context-room-memory-overview">
           <div className="context-room-memory-graph-stage">
             <EntityFactGraphCanvas
@@ -176,7 +179,11 @@ export function MemoryPane({
           </article>
         </div>
       ) : (
-        <EmptyState>暂无关联记忆</EmptyState>
+        <PanelEmptyState
+          icon={Network}
+          title="还没有实体与事实"
+          description="Room 中提取的人物、关系和记忆事实会形成图谱。"
+        />
       )}
       {selectedMemory ? (
         <ActionConfirmDialog

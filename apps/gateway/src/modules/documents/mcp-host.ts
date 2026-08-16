@@ -24,7 +24,7 @@ export const DOCUMENT_MCP_TOOL_DEFINITIONS = [
   {
     name: "context_room_list",
     title: "列出可写入的 Context Room",
-    description: "当当前视口未绑定具体 Context Room 且用户要求创建文档时，必须先调用此只读工具取得当前 Room 列表，并让用户明确选择目标 Room。本轮没有已确认的目标 Room 时，到此停止，不得调用 write_begin，也不得替用户猜测或选择。",
+    description: "仅当用户已经明确要求在工作区创建、保存或写入文档，但当前视口未绑定具体 Context Room 时，必须立即调用此只读工具取得 Room 列表并触发选择 UI。满足条件时不得只回复“无法创建”“请先选择 Room”，不得询问用户是否需要列表，也不得要求用户自行提供 Room 名称。普通问答、分析、总结、整理、写方案、起草、润色或仅讨论文档时不得调用。本轮没有已确认的目标 Room 时，到此停止，不得调用 write_begin，也不得替用户猜测或选择。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -35,7 +35,7 @@ export const DOCUMENT_MCP_TOOL_DEFINITIONS = [
   {
     name: "context_room_write_begin",
     title: "开始创建 Room 文档",
-    description: "仅在当前 Agent 会话已绑定具体 Context Room，或用户已通过 Room 列表明确选择目标后，创建文档并开始事务；未选择时必须先调用 context_room_list，禁止猜测 Room。调用前先确定准备写入正文的核心内容、重点或结论，再据此拟定能够准确概括正文的具体标题：教程突出学习路径或成果，分析突出对象与核心问题，方案突出目标与行动，报告突出主题与范围。除非用户明确指定必须使用的精确标题，否则不得照抄用户的任务表述，也不得使用“后端学习文档”“项目介绍”“学习资料”等只描述文档形式、没有内容信息的泛标题。成功后从 sequence=1 调用 write_append，最后调用 write_commit。",
+    description: "仅当用户已经明确要求在工作区创建、保存或写入文档，并且当前 Agent 会话已绑定具体 Context Room，或用户已通过 Room 列表明确选择目标后，才能创建文档并开始事务。工具可用、当前位于文档页面、回复内容较长，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。未选择 Room 时必须先调用 context_room_list，禁止猜测 Room。若记忆工具可用且主题不是明确的全新主题，调用前必须先检索相关历史记忆和旧文档并据此客制化正文。调用前先确定准备写入正文的核心内容、重点或结论，再据此拟定能够准确概括正文的具体标题：教程突出学习路径或成果，分析突出对象与核心问题，方案突出目标与行动，报告突出主题与范围。除非用户明确指定必须使用的精确标题，否则不得照抄用户的任务表述，也不得使用“后端学习文档”“项目介绍”“学习资料”等只描述文档形式、没有内容信息的泛标题。成功后从 sequence=1 调用 write_append，最后调用 write_commit。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -56,7 +56,7 @@ export const DOCUMENT_MCP_TOOL_DEFINITIONS = [
   {
     name: "context_room_write_append",
     title: "流式追加 Room 文档正文",
-    description: "按严格连续的 sequence 向文档事务追加新的 Markdown 片段。除非用户明确要求简短版本，否则正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结；不得空泛、重复或为了变长而凑字。正文不得重复文档名称或使用一级标题（#）；主章节统一使用二级标题（##），子章节使用三级标题（###），继续细分时才使用四级标题（####）。同一语义层级必须使用相同数量的 #，不得跳级或为了强调临时放大标题，普通强调应使用加粗。每次只能发送此前未发送的正文，不得用新 sequence 重发累计全文；正文完成后必须调用 write_commit。",
+    description: "按严格连续的 sequence 向文档事务追加新的 Markdown 片段。除非用户明确要求简短版本，否则正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结；不得空泛、重复或为了变长而凑字。标题层级应服务于内容结构，默认保持同级章节一致，通常主章节使用 ##、子章节使用 ###，普通强调使用加粗或段落；如果用户明确要求一级标题或其他标题层级，按用户要求输出并保持结构一致。每次只能发送此前未发送的正文，不得用新 sequence 重发累计全文；正文完成后必须调用 write_commit。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -65,7 +65,7 @@ export const DOCUMENT_MCP_TOOL_DEFINITIONS = [
         sequence: { type: "integer", minimum: 1 },
         text: {
           type: "string",
-          description: "仅包含本次新增的 Markdown 正文；正文禁用一级标题，同级章节必须使用一致的标题层级。",
+          description: "仅包含本次新增的 Markdown 正文；标题层级默认保持同级一致，但应遵循用户明确指定的标题层级和排版要求。",
         },
       },
       required: ["transactionId", "sequence", "text"],
@@ -245,11 +245,12 @@ export class DocumentMcpHost {
       {
         capabilities: { tools: {} },
         instructions: [
+          "Use document tools only when the user explicitly asks to create, save, or write a document in the workspace. Requests to explain, analyze, summarize, organize, plan, draft, polish, expand, or return Markdown should be answered in chat by default and do not authorize document creation. Mentioning a document, being on a document page, or producing a long response is not sufficient intent. If intent is ambiguous, do not call context_room_list or write_begin; answer in chat until the user explicitly asks to persist the result as a document.",
           "Document tools create Markdown documents only in a Context Room bound to this run.",
-          "If the current viewport has no bound Room, call context_room_list and ask the user to choose. Do not begin a document until a later run carries the user's explicit selection.",
-          "Before calling write_begin, determine the actual core content, emphasis, or conclusion of the body you are about to write, then derive a specific, natural title that accurately summarizes that planned body. Adapt the title to the content type: emphasize the path or outcome for a tutorial, the subject and central question for an analysis, the goal and actions for a plan, and the subject and scope for a report. Unless the user explicitly supplies an exact title, never copy the task wording or use a generic form-only title such as 'Backend Learning Document', 'Project Introduction', or 'Study Notes'.",
+          "Only if the user explicitly asks to create, save, or write a document and the current viewport has no bound Room, enter Room selection. When both conditions are met, immediately call context_room_list so the client can render the Room selection UI. Do not merely say that creation is unavailable, ask the user to choose without listing Rooms, ask whether they want a list, or require them to type a Room name. For ordinary chat on other pages, do not prompt for Room selection. Do not begin a document until a later run carries the user's explicit selection.",
+          "Before calling write_begin, determine the actual core content, emphasis, or conclusion of the body you are about to write, then derive a specific, natural title that accurately summarizes that planned body. Adapt the title to the content type: emphasize the path or outcome for a tutorial, the subject and central question for an analysis, the goal and actions for a plan, and the subject and scope for a report. Unless the user explicitly supplies an exact title, never copy the task wording or use a generic form-only title such as 'Backend Learning Document', 'Project Introduction', or 'Study Notes'. When memory tools are available and the topic is not explicitly new, search relevant memories and prior documents before write_begin and use them to customize the document; skip only for a clearly new topic or when the user says not to use history.",
           "Unless the user explicitly asks for brevity, write a substantial, well-developed long-form document with useful detail, examples, and structure, without repetition or padding.",
-          "Keep Markdown heading levels semantically consistent. The document title is stored separately, so never use an H1 (#) in the body. Use H2 (##) for every top-level section, H3 (###) for subsections, and H4 (####) only for further subdivision. Never skip levels or enlarge one peer heading for emphasis; use bold for ordinary emphasis.",
+          "Keep Markdown heading levels aligned with the requested content structure. By default, keep peer sections at a consistent level, using H2 (##) for top-level sections and H3 (###) for subsections when appropriate, with bold or paragraphs for ordinary emphasis. This is a default, not a hard restriction: if the user explicitly requests H1, another heading level, or specific formatting, follow that request and keep the chosen structure consistent.",
         ].join(" "),
       },
     );
@@ -304,6 +305,14 @@ export class DocumentMcpHost {
           nextSequence: 1,
           nextAction: "context_room_write_append",
           expiresAt: result.expiresAt,
+          navigation: {
+            pageId: "rooms",
+            title: result.document.title,
+            action: "created",
+            roomId: result.document.roomId,
+            objectId: result.document.id,
+            objectType: "document",
+          },
         });
       }
       case "context_room_write_append": {
@@ -327,7 +336,20 @@ export class DocumentMcpHost {
           sessionId: context.agentSessionId,
           finalSequence: integerArg(args, "finalSequence"),
         });
-        return success({ transactionId, state: "committed", roomId: document.roomId, docId: document.id });
+        return success({
+          transactionId,
+          state: "committed",
+          roomId: document.roomId,
+          docId: document.id,
+          navigation: {
+            pageId: "rooms",
+            title: document.title,
+            action: "created",
+            roomId: document.roomId,
+            objectId: document.id,
+            objectType: "document",
+          },
+        });
       }
       case "context_room_write_abort": {
         const transactionId = stringArg(args, "transactionId");

@@ -7,7 +7,7 @@ import { showToast } from '@/state/toast'
 export function AgentSessionSwitcher({
   activeRunId,
   connected,
-  currentSession,
+  displayTitle,
   sessionId,
   sessions,
   onCreate,
@@ -17,7 +17,7 @@ export function AgentSessionSwitcher({
 }: {
   activeRunId: string | null
   connected: boolean
-  currentSession: AgentSession | null
+  displayTitle: string
   sessionId: string | null
   sessions: AgentSession[]
   onCreate: () => Promise<AgentSession>
@@ -73,8 +73,8 @@ export function AgentSessionSwitcher({
       >
         <History aria-hidden="true" />
         <span>
-          <small>{connected ? '已连接' : sessionId ? '连接中' : '本地会话'}</small>
-          <strong>{currentSession?.title || '新会话'}</strong>
+          <small>{connected ? '已连接' : '本地会话'}</small>
+          <strong>{displayTitle || '\u00a0'}</strong>
         </span>
         <ChevronDown aria-hidden="true" />
       </button>
@@ -121,7 +121,7 @@ export function AgentSessionSwitcher({
                         setMenuOpen(false)
                       }}
                     >
-                      <strong>{session.title || '新会话'}</strong>
+                      <strong>{session.title || '新对话'}</strong>
                       <small>{new Date(session.updatedAt).toLocaleString('zh-CN', {
                         month: 'numeric',
                         day: 'numeric',
@@ -140,7 +140,7 @@ export function AgentSessionSwitcher({
                       <>
                         <button type="button" title="重命名" aria-label="重命名" onClick={() => {
                           setEditingSessionId(session.id)
-                          setEditingTitle(session.title || '新会话')
+                          setEditingTitle(session.title || '新对话')
                         }}><Pencil /></button>
                         <button
                           type="button"

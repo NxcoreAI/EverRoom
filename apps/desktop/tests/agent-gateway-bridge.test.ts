@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../src/main/monitoring/sentry', () => ({ captureSentryLog: vi.fn() }))
 
 import { AgentGatewayBridge } from '../src/main/gateway/agent-gateway-bridge'
 import type { GatewaySupervisor } from '../src/main/gateway/gateway-supervisor'

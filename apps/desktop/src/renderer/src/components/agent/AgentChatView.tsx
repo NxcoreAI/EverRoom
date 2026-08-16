@@ -1,10 +1,13 @@
-import { Brain, Check, ChevronRight, Copy, Folder, FolderKanban, RotateCcw, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Brain, Check, ChevronRight, Copy, FileText, Folder, FolderKanban, Link2, RotateCcw, X } from 'lucide-react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
+import { parseAgentNavigationTarget } from './agentNavigation'
+import { formatAgentOutput } from './agentOutputFormat'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
+import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
-import type { AgentRoomReference } from '@nxcore/agent-contract'
+import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink } from '@nxcore/agent-contract'
 
 const quickPrompts = [
   ['总结当前页面的重点，并列出下一步', '总结当前页面最重要的内容，并按优先级列出下一步。'],
@@ -25,7 +28,7 @@ function ReasoningBlock({ active, content }: { active: boolean; content: string 
   return (
     <details className="agent-reasoning" open={active}>
       <summary><Brain aria-hidden="true" />思考过程</summary>
-      <p>{content}</p>
+      <div className="agent-reasoning-content"><FormattedAgentText content={content} /></div>
     </details>
   )
 }
@@ -86,46 +89,195 @@ function RoomSelection({
   )
 }
 
+const generatedDocumentPattern = /文档已成功生成[，,]\s*您可以查看：?\s*\[([^\]]+)\]\s*\(?([0-9a-f]{8}-[0-9a-f-]{27,})\)?/iu
+
+function FormattedAgentText({ content }: { content: string }) {
+  return formatAgentOutput(content).map((block, index) => {
+    if (block.type === 'paragraph') return <p key={`${index}:${block.text}`}>{block.text}</p>
+    const List = block.ordered ? 'ol' : 'ul'
+    return (
+      <List key={`${index}:${block.items.join('\u0000')}`} className="agent-output-list">
+        {block.items.map((item, itemIndex) => <li key={`${itemIndex}:${item}`}>{item}</li>)}
+      </List>
+    )
+  })
+}
+
+function AssistantMessageContent({ content }: { content: string }) {
+  const match = generatedDocumentPattern.exec(content)
+  if (!match || match.index === undefined) return <FormattedAgentText content={content} />
+
+  const before = content.slice(0, match.index).trim()
+  const after = content.slice(match.index + match[0].length).trim()
+  const title = match[1].trim()
+
+  return (
+    <>
+      {before ? <FormattedAgentText content={before} /> : null}
+      <div className="agent-artifact" role="status" aria-label={`文档已生成：${title}`}>
+        <span className="agent-artifact-icon" aria-hidden="true"><FileText /></span>
+        <span className="agent-artifact-copy">
+          <strong>{title}</strong>
+          <small>文档已生成</small>
+        </span>
+      </div>
+      {after ? <FormattedAgentText content={after} /> : null}
+    </>
+  )
+}
+
+const navigationPageLabels: Record<string, string> = {
+  home: '首页',
+  rooms: 'Context Room',
+  docs: '文档',
+  sources: '数据源',
+  memory: '记忆',
+  tasks: '任务',
+  diary: '日记',
+}
+
+function SessionReference({ link, onOpen }: { link: AgentSessionLink; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className="agent-navigation-status agent-session-reference"
+      title={`${link.sourcePageLabel} · ${link.target.title}`}
+      onClick={onOpen}
+    >
+      <Link2 aria-hidden="true" />
+      <span>引用自 {link.sourcePageLabel} · {link.target.title}</span>
+      <ChevronRight aria-hidden="true" />
+    </button>
+  )
+}
+
+function RunNavigation({
+  link,
+  onOpen,
+  pending,
+}: {
+  link?: AgentSessionLink
+  onOpen: (link: AgentSessionLink) => void
+  pending?: AgentNavigationTarget
+}) {
+  if (link) {
+    return (
+      <button
+        type="button"
+        className="agent-navigation-status"
+        aria-label={`前往${navigationPageLabels[link.target.pageId] ?? link.target.pageId}`}
+        title={link.target.title}
+        onClick={() => onOpen(link)}
+      >
+        <Check aria-hidden="true" />
+        <span>已前往「{link.target.title}」继续创建</span>
+        <ChevronRight aria-hidden="true" />
+      </button>
+    )
+  }
+  if (!pending) return null
+  return (
+    <div className="agent-navigation-status is-pending" role="status" title={pending.title}>
+      <Link2 aria-hidden="true" />
+      <span>前往「{pending.title}」继续创建</span>
+    </div>
+  )
+}
+
+function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
+  const active = state.status === 'accepted' || state.status === 'running'
+  const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
+
+  return (
+    <>
+      <section className="agent-linked-run" aria-label="引用任务进度">
+        {state.loading ? <ThinkingStatus label="正在同步工作进度..." /> : null}
+        {active ? (
+          <ThinkingStatus label={state.documentPending ? '正在编辑文档...' : getThinkingLabel(assistantMessage, state.tools)} />
+        ) : null}
+        <ReasoningBlock active={active} content={state.reasoning} />
+        <AgentExecutionTimeline
+          tools={state.tools}
+          runStartedAt={state.startedAt}
+          runCompletedAt={state.completedAt}
+          continuing={state.documentPending}
+          continuationLabel="正在编辑文档"
+        />
+        {state.status === 'completed' && !assistantMessage?.content ? (
+          <div className="agent-linked-status" role="status">创建已完成</div>
+        ) : null}
+        {state.error ? <div className="agent-error" role="alert">{state.error}</div> : null}
+      </section>
+      {assistantMessage?.content ? (
+        <article className="agent-message" data-role="assistant">
+          <AssistantMessageContent content={assistantMessage.content} />
+        </article>
+      ) : null}
+    </>
+  )
+}
+
 export function AgentChatView({
   activeRunId,
   availableRooms,
   composer,
+  currentSessionId,
   draftHasContent,
   error,
   loading,
   messages,
   onRetryPrompt,
+  onOpenSessionLink,
   onSelectRoom,
   onSelectPrompt,
+  pendingNavigationByRun,
   reasoningByRun,
   runCompletedAtByRun,
   runStartedAtByRun,
+  scopeReady,
+  sessionLinks,
   submitting,
   toolCallsByRun,
 }: {
   activeRunId: string | null
   availableRooms: AgentRoomReference[]
   composer: ReactNode
+  currentSessionId: string | null
   draftHasContent: boolean
   error: string | null
   loading: boolean
   messages: DisplayAgentMessage[]
   onRetryPrompt: (prompt: string) => void
+  onOpenSessionLink: (link: AgentSessionLink) => void
   onSelectRoom: (room: AgentRoomReference) => void
   onSelectPrompt: (prompt: string) => void
+  pendingNavigationByRun: Record<string, AgentNavigationTarget>
   reasoningByRun: Record<string, string>
   runCompletedAtByRun: Record<string, string>
   runStartedAtByRun: Record<string, string>
+  scopeReady: boolean
+  sessionLinks: AgentSessionLink[]
   submitting: boolean
   toolCallsByRun: Record<string, DisplayAgentToolCall[]>
 }) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [dismissedRoomSelections, setDismissedRoomSelections] = useState<Set<string>>(() => new Set())
   const conversationRef = useRef<HTMLDivElement>(null)
-  const hasConversation = messages.length > 0 || Boolean(activeRunId) || loading || submitting || Boolean(error)
-  const empty = !hasConversation
-  const previousEmptyRef = useRef(empty)
-  const [quickPromptsReady, setQuickPromptsReady] = useState(empty)
+  const hasConversation = messages.length > 0 || sessionLinks.length > 0
+    || Boolean(activeRunId) || Boolean(error)
+  const confirmedEmpty = scopeReady && !hasConversation
+  const [emptyLayout, setEmptyLayout] = useState(confirmedEmpty)
+  const previousEmptyRef = useRef(confirmedEmpty)
+  const [quickPromptsReady, setQuickPromptsReady] = useState(confirmedEmpty)
+  const [contentReady, setContentReady] = useState(!confirmedEmpty)
+  const previousContentEmptyRef = useRef(confirmedEmpty)
+  const previousContentSessionRef = useRef(currentSessionId)
+  const incomingLink = [...sessionLinks].reverse().find((link) => link.targetSessionId === currentSessionId)
+  const outgoingLinks = useMemo(
+    () => sessionLinks.filter((link) => link.sourceSessionId === currentSessionId),
+    [currentSessionId, sessionLinks],
+  )
+  const linkedRun = useLinkedAgentRun(incomingLink ?? null)
 
   const latestStreamingMessage = useMemo(
     () => [...messages].reverse().find((message) => (
@@ -172,12 +324,20 @@ export function AgentChatView({
     const element = conversationRef.current
     if (!element) return
     element.scrollTop = element.scrollHeight
-  }, [activeRunId, messages, toolCallsByRun])
+  }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, toolCallsByRun])
+
+  useLayoutEffect(() => {
+    if (scopeReady) setEmptyLayout(confirmedEmpty)
+  }, [confirmedEmpty, scopeReady])
 
   useEffect(() => {
+    if (!scopeReady) {
+      setQuickPromptsReady(false)
+      return
+    }
     const wasEmpty = previousEmptyRef.current
-    previousEmptyRef.current = empty
-    if (!empty) {
+    previousEmptyRef.current = confirmedEmpty
+    if (!confirmedEmpty) {
       setQuickPromptsReady(false)
       return
     }
@@ -186,7 +346,38 @@ export function AgentChatView({
       return
     }
     setQuickPromptsReady(false)
-  }, [empty])
+  }, [confirmedEmpty, scopeReady])
+
+  useLayoutEffect(() => {
+    if (!scopeReady) {
+      setContentReady(false)
+      return
+    }
+    const wasEmpty = previousContentEmptyRef.current
+    const sessionChanged = previousContentSessionRef.current !== currentSessionId
+    previousContentSessionRef.current = currentSessionId
+    if (confirmedEmpty) {
+      previousContentEmptyRef.current = true
+      setContentReady(false)
+      return
+    }
+    if (loading) {
+      setContentReady(false)
+      return
+    }
+    previousContentEmptyRef.current = false
+    if (!wasEmpty && !sessionChanged) {
+      setContentReady(true)
+      return
+    }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setContentReady(true)
+      return
+    }
+    setContentReady(false)
+    const timer = window.setTimeout(() => setContentReady(true), wasEmpty ? 320 : 80)
+    return () => window.clearTimeout(timer)
+  }, [confirmedEmpty, currentSessionId, loading, scopeReady])
 
   const copyMessage = async (message: DisplayAgentMessage) => {
     try {
@@ -201,18 +392,25 @@ export function AgentChatView({
     <section
       className="agent-chat-conversation-frame"
       data-drafting={String(draftHasContent)}
-      data-empty={String(empty)}
+      data-content-ready={String(contentReady)}
+      data-empty={String(emptyLayout)}
       data-prompts-ready={String(quickPromptsReady)}
       onTransitionEnd={(event) => {
         if (
-          empty
+          emptyLayout
           && event.propertyName === 'bottom'
           && (event.target as HTMLElement).classList.contains('agent-composer-shell')
         ) setQuickPromptsReady(true)
       }}
     >
-      <div className="agent-chat-empty-heading"><h2>开始一段新对话</h2></div>
+      {confirmedEmpty ? <div className="agent-chat-empty-heading"><h2>开始一段新对话</h2></div> : null}
       <div ref={conversationRef} className="agent-conversation" aria-live="polite">
+          {incomingLink ? (
+            <>
+              <SessionReference link={incomingLink} onOpen={() => onOpenSessionLink(incomingLink)} />
+              <LinkedRunProgress state={linkedRun} />
+            </>
+          ) : null}
           {messages.map((message, index) => {
             if (message.role === 'system') return null
             const tools = toolCallsByRun[message.runId] ?? []
@@ -220,7 +418,19 @@ export function AgentChatView({
             const showActions = message.role === 'assistant' && !message.streaming && Boolean(message.content.trim())
 
             if (message.role === 'user') {
-              return <article key={message.id} className="agent-message" data-role="user"><p>{message.content}</p></article>
+              const link = outgoingLinks.find((item) => item.sourceRunId === message.runId)
+              const navigationResult = (toolCallsByRun[message.runId] ?? []).some((tool) => (
+                tool.status === 'completed' && Boolean(parseAgentNavigationTarget(tool.result))
+              ))
+              const pending = !runCompletedAtByRun[message.runId] || navigationResult
+                ? pendingNavigationByRun[message.runId]
+                : undefined
+              return (
+                <Fragment key={message.id}>
+                  <article className="agent-message" data-role="user"><p>{message.content}</p></article>
+                  <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
+                </Fragment>
+              )
             }
 
             return (
@@ -235,7 +445,7 @@ export function AgentChatView({
                   runCompletedAt={runCompletedAtByRun[message.runId]}
                 />
                 {message.content ? (
-                  <article className="agent-message" data-role="assistant"><p>{message.content}</p></article>
+                  <article className="agent-message" data-role="assistant"><AssistantMessageContent content={message.content} /></article>
                 ) : null}
                 {showActions ? (
                   <div className="agent-message-actions">

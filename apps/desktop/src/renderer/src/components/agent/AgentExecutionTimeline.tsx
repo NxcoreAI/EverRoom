@@ -4,6 +4,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronRight,
   Circle,
   FileText,
   Image as ImageIcon,
@@ -150,52 +151,57 @@ export function AgentExecutionTimeline({
   tools,
   runStartedAt,
   runCompletedAt,
+  continuing = false,
+  continuationLabel = '正在继续处理',
 }: {
   tools: DisplayAgentToolCall[]
   runStartedAt?: string
   runCompletedAt?: string
+  continuing?: boolean
+  continuationLabel?: string
 }) {
   const running = tools.some((tool) => tool.status === 'pending' || tool.status === 'running')
-  const [expanded, setExpanded] = useState(running)
+  const active = running || continuing
+  const [expanded, setExpanded] = useState(active)
   const [now, setNow] = useState(Date.now())
-  const wasRunningRef = useRef(running)
+  const wasActiveRef = useRef(active)
 
   useEffect(() => {
-    const wasRunning = wasRunningRef.current
-    wasRunningRef.current = running
-    if (running) {
+    const wasActive = wasActiveRef.current
+    wasActiveRef.current = active
+    if (active) {
       setExpanded(true)
       return undefined
     }
-    if (!wasRunning) return undefined
+    if (!wasActive) return undefined
     const timer = window.setTimeout(() => setExpanded(false), 600)
     return () => window.clearTimeout(timer)
-  }, [running])
+  }, [active])
 
   useEffect(() => {
-    if (!running) return undefined
+    if (!active) return undefined
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
-  }, [running])
+  }, [active])
 
   const totalDuration = useMemo(() => runStartedAt
-    ? durationMs(runStartedAt, runCompletedAt, now)
-    : 0, [now, runCompletedAt, runStartedAt])
+    ? durationMs(runStartedAt, continuing ? undefined : runCompletedAt, now)
+    : 0, [continuing, now, runCompletedAt, runStartedAt])
 
   if (tools.length === 0) return null
 
   return (
-    <section className="agent-execution" data-running={String(running)} data-expanded={String(expanded)}>
+    <section className="agent-execution" data-running={String(active)} data-expanded={String(expanded)}>
       <button
         type="button"
         className="agent-execution-summary"
         aria-expanded={expanded}
         onClick={() => {
-          if (!running) setExpanded((current) => !current)
+          if (!active) setExpanded((current) => !current)
         }}
       >
-        {running ? <LoaderCircle className="spin" aria-hidden="true" /> : <Wrench aria-hidden="true" />}
-        <strong>{running ? '正在执行' : `已执行 ${tools.length} 个操作`}</strong>
+        {active ? <LoaderCircle className="spin" aria-hidden="true" /> : <Wrench aria-hidden="true" />}
+        <strong>{continuing && !running ? continuationLabel : running ? '正在执行' : `已执行 ${tools.length} 个操作`}</strong>
         <ChevronDown className="agent-execution-chevron" aria-hidden="true" />
         <span>{totalDuration ? formatDuration(totalDuration) : ''}</span>
       </button>
@@ -225,7 +231,7 @@ export function AgentExecutionTimeline({
                     <span className="agent-tool-status" title={statusLabel(tool.status)}>
                       <StatusIcon status={tool.status} />
                     </span>
-                    <ChevronDown className="agent-tool-chevron" aria-hidden="true" />
+                    <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
                   </summary>
                   <div className="agent-tool-details">
                     <div>

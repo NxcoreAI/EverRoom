@@ -214,6 +214,11 @@ describe("formatRecallResult", () => {
         ],
         coreContent: "用户是桌面应用开发者",
         scenarios: [{ path: "工作.md", created_at: "", updated_at: "" }],
+        conversationHits: [{
+          role: "assistant",
+          content: "[document:doc-1] 认证服务演进路线\n\n旧文档正文",
+          timestamp: "2026-08-03T10:00:00Z",
+        }],
       },
       2000,
     );
@@ -221,6 +226,8 @@ describe("formatRecallResult", () => {
     expect(result).toContain("[用户画像]");
     expect(result).toContain("用户偏好中文回复");
     expect(result).toContain("工作.md");
+    expect(result).toContain("[相关历史对话与文档]");
+    expect(result).toContain("认证服务演进路线");
     expect(result).toContain("[2026-08-02]");
   });
 
@@ -290,6 +297,7 @@ describe("memory extension capture policy", () => {
     const searchAtomic = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
     const readCore = vi.spyOn(client, "readCore").mockResolvedValue(null);
     const listScenarios = vi.spyOn(client, "listScenarios").mockResolvedValue([]);
+    const searchConversation = vi.spyOn(client, "searchConversation").mockResolvedValue([]);
     const addConversation = vi.spyOn(client, "addConversation").mockResolvedValue();
     const handlers = new Map<string, (event: unknown) => Promise<unknown>>();
     const extension = createMemoryExtension({
@@ -321,6 +329,7 @@ describe("memory extension capture policy", () => {
     expect(searchAtomic).toHaveBeenCalled();
     expect(readCore).toHaveBeenCalled();
     expect(listScenarios).toHaveBeenCalled();
+    expect(searchConversation).toHaveBeenCalledWith("把选区改得更简洁", 5);
     expect(addConversation).not.toHaveBeenCalled();
   });
 });

@@ -93,6 +93,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const mountedRef = useRef(true)
   const valueRef = useRef(value)
   const insertionPointRef = useRef(0)
+  const composingRef = useRef(false)
 
   valueRef.current = value
   useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement)
@@ -189,6 +190,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
+      // IME candidate confirmation also emits Enter; only submit after composition ends.
+      if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
       event.preventDefault()
       if (available && voiceState === 'idle') onSubmit()
     }
@@ -366,6 +369,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           value={value}
           disabled={!available || active || voiceState === 'saving' || voiceState === 'transcribing'}
           onChange={(event) => onChange(event.target.value)}
+          onCompositionStart={() => { composingRef.current = true }}
+          onCompositionEnd={() => { composingRef.current = false }}
           onKeyDown={handleKeyDown}
         />
         {attachments.length > 0 ? (

@@ -90,6 +90,34 @@ export interface UpdateAgentSessionInput {
   title: string;
 }
 
+export type AgentNavigationAction = "created" | "updated" | "opened" | "referenced";
+export type AgentNavigationObjectType = "room" | "document" | "source" | "memory" | "task" | "diary";
+
+export interface AgentNavigationTarget {
+  pageId: string;
+  title: string;
+  action: AgentNavigationAction;
+  roomId?: string | null;
+  objectId?: string;
+  objectType?: AgentNavigationObjectType;
+}
+
+export interface CreateAgentSessionLinkInput {
+  sourceSessionId: string;
+  targetSessionId: string;
+  sourceRunId: string;
+  sourcePageId: string;
+  sourcePageLabel: string;
+  sourceRoomId?: string | null;
+  target: AgentNavigationTarget;
+}
+
+export interface AgentSessionLink extends CreateAgentSessionLinkInput {
+  id: string;
+  createdAt: string;
+  returnedAt: string | null;
+}
+
 export interface AgentRoomReference {
   id: string;
   title: string;

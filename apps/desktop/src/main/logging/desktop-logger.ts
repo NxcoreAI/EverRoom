@@ -1,6 +1,8 @@
 import { appendFile, mkdir, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { captureSentryLog } from '../monitoring/sentry'
+
 type LogLevel = 'info' | 'warn' | 'error'
 
 const LOG_RETENTION_DAYS = 30
@@ -57,6 +59,7 @@ export function logDesktop(
     ...event,
   }
   console[level](`[desktop][${module}] ${JSON.stringify(event)}`)
+  captureSentryLog(module, level, event)
   const directory = logsDirectory
   if (!directory) return
   enqueue(() => appendFile(

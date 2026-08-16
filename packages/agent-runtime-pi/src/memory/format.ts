@@ -1,5 +1,6 @@
 import type {
   MemoryAtomicItem,
+  MemoryConversationHit,
   MemoryScenarioEntry,
 } from "./types.js";
 
@@ -7,6 +8,7 @@ export interface MemoryRecallInput {
   atomicItems: MemoryAtomicItem[];
   coreContent: string | null;
   scenarios: MemoryScenarioEntry[];
+  conversationHits?: MemoryConversationHit[];
 }
 
 /**
@@ -37,6 +39,14 @@ export function formatRecallResult(input: MemoryRecallInput, charBudget: number)
     });
     const extra = input.scenarios.length > 10 ? `\n（另有 ${input.scenarios.length - 10} 个场景，可用 memory_search 查询）` : "";
     sections.push(`[历史场景]（仅目录，需要细节时用 memory_search / conversation_search 查询）\n${lines.join("\n")}${extra}`);
+  }
+
+  if (input.conversationHits && input.conversationHits.length > 0) {
+    const lines = input.conversationHits.slice(0, 8).map((hit) => {
+      const date = hit.timestamp?.slice(0, 16).replace("T", " ") ?? "";
+      return `- [${hit.role}${date ? ` ${date}` : ""}] ${hit.content}`;
+    });
+    sections.push(`[相关历史对话与文档]\n${lines.join("\n")}`);
   }
 
   if (sections.length === 0) return null;

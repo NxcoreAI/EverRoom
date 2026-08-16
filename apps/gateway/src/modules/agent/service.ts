@@ -2,23 +2,27 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentEvent,
   AgentEventType,
+  AgentNavigationTarget,
   AgentMessage,
   AgentRun,
   AgentRunStatus,
   AgentRoomReference,
   AgentSession,
+  AgentSessionLink,
   AgentSessionSnapshot,
+  CreateAgentSessionLinkInput,
   CreateAgentSessionInput,
   StartAgentRunInput,
   UpdateAgentSessionInput,
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   agentEvents,
   agentMessages,
   agentRuns,
+  agentSessionLinks,
   agentSessions,
 } from "../../infrastructure/database/schema.js";
 import { AgentEventBroker } from "./event-broker.js";
@@ -37,6 +41,21 @@ export interface AgentRoomRegistry {
 function normalizeRoomId(roomId: string | null | undefined): string | null {
   const normalized = roomId?.trim();
   return normalized ? normalized : null;
+}
+
+function requestsWorkspaceDocument(prompt: string): boolean {
+  const text = prompt.trim();
+  if (!text) return false;
+  if (/(?:不要|别|无需|不需要|不想|禁止|不是要|并非要).{0,10}(?:创建|新建|生成|写入|保存|落盘|存入|写|撰写).{0,32}(?:文档|文件)/iu.test(text)) {
+    return false;
+  }
+  if (/(?:如何|怎么|怎样|为什么|介绍|解释|说明).{0,12}(?:创建|新建|生成|写入|保存|撰写).{0,24}(?:文档|文件)/iu.test(text)) {
+    return false;
+  }
+  return /(?:创建|新建|生成|写入|保存|落盘|存入|写|撰写).{0,32}(?:文档|文件)/iu.test(text)
+    || /(?:文档|文件).{0,20}(?:创建|新建|写入|保存|落盘)/iu.test(text)
+    || /(?:我要|我想要|给我|帮我做).{0,24}(?:文档|文件)/iu.test(text)
+    || /(?:保存|写入|落盘|存入).{0,20}(?:文档|Room|房间)/iu.test(text);
 }
 
 function iso(value: Date | null): string | null {
@@ -79,6 +98,36 @@ function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
     content: row.content,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+function toSessionLink(row: typeof agentSessionLinks.$inferSelect): AgentSessionLink {
+  return {
+    id: row.id,
+    sourceSessionId: row.sourceSessionId,
+    targetSessionId: row.targetSessionId,
+    sourceRunId: row.sourceRunId,
+    sourcePageId: row.sourcePageId,
+    sourcePageLabel: row.sourcePageLabel,
+    sourceRoomId: normalizeRoomId(row.sourceRoomId),
+    target: row.target,
+    createdAt: row.createdAt.toISOString(),
+    returnedAt: iso(row.returnedAt),
+  };
+}
+
+function normalizeNavigationTarget(target: AgentNavigationTarget): AgentNavigationTarget {
+  return {
+    pageId: target.pageId.trim(),
+    title: target.title.trim(),
+    action: target.action,
+    ...(target.roomId !== undefined ? { roomId: normalizeRoomId(target.roomId) } : {}),
+    ...(target.objectId?.trim() ? { objectId: target.objectId.trim() } : {}),
+    ...(target.objectType ? { objectType: target.objectType } : {}),
+  };
+}
+
+function navigationTargetKey(target: AgentNavigationTarget): string {
+  return [target.pageId, target.roomId ?? "", target.objectType ?? "", target.objectId ?? ""].join("\u0000");
 }
 
 function runtimePrompt(input: StartAgentRunInput, pageLabel: string): string {
@@ -205,6 +254,61 @@ export class AgentService {
       .filter((row) => pageLabel === undefined || row.pageLabel === pageLabel)
       .filter((row) => normalizedRoomId === undefined || normalizeRoomId(row.roomId) === normalizedRoomId)
       .map(toSession);
+  }
+
+  createSessionLink(input: CreateAgentSessionLinkInput): AgentSessionLink {
+    const source = this.db.select({ id: agentSessions.id })
+      .from(agentSessions).where(eq(agentSessions.id, input.sourceSessionId)).get();
+    const targetSession = this.db.select({ id: agentSessions.id })
+      .from(agentSessions).where(eq(agentSessions.id, input.targetSessionId)).get();
+    const sourceRun = this.db.select({ sessionId: agentRuns.sessionId })
+      .from(agentRuns).where(eq(agentRuns.id, input.sourceRunId)).get();
+    if (!source || !targetSession || sourceRun?.sessionId !== input.sourceSessionId) {
+      throw new Error("agent_session_link_target_not_found");
+    }
+
+    const target = normalizeNavigationTarget(input.target);
+    if (!target.pageId || !target.title) throw new Error("agent_session_link_invalid_target");
+    const targetKey = navigationTargetKey(target);
+    const existing = this.db.select().from(agentSessionLinks).where(and(
+      eq(agentSessionLinks.sourceRunId, input.sourceRunId),
+      eq(agentSessionLinks.targetKey, targetKey),
+    )).get();
+    if (existing) return toSessionLink(existing);
+
+    const row: typeof agentSessionLinks.$inferInsert = {
+      id: randomUUID(),
+      sourceSessionId: input.sourceSessionId,
+      targetSessionId: input.targetSessionId,
+      sourceRunId: input.sourceRunId,
+      sourcePageId: input.sourcePageId.trim(),
+      sourcePageLabel: input.sourcePageLabel.trim(),
+      sourceRoomId: normalizeRoomId(input.sourceRoomId),
+      targetKey,
+      target,
+      createdAt: new Date(),
+    };
+    return toSessionLink(this.db.insert(agentSessionLinks).values(row).returning().get());
+  }
+
+  listSessionLinks(sessionId: string): AgentSessionLink[] {
+    return this.db.select().from(agentSessionLinks)
+      .where(or(
+        eq(agentSessionLinks.sourceSessionId, sessionId),
+        eq(agentSessionLinks.targetSessionId, sessionId),
+      ))
+      .orderBy(asc(agentSessionLinks.createdAt))
+      .all()
+      .map(toSessionLink);
+  }
+
+  markSessionLinkReturned(linkId: string): AgentSessionLink | null {
+    const updated = this.db.update(agentSessionLinks)
+      .set({ returnedAt: new Date() })
+      .where(eq(agentSessionLinks.id, linkId))
+      .returning()
+      .get();
+    return updated ? toSessionLink(updated) : null;
   }
 
   updateSession(sessionId: string, input: UpdateAgentSessionInput): AgentSession | null {
@@ -341,6 +445,32 @@ export class AgentService {
       "agent user input",
     );
     await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: {} });
+
+    // The client can only render the Room picker after a completed list-tool event.
+    // Make that preflight deterministic for explicit document requests instead of
+    // relying on the model to decide whether to call the read-only tool.
+    if (!sessionRoomId && !runRoomId && requestsWorkspaceDocument(input.prompt)) {
+      const toolCallId = randomUUID();
+      await this.appendEvent(sessionId, runId, {
+        type: "tool.requested",
+        payload: { toolCallId, name: "context_room_list", args: {} },
+      });
+      await this.appendEvent(sessionId, runId, {
+        type: "tool.started",
+        payload: { toolCallId, name: "context_room_list", args: {} },
+      });
+      await this.appendEvent(sessionId, runId, {
+        type: "tool.completed",
+        payload: {
+          toolCallId,
+          name: "context_room_list",
+          args: {},
+          result: { rooms, selectionRequired: true },
+        },
+      });
+      await this.appendEvent(sessionId, runId, { type: "run.completed", payload: {} });
+      return this.getRun(runId)!;
+    }
 
     let runtimeRun;
     try {

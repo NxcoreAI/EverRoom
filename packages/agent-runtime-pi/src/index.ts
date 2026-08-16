@@ -147,7 +147,7 @@ export class PiAgentRuntime implements AgentRuntime {
     return {
       streaming: true,
       reasoning: this.config.reasoning !== "off",
-      tools: this.memoryClient !== null || (this.integration.tools?.length ?? 0) > 0,
+      tools: true,
       steering: true,
       resume: false,
     };
@@ -332,6 +332,7 @@ export class PiAgentRuntime implements AgentRuntime {
         const lines = [
           "你是 NxCore 桌面工作区中的 AI 助手。",
           "回答应准确、简洁，并使用与用户相同的语言。",
+          "聊天回复使用自然、简洁的纯文本格式；不要使用 Markdown 标题符、粗体或斜体标记、反引号、代码围栏、表格或不常用装饰符号。需要列举时只使用普通数字列表或短句。文档正文仍按文档工具要求使用 Markdown。",
           "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
         ];
         if (memory && memoryClient) {
@@ -339,20 +340,22 @@ export class PiAgentRuntime implements AgentRuntime {
             "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入。",
           );
         }
-        if (customTools.length > 0) {
+        const hasDocumentTools = customTools.some((tool) => tool.name.startsWith("context_room_"));
+        if (hasDocumentTools) {
           lines.push(
-            "你只能使用当前会话提供的 Context Room 文档工具，不能使用文件、Shell 或其他外部产品工具。",
-            "仅当用户明确要求新建、生成或撰写一篇独立文档时，依次调用 context_room_write_begin、一个或多个 context_room_write_append，最后调用 context_room_write_commit；局部选区重写、普通问答或聊天不得擅自创建新文档。",
-            "如果本轮提示说明当前视口未绑定具体 Context Room，必须先调用 context_room_list，列出工具返回的 Room 并让用户选择，然后结束本轮；在用户通过后续输入明确选择前，禁止调用 context_room_write_begin，禁止替用户猜测目标 Room。",
+            "你只能使用当前会话提供的 Context Room 文档工具以及明确列出的其他能力；不要臆造未提供的文件、Shell 或外部产品工具。",
+            "只有当用户明确表达了要在工作区中创建、保存或写入一篇文档的操作意图时，才可以调用 Context Room 文档工具，例如用户明确说“创建文档”“写入文档”“保存成文档”或“在某个 Room 里生成文档”。仅仅要求解释、分析、总结、整理、列计划、写方案、起草内容、润色、扩写或给出 Markdown，默认都应直接在聊天中回答，不能据此推断用户想创建文档；用户提到某篇文档、讨论如何写文档、当前页面位于文档区，或回答可能很长，也都不构成创建意图。意图不明确时不要调用 context_room_list 或 context_room_write_begin，先在聊天中完成请求；只有用户随后明确要求落盘为文档时，再开始文档流程。局部选区重写也不创建新文档。",
+            "只有当用户明确要求在工作区创建、保存或写入文档，且当前视口未绑定具体 Context Room 时，才进入 Room 选择流程；一旦同时满足这两个条件，必须立即调用 context_room_list，并使用工具返回的列表让用户选择。不得只用文字回复“无法创建”“请先选择 Room”，不得询问用户是否需要查看列表，也不得要求用户自行提供 Room 名称，因为选择 UI 依赖本次工具调用。普通页面的普通聊天不要主动提示 Room 选择。用户明确选择前禁止调用 context_room_write_begin，也不要替用户猜测目标 Room。",
+            "如果本轮要创建文档且记忆工具可用，调用 context_room_write_begin 之前必须先用 memory_search 和 conversation_search 检索与主题、项目或用户偏好相关的历史记忆和旧文档；将命中的内容作为客制化依据。只有明确属于全新主题，或用户明确要求不要参考历史时，才可以跳过检索。",
             "在调用 context_room_write_begin 前，先确定准备写入正文的实际核心内容、重点或结论，再据此拟定能够准确概括正文的具体、自然、有辨识度的标题。标题要随内容类型调整：教程突出学习路径或成果，分析突出对象与核心问题，方案突出目标与行动，报告突出主题与范围。除非用户明确指定必须使用的精确标题，否则不要复制用户的任务表述，也不要使用“后端学习文档”“项目介绍”“学习资料”等只描述文档形式、没有内容信息的泛标题；随后写出的正文必须与标题一致。",
             "除非用户明确要求简短版本，否则文档正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结。内容长度应与主题复杂度相称，不得空泛、重复或为了变长而凑字。",
-            "正文的 Markdown 标题层级必须统一且符合语义：文档名称已由独立标题承载，正文不得再使用一级标题（#）；主章节统一使用二级标题（##），其下子章节使用三级标题（###），需要继续细分时才使用四级标题（####）。同一层级的章节必须使用相同数量的 #，不得跳级，也不得为了强调某一段临时把标题放大；普通强调请使用加粗而不是标题。",
+            "正文的 Markdown 标题层级应服务于内容结构：默认让同一层级的章节使用一致的标题级别，避免只为强调某一段临时放大标题；通常可用 ## 表示主章节、### 表示子章节，普通强调使用加粗或段落。不要机械套用这一默认规则：如果用户明确要求一级标题、特定标题层级或特定排版，必须尊重用户要求，并保持其指定结构前后一致。",
             "正文必须使用 Markdown；append 的 sequence 从 1 开始并严格连续。每次 append 只能发送新增片段，严禁用新的 sequence 重发此前内容或累计全文。工具调用失败时不要声称文档已经创建。",
           );
         }
-        if (!memory && customTools.length === 0) {
-          lines.push("当前运行未授权任何文件、Shell 或外部产品工具；不要声称执行了未提供的操作。");
-        }
+        lines.push(
+          "你可以使用 Pi Agent 内置 bash 在本机执行命令和访问文件。只有用户明确要求操作本机文件或执行本机命令时才调用；普通分析和文档生成不要调用。",
+        );
         return lines.join("\n");
       },
       appendSystemPromptOverride: () => [],
@@ -368,8 +371,7 @@ export class PiAgentRuntime implements AgentRuntime {
       modelRuntime,
       model,
       thinkingLevel: this.config.reasoning,
-      noTools: customTools.length > 0 || (memory && memoryClient) ? "builtin" : "all",
-      tools: [...toolNames, ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : [])],
+      tools: ["bash", ...toolNames, ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : [])],
       customTools: [
         ...customTools,
         ...(memory && memoryClient ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId) : []),
@@ -420,7 +422,7 @@ export class PiAgentRuntime implements AgentRuntime {
         ? input.availableRooms?.find((room) => room.id === input.roomId)
         : undefined;
       const roomContext = input.roomSelectionRequired
-        ? "当前视口未绑定具体 Context Room。本轮若要新建文档，必须调用 context_room_list 展示可选 Room 并请用户选择；选择前不得创建文档。"
+        ? "当前视口未绑定具体 Context Room。若用户本轮明确要求把内容创建、保存或写入工作区文档，必须立即调用 context_room_list 以展示 Room 选择 UI；不要只回复无法创建、请用户先选择或询问是否需要列表。普通聊天不要主动提示 Room 选择。用户选择前不得创建文档。"
         : input.roomId
           ? `本轮文档目标 Room 已确认：${selectedRoom?.title ?? input.pageLabel}（ID: ${input.roomId}）。`
           : "本轮没有可用的 Context Room 文档目标。";

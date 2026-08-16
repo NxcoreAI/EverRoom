@@ -30,17 +30,8 @@ function formatTimestamp(milliseconds: number): string {
   return formatDuration(Math.max(0, Math.floor(milliseconds / 1000)))
 }
 
-function errorMessage(error: unknown, audioSource?: AudioSource): string {
+function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : '录音转写失败，请重试。'
-  const errorName = typeof error === 'object' && error !== null && 'name' in error
-    ? String((error as { name?: unknown }).name ?? '')
-    : ''
-  if (audioSource === 'microphone' && (errorName === 'NotFoundError' || /Requested device not found/i.test(message))) {
-    return '未检测到麦克风输入设备。请连接麦克风或耳机，并在“系统设置 → 隐私与安全性 → 麦克风”中允许 EverRoom 访问。'
-  }
-  if (audioSource === 'microphone' && errorName === 'NotAllowedError') {
-    return '麦克风访问被拒绝。请在“系统设置 → 隐私与安全性 → 麦克风”中允许 EverRoom 访问，然后重新开始录音。'
-  }
   if (message === 'SERVER_ERROR') {
     return '阿里云未能读取或处理录音（SERVER_ERROR）。当前百炼临时存储链路不可用，请配置自有 OSS 后重试。'
   }
@@ -263,7 +254,7 @@ export function RecordingPage({
       if (id) await desktopApi().asr.cancelRecording(id).catch(() => undefined)
       const eventId = realityEventIdRef.current
       realityEventIdRef.current = null
-      if (eventId) await desktopApi().reality.fail(eventId, errorMessage(caught, audioSource)).catch(() => undefined)
+      if (eventId) await desktopApi().reality.fail(eventId, errorMessage(caught)).catch(() => undefined)
       reportRecordingError(caught, audioSource)
       setState('error')
     }
@@ -335,7 +326,7 @@ export function RecordingPage({
       const eventId = realityEventIdRef.current
       realityEventIdRef.current = null
       if (eventId) {
-        const failed = await desktopApi().reality.fail(eventId, errorMessage(caught, audioSource)).catch(() => null)
+        const failed = await desktopApi().reality.fail(eventId, errorMessage(caught)).catch(() => null)
         if (failed) onEventChanged?.(failed)
       }
       reportRecordingError(caught, audioSource)

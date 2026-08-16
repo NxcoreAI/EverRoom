@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract';
+import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
@@ -111,7 +111,7 @@ export function WorkspaceLayout({
   trashedDocuments: RoomDocument[];
   documentEvents: Record<string, DocumentEvent[]>;
   onBackendDocumentChange: (document: RoomDocument) => void;
-  onCreateDocument: (title: string) => Promise<void>;
+  onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;

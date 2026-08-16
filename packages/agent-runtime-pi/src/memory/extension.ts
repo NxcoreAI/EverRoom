@@ -52,10 +52,11 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
         if (!run || run.cancelled) return;
 
         const query = run.originalPrompt.slice(0, RECALL_QUERY_MAX_CHARS);
-        const [atomic, core, scenarios] = await Promise.allSettled([
+        const [atomic, core, scenarios, conversations] = await Promise.allSettled([
           client.searchAtomic(query, config.recallLimit),
           client.readCore(),
           client.listScenarios(),
+          client.searchConversation(query, config.recallLimit),
         ]);
         if (atomic.status === "rejected") {
           log.warn(`${TAG} L1 recall failed: ${String(atomic.reason)}`);
@@ -66,12 +67,16 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
         if (scenarios.status === "rejected") {
           log.warn(`${TAG} L2 scenario list failed: ${String(scenarios.reason)}`);
         }
+        if (conversations.status === "rejected") {
+          log.warn(`${TAG} L0 conversation recall failed: ${String(conversations.reason)}`);
+        }
 
         const content = formatRecallResult(
           {
             atomicItems: atomic.status === "fulfilled" ? atomic.value : [],
             coreContent: core.status === "fulfilled" ? core.value?.content ?? null : null,
             scenarios: scenarios.status === "fulfilled" ? scenarios.value : [],
+            conversationHits: conversations.status === "fulfilled" ? conversations.value : [],
           },
           config.charBudget,
         );

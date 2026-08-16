@@ -56,11 +56,22 @@ describe('selection rewrite Agent stream', () => {
       instruction: '更简洁',
       contextBefore: '前文',
       contextAfter: '后文',
+      formatContext: {
+        blockType: 'codeBlock',
+        ancestorTypes: ['doc', 'codeBlock'],
+        codeLanguage: 'ts',
+      },
     })
 
     expect(prompt).toContain('"selectedText":"原文"')
     expect(prompt).toContain('不要调用任何工具')
+    expect(prompt).toContain('代码块只输出原始代码并保留缩进、空格和换行')
+    expect(prompt).toContain('"blockType":"codeBlock"')
     expect(sanitizeSelectionRewriteOutput('```text\n改写后的文本：新文本\n```')).toBe('新文本')
+    expect(sanitizeSelectionRewriteOutput('  if (ok) {\n    return value\n  }\n', { preserveWhitespace: true }))
+      .toBe('  if (ok) {\n    return value\n  }\n')
+    expect(sanitizeSelectionRewriteOutput('```ts\n  return value\n```', { preserveWhitespace: true }))
+      .toBe('  return value\n')
   })
 
   it('streams deltas, resolves the final text, and removes its temporary session', async () => {
@@ -99,6 +110,34 @@ describe('selection rewrite Agent stream', () => {
     expect(api.startRun).toHaveBeenCalledWith('rewrite-session', expect.objectContaining({ captureMemory: false }))
     expect(api.deleteSession).toHaveBeenCalledWith('rewrite-session')
     expect(api.cancelRun).not.toHaveBeenCalled()
+  })
+
+  it('preserves code indentation while streaming a code-block rewrite', async () => {
+    const batches = [
+      [event(1, 'message.delta', { delta: '  if (ok) {\n    return value\n  }\n' })],
+      [event(2, 'run.completed', {})],
+    ]
+    const api: SelectionRewriteAgentApi = {
+      createSession: vi.fn().mockResolvedValue(session()),
+      startRun: vi.fn().mockResolvedValue(run()),
+      getEvents: vi.fn().mockImplementation(async () => batches.shift() ?? []),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    }
+
+    await expect(streamSelectionRewrite(api, {
+      roomId: 'room-1',
+      documentName: '代码',
+      selectedText: 'if (ok) {\n  return value\n}',
+      instruction: '优化',
+      contextBefore: '',
+      contextAfter: '',
+      formatContext: { blockType: 'codeBlock', ancestorTypes: ['doc', 'codeBlock'], codeLanguage: 'ts' },
+    }, {
+      signal: new AbortController().signal,
+      onText: () => undefined,
+      pollIntervalMs: 0,
+    })).resolves.toBe('  if (ok) {\n    return value\n  }\n')
   })
 
   it('cancels the active run and removes its session when aborted', async () => {

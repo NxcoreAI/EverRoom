@@ -36,8 +36,7 @@ export function TiptapBubbleToolbar({
 
       return {
         askAiDisabled: !(selection instanceof TextSelection) ||
-          selection.empty ||
-          !selection.$from.sameParent(selection.$to),
+          selection.empty,
         boldActive: currentEditor.isActive('bold'),
         codeActive: currentEditor.isActive('code'),
         italicActive: currentEditor.isActive('italic'),
@@ -138,7 +137,7 @@ export function TiptapBubbleToolbar({
             type="button"
             className="context-room-tiptap-ask-ai"
             aria-label="Ask AI"
-            title={toolbarState.askAiDisabled ? '请选择单个段落中的文字' : 'Ask AI'}
+            title={toolbarState.askAiDisabled ? '请选择文本' : 'Ask AI'}
             disabled={toolbarState.askAiDisabled}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {

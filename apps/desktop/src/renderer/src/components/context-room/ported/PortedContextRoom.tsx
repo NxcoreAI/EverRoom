@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 
+import { AllRoomsViewSkeleton } from '../AllRoomsViewSkeleton'
 import { CONTEXT_ROOMS } from './data'
 import type { ContextRoomKind, ContextRoomRecord } from './types'
 import type { ContextRoomWorkspaceTab } from '../contextRoomTabs'
@@ -8,6 +9,10 @@ import { useRoomDocumentsState } from '../RoomDocumentsProvider'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { DetailPane } from './components/RoomIconSidebar'
+
+const AllRoomsView = lazy(() =>
+  import('./components/AllRoomsView').then((module) => ({ default: module.AllRoomsView })),
+)
 
 interface DraftRoom {
   kind: ContextRoomKind
@@ -51,6 +56,7 @@ function createRoom(draft: DraftRoom): ContextRoomRecord {
 
 export function PortedContextRoom({
   activeRoomId,
+  focusedDocumentId,
   homeRequest,
   onDetailFocusChange,
   onOpenRoomTab,
@@ -58,6 +64,7 @@ export function PortedContextRoom({
   onShowHome,
 }: {
   activeRoomId: string | null
+  focusedDocumentId: string | null
   homeRequest: number
   onDetailFocusChange: (focused: boolean) => void
   onOpenRoomTab: (room: ContextRoomWorkspaceTab) => void
@@ -67,6 +74,7 @@ export function PortedContextRoom({
   const { state, setState } = useContextRoomState()
   const handledHomeRequest = useRef(homeRequest)
   const detailPaneByRoomIdRef = useRef<Record<string, DetailPane>>({})
+  const [homeView, setHomeView] = useState<'home' | 'all'>('home')
   const [initialObject, setInitialObject] = useState<{
     kind: 'file' | 'mail' | 'meeting'
     id: string
@@ -94,6 +102,7 @@ export function PortedContextRoom({
     if (homeRequest === handledHomeRequest.current) return
     handledHomeRequest.current = homeRequest
     setInitialObject(null)
+    setHomeView('home')
     onShowHome()
   }, [homeRequest, onShowHome])
 
@@ -117,6 +126,25 @@ export function PortedContextRoom({
     onOpenRoomTab({ id: room.id, title: room.title })
   }
 
+  const renameRoom = (roomId: string, name: string) => setState((current) => ({
+    ...current,
+    rooms: current.rooms.map((room) => room.id === roomId ? { ...room, title: name } : room),
+  }))
+
+  const deleteRoom = (roomId: string) => setState((current) => {
+    const room = current.rooms.find((item) => item.id === roomId)
+    return room
+      ? { rooms: current.rooms.filter((item) => item.id !== roomId), deletedRooms: [room, ...current.deletedRooms] }
+      : current
+  })
+
+  const restoreRoom = (roomId: string) => setState((current) => {
+    const room = current.deletedRooms.find((item) => item.id === roomId)
+    return room
+      ? { rooms: [room, ...current.rooms], deletedRooms: current.deletedRooms.filter((item) => item.id !== roomId) }
+      : current
+  })
+
   if (activeRoom) {
     return (
       <PortedDetail
@@ -126,7 +154,7 @@ export function PortedContextRoom({
         backendDocuments={roomDocuments.documentsByRoom[activeRoom.id] ?? []}
         trashedDocuments={roomDocuments.trashedDocumentsByRoom[activeRoom.id] ?? []}
         documentEvents={roomDocuments.eventsByDocument}
-        focusedDocumentId={roomDocuments.focusedDocumentByRoom[activeRoom.id] ?? null}
+        focusedDocumentId={focusedDocumentId ?? roomDocuments.focusedDocumentByRoom[activeRoom.id] ?? null}
         onBackendDocumentChange={roomDocuments.upsertDocument}
         onCreateDocument={roomDocuments.createDocument}
         onDeleteDocument={roomDocuments.deleteDocument}
@@ -148,6 +176,21 @@ export function PortedContextRoom({
     )
   }
 
+  if (homeView === 'all') {
+    return (
+      <Suspense fallback={<AllRoomsViewSkeleton />}>
+        <AllRoomsView
+          rooms={state.rooms}
+          onBack={() => setHomeView('home')}
+          onOpenDetail={openRoom}
+          onRenameRoom={renameRoom}
+          onDeleteRoom={deleteRoom}
+          onRestoreRoom={restoreRoom}
+        />
+      </Suspense>
+    )
+  }
+
   return (
     <HomeView
       rooms={state.rooms}
@@ -157,22 +200,9 @@ export function PortedContextRoom({
         setState((current) => ({ ...current, rooms: [room, ...current.rooms] }))
         onOpenRoomTab({ id: room.id, title: room.title })
       }}
-      onRenameRoom={(roomId, name) => setState((current) => ({
-        ...current,
-        rooms: current.rooms.map((room) => room.id === roomId ? { ...room, title: name } : room),
-      }))}
-      onDeleteRoom={(roomId) => setState((current) => {
-        const room = current.rooms.find((item) => item.id === roomId)
-        return room
-          ? { rooms: current.rooms.filter((item) => item.id !== roomId), deletedRooms: [room, ...current.deletedRooms] }
-          : current
-      })}
-      onRestoreRoom={(roomId) => setState((current) => {
-        const room = current.deletedRooms.find((item) => item.id === roomId)
-        return room
-          ? { rooms: [room, ...current.rooms], deletedRooms: current.deletedRooms.filter((item) => item.id !== roomId) }
-          : current
-      })}
+      onRenameRoom={renameRoom}
+      onDeleteRoom={deleteRoom}
+      onRestoreRoom={restoreRoom}
       onOpenRecommendationSource={(source) => {
         if (!source.roomId) return
         if (source.objectId) {
@@ -188,6 +218,7 @@ export function PortedContextRoom({
         if (room) onOpenRoomTab({ id: room.id, title: room.title })
       }}
       onOpenDetail={openRoom}
+      onShowAll={() => setHomeView('all')}
     />
   )
 }

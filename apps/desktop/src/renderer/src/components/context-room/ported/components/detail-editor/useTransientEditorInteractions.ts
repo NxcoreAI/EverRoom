@@ -1,4 +1,5 @@
 import type { Editor } from '@tiptap/react'
+import { TextSelection } from '@tiptap/pm/state'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 const SCROLLBAR_HIDE_DELAY = 700
@@ -33,7 +34,30 @@ export function nextDocumentStreamFollowState({
   return wasFollowing || isNearDocumentStreamEnd({ scrollTop, scrollHeight, clientHeight })
 }
 
-export function useTransientEditorInteractions(editor: Editor | null) {
+export function isSelectionOutsideViewport({
+  startTop,
+  startBottom,
+  endTop,
+  endBottom,
+  viewportTop,
+  viewportBottom,
+}: {
+  startTop: number
+  startBottom: number
+  endTop: number
+  endBottom: number
+  viewportTop: number
+  viewportBottom: number
+}): boolean {
+  const selectionTop = Math.min(startTop, endTop)
+  const selectionBottom = Math.max(startBottom, endBottom)
+  return selectionBottom <= viewportTop || selectionTop >= viewportBottom
+}
+
+export function useTransientEditorInteractions(
+  editor: Editor | null,
+  onSelectionCleared?: () => void,
+) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrollbarTimer = useRef<number | null>(null)
   const followingDocumentStream = useRef(true)
@@ -54,6 +78,29 @@ export function useTransientEditorInteractions(editor: Editor | null) {
     previousScrollTop.current = scrollElement.scrollTop
 
     const handleScroll = () => {
+      const selection = editor.state.selection
+      if (selection instanceof TextSelection && !selection.empty) {
+        try {
+          const start = editor.view.coordsAtPos(selection.from)
+          const end = editor.view.coordsAtPos(selection.to)
+          const viewport = scrollElement.getBoundingClientRect()
+          if (isSelectionOutsideViewport({
+            startTop: start.top,
+            startBottom: start.bottom,
+            endTop: end.top,
+            endBottom: end.bottom,
+            viewportTop: viewport.top,
+            viewportBottom: viewport.bottom,
+          })) {
+            editor.view.dispatch(editor.state.tr.setSelection(
+              TextSelection.create(editor.state.doc, selection.from),
+            ))
+            onSelectionCleared?.()
+          }
+        } catch {
+          // The editor can be between document updates while a scroll event fires.
+        }
+      }
       followingDocumentStream.current = nextDocumentStreamFollowState({
         wasFollowing: followingDocumentStream.current,
         previousScrollTop: previousScrollTop.current,
@@ -75,7 +122,7 @@ export function useTransientEditorInteractions(editor: Editor | null) {
       if (scrollbarTimer.current !== null) window.clearTimeout(scrollbarTimer.current)
       scrollElement.removeEventListener('scroll', handleScroll)
     }
-  }, [editor])
+  }, [editor, onSelectionCleared])
 
   return { scrollRef, scrolling, shouldFollowDocumentStream, followDocumentStream }
 }

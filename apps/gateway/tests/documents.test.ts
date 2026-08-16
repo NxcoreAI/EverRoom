@@ -604,12 +604,20 @@ describe('document transactions', () => {
       .toContain('准备写入正文的核心内容、重点或结论')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
       .toContain('准确概括正文')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
+      .toContain('用户已经明确要求在工作区创建、保存或写入文档')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
+      .toContain('只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
+      .toContain('必须立即调用此只读工具')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
+      .toContain('不得询问用户是否需要列表')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
       .toContain('充实、完整的长篇内容')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
-      .toContain('主章节统一使用二级标题（##）')
+      .toContain('默认保持同级章节一致')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
-      .toContain('同一语义层级必须使用相同数量的 #')
+      .toContain('如果用户明确要求一级标题或其他标题层级')
 
     await host.exchange('mcp-session', {
       jsonrpc: '2.0',
