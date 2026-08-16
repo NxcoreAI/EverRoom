@@ -43,6 +43,21 @@ function normalizeRoomId(roomId: string | null | undefined): string | null {
   return normalized ? normalized : null;
 }
 
+function requestsWorkspaceDocument(prompt: string): boolean {
+  const text = prompt.trim();
+  if (!text) return false;
+  if (/(?:不要|别|无需|不需要|不想|禁止|不是要|并非要).{0,10}(?:创建|新建|生成|写入|保存|落盘|存入|写|撰写).{0,32}(?:文档|文件)/iu.test(text)) {
+    return false;
+  }
+  if (/(?:如何|怎么|怎样|为什么|介绍|解释|说明).{0,12}(?:创建|新建|生成|写入|保存|撰写).{0,24}(?:文档|文件)/iu.test(text)) {
+    return false;
+  }
+  return /(?:创建|新建|生成|写入|保存|落盘|存入|写|撰写).{0,32}(?:文档|文件)/iu.test(text)
+    || /(?:文档|文件).{0,20}(?:创建|新建|写入|保存|落盘)/iu.test(text)
+    || /(?:我要|我想要|给我|帮我做).{0,24}(?:文档|文件)/iu.test(text)
+    || /(?:保存|写入|落盘|存入).{0,20}(?:文档|Room|房间)/iu.test(text);
+}
+
 function iso(value: Date | null): string | null {
   return value?.toISOString() ?? null;
 }
@@ -430,6 +445,32 @@ export class AgentService {
       "agent user input",
     );
     await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: {} });
+
+    // The client can only render the Room picker after a completed list-tool event.
+    // Make that preflight deterministic for explicit document requests instead of
+    // relying on the model to decide whether to call the read-only tool.
+    if (!sessionRoomId && !runRoomId && requestsWorkspaceDocument(input.prompt)) {
+      const toolCallId = randomUUID();
+      await this.appendEvent(sessionId, runId, {
+        type: "tool.requested",
+        payload: { toolCallId, name: "context_room_list", args: {} },
+      });
+      await this.appendEvent(sessionId, runId, {
+        type: "tool.started",
+        payload: { toolCallId, name: "context_room_list", args: {} },
+      });
+      await this.appendEvent(sessionId, runId, {
+        type: "tool.completed",
+        payload: {
+          toolCallId,
+          name: "context_room_list",
+          args: {},
+          result: { rooms, selectionRequired: true },
+        },
+      });
+      await this.appendEvent(sessionId, runId, { type: "run.completed", payload: {} });
+      return this.getRun(runId)!;
+    }
 
     let runtimeRun;
     try {

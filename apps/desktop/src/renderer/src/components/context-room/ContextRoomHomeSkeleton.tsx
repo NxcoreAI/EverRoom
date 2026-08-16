@@ -34,7 +34,7 @@ export function ContextRoomHomeSkeleton() {
         <section>
           <SkeletonSectionTitle />
           <div className="context-room-skeleton-grid context-room-skeleton-recommendations">
-            {Array.from({ length: 4 }, (_, index) => <SkeletonCard key={index} />)}
+            {Array.from({ length: 2 }, (_, index) => <SkeletonCard key={index} />)}
           </div>
         </section>
 

@@ -564,7 +564,7 @@
   position: absolute;
   z-index: 20;
   top: 50%;
-  right: 8px;
+  right: 16px;
   width: 22px;
   padding: 4px 0;
   transform: translateY(-50%);

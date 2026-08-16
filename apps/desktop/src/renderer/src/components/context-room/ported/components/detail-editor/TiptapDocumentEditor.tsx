@@ -208,6 +208,7 @@ export function TiptapDocumentEditor({
   const presentingStream = events.some(
     (event) => event.type === 'document.appended' || event.type === 'document.commit-requested',
   )
+  const writing = Boolean(backendDocument?.activeTransactionId) || presentingStream
 
   backendRef.current = backendDocument
   onBackendChangeRef.current = onBackendDocumentChange
@@ -307,7 +308,14 @@ export function TiptapDocumentEditor({
       queueDocumentSave(currentEditor.getJSON() as TiptapJsonContent)
     },
   }, [documentId])
-  const editorInteractions = useTransientEditorInteractions(editor)
+  const selectionRewrite = useTiptapSelectionRewrite({
+    editor,
+    roomId: room.id,
+    documentId,
+    documentName,
+    externallyLocked: writing,
+  })
+  const editorInteractions = useTransientEditorInteractions(editor, selectionRewrite.cancel)
 
   useEffect(
     () => registerVisibleDocument(documentId),
@@ -499,15 +507,7 @@ export function TiptapDocumentEditor({
     if (!dragging && editor && !editor.isDestroyed) editor.view.dom.dispatchEvent(new Event('dragend'))
   }
 
-  const writing = Boolean(backendDocument?.activeTransactionId) || presentingStream
   const awaitingFirstContent = isAgentDocumentAwaitingContent(backendDocument)
-  const selectionRewrite = useTiptapSelectionRewrite({
-    editor,
-    roomId: room.id,
-    documentId,
-    documentName,
-    externallyLocked: writing,
-  })
   return (
     <div
       className="context-room-embedded-cloud-doc context-room-tiptap-editor"

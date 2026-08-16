@@ -32,7 +32,7 @@ describe("PiAgentRuntime", () => {
     await expect(runtime.getCapabilities()).resolves.toEqual({
       streaming: true,
       reasoning: false,
-      tools: false,
+      tools: true,
       steering: true,
       resume: false,
     });
@@ -244,18 +244,26 @@ describe("PiAgentRuntime", () => {
       expect(secondEvents.map((event) => event.type)).toContain("tool.completed");
       expect(requestBodies).toHaveLength(4);
       expect(JSON.stringify(requestBodies[0]?.tools)).toContain("context_room_write_begin");
+      expect(JSON.stringify(requestBodies[0]?.tools)).toContain('"name":"bash"');
+      expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("v2_desktop_user_pc_bash");
       const firstRequest = JSON.stringify(requestBodies[0]);
       expect(firstRequest).toContain("必须使用简体中文");
       expect(firstRequest).toContain("准备写入正文的实际核心内容、重点或结论");
       expect(firstRequest).toContain("标题要随内容类型调整");
       expect(firstRequest).toContain("随后写出的正文必须与标题一致");
       expect(firstRequest).toContain("充实、完整的长篇内容");
-      expect(firstRequest).toContain("正文不得再使用一级标题（#）");
-      expect(firstRequest).toContain("同一层级的章节必须使用相同数量的 #");
-      expect(firstRequest).toContain("普通强调请使用加粗而不是标题");
-      expect(firstRequest).toContain("局部选区重写、普通问答或聊天不得擅自创建新文档");
-      expect(firstRequest).toContain("必须先调用 context_room_list");
-      expect(firstRequest).toContain("禁止替用户猜测目标 Room");
+      expect(firstRequest).toContain("标题层级应服务于内容结构");
+      expect(firstRequest).toContain("默认让同一层级的章节使用一致的标题级别");
+      expect(firstRequest).toContain("如果用户明确要求一级标题");
+      expect(firstRequest).toContain("明确表达了要在工作区中创建、保存或写入一篇文档");
+      expect(firstRequest).toContain("解释、分析、总结、整理、列计划、写方案、起草内容、润色、扩写");
+      expect(firstRequest).toContain("意图不明确时不要调用 context_room_list 或 context_room_write_begin");
+      expect(firstRequest).toContain("只有当用户明确要求在工作区创建、保存或写入文档");
+      expect(firstRequest).toContain("必须立即调用 context_room_list");
+      expect(firstRequest).toContain("不得询问用户是否需要查看列表");
+      expect(firstRequest).toContain("普通页面的普通聊天不要主动提示 Room 选择");
+      expect(firstRequest).toContain("也不要替用户猜测目标 Room");
+      expect(firstRequest).toContain("调用 context_room_write_begin 之前必须先用 memory_search 和 conversation_search");
       expect(requestBodies[1]?.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: "tool", content: '{"roomId":"room-a","state":"open"}' }),
       ]));

@@ -1,4 +1,4 @@
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract'
+import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
@@ -50,7 +50,7 @@ export function PortedDetail({
   onOpenRoom: (roomId: string) => void
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void
   onBackendDocumentChange: (document: RoomDocument) => void
-  onCreateDocument: (roomId: string, title: string) => Promise<RoomDocument>
+  onCreateDocument: (roomId: string, title: string, contentJson?: TiptapJsonContent) => Promise<RoomDocument>
   onDeleteDocument: (document: RoomDocument) => Promise<void>
   onRestoreDocument: (document: RoomDocument) => Promise<void>
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>
@@ -100,12 +100,32 @@ export function PortedDetail({
     layout.setMobileContent(true)
   }, [layout, room.id])
 
-  const createDocument = useCallback(async (title: string) => {
-    const document = await onCreateDocument(room.id, title)
+  const createDocument = useCallback(async (title: string, contentJson?: TiptapJsonContent) => {
+    const document = await onCreateDocument(room.id, title, contentJson)
     const resource = createContextRoomResourceLibrary(room, [document]).resources.find((candidate) =>
       candidate.kind === 'cloud-doc' && candidate.binding.docId === document.id)
     if (resource) openResource(resource)
   }, [onCreateDocument, openResource, room])
+
+  const addLocalFile = useCallback((file: LocalOfficeFile) => {
+    const item = createContextRoomFileItem(file)
+    onUpdateRoom((current) => {
+      if (current.fileItems.some((candidate) => candidate.hostfsPath === file.path)) return current
+      return {
+        ...current,
+        fileItems: [...current.fileItems, item],
+        stats: { ...current.stats, docs: current.stats.docs + 1 },
+      }
+    })
+    setSelectedResourceId(`${room.id}:file:${item.id}`)
+    setSelectedObject(null)
+    layout.setPanels(['documents'])
+    layout.setPanelWeights([1])
+    layout.setActivePanelIndex(0)
+    layout.setMiddleHidden(false)
+    layout.setMobileContent(true)
+    setActivePane('documents')
+  }, [layout, onUpdateRoom, room.id, setActivePane])
 
   useEffect(() => {
     const resource = library.resources.find((candidate) =>
@@ -141,26 +161,6 @@ export function PortedDetail({
     if (!layout.panels.includes(pane)) layout.switchPane(pane)
     layout.setMobileContent(true)
   }, [layout])
-
-  const addLocalFile = useCallback((file: LocalOfficeFile) => {
-    const item = createContextRoomFileItem(file)
-    onUpdateRoom((current) => {
-      if (current.fileItems.some((candidate) => candidate.hostfsPath === file.path)) return current
-      return {
-        ...current,
-        fileItems: [...current.fileItems, item],
-        stats: { ...current.stats, docs: current.stats.docs + 1 },
-      }
-    })
-    setSelectedResourceId(`${room.id}:file:${item.id}`)
-    setSelectedObject(null)
-    layout.setPanels(['documents'])
-    layout.setPanelWeights([1])
-    layout.setActivePanelIndex(0)
-    layout.setMiddleHidden(false)
-    layout.setMobileContent(true)
-    setActivePane('documents')
-  }, [layout, onUpdateRoom, room.id])
 
   const toggleTask = (taskId: string) => onUpdateRoom((current) => ({
     ...current,
