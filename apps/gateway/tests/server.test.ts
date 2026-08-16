@@ -22,7 +22,6 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
-    remoteAgent: null,
     pi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
@@ -59,7 +58,7 @@ describe("gateway server", () => {
     expect(authorized.statusCode).toBe(200);
   });
 
-  it("deletes documents through the authenticated REST API", async () => {
+  it("supports the complete authenticated document CRUD lifecycle", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
@@ -74,28 +73,91 @@ describe("gateway server", () => {
         contentJson: { type: "doc", content: [] },
       },
     });
+    const listedAfterCreate = await app.inject({
+      method: "GET",
+      url: "/v1/documents?roomId=room-delete",
+      headers,
+    });
+    const readAfterCreate = await app.inject({
+      method: "GET",
+      url: "/v1/documents/document-to-delete",
+      headers,
+    });
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/v1/documents/document-to-delete",
+      headers,
+      payload: {
+        baseVersion: 1,
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "已更新" }] }] },
+      },
+    });
+    const conflict = await app.inject({
+      method: "PUT",
+      url: "/v1/documents/document-to-delete",
+      headers,
+      payload: { baseVersion: 1, contentJson: { type: "doc", content: [] } },
+    });
     const deleted = await app.inject({
       method: "DELETE",
       url: "/v1/documents/document-to-delete",
       headers,
     });
-    const listed = await app.inject({
+    const listedAfterDelete = await app.inject({
       method: "GET",
       url: "/v1/documents?roomId=room-delete",
       headers,
     });
-    const missing = await app.inject({
+    const listedTrash = await app.inject({
+      method: "GET",
+      url: "/v1/documents?roomId=room-delete&trashed=true",
+      headers,
+    });
+    const restored = await app.inject({
+      method: "POST",
+      url: "/v1/documents/document-to-delete/restore",
+      headers,
+    });
+    const listedAfterRestore = await app.inject({
+      method: "GET",
+      url: "/v1/documents?roomId=room-delete",
+      headers,
+    });
+    await app.inject({
       method: "DELETE",
+      url: "/v1/documents/document-to-delete",
+      headers,
+    });
+    const permanentlyDeleted = await app.inject({
+      method: "DELETE",
+      url: "/v1/documents/document-to-delete/permanent",
+      headers,
+    });
+    const readAfterPermanentDelete = await app.inject({
+      method: "GET",
       url: "/v1/documents/document-to-delete",
       headers,
     });
     await app.close();
 
     expect(imported.statusCode).toBe(201);
+    expect(imported.json()).toMatchObject({ id: "document-to-delete", roomId: "room-delete", version: 1 });
+    expect(listedAfterCreate.json()).toEqual([expect.objectContaining({ id: "document-to-delete" })]);
+    expect(readAfterCreate.json()).toMatchObject({ id: "document-to-delete", version: 1 });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ version: 2, contentJson: { type: "doc" } });
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toMatchObject({ error: "DOCUMENT_CONFLICT" });
     expect(deleted.statusCode).toBe(204);
-    expect(listed.json()).toEqual([]);
-    expect(missing.statusCode).toBe(404);
-    expect(missing.json()).toMatchObject({ error: "NOT_FOUND" });
+    expect(listedAfterDelete.json()).toEqual([]);
+    expect(listedTrash.json()).toEqual([
+      expect.objectContaining({ id: "document-to-delete", deletedAt: expect.any(String) }),
+    ]);
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json()).toMatchObject({ id: "document-to-delete", deletedAt: null });
+    expect(listedAfterRestore.json()).toEqual([expect.objectContaining({ id: "document-to-delete" })]);
+    expect(permanentlyDeleted.statusCode).toBe(204);
+    expect(readAfterPermanentDelete.statusCode).toBe(404);
   });
 
   it("serves the document MCP protocol over authenticated HTTP", async () => {

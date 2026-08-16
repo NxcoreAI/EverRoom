@@ -7,7 +7,7 @@ import type {
   SaveRoomDocumentInput,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
-import { and, asc, eq, lt } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   documentOps,
@@ -73,6 +73,7 @@ function toDocument(
     version: row.version,
     status: row.status,
     activeTransactionId: row.activeTransactionId,
+    deletedAt: row.deletedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -101,11 +102,14 @@ export class DocumentService {
     this.pending.clear();
   }
 
-  list(roomId: string): RoomDocument[] {
+  list(roomId: string, trashed = false): RoomDocument[] {
     return this.db.select({ document: documents })
       .from(roomDocumentLinks)
       .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
-      .where(eq(roomDocumentLinks.roomId, roomId))
+      .where(and(
+        eq(roomDocumentLinks.roomId, roomId),
+        trashed ? isNotNull(documents.deletedAt) : isNull(documents.deletedAt),
+      ))
       .orderBy(asc(roomDocumentLinks.linkedAt))
       .all()
       .map(({ document }) => toDocument(document, roomId));
@@ -195,9 +199,13 @@ export class DocumentService {
     return this.queue.enqueue(() => {
       const current = this.get(documentId);
       if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (current.deletedAt) {
+        throw new DocumentServiceError("DOCUMENT_TRASHED", "Restore the document before editing it", 409);
+      }
       if (current.activeTransactionId) {
         throw new DocumentServiceError("DOCUMENT_BUSY", "Agent is writing this document", 409);
       }
+      if (JSON.stringify(current.contentJson) === JSON.stringify(input.contentJson)) return current;
       if (current.version !== input.baseVersion) {
         throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409);
       }
@@ -224,8 +232,38 @@ export class DocumentService {
     return this.queue.enqueue(() => {
       const current = this.get(documentId);
       if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (current.deletedAt) return;
       if (current.activeTransactionId) {
         throw new DocumentServiceError("DOCUMENT_BUSY", "Agent is writing this document", 409);
+      }
+      const now = new Date();
+      this.db.update(documents).set({ deletedAt: now, updatedAt: now })
+        .where(eq(documents.id, documentId)).run();
+      const trashed = this.get(documentId)!;
+      this.publish(current.roomId, documentId, null, "document.trashed", { document: trashed });
+    });
+  }
+
+  restore(documentId: string): Promise<RoomDocument> {
+    return this.queue.enqueue(() => {
+      const current = this.get(documentId);
+      if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (!current.deletedAt) return current;
+      const now = new Date();
+      this.db.update(documents).set({ deletedAt: null, updatedAt: now })
+        .where(eq(documents.id, documentId)).run();
+      const restored = this.get(documentId)!;
+      this.publish(restored.roomId, documentId, null, "document.restored", { document: restored });
+      return restored;
+    });
+  }
+
+  deletePermanently(documentId: string): Promise<void> {
+    return this.queue.enqueue(() => {
+      const current = this.get(documentId);
+      if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (!current.deletedAt) {
+        throw new DocumentServiceError("DOCUMENT_NOT_TRASHED", "Move the document to trash first", 409);
       }
       const transactions = this.db.select({ id: documentTransactions.id })
         .from(documentTransactions)

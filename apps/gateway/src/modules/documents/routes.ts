@@ -16,10 +16,13 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
       {
         schema: {
           tags: ["documents"],
-          querystring: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+          querystring: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            trashed: Type.Optional(Type.Union([Type.Literal("true"), Type.Literal("false")])),
+          }),
         },
       },
-      async (request) => service.list(request.query.roomId),
+      async (request) => service.list(request.query.roomId, request.query.trashed === "true"),
     );
 
     app.get(
@@ -75,6 +78,37 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
       async (request, reply) => {
         try {
           await service.delete(request.params.id);
+          return reply.code(204).send();
+        } catch (error) {
+          if (error instanceof DocumentServiceError) {
+            return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/documents/:id/restore",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          return await service.restore(request.params.id);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) {
+            return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.delete(
+      "/v1/documents/:id/permanent",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          await service.deletePermanently(request.params.id);
           return reply.code(204).send();
         } catch (error) {
           if (error instanceof DocumentServiceError) {
