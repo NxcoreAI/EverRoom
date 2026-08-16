@@ -1,4 +1,4 @@
-import type { TiptapJsonContent } from '@nxcore/agent-contract'
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 
 const STREAM_CHARACTERS_PER_FRAME = 2
 const STREAM_MAX_FRAMES_PER_APPEND = 800
@@ -19,6 +19,22 @@ export function tiptapTextContent(node: TiptapJsonContent): string {
 
 export function countTiptapTextCharacters(node: TiptapJsonContent): number {
   return textCharacters(tiptapTextContent(node)).length
+}
+
+export function hasVisibleTiptapContent(node: TiptapJsonContent): boolean {
+  if (typeof node.text === 'string' && node.text.trim().length > 0) return true
+  if (node.type === 'horizontalRule' || node.type === 'image') return true
+  return node.content?.some(hasVisibleTiptapContent) ?? false
+}
+
+export function isAgentDocumentAwaitingContent(
+  document: Pick<RoomDocument, 'activeTransactionId' | 'contentJson' | 'status'> | null,
+): boolean {
+  return Boolean(
+    document?.status === 'draft'
+    && document.activeTransactionId
+    && !hasVisibleTiptapContent(document.contentJson),
+  )
 }
 
 export function isEmptyTiptapParagraph(node: TiptapJsonContent | undefined): boolean {

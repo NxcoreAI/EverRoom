@@ -76,6 +76,10 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/permanent`, { method: 'DELETE' })
   }
 
+  emptyTrash(roomId: string): Promise<void> {
+    return this.request(`/v1/documents/trash?${new URLSearchParams({ roomId })}`, { method: 'DELETE' })
+  }
+
   acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void> {
     return this.request(`/v1/document-transactions/${encodeURIComponent(transactionId)}/ack`, {
       method: 'POST',

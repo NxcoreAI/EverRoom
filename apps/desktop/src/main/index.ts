@@ -83,6 +83,7 @@ const DOCUMENT_CHANNELS = {
   delete: 'documents:delete',
   restore: 'documents:restore',
   deletePermanently: 'documents:delete-permanently',
+  emptyTrash: 'documents:empty-trash',
   acknowledge: 'documents:acknowledge',
   subscribe: 'documents:subscribe',
   unsubscribe: 'documents:unsubscribe',
@@ -309,6 +310,7 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
   ipcMain.handle(DOCUMENT_CHANNELS.restore, (_event, documentId) => bridge.restore(documentId))
   ipcMain.handle(DOCUMENT_CHANNELS.deletePermanently, (_event, documentId) =>
     bridge.deletePermanently(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.emptyTrash, (_event, roomId) => bridge.emptyTrash(roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
     bridge.acknowledge(transactionId, input))
   ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))

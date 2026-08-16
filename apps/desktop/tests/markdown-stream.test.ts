@@ -7,6 +7,8 @@ import {
   documentStreamCharactersPerFrame,
   documentStreamRevealDelay,
   eventsAfterLastDocumentTerminal,
+  hasVisibleTiptapContent,
+  isAgentDocumentAwaitingContent,
   isEmptyTiptapParagraph,
   MarkdownBlockBuffer,
   revealTiptapNode,
@@ -53,6 +55,28 @@ describe('Markdown stream buffering', () => {
       content: [{ type: 'text', text: '正文' }],
     })).toBe(false)
     expect(isEmptyTiptapParagraph({ type: 'heading' })).toBe(false)
+  })
+
+  it('shows the Agent overlay only before the first visible content is persisted', () => {
+    const emptyDraft = {
+      status: 'draft' as const,
+      activeTransactionId: 'tx-1',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph' }] },
+    }
+    expect(hasVisibleTiptapContent(emptyDraft.contentJson)).toBe(false)
+    expect(isAgentDocumentAwaitingContent(emptyDraft)).toBe(true)
+    expect(isAgentDocumentAwaitingContent({
+      ...emptyDraft,
+      contentJson: {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: '正文开始' }] }],
+      },
+    })).toBe(false)
+    expect(isAgentDocumentAwaitingContent({
+      ...emptyDraft,
+      status: 'active',
+      activeTransactionId: null,
+    })).toBe(false)
   })
 
   it('deduplicates retried transaction sequences independently of event IDs', () => {

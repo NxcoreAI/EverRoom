@@ -290,6 +290,7 @@ export interface NxcoreDesktopApi {
     delete(documentId: string): Promise<void>
     restore(documentId: string): Promise<RoomDocument>
     deletePermanently(documentId: string): Promise<void>
+    emptyTrash(roomId: string): Promise<void>
     acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void>
     subscribe(roomId: string): Promise<void>
     unsubscribe(roomId?: string): Promise<void>

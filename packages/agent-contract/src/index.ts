@@ -167,6 +167,19 @@ export interface DocumentEvent<T = unknown> {
   payload: T;
 }
 
+export interface DocumentSnapshotEventPayload {
+  document: RoomDocument;
+}
+
+export interface DocumentAppendedEventPayload extends DocumentSnapshotEventPayload {
+  sequence: number;
+  text: string;
+}
+
+export interface DocumentCommitRequestedEventPayload extends DocumentSnapshotEventPayload {
+  finalSequence: number;
+}
+
 export interface DocumentEventFrame {
   type: "document.event";
   protocol: 1;
