@@ -140,12 +140,17 @@ export function AgentPanel({
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
     if ((navigationRequest.target.roomId ?? null) !== roomId) return
-    if (!roomBackendReady || session.loading || session.activeRunId || submitting) return
+    if (!roomBackendReady || !session.scopeReady || session.loading || session.activeRunId || submitting) return
     if (handledRequestKeysRef.current.has(navigationRequest.key)) return
     handledRequestKeysRef.current.add(navigationRequest.key)
     setSubmitting(true)
     void (async () => {
-      const targetSession = await session.createSession()
+      const reusableSession = session.sessions.length === 1
+        && session.currentSession?.id === session.sessionId
+        && !session.currentSession.title?.trim()
+        && session.messages.length === 0
+        && session.sessionLinks.length === 0
+      const targetSession = reusableSession ? session.currentSession! : await session.createSession()
       const targetSessionId = targetSession.id
       await session.renameSession(targetSessionId, navigationRequest.target.title.trim().slice(0, 120))
       await session.createSessionLink({
@@ -251,9 +256,7 @@ export function AgentPanel({
         <AgentSessionSwitcher
           activeRunId={session.activeRunId}
           connected={session.connected}
-          currentSession={session.currentSession}
-          loading={session.loading}
-          transitionTitle={navigationRequest?.target.title ?? null}
+          displayTitle={navigationRequest?.target.title ?? session.displayTitle}
           sessionId={session.sessionId}
           sessions={session.sessions}
           onCreate={async () => {
@@ -278,6 +281,7 @@ export function AgentPanel({
         availableRooms={rooms}
         composer={composer}
         currentSessionId={session.sessionId}
+        scopeReady={session.scopeReady}
         draftHasContent={Boolean(draft.trim())}
         error={session.error}
         loading={session.loading}

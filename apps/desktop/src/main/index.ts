@@ -2,6 +2,7 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell } from 'electron'
 
+import type { CloudAccountStatus } from '../shared/sources'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
@@ -24,6 +25,7 @@ import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
+import { configureSentry, syncSentryAccount } from './monitoring/sentry'
 
 const APP_NAME = 'EverRoom'
 
@@ -33,6 +35,7 @@ const dataDirectory = join(appDataDirectory, APP_NAME)
 app.setPath('userData', dataDirectory)
 app.setName(APP_NAME)
 configureDesktopLogger(dataDirectory)
+configureSentry(app.getVersion(), app.isPackaged)
 if (process.platform === 'darwin') process.title = APP_NAME
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -390,22 +393,28 @@ function registerRealityHandlers(bridge: RealityGatewayBridge): void {
   ipcMain.handle(REALITY_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
+async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promise<CloudAccountStatus> {
+  const account = await status
+  syncSentryAccount(account)
+  return account
+}
+
 function registerAccountHandlers(client: SaasClient): void {
-  ipcMain.handle(ACCOUNT_CHANNELS.status, () => client.status())
+  ipcMain.handle(ACCOUNT_CHANNELS.status, () => syncAccountMonitoring(client.status()))
   ipcMain.handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
     const value = input as { identifier?: unknown; password?: unknown }
     if (typeof value.identifier !== 'string' || typeof value.password !== 'string') {
       throw new Error('请输入账号和密码。')
     }
-    return client.login(value.identifier, value.password)
+    return syncAccountMonitoring(client.login(value.identifier, value.password))
   })
   ipcMain.handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
     if (provider !== 'apple' && provider !== 'google') throw new Error('不支持的登录方式。')
-    return client.loginWithOidc(provider)
+    return syncAccountMonitoring(client.loginWithOidc(provider))
   })
   ipcMain.handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
-  ipcMain.handle(ACCOUNT_CHANNELS.logout, () => client.logout())
+  ipcMain.handle(ACCOUNT_CHANNELS.logout, () => syncAccountMonitoring(client.logout()))
 }
 
 function createWindow(): void {
@@ -488,7 +497,7 @@ function createWindow(): void {
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   nativeTheme.themeSource = 'light'
   if (process.defaultApp && process.argv[1] && process.platform !== 'darwin') {
-    app.setAsDefaultProtocolClient('everroom', process.execPath, [process.argv[1]])
+    app.setAsDefaultProtocolClient('everroom', process.execPath, [app.getAppPath()])
   } else {
     app.setAsDefaultProtocolClient('everroom')
   }
