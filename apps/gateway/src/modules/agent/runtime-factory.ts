@@ -4,6 +4,7 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import type { GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
+import { join } from "node:path";
 
 export function createAgentRuntime(config: GatewayConfig, mcpHost: DocumentMcpHost): AgentRuntime {
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
@@ -14,5 +15,17 @@ export function createAgentRuntime(config: GatewayConfig, mcpHost: DocumentMcpHo
       input.sessionId,
       `pi-agent-run-${outcome}`,
     ),
+  });
+}
+
+export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntime {
+  if (config.agentRuntime === "fake") return new FakeAgentRuntime();
+  if (!config.pi) throw new Error("Pi runtime configuration is missing");
+  const { memory: _memory, ...pi } = config.pi;
+  return new PiAgentRuntime({
+    ...pi,
+    sessionsDir: join(config.pi.sessionsDir, "background"),
+    workingDirectory: join(config.pi.workingDirectory, "background"),
+    agentDirectory: join(config.pi.agentDirectory, "background"),
   });
 }

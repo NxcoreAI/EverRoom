@@ -24,6 +24,7 @@ import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
 import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
+import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
 
 const APP_NAME = 'EverRoom'
 
@@ -146,6 +147,7 @@ let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let saasClient: SaasClient | null = null
 let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
+let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
 
@@ -527,6 +529,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       keyring,
     )
     await privateTranscriptionSync.initialize()
+    transcriptionProcessingCoordinator = new TranscriptionProcessingCoordinator(
+      join(dataDirectory, 'transcription-processing-state.json'),
+      saasClient,
+      keyring,
+      agentGatewayBridge,
+    )
+    await transcriptionProcessingCoordinator.initialize()
+    transcriptionProcessingCoordinator.start()
     if (process.platform !== 'darwin') {
       const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
       if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
@@ -556,6 +566,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
     realityGatewayBridge = null
+    transcriptionProcessingCoordinator?.stop()
+    transcriptionProcessingCoordinator = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -593,6 +605,8 @@ app.on('before-quit', (event) => {
   recordingStore = null
   saasClient = null
   privateTranscriptionSync = null
+  transcriptionProcessingCoordinator?.stop()
+  transcriptionProcessingCoordinator = null
   agentBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()

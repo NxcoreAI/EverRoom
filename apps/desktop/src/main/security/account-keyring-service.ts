@@ -61,6 +61,12 @@ function verificationCode(publicKey: string): string {
   return digest.match(/.{1,4}/g)!.join('-')
 }
 
+function isBasicTextStorage(): boolean {
+  // Electron only exposes the selected storage backend at runtime on Linux.
+  if (process.platform !== 'linux') return false
+  return safeStorage.getSelectedStorageBackend?.() === 'basic_text'
+}
+
 export class AccountKeyringService {
   private loaded = false
   private file: StoredKeyringFile | null = null
@@ -70,7 +76,7 @@ export class AccountKeyringService {
   async initialize(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
-    if (!safeStorage.isEncryptionAvailable() || safeStorage.getSelectedStorageBackend() === 'basic_text') return
+    if (!safeStorage.isEncryptionAvailable() || isBasicTextStorage()) return
     try {
       const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as Partial<StoredKeyringFile>
       if (typeof parsed.publicKey === 'string' && typeof parsed.privateKey === 'string') {
@@ -82,7 +88,7 @@ export class AccountKeyringService {
   }
 
   isAvailable(): boolean {
-    return safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend() !== 'basic_text'
+    return safeStorage.isEncryptionAvailable() && !isBasicTextStorage()
   }
 
   async status(client: SaasClient, userId: string): Promise<AccountKeyringStatus> {

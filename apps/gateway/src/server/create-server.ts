@@ -18,7 +18,7 @@ import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
 import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
-import { createAgentRuntime } from "../modules/agent/runtime-factory.js";
+import { createAgentRuntime, createBackgroundAgentRuntime } from "../modules/agent/runtime-factory.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
@@ -30,6 +30,8 @@ import { MemoryService } from "../modules/memory/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
+import { processingRoutes } from "../modules/processing/routes.js";
+import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -119,6 +121,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   const agentService = new AgentService(db, agentRuntime, new AgentEventBroker(), app.log);
   await agentService.initialize();
+  const transcriptionSummaryService = new TranscriptionSummaryService(createBackgroundAgentRuntime(config));
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
@@ -131,6 +134,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   app.addHook("onClose", async () => {
     await agentService.dispose();
+    await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     documentService.dispose();
     await asrService.dispose();
@@ -138,6 +142,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await gatewayLogger.close();
   });
   await app.register(agentRoutes(agentService));
+  await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));
   await app.register(asrRoutes(asrService));

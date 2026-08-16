@@ -82,7 +82,16 @@ export class FakeAgentRuntime implements AgentRuntime {
       await delay(120, signal);
       queue.push({ type: "message.started", payload: { role: "assistant" } });
 
-      const content = `这是 Fake Runtime 的流式响应。当前工作区是“${input.pageLabel}”。你刚才提出的是：“${input.prompt}”。协议链路已经打通，下一阶段会将这里替换为 Pi SDK。`;
+      const content = input.pageLabel === "后台转写总结"
+        ? JSON.stringify({
+            title: "转写总结（模拟）",
+            overview: "Fake Runtime 已完成后台总结链路验证；请配置 Pi Runtime 生成真实总结。",
+            keyPoints: [],
+            decisions: [],
+            actionItems: [],
+            topics: [],
+          })
+        : `这是 Fake Runtime 的流式响应。当前工作区是“${input.pageLabel}”。你刚才提出的是：“${input.prompt}”。协议链路已经打通，下一阶段会将这里替换为 Pi SDK。`;
       for (const character of content) {
         await delay(12, signal);
         queue.push({ type: "message.delta", payload: { delta: character } });

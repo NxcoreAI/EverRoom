@@ -98,6 +98,7 @@ export interface PrivateRecordEnvelope {
   cursor: number
   operation: 'upsert' | 'delete'
   recordId: string
+  recordType?: 'legacy_transcription' | 'transcription_source' | 'transcription_summary'
   algorithm?: 'AES-256-GCM'
   schemaVersion?: number
   keyId?: string
@@ -110,6 +111,39 @@ export interface PrivateRecordEnvelope {
   revision: number
   createdAt: string
   updatedAt: string
+}
+
+export interface ProcessingJob {
+  id: string
+  workflow: 'transcription.summary.v1'
+  workflowVersion: number
+  sourceRecordId: string
+  sourceRevision: number
+  sourceContentHash: string
+  status: 'pending' | 'leased' | 'running' | 'retry_wait' | 'succeeded' | 'superseded' | 'cancelled' | 'dead_letter'
+  attemptCount: number
+  maxAttempts: number
+  leaseExpiresAt: string | null
+  resultRecordId: string | null
+  lastErrorCode: string | null
+  lastErrorClass: 'retryable' | 'permanent' | 'user_action' | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export interface CompleteProcessingJobInput {
+  leaseToken: string
+  resultRecordId: string
+  algorithm: 'AES-256-GCM'
+  schemaVersion: number
+  keyId: string
+  ciphertext: string
+  contentHash: string
+  wrappingAlgorithm: 'AES-256-GCM'
+  wrappingKeyId: string
+  wrappingKeyVersion: number
+  wrappedKey: string
 }
 
 interface StoredAccountProfile {
@@ -421,6 +455,53 @@ export class SaasClient {
       records: result.data,
       nextCursor: typeof result.meta?.nextCursor === 'number' ? result.meta.nextCursor : cursor,
     }
+  }
+
+  async getPrivateRecord(recordId: string): Promise<PrivateRecordEnvelope> {
+    return this.request(`/app/private-records/${encodeURIComponent(recordId)}`)
+  }
+
+  async registerProcessorDevice(): Promise<void> {
+    await this.request('/app/processing/device', {
+      method: 'PUT',
+      data: { capabilities: ['transcription.summary.v1'], maxConcurrency: 1 },
+    })
+  }
+
+  async claimProcessingJob(): Promise<{ job: ProcessingJob; leaseToken: string } | null> {
+    return this.request('/app/processing/jobs/claim', { method: 'POST', data: {} })
+  }
+
+  async startProcessingJob(jobId: string, leaseToken: string): Promise<ProcessingJob> {
+    return this.request(`/app/processing/jobs/${encodeURIComponent(jobId)}/start`, {
+      method: 'POST',
+      data: { leaseToken },
+    })
+  }
+
+  async renewProcessingJob(jobId: string, leaseToken: string): Promise<ProcessingJob> {
+    return this.request(`/app/processing/jobs/${encodeURIComponent(jobId)}/renew`, {
+      method: 'POST',
+      data: { leaseToken },
+    })
+  }
+
+  async completeProcessingJob(jobId: string, input: CompleteProcessingJobInput): Promise<void> {
+    await this.request(`/app/processing/jobs/${encodeURIComponent(jobId)}/complete`, {
+      method: 'POST',
+      data: input,
+    })
+  }
+
+  async failProcessingJob(jobId: string, input: {
+    leaseToken: string
+    errorCode: string
+    errorClass: 'retryable' | 'permanent' | 'user_action'
+  }): Promise<void> {
+    await this.request(`/app/processing/jobs/${encodeURIComponent(jobId)}/fail`, {
+      method: 'POST',
+      data: input,
+    })
   }
 
   async acknowledgeSync(cursor: number): Promise<void> {

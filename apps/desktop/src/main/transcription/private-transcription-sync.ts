@@ -22,7 +22,10 @@ function parsePlaintext(recordId: string, plaintext: Buffer, envelope: PrivateRe
     value = { transcript: plaintext.toString('utf8') }
   }
   const object = value && typeof value === 'object' ? value as Record<string, unknown> : { transcript: String(value ?? '') }
-  if (object.kind !== undefined && object.kind !== 'everroom.transcription') throw new Error(`转写记录 ${recordId} 的类型无效。`)
+  if (
+    object.kind !== undefined
+    && !['everroom.transcription', 'everroom.transcription-source', 'everroom.transcription-summary'].includes(String(object.kind))
+  ) throw new Error(`转写记录 ${recordId} 的类型无效。`)
   if (object.eventId !== undefined && object.eventId !== recordId) throw new Error(`转写记录 ${recordId} 的事件标识无效。`)
   const transcriptLines = Array.isArray(object.transcriptLines) ? object.transcriptLines : []
   const transcript = typeof object.transcript === 'string'
@@ -31,6 +34,8 @@ function parsePlaintext(recordId: string, plaintext: Buffer, envelope: PrivateRe
       ? object.rawTranscript
       : typeof object.detailMarkdown === 'string'
         ? object.detailMarkdown
+        : object.summary && typeof object.summary === 'object' && typeof (object.summary as Record<string, unknown>).overview === 'string'
+          ? (object.summary as Record<string, unknown>).overview as string
         : transcriptLines.map((line) => line && typeof line === 'object' && typeof (line as Record<string, unknown>).text === 'string' ? (line as Record<string, unknown>).text : '').filter(Boolean).join('\n')
   const segments = Array.isArray(object.segments) ? object.segments.filter((segment): segment is AsrSegment => {
     if (!segment || typeof segment !== 'object') return false
@@ -141,24 +146,11 @@ export class PrivateTranscriptionSyncService {
   }
 
   private decryptRecord(envelope: PrivateRecordEnvelope, umk: Buffer, umkId: string, umkVersion: number): PrivateTranscriptionRecord {
-    if (!envelope.ciphertext || !envelope.keyId || !envelope.contentHash || envelope.algorithm !== 'AES-256-GCM') throw new Error(`转写记录 ${envelope.recordId} 缺少加密字段。`)
-    if (hashBase64(envelope.ciphertext) !== envelope.contentHash) throw new Error(`转写记录 ${envelope.recordId} 完整性校验失败。`)
-    let plaintext: Buffer
-    if (envelope.schemaVersion === 1) {
-      if (envelope.keyId !== keyId(umk)) throw new Error(`转写记录 ${envelope.recordId} 的旧版 UMK 不匹配。`)
-      plaintext = combinedDecrypt(umk, envelope.ciphertext, Buffer.from(`everroom.private-record.v1:${envelope.recordId}:${envelope.keyId}`, 'utf8'))
-    } else if (envelope.schemaVersion === 2) {
-      if (envelope.wrappingAlgorithm !== 'AES-256-GCM' || envelope.wrappingKeyId !== umkId || envelope.wrappingKeyVersion !== umkVersion || !envelope.wrappedKey) {
-        throw new Error(`转写记录 ${envelope.recordId} 使用了不可用的 UMK 版本。`)
-      }
-      const wrappingAad = Buffer.from(`everroom.wrapped-dek.v1:${envelope.recordId}:${envelope.keyId}:${umkId}:${umkVersion}`, 'utf8')
-      const dek = combinedDecrypt(umk, envelope.wrappedKey, wrappingAad)
-      if (dek.length !== 32 || keyId(dek) !== envelope.keyId) throw new Error(`转写记录 ${envelope.recordId} 的 DEK 校验失败。`)
-      plaintext = combinedDecrypt(dek, envelope.ciphertext, Buffer.from(`everroom.private-record.v2:${envelope.recordId}:${envelope.keyId}:${umkId}:${umkVersion}`, 'utf8'))
-    } else {
-      throw new Error(`转写记录 ${envelope.recordId} 的加密版本不受支持。`)
-    }
-    return parsePlaintext(envelope.recordId, plaintext, envelope)
+    return parsePlaintext(
+      envelope.recordId,
+      decryptPrivateRecordPayload(envelope, umk, umkId, umkVersion),
+      envelope,
+    )
   }
 
   private async persist(): Promise<void> {
@@ -166,4 +158,28 @@ export class PrivateTranscriptionSyncService {
     await writeFile(this.filePath, JSON.stringify(this.state), { mode: 0o600 })
     await chmod(this.filePath, 0o600)
   }
+}
+
+export function decryptPrivateRecordPayload(
+  envelope: PrivateRecordEnvelope,
+  umk: Buffer,
+  umkId: string,
+  umkVersion: number,
+): Buffer {
+    if (!envelope.ciphertext || !envelope.keyId || !envelope.contentHash || envelope.algorithm !== 'AES-256-GCM') throw new Error(`转写记录 ${envelope.recordId} 缺少加密字段。`)
+    if (hashBase64(envelope.ciphertext) !== envelope.contentHash) throw new Error(`转写记录 ${envelope.recordId} 完整性校验失败。`)
+    if (envelope.schemaVersion === 1) {
+      if (envelope.keyId !== keyId(umk)) throw new Error(`转写记录 ${envelope.recordId} 的旧版 UMK 不匹配。`)
+      return combinedDecrypt(umk, envelope.ciphertext, Buffer.from(`everroom.private-record.v1:${envelope.recordId}:${envelope.keyId}`, 'utf8'))
+    }
+    if (envelope.schemaVersion === 2 || envelope.schemaVersion === 3) {
+      if (envelope.wrappingAlgorithm !== 'AES-256-GCM' || envelope.wrappingKeyId !== umkId || envelope.wrappingKeyVersion !== umkVersion || !envelope.wrappedKey) {
+        throw new Error(`转写记录 ${envelope.recordId} 使用了不可用的 UMK 版本。`)
+      }
+      const wrappingAad = Buffer.from(`everroom.wrapped-dek.v1:${envelope.recordId}:${envelope.keyId}:${umkId}:${umkVersion}`, 'utf8')
+      const dek = combinedDecrypt(umk, envelope.wrappedKey, wrappingAad)
+      if (dek.length !== 32 || keyId(dek) !== envelope.keyId) throw new Error(`转写记录 ${envelope.recordId} 的 DEK 校验失败。`)
+      return combinedDecrypt(dek, envelope.ciphertext, Buffer.from(`everroom.private-record.v${envelope.schemaVersion}:${envelope.recordId}:${envelope.keyId}:${umkId}:${umkVersion}`, 'utf8'))
+    }
+    throw new Error(`转写记录 ${envelope.recordId} 的加密版本不受支持。`)
 }
