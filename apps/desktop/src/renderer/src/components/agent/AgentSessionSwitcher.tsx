@@ -2,6 +2,8 @@ import type { AgentSession } from '@nxcore/agent-contract'
 import { Check, ChevronDown, History, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { showToast } from '@/state/toast'
+
 export function AgentSessionSwitcher({
   activeRunId,
   connected,
@@ -28,6 +30,11 @@ export function AgentSessionSwitcher({
   const [editingTitle, setEditingTitle] = useState('')
   const navigationRef = useRef<HTMLDivElement>(null)
 
+  const reportError = (title: string, error: unknown) => showToast({
+    title,
+    message: error instanceof Error ? error.message : '请稍后重试。',
+  })
+
   useEffect(() => {
     if (!menuOpen) return
     const close = (event: PointerEvent) => {
@@ -45,12 +52,14 @@ export function AgentSessionSwitcher({
   }, [menuOpen])
 
   const create = () => {
-    void onCreate().then(() => setMenuOpen(false)).catch(() => undefined)
+    void onCreate().then(() => setMenuOpen(false)).catch((error) => reportError('新建会话失败', error))
   }
 
   const saveTitle = (id: string) => {
     if (!editingTitle.trim()) return
-    void onRename(id, editingTitle).then(() => setEditingSessionId(null)).catch(() => undefined)
+    void onRename(id, editingTitle)
+      .then(() => setEditingSessionId(null))
+      .catch((error) => reportError('重命名会话失败', error))
   }
 
   return (
@@ -106,7 +115,9 @@ export function AgentSessionSwitcher({
                       className="agent-session-select"
                       disabled={Boolean(activeRunId) && session.id !== sessionId}
                       onClick={() => {
-                        if (session.id !== sessionId) void onSelect(session)
+                        if (session.id !== sessionId) {
+                          void onSelect(session).catch((error) => reportError('切换会话失败', error))
+                        }
                         setMenuOpen(false)
                       }}
                     >
@@ -136,7 +147,9 @@ export function AgentSessionSwitcher({
                           title={isRunning ? '运行中的会话不能删除' : '删除'}
                           aria-label="删除"
                           disabled={isRunning}
-                          onClick={() => void onDelete(session).then(() => setMenuOpen(false)).catch(() => undefined)}
+                          onClick={() => void onDelete(session)
+                            .then(() => setMenuOpen(false))
+                            .catch((error) => reportError('删除会话失败', error))}
                         ><Trash2 /></button>
                       </>
                     )}
