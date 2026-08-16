@@ -70,15 +70,22 @@
 ```ts
 // Room 注册表：当前 Room 只存在于渲染器 localStorage（nexcore:context-room:state:v1），
 // gateway 无实体表。自动建 Room（D2）要求 gateway 侧有权威注册表：
-// 渲染器 Room 打开/创建时上报登记（origin=user），router 自动创建时写入（origin=auto），
-// 渲染器经 REST 拉取 origin=auto 的 Room 显示（带角标）。
+// 渲染器 Room 打开/创建/改名时上报 upsert，删除时上报（写 deletedAt）；
+// router 自动创建时写入（origin=auto），渲染器经 REST 拉取 origin=auto 的 Room 显示（带角标）。
+// 新表对 rooms 一律松引用（存量 roomId 无注册行不阻塞），完整性由 service 层校验。
 export const rooms = sqliteTable("rooms", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
-  kind: text("kind").notNull().default("auto"),       // 对齐渲染器 ContextRoomRecord.kind
-  origin: text("origin").notNull().default("user"),   // user | auto
+  // 对齐渲染器 ContextRoomKind 六值枚举；⑤ create_new 时 LLM 一并提议 kind，
+  // 渲染器按 kind 直接选图标/色调（人物/项目/主题/长期目标/议题/事件）
+  kind: text("kind").notNull().default("议题"),
+  origin: text("origin").notNull().default("user"),   // user | auto；上报命中 auto 行 = 认领，翻转为 user
   /** origin=auto 时的空间简介（LLM 判"新主题"时产出，供后续路由当候选身份卡） */
   summary: text("summary"),
+  /** 曾用名/同义词（JSON string[]）：重名去重比对用；rename/认领时把旧 title 追加 */
+  aliases: text("aliases"),
+  /** 软删除（null = 存活）：渲染器 deletedRooms 上报触发；候选池/auto 同步/wiki 挂载全部过滤 */
+  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   createdAt / updatedAt,
 });
 
@@ -89,13 +96,18 @@ export const roomWikis = sqliteTable("room_wikis", {
   // ④ 向量层用：质心（float32 数组序列化，~4KB）与参与文档数（冷启动判断）
   centroid: text("centroid"),                         // base64 BLOB；null = 未初始化
   centroidDocs: integer("centroid_docs").notNull().default(0),
+  /** 生成质心所用 embedding 模型标识：换模型后旧质心不可比，检测到不一致时整体重算 */
+  centroidModel: text("centroid_model"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
 });
 
 export const routeDecisions = sqliteTable("route_decisions", {
   id: text("id").primaryKey(),
-  documentId: text("document_id").notNull(),
-  documentVersion: integer("document_version").notNull(),
+  // 溯源 = DocEnvelope.ref（§5.1）：资料实体留在各自表（documents / reality_events / ...），
+  // 决策只记 kind+id。两列设计避免接入新资料源时迁移。
+  sourceKind: text("source_kind").notNull().default("everroom-doc"),
+  sourceId: text("source_id").notNull(),
+  sourceVersion: integer("source_version").notNull(),
   // 路由结果：主 Room（落 ingest）+ 附带 Room（仅链接）
   primaryRoomId: text("primary_room_id"),             // null = 待归类（含 create_new 待执行）
   linkedRoomIds: text("linked_room_ids"),              // JSON array
@@ -134,9 +146,11 @@ export const routingRules = sqliteTable("routing_rules", {
 | 结构 | 用途 |
 | --- | --- |
 | `room_doc_links` | 多归属附带链接；L0 层"版本更新回原 Room"的判定依据 |
-| `jobs`（schema.ts:17） | ingest 队列：`type: "knowledge.ingest"`，payload 携带 documentId + knowledgeId |
+| `jobs`（schema.ts:17） | ingest 队列：`type: "knowledge.ingest"`，payload 携带 sourceRef（kind+id）+ knowledgeId |
 
 > 注：原方案中 `gateway_metadata` 存全局 wiki_id 的用途随全局 wiki 取消而移除。
+
+> **资料聚合是派生视图，不进 rooms 行**："某 Room 聚合了哪些资料" = `room_doc_links` ⨝ `documents`（documents 表本身**无 roomId 列**，归属 100% 走链接表，多归属天然成立），经 `GET /knowledge/rooms/:id/materials` 输出；主/附归属看 route_decisions（可选优化：给 room_doc_links 加 role 列免 join）；知识层内容由 `room_wikis.knowledgeId` → KS `page/ls` 派生。不把清单快照存进 rooms——JSON 数组会与 documents 漂移（渲染器 `ContextRoomRecord.materials` 即反例）。
 
 ## 4. Wiki 生命周期管理
 
@@ -171,15 +185,15 @@ export const routingRules = sqliteTable("routing_rules", {
 
 - **判定权只在⑤**，且必须是"高置信的新主题"判断（confidence ≥ 0.8 才允许 create_new；低置信 + 无匹配仍走待归类队列，卡片上提供"按建议新建 Room「X」"按钮，人点一下才建）；
 - **新 Room 立即进候选池**：后续路由的卷宗里，它和普通 Room 一样有 name + summary + 页面标题——第二份同类文档会归入它而不是再建一个。这是防碎片化的核心闭环：**孤立文档最多催生一个新 Room，不会催生一串**；
-- **重名去重**：create_new 前用 title 相似度（bigram 重合 + 别名表）比对现有 Room，命中即归并到现有 Room 而非新建；
+- **重名去重**：create_new 前用 title 相似度（bigram 重合 + rooms.aliases 曾用名）比对现有 Room，命中即归并到现有 Room 而非新建；
 - **人工可收敛**：origin=auto 的 Room 在面板可重命名、可合并进其他 Room（合并 = room_doc_links 迁移 + wiki raw/rm 级联清理 + 目标 Room re-ingest，M3 提供 UI）。
 
 > 渲染器 Room 目前存于 localStorage（`nexcore:context-room:state:v1`），gateway 侧 `rooms` 表是新增的权威注册表：渲染器 Room 首次被打开/文档挂载时上报登记（origin=user，幂等），自动创建的 Room 反向经 REST 同步下去。Room 的"单一事实源"问题在本方案内只做最小闭环，完整双向同步不在范围内（见 §12）。
 
-### 4.3 文档 → KS raw 的导出约定
+### 4.3 资料导出约定（DocEnvelope → KS raw）
 
-- 文件名：`${documentId}__${title-sanitized}.md`（稳定可重入；sources 溯源可读）；
-- 内容：Tiptap JSON → markdown（新增 exporter，表格/列表基本覆盖；画板等富块降级为链接说明）；
+- 文件名：`${sourceKind}-${sourceId}__${title-sanitized}.md`（稳定可重入；sources 溯源可读）；
+- 内容：各源自负责转 markdown（即 DocEnvelope.markdown）——everroom-doc 由 Tiptap JSON 导出（新增 exporter，表格/列表基本覆盖；画板等富块降级为链接说明）；reality-event 由 transcript + insights 组装；
 - **KS 硬约束**（`MemoryKnowledge/src/routes/wiki.ts:263-266`）：单文件 ≤ 512KB、单批 ≤ 10 文件、总量 ≤ 5MB。超限策略：截断正文并附"已截断"标注（Room 文档极少超限，会议纪要连接器接入时需分片）。
 
 ## 5. 自动归类路由层（核心）
@@ -191,6 +205,26 @@ export const routingRules = sqliteTable("routing_rules", {
 - **不在** `appended`/`commit-requested` 时触发（草稿噪音）；
 - **防抖**：同一文档 10 分钟窗口内多次 commit 只入队最后一次（比较 version，jobs 去重）；
 - 失败重试：`document.deleted` 触发清理任务（见 5.5）。
+
+**输入归一化：DocEnvelope（路由器的输入契约）**。路由层不关心资料本体存在哪张表，只消费归一化信封——各资料实体留在自己的表里，信封是无状态的过路结构：
+
+```ts
+interface DocEnvelope {
+  ref: {
+    kind: "everroom-doc" | "reality-event" | "mail" | "file" | "cloud-doc";
+    id: string;          // 对应表的主键（documents.id / reality_events.id / ...）
+    version: number;     // 幂等与去重依据
+  };
+  title: string;
+  markdown: string;      // 各源自负责转 markdown：doc→Tiptap 导出（§4.3）；reality-event→transcript+insights 组装
+  occurredAt?: string;   // 业务时间（会议/邮件发生时间），≠入库时间，⑤ 卷宗展示用
+  entrySignals?: { sourceTag?: string; threadId?: string; filenamePrefix?: string; creatorId?: string };
+}
+```
+
+- 现成的第二源：`reality_events`（schema.ts:227，实录事件——transcript/insights/markers/音频元数据俱全）即"会议纪要连接器"的真实数据源，接入时把 processingState=ready 的事件组装成 `kind: "reality-event"` 信封即可，**无需新建资料表**；
+- 本地文件（fileItems，hostfsPath 为设备态）与云文档后续作为新 kind 接入，信封结构不变；
+- 对应地 `route_decisions` 以 `sourceKind + sourceId` 溯源（见 §3.1）。
 
 ### 5.2 路由瀑布：确定性层 → 候选生成层 → LLM 终审
 
@@ -264,7 +298,7 @@ confidence < 0.6 → status=awaiting_review（待归类队列，reason 作为给
 
 ```text
 1. ensureWikiForRoom(primaryRoomId)          → knowledgeId
-2. exporter: Tiptap → markdown
+2. exporter: 按 sourceKind 生成 DocEnvelope.markdown
 3. POST /v3/wiki/raw/write { wiki_id, files:[{filename, content}] }
 4. POST /v3/wiki/ingest { wiki_id }          → 202（异步）
 5. 轮询 /v3/wiki/get 直到 status 离开 processing（超时 10 分钟标 failed）
@@ -301,7 +335,6 @@ resolveKnowledge(roomId):
 ```
 
 未配置 knowledge 或 Room 尚无 wiki → 本会话不启用 knowledge 工具（与现状未配置时行为一致）。Room 尚无 wiki 的情况会被 §4.2 的懒创建收敛：第一份文档路由进来时 wiki 就存在了。
-未配置 knowledge 或 Room 尚无 wiki → 仅全局（或完全不启用，与现状一致）。
 
 ### 6.2 pi runtime 改动（`packages/agent-runtime-pi/src/knowledge/`）
 
@@ -335,8 +368,6 @@ agent_end 写 L0 前:
 | `NXCORE_KNOWLEDGE_ROUTE_THRESHOLD_AUTO` | `0.8` | 高置信自动执行阈值 |
 | `NXCORE_KNOWLEDGE_ROUTE_THRESHOLD_REVIEW` | `0.6` | 低于此值进待归类队列 |
 | `NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS` | `600000` | 文档 commit 防抖窗口 |
-| `NXCORE_KNOWLEDGE_LLM_BASE_URL/KEY/MODEL` | 空 | ④⑤ 层与摘要抽取用的 LLM（可复用 NXCORE_AI_*） |
-
 | `NXCORE_KNOWLEDGE_AUTO_CREATE_ROOM_ENABLED` | `false` | ⑤ 的 create_new 自动建 Room 开关（独立灰度，可只在 LLM 仲裁稳定后放开） |
 | `NXCORE_KNOWLEDGE_LLM_BASE_URL/KEY/MODEL` | 空 | ④⑤ 层与摘要抽取用的 LLM（可复用 NXCORE_AI_*） |
 
@@ -347,7 +378,9 @@ agent_end 写 L0 前:
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/knowledge/rooms` | Room 注册表（`?origin=auto` 过滤自动创建的，渲染器同步用） |
-| POST | `/knowledge/rooms` | 渲染器上报登记本地 Room（幂等，origin=user） |
+| GET | `/knowledge/rooms/:id/materials` | Room 的资料清单（**派生视图**）：documents 原生 + room_doc_links 链接 + 路由信息。auto Room 下发后渲染器本地无状态，从这里拉 |
+| POST | `/knowledge/rooms` | 渲染器上报本地 Room，**upsert 语义**：按 id 更新 title/kind；命中 origin=auto 行视为认领（翻转为 user，旧 title 记入 aliases） |
+| DELETE | `/knowledge/rooms/:id` | 渲染器上报删除（对应 localStorage deletedRooms）。默认策略：wiki 归档不删（§4.1）、documents/room_doc_links 保留悬挂（与现状一致，完整级联归 RoomService 第③步）、路由候选池剔除 |
 | PATCH | `/knowledge/rooms/:id` | 重命名 / 合并进其他 Room（M3，auto Room 治理） |
 | GET | `/knowledge/wikis` | Room↔wiki 映射列表（含状态、页面数） |
 | GET | `/knowledge/wikis/:roomId` | 单 Room wiki 详情（KS `/get` 透传） |
@@ -390,7 +423,7 @@ agent_end 写 L0 前:
 | 512KB/5MB raw 限制 | exporter 截断标注；连接器分片（后续） |
 | Room 粒度碎片化（Room 很细时 wiki 过多、跨 Room 检索贵） | room_wikis 预留升级路径：加 `spaceId` 列即可演进为"Room 归属 Space，Space 对应 wiki"，瀑布不变 |
 | **auto Room 泛滥**（无全局兜底后，孤立文档持续催生新 Room） | §4.2 三约束：create_new 仅⑤高置信可判 + 新 Room 立即入候选池（同类文档第二轮归入）+ 重名去重归并；独立开关分阶段放开；M3 提供合并/重命名收敛手段 |
-| Room 双源真相（渲染器 localStorage vs gateway rooms 表）漂移 | 上报登记幂等 + auto Room 单向同步（gateway → 渲染器）；完整双向同步列为 §12 开放问题，不在本方案内 |
+| Room 双源真相（渲染器 localStorage vs gateway rooms 表）漂移 | 上报 upsert（含改名）+ 删除上报（deletedRooms → deletedAt）+ auto Room 单向同步（gateway → 渲染器）；完整双向同步列为 §12 开放问题，不在本方案内 |
 | KS 进程资源随 wiki 数增长（每 wiki 独立 data dir） | 懒创建 + archived 归档；上限保护（如活跃 wiki > 200 告警） |
 | ingest 与用户阅读竞态（页面正在重建时检索） | 检索侧容忍（KS search 读旧快照）；状态透出到 UI（processing 徽标） |
 
@@ -410,4 +443,19 @@ agent_end 写 L0 前:
 3. ④ 层 embedding 的模型与存储位置：KS 尚无向量检索，gateway 自算的成本与一致性（文档改版后向量更新）需在 M2 评估；KS 支持向量后是否切换。
 4. Tiptap → markdown 导出对富内容（画板、Base 嵌入）的降级表达是否足以让 LLM ingest 有效利用。
 5. auto Room 的治理节奏：LLM 起的名字质量参差，何时提示用户重命名（首次打开时？沉淀满 N 份文档时？）；多个 auto Room 语义相近时是自动建议合并还是仅提示。
-6. Room 的单一事实源：本方案以 gateway `rooms` 表为注册表、渲染器 localStorage 为展示态做最小闭环；长期是否把 Room 完全上收到 gateway（渲染器只读）需要产品层面决策。
+6. Room 的单一事实源与**服务化演进**：本方案以 gateway `rooms` 表为注册表、渲染器 localStorage 为展示态做最小闭环。完整 RoomService（`modules/room`，对照 documents 模块的模式：全量 schema + CRUD + WS 同步，localStorage 降级为缓存）建议按三步独立推进：① 注册表（本方案）→ ② 展示字段服务端派生 → ③ 全量 CRUD + 多端同步（iOS 端展示 Room 列表时为硬性触发条件）。不与 room-wiki 链路绑定。
+   服务化的路径是**拆解而非整体搬迁**——现状 `ContextRoomRecord`（渲染器 `context-room/ported/types.ts:216`）混合了四类状态，各字段的目标归属：
+
+   | 渲染器字段（现状 localStorage） | 服务端的家 | 状态 |
+   | --- | --- | --- |
+   | id / title / kind / roomCode | `rooms` 注册表 | 本方案第①步 |
+   | materials[type=文档] | `documents` + `room_doc_links` | **已有**（documents 模块已服务化） |
+   | materials[type=邮件/会议]（含 transcript） | 外部采集连接器信封 | 后续 |
+   | fileItems（hostfsPath 为本地路径） | 本地文件索引（设备态，难上收） | 开放 |
+   | memoryItems / pendingMemoryItems | MemoryCore（L1-L3 + 待确认流） | pi-memory 方案 |
+   | actionItems | 将来的 `room_items` 表 | 第③步 |
+   | graphEdges | 从共享文档 / 路由决策派生 | 可派生 |
+   | stats / timeline / riskCount | 服务端派生下发 | 第②步 |
+   | icon / tone / starred / lastViewed / 邮件 replyDraft·unread | 永留客户端（展示与交互态） | 不上收 |
+
+   另注：`context-room/types.ts` 与 `ported/types.ts` 存在**两套同名 `ContextRoomRecord`**（简化版/完整版），服务化前需先合并，避免映射歧义。
