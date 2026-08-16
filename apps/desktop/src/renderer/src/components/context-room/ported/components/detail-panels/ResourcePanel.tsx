@@ -138,6 +138,7 @@ export function ResourceTree({
   onDeleteDocument,
   onRestoreDocument,
   onDeleteDocumentPermanently,
+  onEmptyTrash,
   onAddFile,
 }: {
   room: ContextRoomRecord;
@@ -149,6 +150,7 @@ export function ResourceTree({
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
+  onEmptyTrash: (roomId: string) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
 }) {
   const library = useMemo(
@@ -164,6 +166,9 @@ export function ResourceTree({
   const [newDocumentTitle, setNewDocumentTitle] = useState('');
   const [creatingDocument, setCreatingDocument] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [clearTrashPopoverOpen, setClearTrashPopoverOpen] = useState(false);
+  const [clearingTrash, setClearingTrash] = useState(false);
+  const [clearTrashError, setClearTrashError] = useState<string | null>(null);
   const [documentToDelete, setDocumentToDelete] = useState<RoomDocument | null>(null);
   const [documentToDeletePermanently, setDocumentToDeletePermanently] = useState<RoomDocument | null>(null);
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
@@ -174,6 +179,7 @@ export function ResourceTree({
     () => new Map([...backendDocuments, ...trashedDocuments].map((document) => [document.id, document])),
     [backendDocuments, trashedDocuments],
   );
+  const trashDocumentCount = trashedDocuments.length;
 
   const confirmDelete = async (document: RoomDocument) => {
     setDeleteError(null);
@@ -200,6 +206,19 @@ export function ResourceTree({
       setCreateError(error instanceof Error ? error.message : '创建文档失败');
     } finally {
       setCreatingDocument(false);
+    }
+  };
+
+  const clearTrash = async () => {
+    setClearTrashError(null);
+    setClearingTrash(true);
+    try {
+      await onEmptyTrash(room.id);
+      setClearTrashPopoverOpen(false);
+    } catch (error: unknown) {
+      setClearTrashError(error instanceof Error ? error.message : '清空回收站失败');
+    } finally {
+      setClearingTrash(false);
     }
   };
 
@@ -307,6 +326,58 @@ export function ResourceTree({
                           </footer>
                         </form>
                         <Popover.Arrow className="context-room-document-create-arrow" />
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
+                ) : null}
+                {trashFolder ? (
+                  <Popover.Root
+                    open={clearTrashPopoverOpen}
+                    onOpenChange={(nextOpen) => {
+                      if (!nextOpen && clearingTrash) return;
+                      setClearTrashError(null);
+                      setClearTrashPopoverOpen(nextOpen);
+                    }}
+                  >
+                    <Popover.Trigger asChild>
+                      <button
+                        type="button"
+                        className="context-room-resource-folder-add is-danger"
+                        aria-label="清空回收站"
+                        title={trashDocumentCount ? '清空回收站' : '回收站为空'}
+                        disabled={!trashDocumentCount || clearingTrash}
+                      >
+                        {clearingTrash
+                          ? <LoaderCircle aria-hidden="true" className="is-spinning" />
+                          : <Trash2 aria-hidden="true" />}
+                      </button>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content
+                        className="context-room-document-delete-popover"
+                        side="right"
+                        align="start"
+                        sideOffset={8}
+                        collisionPadding={12}
+                        aria-label="确认清空回收站"
+                      >
+                        <p>清空回收站？</p>
+                        <span>{trashDocumentCount} 篇文档及其历史版本将无法恢复。</span>
+                        {clearTrashError ? <small role="alert">{clearTrashError}</small> : null}
+                        <footer>
+                          <Popover.Close asChild>
+                            <button type="button" disabled={clearingTrash}>取消</button>
+                          </Popover.Close>
+                          <button
+                            type="button"
+                            className="is-danger"
+                            disabled={clearingTrash}
+                            onClick={() => void clearTrash()}
+                          >
+                            {clearingTrash ? '清空中…' : '清空'}
+                          </button>
+                        </footer>
+                        <Popover.Arrow className="context-room-document-delete-arrow" />
                       </Popover.Content>
                     </Popover.Portal>
                   </Popover.Root>

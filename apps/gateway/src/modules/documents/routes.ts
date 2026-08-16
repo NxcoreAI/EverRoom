@@ -32,6 +32,20 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
         ?? reply.code(404).send({ error: "not_found", message: "Document not found" }),
     );
 
+    app.delete(
+      "/v1/documents/trash",
+      {
+        schema: {
+          tags: ["documents"],
+          querystring: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => {
+        await service.emptyTrash(request.query.roomId);
+        return reply.code(204).send();
+      },
+    );
+
     app.post(
       "/v1/documents/import",
       {
