@@ -3,6 +3,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -21,6 +22,8 @@ const MIN_RECORDING_MS = 10_000
 const ASR_POLL_MS = 2_000
 const ASR_TIMEOUT_MS = 30 * 60 * 1000
 const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+const TEXTAREA_MIN_HEIGHT = 42
+const TEXTAREA_MAX_HEIGHT = 180
 
 type VoiceState = 'idle' | 'requesting' | 'recording' | 'saving' | 'transcribing'
 
@@ -75,6 +78,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [attachments, setAttachments] = useState<LocalAttachment[]>([])
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [elapsed, setElapsed] = useState(0)
+  const shellRef = useRef<HTMLFormElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -90,6 +94,51 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   valueRef.current = value
   useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement)
+
+  const resizeTextarea = () => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    const stickToBottom = document.activeElement === textarea
+      && textarea.selectionEnd === textarea.value.length
+    const previousScrollTop = textarea.scrollTop
+    textarea.style.height = '0px'
+    const contentHeight = textarea.scrollHeight
+    const nextHeight = Math.min(TEXTAREA_MAX_HEIGHT, Math.max(TEXTAREA_MIN_HEIGHT, contentHeight))
+    textarea.style.height = `${nextHeight}px`
+    textarea.dataset.scrollable = String(contentHeight > TEXTAREA_MAX_HEIGHT)
+    textarea.scrollTop = stickToBottom ? textarea.scrollHeight : previousScrollTop
+  }
+
+  useLayoutEffect(() => {
+    resizeTextarea()
+  }, [attachments.length, value])
+
+  useEffect(() => {
+    const shell = shellRef.current
+    const prompt = shell?.querySelector<HTMLElement>('.agent-prompt')
+    const frame = shell?.parentElement
+    if (!shell || !prompt || !frame) return undefined
+
+    const syncHeight = () => {
+      frame.style.setProperty('--agent-composer-height', `${shell.getBoundingClientRect().height}px`)
+    }
+    let promptWidth = prompt.getBoundingClientRect().width
+    const promptObserver = new ResizeObserver(([entry]) => {
+      if (Math.abs(entry.contentRect.width - promptWidth) < 0.5) return
+      promptWidth = entry.contentRect.width
+      resizeTextarea()
+    })
+    const shellObserver = new ResizeObserver(syncHeight)
+    promptObserver.observe(prompt)
+    shellObserver.observe(shell)
+    syncHeight()
+
+    return () => {
+      promptObserver.disconnect()
+      shellObserver.disconnect()
+      frame.style.removeProperty('--agent-composer-height')
+    }
+  }, [])
 
   const releaseMedia = () => {
     voiceOperationRef.current += 1
@@ -301,7 +350,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           : ''
 
   return (
-    <form className="agent-composer-shell" onSubmit={submit}>
+    <form ref={shellRef} className="agent-composer-shell" onSubmit={submit}>
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         <textarea
           ref={textareaRef}

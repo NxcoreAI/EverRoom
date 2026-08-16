@@ -134,7 +134,7 @@ export function AgentChatView({
       onTransitionEnd={(event) => {
         if (
           empty
-          && event.propertyName === 'top'
+          && event.propertyName === 'bottom'
           && (event.target as HTMLElement).classList.contains('agent-composer-shell')
         ) setQuickPromptsReady(true)
       }}

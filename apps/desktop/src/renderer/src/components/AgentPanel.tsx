@@ -5,7 +5,6 @@ import { AgentComposer } from '@/components/agent/AgentComposer'
 import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
 import { AgentToolbar } from '@/components/agent/AgentToolbar'
 import { useAgentSession } from '@/components/agent/useAgentSession'
-import { showToast } from '@/state/toast'
 
 import './agent/AgentPanel.css'
 import './agent/AgentChat.css'
@@ -104,18 +103,7 @@ export function AgentPanel({
 
   return (
     <aside className="agent-panel">
-      <AgentToolbar
-        onCreateConversation={() => {
-          setDraft('')
-          setSelectedText('')
-          setComposerResetKey((current) => current + 1)
-          void session.createSession().catch((error) => showToast({
-            title: '新建会话失败',
-            message: error instanceof Error ? error.message : '请稍后重试。',
-          }))
-          focusComposer()
-        }}
-      >
+      <AgentToolbar>
         <AgentSessionSwitcher
           activeRunId={session.activeRunId}
           connected={session.connected}
