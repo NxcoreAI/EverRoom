@@ -20,45 +20,10 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  min-height: 56px;
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(227, 231, 237, 0.82);
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(18px);
-}
-
-.agent-chat-toolbar-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-}
-
-.agent-icon-button {
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
-}
-
-.agent-icon-button:hover {
-  border-color: rgba(61, 111, 246, 0.24);
-  background: rgba(255, 255, 255, 0.48);
-  color: var(--accent-strong);
-}
-
-.agent-icon-button svg {
-  width: 16px;
-  height: 16px;
+  min-height: 52px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #eceef1;
+  background: #fff;
 }
 
 .agent-view-menu {
@@ -140,7 +105,7 @@
 .agent-session-trigger > svg:first-child {
   width: 15px;
   height: 15px;
-  color: var(--accent);
+  color: #737b87;
 }
 
 .agent-session-trigger > svg:last-child {
@@ -198,17 +163,17 @@
   position: absolute;
   z-index: 20;
   top: 46px;
-  right: 0;
-  width: min(320px, calc(100vw - 24px));
+  left: 50%;
+  width: min(320px, calc(100% - 24px));
   overflow: hidden;
   border: 1px solid #e2e7ee;
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.08), 0 18px 44px rgba(16, 24, 40, 0.14);
+  box-shadow: 0 2px 6px rgba(16, 24, 40, 0.05), 0 14px 32px rgba(16, 24, 40, 0.09);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-6px) scale(0.98);
-  transform-origin: top right;
+  transform: translate(-50%, -6px) scale(0.98);
+  transform-origin: top center;
   visibility: hidden;
   transition:
     opacity 180ms ease,
@@ -219,7 +184,7 @@
 .agent-session-menu[data-open='true'] {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0) scale(1);
+  transform: translate(-50%, 0) scale(1);
   visibility: visible;
   transition-delay: 0s;
 }
@@ -301,8 +266,8 @@
 }
 
 .agent-session-row[data-active='true'] {
-  background: #f3f6fc;
-  box-shadow: inset 2px 0 0 rgba(61, 111, 246, 0.58);
+  background: #f3f5f8;
+  box-shadow: inset 2px 0 0 rgba(76, 100, 171, 0.58);
 }
 
 .agent-session-select {
@@ -457,7 +422,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-icon-button,
   .agent-session-menu {
     transition: none;
   }
