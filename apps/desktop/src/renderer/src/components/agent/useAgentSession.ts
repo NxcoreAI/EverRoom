@@ -3,10 +3,12 @@ import type {
   AgentMessage,
   AgentRoomReference,
   AgentSession,
+  AgentSessionLink,
   AgentSessionSnapshot,
+  CreateAgentSessionLinkInput,
   StartAgentRunInput,
 } from '@nxcore/agent-contract'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface DisplayAgentMessage extends AgentMessage {
   streaming?: boolean
@@ -210,6 +212,7 @@ export function useAgentSession(
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [currentSession, setCurrentSession] = useState<AgentSession | null>(null)
+  const [sessionLinks, setSessionLinks] = useState<AgentSessionLink[]>([])
   const [messages, setMessages] = useState<DisplayAgentMessage[]>([])
   const [toolCallsByRun, setToolCallsByRun] = useState<Record<string, DisplayAgentToolCall[]>>({})
   const [runStartedAtByRun, setRunStartedAtByRun] = useState<Record<string, string>>({})
@@ -222,6 +225,7 @@ export function useAgentSession(
   const [error, setError] = useState<string | null>(null)
   const sequenceByRun = useRef(new Map<string, number>())
   const sessionIdRef = useRef<string | null>(null)
+  const activeScopeRef = useRef(sessionScope(pageLabel, roomId))
 
   const updateToolCall = useCallback((event: AgentEvent) => {
     setToolCallsByRun((current) => {
@@ -365,7 +369,9 @@ export function useAgentSession(
   const hydrateSnapshot = useCallback(async (
     snapshot: AgentSessionSnapshot,
     pendingMessages: DisplayAgentMessage[] = [],
+    expectedScope = activeScopeRef.current,
   ) => {
+    if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
     sequenceByRun.current.clear()
     const runIds = [...new Set([
       ...snapshot.messages.map((message) => message.runId),
@@ -377,6 +383,7 @@ export function useAgentSession(
         events: await api.getEvents(snapshot.session.id, runId, 0),
       })))
       : []
+    const nextSessionLinks = api ? await api.listSessionLinks(snapshot.session.id) : []
     const nextTools: Record<string, DisplayAgentToolCall[]> = {}
     const nextReasoning: Record<string, string> = {}
     const nextStartedAt: Record<string, string> = {}
@@ -392,6 +399,8 @@ export function useAgentSession(
       if (reduced.completedAt) nextCompletedAt[group.runId] = reduced.completedAt
     }
     if (snapshot.activeRun?.startedAt) nextStartedAt[snapshot.activeRun.id] = snapshot.activeRun.startedAt
+
+    if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
 
     const nextMessages = mergePendingAgentMessages(snapshot.messages, pendingMessages)
     if (snapshot.activeRun) {
@@ -413,6 +422,7 @@ export function useAgentSession(
     }
 
     setMessages(nextMessages)
+    setSessionLinks(nextSessionLinks)
     setToolCallsByRun(nextTools)
     setReasoningByRun(nextReasoning)
     setRunStartedAtByRun(nextStartedAt)
@@ -424,6 +434,7 @@ export function useAgentSession(
       ? current.map((session) => session.id === snapshot.session.id ? snapshot.session : session)
       : [snapshot.session, ...current])
     sessionIdRef.current = snapshot.session.id
+    return true
   }, [api])
 
   const selectSession = useCallback(async (
@@ -431,24 +442,31 @@ export function useAgentSession(
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<void> => {
     if (!api) return
+    const expectedScope = sessionScope(pageLabel, roomId)
     setLoading(true)
     setConnected(false)
     setError(null)
+    setSessionId(session.id)
+    sessionIdRef.current = session.id
     try {
       await api.unsubscribe()
       const snapshot = await api.getSession(session.id)
-      await hydrateSnapshot(snapshot, pendingMessages)
+      const hydrated = await hydrateSnapshot(snapshot, pendingMessages, expectedScope)
+      if (!hydrated || expectedScope !== activeScopeRef.current) return
       storeSession(pageLabel, roomId, session.id)
       await api.subscribe(session.id)
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '切换会话失败。'))
+      if (expectedScope === activeScopeRef.current) {
+        setError(requestErrorMessage(requestError, '切换会话失败。'))
+      }
     } finally {
-      setLoading(false)
+      if (expectedScope === activeScopeRef.current) setLoading(false)
     }
   }, [api, hydrateSnapshot, pageLabel, roomId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let alive = true
+    activeScopeRef.current = sessionScope(pageLabel, roomId)
     setMessages([])
     setToolCallsByRun({})
     setRunStartedAtByRun({})
@@ -457,7 +475,7 @@ export function useAgentSession(
     setActiveRunId(null)
     setSessionId(null)
     setSessions([])
-    setCurrentSession(null)
+    setSessionLinks([])
     sessionIdRef.current = null
     sequenceByRun.current.clear()
     setConnected(false)
@@ -473,6 +491,7 @@ export function useAgentSession(
           const selected = listedSessions.find((session) => session.id === storedSessionId)
             ?? listedSessions[0]
           if (selected) await selectSession(selected)
+          else if (alive) setCurrentSession(null)
         })
         .catch((requestError) => {
           if (alive) setError(requestError instanceof Error ? requestError.message : '会话加载失败。')
@@ -551,6 +570,7 @@ export function useAgentSession(
           sessionIdRef.current = null
           setSessionId(null)
           setCurrentSession(null)
+          setSessionLinks([])
           setMessages([])
           setToolCallsByRun({})
           setReasoningByRun({})
@@ -566,13 +586,50 @@ export function useAgentSession(
     }
   }
 
+  const selectSessionById = async (sessionIdToSelect: string): Promise<void> => {
+    if (!api || sessionIdToSelect === sessionIdRef.current) return
+    const listed = sessions.find((session) => session.id === sessionIdToSelect)
+    if (listed) {
+      await selectSession(listed)
+      return
+    }
+    const snapshot = await api.getSession(sessionIdToSelect)
+    await selectSession(snapshot.session)
+  }
+
+  const createSessionLink = async (input: CreateAgentSessionLinkInput): Promise<AgentSessionLink> => {
+    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
+    try {
+      const link = await api.createSessionLink(input)
+      if (link.sourceSessionId === sessionIdRef.current || link.targetSessionId === sessionIdRef.current) {
+        setSessionLinks((current) => current.some((item) => item.id === link.id) ? current : [...current, link])
+      }
+      return link
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, '创建会话引用失败。'))
+      throw requestError
+    }
+  }
+
+  const markSessionLinkReturned = async (linkId: string): Promise<AgentSessionLink> => {
+    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
+    try {
+      const link = await api.markSessionLinkReturned(linkId)
+      setSessionLinks((current) => current.map((item) => item.id === link.id ? link : item))
+      return link
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, '返回原会话失败。'))
+      throw requestError
+    }
+  }
+
   const sendPrompt = async (
     prompt: string,
     selectedText?: string,
     selectedRoomId?: string,
-  ): Promise<void> => {
+  ): Promise<string | null> => {
     const message = prompt.trim()
-    if (!message || activeRunId || loading || sending) return
+    if (!message || activeRunId || loading || sending) return null
     const optimisticId = `user-${crypto.randomUUID()}`
     const optimisticMessage: DisplayAgentMessage = {
       id: optimisticId,
@@ -608,6 +665,7 @@ export function useAgentSession(
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, runId: run.id }
         : item))
+      return run.id
     } catch (requestError) {
       if (optimisticId) {
         setMessages((current) => current.filter((message) => message.id !== optimisticId))
@@ -632,6 +690,7 @@ export function useAgentSession(
     activeRunId,
     connected,
     createSession,
+    createSessionLink,
     currentSession,
     deleteSession,
     error,
@@ -641,9 +700,12 @@ export function useAgentSession(
     runCompletedAtByRun,
     runStartedAtByRun,
     renameSession,
+    markSessionLinkReturned,
     selectSession,
+    selectSessionById,
     sendPrompt,
     sessionId,
+    sessionLinks,
     sessions,
     stop,
     toolCallsByRun,

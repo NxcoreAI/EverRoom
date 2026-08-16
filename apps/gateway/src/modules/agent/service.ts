@@ -2,23 +2,27 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentEvent,
   AgentEventType,
+  AgentNavigationTarget,
   AgentMessage,
   AgentRun,
   AgentRunStatus,
   AgentRoomReference,
   AgentSession,
+  AgentSessionLink,
   AgentSessionSnapshot,
+  CreateAgentSessionLinkInput,
   CreateAgentSessionInput,
   StartAgentRunInput,
   UpdateAgentSessionInput,
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   agentEvents,
   agentMessages,
   agentRuns,
+  agentSessionLinks,
   agentSessions,
 } from "../../infrastructure/database/schema.js";
 import { AgentEventBroker } from "./event-broker.js";
@@ -79,6 +83,36 @@ function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
     content: row.content,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+function toSessionLink(row: typeof agentSessionLinks.$inferSelect): AgentSessionLink {
+  return {
+    id: row.id,
+    sourceSessionId: row.sourceSessionId,
+    targetSessionId: row.targetSessionId,
+    sourceRunId: row.sourceRunId,
+    sourcePageId: row.sourcePageId,
+    sourcePageLabel: row.sourcePageLabel,
+    sourceRoomId: normalizeRoomId(row.sourceRoomId),
+    target: row.target,
+    createdAt: row.createdAt.toISOString(),
+    returnedAt: iso(row.returnedAt),
+  };
+}
+
+function normalizeNavigationTarget(target: AgentNavigationTarget): AgentNavigationTarget {
+  return {
+    pageId: target.pageId.trim(),
+    title: target.title.trim(),
+    action: target.action,
+    ...(target.roomId !== undefined ? { roomId: normalizeRoomId(target.roomId) } : {}),
+    ...(target.objectId?.trim() ? { objectId: target.objectId.trim() } : {}),
+    ...(target.objectType ? { objectType: target.objectType } : {}),
+  };
+}
+
+function navigationTargetKey(target: AgentNavigationTarget): string {
+  return [target.pageId, target.roomId ?? "", target.objectType ?? "", target.objectId ?? ""].join("\u0000");
 }
 
 function runtimePrompt(input: StartAgentRunInput, pageLabel: string): string {
@@ -205,6 +239,61 @@ export class AgentService {
       .filter((row) => pageLabel === undefined || row.pageLabel === pageLabel)
       .filter((row) => normalizedRoomId === undefined || normalizeRoomId(row.roomId) === normalizedRoomId)
       .map(toSession);
+  }
+
+  createSessionLink(input: CreateAgentSessionLinkInput): AgentSessionLink {
+    const source = this.db.select({ id: agentSessions.id })
+      .from(agentSessions).where(eq(agentSessions.id, input.sourceSessionId)).get();
+    const targetSession = this.db.select({ id: agentSessions.id })
+      .from(agentSessions).where(eq(agentSessions.id, input.targetSessionId)).get();
+    const sourceRun = this.db.select({ sessionId: agentRuns.sessionId })
+      .from(agentRuns).where(eq(agentRuns.id, input.sourceRunId)).get();
+    if (!source || !targetSession || sourceRun?.sessionId !== input.sourceSessionId) {
+      throw new Error("agent_session_link_target_not_found");
+    }
+
+    const target = normalizeNavigationTarget(input.target);
+    if (!target.pageId || !target.title) throw new Error("agent_session_link_invalid_target");
+    const targetKey = navigationTargetKey(target);
+    const existing = this.db.select().from(agentSessionLinks).where(and(
+      eq(agentSessionLinks.sourceRunId, input.sourceRunId),
+      eq(agentSessionLinks.targetKey, targetKey),
+    )).get();
+    if (existing) return toSessionLink(existing);
+
+    const row: typeof agentSessionLinks.$inferInsert = {
+      id: randomUUID(),
+      sourceSessionId: input.sourceSessionId,
+      targetSessionId: input.targetSessionId,
+      sourceRunId: input.sourceRunId,
+      sourcePageId: input.sourcePageId.trim(),
+      sourcePageLabel: input.sourcePageLabel.trim(),
+      sourceRoomId: normalizeRoomId(input.sourceRoomId),
+      targetKey,
+      target,
+      createdAt: new Date(),
+    };
+    return toSessionLink(this.db.insert(agentSessionLinks).values(row).returning().get());
+  }
+
+  listSessionLinks(sessionId: string): AgentSessionLink[] {
+    return this.db.select().from(agentSessionLinks)
+      .where(or(
+        eq(agentSessionLinks.sourceSessionId, sessionId),
+        eq(agentSessionLinks.targetSessionId, sessionId),
+      ))
+      .orderBy(asc(agentSessionLinks.createdAt))
+      .all()
+      .map(toSessionLink);
+  }
+
+  markSessionLinkReturned(linkId: string): AgentSessionLink | null {
+    const updated = this.db.update(agentSessionLinks)
+      .set({ returnedAt: new Date() })
+      .where(eq(agentSessionLinks.id, linkId))
+      .returning()
+      .get();
+    return updated ? toSessionLink(updated) : null;
   }
 
   updateSession(sessionId: string, input: UpdateAgentSessionInput): AgentSession | null {

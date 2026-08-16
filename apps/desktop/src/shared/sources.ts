@@ -16,10 +16,12 @@ import type {
   AgentEvent,
   AgentRun,
   AgentSession,
+  AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
   ContextRoomSnapshot,
   CreateAgentSessionInput,
+  CreateAgentSessionLinkInput,
   DocumentEventFrame,
   ImportRoomDocumentInput,
   RoomDocument,
@@ -271,6 +273,9 @@ export interface NxcoreDesktopApi {
   agent: {
     listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
+    createSessionLink(input: CreateAgentSessionLinkInput): Promise<AgentSessionLink>
+    listSessionLinks(sessionId: string): Promise<AgentSessionLink[]>
+    markSessionLinkReturned(linkId: string): Promise<AgentSessionLink>
     updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession>
     deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>

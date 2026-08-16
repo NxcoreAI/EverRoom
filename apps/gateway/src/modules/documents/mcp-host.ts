@@ -304,6 +304,14 @@ export class DocumentMcpHost {
           nextSequence: 1,
           nextAction: "context_room_write_append",
           expiresAt: result.expiresAt,
+          navigation: {
+            pageId: "rooms",
+            title: result.document.title,
+            action: "created",
+            roomId: result.document.roomId,
+            objectId: result.document.id,
+            objectType: "document",
+          },
         });
       }
       case "context_room_write_append": {
@@ -327,7 +335,20 @@ export class DocumentMcpHost {
           sessionId: context.agentSessionId,
           finalSequence: integerArg(args, "finalSequence"),
         });
-        return success({ transactionId, state: "committed", roomId: document.roomId, docId: document.id });
+        return success({
+          transactionId,
+          state: "committed",
+          roomId: document.roomId,
+          docId: document.id,
+          navigation: {
+            pageId: "rooms",
+            title: document.title,
+            action: "created",
+            roomId: document.roomId,
+            objectId: document.id,
+            objectType: "document",
+          },
+        });
       }
       case "context_room_write_abort": {
         const transactionId = stringArg(args, "transactionId");
