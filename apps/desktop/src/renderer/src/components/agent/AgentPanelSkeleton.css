@@ -103,10 +103,11 @@
   width: 56%;
 }
 
-/* 底部输入框:复刻 agent-composer-shell 的圆角卡片和操作按钮。 */
+/* 底部输入框:复刻 agent-composer-shell 的圆角卡片和操作按钮,底部同样铺白。 */
 .agent-skeleton-composer {
   flex: 0 0 auto;
   padding: 8px 12px 16px;
+  background: #fff;
 }
 
 .agent-skeleton-composer-box {
