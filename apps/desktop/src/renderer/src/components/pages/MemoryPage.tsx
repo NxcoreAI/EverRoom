@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
 import { ConversationPane } from './memory/ConversationPane'
 import { CoreProfilePane } from './memory/CoreProfilePane'
+import { DocumentPane } from './memory/DocumentPane'
 import { MemoryDisabledView, MemoryUnreachableView } from './memory/MemoryStatusViews'
 import type { MemorySearchResult } from './memory/MemorySearchResults'
 import { MemorySearchResults } from './memory/MemorySearchResults'
@@ -16,6 +17,7 @@ import './memory/MemoryPage.css'
 const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'overview', label: '总览', level: '' },
   { id: 'conversation', label: '对话', level: 'L0' },
+  { id: 'documents', label: '文档', level: '' },
   { id: 'atomic', label: '原子记忆', level: 'L1' },
   { id: 'scenario', label: '场景', level: 'L2' },
   { id: 'core', label: '画像', level: 'L3' },
@@ -28,6 +30,20 @@ export function MemoryPage() {
   const [search, setSearch] = useState<{ query: string; result: MemorySearchResult } | null>(null)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
+  // 溯源跳转目标（原子记忆 → 文档详情 / 会话过滤），置位同时切 Tab。
+  const [documentFocus, setDocumentFocus] = useState<string | null>(null)
+  const [conversationFocus, setConversationFocus] = useState<string | null>(null)
+
+  const openDocument = (documentId: string) => {
+    setDocumentFocus(documentId)
+    setSearch(null)
+    setTab('documents')
+  }
+  const openConversation = (sessionId: string) => {
+    setConversationFocus(sessionId)
+    setSearch(null)
+    setTab('conversation')
+  }
 
   const runSearch = async () => {
     const query = searchText.trim()
@@ -130,10 +146,15 @@ export function MemoryPage() {
               ? <MemoryOverviewPane overview={overview.data} onNavigate={setTab} />
               : <p className="mem-loading">加载中…</p>
           ) : null}
-          {tab === 'atomic' ? <AtomicMemoryPane /> : null}
+          {tab === 'atomic' ? (
+            <AtomicMemoryPane onOpenDocument={openDocument} onOpenConversation={openConversation} />
+          ) : null}
           {tab === 'scenario' ? <ScenarioPane /> : null}
           {tab === 'core' ? <CoreProfilePane /> : null}
-          {tab === 'conversation' ? <ConversationPane /> : null}
+          {tab === 'conversation' ? (
+            <ConversationPane focusSessionId={conversationFocus} />
+          ) : null}
+          {tab === 'documents' ? <DocumentPane focusDocumentId={documentFocus} /> : null}
         </div>
       )}
     </div>

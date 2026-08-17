@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import {
   MemoryCoreClient,
@@ -7,6 +8,16 @@ import {
   type MemoryPipelineStatus,
   type MemoryRuntimeConfig,
 } from "@nxcore/agent-runtime-pi";
+import { and, eq } from "drizzle-orm";
+import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import { parsedContents, uploadedFiles } from "../../infrastructure/database/schema.js";
+import {
+  contentHashOf,
+  fileIdOf,
+  MARKDOWN_PARSER_VERSION,
+  storageRelPath,
+  storeFileBlob,
+} from "../knowledge/file-storage.js";
 import { MemoryGatewayError } from "./errors.js";
 
 /** UI 浏览场景的超时：比 agent 注入流程（3s）宽松，但仍在交互可接受范围。 */
@@ -29,6 +40,8 @@ export interface MemoryConversationMessageDto {
   content: string;
   timestamp: string | null;
   sessionId: string | null;
+  /** 来源标记：null = 旧数据/未标注；'document' = md 导入的文档会话块。 */
+  sourceKind: string | null;
 }
 
 /** 渲染层 DTO：L2 场景目录项。 */
@@ -78,6 +91,88 @@ export interface MemoryConversationListOptions {
   offset: number;
   timeStart?: string | undefined;
   timeEnd?: string | undefined;
+  /** 'conversation' = 仅对话（排除文档会话块）。 */
+  sourceKind?: "conversation" | "document" | undefined;
+}
+
+/** 渲染层 DTO：导入的文档登记行（MemoryCore documents 表视图）。 */
+export interface MemoryDocumentDto {
+  id: string;
+  title: string;
+  /** 调用方资产引用（= EverRoom 知识资产 file id，预览/落盘溯源用）。 */
+  callerRef: string;
+  version: number;
+  sessionId: string;
+  chunkCount: number;
+  derivedMemoryCount: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 渲染层 DTO：文档分块（含正文与原文行区间，正向溯源预览）。 */
+export interface MemoryDocumentChunkDto {
+  chunkIndex: number;
+  messageId: string;
+  headingPath: string;
+  lineStart: number;
+  lineEnd: number;
+  content: string;
+  recordedAt: string | null;
+}
+
+/** 渲染层 DTO：文档派生的 L1 原子（反向溯源入口）。 */
+export interface MemoryDocumentMemoryDto {
+  id: string;
+  type: string;
+  content: string;
+  background: string | null;
+  sourceMessageIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 渲染层 DTO：原子记忆溯源锚点。 */
+export interface MemoryProvenanceAnchorDto {
+  messageId: string;
+  role: string;
+  content: string;
+  recordedAt: string | null;
+  sessionId: string | null;
+  sourceKind: string;
+  headingPath?: string;
+  lineStart?: number;
+  lineEnd?: number;
+  chunkIndex?: number;
+}
+
+/** 渲染层 DTO：一站式溯源。 */
+export interface MemoryAtomicProvenanceDto {
+  memoryId: string;
+  type: string;
+  content: string;
+  kind: string;
+  session: { sessionId: string | null; sessionKey: string | null } | null;
+  document: {
+    documentId: string;
+    title: string;
+    callerRef: string;
+    version: number;
+    sessionId: string;
+  } | null;
+  anchorMessageIds: string[];
+  anchors: MemoryProvenanceAnchorDto[];
+}
+
+/** md 导入结果（资产化 + MemoryCore 登记双段）。 */
+export interface MemoryImportMarkdownResult {
+  fileId: string;
+  document: MemoryDocumentDto;
+  version: string;
+  sessionId: string;
+  chunkCount: number;
+  deduplicated: boolean;
+  replacedVersions: number;
+  acceptedChunks: number;
 }
 
 /**
@@ -87,7 +182,12 @@ export interface MemoryConversationListOptions {
 export class MemoryService {
   private readonly client: MemoryCoreClient | null;
 
-  constructor(config: MemoryRuntimeConfig | null, private readonly logger: FastifyBaseLogger) {
+  constructor(
+    config: MemoryRuntimeConfig | null,
+    private readonly logger: FastifyBaseLogger,
+    /** md 导入的资产化落点：gateway 数据库（uploaded_files/parsed_contents）与对象库根。 */
+    private readonly assets: { db: GatewayDatabase; dataDir: string } | null,
+  ) {
     this.client = config ? new MemoryClientWithTimeout(config) : null;
   }
 
@@ -252,6 +352,7 @@ export class MemoryService {
       offset: options.offset,
       timeStart: options.timeStart,
       timeEnd: options.timeEnd,
+      sourceKind: options.sourceKind,
     }));
     return {
       messages: page.messages.map((message) => ({
@@ -260,6 +361,7 @@ export class MemoryService {
         content: message.content,
         timestamp: message.timestamp ?? null,
         sessionId: message.session_id ?? null,
+        sourceKind: message.source_kind ?? null,
       })),
       total: page.total,
     };
@@ -279,6 +381,7 @@ export class MemoryService {
         content: message.content,
         timestamp: message.timestamp ?? null,
         sessionId: null,
+        sourceKind: message.source_kind ?? null,
         score: message.score ?? 0,
       })),
     };
@@ -291,6 +394,213 @@ export class MemoryService {
     const client = this.require();
     const result = await this.call(() => client.deleteConversation(target));
     return { deletedCount: result.deleted_count };
+  }
+
+  // ───────────────────────── md 文档导入（资产化 + /v3/document/import） ─────────────────────────
+
+  /**
+   * md 一等来源导入（docs/memory-md-source-plan.md §6）：
+   * ① 资产化——file-storage 原语落对象库 + uploaded_files/parsed_contents
+   *   （与知识上传同一套确定性身份，但**不走** submitFileUpload 的 wiki 路由）；
+   * ② 代理 MemoryCore /v3/document/import，caller_ref = file id。
+   * 原文字节只落资产层；MemoryCore 仅存 caller_ref 与内容指纹。
+   */
+  async importMarkdown(input: {
+    title: string;
+    markdown: string;
+    filename?: string | undefined;
+  }): Promise<MemoryImportMarkdownResult> {
+    const client = this.require();
+    const assets = this.requireAssets();
+
+    const filename = input.filename?.trim() || `${input.title.trim()}.md`;
+    const buffer = Buffer.from(input.markdown, "utf8");
+    const fileId = fileIdOf(filename);
+    const contentHash = contentHashOf(buffer);
+
+    const existing = assets.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get();
+    if (existing?.contentHash !== contentHash) {
+      await storeFileBlob(assets.dataDir, contentHash, buffer);
+      const parsedId = this.ensureParsed(contentHash, input.markdown);
+      if (existing) {
+        // 同名新内容：资产身份不变，指针前移（与知识上传同语义）
+        assets.db.update(uploadedFiles).set({
+          contentHash,
+          storagePath: storageRelPath(contentHash),
+          originalName: filename,
+          bytes: buffer.byteLength,
+          currentParsedId: parsedId,
+          updatedAt: new Date(),
+        }).where(eq(uploadedFiles.id, fileId)).run();
+      } else {
+        assets.db.insert(uploadedFiles).values({
+          id: fileId,
+          contentHash,
+          storagePath: storageRelPath(contentHash),
+          originalName: filename,
+          bytes: buffer.byteLength,
+          currentParsedId: parsedId,
+        }).onConflictDoNothing().run();
+      }
+    }
+
+    const result = await this.call(() => client.importDocument({
+      title: input.title.trim(),
+      markdown: input.markdown,
+      callerRef: fileId,
+    }));
+    return {
+      fileId,
+      document: this.toDocumentDto(result.document),
+      version: result.version,
+      sessionId: result.session_id,
+      chunkCount: result.chunk_count,
+      deduplicated: result.deduplicated,
+      replacedVersions: result.replaced_versions,
+      acceptedChunks: result.accepted_chunks,
+    };
+  }
+
+  async listDocuments(
+    limit = 50,
+    offset = 0,
+  ): Promise<{ documents: MemoryDocumentDto[]; total: number }> {
+    const client = this.require();
+    const page = await this.call(() => client.listDocuments({ limit, offset }));
+    return {
+      documents: page.documents.map((item) => this.toDocumentDto(item)),
+      total: page.total,
+    };
+  }
+
+  async getDocument(documentId: string): Promise<{
+    document: MemoryDocumentDto;
+    chunks: MemoryDocumentChunkDto[];
+    memories: MemoryDocumentMemoryDto[];
+  }> {
+    const client = this.require();
+    const detail = await this.call(() => client.getDocument(documentId));
+    return {
+      document: this.toDocumentDto(detail.document),
+      chunks: detail.chunks.map((chunk) => ({
+        chunkIndex: chunk.chunk_index,
+        messageId: chunk.message_id,
+        headingPath: chunk.heading_path,
+        lineStart: chunk.line_start,
+        lineEnd: chunk.line_end,
+        content: chunk.content,
+        recordedAt: chunk.recorded_at ?? null,
+      })),
+      memories: detail.memories.map((memory) => ({
+        id: memory.id,
+        type: memory.type,
+        content: memory.content,
+        background: memory.background ?? null,
+        sourceMessageIds: memory.source_message_ids ?? [],
+        createdAt: memory.created_at ?? "",
+        updatedAt: memory.updated_at ?? "",
+      })),
+    };
+  }
+
+  async deleteDocument(documentId: string): Promise<{ documentId: string; deleted: boolean }> {
+    const client = this.require();
+    const result = await this.call(() => client.deleteDocument(documentId));
+    return { documentId: result.document_id, deleted: true };
+  }
+
+  async atomicProvenance(memoryId: string): Promise<MemoryAtomicProvenanceDto> {
+    const client = this.require();
+    const provenance = await this.call(() => client.atomicProvenance(memoryId));
+    return {
+      memoryId: provenance.memory_id,
+      type: provenance.type,
+      content: provenance.content,
+      kind: provenance.kind,
+      session: provenance.session
+        ? {
+          sessionId: provenance.session.session_id ?? null,
+          sessionKey: provenance.session.session_key ?? null,
+        }
+        : null,
+      document: provenance.document
+        ? {
+          documentId: provenance.document.document_id,
+          title: provenance.document.title,
+          callerRef: provenance.document.caller_ref,
+          version: provenance.document.version,
+          sessionId: provenance.document.session_id,
+        }
+        : null,
+      anchorMessageIds: provenance.anchor_message_ids,
+      anchors: provenance.anchors.map((anchor) => ({
+        messageId: anchor.message_id,
+        role: anchor.role,
+        content: anchor.content,
+        recordedAt: anchor.recorded_at ?? null,
+        sessionId: anchor.session_id ?? null,
+        sourceKind: anchor.source_kind,
+        ...(anchor.heading_path !== undefined ? { headingPath: anchor.heading_path } : {}),
+        ...(anchor.line_start !== undefined ? { lineStart: anchor.line_start } : {}),
+        ...(anchor.line_end !== undefined ? { lineEnd: anchor.line_end } : {}),
+        ...(anchor.chunk_index !== undefined ? { chunkIndex: anchor.chunk_index } : {}),
+      })),
+    };
+  }
+
+  private toDocumentDto(item: {
+    document_id: string;
+    title: string;
+    caller_ref: string;
+    version: number;
+    session_id: string;
+    chunk_count: number;
+    created_at: string;
+    updated_at: string;
+    derived_memory_count?: number;
+  }): MemoryDocumentDto {
+    return {
+      id: item.document_id,
+      title: item.title,
+      callerRef: item.caller_ref,
+      version: item.version,
+      sessionId: item.session_id,
+      chunkCount: item.chunk_count,
+      derivedMemoryCount: item.derived_memory_count ?? null,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+    };
+  }
+
+  /** 解析产物幂等入库（与 KnowledgeService.ensureParsed 同判重，导入侧本地实现）。 */
+  private ensureParsed(contentHash: string, markdown: string): string {
+    const assets = this.requireAssets();
+    const existing = assets.db.select().from(parsedContents)
+      .where(and(
+        eq(parsedContents.contentHash, contentHash),
+        eq(parsedContents.parserVersion, MARKDOWN_PARSER_VERSION),
+      ))
+      .get();
+    if (existing) return existing.id;
+    const id = `parsed-${randomUUID().slice(0, 12)}`;
+    assets.db.insert(parsedContents).values({
+      id,
+      contentHash,
+      parserVersion: MARKDOWN_PARSER_VERSION,
+      markdown,
+    }).run();
+    return id;
+  }
+
+  private requireAssets(): { db: GatewayDatabase; dataDir: string } {
+    if (!this.assets) {
+      throw new MemoryGatewayError(
+        "memory_disabled",
+        "memory document assets are not available on this gateway",
+        503,
+      );
+    }
+    return this.assets;
   }
 
   private require(): MemoryCoreClient {

@@ -157,7 +157,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
-  const memoryService = new MemoryService(config.pi?.memory ?? null, app.log);
+  const memoryService = new MemoryService(config.pi?.memory ?? null, app.log, { db, dataDir: config.dataDir });
   const realityService = new RealityService(db, config.asrInputDir, app.log);
   const recoveredCaptures = realityService.recoverInterruptedCaptures();
   if (recoveredCaptures > 0) {

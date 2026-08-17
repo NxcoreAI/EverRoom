@@ -127,6 +127,12 @@ const MEMORY_CHANNELS = {
   listConversations: 'memory:list-conversations',
   searchConversations: 'memory:search-conversations',
   deleteConversations: 'memory:delete-conversations',
+  importMarkdown: 'memory:import-markdown',
+  pickMarkdownFiles: 'memory:pick-markdown-files',
+  listDocuments: 'memory:documents:list',
+  getDocument: 'memory:documents:get',
+  deleteDocument: 'memory:documents:delete',
+  atomicProvenance: 'memory:atomic-provenance',
 } as const
 
 const KNOWLEDGE_CHANNELS = {
@@ -393,6 +399,19 @@ function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
     (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
       bridge.deleteConversations(target),
   )
+  ipcMain.handle(
+    MEMORY_CHANNELS.importMarkdown,
+    (_event, input: { title: string; markdown: string; filename?: string }) =>
+      bridge.importMarkdown(input),
+  )
+  ipcMain.handle(MEMORY_CHANNELS.pickMarkdownFiles, () => bridge.pickMarkdownFiles())
+  ipcMain.handle(
+    MEMORY_CHANNELS.listDocuments,
+    (_event, limit?: number, offset?: number) => bridge.listDocuments(limit, offset),
+  )
+  ipcMain.handle(MEMORY_CHANNELS.getDocument, (_event, id: string) => bridge.getDocument(id))
+  ipcMain.handle(MEMORY_CHANNELS.deleteDocument, (_event, id: string) => bridge.deleteDocument(id))
+  ipcMain.handle(MEMORY_CHANNELS.atomicProvenance, (_event, id: string) => bridge.atomicProvenance(id))
 }
 
 function registerRealityHandlers(bridge: RealityGatewayBridge): void {

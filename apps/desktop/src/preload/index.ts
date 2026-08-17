@@ -83,6 +83,14 @@ const api: NxcoreDesktopApi = {
       invoke('memory:search-conversations', query, limit, sessionId),
     deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
       invoke('memory:delete-conversations', target),
+    importMarkdown: (input: { title: string; markdown: string; filename?: string }) =>
+      invoke('memory:import-markdown', input),
+    pickMarkdownFiles: () => invoke('memory:pick-markdown-files'),
+    listDocuments: (limit?: number, offset?: number) =>
+      invoke('memory:documents:list', limit, offset),
+    getDocument: (id: string) => invoke('memory:documents:get', id),
+    deleteDocument: (id: string) => invoke('memory:documents:delete', id),
+    atomicProvenance: (id: string) => invoke('memory:atomic-provenance', id),
   },
   reality: {
     listEvents: (filters) => invoke('reality:list-events', filters),

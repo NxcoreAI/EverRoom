@@ -259,6 +259,17 @@ export interface NxcoreDesktopApi {
     listConversations(options: MemoryConversationListOptions): Promise<MemoryConversationPageDto>
     searchConversations(query: string, limit?: number, sessionId?: string): Promise<{ messages: MemoryConversationMessageDto[] }>
     deleteConversations(target: { sessionIds?: string[]; messageIds?: string[] }): Promise<{ deletedCount: number }>
+    /** md 文档导入（gateway 资产化 + MemoryCore 登记，title 必填）。 */
+    importMarkdown(input: { title: string; markdown: string; filename?: string }): Promise<MemoryImportMarkdownResultDto>
+    /** 系统文件选择框（仅 .md，≤2MB）→ 文本（取消返回空数组；失败项带 error）。 */
+    pickMarkdownFiles(): Promise<Array<{ filename: string; markdown: string } | { filename: string; error: string }>>
+    /** 导入文档登记清单（每身份键最新版本）。 */
+    listDocuments(limit?: number, offset?: number): Promise<{ documents: MemoryDocumentDto[]; total: number }>
+    /** 文档详情：登记行 + 分块（含正文与行区间）+ 派生 L1。 */
+    getDocument(id: string): Promise<MemoryDocumentDetailDto>
+    deleteDocument(id: string): Promise<{ documentId: string; deleted: boolean }>
+    /** 原子记忆一站式溯源（文档锚点/会话原话）。 */
+    atomicProvenance(id: string): Promise<MemoryAtomicProvenanceDto>
   }
   reality: {
     listEvents(filters?: { status?: RealityEventStatus; search?: string }): Promise<RealityEvent[]>
@@ -348,10 +359,14 @@ import type {
   MemoryAtomicItemDto,
   MemoryAtomicListOptions,
   MemoryAtomicPageDto,
+  MemoryAtomicProvenanceDto,
   MemoryConversationListOptions,
   MemoryConversationMessageDto,
   MemoryConversationPageDto,
   MemoryCoreDto,
+  MemoryDocumentDetailDto,
+  MemoryDocumentDto,
+  MemoryImportMarkdownResultDto,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,

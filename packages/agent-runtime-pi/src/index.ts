@@ -41,10 +41,10 @@ export type {
 export type { KnowledgeToolScope } from "./knowledge/tools.js";
 export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
 export type { MemoryCoreErrorKind } from "./memory/client.js";
-export type { MemoryRuntimeConfig } from "./memory/types.js";
 export type {
   MemoryAtomicItem,
   MemoryAtomicPage,
+  MemoryAtomicProvenance,
   MemoryAtomicQuery,
   MemoryCaptureMessage,
   MemoryConversationHit,
@@ -52,8 +52,15 @@ export type {
   MemoryConversationPage,
   MemoryConversationQuery,
   MemoryCoreFile,
+  MemoryDocumentChunk,
+  MemoryDocumentDetail,
+  MemoryDocumentImportResult,
+  MemoryDocumentItem,
+  MemoryDocumentMemory,
   MemoryPipelineStage,
   MemoryPipelineStatus,
+  MemoryProvenanceAnchor,
+  MemoryRuntimeConfig,
   MemoryScenarioEntry,
   MemoryScenarioFile,
 } from "./memory/types.js";
