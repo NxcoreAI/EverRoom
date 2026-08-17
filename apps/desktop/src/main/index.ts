@@ -608,7 +608,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     void saasClient.initialize()
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
     await keyring.initialize()
-    privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory)
+    privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'))
+    void privateAudioSync.drainPending().catch(() => undefined)
     privateTranscriptionSync = new PrivateTranscriptionSyncService(
       join(dataDirectory, 'private-transcription-sync.json'),
       saasClient,

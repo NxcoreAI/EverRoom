@@ -152,6 +152,8 @@ export interface PrivateAudioAsset {
   wrappingKeyId: string
   wrappingKeyVersion: number
   wrappedKey: string
+  chunkCount?: number
+  chunkPlainSize?: number
   objectKey?: string | null
   status: 'created' | 'uploaded' | 'deleted'
   revision: number
@@ -562,6 +564,10 @@ export class SaasClient {
   async deletePrivateAudio(id: string): Promise<void> {
     await this.request(`/app/private-audio/${encodeURIComponent(id)}`, { method: 'DELETE' })
   }
+  async authorizePrivateAudioChunk(id: string, index: number, input: { plainSize: number; cipherSize: number; cipherContentHash: string }): Promise<{ uploadUrl: string; headers: Record<string,string>; expiresAt: string; objectKey: string }> { return this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks/${index}/upload-authorization`, { method: 'POST', data: { chunkIndex: index, ...input } }) }
+  async completePrivateAudioChunk(id: string, index: number): Promise<void> { await this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks/${index}/upload-complete`, { method: 'POST' }) }
+  async authorizePrivateAudioChunkDownload(id: string, index: number): Promise<{ downloadUrl: string; expiresAt: string }> { return this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks/${index}/download-authorization`, { method: 'POST' }) }
+  async completePrivateAudioChunks(id: string): Promise<void> { await this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks-complete`, { method: 'POST' }) }
 
   async registerProcessorDevice(): Promise<void> {
     await this.request('/app/processing/device', {
