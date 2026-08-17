@@ -1,6 +1,6 @@
 # MemoryCore md 文档链路 + 记忆溯源 — 实施方案（v2）
 
-> 状态：v2 已全量落地（M0–M4，commit 81c3ef7）；2026-08-18 修订：L2/L3 排除文档派生原子（§5.4，fork 446e9dd）
+> 状态：v2 已全量落地（M0–M4，commit 81c3ef7）；2026-08-18 修订：L2/L3 排除文档派生原子（§5.4）+ 文档 type 限定收紧为 work_*（§5.3），fork a5dabc5
 > 日期：2026-08-17；v2 修订：文档子系统整体下沉 MemoryCore 实现，gateway 退为薄代理（用户拍板）
 > 前置：`docs/pi-agent-memory-plan.md`（已实施，pi agent 接入 MemoryCore）、`docs/memory-app-plan.md`（已实施，MemoryPage 查看链路）
 > 范围：`TencentDB-Agent-Memory/MemoryCore`（fork，新增文档子系统）、`apps/gateway`（薄代理路由）、`apps/desktop`（MemoryPage 改造）
@@ -127,7 +127,7 @@ md 原文是**文档资产**，归调用方所有——EverRoom 侧即知识资�
 
    > 以下是一份文档《{title}》的分块内容，每块开头标注了它在文档中的标题路径。请从中提取值得长期记住的**事实、约束、做法、决策**——即未来对话中可直接复用、能减少重复工作的信息。不要把文档内容当作用户说过的话；不复述文档结构本身；每条记忆的 source_message_ids 指向其依据的分块消息 id。
 
-2. **type 限定**：只产 `work_fact / work_task / work_method / work_artifact / instruction`，不产 `persona / episodic`（文档不是用户人格与经历）。
+2. **type 限定**：只产 `work_fact / work_task / work_method / work_artifact`，不产 `persona / episodic / instruction`（文档不是用户人格与经历；instruction 是对话链路的"用户指令"类型，文档中的行为规则归 work_method——2026-08-18 收紧，原含 instruction 已废止）。
 3. **scene 处理**：不做 `previousSceneName` 连续性；`scene_name` = 文档标题（仅作 L1 分组/展示标签——文档原子不进 L2，§5.4 修订）。
 4. **溯源落列**：`source_kind/source_ref/source_message_ids` 随 MemoryRecord 落新列（`l1-writer.ts`/`l1-reader.ts` 增字段）。
 5. **修 `/atomic/update` 清空行为**（`v2-router.ts:1073-1091`）：人工编辑内容时保留既有 source 三字段，只更新 content/version。
@@ -227,7 +227,7 @@ md 原文是**文档资产**，归调用方所有——EverRoom 侧即知识资�
 
 ## 13. 开放问题（待拍板）
 
-1. **文档 type 限定集**：建议 `work_fact/work_task/work_method/work_artifact/instruction`，排除 `persona/episodic`。
+1. **文档 type 限定集**：~~建议 `work_fact/work_task/work_method/work_artifact/instruction`~~ → 2026-08-18 拍板收紧为 `work_fact/work_task/work_method/work_artifact`（排除 `persona/episodic/instruction`，fork a5dabc5）。
 2. **重导身份判定**：建议 `(title, caller_ref)` 命中即同源升版；还是要求 sha 相似度？
 3. **chunk 带标题路径前缀**：建议带（自含语境）；代价是原子 content 可能沾标题词。
 4. **文档隔离维度**：v1 挂 (team, agent, user) 与召回对齐（pi agent 可召回）；但"文档属用户、多 agent 共享"是否更对（涉及上游 asset/ACL 体系）？建议 v1 从简，M4 再议。

@@ -9,6 +9,7 @@ allowBuilds:
   '@google/genai': true
   '@parcel/watcher': false
   '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryCore': false
+  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#a5dabc5bd4ef96411ec5587cefb73b3caed6ab90&path:MemoryCore': false
   '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#cfbb90401288cf9d51dd54f10291b973e2c3f10d&path:MemoryCore': false
   '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/906dd0f0f4b6263312dabf345ebeba37e6e8d3ae': false
   better-sqlite3: true
