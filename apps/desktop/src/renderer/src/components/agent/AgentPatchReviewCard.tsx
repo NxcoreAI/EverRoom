@@ -16,9 +16,9 @@ const statusCopy: Record<DocumentPatchStatus, string> = {
 }
 
 export function shouldShowAgentPatchReviewCard(
-  patch: DocumentPatchSummary | null | undefined,
-): patch is DocumentPatchSummary {
-  return Boolean(patch && patch.kind !== 'continue')
+  _patch: DocumentPatchSummary | null | undefined,
+): _patch is DocumentPatchSummary {
+  return false
 }
 
 export function AgentPatchReviewCard({

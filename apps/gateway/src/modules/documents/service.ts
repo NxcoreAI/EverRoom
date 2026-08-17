@@ -9,6 +9,7 @@ import type {
   ApplyDocumentPatchResult,
   CreateDocumentPatchInput,
   DocumentBlockResolution,
+  DocumentBlockBacklink,
   DocumentBlockSummary,
   DocumentContinuationBlock,
   DocumentEvent,
@@ -16,6 +17,7 @@ import type {
   DocumentPatchHunk,
   DocumentPatchStatus,
   DocumentPatchSummary,
+  DocumentVersionSummary,
   ImportRoomDocumentInput,
   ResolveDocumentBlockReferencesInput,
   RejectDocumentContinuationBlockInput,
@@ -32,6 +34,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm"
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   contextRooms,
+  documentBlockReferences,
   documentBlocks,
   documentOps,
   documentPatchHunks,
@@ -43,8 +46,11 @@ import {
 } from "../../infrastructure/database/schema.js";
 import {
   applyDocumentPatchHunk,
-  collectDocumentReferences,
+  DOCUMENT_TITLE_NODE_TYPE,
+  documentBodyContent,
+  documentTitleText,
   findBlockPath,
+  inheritStreamBlockIds,
   nodeAtPath,
   normalizeDocumentContent,
   patchTargetBlockIds,
@@ -117,6 +123,7 @@ function toDocument(
     roomId,
     title: row.title,
     contentJson: row.contentJson as TiptapJsonContent,
+    contentSchemaVersion: row.contentSchemaVersion,
     version: row.version,
     status: row.status,
     activeTransactionId: row.activeTransactionId,
@@ -262,19 +269,118 @@ export class DocumentService {
   listBlocks(documentId: string): DocumentBlockSummary[] {
     const document = this.get(documentId);
     if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    this.ensureProjection(document);
     return this.db.select().from(documentBlocks)
       .where(eq(documentBlocks.documentId, documentId))
       .orderBy(asc(documentBlocks.ordinal)).all()
       .map((row) => ({
-        id: row.id,
+        blockId: row.blockId,
         documentId,
         roomId: document.roomId,
         parentBlockId: row.parentBlockId,
+        rootBlockId: row.rootBlockId,
         type: row.type,
+        siblingIndex: row.siblingIndex,
         ordinal: row.ordinal,
         path: row.path,
+        depth: row.depth,
         textPreview: row.textPreview,
+        indexedVersion: row.indexedVersion,
       }));
+  }
+
+  listBlockBacklinks(documentId: string, blockId?: string): DocumentBlockBacklink[] {
+    const document = this.get(documentId);
+    if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    this.ensureProjection(document);
+    const conditions = [eq(documentBlockReferences.targetDocumentId, documentId)];
+    if (blockId) conditions.push(eq(documentBlockReferences.targetBlockId, blockId));
+    return this.db.select({
+      reference: documentBlockReferences,
+      sourceDocument: documents,
+      sourceRoomId: roomDocumentLinks.roomId,
+      sourceBlock: documentBlocks,
+    }).from(documentBlockReferences)
+      .innerJoin(documents, eq(documents.id, documentBlockReferences.sourceDocumentId))
+      .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
+      .innerJoin(documentBlocks, and(
+        eq(documentBlocks.documentId, documentBlockReferences.sourceDocumentId),
+        eq(documentBlocks.blockId, documentBlockReferences.sourceBlockId),
+      ))
+      .where(and(...conditions))
+      .orderBy(asc(documentBlockReferences.ordinal)).all()
+      .map(({ reference, sourceDocument, sourceRoomId, sourceBlock }) => ({
+        sourceRoomId,
+        sourceDocumentId: sourceDocument.id,
+        sourceDocumentTitle: sourceDocument.title,
+        sourceBlockId: reference.sourceBlockId,
+        sourceTextPreview: sourceBlock.textPreview,
+        targetDocumentId: reference.targetDocumentId,
+        targetBlockId: reference.targetBlockId,
+      }));
+  }
+
+  listVersions(documentId: string): DocumentVersionSummary[] {
+    if (!this.get(documentId)) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    return this.db.select().from(documentVersions)
+      .where(eq(documentVersions.documentId, documentId))
+      .orderBy(desc(documentVersions.version)).all()
+      .map((version) => ({
+        documentId,
+        version: version.version,
+        contentSchemaVersion: version.contentSchemaVersion,
+        sourceTransactionId: version.sourceTransactionId,
+        sourcePatchId: version.sourcePatchId,
+        createdAt: version.createdAt.toISOString(),
+      }));
+  }
+
+  restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument> {
+    return this.queue.enqueue(() => {
+      const document = this.get(documentId);
+      if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
+      if (document.activeTransactionId) throw new DocumentServiceError("DOCUMENT_BUSY", "Document is busy", 409);
+      if (document.version !== baseVersion) {
+        throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409);
+      }
+      const historical = this.db.select().from(documentVersions).where(and(
+        eq(documentVersions.documentId, documentId),
+        eq(documentVersions.version, version),
+      )).get();
+      if (!historical) throw new DocumentServiceError("VERSION_NOT_FOUND", "Document version not found", 404);
+      const nextVersion = document.version + 1;
+      const normalized = this.normalizeContent(
+        documentId,
+        document.roomId,
+        historical.contentJson as TiptapJsonContent,
+        nextVersion,
+        document.title,
+      );
+      const now = new Date();
+      this.db.transaction((tx) => {
+        tx.update(documents).set({
+          title: normalized.title,
+          contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
+          version: nextVersion,
+          updatedAt: now,
+        }).where(eq(documents.id, documentId)).run();
+        tx.insert(documentVersions).values({
+          id: randomUUID(),
+          documentId,
+          version: nextVersion,
+          contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
+          createdAt: now,
+        }).run();
+        this.replaceProjection(tx, documentId, normalized);
+      });
+      const restored = this.get(documentId)!;
+      this.markPendingPatchesConflicted(documentId, nextVersion);
+      this.publish(restored.roomId, documentId, null, "document.updated", { document: restored });
+      return restored;
+    });
   }
 
   resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): DocumentBlockResolution[] {
@@ -300,9 +406,11 @@ export class DocumentService {
           version: document.version,
         };
       }
+      this.ensureProjection(document);
       const block = this.db.select().from(documentBlocks).where(and(
         eq(documentBlocks.documentId, reference.documentId),
-        eq(documentBlocks.id, reference.blockId),
+        eq(documentBlocks.blockId, reference.blockId),
+        eq(documentBlocks.indexedVersion, document.version),
       )).get();
       return {
         ...reference,
@@ -372,9 +480,9 @@ export class DocumentService {
     const blocks = this.listBlocks(documentId);
     let markdown: string;
     try {
-      markdown = this.markdown.serialize(document.contentJson);
+      markdown = this.markdown.serialize(documentBodyContent(document.contentJson));
     } catch {
-      markdown = blocks.map((block) => `<!-- block:${block.id} type:${block.type} -->\n${block.textPreview}`).join("\n\n");
+      markdown = blocks.map((block) => `<!-- block:${block.blockId} type:${block.type} -->\n${block.textPreview}`).join("\n\n");
     }
     return { document, blocks, markdown };
   }
@@ -394,12 +502,13 @@ export class DocumentService {
         return existing;
       }
       const now = new Date();
-      const normalized = this.normalizeContent(input.id, input.roomId, input.contentJson);
+      const normalized = this.normalizeContent(input.id, input.roomId, input.contentJson, 1, input.title);
       this.db.transaction((tx) => {
         tx.insert(documents).values({
           id: input.id,
-          title: input.title.trim().slice(0, 120),
+          title: normalized.title,
           contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
           version: 1,
           status: "active",
           createdAt: now,
@@ -411,19 +520,10 @@ export class DocumentService {
           documentId: input.id,
           version: 1,
           contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
           createdAt: now,
         }).run();
-        if (normalized.blocks.length > 0) {
-          tx.insert(documentBlocks).values(normalized.blocks.map((block) => ({
-            id: block.id,
-            documentId: block.documentId,
-            parentBlockId: block.parentBlockId,
-            type: block.type,
-            ordinal: block.ordinal,
-            path: block.path,
-            textPreview: block.textPreview,
-          }))).run();
-        }
+        this.replaceProjection(tx, input.id, normalized);
       });
       const imported = this.get(input.id)!;
       this.publish(input.roomId, input.id, null, "document.updated", { document: imported });
@@ -447,37 +547,48 @@ export class DocumentService {
       if (title.length > 120) {
         throw new DocumentServiceError("INVALID_TITLE", "Document title cannot exceed 120 characters");
       }
-      const normalized = this.normalizeContent(documentId, current.roomId, input.contentJson, current.contentJson);
+      if (input.title === undefined
+        && JSON.stringify(documentBodyContent(current.contentJson)) === JSON.stringify(documentBodyContent(input.contentJson))) {
+        return current;
+      }
+      const nextVersion = current.version + 1;
+      const incomingNodeTitle = documentTitleText(
+        input.contentJson.content?.find((node) => node.type === DOCUMENT_TITLE_NODE_TYPE),
+      );
+      const content = input.title !== undefined && incomingNodeTitle === current.title && title !== current.title
+        ? {
+          ...input.contentJson,
+          content: (input.contentJson.content ?? []).map((node) => node.type === DOCUMENT_TITLE_NODE_TYPE
+            ? { type: DOCUMENT_TITLE_NODE_TYPE, content: [{ type: "text", text: title }] }
+            : node),
+        }
+        : input.contentJson;
+      const normalized = this.normalizeContent(documentId, current.roomId, content, nextVersion, title);
       const contentChanged = JSON.stringify(current.contentJson) !== JSON.stringify(normalized.content);
-      const titleChanged = current.title !== title;
+      const titleChanged = current.title !== normalized.title;
       if (!contentChanged && !titleChanged) return current;
       if (current.version !== input.baseVersion) {
         throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409);
       }
-      const nextVersion = current.version + 1;
       const now = new Date();
       this.db.transaction((tx) => {
-        tx.update(documents).set({ title, contentJson: normalized.content, version: nextVersion, updatedAt: now })
+        tx.update(documents).set({
+          title: normalized.title,
+          contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
+          version: nextVersion,
+          updatedAt: now,
+        })
           .where(eq(documents.id, documentId)).run();
         tx.insert(documentVersions).values({
           id: randomUUID(),
           documentId,
           version: nextVersion,
           contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
           createdAt: now,
         }).run();
-        tx.delete(documentBlocks).where(eq(documentBlocks.documentId, documentId)).run();
-        if (normalized.blocks.length > 0) {
-          tx.insert(documentBlocks).values(normalized.blocks.map((block) => ({
-            id: block.id,
-            documentId: block.documentId,
-            parentBlockId: block.parentBlockId,
-            type: block.type,
-            ordinal: block.ordinal,
-            path: block.path,
-            textPreview: block.textPreview,
-          }))).run();
-        }
+        this.replaceProjection(tx, documentId, normalized);
       });
       const updated = this.get(documentId)!;
       this.markPendingPatchesConflicted(documentId, nextVersion);
@@ -628,7 +739,8 @@ export class DocumentService {
         current.documentId,
         current.roomId,
         current.workingContentJson as TiptapJsonContent,
-        current.workingContentJson as TiptapJsonContent,
+        1,
+        this.get(current.documentId)?.title,
       );
       const finalContent = prepared.content;
       this.publish(current.roomId, current.documentId, current.id, "document.commit-requested", {
@@ -644,7 +756,9 @@ export class DocumentService {
           completedAt: now,
         }).where(eq(documentTransactions.id, current.id)).run();
         tx.update(documents).set({
+          title: prepared.title,
           contentJson: finalContent,
+          contentSchemaVersion: prepared.schemaVersion,
           version: 1,
           status: "active",
           activeTransactionId: null,
@@ -655,21 +769,11 @@ export class DocumentService {
           documentId: current.documentId,
           version: 1,
           contentJson: finalContent,
+          contentSchemaVersion: prepared.schemaVersion,
           sourceTransactionId: current.id,
           createdAt: now,
         }).run();
-        tx.delete(documentBlocks).where(eq(documentBlocks.documentId, current.documentId)).run();
-        if (prepared.blocks.length > 0) {
-          tx.insert(documentBlocks).values(prepared.blocks.map((block) => ({
-            id: block.id,
-            documentId: block.documentId,
-            parentBlockId: block.parentBlockId,
-            type: block.type,
-            ordinal: block.ordinal,
-            path: block.path,
-            textPreview: block.textPreview,
-          }))).run();
-        }
+        this.replaceProjection(tx, current.documentId, prepared);
       });
       const document = this.get(current.documentId)!;
       this.publish(current.roomId, current.documentId, current.id, "document.committed", { document });
@@ -882,8 +986,10 @@ export class DocumentService {
         row.documentId,
         row.roomId,
         parsed,
+        0,
+        this.get(row.documentId)?.title,
       );
-      const after = afterNormalized.content.content ?? [];
+      const after = documentBodyContent(afterNormalized.content).content ?? [];
       const applied = applyDocumentPatchHunk(
         row.proposedContentJson,
         input.operation,
@@ -894,7 +1000,8 @@ export class DocumentService {
         row.documentId,
         row.roomId,
         applied.content,
-        row.proposedContentJson,
+        0,
+        this.get(row.documentId)?.title,
       );
       const addedCharacters = tiptapText({ type: "doc", content: after }).length;
       const deletedCharacters = tiptapText({ type: "doc", content: applied.before }).length;
@@ -1023,17 +1130,19 @@ export class DocumentService {
         candidate.target,
         [candidate.contentJson],
       );
-      const normalized = this.normalizeContent(row.documentId, row.roomId, applied.content, document.contentJson);
+      const nextVersion = document.version + 1;
+      const normalized = this.normalizeContent(row.documentId, row.roomId, applied.content, nextVersion, document.title);
       const acceptedBlockIds = [...patch.acceptedBlockIds, candidate.blockId];
       const rejectedBlockIds = patch.rejectedBlockIds;
       const decidedBlockIds = new Set([...acceptedBlockIds, ...rejectedBlockIds]);
       const remaining = patch.continuationBlocks.filter((block) => !decidedBlockIds.has(block.blockId));
       const completed = remaining.length === 0;
-      const nextVersion = document.version + 1;
       const now = new Date();
       this.db.transaction((tx) => {
         tx.update(documents).set({
+          title: normalized.title,
           contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
           version: nextVersion,
           updatedAt: now,
         }).where(eq(documents.id, row.documentId)).run();
@@ -1042,21 +1151,11 @@ export class DocumentService {
           documentId: row.documentId,
           version: nextVersion,
           contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
           sourcePatchId: row.id,
           createdAt: now,
         }).run();
-        tx.delete(documentBlocks).where(eq(documentBlocks.documentId, row.documentId)).run();
-        if (normalized.blocks.length > 0) {
-          tx.insert(documentBlocks).values(normalized.blocks.map((block) => ({
-            id: block.id,
-            documentId: block.documentId,
-            parentBlockId: block.parentBlockId,
-            type: block.type,
-            ordinal: block.ordinal,
-            path: block.path,
-            textPreview: block.textPreview,
-          }))).run();
-        }
+        this.replaceProjection(tx, row.documentId, normalized);
         tx.update(documentPatches).set({
           status: completed ? "applied" : "pending",
           acceptedBlockIds,
@@ -1272,13 +1371,15 @@ export class DocumentService {
         if (!requestedIds.includes(hunk.id)) continue;
         content = applyDocumentPatchHunk(content, hunk.operation, hunk.target, hunk.afterJson).content;
       }
-      const normalized = this.normalizeContent(row.documentId, row.roomId, content, row.baseContentJson);
-      const rejectedIds = hunkRows.map((hunk) => hunk.id).filter((id) => !requestedIds.includes(id));
       const nextVersion = document.version + 1;
+      const normalized = this.normalizeContent(row.documentId, row.roomId, content, nextVersion, document.title);
+      const rejectedIds = hunkRows.map((hunk) => hunk.id).filter((id) => !requestedIds.includes(id));
       const now = new Date();
       this.db.transaction((tx) => {
         tx.update(documents).set({
+          title: normalized.title,
           contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
           version: nextVersion,
           updatedAt: now,
         }).where(eq(documents.id, row.documentId)).run();
@@ -1287,21 +1388,11 @@ export class DocumentService {
           documentId: row.documentId,
           version: nextVersion,
           contentJson: normalized.content,
+          contentSchemaVersion: normalized.schemaVersion,
           sourcePatchId: row.id,
           createdAt: now,
         }).run();
-        tx.delete(documentBlocks).where(eq(documentBlocks.documentId, row.documentId)).run();
-        if (normalized.blocks.length > 0) {
-          tx.insert(documentBlocks).values(normalized.blocks.map((block) => ({
-            id: block.id,
-            documentId: block.documentId,
-            parentBlockId: block.parentBlockId,
-            type: block.type,
-            ordinal: block.ordinal,
-            path: block.path,
-            textPreview: block.textPreview,
-          }))).run();
-        }
+        this.replaceProjection(tx, row.documentId, normalized);
         tx.update(documentPatches).set({
           status: "applied",
           acceptedHunkIds: requestedIds,
@@ -1407,12 +1498,16 @@ export class DocumentService {
       .all()
       .map((operation) => operation.markdown)
       .join("") + input.text;
-    const parsed = this.parseMarkdown(markdown, input.transactionId);
+    const parsed = inheritStreamBlockIds(
+      transaction.workingContentJson as TiptapJsonContent,
+      this.parseMarkdown(markdown, input.transactionId),
+    );
     const normalized = this.normalizeContent(
       transaction.documentId,
       transaction.roomId,
       parsed,
-      transaction.workingContentJson as TiptapJsonContent,
+      0,
+      this.get(transaction.documentId)?.title,
     );
     const content = normalized.content;
     this.db.transaction((tx) => {
@@ -1434,20 +1529,14 @@ export class DocumentService {
         updatedAt: now,
       })
         .where(eq(documentTransactions.id, input.transactionId)).run();
-      tx.update(documents).set({ contentJson: content, updatedAt: now })
+      tx.update(documents).set({
+        title: normalized.title,
+        contentJson: content,
+        contentSchemaVersion: normalized.schemaVersion,
+        updatedAt: now,
+      })
         .where(eq(documents.id, transaction.documentId)).run();
-      tx.delete(documentBlocks).where(eq(documentBlocks.documentId, transaction.documentId)).run();
-      if (normalized.blocks.length > 0) {
-        tx.insert(documentBlocks).values(normalized.blocks.map((block) => ({
-          id: block.id,
-          documentId: block.documentId,
-          parentBlockId: block.parentBlockId,
-          type: block.type,
-          ordinal: block.ordinal,
-          path: block.path,
-          textPreview: block.textPreview,
-        }))).run();
-      }
+      this.replaceProjection(tx, transaction.documentId, normalized);
     });
     return {
       transaction: { ...transaction, nextSequence, totalBytes, expiresAt },
@@ -1581,17 +1670,22 @@ export class DocumentService {
     documentId: string,
     roomId: string,
     content: TiptapJsonContent,
-    previous?: TiptapJsonContent,
+    indexedVersion = 0,
+    documentTitle?: string,
   ) {
-    for (const reference of collectDocumentReferences(content)) {
-      if (reference.roomId !== roomId) {
+    const normalized = normalizeDocumentContent(content, documentId, roomId, {
+      indexedVersion,
+      ...(documentTitle !== undefined ? { documentTitle } : {}),
+    });
+    for (const reference of normalized.references) {
+      if (reference.targetRoomId !== roomId) {
         throw new DocumentServiceError(
           "CROSS_ROOM_REFERENCE",
           "Document block references must stay in one Room",
           409,
         );
       }
-      const target = this.get(reference.documentId);
+      const target = this.get(reference.targetDocumentId);
       if (target && target.roomId !== roomId) {
         throw new DocumentServiceError(
           "CROSS_ROOM_REFERENCE",
@@ -1600,12 +1694,60 @@ export class DocumentService {
         );
       }
     }
-    const owners = new Map(this.db.select({ id: documentBlocks.id, documentId: documentBlocks.documentId })
-      .from(documentBlocks).all().map((row) => [row.id, row.documentId] as const));
-    return normalizeDocumentContent(content, documentId, roomId, {
-      ...(previous ? { previous } : {}),
-      owners,
-    });
+    return normalized;
+  }
+
+  private replaceProjection(
+    tx: GatewayDatabase,
+    documentId: string,
+    projection: ReturnType<typeof normalizeDocumentContent>,
+  ): void {
+    tx.delete(documentBlockReferences)
+      .where(eq(documentBlockReferences.sourceDocumentId, documentId)).run();
+    tx.delete(documentBlocks).where(eq(documentBlocks.documentId, documentId)).run();
+    if (projection.blocks.length > 0) {
+      tx.insert(documentBlocks).values(projection.blocks.map((block) => ({
+        documentId: block.documentId,
+        blockId: block.blockId,
+        parentBlockId: block.parentBlockId,
+        rootBlockId: block.rootBlockId,
+        type: block.type,
+        siblingIndex: block.siblingIndex,
+        ordinal: block.ordinal,
+        path: block.path,
+        depth: block.depth,
+        textPreview: block.textPreview,
+        indexedVersion: block.indexedVersion,
+      }))).run();
+    }
+    if (projection.references.length > 0) {
+      const indexedVersion = projection.blocks[0]?.indexedVersion ?? 0;
+      tx.insert(documentBlockReferences).values(projection.references.map((reference) => ({
+        sourceDocumentId: documentId,
+        sourceBlockId: reference.sourceBlockId,
+        targetRoomId: reference.targetRoomId,
+        targetDocumentId: reference.targetDocumentId,
+        targetBlockId: reference.targetBlockId,
+        ordinal: reference.ordinal,
+        indexedVersion,
+      }))).run();
+    }
+  }
+
+  private ensureProjection(document: RoomDocument): void {
+    const indexed = this.db.select({ indexedVersion: documentBlocks.indexedVersion })
+      .from(documentBlocks)
+      .where(eq(documentBlocks.documentId, document.id))
+      .limit(1).get();
+    const normalized = normalizeDocumentContent(
+      document.contentJson,
+      document.id,
+      document.roomId,
+      { indexedVersion: document.version, documentTitle: document.title },
+    );
+    const hasAddressableContent = normalized.blocks.length > 0;
+    if (indexed?.indexedVersion === document.version || (!indexed && !hasAddressableContent)) return;
+    this.db.transaction((tx) => this.replaceProjection(tx, document.id, normalized));
   }
 
   private normalizeStoredDocuments(): void {
@@ -1613,35 +1755,30 @@ export class DocumentService {
       .from(documents)
       .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
       .orderBy(asc(documents.createdAt)).all();
-    const owners = new Map<string, string>();
     this.db.transaction((tx) => {
       for (const row of rows) {
         const normalized = normalizeDocumentContent(
           row.document.contentJson as TiptapJsonContent,
           row.document.id,
           row.roomId,
-          { owners },
+          { indexedVersion: row.document.version, documentTitle: row.document.title },
         );
-        if (normalized.changed) {
-          tx.update(documents).set({ contentJson: normalized.content })
+        if (normalized.changed || row.document.contentSchemaVersion !== normalized.schemaVersion) {
+          tx.update(documents).set({
+            title: normalized.title,
+            contentJson: normalized.content,
+            contentSchemaVersion: normalized.schemaVersion,
+          })
             .where(eq(documents.id, row.document.id)).run();
-          tx.update(documentVersions).set({ contentJson: normalized.content }).where(and(
+          tx.update(documentVersions).set({
+            contentJson: normalized.content,
+            contentSchemaVersion: normalized.schemaVersion,
+          }).where(and(
             eq(documentVersions.documentId, row.document.id),
             eq(documentVersions.version, row.document.version),
           )).run();
         }
-        tx.delete(documentBlocks).where(eq(documentBlocks.documentId, row.document.id)).run();
-        if (normalized.blocks.length > 0) {
-          tx.insert(documentBlocks).values(normalized.blocks.map((block) => ({
-            id: block.id,
-            documentId: block.documentId,
-            parentBlockId: block.parentBlockId,
-            type: block.type,
-            ordinal: block.ordinal,
-            path: block.path,
-            textPreview: block.textPreview,
-          }))).run();
-        }
+        this.replaceProjection(tx, row.document.id, normalized);
       }
     });
   }

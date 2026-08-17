@@ -68,6 +68,8 @@ export function FakeDocumentContent({
   documentEvents,
   onBackendDocumentChange,
   onDeleteDocument,
+  focusedBlockId,
+  documentFocusRequestId,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
@@ -75,6 +77,8 @@ export function FakeDocumentContent({
   documentEvents: Record<string, DocumentEvent[]>
   onBackendDocumentChange: (document: RoomDocument) => void
   onDeleteDocument?: (document: RoomDocument) => Promise<void>
+  focusedBlockId?: string | null
+  documentFocusRequestId?: number | null
 }) {
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const backendDocument = backendDocuments.find((document) => document.id === documentId) ?? null
@@ -87,6 +91,8 @@ export function FakeDocumentContent({
       events={documentEvents[documentId] ?? []}
       onBackendDocumentChange={onBackendDocumentChange}
       onDeleteDocument={onDeleteDocument}
+      focusedBlockId={focusedBlockId}
+      documentFocusRequestId={documentFocusRequestId}
     />
   )
 }

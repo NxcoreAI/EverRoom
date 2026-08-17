@@ -3,6 +3,9 @@ import { Extension, type Editor } from '@tiptap/react'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { Check, X } from 'lucide-react'
+import { createElement, Fragment as ReactFragment, type MouseEvent as ReactMouseEvent } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 
 import type { DocumentPatchDecisionMap } from './documentPatchState'
 
@@ -10,9 +13,13 @@ interface PatchReviewDecorationState {
   patch: DocumentPatch
   decisions: DocumentPatchDecisionMap
   currentHunkId: string | null
+  busy: boolean
+  onDecision: (hunkId: string, decision: 'accepted' | 'rejected') => Promise<void>
+  onAcceptAll: () => Promise<void>
 }
 
 const patchReviewDecorationKey = new PluginKey<PatchReviewDecorationState | null>('documentPatchReview')
+const patchActionRoots = new WeakMap<Node, Root>()
 
 function hunkTargetBlockIds(hunk: DocumentPatchHunk): string[] {
   const target = hunk.target
@@ -93,7 +100,7 @@ function reviewDecorations(doc: ProseMirrorNode, state: PatchReviewDecorationSta
     })
 
     const proposedText = jsonText(hunk.after) || hunk.markdown.trim()
-    if (hunk.operation !== 'delete' && proposedText) {
+    if (hunk.operation === 'delete' || proposedText) {
       const position = targetPreviewPosition(doc, hunk)
       decorations.push(Decoration.widget(position, () => {
         const preview = document.createElement('div')
@@ -104,9 +111,57 @@ function reviewDecorations(doc: ProseMirrorNode, state: PatchReviewDecorationSta
         ].filter(Boolean).join(' ')
         preview.dataset.patchHunkId = hunk.id
         preview.dataset.patchDecision = state.decisions[hunk.id] ?? 'undecided'
-        preview.textContent = proposedText
+        preview.tabIndex = 0
+        preview.setAttribute('role', 'region')
+        preview.setAttribute('aria-label', `文档改动 ${hunk.sequence}`)
+        const content = document.createElement('div')
+        content.className = 'document-patch-review-proposed-content'
+        content.textContent = proposedText || '删除此处内容'
+        const actions = document.createElement('div')
+        actions.className = 'document-patch-review-proposed-actions'
+        const root = createRoot(actions)
+        root.render(createElement(ReactFragment, null,
+          createElement('button', {
+            type: 'button',
+            className: 'is-accept',
+            title: '接受此处改动',
+            'aria-label': '接受此处改动',
+            disabled: state.busy,
+            onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
+            onClick: (event: ReactMouseEvent) => { event.stopPropagation(); void state.onDecision(hunk.id, 'accepted') },
+          }, createElement(Check, { 'aria-hidden': true })),
+          createElement('button', {
+            type: 'button',
+            className: 'is-reject',
+            title: '拒绝此处改动',
+            'aria-label': '拒绝此处改动',
+            disabled: state.busy,
+            onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
+            onClick: (event: ReactMouseEvent) => { event.stopPropagation(); void state.onDecision(hunk.id, 'rejected') },
+          }, createElement(X, { 'aria-hidden': true })),
+          createElement('button', {
+            type: 'button',
+            className: 'is-accept-all',
+            title: '全部接受',
+            disabled: state.busy,
+            onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
+            onClick: (event: ReactMouseEvent) => { event.stopPropagation(); void state.onAcceptAll() },
+          }, '全部接受'),
+        ))
+        preview.append(content, actions)
+        preview.addEventListener('keydown', (event) => {
+          if (event.target !== preview || event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || state.busy) return
+          event.preventDefault()
+          event.stopPropagation()
+          void state.onDecision(hunk.id, 'accepted')
+        })
+        patchActionRoots.set(preview, root)
         return preview
-      }, { key: `patch-proposed:${hunk.id}`, side: 1 }))
+      }, {
+        key: `patch-proposed:${hunk.id}:${state.decisions[hunk.id] ?? 'undecided'}:${state.busy}`,
+        side: 1,
+        destroy: (node) => window.setTimeout(() => patchActionRoots.get(node)?.unmount(), 0),
+      }))
     }
   }
   return DecorationSet.create(doc, decorations)
@@ -139,12 +194,18 @@ export function showDocumentPatchReview(
   patch: DocumentPatch,
   decisions: DocumentPatchDecisionMap,
   currentHunkId: string | null,
+  busy: boolean,
+  onDecision: (hunkId: string, decision: 'accepted' | 'rejected') => Promise<void>,
+  onAcceptAll: () => Promise<void>,
 ): void {
   if (editor.isDestroyed) return
   editor.view.dispatch(editor.state.tr.setMeta(patchReviewDecorationKey, {
     patch,
     decisions,
     currentHunkId,
+    busy,
+    onDecision,
+    onAcceptAll,
   } satisfies PatchReviewDecorationState))
 }
 

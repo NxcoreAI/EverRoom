@@ -33,7 +33,7 @@ export function createRoomDocumentContent(
   return {
     type: 'doc',
     content: [
-      { type: 'heading', attrs: { level: 1 }, content: [textNode(title)] },
+      { type: 'documentTitle', content: [textNode(title)] },
       { type: 'paragraph', content: [textNode(room.brief.background)] },
       { type: 'heading', attrs: { level: 2 }, content: [textNode('目标')] },
       { type: 'paragraph', content: [textNode(room.brief.goal)] },

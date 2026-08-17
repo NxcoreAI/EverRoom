@@ -899,3 +899,17 @@
     font-size: 26px;
   }
 }
+.context-room-tiptap-content h1[data-document-title] {
+  margin: 0 0 20px;
+  color: var(--cr-text);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.context-room-tiptap-content h1[data-document-title]:empty::before {
+  color: var(--cr-muted);
+  content: '无标题文档';
+  pointer-events: none;
+}

@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type {
   AgentNavigationTarget,
   DocumentPatchOperation,
@@ -185,6 +185,7 @@ export const documents = sqliteTable("documents", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
   contentJson: text("content_json", { mode: "json" }).notNull(),
+  contentSchemaVersion: integer("content_schema_version").notNull().default(1),
   version: integer("version").notNull().default(0),
   status: text("status", { enum: ["draft", "active"] }).notNull().default("draft"),
   activeTransactionId: text("active_transaction_id"),
@@ -223,6 +224,7 @@ export const documentVersions = sqliteTable(
       .references(() => documents.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
     contentJson: text("content_json", { mode: "json" }).notNull(),
+    contentSchemaVersion: integer("content_schema_version").notNull().default(1),
     sourceTransactionId: text("source_transaction_id"),
     sourcePatchId: text("source_patch_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -235,19 +237,45 @@ export const documentVersions = sqliteTable(
 export const documentBlocks = sqliteTable(
   "document_blocks",
   {
-    id: text("id").primaryKey(),
     documentId: text("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
+    blockId: text("block_id").notNull(),
     parentBlockId: text("parent_block_id"),
+    rootBlockId: text("root_block_id").notNull(),
     type: text("type").notNull(),
+    siblingIndex: integer("sibling_index").notNull(),
     ordinal: integer("ordinal").notNull(),
     path: text("path", { mode: "json" }).$type<number[]>().notNull(),
+    depth: integer("depth").notNull(),
     textPreview: text("text_preview").notNull(),
+    indexedVersion: integer("indexed_version").notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.documentId, table.blockId] }),
     uniqueIndex("document_blocks_document_ordinal_idx").on(table.documentId, table.ordinal),
     index("document_blocks_document_idx").on(table.documentId),
+    index("document_blocks_root_idx").on(table.documentId, table.rootBlockId),
+  ],
+);
+
+export const documentBlockReferences = sqliteTable(
+  "document_block_references",
+  {
+    sourceDocumentId: text("source_document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    sourceBlockId: text("source_block_id").notNull(),
+    targetRoomId: text("target_room_id").notNull(),
+    targetDocumentId: text("target_document_id").notNull(),
+    targetBlockId: text("target_block_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    indexedVersion: integer("indexed_version").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.sourceDocumentId, table.ordinal] }),
+    index("document_block_references_source_idx").on(table.sourceDocumentId, table.sourceBlockId),
+    index("document_block_references_target_idx").on(table.targetDocumentId, table.targetBlockId),
   ],
 );
 

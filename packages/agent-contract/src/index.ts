@@ -184,6 +184,7 @@ export interface RoomDocument {
   roomId: string;
   title: string;
   contentJson: TiptapJsonContent;
+  contentSchemaVersion: number;
   version: number;
   status: "draft" | "active";
   activeTransactionId: string | null;
@@ -193,14 +194,18 @@ export interface RoomDocument {
 }
 
 export interface DocumentBlockSummary {
-  id: string;
+  blockId: string;
   documentId: string;
   roomId: string;
   parentBlockId: string | null;
+  rootBlockId: string;
   type: string;
+  siblingIndex: number;
   ordinal: number;
   path: number[];
+  depth: number;
   textPreview: string;
+  indexedVersion: number;
 }
 
 export interface DocumentBlockList {
@@ -215,7 +220,8 @@ export type DocumentBlockResolutionStatus =
   | "document_trashed"
   | "document_deleted"
   | "block_missing"
-  | "room_unavailable";
+  | "room_unavailable"
+  | "permission_denied";
 
 export interface DocumentBlockReferenceInput {
   roomId: string;
@@ -237,6 +243,35 @@ export interface DocumentBlockResolution extends DocumentBlockReferenceInput {
 
 export interface ResolveDocumentBlockReferencesResult {
   resolutions: DocumentBlockResolution[];
+}
+
+export interface DocumentBlockBacklink {
+  sourceRoomId: string;
+  sourceDocumentId: string;
+  sourceDocumentTitle: string;
+  sourceBlockId: string;
+  sourceTextPreview: string;
+  targetDocumentId: string;
+  targetBlockId: string;
+}
+
+export interface DocumentBlockBacklinkList {
+  documentId: string;
+  blockId: string | null;
+  backlinks: DocumentBlockBacklink[];
+}
+
+export interface DocumentVersionSummary {
+  documentId: string;
+  version: number;
+  contentSchemaVersion: number;
+  sourceTransactionId: string | null;
+  sourcePatchId: string | null;
+  createdAt: string;
+}
+
+export interface RestoreDocumentVersionInput {
+  baseVersion: number;
 }
 
 export type DocumentPatchKind = "continue" | "edit";

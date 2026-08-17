@@ -72,20 +72,48 @@ export const DOCUMENT_MCP_TOOL_DEFINITIONS = [
   {
     name: "context_room_patch_hunk",
     title: "追加可审阅的文档修改项",
-    description: "向 building Patch 追加一个独立、不可重叠的 hunk。sequence 从 1 严格连续。insert/replace 使用 Markdown，delete 不传 Markdown。Patch 只生成提案，不直接应用正文。kind=continue 时只能调用一次本工具，operation=insert，并把充分展开的多块 Markdown 一次传入；服务会拆成顶层块供编辑器 Tab 连续接受，不得只生成一小段。",
+    description: "向 building Patch 追加一个独立、不可重叠的 hunk。sequence 从 1 严格连续。操作与 target 必须匹配：insert 可使用 {at:'end'}、{blockId,edge:'before'|'after'} 或同一块内零宽 offset；replace/delete 整块使用 {blockId}，块内范围使用 {blockId,fromOffset,toOffset}，连续块范围使用 {fromBlockId,toBlockId}；replace/delete 禁止携带 edge，insert 禁止使用连续块范围。insert/replace 使用 Markdown，delete 不传 Markdown。调用失败时修正参数并使用相同 sequence 重试，不得跳号。Patch 只生成提案，不直接应用正文。kind=continue 时只能调用一次本工具，operation=insert，并把充分展开的多块 Markdown 一次传入；服务会拆成顶层块供编辑器 Tab 连续接受，不得只生成一小段。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         patchId: { type: "string" },
         sequence: { type: "integer", minimum: 1 },
-        operation: { type: "string", enum: ["insert", "replace", "delete"] },
+        operation: {
+          type: "string",
+          enum: ["insert", "replace", "delete"],
+          description: "insert 用于新增；replace/delete 必须直接指向要修改的块或范围，不能使用 edge。",
+        },
         target: {
           oneOf: [
-            { type: "object", additionalProperties: false, properties: { at: { const: "end" } }, required: ["at"] },
-            { type: "object", additionalProperties: false, properties: { blockId: { type: "string" }, edge: { enum: ["before", "after"] } }, required: ["blockId", "edge"] },
-            { type: "object", additionalProperties: false, properties: { blockId: { type: "string" }, fromOffset: { type: "integer", minimum: 0 }, toOffset: { type: "integer", minimum: 0 } }, required: ["blockId"] },
-            { type: "object", additionalProperties: false, properties: { fromBlockId: { type: "string" }, toBlockId: { type: "string" } }, required: ["fromBlockId", "toBlockId"] },
+            {
+              type: "object",
+              description: "仅用于在文档末尾 insert。",
+              additionalProperties: false,
+              properties: { at: { const: "end" } },
+              required: ["at"],
+            },
+            {
+              type: "object",
+              description: "仅用于在指定块之前或之后 insert；不能用于 replace/delete。",
+              additionalProperties: false,
+              properties: { blockId: { type: "string" }, edge: { enum: ["before", "after"] } },
+              required: ["blockId", "edge"],
+            },
+            {
+              type: "object",
+              description: "不带 offset 时 replace/delete 整块；带 offset 时在块内 insert/replace/delete。",
+              additionalProperties: false,
+              properties: { blockId: { type: "string" }, fromOffset: { type: "integer", minimum: 0 }, toOffset: { type: "integer", minimum: 0 } },
+              required: ["blockId"],
+            },
+            {
+              type: "object",
+              description: "仅用于 replace/delete 同一父级下的连续块范围。",
+              additionalProperties: false,
+              properties: { fromBlockId: { type: "string" }, toBlockId: { type: "string" } },
+              required: ["fromBlockId", "toBlockId"],
+            },
           ],
         },
         markdown: { type: "string", maxLength: 65536 },
@@ -207,6 +235,20 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function normalizeAgentPatchTarget(
+  operation: "insert" | "replace" | "delete",
+  value: Record<string, unknown>,
+): { target: DocumentPatchTarget; corrected: boolean } {
+  if (operation !== "insert"
+    && typeof value.blockId === "string"
+    && (value.edge === "before" || value.edge === "after")
+    && value.fromOffset === undefined
+    && value.toOffset === undefined) {
+    return { target: { blockId: value.blockId }, corrected: true };
+  }
+  return { target: value as DocumentPatchTarget, corrected: false };
 }
 
 function stringArg(args: Record<string, unknown>, name: string, allowEmpty = false): string {
@@ -426,19 +468,20 @@ export class DocumentMcpHost {
         });
       }
       case "context_room_patch_hunk": {
-        const target = args.target;
-        if (!target || typeof target !== "object" || Array.isArray(target)) {
+        const rawTarget = args.target;
+        if (!rawTarget || typeof rawTarget !== "object" || Array.isArray(rawTarget)) {
           throw new Error("INVALID_REQUEST: target is required");
         }
         const operation = stringArg(args, "operation");
         if (operation !== "insert" && operation !== "replace" && operation !== "delete") {
           throw new Error("INVALID_REQUEST: unsupported patch operation");
         }
+        const normalized = normalizeAgentPatchTarget(operation, rawTarget as Record<string, unknown>);
         const result = await this.documents.appendPatchHunk({
           patchId: stringArg(args, "patchId"),
           sequence: integerArg(args, "sequence"),
           operation,
-          target: target as DocumentPatchTarget,
+          target: normalized.target,
           ...(typeof args.markdown === "string" ? { markdown: args.markdown } : {}),
           sessionId: context.agentSessionId,
         });
@@ -448,6 +491,8 @@ export class DocumentMcpHost {
           duplicate: result.duplicate,
           nextSequence: result.nextSequence,
           commitRequired: true,
+          target: normalized.target,
+          targetCorrected: normalized.corrected,
         });
       }
       case "context_room_patch_commit": {

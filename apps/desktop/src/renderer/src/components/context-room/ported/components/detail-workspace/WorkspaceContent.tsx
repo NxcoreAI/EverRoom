@@ -18,6 +18,9 @@ export function WorkspaceContent({
   selectedResource,
   backendDocuments,
   documentEvents,
+  focusedDocumentId,
+  focusedBlockId,
+  documentFocusRequestId,
   onBackendDocumentChange,
   onDeleteDocument,
   onOpenRoom,
@@ -32,6 +35,9 @@ export function WorkspaceContent({
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
   documentEvents: Record<string, DocumentEvent[]>;
+  focusedDocumentId: string | null;
+  focusedBlockId: string | null;
+  documentFocusRequestId: number | null;
   onBackendDocumentChange: (document: RoomDocument) => void;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onOpenRoom: (roomId: string) => void;
@@ -110,6 +116,10 @@ export function WorkspaceContent({
           resource={visibleResource}
           backendDocuments={backendDocuments}
           documentEvents={documentEvents}
+          focusedBlockId={focusedDocumentId === visibleResource.binding.docId ? focusedBlockId : null}
+          documentFocusRequestId={focusedDocumentId === visibleResource.binding.docId
+            ? documentFocusRequestId
+            : null}
           onBackendDocumentChange={onBackendDocumentChange}
           onDeleteDocument={onDeleteDocument}
         />

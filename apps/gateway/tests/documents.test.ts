@@ -7,6 +7,7 @@ import {
   agentSessions,
   contextRooms,
   documentBlocks,
+  documentBlockReferences,
   documentOps,
   documentTransactions,
   documentVersions,
@@ -81,7 +82,10 @@ describe('document transactions', () => {
           status: 'active',
           contentJson: expect.objectContaining({
             type: 'doc',
-            content: [expect.objectContaining({ type: 'paragraph', attrs: { id: expect.any(String) } })],
+            content: [
+              expect.objectContaining({ type: 'documentTitle' }),
+              expect.objectContaining({ type: 'paragraph', attrs: { id: expect.any(String) } }),
+            ],
           }),
         }),
       ])
@@ -122,7 +126,10 @@ describe('document transactions', () => {
           deletedAt: expect.any(String),
           contentJson: expect.objectContaining({
             type: 'doc',
-            content: [expect.objectContaining({ type: 'paragraph', attrs: { id: expect.any(String) } })],
+            content: [
+              expect.objectContaining({ type: 'documentTitle' }),
+              expect.objectContaining({ type: 'paragraph', attrs: { id: expect.any(String) } }),
+            ],
           }),
         }),
       ])
@@ -173,6 +180,35 @@ describe('document transactions', () => {
       baseVersion: 1,
       contentJson: { type: 'doc', content: [] },
     })).rejects.toMatchObject({ code: 'DOCUMENT_CONFLICT' })
+  })
+
+  it('derives the list title from the canonical document title node', async () => {
+    const { service } = await createHarness()
+    const imported = await service.import({
+      id: 'doc-title-node',
+      roomId: 'room-1',
+      title: '旧标题',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '正文' }] }] },
+    })
+
+    expect(imported.contentJson.content?.[0]).toMatchObject({
+      type: 'documentTitle',
+      content: [{ type: 'text', text: '旧标题' }],
+    })
+    const updated = await service.save(imported.id, {
+      baseVersion: imported.version,
+      title: '这个字段不再是权威来源',
+      contentJson: {
+        ...imported.contentJson,
+        content: [
+          { type: 'documentTitle', content: [{ type: 'text', text: '节点中的新标题' }] },
+          ...(imported.contentJson.content?.slice(1) ?? []),
+        ],
+      },
+    })
+
+    expect(updated.title).toBe('节点中的新标题')
+    expect(service.list('room-1')[0]?.title).toBe('节点中的新标题')
   })
 
   it('moves a document to trash, restores it, and only removes stored content permanently', async () => {
@@ -314,6 +350,7 @@ describe('document transactions', () => {
     const persistedDraft = service.list('room-1')[0]
     expect(persistedDraft).toMatchObject({ status: 'draft', version: 0 })
     expect(persistedDraft?.contentJson.content).toEqual([
+      expect.objectContaining({ type: 'documentTitle' }),
       expect.objectContaining({
         type: 'heading',
         attrs: { level: 1, id: expect.any(String) },
@@ -621,17 +658,17 @@ describe('document transactions', () => {
     })
     const blocks = service.listBlocks(target.id)
     expect(blocks.map((block) => block.type)).toEqual(['taskList', 'taskItem', 'paragraph'])
-    expect(new Set(blocks.map((block) => block.id))).toHaveLength(3)
+    expect(new Set(blocks.map((block) => block.blockId))).toHaveLength(3)
     expect(db.select().from(documentBlocks).all()).toHaveLength(3)
 
     const item = blocks.find((block) => block.type === 'taskItem')!
     expect(service.resolveBlockReferences({
       sourceRoomId: 'room-1',
-      references: [{ roomId: 'room-1', documentId: target.id, blockId: item.id }],
+      references: [{ roomId: 'room-1', documentId: target.id, blockId: item.blockId }],
     })).toEqual([expect.objectContaining({ status: 'available', textPreview: '第一项' })])
     expect(() => service.resolveBlockReferences({
       sourceRoomId: 'room-1',
-      references: [{ roomId: 'room-2', documentId: target.id, blockId: item.id }],
+      references: [{ roomId: 'room-2', documentId: target.id, blockId: item.blockId }],
     })).toThrow(expect.objectContaining({ code: 'CROSS_ROOM_REFERENCE' }))
 
     await expect(service.import({
@@ -644,21 +681,102 @@ describe('document transactions', () => {
           type: 'paragraph',
           content: [{
             type: 'documentBlockReference',
-            attrs: { targetRoomId: 'room-1', targetDocumentId: target.id, targetBlockId: item.id },
+            attrs: { targetRoomId: 'room-1', targetDocumentId: target.id, targetBlockId: item.blockId },
           }],
         }],
       },
     })).rejects.toMatchObject({ code: 'CROSS_ROOM_REFERENCE' })
   })
 
-  it('does not let inserted or duplicated blocks steal existing stable IDs', () => {
-    const previous = {
-      type: 'doc',
+  it('treats block identity as document-local and rebuilds reference backlinks', async () => {
+    const { db, service } = await createHarness()
+    db.insert(contextRooms).values({ id: 'room-1', title: 'Room 1', data: {}, position: 0 }).run()
+    const target = await service.import({
+      id: 'doc-target-local-id', roomId: 'room-1', title: '目标文档',
+      contentJson: { type: 'doc', content: [{
+        type: 'paragraph', attrs: { id: 'shared-block-id' }, content: [{ type: 'text', text: '目标内容' }],
+      }] },
+    })
+    const source = await service.import({
+      id: 'doc-source-local-id', roomId: 'room-1', title: '来源文档',
+      contentJson: { type: 'doc', content: [{
+        type: 'paragraph', attrs: { id: 'shared-block-id' }, content: [{
+          type: 'text', text: '引用', marks: [{ type: 'link', attrs: {
+            href: `everroom://room/room-1/${target.id}/shared-block-id`,
+          } }],
+        }],
+      }] },
+    })
+
+    expect(service.listBlocks(target.id)[0]?.blockId).toBe('shared-block-id')
+    expect(service.listBlocks(source.id)[0]?.blockId).toBe('shared-block-id')
+    expect(db.select().from(documentBlockReferences).all()).toEqual([
+      expect.objectContaining({
+        sourceDocumentId: source.id,
+        sourceBlockId: 'shared-block-id',
+        targetDocumentId: target.id,
+        targetBlockId: 'shared-block-id',
+      }),
+    ])
+    expect(service.listBlockBacklinks(target.id, 'shared-block-id')).toEqual([
+      expect.objectContaining({
+        sourceDocumentId: source.id,
+        sourceDocumentTitle: '来源文档',
+        sourceTextPreview: '引用',
+      }),
+    ])
+  })
+
+  it('repairs a stale derived projection from canonical content before resolving a reference', async () => {
+    const { db, service } = await createHarness()
+    db.insert(contextRooms).values({ id: 'room-1', title: 'Room 1', data: {}, position: 0 }).run()
+    const target = await service.import({
+      id: 'doc-stale-projection', roomId: 'room-1', title: '投影修复',
+      contentJson: { type: 'doc', content: [{
+        type: 'paragraph', attrs: { id: 'authoritative-block' }, content: [{ type: 'text', text: '权威正文' }],
+      }] },
+    })
+    db.update(documentBlocks).set({ indexedVersion: 0 }).where(eq(documentBlocks.documentId, target.id)).run()
+
+    expect(service.resolveBlockReferences({
+      sourceRoomId: 'room-1',
+      references: [{ roomId: 'room-1', documentId: target.id, blockId: 'authoritative-block' }],
+    })).toEqual([expect.objectContaining({ status: 'available', version: 1 })])
+    expect(db.select().from(documentBlocks).where(eq(documentBlocks.documentId, target.id)).get()?.indexedVersion)
+      .toBe(1)
+  })
+
+  it('restores historical content as a new authoritative version', async () => {
+    const { service } = await createHarness()
+    const imported = await service.import({
+      id: 'doc-version-restore', roomId: 'room-1', title: '版本恢复',
+      contentJson: { type: 'doc', content: [{
+        type: 'paragraph', attrs: { id: 'kept-history-id' }, content: [{ type: 'text', text: '第一版' }],
+      }] },
+    })
+    const saved = await service.save(imported.id, {
+      baseVersion: imported.version,
+      contentJson: { type: 'doc', content: [{
+        type: 'paragraph', attrs: { id: 'kept-history-id' }, content: [{ type: 'text', text: '第二版' }],
+      }] },
+    })
+    const restored = await service.restoreVersion(imported.id, 1, saved.version)
+
+    expect(restored.version).toBe(3)
+    expect(restored.contentJson).toMatchObject({
       content: [
-        { type: 'paragraph', attrs: { id: 'block-a' }, content: [{ type: 'text', text: 'A' }] },
-        { type: 'paragraph', attrs: { id: 'block-b' }, content: [{ type: 'text', text: 'B' }] },
+        { type: 'documentTitle', content: [{ text: '版本恢复' }] },
+        { attrs: { id: 'kept-history-id' }, content: [{ text: '第一版' }] },
       ],
-    }
+    })
+    expect(service.listVersions(imported.id).map((item) => item.version)).toEqual([3, 2, 1])
+    expect(service.listBlocks(imported.id)[0]).toMatchObject({
+      blockId: 'kept-history-id',
+      indexedVersion: 3,
+    })
+  })
+
+  it('does not let inserted or duplicated blocks steal existing stable IDs', () => {
     const incoming = {
       type: 'doc',
       content: [
@@ -669,18 +787,15 @@ describe('document transactions', () => {
       ],
     }
 
-    const normalized = normalizeDocumentContent(incoming, 'doc-stable', 'room-1', {
-      previous,
-      owners: new Map([['block-a', 'doc-stable'], ['block-b', 'doc-stable']]),
-    })
+    const normalized = normalizeDocumentContent(incoming, 'doc-stable', 'room-1')
     const ids = normalized.content.content!.map((node) => node.attrs?.id)
 
-    expect(ids[1]).toBe('block-a')
-    expect(ids[3]).toBe('block-b')
-    expect(ids[0]).not.toBe('block-a')
-    expect(ids[0]).not.toBe('block-b')
-    expect(ids[2]).not.toBe('block-a')
-    expect(new Set(ids)).toHaveLength(ids.length)
+    expect(ids[2]).toBe('block-a')
+    expect(ids[4]).toBe('block-b')
+    expect(ids[1]).not.toBe('block-a')
+    expect(ids[1]).not.toBe('block-b')
+    expect(ids[3]).not.toBe('block-a')
+    expect(new Set(ids.filter(Boolean))).toHaveLength(ids.length - 1)
   })
 
   it('detects range, descendant, and insertion-point hunk overlap from the base document', () => {
@@ -722,7 +837,7 @@ describe('document transactions', () => {
         ],
       },
     })
-    const secondBlockId = service.listBlocks(document.id)[1]!.id
+    const secondBlockId = service.listBlocks(document.id)[1]!.blockId
     const started = await service.beginPatch({
       documentId: document.id,
       roomId: document.roomId,
@@ -943,7 +1058,7 @@ describe('document transactions', () => {
       id: 'doc-cursor-continuation', roomId: 'room-1', title: '光标续写',
       contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '原段落' }] }] },
     })
-    const sourceBlockId = service.listBlocks(document.id)[0]!.id
+    const sourceBlockId = service.listBlocks(document.id)[0]!.blockId
     const started = await service.beginPatch({
       documentId: document.id, roomId: document.roomId, baseVersion: 1, kind: 'continue',
       summary: '从段落开头续写', agentSessionId: 'session-1', runId: 'run-cursor-continuation',
@@ -958,7 +1073,7 @@ describe('document transactions', () => {
     })
     const first = prepared.nextPendingBlock!
     const firstResult = await service.acceptContinuationBlock(prepared.id, { baseVersion: 1, blockId: first.blockId })
-    expect(service.listBlocks(document.id).some((block) => block.id === first.blockId)).toBe(true)
+    expect(service.listBlocks(document.id).some((block) => block.blockId === first.blockId)).toBe(true)
     const second = firstResult.nextPendingBlock!
     const secondResult = await service.acceptContinuationBlock(prepared.id, { baseVersion: 2, blockId: second.blockId })
     expect(secondResult.patch.status).toBe('applied')
@@ -997,7 +1112,7 @@ describe('document transactions', () => {
       id: 'doc-active-context', roomId: 'room-1', title: '活动文档',
       contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'A😀B' }] }] },
     })
-    const blockId = service.listBlocks(document.id)[0]!.id
+    const blockId = service.listBlocks(document.id)[0]!.blockId
     expect(service.validateActiveDocumentContext({
       roomId: 'room-1', documentId: document.id, title: '不可信标题', version: 1,
       defaultAnchor: 'end', cursorAnchorCandidate: { blockId, offset: 3, affinity: 'after' },
@@ -1044,6 +1159,39 @@ describe('document transactions', () => {
     })
     expect(service.get(document.id)).toMatchObject({ version: 1 })
     expect(DOCUMENT_MCP_TOOL_DEFINITIONS.some((tool) => tool.name.includes('apply'))).toBe(false)
+  })
+
+  it('normalizes an Agent replace target that incorrectly includes a block edge', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-agent-edit-target', roomId: 'room-1', title: 'Agent 修改目标',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '原始段落' }] }] },
+    })
+    const blockId = service.listBlocks(document.id)[0]!.blockId
+    const host = new DocumentMcpHost(service)
+    disposables.push(() => host.close())
+    const context = { agentSessionId: 'session-1', runId: 'run-agent-edit-target', roomId: 'room-1' }
+    const begun = await host.callTool('context_room_patch_begin', {
+      documentId: document.id, baseVersion: 1, kind: 'edit', summary: '替换原始段落',
+    }, context)
+    const patchId = String(begun.structuredContent.patchId)
+    const appended = await host.callTool('context_room_patch_hunk', {
+      patchId,
+      sequence: 1,
+      operation: 'replace',
+      target: { blockId, edge: 'after' },
+      markdown: '替换后的段落',
+    }, context)
+    expect(appended.structuredContent).toMatchObject({
+      acceptedSequence: 1,
+      nextSequence: 2,
+      target: { blockId },
+      targetCorrected: true,
+    })
+    expect(service.getPatch(patchId)?.hunks[0]).toMatchObject({
+      operation: 'replace',
+      target: { blockId },
+    })
   })
 
   it('publishes all approved document and patch MCP tools', async () => {

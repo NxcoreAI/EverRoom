@@ -353,6 +353,7 @@ export class PiAgentRuntime implements AgentRuntime {
             "正文必须使用 Markdown；append 的 sequence 从 1 开始并严格连续。每次 append 只能发送新增片段，严禁用新的 sequence 重发此前内容或累计全文。工具调用失败时不要声称文档已经创建。",
             "只有用户明确要求续写、补充、改写、替换或删除已有工作区文档内容时，才进入已有文档修改流程。普通讨论、评价、总结某篇文档，或仅把文档当作参考资料，不构成修改意图。目标 Room 未确认时先调用 context_room_list；Room 已确认但目标文档未确认时调用 context_room_document_list，让用户选择，不得猜测。",
             "修改已有文档前必须调用 context_room_document_read 读取权威版本，再通过 context_room_patch_begin、context_room_patch_hunk、context_room_patch_commit 生成 Patch。Agent 没有直接应用正文的权限，不得声称未被用户接受的内容已经写入。kind=edit 的修改等待用户审阅；kind=continue 的候选会直接出现在文档编辑区，由用户连续接受，不要要求用户回到智能区点击确认。",
+            "调用 context_room_patch_hunk 时必须让 operation 与 target 匹配：insert 才能使用文末或 block edge；replace/delete 整块必须使用不带 edge 的 {blockId}，块内范围使用 offset，连续块范围使用 fromBlockId/toBlockId。工具调用失败时根据错误修正参数，并用同一个 sequence 重试，不得跳号或把失败项计入 finalSequence。",
             "用户只说“续写”或“继续写”时，Patch 必须插入文档末尾。只有用户明确说“当前位置”“光标处”“这里继续”，或由明确的“在此续写”入口发起时，才可采用当前文档上下文提供的 cursorAnchorCandidate。不得因为编辑器中恰好存在光标就改变默认位置。除非用户明确要求简短续写，续写内容必须充分展开并形成多个连贯、有信息量的 Markdown 块，通常包含若干段落、必要的小标题、示例或后续论述；不得只生成一小段就结束。一个 continue Patch 只调用一次 patch_hunk，把完整的多块 Markdown 作为该 hunk 发送，编辑器会按顶层块让用户连续接受。",
             "已有文档修改若与用户历史偏好、项目背景或旧文档明显相关，可先检索记忆以增强客制化；用户要求不要参考历史时不检索。只有用户最终接受并应用的 Patch 才视为实际文档改动。",
           );

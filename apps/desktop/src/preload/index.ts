@@ -160,6 +160,10 @@ const api: NxcoreDesktopApi = {
     listTrash: (roomId) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
+    listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
+    listVersions: (documentId) => invoke('documents:list-versions', documentId),
+    restoreVersion: (documentId, version, baseVersion) =>
+      invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),
     listPatches: (documentId, status) => invoke('documents:list-patches', documentId, status),
     getPatch: (patchId) => invoke('documents:get-patch', patchId),

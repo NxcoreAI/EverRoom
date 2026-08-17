@@ -90,6 +90,9 @@ const DOCUMENT_CHANNELS = {
   listTrash: 'documents:list-trash',
   get: 'documents:get',
   listBlocks: 'documents:list-blocks',
+  listBlockBacklinks: 'documents:list-block-backlinks',
+  listVersions: 'documents:list-versions',
+  restoreVersion: 'documents:restore-version',
   resolveBlockReferences: 'documents:resolve-block-references',
   listPatches: 'documents:list-patches',
   getPatch: 'documents:get-patch',
@@ -337,6 +340,11 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
   ipcMain.handle(DOCUMENT_CHANNELS.listTrash, (_event, roomId) => bridge.listTrash(roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
   ipcMain.handle(DOCUMENT_CHANNELS.listBlocks, (_event, documentId) => bridge.listBlocks(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.listBlockBacklinks, (_event, documentId, blockId) =>
+    bridge.listBlockBacklinks(documentId, blockId))
+  ipcMain.handle(DOCUMENT_CHANNELS.listVersions, (_event, documentId) => bridge.listVersions(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.restoreVersion, (_event, documentId, version, baseVersion) =>
+    bridge.restoreVersion(documentId, version, baseVersion))
   ipcMain.handle(DOCUMENT_CHANNELS.resolveBlockReferences, (_event, input) =>
     bridge.resolveBlockReferences(input))
   ipcMain.handle(DOCUMENT_CHANNELS.listPatches, (_event, documentId, status) =>

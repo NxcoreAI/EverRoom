@@ -71,6 +71,13 @@
       "when": 1786903278009,
       "tag": "0009_lush_nicolaos",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1786953260462,
+      "tag": "0010_tricky_mongoose",
+      "breakpoints": true
     }
   ]
 }

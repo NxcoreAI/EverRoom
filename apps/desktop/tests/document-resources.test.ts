@@ -103,4 +103,27 @@ describe('Context Room document focus requests', () => {
     )
     expect(nextAgentOpen.shouldOpen).toBe(true)
   })
+
+  it('treats repeated navigation to the same document as a new request', () => {
+    const first = consumeDocumentFocusRequest(null, 'room-a', 'document-a', true, 1)
+    expect(first.shouldOpen).toBe(true)
+
+    const alreadyHandled = consumeDocumentFocusRequest(
+      first.handledKey,
+      'room-a',
+      'document-a',
+      true,
+      1,
+    )
+    expect(alreadyHandled.shouldOpen).toBe(false)
+
+    const repeatedClick = consumeDocumentFocusRequest(
+      alreadyHandled.handledKey,
+      'room-a',
+      'document-a',
+      true,
+      2,
+    )
+    expect(repeatedClick.shouldOpen).toBe(true)
+  })
 })

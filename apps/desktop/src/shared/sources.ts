@@ -28,9 +28,11 @@ import type {
   CreateAgentSessionLinkInput,
   DocumentEventFrame,
   DocumentBlockList,
+  DocumentBlockBacklinkList,
   DocumentPatch,
   DocumentPatchStatus,
   DocumentPatchSummary,
+  DocumentVersionSummary,
   ImportRoomDocumentInput,
   RoomDocument,
   ResolveDocumentBlockReferencesInput,
@@ -340,6 +342,9 @@ export interface NxcoreDesktopApi {
     listTrash(roomId: string): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
     listBlocks(documentId: string): Promise<DocumentBlockList>
+    listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList>
+    listVersions(documentId: string): Promise<DocumentVersionSummary[]>
+    restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
     listPatches(documentId?: string, status?: DocumentPatchStatus): Promise<DocumentPatchSummary[]>
     getPatch(patchId: string): Promise<DocumentPatch>

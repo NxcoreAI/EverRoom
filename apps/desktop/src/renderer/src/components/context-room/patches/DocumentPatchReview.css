@@ -199,6 +199,68 @@
   line-height: 14px;
 }
 
+.document-patch-review-proposed {
+  position: relative;
+  display: block;
+  margin: 8px 0;
+  padding: 10px 12px 7px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 34%, var(--cr-border));
+  border-left: 3px solid var(--cr-blue);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cr-blue) 6%, var(--cr-surface));
+  color: var(--cr-text);
+  outline: 0;
+}
+
+.document-patch-review-proposed-content {
+  white-space: pre-wrap;
+}
+
+.document-patch-review-proposed-actions {
+  display: flex;
+  min-height: 27px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--cr-blue) 15%, transparent);
+}
+
+.document-patch-review-proposed-actions button {
+  display: inline-flex;
+  height: 26px;
+  min-width: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.document-patch-review-proposed-actions button:hover:not(:disabled),
+.document-patch-review-proposed-actions button:focus-visible {
+  outline: 0;
+  background: var(--cr-surface);
+}
+
+.document-patch-review-proposed-actions .is-accept { color: #16834f; }
+.document-patch-review-proposed-actions .is-reject { color: var(--cr-danger, #b83b35); }
+.document-patch-review-proposed-actions .is-accept-all {
+  border-color: color-mix(in srgb, var(--cr-blue) 28%, var(--cr-border));
+  background: var(--cr-surface);
+  color: var(--cr-blue);
+}
+
+.document-patch-review-proposed-actions button svg { width: 15px; height: 15px; }
+.document-patch-review-proposed-actions button:disabled { cursor: default; opacity: 0.45; }
+
 .document-patch-review-navigation,
 .document-patch-review-decision,
 .document-patch-review-actions {

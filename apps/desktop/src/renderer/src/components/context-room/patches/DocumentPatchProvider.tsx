@@ -34,6 +34,7 @@ import {
   pendingContinuationBlock,
   pendingContinuationBlocks,
 } from './documentContinuationState'
+import { requestDocumentPatchNavigation } from './documentPatchNavigation'
 
 export type DocumentContinuationDecision = 'accepted' | 'rejected'
 export type DocumentContinuationDecisionMap = Record<string, DocumentContinuationDecision | undefined>
@@ -232,7 +233,17 @@ export function DocumentPatchProvider({
     const request = api.getPatch(patchId)
       .then((patch) => {
         clearPatchError(patchId)
-        return storePatch(patch)
+        const stored = storePatch(patch)
+        if (stored.kind === 'edit' && stored.status === 'pending') {
+          setReviewPatchId(stored.id)
+          setCurrentHunkId(stored.hunks[0]?.id ?? null)
+          requestDocumentPatchNavigation({
+            roomId: stored.roomId,
+            documentId: stored.documentId,
+            patchId: stored.id,
+          })
+        }
+        return stored
       })
       .catch((error: unknown) => {
         setErrorsByPatchId((current) => ({ ...current, [patchId]: classifyDocumentPatchError(error) }))
@@ -463,6 +474,18 @@ export function DocumentPatchProvider({
   }, [fullPatchesById])
 
   useEffect(() => {
+    for (const [patchId, decisions] of Object.entries(decisionsByPatchId)) {
+      const patch = fullPatchesById[patchId]
+      if (!patch || patch.kind !== 'edit' || patch.status !== 'pending' || busyPatchIds.has(patchId)) continue
+      const decided = patch.hunks.every((hunk) => decisions?.[hunk.id])
+      if (!decided) continue
+      const hasAccepted = patch.hunks.some((hunk) => decisions?.[hunk.id] === 'accepted')
+      if (hasAccepted) void applySelected(patchId)
+      else void rejectPatch(patchId)
+    }
+  }, [applySelected, busyPatchIds, decisionsByPatchId, fullPatchesById, rejectPatch])
+
+  useEffect(() => {
     for (const [patchId, decisions] of Object.entries(continuationDecisionsByPatchId)) {
       if (!decisions || busyPatchIds.has(patchId)) continue
       const block = pendingContinuationBlock(fullPatchesById[patchId])
@@ -485,11 +508,31 @@ export function DocumentPatchProvider({
     return documents.onEvent(({ event }) => {
       const update = patchEventUpdate(event)
       if (!update) return
-      if (update.patch) setPatchesById((current) => ({ ...current, [update.patchId]: update.patch! }))
+      if (update.patch) {
+        setPatchesById((current) => ({ ...current, [update.patchId]: update.patch! }))
+        if (update.patch.kind === 'edit' && update.patch.status === 'pending') {
+          setReviewPatchId(update.patchId)
+          requestDocumentPatchNavigation({
+            roomId: update.patch.roomId,
+            documentId: update.patch.documentId,
+            patchId: update.patch.id,
+          })
+        }
+      }
       if (update.document) onDocumentApplied?.(update.document)
       void loadPatch(update.patchId)
     })
   }, [loadPatch, onDocumentApplied])
+
+  useEffect(() => {
+    const api = patchBridge()
+    if (!api) return
+    void api.listPatches(undefined, 'pending').then((patches) => {
+      for (const patch of patches) {
+        if (patch.kind === 'edit') void loadPatch(patch.id)
+      }
+    }).catch(() => undefined)
+  }, [loadPatch])
 
   const value = useMemo<DocumentPatchContextValue>(() => ({
     patchesById,

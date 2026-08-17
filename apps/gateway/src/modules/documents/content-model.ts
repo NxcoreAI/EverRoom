@@ -5,22 +5,23 @@ import type {
   DocumentPatchTarget,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
+import {
+  DOCUMENT_TITLE_NODE_TYPE,
+  findBlockPath as findSharedBlockPath,
+  isValidBlockId,
+  nodeAtPath as sharedNodeAtPath,
+  normalizeDocumentContent as normalizeSharedDocumentContent,
+  tiptapText,
+  type ProjectedDocumentReference,
+} from "@nxcore/document-model";
 import { DocumentServiceError } from "./errors.js";
 
-export const REFERENCABLE_BLOCK_TYPES = new Set([
-  "paragraph",
-  "heading",
-  "bulletList",
-  "orderedList",
-  "taskList",
-  "blockquote",
-  "codeBlock",
-  "horizontalRule",
-  "listItem",
-  "taskItem",
-]);
-
-const TEXT_PREVIEW_LIMIT = 240;
+export {
+  DOCUMENT_TITLE_NODE_TYPE,
+  documentBodyContent,
+  documentTitleText,
+  tiptapText,
+} from "@nxcore/document-model";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -30,58 +31,40 @@ function pathKey(path: number[]): string {
   return path.join(".");
 }
 
-export function tiptapText(node: TiptapJsonContent): string {
-  if (typeof node.text === "string") return node.text;
-  if (node.type === "hardBreak") return "\n";
-  return (node.content ?? []).map(tiptapText).join("");
-}
-
-function textPreview(node: TiptapJsonContent): string {
-  let value = "";
-  const visit = (candidate: TiptapJsonContent) => {
-    if (value.length >= TEXT_PREVIEW_LIMIT * 2) return;
-    if (typeof candidate.text === "string") {
-      value += candidate.text.slice(0, TEXT_PREVIEW_LIMIT * 2 - value.length);
-      return;
-    }
-    if (candidate.type === "hardBreak") value += "\n";
-    candidate.content?.forEach(visit);
-  };
-  visit(node);
-  return value.replace(/\s+/g, " ").trim().slice(0, TEXT_PREVIEW_LIMIT);
-}
-
-function validBlockId(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
-}
-
-function previousIds(content?: TiptapJsonContent): Map<string, string> {
-  const result = new Map<string, string>();
-  const visit = (node: TiptapJsonContent, path: number[]) => {
-    if (REFERENCABLE_BLOCK_TYPES.has(node.type) && validBlockId(node.attrs?.id)) {
-      result.set(`${pathKey(path)}\0${node.type}`, node.attrs.id);
-    }
-    node.content?.forEach((child, index) => visit(child, [...path, index]));
-  };
-  if (content) visit(content, []);
-  return result;
-}
-
-function explicitIds(content: TiptapJsonContent): Set<string> {
-  const result = new Set<string>();
-  const visit = (node: TiptapJsonContent) => {
-    if (REFERENCABLE_BLOCK_TYPES.has(node.type) && validBlockId(node.attrs?.id)) {
-      result.add(node.attrs.id);
-    }
-    node.content?.forEach(visit);
-  };
-  visit(content);
-  return result;
-}
-
 export interface NormalizeDocumentOptions {
-  previous?: TiptapJsonContent;
-  owners?: Map<string, string>;
+  indexedVersion?: number;
+  createId?: () => string;
+  documentTitle?: string;
+}
+
+/**
+ * Markdown stream snapshots do not carry attrs. Within one open transaction,
+ * inherit identity only for the unchanged structural prefix.
+ */
+export function inheritStreamBlockIds(
+  previous: TiptapJsonContent,
+  incoming: TiptapJsonContent,
+): TiptapJsonContent {
+  const next = clone(incoming);
+  const previousBody: TiptapJsonContent = previous.type === "doc"
+    ? { ...previous, ...(previous.content ? { content: previous.content.filter((node) => node.type !== DOCUMENT_TITLE_NODE_TYPE) } : {}) }
+    : previous;
+  const incomingBody: TiptapJsonContent = next.type === "doc"
+    ? { ...next, ...(next.content ? { content: next.content.filter((node) => node.type !== DOCUMENT_TITLE_NODE_TYPE) } : {}) }
+    : next;
+  const visit = (prior: TiptapJsonContent | undefined, current: TiptapJsonContent) => {
+    if (!prior || prior.type !== current.type) return;
+    if (isValidBlockId(prior.attrs?.id) && !isValidBlockId(current.attrs?.id)) {
+      current.attrs = { ...current.attrs, id: prior.attrs.id };
+    }
+    current.content?.forEach((child, index) => visit(prior.content?.[index], child));
+  };
+  visit(previousBody, incomingBody);
+  if (next.type === "doc" && incomingBody !== next) {
+    const title = next.content?.find((node) => node.type === DOCUMENT_TITLE_NODE_TYPE);
+    next.content = title ? [title, ...(incomingBody.content ?? [])] : (incomingBody.content ?? []);
+  }
+  return next;
 }
 
 export function normalizeDocumentContent(
@@ -89,70 +72,28 @@ export function normalizeDocumentContent(
   documentId: string,
   roomId: string,
   options: NormalizeDocumentOptions = {},
-): { content: TiptapJsonContent; blocks: DocumentBlockSummary[]; changed: boolean } {
-  const seen = new Set<string>();
-  const prior = previousIds(options.previous);
-  const incomingIds = explicitIds(content);
-  const blocks: DocumentBlockSummary[] = [];
-  let ordinal = 0;
-  let changed = false;
-
-  const visit = (
-    source: TiptapJsonContent,
-    path: number[],
-    parentBlockId: string | null,
-  ): TiptapJsonContent => {
-    let node: TiptapJsonContent = {
-      ...source,
-      ...(source.attrs ? { attrs: { ...source.attrs } } : {}),
-      ...(source.marks ? { marks: source.marks.map((mark) => ({
-        ...mark,
-        ...(mark.attrs ? { attrs: { ...mark.attrs } } : {}),
-      })) } : {}),
-    };
-    let nextParent = parentBlockId;
-    if (REFERENCABLE_BLOCK_TYPES.has(node.type)) {
-      const explicit = node.attrs?.id;
-      const fallback = prior.get(`${pathKey(path)}\0${node.type}`);
-      const usable = (candidate: unknown): candidate is string => validBlockId(candidate)
-        && !seen.has(candidate)
-        && (!options.owners?.has(candidate) || options.owners.get(candidate) === documentId);
-      // A supplied duplicate belongs to the original block encountered first;
-      // copies always receive a fresh identity. Path fallback is only for old
-      // clients that omitted IDs entirely, and must never steal an ID that is
-      // still present elsewhere in the incoming document.
-      const canRestoreFallback = explicit === undefined
-        && !incomingIds.has(fallback ?? "")
-        && usable(fallback);
-      const id = usable(explicit) ? explicit : canRestoreFallback ? fallback : randomUUID();
-      if (explicit !== id) changed = true;
-      node.attrs = { ...node.attrs, id };
-      seen.add(id);
-      options.owners?.set(id, documentId);
-      nextParent = id;
-      blocks.push({
-        id,
-        documentId,
-        roomId,
-        parentBlockId,
-        type: node.type,
-        ordinal: ordinal++,
-        path,
-        textPreview: "",
-      });
-    }
-    if (node.content) {
-      node.content = node.content.map((child, index) => visit(child, [...path, index], nextParent));
-    }
-    if (nextParent && blocks.length > 0) {
-      const block = blocks.find((candidate) => candidate.id === nextParent);
-      if (block) block.textPreview = textPreview(node);
-    }
-    return node;
+): {
+  content: TiptapJsonContent;
+  title: string;
+  blocks: DocumentBlockSummary[];
+  references: ProjectedDocumentReference[];
+  changed: boolean;
+  schemaVersion: number;
+} {
+  const normalized = normalizeSharedDocumentContent(content, {
+    createId: options.createId ?? randomUUID,
+    ...(options.documentTitle !== undefined ? { documentTitle: options.documentTitle } : {}),
+  });
+  const indexedVersion = options.indexedVersion ?? 0;
+  return {
+    ...normalized,
+    blocks: normalized.blocks.map((block) => ({
+      ...block,
+      documentId,
+      roomId,
+      indexedVersion,
+    })),
   };
-
-  const normalized = visit(content, [], null);
-  return { content: normalized, blocks, changed };
 }
 
 export function collectDocumentReferences(content: TiptapJsonContent): Array<{
@@ -183,27 +124,15 @@ export function collectDocumentReferences(content: TiptapJsonContent): Array<{
 }
 
 export function findBlockPath(content: TiptapJsonContent, blockId: string): number[] | null {
-  let result: number[] | null = null;
-  const visit = (node: TiptapJsonContent, path: number[]) => {
-    if (result) return;
-    if (node.attrs?.id === blockId) {
-      result = path;
-      return;
-    }
-    node.content?.forEach((child, index) => visit(child, [...path, index]));
-  };
-  visit(content, []);
-  return result;
+  return findSharedBlockPath(content, blockId);
 }
 
 export function nodeAtPath(content: TiptapJsonContent, path: number[]): TiptapJsonContent {
-  let node = content;
-  for (const index of path) {
-    const child = node.content?.[index];
-    if (!child) throw new DocumentServiceError("ANCHOR_INVALID", "Document block path is no longer valid", 409);
-    node = child;
+  try {
+    return sharedNodeAtPath(content, path);
+  } catch {
+    throw new DocumentServiceError("ANCHOR_INVALID", "Document block path is no longer valid", 409);
   }
-  return node;
 }
 
 function parentAtPath(content: TiptapJsonContent, path: number[]) {
@@ -299,7 +228,7 @@ function inlineReplacement(
       ...first,
       attrs: {
         ...first.attrs,
-        ...(validBlockId(source.attrs?.id) ? { id: source.attrs.id } : {}),
+        ...(isValidBlockId(source.attrs?.id) ? { id: source.attrs.id } : {}),
       },
     };
   }
@@ -320,13 +249,23 @@ export function applyDocumentPatchHunk(
 ): { content: TiptapJsonContent; before: TiptapJsonContent[] } {
   const content = clone(source);
   if ("at" in target) {
-    if (operation !== "insert") throw new DocumentServiceError("INVALID_PATCH", "Document end only supports insert");
+    if (operation !== "insert") {
+      throw new DocumentServiceError(
+        "INVALID_PATCH",
+        "Document end only supports insert; replace/delete must target a block or block range",
+      );
+    }
     content.content = [...(content.content ?? []), ...clone(after)];
     return { content, before: [] };
   }
 
   if ("fromBlockId" in target) {
-    if (operation === "insert") throw new DocumentServiceError("INVALID_PATCH", "Block ranges do not support insert");
+    if (operation === "insert") {
+      throw new DocumentServiceError(
+        "INVALID_PATCH",
+        "Block ranges only support replace/delete; insert must use a block edge or offset",
+      );
+    }
     const fromPath = findBlockPath(content, target.fromBlockId);
     const toPath = findBlockPath(content, target.toBlockId);
     if (!fromPath || !toPath) throw new DocumentServiceError("BLOCK_NOT_FOUND", "Patch block was not found", 409);
@@ -348,7 +287,12 @@ export function applyDocumentPatchHunk(
   const { parent, index } = parentAtPath(content, path);
   const current = parent.content![index]!;
   if ("edge" in target) {
-    if (operation !== "insert") throw new DocumentServiceError("INVALID_PATCH", "Block edges only support insert");
+    if (operation !== "insert") {
+      throw new DocumentServiceError(
+        "INVALID_PATCH",
+        "Block edges only support insert; replace/delete the referenced block with target { blockId } and no edge",
+      );
+    }
     const insertAt = target.edge === "before" ? index : index + 1;
     parent.content!.splice(insertAt, 0, ...nodesForParent(parent, after));
     return { content, before: [] };
@@ -363,7 +307,12 @@ export function applyDocumentPatchHunk(
     parent.content!.splice(index, 1, ...nodesForParent(parent, nodes));
     return { content, before: [clone(current)] };
   }
-  if (operation === "insert") throw new DocumentServiceError("INVALID_PATCH", "Insert requires an edge or offset");
+  if (operation === "insert") {
+    throw new DocumentServiceError(
+      "INVALID_PATCH",
+      "Insert requires target { blockId, edge } or a zero-width block offset",
+    );
+  }
   const replacement = operation === "delete" ? [] : nodesForParent(parent, after);
   parent.content!.splice(index, 1, ...replacement);
   return { content, before: [clone(current)] };

@@ -24,6 +24,7 @@
     "@fastify/websocket": "^11.3.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@nxcore/agent-contract": "workspace:*",
+    "@nxcore/document-model": "workspace:*",
     "@nxcore/agent-runtime": "workspace:*",
     "@nxcore/agent-runtime-pi": "workspace:*",
     "@nxcore/reality-contract": "workspace:*",

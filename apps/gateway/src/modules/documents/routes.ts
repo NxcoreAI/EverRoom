@@ -52,7 +52,76 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
         try {
           const document = service.get(request.params.id);
           if (!document) return reply.code(404).send({ error: "not_found", message: "Document not found" });
-          return { documentId: document.id, roomId: document.roomId, version: document.version, blocks: service.listBlocks(document.id) };
+          return {
+            documentId: document.id,
+            roomId: document.roomId,
+            version: document.version,
+            blocks: service.listBlocks(document.id),
+          };
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/documents/:id/backlinks",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          querystring: Type.Object({
+            blockId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return {
+            documentId: request.params.id,
+            blockId: request.query.blockId ?? null,
+            backlinks: service.listBlockBacklinks(request.params.id, request.query.blockId),
+          };
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/documents/:id/versions",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          return service.listVersions(request.params.id);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/documents/:id/versions/:version/restore",
+      {
+        schema: {
+          tags: ["documents"],
+          params: Type.Object({
+            id: Type.String({ minLength: 1, maxLength: 128 }),
+            version: Type.Integer({ minimum: 1 }),
+          }),
+          body: Type.Object({ baseVersion: Type.Integer({ minimum: 0 }) }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.restoreVersion(
+            request.params.id,
+            request.params.version,
+            request.body.baseVersion,
+          );
         } catch (error) {
           if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
           throw error;

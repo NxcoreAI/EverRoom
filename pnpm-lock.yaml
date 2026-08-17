@@ -19,6 +19,9 @@ importers:
       '@nxcore/agent-contract':
         specifier: workspace:*
         version: link:../../packages/agent-contract
+      '@nxcore/document-model':
+        specifier: workspace:*
+        version: link:../../packages/document-model
       '@nxcore/reality-contract':
         specifier: workspace:*
         version: link:../../packages/reality-contract
@@ -40,9 +43,18 @@ importers:
       '@tencentdb-agent-memory/memory-tencentdb-v2':
         specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#906dd0f0f4b6263312dabf345ebeba37e6e8d3ae
         version: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/906dd0f0f4b6263312dabf345ebeba37e6e8d3ae(socks@2.8.9)(supports-color@8.1.1)
+      '@tiptap/extension-document':
+        specifier: ^3.30.1
+        version: 3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))
       '@tiptap/extension-drag-handle-react':
         specifier: ^3.30.1
         version: 3.30.1(@tiptap/extension-drag-handle@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/extension-collaboration@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)(@tiptap/y-tiptap@3.0.8(prosemirror-model@1.25.11)(prosemirror-state@1.4.4)(prosemirror-view@1.42.2)(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32))(yjs@13.6.32))(@tiptap/extension-node-range@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)(@tiptap/y-tiptap@3.0.8(prosemirror-model@1.25.11)(prosemirror-state@1.4.4)(prosemirror-view@1.42.2)(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32)))(@tiptap/pm@3.30.1)(@tiptap/react@3.30.1(@floating-ui/dom@1.8.0)(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)(@types/react-dom@18.3.5(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@tiptap/extension-image':
+        specifier: ^3.30.1
+        version: 3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))
+      '@tiptap/extension-table':
+        specifier: ^3.30.1
+        version: 3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)
       '@tiptap/extension-table-of-contents':
         specifier: ^3.30.1
         version: 3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)
@@ -115,7 +127,7 @@ importers:
         version: 4.3.4(supports-color@8.1.1)(vite@6.4.3(@types/node@22.20.1)(jiti@2.7.0)(sass-embedded@1.102.0)(sass@1.102.0)(tsx@4.23.12)(yaml@2.9.0))
       electron:
         specifier: ^39.2.7
-        version: 39.8.10(supports-color@8.1.1)
+        version: 39.8.10(supports-color@7.1.0)
       electron-builder:
         specifier: ^26.0.12
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@8.1.1)
@@ -158,6 +170,9 @@ importers:
       '@nxcore/agent-runtime-pi':
         specifier: workspace:*
         version: link:../../packages/agent-runtime-pi
+      '@nxcore/document-model':
+        specifier: workspace:*
+        version: link:../../packages/document-model
       '@nxcore/reality-contract':
         specifier: workspace:*
         version: link:../../packages/reality-contract
@@ -278,6 +293,19 @@ importers:
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@6.4.3(@types/node@26.2.0)(jiti@2.7.0)(sass-embedded@1.102.0)(sass@1.102.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/document-model:
+    dependencies:
+      '@nxcore/agent-contract':
+        specifier: workspace:*
+        version: link:../agent-contract
+    devDependencies:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -2702,6 +2730,11 @@ packages:
       '@tiptap/core': 3.30.1
       '@tiptap/pm': 3.30.1
 
+  '@tiptap/extension-image@3.30.1':
+    resolution: {integrity: sha512-LChYqHC0u7dq9/zj9R+SYgT04tuT549tzFeu8Ymo1TJ46Y9Iy3BfwlETZRvyV8NkC/eoGqUevJeD3HtG/vMaog==}
+    peerDependencies:
+      '@tiptap/core': 3.30.1
+
   '@tiptap/extension-italic@3.30.1':
     resolution: {integrity: sha512-KldMtozKk8OBHexo6akCQpJCWMgJ5OwPYuEOJO+vFjgw6VS+9N16peIo5dY+vXAiVIZL+swEsBp4barwz7NiLw==}
     peerDependencies:
@@ -2752,6 +2785,12 @@ packages:
 
   '@tiptap/extension-table-of-contents@3.30.1':
     resolution: {integrity: sha512-LMbbvrcUYIBHuT889kmCY1kV9jz8lbERjdyavQQM1HS8aJh6CzXY383f+R1yScRvz9kMyx3NSDLVBZf5VJ3kMg==}
+    peerDependencies:
+      '@tiptap/core': 3.30.1
+      '@tiptap/pm': 3.30.1
+
+  '@tiptap/extension-table@3.30.1':
+    resolution: {integrity: sha512-frZvuNbgi4ohLGeweHMfKWoCVAlCUB/BULgzjLMaFSaSpVGk2KVeoYtCJf9wR240IAj3t7tti3A7E4Ymz98qOQ==}
     peerDependencies:
       '@tiptap/core': 3.30.1
       '@tiptap/pm': 3.30.1
@@ -9097,6 +9136,10 @@ snapshots:
       '@tiptap/core': 3.30.1(@tiptap/pm@3.30.1)
       '@tiptap/pm': 3.30.1
 
+  '@tiptap/extension-image@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))':
+    dependencies:
+      '@tiptap/core': 3.30.1(@tiptap/pm@3.30.1)
+
   '@tiptap/extension-italic@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))':
     dependencies:
       '@tiptap/core': 3.30.1(@tiptap/pm@3.30.1)
@@ -9142,6 +9185,11 @@ snapshots:
       '@tiptap/core': 3.30.1(@tiptap/pm@3.30.1)
       '@tiptap/pm': 3.30.1
       uuid: 14.0.1
+
+  '@tiptap/extension-table@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)':
+    dependencies:
+      '@tiptap/core': 3.30.1(@tiptap/pm@3.30.1)
+      '@tiptap/pm': 3.30.1
 
   '@tiptap/extension-task-item@3.30.1(@tiptap/extension-list@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1))':
     dependencies:
@@ -10416,7 +10464,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@39.8.10(supports-color@8.1.1):
+  electron@39.8.10(supports-color@7.1.0):
     dependencies:
       '@electron/get': 2.0.0(supports-color@8.1.1)
       '@types/node': 22.20.1

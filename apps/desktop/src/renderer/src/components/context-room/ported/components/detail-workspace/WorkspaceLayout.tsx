@@ -54,6 +54,9 @@ export function WorkspaceLayout({
   backendDocuments,
   trashedDocuments,
   documentEvents,
+  focusedDocumentId,
+  focusedBlockId,
+  documentFocusRequestId,
   onBackendDocumentChange,
   onCreateDocument,
   onDeleteDocument,
@@ -110,6 +113,9 @@ export function WorkspaceLayout({
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
   documentEvents: Record<string, DocumentEvent[]>;
+  focusedDocumentId: string | null;
+  focusedBlockId: string | null;
+  documentFocusRequestId: number | null;
   onBackendDocumentChange: (document: RoomDocument) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
@@ -342,6 +348,9 @@ export function WorkspaceLayout({
               selectedResource={selectedResource}
               backendDocuments={backendDocuments}
               documentEvents={documentEvents}
+              focusedDocumentId={focusedDocumentId}
+              focusedBlockId={focusedBlockId}
+              documentFocusRequestId={documentFocusRequestId}
               onBackendDocumentChange={onBackendDocumentChange}
               onDeleteDocument={onDeleteDocument}
               onOpenRoom={onOpenRoom}

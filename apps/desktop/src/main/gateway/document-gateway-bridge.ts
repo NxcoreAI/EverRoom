@@ -5,10 +5,12 @@ import type {
   ApplyDocumentPatchInput,
   ApplyDocumentPatchResult,
   DocumentBlockList,
+  DocumentBlockBacklinkList,
   DocumentEventFrame,
   DocumentPatch,
   DocumentPatchStatus,
   DocumentPatchSummary,
+  DocumentVersionSummary,
   ImportRoomDocumentInput,
   RoomDocument,
   ResolveDocumentBlockReferencesInput,
@@ -67,6 +69,23 @@ export class DocumentGatewayBridge {
 
   listBlocks(documentId: string): Promise<DocumentBlockList> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/blocks`)
+  }
+
+  listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList> {
+    const query = blockId ? `?${new URLSearchParams({ blockId })}` : ''
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/backlinks${query}`)
+  }
+
+  listVersions(documentId: string): Promise<DocumentVersionSummary[]> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/versions`)
+  }
+
+  restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument> {
+    return this.request(
+      `/v1/documents/${encodeURIComponent(documentId)}/versions/${String(version)}/restore`,
+      { method: 'POST', body: JSON.stringify({ baseVersion }) },
+      true,
+    )
   }
 
   resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult> {

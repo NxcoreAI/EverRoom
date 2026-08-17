@@ -213,9 +213,9 @@ describe('Agent Patch review', () => {
     expect(shouldHandleContinuationTab({ ...candidate, key: 'Enter' })).toBe(false)
   })
 
-  it('keeps continuation patches out of Agent review cards without hiding edit patches', () => {
+  it('keeps continuation and edit patches out of Agent review cards', () => {
     expect(shouldShowAgentPatchReviewCard(continuationPatch)).toBe(false)
-    expect(shouldShowAgentPatchReviewCard(patch)).toBe(true)
+    expect(shouldShowAgentPatchReviewCard(patch)).toBe(false)
     expect(shouldShowAgentPatchReviewCard(undefined)).toBe(false)
   })
 

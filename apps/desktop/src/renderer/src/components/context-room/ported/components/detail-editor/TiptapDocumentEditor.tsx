@@ -9,6 +9,7 @@ import { Placeholder } from '@tiptap/extensions'
 import StarterKit from '@tiptap/starter-kit'
 import { LoaderCircle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { documentTitleText, ensureDocumentTitle } from '@nxcore/document-model'
 
 import { useRoomDocumentsState } from '../../../RoomDocumentsProvider'
 import { cursorAnchorCandidateFromEditorState } from '@/components/agent/activeDocumentContext'
@@ -68,12 +69,17 @@ import {
   insertDocumentBlockReference,
 } from './DocumentBlockReference'
 import { DocumentBlockReferencePicker } from './DocumentBlockReferencePicker'
+import { DocumentTitle, DocumentWithTitle } from './DocumentTitle'
 import {
   createEverroomBlockReferenceUrl,
   parseEverroomBlockReferenceUrl,
   parseSameRoomBlockReferenceLink,
 } from './documentBlockReferenceLink'
-import { requestDocumentBlockNavigation } from './documentBlockNavigation'
+import {
+  documentBlockFocusRequestKey,
+  focusDocumentBlock,
+  requestDocumentBlockNavigation,
+} from './documentBlockNavigation'
 import { showToast } from '@/state/toast'
 import './TiptapDocumentEditor.css'
 
@@ -191,6 +197,8 @@ export function TiptapDocumentEditor({
   events,
   onBackendDocumentChange,
   onDeleteDocument,
+  focusedBlockId,
+  documentFocusRequestId,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
@@ -198,17 +206,20 @@ export function TiptapDocumentEditor({
   events: DocumentEvent[]
   onBackendDocumentChange: (document: RoomDocument) => void
   onDeleteDocument?: (document: RoomDocument) => Promise<void>
+  focusedBlockId?: string | null
+  documentFocusRequestId?: number | null
 }) {
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const documentName = backendDocument?.title ?? resource?.name ?? room.cloudDoc.title ?? room.title
   const initialDraft = useState(() => readDocumentDraftRecord(documentId))[0]
   const canRecoverInitialDraft = !backendDocument?.activeTransactionId
     && shouldRecoverDocumentDraft(initialDraft, backendDocument)
-  const initialContent = useState<JSONContent>(() => (
-    canRecoverInitialDraft
+  const initialContent = useState<JSONContent>(() => {
+    const source = canRecoverInitialDraft
       ? initialDraft!.content
       : backendDocument?.contentJson ?? readDocumentDraft(documentId) ?? createRoomDocumentContent(room, documentName)
-  ))[0]
+    return ensureDocumentTitle(source as TiptapJsonContent, documentName).content as JSONContent
+  })[0]
   const saveTimer = useRef<number | null>(null)
   const saveInFlight = useRef(false)
   const pendingSave = useRef<{ contentJson: TiptapJsonContent; title: string; revision: number } | null>(null)
@@ -221,8 +232,7 @@ export function TiptapDocumentEditor({
   const versionRef = useRef(backendDocument?.version ?? 0)
   const importedRef = useRef(Boolean(backendDocument))
   const revealedContinuationPatchId = useRef<string | null>(null)
-  const [editableTitle, setEditableTitle] = useState(documentName)
-  const titleRef = useRef(documentName)
+  const handledBlockFocusKey = useRef<string | null>(null)
   const [saveState, setSaveState] = useState(backendDocument?.status === 'draft' ? 'Agent 正在写入' : '已保存')
   const [tableOfContents, setTableOfContents] = useState<TableOfContentData>([])
   const [blockDragging, setBlockDragging] = useState(false)
@@ -241,6 +251,7 @@ export function TiptapDocumentEditor({
     decideContinuationBlock,
     fullPatchesById,
     reviewPatchId,
+    setHunkDecision,
   } = useDocumentPatches()
   const presentingStream = events.some(
     (event) => event.type === 'document.appended' || event.type === 'document.commit-requested',
@@ -249,14 +260,6 @@ export function TiptapDocumentEditor({
 
   backendRef.current = backendDocument
   onBackendChangeRef.current = onBackendDocumentChange
-
-  useEffect(() => {
-    const title = backendDocument?.title ?? documentName
-    const pendingTitle = pendingSave.current?.title
-    if (pendingTitle && pendingTitle !== title) return
-    setEditableTitle(title)
-    titleRef.current = title
-  }, [backendDocument?.title, documentId, documentName])
 
   const persistPendingSave = async (): Promise<void> => {
     if (saveInFlight.current) return
@@ -316,7 +319,7 @@ export function TiptapDocumentEditor({
   const queueDocumentSave = (
     contentJson: TiptapJsonContent,
     delay = 300,
-    title = titleRef.current,
+    title = documentTitleText(contentJson.content?.[0]) || backendRef.current?.title || documentName,
   ): void => {
     const revision = ++editRevision.current
     pendingSave.current = { contentJson, title, revision }
@@ -329,33 +332,10 @@ export function TiptapDocumentEditor({
     }, delay)
   }
 
-  const updateDocumentTitle = (value: string): void => {
-    setEditableTitle(value)
-    const title = value.trim()
-    if (!editor || editor.isDestroyed) return
-    if (!title) {
-      const fallbackTitle = backendRef.current?.title ?? documentName
-      titleRef.current = fallbackTitle
-      queueDocumentSave(editor.getJSON() as TiptapJsonContent, 500, fallbackTitle)
-      return
-    }
-    titleRef.current = title
-    queueDocumentSave(editor.getJSON() as TiptapJsonContent, 500, title)
-  }
-
-  const restoreEmptyDocumentTitle = (): void => {
-    if (editableTitle.trim()) return
-    const title = backendRef.current?.title ?? documentName
-    setEditableTitle(title)
-    titleRef.current = title
-    if (editor && !editor.isDestroyed) {
-      queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0, title)
-    }
-  }
-
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
+        document: false,
         dropcursor: { class: 'context-room-tiptap-dropcursor', color: false, width: 2 },
         heading: { levels: [1, 2, 3] },
         link: {
@@ -365,9 +345,11 @@ export function TiptapDocumentEditor({
           protocols: ['everroom'],
         },
       }),
+      DocumentWithTitle,
+      DocumentTitle,
       TaskList,
       TaskItem.configure({ nested: true }),
-      StableBlockIds,
+      StableBlockIds.configure({ documentId }),
       DocumentBlockReference.configure({
         sourceRoomId: room.id,
         resolveReferences: async (input) => {
@@ -392,7 +374,9 @@ export function TiptapDocumentEditor({
         onUpdate: setTableOfContents,
       }),
       Placeholder.configure({
-        placeholder: ({ node }) => node.type.name === 'heading' ? '标题' : "输入 '/' 插入内容",
+        placeholder: ({ node }) => node.type.name === 'documentTitle'
+          ? '文档标题'
+          : node.type.name === 'heading' ? '标题' : "输入 '/' 插入内容",
         includeChildren: true,
       }),
     ],
@@ -471,9 +455,18 @@ export function TiptapDocumentEditor({
       visibleReviewPatch,
       decisionsByPatchId[visibleReviewPatch.id] ?? {},
       currentHunkId,
+      busyPatchIds.has(visibleReviewPatch.id),
+      async (hunkId, decision) => {
+        setHunkDecision(visibleReviewPatch.id, hunkId, decision)
+      },
+      async () => {
+        for (const hunk of visibleReviewPatch.hunks) {
+          setHunkDecision(visibleReviewPatch.id, hunk.id, 'accepted')
+        }
+      },
     )
     if (visibleReviewPatch.status !== 'pending' && visibleReviewPatch.status !== 'conflicted') closeReview()
-  }, [closeReview, currentHunkId, decisionsByPatchId, editor, visibleReviewPatch])
+  }, [busyPatchIds, closeReview, currentHunkId, decisionsByPatchId, editor, setHunkDecision, visibleReviewPatch])
 
   useEffect(() => {
     if (!editor || !visibleContinuationPatch || !continuationBlock) {
@@ -634,6 +627,50 @@ export function TiptapDocumentEditor({
       }
     }
   }, [backendDocument, editor, presentingStream, visibleContinuationPatch, visibleReviewPatch])
+
+  useEffect(() => {
+    if (!editor || !backendDocument || !focusedBlockId || editor.isDestroyed) return
+    const requestKey = documentBlockFocusRequestKey(
+      documentId,
+      focusedBlockId,
+      documentFocusRequestId,
+    )
+    if (handledBlockFocusKey.current === requestKey) return
+    let cancelled = false
+    const focus = async () => {
+      const documents = window.nxcore?.documents
+      if (!documents) return
+      const resolve = () => documents.resolveBlockReferences({
+        sourceRoomId: room.id,
+        references: [{ roomId: room.id, documentId, blockId: focusedBlockId }],
+      })
+      let resolution = (await resolve()).resolutions[0]
+      if (cancelled) return
+      if (!resolution || resolution.status !== 'available') {
+        handledBlockFocusKey.current = requestKey
+        if (resolution?.status === 'block_missing') {
+          showToast({ title: '引用块已失效', message: '原引用块已被删除或合并。' })
+        }
+        return
+      }
+      if ((resolution.version ?? 0) > backendDocument.version) return
+      await new Promise<void>((resolveFrame) => window.requestAnimationFrame(() => resolveFrame()))
+      if (cancelled) return
+      const result = focusDocumentBlock(editor.view.dom, focusedBlockId)
+      if (result === 'focused') {
+        handledBlockFocusKey.current = requestKey
+        return
+      }
+      resolution = (await resolve()).resolutions[0]
+      if (cancelled) return
+      if (resolution?.status === 'block_missing') {
+        handledBlockFocusKey.current = requestKey
+        showToast({ title: '引用块已失效', message: '原引用块已被删除或合并。' })
+      }
+    }
+    void focus().catch(() => undefined)
+    return () => { cancelled = true }
+  }, [backendDocument, documentFocusRequestId, documentId, editor, focusedBlockId, room.id])
 
   useEffect(() => {
     if (!editor) return
@@ -798,28 +835,7 @@ export function TiptapDocumentEditor({
     >
       <div className="context-room-embedded-doc-status">
         <b>{saveState}</b>
-        <input
-          className="context-room-document-title-input"
-          aria-label="文档标题"
-          title="文档标题"
-          value={editableTitle}
-          maxLength={120}
-          disabled={writing || editorLocked}
-          onChange={(event) => updateDocumentTitle(event.target.value)}
-          onBlur={restoreEmptyDocumentTitle}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur()
-            if (event.key === 'Escape') {
-              const title = backendRef.current?.title ?? documentName
-              setEditableTitle(title)
-              titleRef.current = title
-              if (editor && !editor.isDestroyed) {
-                queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0, title)
-              }
-              event.currentTarget.blur()
-            }
-          }}
-        />
+        <strong className="context-room-document-title" aria-label="文档标题">{documentName}</strong>
         {editor ? (
           <TiptapDocumentActions
             editor={editor}
