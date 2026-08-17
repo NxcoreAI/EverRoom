@@ -1,20 +1,17 @@
 /**
- * ④ 向量候选层（plan §5.2）：文档 embedding vs 各 Room 质心的暴力余弦。
+ * 向量件（entity-room-plan §4.2）：文档 embedding 与实体质心的余弦代数。
  *
- * 规模分析：Room 质心数量级为百级以内，1 查询向量 vs N 质心纯内存
- * 余弦即可（微秒级），不引入向量数据库。质心存 room_wikis.centroid
- * （float32 数组 base64，~4KB），ingest 成功后指数滑动平均增量更新：
- *   centroid = norm(centroid·(1-α) + new·α)
- * 不存逐文档向量；centroid_docs < 5 视为冷启动，本级跳过。
+ * 质心载体从 room_wikis 迁到 entities：弱实体从第一份资料就累积（无冷启动
+ * 阈值），用于同名异实体的消歧 tie-break（多命中 → 质心最近者）。
+ * 规模：实体数量级百级以内，1 查询向量 vs N 质心纯内存余弦（微秒级），
+ * 不引入向量数据库。centroid = norm(centroid·(1-α) + new·α)（EMA）。
  * centroidModel 不一致 = 换过 embedding 模型，旧质心不可比，作废重算。
  */
 
 import type { KnowledgeLlmConfig } from "../../config.js";
 
-/** EMA 新样本权重：偏保守，前 ~4 份文档后质心才近似收敛到新主题。 */
+/** EMA 新样本权重：偏保守，前 ~4 份资料后质心才近似收敛到新主题。 */
 export const CENTROID_EMA_ALPHA = 0.25;
-/** 冷启动阈值：参与质心的文档数低于此值时 ④ 层不产候选（plan §5.2）。 */
-export const CENTROID_COLD_START_DOCS = 5;
 /** embedding 输入截断：标题 + 正文头部（模型侧另有 token 上限，这里保守）。 */
 const EMBED_INPUT_MAX_CHARS = 4_000;
 const EMBED_TIMEOUT_MS = 30_000;
@@ -116,54 +113,33 @@ function normalize(vector: number[]): number[] {
   return vector.map((value) => value / norm);
 }
 
-// ───────────────────────── 候选产出与质心维护 ─────────────────────────
+// ───────────────────────── 消歧 tie-break 与质心维护 ─────────────────────────
 
-export interface VectorScore {
-  roomId: string;
-  similarity: number;
-}
-
+/** 质心载体（entities 行的向量态）。 */
 export interface CentroidRecord {
-  roomId: string;
-  knowledgeId: string;
+  id: string;
   centroid: string | null;
   centroidDocs: number;
   centroidModel: string | null;
 }
 
-/** 候选池过滤 + 打分：冷启动与模型不一致的 Room 不参与本轮 ④。 */
-export function rankByCentroids(
+/**
+ * 同名多命中时的质心最近者（plan §4.2 步骤 1）：
+ * 模型不一致或无质心的候选不参与；无任何可用质心返回 null（调用方
+ * 回退证据分高者）。不设冷启动阈值——弱实体从第一份资料就累积质心。
+ */
+export function nearestByCentroid(
   documentVector: number[],
-  centroids: CentroidRecord[],
+  candidates: CentroidRecord[],
   model: string,
-  topN = 5,
-): VectorScore[] {
-  const results: VectorScore[] = [];
-  for (const record of centroids) {
-    if (record.centroidDocs < CENTROID_COLD_START_DOCS) continue;
-    if (record.centroidModel !== model || !record.centroid) continue;
+): { id: string; similarity: number } | null {
+  let best: { id: string; similarity: number } | null = null;
+  for (const record of candidates) {
+    if (!record.centroid || record.centroidModel !== model) continue;
     const similarity = cosineSimilarity(documentVector, decodeCentroid(record.centroid));
-    if (similarity > 0) results.push({ roomId: record.roomId, similarity: Number(similarity.toFixed(4)) });
+    if (!best || similarity > best.similarity) best = { id: record.id, similarity };
   }
-  return results.sort((a, b) => b.similarity - a.similarity).slice(0, topN);
-}
-
-/** ingest 成功后的质心推进（best-effort：失败只记日志，不影响 ingest 结果）。 */
-export function advanceCentroid(
-  previous: CentroidRecord,
-  documentVector: number[],
-  model: string,
-): { centroid: string; centroidDocs: number; centroidModel: string } {
-  // 换模型 / 未初始化：从当前文档向量重建
-  const base = previous.centroidModel === model && previous.centroid
-    ? decodeCentroid(previous.centroid)
-    : null;
-  const blended = blendCentroid(base, documentVector);
-  return {
-    centroid: encodeCentroid(blended),
-    centroidDocs: (previous.centroidModel === model ? previous.centroidDocs : 0) + 1,
-    centroidModel: model,
-  };
+  return best;
 }
 
 /** embedding 输入文本：标题显式前置 + 正文头部。 */

@@ -196,7 +196,7 @@ export function ResourceTree({
                       className={`context-room-resource-item${selectedId === resource.id ? ' is-selected' : ''}`}
                       onClick={() => onSelect(resource)}
                     >
-                      {resource.kind === 'cloud-doc' ? <FileText aria-hidden="true" /> : resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : <FileText aria-hidden="true" />}
+                      {resource.kind === 'office-file' && resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : <FileText aria-hidden="true" />}
                       <span><b>{resource.name}</b><small>{resource.updatedAt}</small></span>
                     </button>
                     {backendDocument ? (

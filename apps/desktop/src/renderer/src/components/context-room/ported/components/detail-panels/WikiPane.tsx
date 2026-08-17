@@ -1,9 +1,24 @@
-import { BookOpen, ChevronLeft, FileText, FolderOpen, RefreshCw, Upload } from 'lucide-react';
+import {
+  ChevronLeft,
+  FileText,
+  FolderOpen,
+  ListTree,
+  Network,
+  RefreshCw,
+  Upload,
+} from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { showToast } from '@/state/toast';
-import type { KnowledgeFileDto, KnowledgeWikiPageDto } from '../../../../../../../shared/knowledge';
-import type { ContextRoomRecord } from '../../types';
+import type {
+  KnowledgeFileDto,
+  KnowledgeWikiGraphDto,
+  KnowledgeWikiPageDto,
+} from '../../../../../../../shared/knowledge';
+import type { ContextRoomRecord, ContextRoomWikiPageResource } from '../../types';
+import { WikiGraphCanvas } from '../WikiGraphCanvas';
+import { MarkdownBody } from './MarkdownBody';
+import { WikiTree } from './WikiTree';
 
 const SOURCE_KIND_LABELS: Record<string, string> = {
   'everroom-doc': 'Room 文档',
@@ -31,84 +46,35 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 剥 KS 页面 frontmatter（--- 包围的元数据块）。 */
-function stripFrontmatter(markdown: string): string {
-  if (!markdown.startsWith('---')) return markdown;
-  const end = markdown.indexOf('\n---', 3);
-  return end >= 0 ? markdown.slice(end + 4).replace(/^\s*\n/, '') : markdown;
-}
-
-interface MarkdownBlock {
-  key: number;
-  kind: 'h1' | 'h2' | 'h3' | 'li' | 'p';
-  text: string;
-}
-
-/** 轻量 markdown 分块：标题/列表/段落（wiki 页面以这三种为主，够用且零依赖）。 */
-function parseMarkdown(markdown: string): MarkdownBlock[] {
-  const blocks: MarkdownBlock[] = [];
-  const lines = stripFrontmatter(markdown).split('\n');
-  let paragraph: string[] = [];
-  let key = 0;
-  const flush = () => {
-    const text = paragraph.join(' ').trim();
-    paragraph = [];
-    if (text) blocks.push({ key: key++, kind: 'p', text });
-  };
-  for (const rawLine of lines) {
-    const line = rawLine.trimEnd();
-    if (!line.trim()) {
-      flush();
-      continue;
-    }
-    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
-    if (heading) {
-      flush();
-      const level = heading[1]!.length;
-      blocks.push({ key: key++, kind: level === 1 ? 'h1' : level === 2 ? 'h2' : 'h3', text: heading[2]! });
-      continue;
-    }
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (bullet) {
-      flush();
-      blocks.push({ key: key++, kind: 'li', text: bullet[1]! });
-      continue;
-    }
-    paragraph.push(line.trim());
-  }
-  flush();
-  return blocks;
-}
-
-function MarkdownBody({ markdown }: { markdown: string }) {
-  const blocks = parseMarkdown(markdown);
-  return (
-    <div className="context-room-wiki-markdown">
-      {blocks.map((block) => {
-        if (block.kind === 'h1') return <h3 key={block.key}>{block.text}</h3>;
-        if (block.kind === 'h2') return <h4 key={block.key}>{block.text}</h4>;
-        if (block.kind === 'h3') return <h5 key={block.key}>{block.text}</h5>;
-        if (block.kind === 'li') return <li key={block.key}>{block.text}</li>;
-        return <p key={block.key}>{block.text}</p>;
-      })}
-    </div>
-  );
-}
+type WikiView = 'tree' | 'graph';
 
 /**
- * Room 知识库面板（room-wiki 方案 M3）：本 Room wiki 的页面列表与阅读。
- * 页面由文档/资料 ingest 后自动生成；"上传文件"走自动归类路由。
+ * Room 知识库面板（room-wiki 方案 M3c）：wiki 页面按 path 组织成目录树，
+ * 点击交给编辑栏（onOpenPage）；图谱视图渲染 md 内链派生的链接图。
+ * 来源文件与上传区保留（上传走自动归类路由）。
  */
-export function WikiPane({ room }: { room: ContextRoomRecord }) {
+export function WikiPane({ room, selectedResourceId, onOpenPage }: {
+  room: ContextRoomRecord;
+  /** 编辑栏当前选中资源 id（wiki 页高亮联动）。 */
+  selectedResourceId?: string | null;
+  onOpenPage: (resource: ContextRoomWikiPageResource) => void;
+}) {
   const [status, setStatus] = useState<string>('loading');
   const [pages, setPages] = useState<KnowledgeWikiPageDto[]>([]);
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [files, setFiles] = useState<KnowledgeFileDto[]>([]);
-  const [selected, setSelected] = useState<
-    { kind: 'page' | 'file'; title: string; markdown: string; fileId?: string } | null
+  const [selectedFile, setSelectedFile] = useState<
+    { title: string; markdown: string; fileId: string } | null
   >(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [view, setView] = useState<WikiView>('tree');
+  const [graph, setGraph] = useState<KnowledgeWikiGraphDto | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+
+  const selectedPath = selectedResourceId?.startsWith(`${room.id}:wiki:`)
+    ? selectedResourceId.slice(`${room.id}:wiki:`.length)
+    : null;
 
   const refresh = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge;
@@ -130,23 +96,43 @@ export function WikiPane({ room }: { room: ContextRoomRecord }) {
   }, [room.id]);
 
   useEffect(() => {
-    setSelected(null);
+    setSelectedFile(null);
+    setView('tree');
     void refresh();
-    // 上传/确认后广播的事件：wiki 内容可能变化
-    const onChanged = () => void refresh();
+    // 上传/确认后广播的事件：wiki 内容可能变化（图谱缓存一并作废）
+    const onChanged = () => {
+      setGraph(null);
+      void refresh();
+    };
     window.addEventListener('everroom:knowledge-changed', onChanged);
     return () => window.removeEventListener('everroom:knowledge-changed', onChanged);
   }, [refresh]);
 
-  const openPage = async (page: KnowledgeWikiPageDto) => {
+  // 图谱懒加载：首次切到图谱视图才拉取（服务端要读全部页面，别在目录态白跑）
+  useEffect(() => {
+    if (view !== 'graph' || graph || graphLoading || pages.length === 0) return;
     const knowledge = window.nxcore?.knowledge;
     if (!knowledge) return;
-    try {
-      const data = await knowledge.readWikiPage(room.id, page.path);
-      setSelected({ kind: 'page', title: page.title, markdown: data.markdown });
-    } catch (cause) {
-      showToast({ title: '读取页面失败', message: cause instanceof Error ? cause.message : undefined });
-    }
+    setGraphLoading(true);
+    knowledge.getWikiGraph(room.id)
+      .then((data) => setGraph(data))
+      .catch((cause) => {
+        showToast({ title: '图谱加载失败', message: cause instanceof Error ? cause.message : undefined });
+        setGraph({ nodes: [], edges: [] });
+      })
+      .finally(() => setGraphLoading(false));
+  }, [view, graph, graphLoading, pages.length, room.id]);
+
+  const openPage = (page: KnowledgeWikiPageDto) => {
+    onOpenPage({
+      id: `${room.id}:wiki:${page.path}`,
+      roomId: room.id,
+      folderId: null,
+      name: page.title,
+      updatedAt: '',
+      kind: 'wiki-page',
+      wikiPath: page.path,
+    });
   };
 
   const openFile = async (file: KnowledgeFileDto) => {
@@ -154,7 +140,7 @@ export function WikiPane({ room }: { room: ContextRoomRecord }) {
     if (!knowledge) return;
     try {
       const data = await knowledge.readFileMarkdown(file.id);
-      setSelected({ kind: 'file', title: file.originalName, markdown: data.markdown, fileId: file.id });
+      setSelectedFile({ title: file.originalName, markdown: data.markdown, fileId: file.id });
     } catch (cause) {
       showToast({ title: '读取文件失败', message: cause instanceof Error ? cause.message : undefined });
     }
@@ -203,28 +189,26 @@ export function WikiPane({ room }: { room: ContextRoomRecord }) {
     }
   };
 
-  if (selected) {
+  if (selectedFile) {
     return (
       <div className="context-room-wiki-pane">
         <header>
-          <button type="button" className="context-room-wiki-back" onClick={() => setSelected(null)}>
+          <button type="button" className="context-room-wiki-back" onClick={() => setSelectedFile(null)}>
             <ChevronLeft aria-hidden="true" />
             返回列表
           </button>
-          {selected.kind === 'file' && selected.fileId ? (
-            <button
-              type="button"
-              className="context-room-wiki-reveal"
-              title="在文件夹中显示原件"
-              onClick={() => void revealFile(selected.fileId!)}
-            >
-              <FolderOpen aria-hidden="true" />
-              显示原件
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="context-room-wiki-reveal"
+            title="在文件夹中显示原件"
+            onClick={() => void revealFile(selectedFile.fileId)}
+          >
+            <FolderOpen aria-hidden="true" />
+            显示原件
+          </button>
         </header>
         <div className="context-room-wiki-reader">
-          <MarkdownBody markdown={selected.markdown} />
+          <MarkdownBody markdown={selectedFile.markdown} />
         </div>
       </div>
     );
@@ -235,6 +219,30 @@ export function WikiPane({ room }: { room: ContextRoomRecord }) {
       <header>
         <h2>知识库</h2>
         <div className="context-room-wiki-actions">
+          <div className="context-room-wiki-toggle" role="tablist" aria-label="知识库视图">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'tree'}
+              className={view === 'tree' ? 'is-active' : ''}
+              title="目录树"
+              onClick={() => setView('tree')}
+            >
+              <ListTree aria-hidden="true" />
+              目录
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'graph'}
+              className={view === 'graph' ? 'is-active' : ''}
+              title="页面内链图谱"
+              onClick={() => setView('graph')}
+            >
+              <Network aria-hidden="true" />
+              图谱
+            </button>
+          </div>
           <button
             type="button"
             className="context-room-wiki-upload"
@@ -271,24 +279,32 @@ export function WikiPane({ room }: { room: ContextRoomRecord }) {
         <div className="context-room-workspace-empty">
           还没有生成知识页面：上传文件或在 Room 里写文档后自动生成。
         </div>
+      ) : view === 'graph' ? (
+        graphLoading ? (
+          <div className="context-room-workspace-empty">图谱构建中…</div>
+        ) : graph && graph.nodes.length > 0 ? (
+          <div className="context-room-wiki-graph-wrap">
+            <WikiGraphCanvas
+              graph={graph}
+              selectedPath={selectedPath}
+              onSelectPage={(path) => {
+                const page = pages.find((candidate) => candidate.path === path);
+                if (page) openPage(page);
+              }}
+            />
+            <p className="context-room-wiki-graph-hint">
+              节点 = 页面，连线 = 页面内链（[[链接]] / md 链接）；点击节点在编辑栏打开该页。
+            </p>
+          </div>
+        ) : (
+          <div className="context-room-workspace-empty">页面之间还没有内链，图谱为空。</div>
+        )
       ) : (
-        <ul className="context-room-wiki-list">
-          {pages.map((page) => (
-            <li key={page.id}>
-              <button type="button" className="context-room-wiki-item" onClick={() => void openPage(page)}>
-                <span className="context-room-wiki-item-icon">
-                  <BookOpen aria-hidden="true" />
-                </span>
-                <span className="context-room-wiki-item-body">
-                  <strong>{page.title}</strong>
-                  <span>{page.description || sourceKindLabel(page.type)}</span>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="context-room-wiki-tree-wrap">
+          <WikiTree pages={pages} selectedPath={selectedPath} onSelect={openPage} />
+        </div>
       )}
-      {files.length > 0 ? (
+      {files.length > 0 && view === 'tree' ? (
         <section className="context-room-wiki-files">
           <h3>来源文件</h3>
           <ul>

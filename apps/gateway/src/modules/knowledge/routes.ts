@@ -79,43 +79,106 @@ const ManualRouteBody = Type.Union([
   }),
 ]);
 
-const PendingCandidateDto = Type.Object({
-  roomId: Type.String(),
-  title: Type.String(),
+/** 候选实体卡片（entity-room-plan §4.7）：弱期概述由 UI 从依据句派生（ED7）。 */
+const EntityDto = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
   kind: Type.String(),
-  entityScore: Type.Optional(Type.Number()),
-  vectorSimilarity: Type.Optional(Type.Number()),
+  status: Type.String(),
+  roomId: Type.Union([Type.String(), Type.Null()]),
+  evidenceScore: Type.Number(),
+  sourceCount: Type.Integer(),
+  promoteScore: Type.Number(),
+  promoteSources: Type.Integer(),
+  firstEvidence: Type.Union([Type.String(), Type.Null()]),
+  lastLinkedAt: Type.Union([Type.String(), Type.Null()]),
+  updatedAt: Type.String(),
 });
 
-const PendingItemDto = Type.Object({
-  decisionId: Type.String(),
+const EntityStatusQuery = Type.Object({
+  status: Type.Optional(Type.Union([
+    Type.Literal("weak"),
+    Type.Literal("ready"),
+    Type.Literal("promoting"),
+    Type.Literal("room"),
+    Type.Literal("archived"),
+  ])),
+});
+
+const EntityIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
+
+const EntityLinkDto = Type.Object({
+  id: Type.String(),
+  entityId: Type.String(),
   sourceKind: Type.String(),
   sourceId: Type.String(),
   sourceVersion: Type.Integer(),
+  role: Type.String(),
+  salience: Type.Number(),
+  evidence: Type.Union([Type.String(), Type.Null()]),
+  decidedBy: Type.String(),
+  sourceTitle: Type.Union([Type.String(), Type.Null()]),
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+});
+
+const EntityDetailDto = Type.Object({
+  entity: Type.Object({
+    id: Type.String(),
+    name: Type.String(),
+    aliases: Type.Array(Type.String()),
+    kind: Type.String(),
+    summary: Type.Union([Type.String(), Type.Null()]),
+    status: Type.String(),
+    roomId: Type.Union([Type.String(), Type.Null()]),
+    evidenceScore: Type.Number(),
+    sourceCount: Type.Integer(),
+    mergedFrom: Type.Array(Type.String()),
+    lastLinkedAt: Type.Union([Type.String(), Type.Null()]),
+    createdAt: Type.String(),
+    updatedAt: Type.String(),
+  }),
+  room: Type.Union([
+    Type.Null(),
+    Type.Object({ id: Type.String(), title: Type.String(), kind: Type.String() }),
+  ]),
+  links: Type.Array(EntityLinkDto),
+});
+
+const EntityMergeBody = Type.Object({
+  /** 并入的目标实体 id（from = 路径里的 :id）。 */
+  targetId: Type.String({ minLength: 1, maxLength: 100 }),
+});
+
+const DocSourceParams = Type.Object({
+  sourceKind: Type.Union([
+    Type.Literal("everroom-doc"),
+    Type.Literal("reality-event"),
+    Type.Literal("mail"),
+    Type.Literal("file"),
+    Type.Literal("cloud-doc"),
+  ]),
+  sourceId: Type.String({ minLength: 1, maxLength: 200 }),
+});
+
+/** 未识别资料手动挂实体：选既有实体，或就地新建（plan §4.7）。 */
+const AttachBody = Type.Object({
+  entityId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+  createEntity: Type.Optional(Type.Object({
+    name: Type.String({ minLength: 1, maxLength: 120 }),
+    kind: Type.String({ minLength: 1, maxLength: 24 }),
+  })),
+});
+
+/** 未识别栏条目（抽取空/失败的资料，等待人工挂载）。 */
+const UnmatchedItemDto = Type.Object({
+  decisionId: Type.String(),
+  sourceKind: Type.String(),
+  sourceId: Type.String(),
   title: Type.String(),
   summary: Type.Union([Type.String(), Type.Null()]),
   reason: Type.Union([Type.String(), Type.Null()]),
-  confidence: Type.Number(),
-  decidedBy: Type.Union([Type.String(), Type.Null()]),
-  newRoom: Type.Union([
-    Type.Null(),
-    Type.Object({
-      name: Type.String(),
-      summary: Type.String(),
-      kind: Type.Optional(Type.String()),
-    }),
-  ]),
-  candidates: Type.Array(PendingCandidateDto),
   createdAt: Type.String(),
-});
-
-const ConfirmBody = Type.Object({
-  roomIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 10 })),
-  createRoom: Type.Optional(Type.Object({
-    name: Type.String({ minLength: 1, maxLength: 120 }),
-    summary: Type.Optional(Type.String({ maxLength: 500 })),
-    kind: Type.Optional(Type.String({ maxLength: 24 })),
-  })),
 });
 
 const FileUploadBody = Type.Object({
@@ -124,6 +187,20 @@ const FileUploadBody = Type.Object({
   contentBase64: Type.String({ minLength: 1, maxLength: 27 * 1024 * 1024 }),
   occurredAt: Type.Optional(Type.String({ maxLength: 40 })),
   entrySignals: Type.Optional(EntrySignalsSchema),
+});
+
+/** wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */
+const WikiGraphResponse = Type.Object({
+  nodes: Type.Array(Type.Object({
+    id: Type.String(),
+    title: Type.String(),
+    path: Type.String(),
+    inLinks: Type.Integer(),
+  })),
+  edges: Type.Array(Type.Object({
+    source: Type.String(),
+    target: Type.String(),
+  })),
 });
 
 /** Room 的上传文件清单项（uploaded_files ⨝ 最新 file 决策）。 */
@@ -165,9 +242,10 @@ function errorOf(code: string): { error: string } {
 }
 
 /**
- * Knowledge 模块 REST（plan §7.2）。
+ * Knowledge 模块 REST（entity-room-plan §7）。
  * Room 注册表（渲染器上报/拉取）+ Room↔Wiki 映射 + 派生资料视图 +
- * 手动"立即沉淀"/外部信封入口 + 待归类队列 + 确认/撤销 + ②b 规则 CRUD。
+ * 手动"立即沉淀"/外部信封入口 + 候选实体（列表/详情/转正/合并）+
+ * 未识别栏（挂载）+ 最近归类撤销 + ②b 规则 CRUD。
  */
 export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -243,6 +321,18 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         },
       },
       async (request) => service.listRoomWikiPages(request.params.id),
+    );
+
+    app.get(
+      "/v1/knowledge/rooms/:id/wiki/graph",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: RoomIdParams,
+          response: { 200: WikiGraphResponse },
+        },
+      },
+      async (request) => service.wikiGraph(request.params.id),
     );
 
     app.get(
@@ -409,17 +499,163 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
     );
 
     app.get(
-      "/v1/knowledge/pending",
+      "/v1/knowledge/entities",
+      {
+        schema: {
+          tags: ["knowledge"],
+          querystring: EntityStatusQuery,
+          response: {
+            200: Type.Object({ items: Type.Array(EntityDto) }),
+          },
+        },
+      },
+      async (request) => ({
+        items: service.listCandidateEntities(request.query.status ?? "weak").map((entity) => ({
+          ...entity,
+          lastLinkedAt: entity.lastLinkedAt ? iso(entity.lastLinkedAt) : null,
+          updatedAt: iso(entity.updatedAt),
+        })),
+      }),
+    );
+
+    app.get(
+      "/v1/knowledge/entities/:id",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: EntityIdParams,
+          response: {
+            200: EntityDetailDto,
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const detail = service.getEntityDetail(request.params.id);
+        if (!detail.ok) return reply.code(404).send(errorOf(detail.error));
+        return {
+          entity: {
+            id: detail.entity.id,
+            name: detail.entity.name,
+            aliases: detail.entity.aliases,
+            kind: detail.entity.kind,
+            summary: detail.entity.summary,
+            status: detail.entity.status,
+            roomId: detail.entity.roomId,
+            evidenceScore: detail.entity.evidenceScore,
+            sourceCount: detail.entity.sourceCount,
+            mergedFrom: detail.entity.mergedFrom,
+            lastLinkedAt: detail.entity.lastLinkedAt ? iso(detail.entity.lastLinkedAt) : null,
+            createdAt: iso(detail.entity.createdAt),
+            updatedAt: iso(detail.entity.updatedAt),
+          },
+          room: detail.room,
+          links: detail.links.map((link) => ({
+            id: link.id,
+            entityId: link.entityId,
+            sourceKind: link.sourceKind,
+            sourceId: link.sourceId,
+            sourceVersion: link.sourceVersion,
+            role: link.role,
+            salience: link.salience,
+            evidence: link.evidence,
+            decidedBy: link.decidedBy,
+            sourceTitle: link.sourceTitle,
+            createdAt: iso(link.createdAt),
+            updatedAt: iso(link.updatedAt),
+          })),
+        };
+      },
+    );
+
+    app.post(
+      "/v1/knowledge/entities/:id/promote",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: EntityIdParams,
+          response: {
+            202: Type.Object({ queued: Type.Boolean() }),
+            400: Type.Object({ error: Type.String() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = service.promoteEntity(request.params.id);
+        if (!result.ok) {
+          const status = result.error === "entity_not_found" ? 404 : 400;
+          return reply.code(status).send(errorOf(result.error));
+        }
+        return reply.code(202).send({ queued: true });
+      },
+    );
+
+    app.post(
+      "/v1/knowledge/entities/:id/merge",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: EntityIdParams,
+          body: EntityMergeBody,
+          response: {
+            200: Type.Object({ ok: Type.Boolean() }),
+            400: Type.Object({ error: Type.String() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = await service.mergeEntity(request.params.id, request.body.targetId);
+        if (!result.ok) {
+          const status = result.error === "entity_not_found" ? 404 : 400;
+          return reply.code(status).send(errorOf(result.error));
+        }
+        return { ok: true };
+      },
+    );
+
+    app.post(
+      "/v1/knowledge/docs/:sourceKind/:sourceId/attach",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: DocSourceParams,
+          body: AttachBody,
+          response: {
+            200: Type.Object({ entityId: Type.String() }),
+            400: Type.Object({ error: Type.String() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = service.attachDoc({
+          sourceKind: request.params.sourceKind,
+          sourceId: request.params.sourceId,
+          ...(request.body.entityId ? { entityId: request.body.entityId } : {}),
+          ...(request.body.createEntity ? { createEntity: request.body.createEntity } : {}),
+        });
+        if (!result.ok) {
+          const status = result.error === "source_not_routed" || result.error === "entity_not_found" ? 404 : 400;
+          return reply.code(status).send(errorOf(result.error));
+        }
+        return { entityId: result.entityId };
+      },
+    );
+
+    app.get(
+      "/v1/knowledge/docs/unmatched",
       {
         schema: {
           tags: ["knowledge"],
           response: {
-            200: Type.Object({ items: Type.Array(PendingItemDto) }),
+            200: Type.Object({ items: Type.Array(UnmatchedItemDto) }),
           },
         },
       },
       async () => ({
-        items: service.listPending().map((item) => ({
+        items: service.listUnmatched().map((item) => ({
           ...item,
           createdAt: iso(item.createdAt),
         })),
@@ -457,25 +693,6 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           createdAt: iso(item.createdAt),
         })),
       }),
-    );
-
-    app.post(
-      "/v1/knowledge/route/:decisionId/confirm",
-      {
-        schema: {
-          tags: ["knowledge"],
-          params: Type.Object({ decisionId: Type.String({ minLength: 1, maxLength: 100 }) }),
-          body: ConfirmBody,
-        },
-      },
-      async (request, reply) => {
-        const result = service.confirmDecision(request.params.decisionId, request.body);
-        if (!result.ok) {
-          const status = result.error === "decision_not_found" ? 404 : 400;
-          return reply.code(status).send(errorOf(result.error));
-        }
-        return { ok: true, roomId: result.roomId };
-      },
     );
 
     app.post(

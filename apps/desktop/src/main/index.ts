@@ -13,6 +13,7 @@ import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
+import type { KnowledgeAttachInput } from '../shared/knowledge'
 import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
@@ -134,9 +135,15 @@ const KNOWLEDGE_CHANNELS = {
   deleteRoom: 'knowledge:rooms:delete',
   listWikiPages: 'knowledge:wiki:pages',
   readWikiPage: 'knowledge:wiki:page-read',
-  listPending: 'knowledge:pending:list',
+  listWikis: 'knowledge:wikis:list',
+  getWikiGraph: 'knowledge:wiki:graph',
+  listEntities: 'knowledge:entities:list',
+  getEntity: 'knowledge:entities:get',
+  promoteEntity: 'knowledge:entities:promote',
+  mergeEntity: 'knowledge:entities:merge',
+  listUnmatched: 'knowledge:unmatched:list',
+  attachDoc: 'knowledge:docs:attach',
   listRecentDecisions: 'knowledge:decisions:list',
-  confirmDecision: 'knowledge:route:confirm',
   revertDecision: 'knowledge:route:revert',
   pickAndUploadFiles: 'knowledge:files:pick-and-upload',
   listRoomFiles: 'knowledge:files:list',
@@ -320,11 +327,19 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   ipcMain.handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
   ipcMain.handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
   ipcMain.handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
-  ipcMain.handle(KNOWLEDGE_CHANNELS.listPending, () => bridge.listPending())
+  ipcMain.handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
+  ipcMain.handle(KNOWLEDGE_CHANNELS.getWikiGraph, (_event, roomId: string) => bridge.getWikiGraph(roomId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived') =>
+    bridge.listEntities(status))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
+    bridge.mergeEntity(fromId, targetId))
+  ipcMain.handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())
+  ipcMain.handle(KNOWLEDGE_CHANNELS.attachDoc, (_event, sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
+    bridge.attachDoc(sourceKind, sourceId, input))
   ipcMain.handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
     bridge.listRecentDecisions(limit))
-  ipcMain.handle(KNOWLEDGE_CHANNELS.confirmDecision, (_event, decisionId, input) =>
-    bridge.confirmDecision(decisionId, input))
   ipcMain.handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
   ipcMain.handle(KNOWLEDGE_CHANNELS.pickAndUploadFiles, () => bridge.pickAndUploadFiles())
   ipcMain.handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))

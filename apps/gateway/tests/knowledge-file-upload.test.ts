@@ -40,9 +40,10 @@ async function serviceForTest() {
       roomWikisEnabled: false,
       ingestDebounceMs: 600_000,
       routerEnabled: true,
-      routeThresholdAuto: 0.8,
-      routeThresholdReview: 0.6,
-      autoCreateRoomEnabled: false,
+      entityPromoteScore: 2.0,
+      entityPromoteSources: 2,
+      mergeAutoDice: 0.75,
+      mergeJudgeDice: 0.6,
       llm: null,
       embeddingLlm: null,
       embeddingModel: "",
@@ -189,6 +190,44 @@ describe("上传判重闸门（资料模型修订）", () => {
       status: "auto",
       decidedBy: "llm",
     });
+    test.sqlite.close();
+  });
+
+  it("listRoomFiles 多对多并集：mention 链接派生的归属也进对应 Room 清单", async () => {
+    const test = await serviceForTest();
+    test.service.upsertRoom({ id: "room-a", title: "项目甲" });
+    test.service.upsertRoom({ id: "room-b", title: "人物乙" });
+    // 两个 Room 的户口实体均经 ED4 种子化为已晋升（entity_id 确定性）
+    const upload = await test.service.submitFileUpload({
+      filename: "项目甲周报.md",
+      buffer: Buffer.from("# 周报\n\n张三（人物乙）负责排期", "utf8"),
+    });
+
+    // 主房 room-a 已确认沉淀；room-b 无 primary_room_id 落点，只有 mention 链接
+    test.sqlite.prepare(
+      "INSERT INTO route_decisions (id, source_kind, source_id, source_version, source_title, primary_room_id, confidence, decided_by, status, created_at, updated_at) VALUES (?, 'file', ?, 1, ?, 'room-a', 1, 'resolution', 'confirmed', 1, 1)",
+    ).run("d-multi", upload.sourceId, "项目甲周报");
+    const insertLink = test.sqlite.prepare(
+      "INSERT INTO entity_doc_links (id, entity_id, source_kind, source_id, source_version, role, salience, decided_by, created_at, updated_at) VALUES (?, ?, 'file', ?, 1, ?, ?, 'resolution', 1, 1)",
+    );
+    insertLink.run("l-1", "ent-room-room-a", upload.sourceId, "primary", 0.9);
+    insertLink.run("l-2", "ent-room-room-b", upload.sourceId, "mention", 0.3);
+
+    // a 源（primary_room_id 直接归属）与 b 源（mention 链接派生）都能看到
+    expect(test.service.listRoomFiles("room-a").map((file) => file.id)).toContain(upload.sourceId);
+    expect(test.service.listRoomFiles("room-b").map((file) => file.id)).toContain(upload.sourceId);
+
+    // 只链接 room-b 的文件不外溢进 room-a；未链接的房（room 无关实体）看不到
+    const solo = await test.service.submitFileUpload({
+      filename: "人物乙访谈.md",
+      buffer: Buffer.from("# 访谈", "utf8"),
+    });
+    test.sqlite.prepare(
+      "INSERT INTO route_decisions (id, source_kind, source_id, source_version, source_title, primary_room_id, confidence, decided_by, status, created_at, updated_at) VALUES (?, 'file', ?, 1, ?, NULL, 1, 'resolution', 'linked', 1, 1)",
+    ).run("d-solo", solo.sourceId, "人物乙访谈");
+    insertLink.run("l-3", "ent-room-room-b", solo.sourceId, "primary", 0.8);
+    expect(test.service.listRoomFiles("room-a").map((file) => file.id)).not.toContain(solo.sourceId);
+    expect(test.service.listRoomFiles("room-b").map((file) => file.id)).toContain(solo.sourceId);
     test.sqlite.close();
   });
 

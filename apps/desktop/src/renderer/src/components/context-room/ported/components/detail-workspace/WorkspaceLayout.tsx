@@ -3,7 +3,7 @@ import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract';
 import { X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
-import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import { DETAIL_TABS as TABS, type DetailPane } from '../RoomIconSidebar';
 import { OverviewDashboard, type WorkspaceObjectPreview } from '../detail-panels';
 import type { LocalOfficeFile } from '../detail-panels/ResourcePanel';
@@ -56,6 +56,7 @@ export function WorkspaceLayout({
   onBackendDocumentChange,
   onDeleteDocument,
   onSelectResource,
+  onOpenWikiPage,
   onAddFile,
   onOpenMemory,
   onOpenObject,
@@ -107,6 +108,7 @@ export function WorkspaceLayout({
   onBackendDocumentChange: (document: RoomDocument) => void;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onSelectResource: (resource: ContextRoomResource) => void;
+  onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (memoryId: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
@@ -284,6 +286,7 @@ export function WorkspaceLayout({
                         rooms={rooms}
                         onOpenRoom={onOpenRoom}
                         onSelectResource={onSelectResource}
+                        onOpenWikiPage={onOpenWikiPage}
                         onDeleteDocument={onDeleteDocument}
                         onAddFile={onAddFile}
                         onOpenMemory={onOpenMemory}

@@ -1,76 +1,70 @@
 /**
- * 自动归类路由瀑布（plan §5.2）：① 入口确定性 → ② 链接/规则 →
- * ③ 实体候选 → ④ 向量候选 → ⑤ LLM 终审。
+ * 自动归类路由瀑布（entity-room-plan §2.1）：
+ * ① 入口确定性 → ② 规则 → ③′ LLM 实体抽取 → ③″ 实体解析（含 LLM
+ * 同一性判定）→ ④ 链接落库 + 推荐检查（达阈值 → ready 推荐池）。
  *
- * ①② 是决策层（decidedBy=entry/link/rule，confidence=1）；
- * ③④ 只产候选与证据（分数进 evidence，不做决策）；
- * ⑤ 是唯一非确定性决策层（decidedBy=llm），未配置 LLM 时
- * 以 M1 形态收尾：候选连同证据落待归类队列，人工即仲裁者。
+ * ①② 是决策层（decidedBy=entry/rule，confidence=1，零 LLM 成本）；
+ * ③′ 是唯一非确定性抽取环节（开集，无候选菜单——菜单偏差的根源被拆除）；
+ * ③″④ 确定性累积证据；达阈值只进推荐池（ready），建 Room 由用户确认。
+ * 出口三种：
+ * - execute：链接实体中有已晋升者 → 正文 ingest 进其全部 Room wiki（多对多沉淀）
+ * - linked：实体已挂链但都未晋升（弱实体孵化中）
+ * - awaiting_review：抽取空/失败 → 「未识别实体」栏人工挂载
  *
- * 输出统一为：execute（可直接 ingest）或 review（待归类），
- * decision 行由本层创建，worker 据此驱动后续动作。
+ * 单份资料永远无法直接造出 Room（晋升只能靠证据累积或手动转正）。
  */
 
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import { roomDocumentLinks, routeDecisions, routingRules, rooms } from "../../infrastructure/database/schema.js";
 import {
-  roomDocumentLinks,
-  routeDecisions,
-  routingRules,
-  roomWikis,
-  rooms,
-} from "../../infrastructure/database/schema.js";
-import { bigramDiceSimilarity, documentTerms, roomTerms, scoreEntityMatches, type EntityScore } from "./entity-index.js";
+  bestMatch,
+  bigramDiceSimilarity,
+  normalizeEntityName,
+} from "./entity-index.js";
+import {
+  derivePrimaryRoles,
+  EntityRegistry,
+  type EntityRow,
+  type LinkRole,
+  type SourceKind,
+} from "./entity-registry.js";
+import { embeddingInputText, nearestByCentroid, type EmbeddingClient } from "./embedding.js";
 import type { DocEnvelope } from "./envelope.js";
-import type { CandidateCard, KnowledgeLlm } from "./llm.js";
-import { embeddingInputText, rankByCentroids, type EmbeddingClient, type VectorScore } from "./embedding.js";
-import type { WikiPageIndex } from "./wiki-index.js";
-
-/** create_new 重名去重阈值（plan §4.2：bigram Dice + aliases 比对）。 */
-export const ROOM_NAME_DEDUP_THRESHOLD = 0.6;
-/** ⑤ 卷宗候选上限（③④ 并集截断）。 */
-const DOSSIER_CANDIDATE_LIMIT = 8;
-/** ③④ 各自的 top N。 */
-const CANDIDATE_TOP_N = 5;
-/** ⑤ 卷宗里 Room 摘要截断（控制 prompt 体积）。 */
-const ROOM_SUMMARY_CHARS = 200;
+import type { ExtractedEntity, KnowledgeLlm } from "./llm.js";
 
 export interface RouterThresholds {
-  auto: number;
-  review: number;
-  autoCreateRoomEnabled: boolean;
+  promoteScore: number;
+  promoteSources: number;
+  /** 弱-弱确定性自动合并线（免 LLM）。 */
+  mergeAutoDice: number;
+  /** LLM 同一性判定带下限（[judge, auto) 走判定）。 */
+  mergeJudgeDice: number;
 }
 
 export interface RouterDeps {
   db: GatewayDatabase;
-  wikiIndex: WikiPageIndex;
+  registry: EntityRegistry;
   llm: KnowledgeLlm | null;
   embedding: { client: EmbeddingClient; model: string } | null;
   thresholds: RouterThresholds;
-  logger: { warn(bindings: Record<string, unknown>, message: string): void };
+  logger: {
+    info(bindings: Record<string, unknown>, message: string): void;
+    warn(bindings: Record<string, unknown>, message: string): void;
+  };
 }
 
-/** create_new 的 Room 提案（review 时是"按建议新建"卡片的素材）。 */
-export interface NewRoomProposal {
-  name: string;
-  summary: string;
-  kind?: string;
-}
-
-export interface RouteOutcome {
-  /** execute = 已有主 Room 可直接 ingest；review = 待归类（人工或低置信）。 */
-  disposition: "execute" | "review";
+export interface RouteResult {
+  /** execute=已晋升链接实体可直接 ingest；linked=挂链未晋升；awaiting_review=未识别。 */
+  disposition: "execute" | "linked" | "awaiting_review";
   roomId: string | null;
-  linkedRoomIds: string[];
-  decidedBy: "entry" | "link" | "rule" | "llm" | null;
+  /** execute 的全部目标房（多对多沉淀，roomId 为其之首）；linked/awaiting_review 为空。 */
+  roomIds: string[];
+  decidedBy: "entry" | "rule" | "resolution" | null;
   confidence: number;
   reason: string;
   evidence: Record<string, unknown> | null;
-  newRoom?: NewRoomProposal;
-}
-
-export interface RouteResult extends RouteOutcome {
   decisionId: string;
 }
 
@@ -82,7 +76,7 @@ interface RuleMatcher {
   creatorId?: string;
 }
 
-/** ②b 规则具体度：线程/文件前缀 > 来源标签/创建者 > 标题关键词（plan §3.1）。 */
+/** ②b 规则具体度：线程/文件前缀 > 来源标签/创建者 > 标题关键词。 */
 function matcherSpecificity(matcher: RuleMatcher): number {
   if (matcher.threadId || matcher.filenamePrefix) return 2;
   if (matcher.sourceTag || matcher.creatorId) return 1;
@@ -111,23 +105,58 @@ export function fallbackSummary(markdown: string, chars = 300): string {
   return text.replace(/[#>*`|\[\]()]/g, " ").replace(/\s+/g, " ").trim().slice(0, chars);
 }
 
+/**
+ * 批内去重（plan §4.2）：同 kind + Dice ≥0.75 视为同一实体——
+ * 保留先出现（通常是更规范的叫法）的名字，salience 取 max，依据句拼接。
+ */
+export function dedupeExtraction(extracted: ExtractedEntity[]): ExtractedEntity[] {
+  const kept: ExtractedEntity[] = [];
+  for (const item of extracted) {
+    const duplicate = kept.find((candidate) =>
+      candidate.kind === item.kind && bigramDiceSimilarity(candidate.name, item.name) >= 0.75);
+    if (!duplicate) {
+      kept.push(item);
+      continue;
+    }
+    duplicate.salience = Math.max(duplicate.salience, item.salience);
+    if (item.evidence && !duplicate.evidence.includes(item.evidence)) {
+      duplicate.evidence = [duplicate.evidence, item.evidence].filter(Boolean).join("；").slice(0, 300);
+    }
+  }
+  return kept;
+}
+
+/**
+ * execute 目标挑选（多对多沉淀）：全部已晋升链接实体——不分角色，
+ * mention 链接的实体晋升后同样收正文；salience 高者领房（roomId），
+ * 并列看证据分。角色只用于计分，不再决定沉淀归属。
+ */
+export function pickPromotedTargets(
+  linked: Array<{ entity: EntityRow; role: LinkRole; salience: number }>,
+): Array<{ entity: EntityRow; role: LinkRole; salience: number }> {
+  return linked
+    .filter((item) => item.entity.status === "room" && item.entity.roomId)
+    .sort((a, b) =>
+      b.salience - a.salience
+      || b.entity.evidenceScore - a.entity.evidenceScore);
+}
+
 export class KnowledgeRouter {
   constructor(private readonly deps: RouterDeps) {}
 
   /**
    * 跑完整瀑布并落 decision 行。
-   * skipEntry：revert 后重路由时跳过 ①（否则同 Room 直连死循环，plan §5.5）。
+   * skipEntry：revert 后重路由时跳过 ①（否则同 Room 直连死循环）。
    */
   async route(envelope: DocEnvelope, options: { skipEntry?: boolean } = {}): Promise<RouteResult> {
-    // ── ① 入口确定性：EverRoom 内文档天然带 Room（room_doc_links 首链即源 Room）
+    // ── ① 入口确定性：EverRoom 内文档天然带 Room（ED5：不跑抽取，零 LLM 成本）
     if (!options.skipEntry && envelope.ref.kind === "everroom-doc") {
       const entry = this.resolveEntryRooms(envelope.ref.id);
       if (entry) {
-        const [primaryRoomId, ...linkedRoomIds] = entry;
+        const [primaryRoomId] = entry;
         return this.persist(envelope, {
           disposition: "execute",
           roomId: primaryRoomId ?? null,
-          linkedRoomIds,
           decidedBy: "entry",
           confidence: 1,
           reason: "文档创建于该 Room（入口确定性）",
@@ -136,27 +165,12 @@ export class KnowledgeRouter {
       }
     }
 
-    // ── ②a 链接：同源最近的已确认/自动决策（版本更新回原 Room，"更新不漂移"）
-    const linked = this.resolveLinkedRoom(envelope.ref.kind, envelope.ref.id);
-    if (linked) {
-      return this.persist(envelope, {
-        disposition: "execute",
-        roomId: linked,
-        linkedRoomIds: [],
-        decidedBy: "link",
-        confidence: 1,
-        reason: "该资料此前已确认归属此 Room（版本更新回原 Room）",
-        evidence: null,
-      });
-    }
-
     // ── ②b 规则：用户显式配置的逃生舱（默认空表，纯可选）
     const ruleHit = this.matchRule(envelope);
     if (ruleHit) {
       return this.persist(envelope, {
         disposition: "execute",
         roomId: ruleHit.roomId,
-        linkedRoomIds: [],
         decidedBy: "rule",
         confidence: 1,
         reason: `命中路由规则 ${ruleHit.ruleId}（${ruleHit.describe}）`,
@@ -164,31 +178,152 @@ export class KnowledgeRouter {
       });
     }
 
-    // ── ③④ 候选层：只产证据，不判决
-    const { entityScores, vectorScores, candidateIds } = await this.collectCandidates(envelope);
-
-    // ── ⑤ LLM 终审（未配置 → M1 形态：人工即仲裁者）
-    if (this.deps.llm) {
-      return this.persist(envelope, await this.arbitrate(envelope, candidateIds, entityScores, vectorScores));
+    // ── ③′ 实体抽取：未配置 LLM / 抽取失败 → 未识别栏（不硬塞、不自动建实体）
+    if (!this.deps.llm) {
+      return this.persist(envelope, {
+        disposition: "awaiting_review",
+        roomId: null,
+        decidedBy: null,
+        confidence: 0,
+        reason: "抽取 LLM 未配置，资料进入未识别栏等待人工挂载",
+        evidence: { summary: fallbackSummary(envelope.markdown) },
+      });
+    }
+    let extraction;
+    try {
+      extraction = await this.deps.llm.extract(envelope.title, envelope.markdown);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.deps.logger.warn(
+        { event: "knowledge.router.extract.failed", sourceId: envelope.ref.id, error: message },
+        "entity extraction failed, falling back to unmatched",
+      );
+      return this.persist(envelope, {
+        disposition: "awaiting_review",
+        roomId: null,
+        decidedBy: null,
+        confidence: 0,
+        reason: `实体抽取失败：${message}`,
+        evidence: { summary: fallbackSummary(envelope.markdown) },
+      });
     }
 
+    const entities = dedupeExtraction(extraction.entities);
+    // 抽取结果可视化：批内去重后的实体清单（name/kind/salience/依据句）
+    this.deps.logger.info(
+      {
+        event: "knowledge.router.extracted",
+        sourceId: envelope.ref.id,
+        title: envelope.title,
+        summary: extraction.summary,
+        entities: entities.map((item) => ({
+          name: item.name,
+          kind: item.kind,
+          salience: Number(item.salience.toFixed(2)),
+          evidence: item.evidence,
+        })),
+      },
+      entities.length > 0
+        ? `抽取实体 ${entities.length} 个：${entities.map((item) => item.name).join("、")}`
+        : "抽取未发现实体",
+    );
+    if (entities.length === 0) {
+      // 空数组是合法抽取结果（通用词不成实体）——同样进未识别栏人工挂载
+      return this.persist(envelope, {
+        disposition: "awaiting_review",
+        roomId: null,
+        decidedBy: null,
+        confidence: 0,
+        reason: extraction.summary ? `抽取未发现实体：${extraction.summary.slice(0, 120)}` : "抽取未发现实体",
+        evidence: { summary: extraction.summary || fallbackSummary(envelope.markdown) },
+      });
+    }
+
+    // ── ③″ 解析 + ④ 链接落库（含晋升检查）
+    const roles = derivePrimaryRoles(entities);
+    const userPinned = new Set(
+      this.deps.registry.linksOfSource(envelope.ref.kind, envelope.ref.id)
+        .filter((link) => link.decidedBy === "user")
+        .map((link) => link.entityId),
+    );
+    const documentVector = await this.embedDocument(envelope);
+
+    const pool = this.deps.registry.loadResolutionPool();
+    const linked: Array<{ entity: EntityRow; role: LinkRole; salience: number; evidence: string }> = [];
+
+    for (const item of entities) {
+      const role = roles.get(item.name) ?? "mention";
+      const resolved = await this.resolveEntity(item, pool, documentVector);
+      if (resolved) pool.push(resolved);
+      const entity = resolved ?? this.deps.registry.createEntity({ name: item.name, kind: item.kind });
+      if (userPinned.has(entity.id)) continue; // 用户手动挂载优先，不被重抽取覆盖
+
+      const updated = this.deps.registry.upsertLink({
+        entityId: entity.id,
+        sourceKind: envelope.ref.kind,
+        sourceId: envelope.ref.id,
+        sourceVersion: envelope.ref.version,
+        role,
+        salience: item.salience,
+        evidence: item.evidence || null,
+        decidedBy: "resolution",
+      });
+      linked.push({ entity: updated, role, salience: item.salience, evidence: item.evidence });
+      if (documentVector) {
+        try {
+          this.deps.registry.advanceEntityCentroid(entity.id, documentVector, this.deps.embedding!.model);
+        } catch { /* best-effort */ }
+      }
+      // 推荐确认制：达阈值只翻推荐态（weak → ready），不建 Room——
+      // 用户在首页确认后才晋升（service.promoteEntity）
+      if (this.isPromotionReady(updated)) {
+        this.deps.registry.markReady(updated.id);
+      }
+    }
+
+    if (linked.length === 0) {
+      return this.persist(envelope, {
+        disposition: "awaiting_review",
+        roomId: null,
+        decidedBy: null,
+        confidence: 0,
+        reason: "全部实体链接为用户手动挂载，无自动动作",
+        evidence: { summary: extraction.summary, entities: [] },
+      });
+    }
+
+    // ── 出口判定：已晋升链接实体 → execute（解析命中即归属，多对多沉淀）
+    const targets = pickPromotedTargets(linked);
+    if (targets.length > 0) {
+      const lead = targets[0]!.entity;
+      return this.persist(envelope, {
+        disposition: "execute",
+        roomId: lead.roomId,
+        roomIds: targets.map((item) => item.entity.roomId!),
+        decidedBy: "resolution",
+        confidence: 1,
+        reason: targets.length === 1
+          ? `解析命中已晋升实体「${lead.name}」（证据分 ${lead.evidenceScore.toFixed(1)}）`
+          : `解析命中 ${targets.length} 个已晋升实体（主「${lead.name}」），正文多房沉淀`,
+        evidence: this.evidenceOf(extraction.summary, linked),
+      });
+    }
     return this.persist(envelope, {
-      disposition: "review",
+      disposition: "linked",
       roomId: null,
-      linkedRoomIds: [],
-      decidedBy: null,
-      confidence: 0,
-      reason: "路由候选已生成，等待人工确认（LLM 仲裁未配置）",
-      evidence: this.evidenceOf(entityScores, vectorScores),
+      decidedBy: "resolution",
+      confidence: 1,
+      reason: `挂链 ${linked.length} 个实体（均未晋升，孵化中）`,
+      evidence: this.evidenceOf(extraction.summary, linked),
     });
   }
 
   // ───────────────────────── ①② 决策层 ─────────────────────────
 
   /**
-   * everroom-doc 的源 Room：room_doc_links 按链接时间升序，首链为主，其余为附带。
-   * 对 rooms 注册表松引用（plan §3.1：存量 roomId 无注册行不阻塞）——
-   * leftJoin + deletedAt IS NULL 同时覆盖"无注册行"与"未删除"两种存活态。
+   * everroom-doc 的源 Room：room_doc_links 按链接时间升序，首链为主。
+   * 对 rooms 注册表松引用——leftJoin + deletedAt IS NULL 同时覆盖
+   * "无注册行"与"未删除"两种存活态。
    */
   private resolveEntryRooms(documentId: string): string[] | null {
     const rows = this.deps.db.select({ roomId: roomDocumentLinks.roomId })
@@ -199,25 +334,6 @@ export class KnowledgeRouter {
       .all();
     if (rows.length === 0) return null;
     return [...new Set(rows.map((row) => row.roomId))];
-  }
-
-  /** 同源最近的 confirmed/auto 决策（reverted 不算——撤销就是为了离开那个 Room）。 */
-  private resolveLinkedRoom(sourceKind: DocEnvelope["ref"]["kind"], sourceId: string): string | null {
-    const row = this.deps.db.select({ primaryRoomId: routeDecisions.primaryRoomId })
-      .from(routeDecisions)
-      .where(and(
-        eq(routeDecisions.sourceKind, sourceKind),
-        eq(routeDecisions.sourceId, sourceId),
-        inArray(routeDecisions.status, ["confirmed", "auto"]),
-      ))
-      .orderBy(desc(routeDecisions.createdAt))
-      .get();
-    if (!row?.primaryRoomId) return null;
-    // 松引用：注册表无行 = 存活；只有显式 deletedAt 才剔除
-    const registry = this.deps.db.select({ deletedAt: rooms.deletedAt })
-      .from(rooms).where(eq(rooms.id, row.primaryRoomId)).get();
-    if (registry?.deletedAt) return null;
-    return row.primaryRoomId;
   }
 
   private matchRule(envelope: DocEnvelope): { roomId: string; ruleId: string; describe: string } | null {
@@ -248,261 +364,145 @@ export class KnowledgeRouter {
     return null;
   }
 
-  // ───────────────────────── ③④ 候选层 ─────────────────────────
+  // ───────────────────────── ③″ 实体解析（plan §4.2） ─────────────────────────
 
-  private async collectCandidates(envelope: DocEnvelope): Promise<{
-    entityScores: EntityScore[];
-    vectorScores: VectorScore[];
-    candidateIds: string[];
-  }> {
-    const aliveRooms = this.deps.db.select().from(rooms).where(isNull(rooms.deletedAt)).all();
+  /**
+   * 解析单个抽取实体：精确（归一化 name/alias）→ 多命中消歧（质心/证据分）
+   * → 模糊（Dice 带 + 必要时 LLM 同一性判定）。返回命中的注册表实体；
+   * null = 未命中（调用方新建 weak）。
+   * 命中后按需累积 alias（fuzzy 命中的叫法进曾用名）。
+   */
+  private async resolveEntity(
+    item: ExtractedEntity,
+    pool: EntityRow[],
+    documentVector: number[] | null,
+  ): Promise<EntityRow | null> {
+    const query = normalizeEntityName(item.name);
 
-    // ③ Room 侧术语表 = wiki 页面标题 ∪ Room 标题/别名（无 wiki 的 Room 也能被标题命中）
-    let entityScores: EntityScore[] = [];
-    try {
-      const snapshot = await this.deps.wikiIndex.snapshot();
-      const roomTokenSets = new Map<string, Set<string>>();
-      for (const room of aliveRooms) {
-        const snapshotEntry = snapshot.get(room.id);
-        const terms = roomTerms([
-          ...(snapshotEntry?.pageTitles ?? []),
-          room.title,
-          ...(room.aliases ?? []),
-        ]);
-        if (terms.size > 0) roomTokenSets.set(room.id, terms);
+    // 1. 精确：name/alias 归一化比对
+    const exact = pool.filter((entity) =>
+      [entity.name, ...entity.aliases].some((candidate) => normalizeEntityName(candidate) === query));
+    if (exact.length === 1) return exact[0]!;
+    if (exact.length > 1) {
+      // 同名异实体（两个"张三"）：质心最近者；未配置 embedding → 证据分高者
+      if (documentVector && this.deps.embedding) {
+        const nearest = nearestByCentroid(documentVector, exact, this.deps.embedding.model);
+        if (nearest) return exact.find((entity) => entity.id === nearest.id)!;
       }
-      const terms = documentTerms(envelope.title, fallbackSummary(envelope.markdown, 2_000));
-      entityScores = scoreEntityMatches(terms, roomTokenSets, CANDIDATE_TOP_N);
-    } catch (error) {
-      this.deps.logger.warn(
-        { event: "knowledge.router.entity.failed", error: error instanceof Error ? error.message : String(error) },
-        "entity candidate layer failed, continuing without it",
-      );
+      return [...exact].sort((a, b) => b.evidenceScore - a.evidenceScore)[0]!;
     }
 
-    // ④ 向量层：冷启动/换模型的 Room 在 rankByCentroids 内部被过滤
-    let vectorScores: VectorScore[] = [];
-    if (this.deps.embedding) {
+    // 2. 模糊：逐实体取 name+aliases 全量最优 Dice（避免跨实体同名 alias 串分）
+    let target: EntityRow | null = null;
+    let bestScore = 0;
+    for (const entity of pool) {
+      const match = bestMatch(item.name, [entity.name, ...entity.aliases]);
+      if (match && match.score > bestScore) {
+        target = entity;
+        bestScore = match.score;
+      }
+    }
+    if (!target || bestScore < this.deps.thresholds.mergeJudgeDice) return null;
+    const autoMerge = bestScore >= this.deps.thresholds.mergeAutoDice
+      && target.kind === item.kind
+      // 双方皆无 wiki（weak/ready 推荐池）才免判定（低风险）
+      && (target.status === "weak" || target.status === "ready");
+
+    if (autoMerge) {
+      this.deps.registry.updateEntityIdentity(target.id, { addAliases: [item.name] });
+      return this.deps.registry.getEntity(target.id) ?? target;
+    }
+
+    // 模糊带：LLM 同一性判定（ED8：系统自主收敛）；失败/判不同 → 分立累积
+    if (this.deps.llm) {
       try {
-        const centroids = this.deps.db.select().from(roomWikis).all();
-        const documentVector = await this.deps.embedding.client.embed(
-          embeddingInputText(envelope.title, envelope.markdown),
+        const judge = await this.deps.llm.judgeEntityIdentity(
+          {
+            name: item.name,
+            aliases: [],
+            kind: item.kind,
+            evidenceSamples: item.evidence ? [item.evidence] : [],
+          },
+          {
+            name: target.name,
+            aliases: target.aliases,
+            kind: target.kind,
+            evidenceSamples: this.deps.registry.linksOfEntity(target.id)
+              .map((link) => link.evidence)
+              .filter((evidence): evidence is string => Boolean(evidence))
+              .slice(0, 5),
+          },
         );
-        vectorScores = rankByCentroids(documentVector, centroids, this.deps.embedding.model, CANDIDATE_TOP_N);
+        if (judge.same) {
+          this.deps.registry.updateEntityIdentity(target.id, { addAliases: [item.name] });
+          return this.deps.registry.getEntity(target.id) ?? target;
+        }
       } catch (error) {
         this.deps.logger.warn(
-          { event: "knowledge.router.vector.failed", error: error instanceof Error ? error.message : String(error) },
-          "vector candidate layer failed, continuing without it",
+          {
+            event: "knowledge.router.judge.failed",
+            entityId: target.id,
+            name: item.name,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "identity judge failed, keeping entities separate",
         );
       }
     }
-
-    const candidateIds = [...new Set([
-      ...entityScores.map((score) => score.roomId),
-      ...vectorScores.map((score) => score.roomId),
-    ])].slice(0, DOSSIER_CANDIDATE_LIMIT);
-    return { entityScores, vectorScores, candidateIds };
+    return null;
   }
 
-  private evidenceOf(entityScores: EntityScore[], vectorScores: VectorScore[]): Record<string, unknown> {
-    const evidence: Record<string, unknown> = {};
-    if (entityScores.length > 0) {
-      evidence.entity = entityScores.map((score) => ({
-        roomId: score.roomId,
-        score: score.score,
-        tokens: score.matched.slice(0, 8).map((match) => match.token),
-      }));
-    }
-    if (vectorScores.length > 0) {
-      evidence.vector = vectorScores.map((score) => ({ roomId: score.roomId, similarity: score.similarity }));
-    }
-    return evidence;
+  private isPromotionReady(entity: EntityRow): boolean {
+    return entity.status === "weak"
+      && entity.evidenceScore >= this.deps.thresholds.promoteScore
+      && entity.sourceCount >= this.deps.thresholds.promoteSources;
   }
 
-  // ───────────────────────── ⑤ LLM 终审 ─────────────────────────
-
-  private async arbitrate(
-    envelope: DocEnvelope,
-    candidateIds: string[],
-    entityScores: EntityScore[],
-    vectorScores: VectorScore[],
-  ): Promise<RouteOutcome> {
-    const evidence = this.evidenceOf(entityScores, vectorScores);
-    const cards = await this.buildCandidateCards(candidateIds, entityScores, vectorScores);
-
-    let summary: string;
+  /** 文档向量（消歧 tie-break + 实体质心推进共用）；未配置/失败返回 null。 */
+  private async embedDocument(envelope: DocEnvelope): Promise<number[] | null> {
+    if (!this.deps.embedding) return null;
     try {
-      summary = await this.deps.llm!.summarize(envelope.title, envelope.markdown);
-    } catch {
-      summary = fallbackSummary(envelope.markdown);
-    }
-
-    let verdict;
-    try {
-      verdict = await this.deps.llm!.arbitrate({
-        documentTitle: envelope.title,
-        documentSummary: summary,
-        ...(envelope.occurredAt ? { occurredAt: envelope.occurredAt } : {}),
-        candidates: cards,
-      });
-    } catch (error) {
-      // ⑤ 失败不阻塞（D5 保守取向）：降级待归类，人工兜底
-      this.deps.logger.warn(
-        { event: "knowledge.router.arbitration.failed", error: error instanceof Error ? error.message : String(error) },
-        "LLM arbitration failed, falling back to human review",
+      return await this.deps.embedding.client.embed(
+        embeddingInputText(envelope.title, envelope.markdown),
       );
-      return {
-        disposition: "review",
-        roomId: null,
-        linkedRoomIds: [],
-        decidedBy: null,
-        confidence: 0,
-        reason: `LLM 仲裁失败：${error instanceof Error ? error.message : String(error)}（候选见证据）`,
-        evidence: { ...evidence, summary },
-      };
+    } catch (error) {
+      this.deps.logger.warn(
+        { event: "knowledge.router.embed.failed", error: error instanceof Error ? error.message : String(error) },
+        "document embedding failed, continuing without tie-break",
+      );
+      return null;
     }
+  }
 
-    const { auto, review, autoCreateRoomEnabled } = this.deps.thresholds;
-
-    // create_new + 高置信 + 开关开 → 重名去重后自动建 Room（plan §4.2）
-    if (verdict.action === "create_new" && verdict.confidence >= auto && autoCreateRoomEnabled) {
-      const duplicate = this.findDuplicateRoom(verdict.newRoom.name);
-      if (duplicate) {
-        return {
-          disposition: "execute",
-          roomId: duplicate.id,
-          linkedRoomIds: [],
-          decidedBy: "llm",
-          confidence: verdict.confidence,
-          reason: `${verdict.reason}（提议新 Room「${verdict.newRoom.name}」与现有「${duplicate.title}」重名，已归并）`,
-          evidence: { ...evidence, summary, verdict },
-        };
-      }
-      const newRoomId = `auto-${randomUUID().slice(0, 8)}`;
-      this.deps.db.insert(rooms).values({
-        id: newRoomId,
-        title: verdict.newRoom.name,
-        kind: verdict.newRoom.kind ?? "主题",
-        origin: "auto",
-        summary: verdict.newRoom.summary || null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }).onConflictDoNothing().run();
-      return {
-        disposition: "execute",
-        roomId: newRoomId,
-        linkedRoomIds: [],
-        decidedBy: "llm",
-        confidence: verdict.confidence,
-        reason: verdict.reason,
-        evidence: { ...evidence, summary, verdict, createdRoom: newRoomId },
-        newRoom: {
-          name: verdict.newRoom.name,
-          summary: verdict.newRoom.summary,
-          ...(verdict.newRoom.kind ? { kind: verdict.newRoom.kind } : {}),
-        },
-      };
-    }
-
-    // create_new 降级（开关关 / 置信不足）：待归类卡片提供"按建议新建 Room"按钮
-    if (verdict.action === "create_new") {
-      return {
-        disposition: "review",
-        roomId: null,
-        linkedRoomIds: [],
-        decidedBy: null,
-        confidence: verdict.confidence,
-        reason: verdict.reason,
-        evidence: { ...evidence, summary, verdict },
-        newRoom: {
-          name: verdict.newRoom.name,
-          summary: verdict.newRoom.summary,
-          ...(verdict.newRoom.kind ? { kind: verdict.newRoom.kind } : {}),
-        },
-      };
-    }
-
-    if (verdict.roomIds.length === 0 || verdict.confidence < review) {
-      return {
-        disposition: "review",
-        roomId: null,
-        linkedRoomIds: [],
-        decidedBy: null,
-        confidence: verdict.confidence,
-        reason: verdict.reason,
-        evidence: { ...evidence, summary, verdict },
-      };
-    }
-
-    // existing + 置信达标：[review, auto) 区间限 existing，此处天然满足
-    const [primaryRoomId, ...linkedRoomIds] = verdict.roomIds;
+  private evidenceOf(
+    summary: string,
+    linked: Array<{ entity: EntityRow; role: LinkRole; salience: number; evidence: string }>,
+  ): Record<string, unknown> {
     return {
-      disposition: "execute",
-      roomId: primaryRoomId ?? null,
-      linkedRoomIds,
-      decidedBy: "llm",
-      confidence: verdict.confidence,
-      reason: verdict.reason,
-      evidence: { ...evidence, summary, verdict },
+      summary: summary || null,
+      entities: linked.map(({ entity, role, salience, evidence }) => ({
+        entityId: entity.id,
+        name: entity.name,
+        kind: entity.kind,
+        status: entity.status,
+        role,
+        salience,
+        evidence: evidence || null,
+        evidenceScore: entity.evidenceScore,
+        sourceCount: entity.sourceCount,
+      })),
     };
-  }
-
-  private async buildCandidateCards(
-    candidateIds: string[],
-    entityScores: EntityScore[],
-    vectorScores: VectorScore[],
-  ): Promise<CandidateCard[]> {
-    if (candidateIds.length === 0) return [];
-    const rows = this.deps.db.select().from(rooms)
-      .where(and(inArray(rooms.id, candidateIds), isNull(rooms.deletedAt)))
-      .all();
-    const entityByRoom = new Map(entityScores.map((score) => [score.roomId, score]));
-    const vectorByRoom = new Map(vectorScores.map((score) => [score.roomId, score]));
-
-    const cards: CandidateCard[] = [];
-    for (const row of rows) {
-      let pageTitles: string[] = [];
-      try {
-        const wiki = this.deps.db.select().from(roomWikis).where(eq(roomWikis.roomId, row.id)).get();
-        if (wiki) pageTitles = await this.deps.wikiIndex.representativeTitles(wiki.knowledgeId);
-      } catch {
-        pageTitles = [];
-      }
-      const entity = entityByRoom.get(row.id);
-      const vector = vectorByRoom.get(row.id);
-      const entityTokens = entity?.matched.map((match) => match.token);
-      cards.push({
-        roomId: row.id,
-        title: row.title,
-        summary: row.summary?.slice(0, ROOM_SUMMARY_CHARS) ?? null,
-        pageTitles,
-        ...(entity ? { entityScore: entity.score } : {}),
-        ...(entityTokens && entityTokens.length > 0 ? { entityTokens } : {}),
-        ...(vector ? { vectorSimilarity: vector.similarity } : {}),
-      });
-    }
-    return cards;
-  }
-
-  /** create_new 重名去重：bigram Dice ≥ 阈值命中现有 Room（含曾用名）即归并。 */
-  findDuplicateRoom(name: string): { id: string; title: string } | null {
-    const rows = this.deps.db.select().from(rooms).where(isNull(rooms.deletedAt)).all();
-    let best: { id: string; title: string; similarity: number } | null = null;
-    for (const row of rows) {
-      for (const candidate of [row.title, ...(row.aliases ?? [])]) {
-        const similarity = bigramDiceSimilarity(name, candidate);
-        if (similarity >= ROOM_NAME_DEDUP_THRESHOLD && (!best || similarity > best.similarity)) {
-          best = { id: row.id, title: row.title, similarity };
-        }
-      }
-    }
-    return best ? { id: best.id, title: best.title } : null;
   }
 
   // ───────────────────────── 决策落库 ─────────────────────────
 
-  private persist(envelope: DocEnvelope, outcome: RouteOutcome): RouteResult {
+  private persist(
+    envelope: DocEnvelope,
+    // roomIds 可省略：单房出口（entry/rule）由 roomId 派生，非 execute 恒空
+    outcome: Omit<RouteResult, "decisionId" | "roomIds"> & { roomIds?: string[] },
+  ): RouteResult {
     const decisionId = randomUUID();
+    const roomIds = outcome.roomIds ?? (outcome.roomId ? [outcome.roomId] : []);
     this.deps.db.insert(routeDecisions).values({
       id: decisionId,
       sourceKind: envelope.ref.kind,
@@ -514,18 +514,21 @@ export class KnowledgeRouter {
         sourceMarkdown: envelope.markdown,
       } : {}),
       primaryRoomId: outcome.roomId,
-      linkedRoomIds: outcome.linkedRoomIds.length > 0 ? outcome.linkedRoomIds : null,
-      newRoomName: outcome.newRoom?.name ?? null,
-      newRoomSummary: outcome.newRoom?.summary ?? null,
-      newRoomKind: outcome.newRoom?.kind ?? null,
-      confidence: outcome.confidence,
       decidedBy: outcome.decidedBy,
+      confidence: outcome.confidence,
       evidence: outcome.evidence,
       reason: outcome.reason,
-      status: outcome.disposition === "execute" ? "auto" : "awaiting_review",
+      status: outcome.disposition === "execute"
+        ? "auto"
+        : outcome.disposition === "linked"
+          ? "linked"
+          : "awaiting_review",
       createdAt: new Date(),
       updatedAt: new Date(),
     }).run();
-    return { ...outcome, decisionId };
+    return { ...outcome, roomIds, decisionId };
   }
 }
+
+/** SourceKind 复导出（service/routes 的 payload 类型引用）。 */
+export type { SourceKind };

@@ -1,0 +1,278 @@
+import { BookOpenText, ListTree, Network, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+
+import {
+  WikiGraphCanvas,
+} from '../context-room/ported/components/WikiGraphCanvas'
+import { MarkdownBody } from '../context-room/ported/components/detail-panels/MarkdownBody'
+import { WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
+import type {
+  KnowledgeRoomDto,
+  KnowledgeWikiDto,
+  KnowledgeWikiGraphDto,
+  KnowledgeWikiPageDto,
+} from '../../../../shared/knowledge'
+import './WikiPage.css'
+
+type WikiView = 'tree' | 'graph'
+
+const WIKI_STATUS_LABELS: Record<string, string> = {
+  none: '未创建',
+  pending: '待处理',
+  processing: '构建中',
+  ready: '已就绪',
+  error: '异常',
+}
+
+function statusLabel(status: string): string {
+  return WIKI_STATUS_LABELS[status] ?? status
+}
+
+/**
+ * 顶层 Wiki 应用（room-wiki 方案 M3c）：浏览全部 Room 的 wiki。
+ * 左栏 wiki 清单（listWikis ⨝ listRooms），主区目录树/图谱切换 + 页面预览；
+ * 只对选中 Room 拉页面，防 N+1。
+ */
+export function WikiPage() {
+  const knowledge = window.nxcore?.knowledge
+  const [wikis, setWikis] = useState<KnowledgeWikiDto[]>([])
+  const [roomsById, setRoomsById] = useState<Map<string, KnowledgeRoomDto>>(new Map())
+  const [loaded, setLoaded] = useState(false)
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
+  const [pages, setPages] = useState<KnowledgeWikiPageDto[]>([])
+  const [pageStatus, setPageStatus] = useState<string>('loading')
+  const [pagesLoading, setPagesLoading] = useState(false)
+  const [selectedPage, setSelectedPage] = useState<KnowledgeWikiPageDto | null>(null)
+  const [markdown, setMarkdown] = useState<string | null>(null)
+  const [view, setView] = useState<WikiView>('tree')
+  const [graph, setGraph] = useState<KnowledgeWikiGraphDto | null>(null)
+  const [graphLoading, setGraphLoading] = useState(false)
+
+  const refreshList = useCallback(async () => {
+    if (!knowledge) return
+    try {
+      const [wikiData, roomData] = await Promise.all([
+        knowledge.listWikis(),
+        knowledge.listRooms(),
+      ])
+      setWikis(wikiData.items)
+      setRoomsById(new Map(roomData.items.map((room) => [room.id, room])))
+      setSelectedRoomId((current) =>
+        current && wikiData.items.some((wiki) => wiki.roomId === current)
+          ? current
+          : wikiData.items[0]?.roomId ?? null)
+    } catch {
+      setWikis([])
+    } finally {
+      setLoaded(true)
+    }
+  }, [knowledge])
+
+  useEffect(() => {
+    void refreshList()
+    const onChanged = () => void refreshList()
+    window.addEventListener('everroom:knowledge-changed', onChanged)
+    return () => window.removeEventListener('everroom:knowledge-changed', onChanged)
+  }, [refreshList])
+
+  // 选中 Room 的页面清单（懒加载：只拉当前 Room）
+  useEffect(() => {
+    setSelectedPage(null)
+    setMarkdown(null)
+    setGraph(null)
+    setPages([])
+    setPageStatus('loading')
+    if (!knowledge || !selectedRoomId) return
+    let cancelled = false
+    setPagesLoading(true)
+    knowledge.listWikiPages(selectedRoomId)
+      .then((data) => {
+        if (cancelled) return
+        setPageStatus(data.status)
+        setPages(data.items)
+      })
+      .catch(() => {
+        if (!cancelled) setPageStatus('error')
+      })
+      .finally(() => {
+        if (!cancelled) setPagesLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [knowledge, selectedRoomId])
+
+  // 页面正文（选中页时拉取）
+  useEffect(() => {
+    setMarkdown(null)
+    if (!knowledge || !selectedRoomId || !selectedPage) return
+    let cancelled = false
+    knowledge.readWikiPage(selectedRoomId, selectedPage.path)
+      .then((data) => {
+        if (!cancelled) setMarkdown(data.markdown)
+      })
+      .catch(() => {
+        if (!cancelled) setMarkdown('')
+      })
+    return () => { cancelled = true }
+  }, [knowledge, selectedRoomId, selectedPage])
+
+  // 图谱懒加载：首次切到图谱视图才拉
+  useEffect(() => {
+    if (view !== 'graph' || graph || graphLoading || pages.length === 0) return
+    if (!knowledge || !selectedRoomId) return
+    setGraphLoading(true)
+    knowledge.getWikiGraph(selectedRoomId)
+      .then((data) => setGraph(data))
+      .catch(() => setGraph({ nodes: [], edges: [] }))
+      .finally(() => setGraphLoading(false))
+  }, [view, graph, graphLoading, pages.length, knowledge, selectedRoomId])
+
+  const openPage = (page: KnowledgeWikiPageDto) => {
+    setSelectedPage(page)
+  }
+
+  const selectedWiki = wikis.find((wiki) => wiki.roomId === selectedRoomId) ?? null
+  const selectedRoomTitle = selectedRoomId ? roomsById.get(selectedRoomId)?.title : undefined
+
+  return (
+    <div className="page wiki-page">
+      <header className="page-header">
+        <div>
+          <h1>Wiki</h1>
+          <p>浏览各 Room 沉淀的知识库：目录树阅读，或看页面内链图谱。</p>
+        </div>
+        <span className="page-header-actions">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void refreshList()}
+            disabled={!knowledge}
+          >
+            <RefreshCw aria-hidden="true" strokeWidth={1.8} />
+            刷新
+          </button>
+        </span>
+      </header>
+
+      {!loaded ? (
+        <div className="wiki-empty">加载中…</div>
+      ) : !knowledge ? (
+        <div className="wiki-empty">知识服务不可用。</div>
+      ) : wikis.length === 0 ? (
+        <div className="wiki-empty">
+          <BookOpenText aria-hidden="true" strokeWidth={1.6} />
+          还没有 wiki：Room 里沉淀资料后自动生成。
+        </div>
+      ) : (
+        <div className="wiki-body">
+          <aside className="wiki-room-list" aria-label="Room wiki 清单">
+            {wikis.map((wiki) => {
+              const room = roomsById.get(wiki.roomId)
+              return (
+                <button
+                  type="button"
+                  key={wiki.roomId}
+                  className={`wiki-room-item${wiki.roomId === selectedRoomId ? ' is-selected' : ''}`}
+                  onClick={() => setSelectedRoomId(wiki.roomId)}
+                >
+                  <strong>{room?.title ?? wiki.roomId}</strong>
+                  <span>{room?.kind ?? 'Room'} · {statusLabel(wiki.status)}</span>
+                </button>
+              )
+            })}
+          </aside>
+
+          <section className="wiki-main">
+            <div className="wiki-main-toolbar">
+              <div className="wiki-main-title">
+                <BookOpenText aria-hidden="true" strokeWidth={1.7} />
+                <span>
+                  {selectedRoomTitle ?? selectedRoomId ?? ''}
+                  {selectedWiki ? `（${statusLabel(selectedWiki.status)}）` : ''}
+                </span>
+              </div>
+              <div className="wiki-toggle" role="tablist" aria-label="wiki 视图">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={view === 'tree'}
+                  className={view === 'tree' ? 'is-active' : ''}
+                  onClick={() => setView('tree')}
+                >
+                  <ListTree aria-hidden="true" />
+                  目录
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={view === 'graph'}
+                  className={view === 'graph' ? 'is-active' : ''}
+                  onClick={() => setView('graph')}
+                >
+                  <Network aria-hidden="true" />
+                  图谱
+                </button>
+              </div>
+            </div>
+
+            <div className="wiki-panes">
+              {view === 'tree' ? (
+                <div className="wiki-tree-pane">
+                  {pagesLoading ? (
+                    <div className="wiki-empty">加载中…</div>
+                  ) : pageStatus === 'error' ? (
+                    <div className="wiki-empty">知识服务不可用。</div>
+                  ) : pageStatus === 'none' ? (
+                    <div className="wiki-empty">该 Room 还没有知识沉淀。</div>
+                  ) : pageStatus === 'processing' || pageStatus === 'pending' ? (
+                    <div className="wiki-empty">知识库正在构建中，稍后刷新查看。</div>
+                  ) : pages.length === 0 ? (
+                    <div className="wiki-empty">还没有页面。</div>
+                  ) : (
+                    <WikiTree pages={pages} selectedPath={selectedPage?.path ?? null} onSelect={openPage} />
+                  )}
+                </div>
+              ) : (
+                <div className="wiki-graph-pane">
+                  {graphLoading ? (
+                    <div className="wiki-empty">图谱构建中…</div>
+                  ) : graph && graph.nodes.length > 0 ? (
+                    <>
+                      <WikiGraphCanvas
+                        graph={graph}
+                        selectedPath={selectedPage?.path ?? null}
+                        onSelectPage={(path) => {
+                          const page = pages.find((candidate) => candidate.path === path)
+                          if (page) openPage(page)
+                        }}
+                      />
+                      <p className="wiki-graph-hint">
+                        节点 = 页面，连线 = 页面内链；点击节点在右侧阅读该页。
+                      </p>
+                    </>
+                  ) : (
+                    <div className="wiki-empty">页面之间还没有内链，图谱为空。</div>
+                  )}
+                </div>
+              )}
+              <div className="wiki-preview">
+                {selectedPage ? (
+                  <>
+                    <header className="wiki-preview-header">
+                      <strong>{selectedPage.title}</strong>
+                      <span>{selectedPage.path}</span>
+                    </header>
+                    {markdown === null ? '加载中…' : <MarkdownBody markdown={markdown} />}
+                  </>
+                ) : (
+                  <div className="wiki-empty">
+                    {view === 'tree' ? '从目录选择一个页面阅读。' : '点击图谱节点阅读该页。'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  )
+}

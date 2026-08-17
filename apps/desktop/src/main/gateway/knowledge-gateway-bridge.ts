@@ -1,12 +1,16 @@
 import { dialog, shell } from 'electron'
 import { readFile } from 'node:fs/promises'
 import type {
-  KnowledgeConfirmInput,
+  KnowledgeAttachInput,
   KnowledgeDecisionDto,
+  KnowledgeEntityDetailDto,
+  KnowledgeEntityDto,
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
-  KnowledgePendingItemDto,
   KnowledgeRoomDto,
+  KnowledgeUnmatchedItemDto,
+  KnowledgeWikiDto,
+  KnowledgeWikiGraphDto,
   KnowledgeWikiPageDto,
 } from '../../shared/knowledge'
 import type { GatewaySupervisor } from './gateway-supervisor'
@@ -43,19 +47,56 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/wiki/pages/${encoded}`)
   }
 
-  listPending(): Promise<{ items: KnowledgePendingItemDto[] }> {
-    return this.request('/v1/knowledge/pending')
+  /** 全部 Room 的 wiki 映射（Wiki 应用清单）。 */
+  listWikis(): Promise<{ items: KnowledgeWikiDto[] }> {
+    return this.request('/v1/knowledge/wikis')
+  }
+
+  /** Room wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */
+  getWikiGraph(roomId: string): Promise<KnowledgeWikiGraphDto> {
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/wiki/graph`)
+  }
+
+  /** 候选实体列表（按状态筛；ready = 首页推荐池）。 */
+  listEntities(status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived'): Promise<{ items: KnowledgeEntityDto[] }> {
+    return this.request(`/v1/knowledge/entities?${new URLSearchParams({ status })}`)
+  }
+
+  getEntity(entityId: string): Promise<KnowledgeEntityDetailDto> {
+    return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}`)
+  }
+
+  /** 手动转正：跳过阈值走晋升全流程（202 异步入队）。 */
+  promoteEntity(entityId: string): Promise<{ queued: boolean }> {
+    return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/promote`, { method: 'POST' })
+  }
+
+  /** 手动合并：from（路径）并入 targetId。 */
+  mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }> {
+    return this.request(`/v1/knowledge/entities/${encodeURIComponent(fromId)}/merge`, {
+      method: 'POST',
+      body: JSON.stringify({ targetId }),
+    })
+  }
+
+  /** 未识别资料手动挂实体（role=manual，+1.5 证据分）。 */
+  attachDoc(
+    sourceKind: string,
+    sourceId: string,
+    input: KnowledgeAttachInput,
+  ): Promise<{ entityId: string }> {
+    return this.request(
+      `/v1/knowledge/docs/${encodeURIComponent(sourceKind)}/${encodeURIComponent(sourceId)}/attach`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  }
+
+  listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }> {
+    return this.request('/v1/knowledge/docs/unmatched')
   }
 
   listRecentDecisions(limit = 20): Promise<{ items: KnowledgeDecisionDto[] }> {
     return this.request(`/v1/knowledge/decisions?${new URLSearchParams({ limit: String(limit) })}`)
-  }
-
-  confirmDecision(decisionId: string, input: KnowledgeConfirmInput): Promise<{ ok: boolean; roomId: string }> {
-    return this.request(`/v1/knowledge/route/${encodeURIComponent(decisionId)}/confirm`, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    })
   }
 
   revertDecision(decisionId: string): Promise<{ ok: boolean }> {
@@ -125,7 +166,9 @@ export class KnowledgeGatewayBridge {
       ...init,
       headers: {
         Authorization: `Bearer ${connection.token}`,
-        'Content-Type': 'application/json',
+        // 无 body 不带 Content-Type：Fastify 5 对「JSON 头 + 空 body」的
+        // POST 直接 400（FST_ERR_CTP_EMPTY_JSON_BODY），promote/revert 均无 body
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
     })

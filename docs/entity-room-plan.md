@@ -1,6 +1,6 @@
 # 实体先行的 Room 晋升制 — Room × Wiki 路由层重构方案（v2 草案）
 
-> 状态：**草案，待评审**（未开工）
+> 状态：**已实现**（E1/E2 落地；2026-08 修订：推荐确认制 + 沉淀多对多）
 > 日期：2026-08-17
 > 范围：`apps/gateway/src/modules/knowledge/`（主体重构）、`apps/gateway/src/infrastructure/database/`、渲染器资料归类面板
 > 与现行方案的关系：**取代 `docs/room-wiki-plan.md` 的 §5（路由瀑布）与 §4.2（create_new 自动建 Room）**；该方案的其余部分（wiki 生命周期 §4.1、上传资料模型 §3.3、agent 消费 §6、KS 硬约束）原样沿用，本文不再重复
@@ -59,15 +59,18 @@ Room 必然围绕六类实体之一建立：**人物 / 项目 / 主题 / 长期�
   │    primary 角色 = salience 最高者（网关侧决定，不依赖 LLM 纪律）
   │    证据分随链接累积（4.3）
   ▼
-  ⑤′ 晋升检查（每次链接落库后，确定性）
-  │    弱实体证据分达阈值 → enqueue 晋升 job：
-  │      0. 晋升前同名扫描：与全注册表 Dice ≥ 阈值 → 阻断自动晋升，出归并卡片（4.5）
-  │      1. rooms 插行（origin=auto，title/kind/summary 来自实体）+ entities.status=room
-  │      2. ensureWikiForRoom（现行 §4.1 原样复用）
-  │      3. 批量 ingest：该实体 primary 链接的资料（每源最新版本）→ per-wiki 串行（D6 不变）
-  │      4. 渲染器 syncAutoRooms（现行链路）拉到新 Room
+  ⑤′ 推荐检查（每次链接落库后，确定性）——推荐确认制
+  │    弱实体证据分达阈值 → status 翻为 ready（进推荐池，不建 Room）：
+  │      首页"推荐 Room"面板按证据分展示前 3，用户点"确认创建"才 enqueue
+  │      晋升 job（POST /knowledge/entities/:id/promote → PROMOTE_JOB {manual:true}）：
+  │        0. 晋升前同名扫描：与全注册表 Dice ≥ 阈值 → 阻断自动晋升，出归并卡片（4.5）
+  │        1. rooms 插行（origin=auto，title/kind/summary 来自实体）+ entities.status=room
+  │        2. ensureWikiForRoom（现行 §4.1 原样复用）
+  │        3. 批量 ingest：该实体全部链接的资料（不分角色，每源最新版本）→ per-wiki 串行（D6 不变）
+  │        4. 渲染器 syncAutoRooms（现行链路）拉到新 Room
   ▼
-  已晋升实体的新资料：解析命中即归属 → 直接增量 ingest 进 Room wiki
+  已晋升实体的新资料：解析命中即归属 → 直接增量 ingest 进**全部**命中实体的 Room wiki
+（多对多沉淀：primary/mention 角色只用于计分，不再决定沉淀归属）
   （= 原 ⑤ 判 existing 的执行路径，但判决者从 LLM 换成确定性解析）
 ```
 
@@ -82,7 +85,7 @@ Room 必然围绕六类实体之一建立：**人物 / 项目 / 主题 / 长期�
 | ED5 | **① 命中的内部文档不跑抽取** | 保持 EverRoom 原生文档零 LLM 成本；user Room 的实体 alias 积累靠外部资料命中与手动改名（残缺点见 12.4） |
 | ED6 | **晋升是软实时后台动作**，非同步返回 | 批量 ingest（阈值 3 → 3~6 分钟）不能阻塞上传链路；UI 出"正在沉淀"状态 |
 | ED7 | **弱实体不维护合成式概述**：依据句日志（entity_doc_links.evidence）即事实源，UI 派生显示；**晋升时一次"转正登记" LLM 调用**综合产出规范 name、Room 概述、补 aliases | 每次链接跑 LLM 更新概述 = 花钱养弱期没人读的字段，且增量合并累积漂移；折进抽取调用需把注册表上下文带回抽取任务（菜单偏差复活）。晋升后概述的更新通道本就存在：KS wiki 实体页随 ingest merge 持续重写 |
-| ED8 | **系统自主判定，不向用户索要确认**：模糊决策（弱-弱疑似同义、晋升撞名）由 LLM 同一性判定自动收敛；用户只做主动治理（自己想合并/转正/拆分时出手），系统从不弹确认卡片 | 确认疲劳会让队列形同虚设；此类错误可由审计 + E3 拆分纠正，代价远低于打扰成本。人审集中在"未识别资料"（抽取彻底失败）的尾部 |
+| ED8 | **系统自主判定，不向用户索要确认**：模糊决策（弱-弱疑似同义、晋升撞名）由 LLM 同一性判定自动收敛；用户只做主动治理（自己想合并/转正/拆分时出手），系统从不弹确认卡片。**〔2026-08 修订〕建 Room 例外：达阈值实体先进 ready 推荐态（不建 Room），用户在首页"推荐 Room"确认后才晋升**——其余模糊决策（合并/撞名归并）仍自主判定 | 确认疲劳会让队列形同虚设；此类错误可由审计 + E3 拆分纠正，代价远低于打扰成本。人审集中在"未识别资料"（抽取彻底失败）的尾部。修订动机：Room 是用户工作区的顶层对象，批量误建的清理成本高于一次轻量确认 |
 
 ## 3. 数据模型
 
@@ -90,7 +93,8 @@ Room 必然围绕六类实体之一建立：**人物 / 项目 / 主题 / 长期�
 
 ```ts
 // 实体注册表：弱 Room 的本体，也是 Room 的"户口"。
-// 一个实体两种状态：weak（候选，无 wiki 无 ingest）/ room（已晋升，roomId 回填）。
+// 状态机：weak（候选，无 wiki 无 ingest）→ ready（达阈值推荐态，等用户确认）→
+// promoting（晋升 job 抢占）→ room（已晋升，roomId 回填）；archived 归档。
 export const entities = sqliteTable("entities", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -193,18 +197,27 @@ bigram/IDF/Dice 复用现行 `entity-index.ts` 的纯函数（比对目标从 wi
                             用户手动挂载 = manual
 证据分（按 sourceId 去重，新版本调整差额而非重复累加）：
   Δ evidenceScore = primary: +1.0 | mention: +0.4 | manual: +1.5
+  ※ 角色只用于计分（调推荐线松紧）——沉淀归属不看角色（4.4 多对多）
 晋升条件：evidenceScore ≥ PROMOTE_SCORE(默认 2.0) 且 sourceCount ≥ PROMOTE_SOURCES(默认 2)
   → 3 份 primary；或 1 primary + 3 mention；或用户手动挂 2 次；组合皆可
 ```
 
 典型画像：3 份核心资料转正；只被 mention 的配角实体（某人物在 5 个项目资料里被提及）约 5 份资料转正——符合"人物 Room 靠出场频次立起来"的直觉。
 
-### 4.4 晋升
+### 4.4 晋升（推荐确认制）
 
 ```text
-触发：链接落库的事务内检查受影响实体，达标即 enqueue jobs { type:"knowledge.entity-promote", entityId }
+推荐（确定性，链接落库/手动挂载的事务内检查）：
+  达阈值（evidenceScore ≥ PROMOTE_SCORE 且 sourceCount ≥ PROMOTE_SOURCES）
+  → markReady：UPDATE entities SET status='ready' WHERE id=? AND status='weak'（幂等翻转）
+  ready 实体继续参与解析池与证据累积（防新资料按名匹配不到而另立弱实体）；
+  首页"推荐 Room"面板拉 listEntities('ready')，按证据分展示前 3。
+
+确认（唯一建 Room 路径，202 异步入队）：
+  用户点"确认创建" → POST /knowledge/entities/:id/promote
+  → enqueue jobs { type:"knowledge.entity-promote", entityId, manual:true }
 worker（复用现行 job 队列与 per-wiki 串行约束）：
-  1. 原子抢占：UPDATE entities SET status='promoting' WHERE id=? AND status='weak'
+  1. 原子抢占：UPDATE entities SET status='promoting' WHERE id=? AND status IN ('weak','ready')
      （防并发重复晋升；抢占失败 = 已有并行 job 在处理，静默退出）
   2. 同名扫描（4.5）：与全注册表 Dice ≥0.6 命中已晋升实体
      → LLM 同一性判定：同一 → 弱实体整体并入该实体（链接迁移、证据分累加、aliases 并集，
@@ -215,15 +228,18 @@ worker（复用现行 job 队列与 per-wiki 串行约束）：
   4. rooms 插行 { id: nanoid, title: 登记name, kind, origin:"auto", summary: 登记概述, entityId }
      entities: status='room', roomId 回填，summary 落登记概述
   5. ensureWikiForRoom(roomId)（现行 registry 原样）
-  6. 批量 ingest：该实体 role∈{primary, manual} 的链接资料（每源最新版本）
+  6. 批量 ingest：该实体**全部**链接的资料（不分角色，每源最新版本）
      → 逐份 raw/write（闸 4 同名覆盖语义不变）→ /ingest → 轮询（现行 worker 全套）
-     ※ mention 链接不 ingest（沿 D3：资料只进 primary 的 wiki，mention 留链接）
+     ※〔2026-08 修订〕D3 废止——沉淀多对多：mention 链接的实体晋升后同样收正文；
+       补账跳过按落盘账本（evidence.rooms 含本房本文件才跳），他房确认不挡本房补账
   7. 渲染器 syncAutoRooms 拉到新 Room（现行单向同步复用）；UI 徽标"由实体晋升"
 失败语义：rooms 行已对外可见，ingest 失败不回滚 Room——走现行 job 重试/failed 语义，
      wiki 面板出"沉淀未完成"状态
+存量补账：服务启动时对存量 weak 实体跑一次阈值检查，达标的翻 ready
+     （老数据立即进推荐池；日志 knowledge.entity.ready_backfilled）。
 ```
 
-晋升后的增量：新资料解析命中 status=room 实体 → 直接走现行 ingest 路径进该 Room wiki（等价于原 ⑤ existing 的执行，判决者换成了解析层）。
+晋升后的增量：新资料解析命中 status=room 实体 → 直接走现行 ingest 路径进**全部**命中实体的 Room wiki（一房一 job，per-wiki 串行不变；等价于原 ⑤ existing 的执行，判决者换成了解析层）。
 
 **概述的生命周期（ED7）**：弱期不维护合成式概述，依据句日志即事实源（UI 卡片派生显示"首条依据 + 共 N 条"）；晋升时一次"转正登记"综合出 Room 概述；晋升后的活概述 = **KS wiki 实体页**（ingest merge 随每份新资料持续重写）——概述的更新通道天然存在，无需实体层再做。rooms.summary 只是登记时的静态 blurb，用户可手改，E3 可选提供"从 wiki 重述简介"。
 
@@ -283,22 +299,22 @@ worker（复用现行 job 队列与 per-wiki 串行约束）：
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `NXCORE_KNOWLEDGE_ROUTER_ENABLED` | `false` | 总开关（沿用） |
-| `NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE` | `2.0` | 晋升证据分阈值 |
+| `NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE` | `2.0` | 晋升证据分阈值（达阈值 → ready 推荐态） |
 | `NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES` | `2` | 晋升最小资料数（防单份资料多角色刷分） |
-| `NXCORE_KNOWLEDGE_AUTO_PROMOTE_ENABLED` | `false` | 自动晋升灰度开关（先手动转正观察抽取质量，再放开——对齐当年 AUTO_CREATE 的分阶段策略） |
 | `NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE` | `0.75` | 弱-弱确定性自动合并线（免 LLM） |
 | `NXCORE_KNOWLEDGE_ENTITY_MERGE_JUDGE_DICE` | `0.6` | LLM 同一性判定带下限（[judge, auto) 走判定） |
 | `NXCORE_KNOWLEDGE_ENTITY_STALE_DAYS` | `90` | 弱实体老化归档天数 |
 | `NXCORE_KNOWLEDGE_LLM_* / _EMBEDDING_MODEL` | 空 | 沿用 |
 | ~~`ROUTE_THRESHOLD_AUTO` / `ROUTE_THRESHOLD_REVIEW` / `AUTO_CREATE_ROOM_ENABLED`~~ | — | 废弃 |
+| ~~`NXCORE_KNOWLEDGE_AUTO_PROMOTE_ENABLED`~~ | — | 废弃（推荐确认制取代：达阈值只翻 ready，建 Room 必须用户确认；残留 env 会被忽略） |
 
 ## 7. REST（routes.ts 增改）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/knowledge/entities?status=weak` | 候选实体列表（进度、材料数、pendingMerge 建议） |
+| GET | `/knowledge/entities?status=weak` | 候选实体列表（`status=ready` = 推荐池，首页面板用） |
 | GET | `/knowledge/entities/:id` | 详情：链接资料 + evidence 依据句 |
-| POST | `/knowledge/entities/:id/promote` | 手动转正（走 4.4 全流程） |
+| POST | `/knowledge/entities/:id/promote` | 用户确认创建（weak/ready 可用，走 4.4 全流程，202 异步入队） |
 | POST | `/knowledge/entities/:id/merge` | body `{ targetId }`，4.5 各场景 |
 | POST | `/knowledge/docs/:sourceKind/:sourceId/attach` | 未识别资料手动挂实体（body `{ entityId? \| createEntity: {name,kind} }`） |
 | GET | `/knowledge/docs/unmatched` | 未识别实体的资料栏 |
@@ -324,7 +340,7 @@ worker（复用现行 job 队列与 per-wiki 串行约束）：
 | 阶段 | 内容 | 出口标准 |
 | --- | --- | --- |
 | **E1 抽取+注册表** | ③′ 抽取、entities/entity_doc_links、③″ 解析（含 LLM 同一性判定）、候选实体 UI（进度/材料/手动转正）；⑤ 仲裁下线，路由改为"解析命中已晋升实体即归属" | 上传文件不再直接出 Room，进候选实体并正确累积；EverRoom 原生文档行为不变 |
-| **E2 自动晋升** | 阈值 + 晋升 job + 批量 ingest + 同名扫描（LLM 同一性判定）+ 渲染器同步 + 弱-弱自动合并 | 同主题连传 3 份 → 自动出现 Room 且 wiki 含全部资料；孤立单份永不产生 Room |
+| **E2 自动晋升** | 阈值 + 晋升 job + 批量 ingest + 同名扫描（LLM 同一性判定）+ 渲染器同步 + 弱-弱自动合并。**已落地为推荐确认制**：阈值命中只翻 ready 推荐态，首页"推荐 Room"面板（前 3、按证据分）确认创建后才走晋升 job | 同主题连传 3 份 → 首页出现推荐卡（前 3、按分），无人确认则永不建 Room；点"确认创建"→ Room + wiki 全量沉淀；孤立单份永不产生 Room |
 | **E3 治理** | 实体合并 UI（含已晋升）、改名级联、evidence 依据句视图、老化归档、Room 简介"从 wiki 重述"（可选） | 两个相近实体一键合并，链接与 wiki 正确迁移 |
 
 ## 10. 风险与对策
@@ -343,8 +359,8 @@ worker（复用现行 job 队列与 per-wiki 串行约束）：
 ## 11. 验收标准
 
 1. **不立孤证**：单份异构资料上传后只出现候选实体（进度 <阈值），永不直接产生 Room。
-2. **累积转正**：同一主题连续上传 3 份 → 第 3 份处理完毕后自动出现 auto Room，wiki 含 3 份资料的页面（AUTO_PROMOTE 开启时）；关闭开关时需手动转正，结果一致。
-3. **命中即归属**：已晋升（含 user）实体的新资料，解析命中后直接进对应 Room wiki，无 LLM 仲裁环节。
+2. **累积转正（推荐确认制）**：同一主题连续上传 3 份 → 第 3 份处理完毕后进入 ready 推荐池并出现在首页"推荐 Room"（前 3、按证据分）；无人确认则不建 Room；点"确认创建"后 auto Room 出现且 wiki 含全部资料页面。
+3. **命中即归属（多对多）**：已晋升（含 user）实体的新资料，解析命中后直接进**所有**命中实体的 Room wiki（mention 角色同样沉淀），无 LLM 仲裁环节。
 4. **同名不重建**：晋升扫描撞现有 Room/实体且判定同一 → 链接并入既有实体，不建新 Room，全程无用户介入。
 5. **零成本路径不变**：EverRoom 原生文档 ① 直连，无 LLM 调用；同名同内容重传闸 1 全跳过。
 6. **可解释**：每个候选实体的详情页能列出全部依据句与关联资料；证据分可复算。

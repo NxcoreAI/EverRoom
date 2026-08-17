@@ -87,9 +87,10 @@ const RawConfigSchema = Type.Object(
     knowledgeRoomWikisEnabled: Type.Boolean(),
     knowledgeIngestDebounceMs: Type.Integer({ minimum: 0 }),
     knowledgeRouterEnabled: Type.Boolean(),
-    knowledgeRouteThresholdAuto: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
-    knowledgeRouteThresholdReview: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
-    knowledgeAutoCreateRoomEnabled: Type.Boolean(),
+    knowledgeEntityPromoteScore: Type.Number({ exclusiveMinimum: 0 }),
+    knowledgeEntityPromoteSources: Type.Integer({ minimum: 1 }),
+    knowledgeEntityMergeAutoDice: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+    knowledgeEntityMergeJudgeDice: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
     knowledgeLlmBaseUrl: Type.String(),
     knowledgeLlmApiKey: Type.String(),
     knowledgeLlmModel: Type.String(),
@@ -136,7 +137,7 @@ export interface PiRuntimeConfig {
   knowledge?: KnowledgeRuntimeConfig;
 }
 
-/** gateway 侧 knowledge 模块配置（Room wiki 注册表 + ingest worker，docs/room-wiki-plan.md §7.1）。 */
+/** gateway 侧 knowledge 模块配置（Room wiki 注册表 + 实体晋升制，docs/entity-room-plan.md §6）。 */
 export interface KnowledgeGatewayConfig {
   baseUrl: string;
   serviceId: string;
@@ -145,19 +146,21 @@ export interface KnowledgeGatewayConfig {
   roomWikisEnabled: boolean;
   /** 文档落定后的入队防抖窗口（毫秒）。 */
   ingestDebounceMs: number;
-  /** 自动归类路由总开关（②③④⑤ 瀑布）；关闭时仅 ① 入口直连 ingest。 */
+  /** 自动归类路由总开关（③′抽取→③″解析→④链接）；关闭时仅 ① 入口直连 ingest。 */
   routerEnabled: boolean;
-  /** ⑤ 输出 confidence ≥ 此值自动执行（含 create_new，后者另受 autoCreateRoomEnabled 门控）。 */
-  routeThresholdAuto: number;
-  /** ⑤ 输出 confidence < 此值进待归类队列。 */
-  routeThresholdReview: number;
-  /** ⑤ 判 create_new 时是否自动建 Room（独立灰度；关闭则降级为待归类建议）。 */
-  autoCreateRoomEnabled: boolean;
-  /** ⑤ 仲裁与摘要抽取用的 LLM；缺省回退 NXCORE_AI_*。 */
+  /** 晋升证据分阈值（primary +1.0 / mention +0.4 / manual +1.5 累积）。 */
+  entityPromoteScore: number;
+  /** 晋升最小资料数（防单份资料多角色刷分）。 */
+  entityPromoteSources: number;
+  /** 弱-弱确定性自动合并线（免 LLM 判定）。 */
+  mergeAutoDice: number;
+  /** LLM 同一性判定带下限（[judge, auto) 走判定）。 */
+  mergeJudgeDice: number;
+  /** 抽取/判定/登记用的 LLM；缺省回退 NXCORE_AI_*。 */
   llm: KnowledgeLlmConfig | null;
-  /** ④ 向量层的 embedding 端点（与 ⑤ 同源配置；⑤ 关闭时 ④ 仍可独立开启）。 */
+  /** 消歧 tie-break 的 embedding 端点（与抽取 LLM 同源配置）。 */
   embeddingLlm: KnowledgeLlmConfig | null;
-  /** ④ 向量层 embedding 模型；空 = 关闭向量候选层。 */
+  /** embedding 模型；空 = 关闭（消歧回退证据分高者）。 */
   embeddingModel: string;
 }
 
@@ -236,6 +239,15 @@ function parseFraction(name: string, value: string): number {
     throw new Error(`Invalid ${name}: expected a fraction in (0, 1]`);
   }
   return fraction;
+}
+
+/** 晋升证据分阈值等正实数配置用这个。 */
+function parsePositiveNumber(name: string, value: string): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    throw new Error(`Invalid ${name}: expected a positive number`);
+  }
+  return number;
 }
 
 function validateAiEndpoint(value: string): void {
@@ -398,20 +410,22 @@ export function loadConfig(
     knowledgeRouterEnabled: env.NXCORE_KNOWLEDGE_ROUTER_ENABLED == null
       ? false
       : parseBoolean("NXCORE_KNOWLEDGE_ROUTER_ENABLED", env.NXCORE_KNOWLEDGE_ROUTER_ENABLED.trim()),
-    knowledgeRouteThresholdAuto: parseFraction(
-      "NXCORE_KNOWLEDGE_ROUTE_THRESHOLD_AUTO",
-      env.NXCORE_KNOWLEDGE_ROUTE_THRESHOLD_AUTO ?? "0.8",
+    knowledgeEntityPromoteScore: parsePositiveNumber(
+      "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE",
+      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE ?? "2.0",
     ),
-    knowledgeRouteThresholdReview: parseFraction(
-      "NXCORE_KNOWLEDGE_ROUTE_THRESHOLD_REVIEW",
-      env.NXCORE_KNOWLEDGE_ROUTE_THRESHOLD_REVIEW ?? "0.6",
+    knowledgeEntityPromoteSources: parsePositiveInteger(
+      "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES",
+      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES ?? "2",
     ),
-    knowledgeAutoCreateRoomEnabled: env.NXCORE_KNOWLEDGE_AUTO_CREATE_ROOM_ENABLED == null
-      ? false
-      : parseBoolean(
-          "NXCORE_KNOWLEDGE_AUTO_CREATE_ROOM_ENABLED",
-          env.NXCORE_KNOWLEDGE_AUTO_CREATE_ROOM_ENABLED.trim(),
-        ),
+    knowledgeEntityMergeAutoDice: parseFraction(
+      "NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE",
+      env.NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE ?? "0.75",
+    ),
+    knowledgeEntityMergeJudgeDice: parseFraction(
+      "NXCORE_KNOWLEDGE_ENTITY_MERGE_JUDGE_DICE",
+      env.NXCORE_KNOWLEDGE_ENTITY_MERGE_JUDGE_DICE ?? "0.6",
+    ),
     knowledgeLlmBaseUrl: env.NXCORE_KNOWLEDGE_LLM_BASE_URL?.trim() ?? "",
     knowledgeLlmApiKey: env.NXCORE_KNOWLEDGE_LLM_API_KEY?.trim() ?? "",
     knowledgeLlmModel: env.NXCORE_KNOWLEDGE_LLM_MODEL?.trim() ?? "",
@@ -518,9 +532,10 @@ export function loadConfig(
         roomWikisEnabled: rawConfig.knowledgeRoomWikisEnabled,
         ingestDebounceMs: rawConfig.knowledgeIngestDebounceMs,
         routerEnabled: rawConfig.knowledgeRouterEnabled,
-        routeThresholdAuto: rawConfig.knowledgeRouteThresholdAuto,
-        routeThresholdReview: rawConfig.knowledgeRouteThresholdReview,
-        autoCreateRoomEnabled: rawConfig.knowledgeAutoCreateRoomEnabled,
+        entityPromoteScore: rawConfig.knowledgeEntityPromoteScore,
+        entityPromoteSources: rawConfig.knowledgeEntityPromoteSources,
+        mergeAutoDice: rawConfig.knowledgeEntityMergeAutoDice,
+        mergeJudgeDice: rawConfig.knowledgeEntityMergeJudgeDice,
         llm: knowledgeLlmBaseUrl && knowledgeLlmApiKey && knowledgeLlmModel
           ? {
               baseUrl: knowledgeLlmBaseUrl,
@@ -528,7 +543,7 @@ export function loadConfig(
               model: knowledgeLlmModel,
             }
           : null,
-        // ④ 只需要 base/key（模型名单列）；与 ⑤ 共用同一套回退。
+        // 消歧只需要 base/key（模型名单列）；与抽取 LLM 共用同一套回退。
         embeddingLlm: knowledgeLlmBaseUrl && knowledgeLlmApiKey
           ? {
               baseUrl: knowledgeLlmBaseUrl,
@@ -540,19 +555,13 @@ export function loadConfig(
       }
     : null;
   if (knowledgeGateway?.routerEnabled) {
-    if (knowledgeGateway.routeThresholdReview >= knowledgeGateway.routeThresholdAuto) {
+    if (knowledgeGateway.mergeJudgeDice >= knowledgeGateway.mergeAutoDice) {
       throw new Error(
-        "Invalid knowledge route thresholds: THRESHOLD_REVIEW must be lower than THRESHOLD_AUTO",
+        "Invalid knowledge entity merge dice: MERGE_JUDGE_DICE must be lower than MERGE_AUTO_DICE",
       );
     }
-    // ⑤ 未配置 LLM 时 router 仍可运行（M1 形态：③④ 候选 → 待归类队列，人工即仲裁者）；
-    // 唯独 auto-create 依赖 ⑤ 的 create_new 判决，没有 LLM 就无从谈起。
-    if (knowledgeGateway.autoCreateRoomEnabled && !knowledgeGateway.llm) {
-      throw new Error(
-        "NXCORE_KNOWLEDGE_AUTO_CREATE_ROOM_ENABLED requires an LLM for arbitration: set "
-          + "NXCORE_KNOWLEDGE_LLM_BASE_URL/KEY/MODEL or NXCORE_AI_BASE_URL/KEY/MODEL",
-      );
-    }
+    // 抽取未配置 LLM 时 router 仍可运行（全部落未识别栏人工挂载）；
+    // 自动晋升依赖抽取产出的证据，没有 LLM 同样不会发生——不构成错误。
   }
 
   return {

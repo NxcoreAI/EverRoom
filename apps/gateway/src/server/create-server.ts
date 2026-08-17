@@ -115,9 +115,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       roomWikisEnabled: config.knowledge?.roomWikisEnabled ?? false,
       ingestDebounceMs: config.knowledge?.ingestDebounceMs ?? 600_000,
       routerEnabled: config.knowledge?.routerEnabled ?? false,
-      routeThresholdAuto: config.knowledge?.routeThresholdAuto ?? 0.8,
-      routeThresholdReview: config.knowledge?.routeThresholdReview ?? 0.6,
-      autoCreateRoomEnabled: config.knowledge?.autoCreateRoomEnabled ?? false,
+      entityPromoteScore: config.knowledge?.entityPromoteScore ?? 2.0,
+      entityPromoteSources: config.knowledge?.entityPromoteSources ?? 2,
+      mergeAutoDice: config.knowledge?.mergeAutoDice ?? 0.75,
+      mergeJudgeDice: config.knowledge?.mergeJudgeDice ?? 0.6,
       llm: config.knowledge?.llm ?? null,
       embeddingLlm: config.knowledge?.embeddingLlm ?? null,
       embeddingModel: config.knowledge?.embeddingModel ?? "",
@@ -170,10 +171,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       {
         debounceMs: config.knowledge.ingestDebounceMs,
         router: config.knowledge.routerEnabled,
-        autoCreateRoom: config.knowledge.autoCreateRoomEnabled,
         embedding: Boolean(config.knowledge.embeddingModel),
       },
-      "knowledge room-wiki routing enabled",
+      "knowledge entity-room routing enabled",
     );
   }
   app.addHook("onClose", async () => {

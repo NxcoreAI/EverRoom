@@ -50,6 +50,13 @@
       "when": 1786891946429,
       "tag": "0006_romantic_texas_twister",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786905155117,
+      "tag": "0007_lethal_sugar_man",
+      "breakpoints": true
     }
   ]
 }

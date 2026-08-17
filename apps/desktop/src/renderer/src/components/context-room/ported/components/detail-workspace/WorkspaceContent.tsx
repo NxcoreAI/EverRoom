@@ -7,6 +7,7 @@ import type { DetailPane } from '../RoomIconSidebar';
 import { ObjectPreview, type WorkspaceObjectPreview } from '../detail-panels';
 import { FakeDocumentContent } from '../detail-panels/FakeDocumentPane';
 import { OfficePreview } from '../detail-panels/ResourcePanel';
+import { WikiPageReader } from '../detail-panels/WikiPageReader';
 
 export function WorkspaceContent({
   room,
@@ -45,7 +46,11 @@ export function WorkspaceContent({
   const visibleObject = selectedObjectOwner && panels.includes(selectedObjectOwner)
     ? selectedObject
     : null;
-  const visibleResource = panels.includes('documents') ? selectedResource : null;
+  // wiki 页面资源例外：知识库面板在场即可显示（从 wiki 目录树/图谱点开的页不切走左栏）
+  const resourcePaneVisible = selectedResource?.kind === 'wiki-page'
+    ? panels.includes('wiki') || panels.includes('documents')
+    : panels.includes('documents');
+  const visibleResource = resourcePaneVisible ? selectedResource : null;
   const showCloudDocs = !visibleObject && visibleResource?.kind === 'cloud-doc';
   const selectedTask = visibleObject?.kind === 'task'
     ? room.actionItems.find((item) => item.id === visibleObject.id)
@@ -95,6 +100,8 @@ export function WorkspaceContent({
         />
       ) : visibleResource?.kind === 'office-file' ? (
         <OfficePreview resource={visibleResource} />
+      ) : visibleResource?.kind === 'wiki-page' ? (
+        <WikiPageReader resource={visibleResource} />
       ) : panels.includes('documents') ? (
         <div className="context-room-workspace-empty">暂无文档</div>
       ) : (

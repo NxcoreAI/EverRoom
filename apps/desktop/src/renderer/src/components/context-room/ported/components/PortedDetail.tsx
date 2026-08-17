@@ -6,7 +6,7 @@ import {
   createContextRoomResourceLibrary,
   getRoomResource,
 } from '../resources'
-import type { ContextRoomRecord, ContextRoomResource } from '../types'
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../types'
 import { useContextRoomLayout } from '../hooks/useContextRoomLayout'
 import { ObjectDetailView } from './ObjectDetailView'
 import type { DetailObject } from './ObjectDetailView'
@@ -48,6 +48,8 @@ export function PortedDetail({
   const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
+  /** WikiPane 打开过的 wiki 页资源（静态 library 不含它们，编辑栏解析时并入）。 */
+  const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
   const [selectedMailId, setSelectedMailId] = useState<string | null>(null)
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
   const [standaloneObject, setStandaloneObject] = useState<DetailObject | null>(() => {
@@ -73,8 +75,15 @@ export function PortedDetail({
     onEnterDocuments: () => undefined,
   })
 
+  const findWikiPageResource = useCallback(
+    (roomId: string, resourceId: string) =>
+      wikiPageResources.find((resource) => resource.id === resourceId && resource.roomId === roomId),
+    [wikiPageResources],
+  )
   const selectedResource = selectedResourceId
-    ? (getRoomResource(library, room.id, selectedResourceId) ?? null)
+    ? (getRoomResource(library, room.id, selectedResourceId)
+      ?? findWikiPageResource(room.id, selectedResourceId)
+      ?? null)
     : null
   const selectedMemory = selectedMemoryId
     ? room.memoryItems.find((item) => item.id === selectedMemoryId) ?? null
@@ -88,6 +97,17 @@ export function PortedDetail({
     layout.setMobileContent(true)
   }, [layout, room.id])
 
+  const openWikiPage = useCallback((resource: ContextRoomWikiPageResource) => {
+    if (resource.roomId !== room.id) return
+    setWikiPageResources((current) =>
+      current.some((item) => item.id === resource.id) ? current : [...current, resource])
+    setSelectedObject(null)
+    setSelectedResourceId(resource.id)
+    // 不切走 documents：编辑栏对 wiki-page 资源单独放宽面板门槛（见 WorkspaceContent），左侧目录树保持在场
+    if (!layout.panels.includes('wiki')) layout.switchPane('wiki')
+    layout.setMobileContent(true)
+  }, [layout, room.id])
+
   useEffect(() => {
     if (!focusedDocumentId) return
     const resource = library.resources.find((candidate) =>
@@ -97,10 +117,12 @@ export function PortedDetail({
   }, [focusedDocumentId, library.resources, openResource, selectedResourceId])
 
   useEffect(() => {
-    if (selectedResourceId && getRoomResource(library, room.id, selectedResourceId)) return
+    if (selectedResourceId
+      && (getRoomResource(library, room.id, selectedResourceId)
+        || findWikiPageResource(room.id, selectedResourceId))) return
     const nextDocument = library.resources.find((resource) => resource.kind === 'cloud-doc')
     setSelectedResourceId(nextDocument?.id ?? null)
-  }, [library, room.id, selectedResourceId])
+  }, [library, room.id, selectedResourceId, findWikiPageResource])
 
   const openObject = useCallback((target: WorkspaceObjectPreview) => {
     if (target.kind === 'mail') {
@@ -182,6 +204,7 @@ export function PortedDetail({
           onBackendDocumentChange={onBackendDocumentChange}
           onDeleteDocument={onDeleteDocument}
           onSelectResource={openResource}
+          onOpenWikiPage={openWikiPage}
           onAddFile={addLocalFile}
           onOpenMemory={setSelectedMemoryId}
           onOpenObject={openObject}

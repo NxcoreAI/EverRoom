@@ -10,6 +10,7 @@ import { MemoryPage } from './pages/MemoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SourcesPage } from './pages/SourcesPage'
 import { TasksPage } from './pages/TasksPage'
+import { WikiPage } from './pages/WikiPage'
 
 const ContextRoomPage = lazy(() =>
   import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
@@ -61,6 +62,7 @@ export function PageCanvas({
   if (page === 'docs') content = <DocsPage />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'memory') content = <MemoryPage />
+  if (page === 'wiki') content = <WikiPage />
   if (page === 'tasks') content = <TasksPage />
   if (page === 'diary') {
     content = (

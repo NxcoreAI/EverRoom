@@ -37,12 +37,17 @@ import type {
   UpdateRealityTranscriptInput,
 } from '@nxcore/reality-contract'
 import type {
-  KnowledgeConfirmInput,
+  KnowledgeAttachInput,
   KnowledgeDecisionDto,
+  KnowledgeEntityDetailDto,
+  KnowledgeEntityDto,
+  KnowledgeEntityStatus,
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
-  KnowledgePendingItemDto,
   KnowledgeRoomDto,
+  KnowledgeUnmatchedItemDto,
+  KnowledgeWikiDto,
+  KnowledgeWikiGraphDto,
   KnowledgeWikiPageDto,
 } from './knowledge'
 
@@ -313,15 +318,27 @@ export interface NxcoreDesktopApi {
     deleteRoom(roomId: string): Promise<void>
     listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
     readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }>
+    /** 全部 Room 的 wiki 映射（Wiki 应用清单）。 */
+    listWikis(): Promise<{ items: KnowledgeWikiDto[] }>
+    /** Room wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */
+    getWikiGraph(roomId: string): Promise<KnowledgeWikiGraphDto>
     /** Room 的上传文件清单（含路由状态徽标数据）。 */
     listRoomFiles(roomId: string): Promise<{ items: KnowledgeFileDto[] }>
     /** 文件解析产物 markdown（预览）。 */
     readFileMarkdown(fileId: string): Promise<{ markdown: string }>
     /** 在系统文件管理器中定位文件本体。 */
     revealFile(fileId: string): Promise<void>
-    listPending(): Promise<{ items: KnowledgePendingItemDto[] }>
+    /** 候选实体列表（ready = 首页推荐池；挂载下拉用 weak）。 */
+    listEntities(status: KnowledgeEntityStatus): Promise<{ items: KnowledgeEntityDto[] }>
+    getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
+    /** 用户确认创建（推荐态实体走完整晋升流程）。 */
+    promoteEntity(entityId: string): Promise<{ queued: boolean }>
+    /** 手动合并：from 并入 target。 */
+    mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
+    listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>
+    /** 未识别资料手动挂实体（role=manual）。 */
+    attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<{ entityId: string }>
     listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
-    confirmDecision(decisionId: string, input: KnowledgeConfirmInput): Promise<{ ok: boolean; roomId: string }>
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
     /** 系统文件选择框（仅 .md）→ 上传 gateway 走自动归类路由。 */
     pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]>

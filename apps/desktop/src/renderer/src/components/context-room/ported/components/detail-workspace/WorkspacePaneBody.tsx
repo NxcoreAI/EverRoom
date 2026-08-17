@@ -1,5 +1,5 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
-import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import type { DetailPane } from '../RoomIconSidebar';
 import {
   MailsPane,
@@ -18,6 +18,7 @@ export function WorkspacePaneBody({
   selectedResourceId,
   backendDocuments,
   onSelectResource,
+  onOpenWikiPage,
   onDeleteDocument,
   onAddFile,
   onOpenMemory,
@@ -32,6 +33,7 @@ export function WorkspacePaneBody({
   selectedResourceId: string | null;
   backendDocuments: RoomDocument[];
   onSelectResource: (resource: ContextRoomResource) => void;
+  onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (id: string) => void;
@@ -68,7 +70,13 @@ export function WorkspacePaneBody({
     );
   }
   if (pane === 'wiki') {
-    return <WikiPane room={room} />;
+    return (
+      <WikiPane
+        room={room}
+        selectedResourceId={selectedResourceId}
+        onOpenPage={onOpenWikiPage}
+      />
+    );
   }
   if (pane === 'schedule') return <SchedulePane room={room} onOpen={onOpenObject} />;
   if (pane === 'tasks') {

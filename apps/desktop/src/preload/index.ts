@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
@@ -167,9 +168,16 @@ const api: NxcoreDesktopApi = {
     deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
     listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
     readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
-    listPending: () => invoke('knowledge:pending:list'),
+    listWikis: () => invoke('knowledge:wikis:list'),
+    getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),
+    listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
+    getEntity: (entityId: string) => invoke('knowledge:entities:get', entityId),
+    promoteEntity: (entityId: string) => invoke('knowledge:entities:promote', entityId),
+    mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
+    listUnmatched: () => invoke('knowledge:unmatched:list'),
+    attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
+      invoke('knowledge:docs:attach', sourceKind, sourceId, input),
     listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
-    confirmDecision: (decisionId, input) => invoke('knowledge:route:confirm', decisionId, input),
     revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
     pickAndUploadFiles: () => invoke('knowledge:files:pick-and-upload'),
     listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),

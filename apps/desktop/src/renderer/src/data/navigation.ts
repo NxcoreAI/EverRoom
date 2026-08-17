@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   BookOpen,
+  BookOpenText,
   Brain,
   FileText,
   FolderSync,
@@ -11,7 +12,7 @@ import {
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'memory' | 'tasks' | 'diary' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'memory' | 'wiki' | 'tasks' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -43,6 +44,7 @@ export const navigationSections: NavigationSection[] = [
     items: [
       { id: 'sources', label: '数据源', icon: FolderSync, tone: 'cyan' },
       { id: 'memory', label: '记忆', icon: Brain, tone: 'orange' },
+      { id: 'wiki', label: 'Wiki', icon: BookOpenText, tone: 'indigo' },
     ],
   },
   {
