@@ -89,17 +89,6 @@
           "!**/*.{test,spec}.*",
           "!**/*.{map,ts,tsx,mts,cts}"
         ]
-      },
-      {
-        "from": "../gateway/node_modules/better-sqlite3",
-        "to": "gateway/node_modules/better-sqlite3",
-        "filter": [
-          "**/*",
-          "!**/build/**",
-          "!**/src/**",
-          "!**/deps/**",
-          "!**/*.{cpp,h,hpp,gyp,gypi,md}"
-        ]
       }
     ],
     "mac": {
@@ -113,6 +102,18 @@
       "target": [
         "dmg",
         "zip"
+      ],
+      "extraResources": [
+        {
+          "from": "../gateway/dist/node_modules/better-sqlite3",
+          "to": "gateway/node_modules/better-sqlite3",
+          "filter": [
+            "lib/**/*",
+            "package.json",
+            "LICENSE",
+            "prebuilds/darwin-arm64.node"
+          ]
+        }
       ]
     },
     "win": {
