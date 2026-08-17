@@ -63,6 +63,7 @@ function summaryPrompt(input: TranscriptionSummaryInput): string {
     "只输出一个 JSON 对象，不要使用 Markdown 代码块，不要添加解释。",
     "JSON 必须符合：{\"title\":string,\"overview\":string,\"keyPoints\":string[],\"decisions\":string[],\"actionItems\":[{\"text\":string,\"owner\":string|null,\"dueDate\":string|null}],\"topics\":string[]}。",
     "不要臆造决定、负责人或日期；没有内容时使用空数组或空字符串。",
+    "只要转写中存在有效内容，title 必须是原文主题而不是任务名称，overview 必须是根据原文写出的非空概览，keyPoints 至少包含一条原文要点；禁止返回全空对象或“后台转写总结”等占位标题。",
     `输出语言：${input.language || "zh-CN"}。`,
     `源记录：${input.sourceRecordId}`,
     "<transcript>",

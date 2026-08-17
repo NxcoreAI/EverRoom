@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { PrivateTranscriptionRecord } from '../src/shared/sources'
-import { toImportedRealityEvent } from '../src/main/transcription/private-transcription-sync'
+import { PrivateTranscriptionSyncService, hasMeaningfulSummary, toImportedRealityEvent } from '../src/main/transcription/private-transcription-sync'
 
 const sourceId = '9f1c963d-2d6e-4ca8-abeb-71cae811a628'
 
@@ -75,5 +78,66 @@ describe('private transcription reality import', () => {
       { text: '你好，你能听到吗？', beginTime: 960, endTime: 9_090, speakerId: 0 },
       { text: '可以听到。', beginTime: 9_090, endTime: 11_300, speakerId: 1 },
     ])
+  })
+
+  it('rejects placeholder titles even when the summary has content', () => {
+    const empty = summary()
+    empty.metadata = {
+      ...empty.metadata,
+      summary: {
+        title: '后台转写总结',
+        overview: '这是一段已经生成的概览。',
+        keyPoints: ['这是一条已经生成的要点。'],
+        decisions: [],
+        actionItems: [],
+        topics: [],
+      },
+    }
+
+    expect(hasMeaningfulSummary(empty)).toBe(false)
+    expect(hasMeaningfulSummary(summary())).toBe(true)
+  })
+
+  it('publishes historical desktop transcriptions but skips synced device events', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-private-sync-'))
+    const putPrivateRecord = vi.fn(async () => ({}))
+    const client = {
+      status: vi.fn(async () => ({ authenticated: true, user: { id: 'user-1' } })),
+      putPrivateRecord,
+    }
+    const keyring = {
+      status: vi.fn(async () => ({ enabled: true, deviceStatus: 'ready', umkId: 'umk-1', activeVersion: 1 })),
+      getUmk: vi.fn(async () => ({ umkId: 'umk-1', version: 1, value: Buffer.alloc(32, 7) })),
+    }
+    const event = {
+      id: 'desktop-event-1',
+      captureDevice: { id: 'desktop-local', name: 'This Mac', kind: 'desktop' },
+      audioSource: 'microphone',
+      durationMs: 1_000,
+      transcript: 'A historical desktop transcript.',
+      transcriptSegments: [],
+      startedAt: '2026-08-17T04:00:00.000Z',
+      endedAt: '2026-08-17T04:00:01.000Z',
+      asrSource: 'local',
+    }
+    const reality = {
+      listEvents: vi.fn(async () => [
+        event,
+        { ...event, id: 'iphone-event-1', captureDevice: { id: 'iphone', name: 'iPhone', kind: 'iphone' } },
+      ]),
+    }
+    const service = new PrivateTranscriptionSyncService(
+      join(directory, 'state.json'),
+      client as never,
+      keyring as never,
+      reality as never,
+    )
+
+    await expect(service.reconcileLocalTranscriptions()).resolves.toBe(1)
+    expect(putPrivateRecord).toHaveBeenCalledTimes(1)
+    expect(putPrivateRecord).toHaveBeenCalledWith('desktop-event-1', expect.objectContaining({
+      recordType: 'transcription_source',
+      expectedRevision: 0,
+    }))
   })
 })

@@ -2,12 +2,19 @@ import { CircleAlert, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import type { DesktopRequestError } from '../../../shared/sources'
+import { showToast } from '@/state/toast'
 import './AppErrorDialog.css'
 
 export function AppErrorDialog() {
   const [error, setError] = useState<DesktopRequestError | null>(null)
 
-  useEffect(() => window.nxcore?.errors.onRequestError(setError), [])
+  useEffect(() => window.nxcore?.errors.onRequestError((requestError) => {
+    if (requestError.severity === 'notice') {
+      showToast({ title: requestError.title ?? '操作提示', message: requestError.message })
+      return
+    }
+    setError(requestError)
+  }), [])
 
   if (!error) return null
 

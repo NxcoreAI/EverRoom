@@ -24,6 +24,8 @@ const ACCOUNT_PROFILE_KEY = 'everroom:saas:account-profile'
 const REQUEST_TIMEOUT_MS = 15_000
 const UPLOAD_TIMEOUT_MS = 5 * 60_000
 const OIDC_LOGIN_TIMEOUT_MS = 3 * 60_000
+const SUBSCRIPTION_CACHE_TTL_MS = 60_000
+const SUBSCRIPTION_RETRY_DELAY_MS = 30_000
 const http = createLoggedHttpClient('saas', { timeout: REQUEST_TIMEOUT_MS })
 
 export const OIDC_CALLBACK_URL = 'everroom://auth/callback'
@@ -133,11 +135,27 @@ export interface PrivateRecordEnvelope {
   updatedAt: string
 }
 
+export interface PutPrivateRecordInput {
+  recordType: 'legacy_transcription' | 'transcription_source'
+  algorithm: 'AES-256-GCM'
+  schemaVersion: number
+  keyId: string
+  ciphertext: string
+  contentHash: string
+  wrappingAlgorithm: 'AES-256-GCM'
+  wrappingKeyId: string
+  wrappingKeyVersion: number
+  wrappedKey: string
+  expectedRevision?: number
+}
+
 export interface PrivateAudioAsset {
   cursor?: number
   operation?: 'upsert' | 'delete'
   id: string
   recordingId: string
+  eventId?: string
+  sequence?: number
   fileName: string
   mimeType: string
   durationMs: number | null
@@ -216,11 +234,21 @@ interface PendingOidcLogin {
   timeout: ReturnType<typeof setTimeout>
 }
 
-class SaasRequestError extends Error {
+export class SaasRequestError extends Error {
   constructor(message: string, readonly status: number) {
     super(message)
     this.name = 'SaasRequestError'
   }
+}
+
+export function isSaasRateLimitError(error: unknown): error is SaasRequestError {
+  return error instanceof SaasRequestError && error.status === 429
+}
+
+function saasErrorMessage(response: AxiosResponse): string {
+  if (response.status === 429) return '请求过于频繁，请稍后重试。'
+  const body = response.data as { detail?: string; message?: string } | null
+  return body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`
 }
 
 function env(name: string, fallback: string): string {
@@ -251,6 +279,9 @@ export class SaasClient {
   private accessToken: string | null = null
   private account: LoginResult | null = null
   private subscription: CloudAccountStatus['subscription'] | null = null
+  private subscriptionLoadedAt = 0
+  private subscriptionRetryAfter = 0
+  private subscriptionPromise: Promise<void> | null = null
   private initializePromise: Promise<void> | null = null
   private pendingOidcLogin: PendingOidcLogin | null = null
 
@@ -279,9 +310,15 @@ export class SaasClient {
     return this.initializePromise
   }
 
-  async status(): Promise<CloudAccountStatus> {
+  async status(refreshSubscription = false): Promise<CloudAccountStatus> {
     await this.initialize()
-    if (this.account) await this.loadSubscription()
+    if (this.account) {
+      try {
+        await this.loadSubscription(refreshSubscription)
+      } catch (error) {
+        if (refreshSubscription) throw error
+      }
+    }
     return this.currentStatus()
   }
 
@@ -409,6 +446,9 @@ export class SaasClient {
     this.accessToken = null
     this.account = null
     this.subscription = null
+    this.subscriptionLoadedAt = 0
+    this.subscriptionRetryAfter = 0
+    this.subscriptionPromise = null
     await this.credentials.delete(REFRESH_TOKEN_KEY)
     await this.credentials.delete(ACCOUNT_PROFILE_KEY)
     return this.currentStatus()
@@ -545,6 +585,13 @@ export class SaasClient {
     return this.request(`/app/private-records/${encodeURIComponent(recordId)}`)
   }
 
+  async putPrivateRecord(recordId: string, input: PutPrivateRecordInput): Promise<PrivateRecordEnvelope> {
+    return this.request(`/app/private-records/${encodeURIComponent(recordId)}`, {
+      method: 'PUT',
+      data: input,
+    })
+  }
+
   async createPrivateAudio(input: Omit<PrivateAudioAsset, 'id'|'status'|'revision'|'createdAt'|'updatedAt'|'objectKey'>): Promise<PrivateAudioAsset> {
     return this.request('/app/private-audio', { method: 'POST', data: input })
   }
@@ -610,6 +657,15 @@ export class SaasClient {
       method: 'POST',
       data: input,
     })
+  }
+
+  async reprocessTranscriptionSummary(input: {
+    sourceRecordId: string
+    sourceRevision: number
+    sourceContentHash: string
+    reason: 'invalid_summary'
+  }): Promise<void> {
+    await this.request('/app/processing/jobs/reprocess', { method: 'POST', data: input })
   }
 
   async acknowledgeSync(cursor: number): Promise<void> {
@@ -748,6 +804,9 @@ export class SaasClient {
     this.accessToken = data.accessToken
     this.account = data
     this.subscription = null
+    this.subscriptionLoadedAt = 0
+    this.subscriptionRetryAfter = 0
+    this.subscriptionPromise = null
     await this.credentials.setPlainText(REFRESH_TOKEN_KEY, data.refreshToken)
     await this.credentials.setPlainText(ACCOUNT_PROFILE_KEY, JSON.stringify({
       userId: data.user.id,
@@ -757,20 +816,33 @@ export class SaasClient {
     } satisfies StoredAccountProfile))
   }
 
-  private async loadSubscription(): Promise<void> {
-    const subscription = await this.request<CloudSubscription>('/app/subscription')
-    const quotaSeconds = Math.max(0, subscription.entitlements?.asrSecondsPerPeriod ?? 0)
-    const usedSeconds = Math.max(0, subscription.usedSeconds)
-    this.subscription = {
-      status: subscription.status,
-      planCode: subscription.planCode,
-      planName: subscription.planName,
-      periodStart: subscription.periodStart,
-      periodEnd: subscription.periodEnd,
-      quotaSeconds,
-      usedSeconds,
-      remainingSeconds: Math.max(0, quotaSeconds - usedSeconds),
-    }
+  private async loadSubscription(force = false): Promise<void> {
+    if (!force && this.subscription && Date.now() - this.subscriptionLoadedAt < SUBSCRIPTION_CACHE_TTL_MS) return
+    if (!force && Date.now() < this.subscriptionRetryAfter) return
+    if (this.subscriptionPromise) return this.subscriptionPromise
+    this.subscriptionPromise = (async () => {
+      try {
+        const subscription = await this.request<CloudSubscription>('/app/subscription')
+        const quotaSeconds = Math.max(0, subscription.entitlements?.asrSecondsPerPeriod ?? 0)
+        const usedSeconds = Math.max(0, subscription.usedSeconds)
+        this.subscription = {
+          status: subscription.status,
+          planCode: subscription.planCode,
+          planName: subscription.planName,
+          periodStart: subscription.periodStart,
+          periodEnd: subscription.periodEnd,
+          quotaSeconds,
+          usedSeconds,
+          remainingSeconds: Math.max(0, quotaSeconds - usedSeconds),
+        }
+        this.subscriptionLoadedAt = Date.now()
+        this.subscriptionRetryAfter = 0
+      } catch (error) {
+        this.subscriptionRetryAfter = Date.now() + SUBSCRIPTION_RETRY_DELAY_MS
+        throw error
+      }
+    })().finally(() => { this.subscriptionPromise = null })
+    return this.subscriptionPromise
   }
 
   private async deviceDetails(): Promise<{
@@ -816,9 +888,9 @@ export class SaasClient {
       await this.refresh(refreshToken)
       response = await this.send(path, config, this.accessToken!)
     }
-    const body = response.data as { data?: T; meta?: { nextCursor?: number }; detail?: string; message?: string } | null
+    const body = response.data as { data?: T; meta?: { nextCursor?: number } } | null
     if (response.status >= 400) {
-      throw new SaasRequestError(body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`, response.status)
+      throw new SaasRequestError(saasErrorMessage(response), response.status)
     }
     if (!body || typeof body !== 'object' || !('data' in body)) throw new Error('SaaS 返回了无效响应。')
     return { data: body.data as T, meta: body.meta }
@@ -842,16 +914,9 @@ export class SaasClient {
   }
 
   private unwrap<T>(response: AxiosResponse): T {
-    const body = response.data as {
-      data?: T
-      detail?: string
-      message?: string
-    } | null
+    const body = response.data as { data?: T } | null
     if (response.status >= 400) {
-      throw new SaasRequestError(
-        body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`,
-        response.status,
-      )
+      throw new SaasRequestError(saasErrorMessage(response), response.status)
     }
     if (!body || typeof body !== 'object' || !('data' in body)) {
       throw new Error('SaaS 返回了无效响应。')

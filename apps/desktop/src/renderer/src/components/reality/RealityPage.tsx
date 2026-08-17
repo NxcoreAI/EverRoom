@@ -22,6 +22,7 @@ import { loadRealitySettings } from '@/state/realitySettings'
 import { showToast } from '@/state/toast'
 import type { RealityEvent, RealityEventStatus, RealityEventType } from '../../../../shared/sources'
 import { RecordingPage } from '../recording/RecordingPage'
+import { mergeRealityEvent, mergeRealitySnapshot } from './reality-event-state'
 import './RealityPage.css'
 
 type DetailTab = 'insights' | 'transcript'
@@ -132,6 +133,8 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [transcriptDraft, setTranscriptDraft] = useState('')
   const [savingTranscript, setSavingTranscript] = useState(false)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+  const [cloudAudioAssetIds, setCloudAudioAssetIds] = useState<string[]>([])
+  const [cloudAudioIndex, setCloudAudioIndex] = useState(0)
   const [playbackPositionMs, setPlaybackPositionMs] = useState(0)
   const [playbackDurationMs, setPlaybackDurationMs] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -149,7 +152,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     }
     try {
       const next = await window.nxcore.reality.listEvents()
-      setEvents(next)
+      setEvents((current) => mergeRealitySnapshot(current, next))
       setExpandedId((current) => current && next.some((event) => event.id === current)
         ? current
         : next.find((event) => event.status === 'ongoing')?.id ?? null)
@@ -167,12 +170,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     const removeListener = window.nxcore.reality.onEvent((frame) => {
       if (frame.type !== 'event.updated') return
       const incoming = frame.change.event
-      setEvents((current) => {
-        const existing = current.find((event) => event.id === incoming.id)
-        if (existing && existing.version >= incoming.version) return current
-        return [incoming, ...current.filter((event) => event.id !== incoming.id)]
-          .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))
-      })
+      setEvents((current) => mergeRealityEvent(current, incoming))
       if (incoming.status === 'ongoing') setExpandedId((current) => current ?? incoming.id)
     })
     void window.nxcore.reality.subscribe()
@@ -181,6 +179,17 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       void window.nxcore?.reality.unsubscribe()
     }
   }, [loadEvents])
+
+  useEffect(() => {
+    if (!account?.authenticated || !window.nxcore) return
+    const sync = async () => {
+      await window.nxcore!.transcriptions.syncPrivate({ quiet: true })
+      await loadEvents()
+    }
+    void sync().catch(() => undefined)
+    const timer = window.setInterval(() => void sync().catch(() => undefined), 15_000)
+    return () => window.clearInterval(timer)
+  }, [account?.authenticated, loadEvents])
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
@@ -216,13 +225,29 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     setPlaybackPositionMs(0)
     setPlaybackDurationMs(selected?.durationMs ?? 0)
     setIsPlaying(false)
-    if (!selected?.audioFileName || !window.nxcore) return
+    setCloudAudioAssetIds([])
+    setCloudAudioIndex(0)
+    if (!selected || !window.nxcore) return
     let cancelled = false
-    void window.nxcore.reality.readAudio(selected.id).then((bytes) => {
+    const load = async () => {
+      if (selected.audioFileName) {
+        const bytes = await window.nxcore!.reality.readAudio(selected.id)
+        return { bytes, mimeType: selected.audioMimeType ?? 'audio/webm' }
+      }
+      const page = await window.nxcore!.privateAudio.list(0)
+      const segmentIds = new Set(selected.transcriptSegments.map((segment) => segment.id.split(':')[0]))
+      const assets = page.assets.filter((asset) => asset.status === 'uploaded' && (asset.eventId === selected.id || asset.recordingId === selected.id || segmentIds.has(asset.recordingId))).sort((a,b) => (a.sequence ?? 0) - (b.sequence ?? 0))
+      setCloudAudioAssetIds(assets.map((asset) => asset.id))
+      if (!assets[0]) return null
+      return window.nxcore!.privateAudio.read(assets[0].id)
+    }
+    void load().then((payload) => {
+      if (!payload) return
+      const { bytes, mimeType } = payload
       if (cancelled) return
       const copy = new Uint8Array(bytes.byteLength)
       copy.set(bytes)
-      objectUrl = URL.createObjectURL(new Blob([copy.buffer], { type: selected.audioMimeType ?? 'audio/webm' }))
+      objectUrl = URL.createObjectURL(new Blob([copy.buffer], { type: mimeType }))
       setAudioUrl(objectUrl)
     }).catch((caught) => {
       if (!cancelled) setError(caught instanceof Error ? caught.message : '本地录音读取失败。')
@@ -232,6 +257,16 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [selected?.id, selected?.audioFileName, selected?.audioMimeType, selected?.durationMs])
+
+  const playNextCloudSegment = async () => {
+    if (!window.nxcore || cloudAudioIndex + 1 >= cloudAudioAssetIds.length) { setIsPlaying(false); return }
+    const nextIndex = cloudAudioIndex + 1
+    const payload = await window.nxcore.privateAudio.read(cloudAudioAssetIds[nextIndex])
+    const copy = new Uint8Array(payload.bytes.byteLength); copy.set(payload.bytes)
+    setCloudAudioIndex(nextIndex)
+    setAudioUrl(URL.createObjectURL(new Blob([copy.buffer], { type: payload.mimeType })))
+    window.setTimeout(() => void audioRef.current?.play(), 0)
+  }
 
   const activeSegmentId = useMemo(() => {
     if (!selected || (!isPlaying && playbackPositionMs <= 0)) return null
@@ -257,7 +292,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   }, [activeSegmentId])
 
   const replaceEvent = (updated: RealityEvent) => {
-    setEvents((current) => current.map((event) => event.id === updated.id ? updated : event))
+    setEvents((current) => mergeRealityEvent(current, updated))
   }
 
   const markImportant = async (event: RealityEvent) => {
@@ -371,7 +406,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
           controlOnly
           onOpenSettings={onOpenSettings}
           onEventChanged={(event) => {
-            setEvents((current) => [event, ...current.filter((item) => item.id !== event.id)])
+            setEvents((current) => mergeRealityEvent(current, event))
             setExpandedId(event.id)
           }}
         />
@@ -457,7 +492,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
 
                           {detailTab === 'insights' ? (
                             <div className="reality-insights">
-                              <section className="reality-topic"><span>主题</span><strong>{event.insights.currentTopic || event.currentTopic || '等待转写结果'}</strong><p>{event.insights.summary || 'SaaS 完成转写后会返回一份模拟总结。'}</p></section>
+                              <section className="reality-topic"><span>主题</span><strong>{event.insights.currentTopic || event.currentTopic || '等待转写结果'}</strong><p>{event.insights.summary || '转写完成后将自动生成总结。'}</p></section>
                               <InsightList title="关键内容" items={event.insights.keyPoints} empty="暂无关键内容" />
                               <div className="reality-insight-columns">
                                 <InsightList title="决策" items={event.insights.decisions} empty="暂无决策" />
@@ -470,7 +505,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                             </div>
                           ) : (
                             <div className="reality-transcript-editor">
-                              {event.audioFileName ? (
+                              {event.audioFileName || cloudAudioAssetIds.length ? (
                                 <div className="reality-player" data-ready={String(Boolean(audioUrl))}>
                                   <audio
                                     ref={audioRef}
@@ -481,7 +516,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                     onTimeUpdate={(audioEvent) => setPlaybackPositionMs(audioEvent.currentTarget.currentTime * 1000)}
                                     onPlay={() => setIsPlaying(true)}
                                     onPause={() => setIsPlaying(false)}
-                                    onEnded={() => setIsPlaying(false)}
+                                    onEnded={() => void playNextCloudSegment()}
                                     onError={() => setError('本地录音无法播放，请确认音频文件仍然存在。')}
                                   />
                                   <button type="button" className="player-toggle" disabled={!audioUrl} onClick={togglePlayback} aria-label={isPlaying ? '暂停录音' : '播放录音'}>

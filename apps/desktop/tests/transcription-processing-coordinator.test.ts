@@ -136,4 +136,26 @@ describe('TranscriptionProcessingCoordinator', () => {
     expect(persisted).toContain('ciphertext')
     expect(client.failProcessingJob).not.toHaveBeenCalled()
   })
+
+  it('rejects a placeholder title even when the summary has content and returns the job for retry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
+    const { client, keyring, agent } = dependencies()
+    agent.summarizeTranscription.mockResolvedValueOnce({ content: JSON.stringify({
+      title: '后台转写总结',
+      overview: '这是一段已经生成的概览。',
+      keyPoints: ['这是一条已经生成的要点。'],
+      decisions: [],
+      actionItems: [],
+      topics: [],
+    }) })
+    const coordinator = new TranscriptionProcessingCoordinator(join(directory, 'state.json'), client as unknown as SaasClient, keyring as unknown as AccountKeyringService, agent as unknown as AgentGatewayBridge)
+
+    await expect(processOne(coordinator)).rejects.toThrow('empty_agent_summary')
+
+    expect(client.completeProcessingJob).not.toHaveBeenCalled()
+    expect(client.failProcessingJob).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      errorCode: 'empty_agent_summary',
+      errorClass: 'retryable',
+    }))
+  })
 })

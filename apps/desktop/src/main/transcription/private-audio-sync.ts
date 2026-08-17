@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import axios from 'axios'
 
@@ -12,12 +12,15 @@ const AUDIO_CHUNK_SIZE = 4 * 1024 * 1024
 function hash(value: Buffer): string { return `sha256:${createHash('sha256').update(value).digest('hex')}` }
 
 export class PrivateAudioSyncService {
+  private eventResolver: ((recordingId: string) => Promise<string | null>) | null = null
   constructor(
     private readonly client: SaasClient,
     private readonly keyring: AccountKeyringService,
     private readonly recordingsDirectory: string,
     private readonly queueFile: string,
   ) {}
+
+  setEventResolver(resolver: (recordingId: string) => Promise<string | null>): void { this.eventResolver = resolver }
 
   async drainPending(): Promise<void> {
     let pending: Array<{ filePath: string; recordingId: string; durationMs: number; mimeType: string }> = []
@@ -31,14 +34,29 @@ export class PrivateAudioSyncService {
   }
 
   async list(cursor = 0): Promise<{ assets: PrivateAudioAsset[]; nextCursor: number }> {
-    return this.client.listPrivateAudio(cursor)
+    const page = await this.client.listPrivateAudio(cursor)
+    if (!this.eventResolver) return page
+    return { ...page, assets: await Promise.all(page.assets.map(async (asset) => ({ ...asset, eventId: asset.eventId && asset.eventId !== asset.recordingId ? asset.eventId : await this.eventResolver!(asset.recordingId) ?? asset.eventId }))) }
   }
 
   async downloadById(assetId: string, outputPath: string): Promise<string> {
-    const page = await this.client.listPrivateAudio(0)
+    const page = await this.list(0)
     const asset = page.assets.find((item) => item.id === assetId)
     if (!asset) throw new Error('音频资产不存在。')
     return this.download(asset, outputPath)
+  }
+
+  async read(assetId: string): Promise<{ bytes: Uint8Array; mimeType: string }> {
+    const page = await this.list(0)
+    const asset = page.assets.find((item) => item.id === assetId && item.status === 'uploaded')
+    if (!asset) throw new Error('音频资产不存在或尚未上传完成。')
+    const outputPath = join(this.recordingsDirectory, `.synced-${asset.id}`)
+    try {
+      await this.download(asset, outputPath)
+      return { bytes: new Uint8Array(await readFile(outputPath)), mimeType: asset.mimeType }
+    } finally {
+      await rm(outputPath, { force: true }).catch(() => undefined)
+    }
   }
 
   async upload(filePath: string, recordingId: string, durationMs: number, mimeType: string, enqueueOnFailure = true): Promise<PrivateAudioAsset> {
@@ -114,13 +132,17 @@ export class PrivateAudioSyncService {
     if (keyId(dataKey) !== asset.dataKeyId) throw new Error('音频数据密钥校验失败。')
     const chunks: Buffer[] = []
     const count = asset.chunkCount ?? 1
+    const chunked = !asset.objectKey
     for (let index = 0; index < count; index += 1) {
-      const authorization = count > 1 ? await this.client.authorizePrivateAudioChunkDownload(asset.id, index) : await this.client.authorizePrivateAudioDownload(asset.id)
+      const authorization = chunked ? await this.client.authorizePrivateAudioChunkDownload(asset.id, index) : await this.client.authorizePrivateAudioDownload(asset.id)
       const response = await axios.get<ArrayBuffer>(authorization.downloadUrl, { responseType: 'arraybuffer', timeout: 5 * 60_000 })
       const cipherChunk = Buffer.from(response.data)
       let chunkPlain: Buffer
-      try { chunkPlain = combinedDecrypt(dataKey, cipherChunk.toString('base64'), Buffer.from(`everroom.private-audio.v${asset.schemaVersion}:${asset.recordingId}:${asset.dataKeyId}:${material.umkId}:${material.version}:${index}`, 'utf8')) }
-      catch { if (count !== 1) throw new Error('音频分片认证失败。'); chunkPlain = combinedDecrypt(dataKey, cipherChunk.toString('base64'), Buffer.from(`everroom.private-audio.v${asset.schemaVersion}:${asset.recordingId}:${asset.dataKeyId}:${material.umkId}:${material.version}`, 'utf8')) }
+      if (chunked) {
+        chunkPlain = combinedDecrypt(dataKey, cipherChunk.toString('base64'), Buffer.from(`everroom.private-audio.v${asset.schemaVersion}:${asset.recordingId}:${asset.dataKeyId}:${material.umkId}:${material.version}:${index}`, 'utf8'))
+      } else {
+        chunkPlain = combinedDecrypt(dataKey, cipherChunk.toString('base64'), Buffer.from(`everroom.private-audio.v${asset.schemaVersion}:${asset.recordingId}:${asset.dataKeyId}:${material.umkId}:${material.version}`, 'utf8'))
+      }
       chunks.push(chunkPlain)
     }
     const plain = Buffer.concat(chunks)

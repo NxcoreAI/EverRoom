@@ -69,6 +69,7 @@ export function SettingsPage() {
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
   const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
   const [syncedCount, setSyncedCount] = useState<number | null>(null)
+  const [syncedAudioCount, setSyncedAudioCount] = useState<number | null>(null)
   const [devices, setDevices] = useState<CloudDevice[]>([])
   const [pairing, setPairing] = useState<PairingSession | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
@@ -85,21 +86,21 @@ export function SettingsPage() {
     const check = async () => {
       try {
         const [next, nextDevices] = await Promise.all([
-          desktopApi.account.keyringStatus(),
-          desktopApi.account.devices(),
+          desktopApi.account.keyringStatus({ quiet: true }),
+          desktopApi.account.devices({ quiet: true }),
         ])
         if (cancelled) return
         setKeyring(next)
         setDevices(nextDevices)
       } catch {
-        if (!cancelled) setKeyring(null)
+        // Keep the last known status during transient network or rate-limit failures.
       } finally {
         setPending((current) => current === 'keyring' ? null : current)
       }
     }
     setPending('keyring')
     void check()
-    const timer = window.setInterval(() => void check(), 5_000)
+    const timer = window.setInterval(() => void check(), 15_000)
     return () => {
       cancelled = true
       window.clearInterval(timer)
@@ -112,9 +113,10 @@ export function SettingsPage() {
     const poll = async () => {
       if (cancelled) return
       try {
-        const next = await window.nxcore!.account.getPairingSession(pairing.pairingSessionId)
+        const next = await window.nxcore!.account.getPairingSession(pairing.pairingSessionId, { quiet: true })
         if (!cancelled) setPairing((current) => current ? { ...current, ...next } : current)
       } catch (error) {
+        if (error instanceof Error && error.message.includes('请求过于频繁')) return
         cancelled = true
         setPairingError(`${error instanceof Error ? error.message : '配对会话读取失败。'} 请重启 SaaS 服务后重新创建二维码。`)
       }
@@ -217,9 +219,13 @@ export function SettingsPage() {
     if (!window.nxcore) return
     setPending('sync')
     try {
-      const result = await window.nxcore.transcriptions.syncPrivate()
+      const [result, audio] = await Promise.all([
+        window.nxcore.transcriptions.syncPrivate(),
+        window.nxcore.privateAudio.list(0),
+      ])
       setKeyring(result.status)
       setSyncedCount(result.synced)
+      setSyncedAudioCount(audio.assets.filter((asset) => asset.status === 'uploaded').length)
     } catch {
       // The preload request interceptor reports the error globally.
     } finally {
@@ -389,9 +395,9 @@ export function SettingsPage() {
                 onClick={() => void syncPrivate()}
               >
                 {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-                同步私密转写
+                同步多端数据
               </button>
-              {syncedCount !== null ? <small className="cloud-keyring-result">本次同步 {syncedCount} 条记录</small> : null}
+              {syncedCount !== null ? <small className="cloud-keyring-result">本次同步 {syncedCount} 条转写，发现 {syncedAudioCount ?? 0} 个音频片段</small> : null}
             </div>
           </div>
         ) : (

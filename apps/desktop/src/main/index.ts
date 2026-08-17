@@ -23,7 +23,7 @@ import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
-import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
@@ -32,6 +32,20 @@ import { TranscriptionProcessingCoordinator } from './transcription/processing-c
 import { PrivateAudioSyncService } from './transcription/private-audio-sync'
 
 const APP_NAME = 'EverRoom'
+
+interface IpcRateLimitNotice {
+  __everroomRateLimited: true
+  message: string
+}
+
+async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRateLimitNotice> {
+  try {
+    return await operation()
+  } catch (error) {
+    if (!isSaasRateLimitError(error)) throw error
+    return { __everroomRateLimited: true, message: error.message }
+  }
+}
 
 const appDataDirectory = app.getPath('appData')
 const dataDirectory = join(appDataDirectory, APP_NAME)
@@ -113,6 +127,7 @@ const ASR_CHANNELS = {
 const PRIVATE_AUDIO_CHANNELS = {
   list: 'private-audio:list',
   download: 'private-audio:download',
+  read: 'private-audio:read',
 } as const
 
 const REALITY_CHANNELS = {
@@ -180,11 +195,12 @@ const queuedProtocolUrls: string[] = []
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
-  const value = input as { channel?: unknown; message?: unknown }
+  const value = input as { channel?: unknown; message?: unknown; severity?: unknown }
   if (typeof value.channel !== 'string' || typeof value.message !== 'string') return
   const channel = value.channel.slice(0, 120)
   const message = value.message.slice(0, 2_000)
-  logDesktop('renderer', 'error', { event: 'renderer.request.error', channel, message })
+  const notice = value.severity === 'notice'
+  logDesktop('renderer', notice ? 'warn' : 'error', { event: notice ? 'renderer.request.notice' : 'renderer.request.error', channel, message })
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
@@ -373,13 +389,14 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   ipcMain.handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
   ipcMain.handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
   ipcMain.handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
-  ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => coordinator.createJob(input))
-  ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
+  ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => rateLimitAware(() => coordinator.createJob(input)))
+  ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => rateLimitAware(() => coordinator.getJob(id)))
 }
 
 function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
-  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => service.list(cursor ?? 0))
-  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => service.downloadById(assetId, outputPath))
+  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(() => service.list(cursor ?? 0)))
+  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => rateLimitAware(() => service.downloadById(assetId, outputPath)))
+  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
 }
 
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
@@ -441,36 +458,38 @@ async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promi
 }
 
 function registerAccountHandlers(client: SaasClient): void {
-  ipcMain.handle(ACCOUNT_CHANNELS.status, () => syncAccountMonitoring(client.status()))
-  ipcMain.handle(ACCOUNT_CHANNELS.devices, () => client.listDevices())
+  ipcMain.handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(() => syncAccountMonitoring(client.status(refreshSubscription === true))))
+  ipcMain.handle(ACCOUNT_CHANNELS.devices, () => rateLimitAware(() => client.listDevices()))
   ipcMain.handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
     const value = input as { identifier?: unknown; password?: unknown }
     if (typeof value.identifier !== 'string' || typeof value.password !== 'string') {
       throw new Error('请输入账号和密码。')
     }
-    return syncAccountMonitoring(client.login(value.identifier, value.password))
+    const identifier = value.identifier
+    const password = value.password
+    return rateLimitAware(() => syncAccountMonitoring(client.login(identifier, password)))
   })
   ipcMain.handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
     if (provider !== 'apple' && provider !== 'google') throw new Error('不支持的登录方式。')
-    return syncAccountMonitoring(client.loginWithOidc(provider))
+    return rateLimitAware(() => syncAccountMonitoring(client.loginWithOidc(provider)))
   })
   ipcMain.handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
-  ipcMain.handle(ACCOUNT_CHANNELS.logout, () => syncAccountMonitoring(client.logout()))
+  ipcMain.handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(() => syncAccountMonitoring(client.logout())))
 }
 
 function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncService): void {
-  ipcMain.handle(ACCOUNT_CHANNELS.keyringStatus, () => sync.keyringStatus())
-  ipcMain.handle(ACCOUNT_CHANNELS.createPairingSession, () => sync.createPairingSession())
+  ipcMain.handle(ACCOUNT_CHANNELS.keyringStatus, () => rateLimitAware(() => sync.keyringStatus()))
+  ipcMain.handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(() => sync.createPairingSession()))
   ipcMain.handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('无效的配对会话。')
-    return sync.getPairingSession(id)
+    return rateLimitAware(() => sync.getPairingSession(id))
   })
   ipcMain.handle(ACCOUNT_CHANNELS.approvePairingSession, (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('无效的配对会话。')
-    return sync.approvePairingSession(id)
+    return rateLimitAware(() => sync.approvePairingSession(id))
   })
-  ipcMain.handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => sync.sync())
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => rateLimitAware(() => sync.sync()))
   ipcMain.handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
 }
 
@@ -617,6 +636,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       realityGatewayBridge,
     )
     await privateTranscriptionSync.initialize()
+    privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
     void privateTranscriptionSync.materializeCached().catch((error) => {
       console.warn('Unable to import cached private transcriptions into Reality.', error)
     })
@@ -625,6 +645,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       saasClient,
       keyring,
       agentGatewayBridge,
+      privateTranscriptionSync,
     )
     await transcriptionProcessingCoordinator.initialize()
     transcriptionProcessingCoordinator.start()
@@ -635,7 +656,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     registerAccountHandlers(saasClient)
     registerPrivateTranscriptionHandlers(privateTranscriptionSync)
-    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync))
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
     registerPrivateAudioHandlers(privateAudioSync)
 
     const connectors = new ConnectorRegistry()

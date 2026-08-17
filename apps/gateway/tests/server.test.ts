@@ -59,6 +59,41 @@ describe("gateway server", () => {
     expect(authorized.statusCode).toBe(200);
   });
 
+  it("serves authenticated background transcription summaries", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const payload = {
+      jobId: "job-1",
+      sourceRecordId: "source-1",
+      transcript: "这是待总结的转写内容。",
+    };
+
+    const unauthorized = await app.inject({
+      method: "POST",
+      url: "/v1/processing/transcription-summary",
+      payload,
+    });
+    const authorized = await app.inject({
+      method: "POST",
+      url: "/v1/processing/transcription-summary",
+      headers: { authorization: `Bearer ${config.authToken}` },
+      payload,
+    });
+    await app.close();
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(authorized.statusCode).toBe(200);
+    const response = authorized.json<{ content: string }>();
+    expect(JSON.parse(response.content)).toMatchObject({
+      title: expect.any(String),
+      overview: expect.any(String),
+      keyPoints: expect.any(Array),
+      decisions: expect.any(Array),
+      actionItems: expect.any(Array),
+      topics: expect.any(Array),
+    });
+  });
+
   it("persists and serves the complete Context Room snapshot", async () => {
     const config = await testConfig();
     const app = await createServer(config);

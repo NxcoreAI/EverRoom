@@ -18,8 +18,16 @@ let pendingRequestError: DesktopRequestError | null = null
 function errorMessage(error: unknown): string {
   if (!(error instanceof Error)) return '请求失败，请稍后重试。'
   return error.message
-    .replace(/^Error invoking remote method '[^']+': Error:\s*/, '')
+    .replace(/^Error invoking remote method '[^']+': (?:[A-Za-z][A-Za-z0-9]*Error|Error):\s*/, '')
     .replace(/^Error:\s*/, '')
+}
+
+function requestError(channel: string, error: unknown): DesktopRequestError {
+  const message = errorMessage(error)
+  if (message.includes('请求过于频繁')) {
+    return { channel, severity: 'notice', title: '操作稍后继续', message }
+  }
+  return { channel, severity: 'error', message }
 }
 
 function reportRequestError(detail: DesktopRequestError): void {
@@ -28,11 +36,24 @@ function reportRequestError(detail: DesktopRequestError): void {
   else for (const listener of requestErrorListeners) listener(detail)
 }
 
+function rateLimitNotice(value: unknown): DesktopRequestError | null {
+  if (!value || typeof value !== 'object') return null
+  const result = value as { __everroomRateLimited?: unknown; message?: unknown }
+  if (result.__everroomRateLimited !== true || typeof result.message !== 'string') return null
+  return { channel: '', severity: 'notice', title: '操作稍后继续', message: result.message }
+}
+
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   try {
-    return await ipcRenderer.invoke(channel, ...args) as T
+    const result = await ipcRenderer.invoke(channel, ...args) as T
+    const notice = rateLimitNotice(result)
+    if (!notice) return result
+    notice.channel = channel
+    reportRequestError(notice)
+    throw new Error(notice.message)
   } catch (error) {
-    const detail = { channel, message: errorMessage(error) }
+    if (error instanceof Error && error.message === '请求过于频繁，请稍后重试。') throw error
+    const detail = requestError(channel, error)
     reportRequestError(detail)
     throw new Error(detail.message)
   }
@@ -40,7 +61,10 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T> {
   try {
-    return await ipcRenderer.invoke(channel, ...args) as T
+    const result = await ipcRenderer.invoke(channel, ...args) as T
+    const notice = rateLimitNotice(result)
+    if (!notice) return result
+    throw new Error(notice.message)
   } catch (error) {
     throw new Error(errorMessage(error))
   }
@@ -68,15 +92,15 @@ const api: NxcoreDesktopApi = {
       invokeQuietly('context-rooms:sync-snapshot', input),
   },
   account: {
-    status: () => invoke('account:status'),
-    devices: () => invoke('account:devices'),
+    status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
+    devices: (options) => options?.quiet ? invokeQuietly('account:devices') : invoke('account:devices'),
     login: (input) => invoke('account:login', input),
     loginWithOidc: (provider) => invoke('account:oidc-login', provider),
     cancelOidcLogin: () => invoke('account:oidc-cancel'),
     logout: () => invoke('account:logout'),
-    keyringStatus: () => invoke('account:keyring-status'),
+    keyringStatus: (options) => options?.quiet ? invokeQuietly('account:keyring-status') : invoke('account:keyring-status'),
     createPairingSession: () => invoke('account:create-pairing-session'),
-    getPairingSession: (id) => invoke('account:get-pairing-session', id),
+    getPairingSession: (id, options) => options?.quiet ? invokeQuietly('account:get-pairing-session', id) : invoke('account:get-pairing-session', id),
     approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
   },
   asr: {
@@ -93,9 +117,10 @@ const api: NxcoreDesktopApi = {
   privateAudio: {
     list: (cursor?: number) => invoke('private-audio:list', cursor ?? 0),
     download: (assetId: string, outputPath: string) => invoke('private-audio:download', assetId, outputPath),
+    read: (assetId: string) => invoke('private-audio:read', assetId),
   },
   transcriptions: {
-    syncPrivate: () => invoke('transcription:sync-private'),
+    syncPrivate: (options) => options?.quiet ? invokeQuietly('transcription:sync-private') : invoke('transcription:sync-private'),
     listPrivate: () => invoke('transcription:list-private'),
   },
   memory: {

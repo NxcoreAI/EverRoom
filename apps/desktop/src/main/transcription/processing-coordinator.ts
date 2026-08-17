@@ -11,6 +11,7 @@ import type {
 import type { AgentGatewayBridge } from '../gateway/agent-gateway-bridge'
 import { AccountKeyringService, combinedEncrypt, keyId } from '../security/account-keyring-service'
 import { decryptPrivateRecordPayload } from './private-transcription-sync'
+import type { PrivateTranscriptionSyncService } from './private-transcription-sync'
 
 const POLL_INTERVAL_MS = 30_000
 const LEASE_RENEW_INTERVAL_MS = 45_000
@@ -58,6 +59,7 @@ export class TranscriptionProcessingCoordinator {
     private readonly client: SaasClient,
     private readonly keyring: AccountKeyringService,
     private readonly agent: AgentGatewayBridge,
+    private readonly sync?: PrivateTranscriptionSyncService,
   ) {}
 
   async initialize(): Promise<void> {
@@ -102,6 +104,9 @@ export class TranscriptionProcessingCoordinator {
     await this.initialize()
     const account = await this.client.status()
     if (!account.authenticated || !account.user || !account.device) return
+    await this.sync?.reconcileLocalTranscriptions()
+    await this.sync?.flushPendingSources()
+    await this.sync?.sync()
     const keyringStatus = await this.keyring.status(this.client, account.user.id)
     if (!keyringStatus.enabled || keyringStatus.deviceStatus !== 'ready') return
     const umk = await this.keyring.getUmk(account.user.id)
@@ -166,6 +171,7 @@ export class TranscriptionProcessingCoordinator {
       await this.client.completeProcessingJob(job.id, { ...result, leaseToken })
       delete this.state.jobs[job.id]
       await this.persist()
+      await this.sync?.sync()
     } catch (error) {
       if (!resultReady) {
         await this.client.failProcessingJob(job.id, {
@@ -251,7 +257,7 @@ function parseSummary(raw: string): SummaryValue {
       dueDate: typeof action.dueDate === 'string' ? action.dueDate.trim().slice(0, 100) || null : null,
     }
   }).filter((item) => item.text)
-  return {
+  const summary = {
     title: string('title', 200),
     overview: string('overview', 5_000),
     keyPoints: strings('keyPoints', 50),
@@ -259,6 +265,10 @@ function parseSummary(raw: string): SummaryValue {
     actionItems,
     topics: strings('topics', 30),
   }
+  if (!summary.title || summary.title === '后台转写总结' || !summary.overview || !summary.keyPoints.length) {
+    throw new Error('empty_agent_summary')
+  }
+  return summary
 }
 
 function encryptSummary(
