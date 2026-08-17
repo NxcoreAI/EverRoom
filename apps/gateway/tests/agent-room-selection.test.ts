@@ -161,6 +161,46 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
+  it('asks for document confirmation when a global creation request has only a topic', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    const run = await service.startRun(session.id, {
+      prompt: '帮我创建一个C语言',
+      idempotencyKey: 'ambiguous-document-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+
+    expect(runtime.starts).toEqual([])
+    expect(run.status).toBe('completed')
+    expect(service.listEvents(session.id, run.id, 0)[3]?.payload).toMatchObject({
+      name: 'context_room_document_intent',
+      result: {
+        clarificationRequired: true,
+        originalPrompt: '帮我创建一个C语言',
+        topic: 'C语言',
+      },
+    })
+    sqlite.close()
+  })
+
+  it('keeps explicit non-document creation targets in the Agent', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '帮我创建一个C语言学习计划',
+      idempotencyKey: 'explicit-plan-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toEqual([
+      expect.objectContaining({ prompt: '帮我创建一个C语言学习计划' }),
+    ])
+    sqlite.close()
+  })
+
   it('does not open the Room picker when document creation is explicitly declined', async () => {
     const { runtime, service, sqlite } = await createHarness()
     const session = service.createSession({ pageLabel: 'Context Room', roomId: null })

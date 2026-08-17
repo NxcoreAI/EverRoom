@@ -4,18 +4,39 @@ import TaskList from '@tiptap/extension-task-list'
 import TableOfContents, { type TableOfContentData } from '@tiptap/extension-table-of-contents'
 import { Markdown } from '@tiptap/markdown'
 import { TextSelection } from '@tiptap/pm/state'
-import { EditorContent, Extension, useEditor, type Editor, type JSONContent } from '@tiptap/react'
+import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
 import StarterKit from '@tiptap/starter-kit'
 import { LoaderCircle } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useRoomDocumentsState } from '../../../RoomDocumentsProvider'
+import { cursorAnchorCandidateFromEditorState } from '@/components/agent/activeDocumentContext'
+import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import type { ContextRoomRecord, ContextRoomResource } from '../../types'
 import { TiptapBlockHandle } from './TiptapBlockHandle'
 import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
 import { TiptapContentScale } from './TiptapContentScale'
+import { TiptapDocumentActions } from './TiptapDocumentActions'
 import { TiptapSlashCommandMenu } from './TiptapSlashCommandMenu'
+import { ensureStableBlockIds, StableBlockIds } from './StableBlockIds'
+import { useDocumentPatches } from '../../../patches/DocumentPatchProvider'
+import {
+  clearDocumentPatchReview,
+  DocumentPatchReviewExtension,
+  showDocumentPatchReview,
+} from '../../../patches/DocumentPatchReviewExtension'
+import { DocumentPatchReviewToolbar } from '../../../patches/DocumentPatchReviewToolbar'
+import {
+  clearDocumentContinuation,
+  DocumentContinuationExtension,
+  showDocumentContinuation,
+} from '../../../patches/DocumentContinuationExtension'
+import { DocumentContinuationToolbar } from '../../../patches/DocumentContinuationToolbar'
+import {
+  pendingContinuationBlock,
+  pendingContinuationBlocks,
+} from '../../../patches/documentContinuationState'
 import {
   SelectionRewritePreviewExtension,
   TiptapSelectionRewritePreview,
@@ -42,23 +63,19 @@ import {
   tiptapTextContent,
 } from './markdownStream'
 import { useTransientEditorInteractions } from './useTransientEditorInteractions'
+import {
+  DocumentBlockReference,
+  insertDocumentBlockReference,
+} from './DocumentBlockReference'
+import { DocumentBlockReferencePicker } from './DocumentBlockReferencePicker'
+import {
+  createEverroomBlockReferenceUrl,
+  parseEverroomBlockReferenceUrl,
+  parseSameRoomBlockReferenceLink,
+} from './documentBlockReferenceLink'
+import { requestDocumentBlockNavigation } from './documentBlockNavigation'
+import { showToast } from '@/state/toast'
 import './TiptapDocumentEditor.css'
-
-const StableBlockIds = Extension.create({
-  name: 'stableBlockIds',
-  addGlobalAttributes() {
-    return [{
-      types: ['paragraph', 'heading', 'bulletList', 'orderedList', 'taskList', 'blockquote', 'codeBlock', 'horizontalRule'],
-      attributes: {
-        id: {
-          default: null,
-          parseHTML: (element) => element.getAttribute('data-block-id'),
-          renderHTML: (attributes) => attributes.id ? { 'data-block-id': String(attributes.id) } : {},
-        },
-      },
-    }]
-  },
-})
 
 interface StreamState {
   buffer: MarkdownBlockBuffer
@@ -173,12 +190,14 @@ export function TiptapDocumentEditor({
   backendDocument,
   events,
   onBackendDocumentChange,
+  onDeleteDocument,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
   backendDocument: RoomDocument | null
   events: DocumentEvent[]
   onBackendDocumentChange: (document: RoomDocument) => void
+  onDeleteDocument?: (document: RoomDocument) => Promise<void>
 }) {
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const documentName = backendDocument?.title ?? resource?.name ?? room.cloudDoc.title ?? room.title
@@ -192,7 +211,7 @@ export function TiptapDocumentEditor({
   ))[0]
   const saveTimer = useRef<number | null>(null)
   const saveInFlight = useRef(false)
-  const pendingSave = useRef<{ contentJson: TiptapJsonContent; revision: number } | null>(null)
+  const pendingSave = useRef<{ contentJson: TiptapJsonContent; title: string; revision: number } | null>(null)
   const editRevision = useRef(0)
   const recoveringDraft = useRef(canRecoverInitialDraft)
   const recoverySaveScheduled = useRef(false)
@@ -201,10 +220,28 @@ export function TiptapDocumentEditor({
   const onBackendChangeRef = useRef(onBackendDocumentChange)
   const versionRef = useRef(backendDocument?.version ?? 0)
   const importedRef = useRef(Boolean(backendDocument))
+  const revealedContinuationPatchId = useRef<string | null>(null)
+  const [editableTitle, setEditableTitle] = useState(documentName)
+  const titleRef = useRef(documentName)
   const [saveState, setSaveState] = useState(backendDocument?.status === 'draft' ? 'Agent 正在写入' : '已保存')
   const [tableOfContents, setTableOfContents] = useState<TableOfContentData>([])
   const [blockDragging, setBlockDragging] = useState(false)
-  const { dismissDocumentPresentation, registerVisibleDocument } = useRoomDocumentsState()
+  const [referencePickerOpen, setReferencePickerOpen] = useState(false)
+  const roomDocuments = useRoomDocumentsState()
+  const { dismissDocumentPresentation, registerVisibleDocument } = roomDocuments
+  const { activateDocument } = useActiveDocument()
+  const {
+    acceptAllContinuationBlocks,
+    busyPatchIds,
+    closeReview,
+    continuationDecisionsByPatchId,
+    continuationPatchIdByDocument,
+    currentHunkId,
+    decisionsByPatchId,
+    decideContinuationBlock,
+    fullPatchesById,
+    reviewPatchId,
+  } = useDocumentPatches()
   const presentingStream = events.some(
     (event) => event.type === 'document.appended' || event.type === 'document.commit-requested',
   )
@@ -212,6 +249,14 @@ export function TiptapDocumentEditor({
 
   backendRef.current = backendDocument
   onBackendChangeRef.current = onBackendDocumentChange
+
+  useEffect(() => {
+    const title = backendDocument?.title ?? documentName
+    const pendingTitle = pendingSave.current?.title
+    if (pendingTitle && pendingTitle !== title) return
+    setEditableTitle(title)
+    titleRef.current = title
+  }, [backendDocument?.title, documentId, documentName])
 
   const persistPendingSave = async (): Promise<void> => {
     if (saveInFlight.current) return
@@ -231,6 +276,7 @@ export function TiptapDocumentEditor({
         try {
           const updated = await documents.save(documentId, {
             baseVersion: versionRef.current,
+            title: pending.title,
             contentJson: pending.contentJson,
           })
           versionRef.current = updated.version
@@ -242,11 +288,19 @@ export function TiptapDocumentEditor({
             removeDocumentDraft(documentId)
             setSaveState('已保存')
           } else {
-            const nextPending = pendingSave.current as { contentJson: TiptapJsonContent; revision: number } | null
+            const nextPending = pendingSave.current as {
+              contentJson: TiptapJsonContent
+              title: string
+              revision: number
+            } | null
             if (nextPending) writeDocumentDraft(documentId, nextPending.contentJson, updated.version)
           }
         } catch (error) {
-          const nextPending = pendingSave.current as { contentJson: TiptapJsonContent; revision: number } | null
+          const nextPending = pendingSave.current as {
+            contentJson: TiptapJsonContent
+            title: string
+            revision: number
+          } | null
           if (!nextPending || nextPending.revision < pending.revision) {
             pendingSave.current = pending
           }
@@ -259,9 +313,13 @@ export function TiptapDocumentEditor({
     }
   }
 
-  const queueDocumentSave = (contentJson: TiptapJsonContent, delay = 300): void => {
+  const queueDocumentSave = (
+    contentJson: TiptapJsonContent,
+    delay = 300,
+    title = titleRef.current,
+  ): void => {
     const revision = ++editRevision.current
-    pendingSave.current = { contentJson, revision }
+    pendingSave.current = { contentJson, title, revision }
     writeDocumentDraft(documentId, contentJson, versionRef.current)
     setSaveState('正在保存...')
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
@@ -271,16 +329,62 @@ export function TiptapDocumentEditor({
     }, delay)
   }
 
+  const updateDocumentTitle = (value: string): void => {
+    setEditableTitle(value)
+    const title = value.trim()
+    if (!editor || editor.isDestroyed) return
+    if (!title) {
+      const fallbackTitle = backendRef.current?.title ?? documentName
+      titleRef.current = fallbackTitle
+      queueDocumentSave(editor.getJSON() as TiptapJsonContent, 500, fallbackTitle)
+      return
+    }
+    titleRef.current = title
+    queueDocumentSave(editor.getJSON() as TiptapJsonContent, 500, title)
+  }
+
+  const restoreEmptyDocumentTitle = (): void => {
+    if (editableTitle.trim()) return
+    const title = backendRef.current?.title ?? documentName
+    setEditableTitle(title)
+    titleRef.current = title
+    if (editor && !editor.isDestroyed) {
+      queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0, title)
+    }
+  }
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
         dropcursor: { class: 'context-room-tiptap-dropcursor', color: false, width: 2 },
         heading: { levels: [1, 2, 3] },
-        link: { openOnClick: false, autolink: true, defaultProtocol: 'https' },
+        link: {
+          openOnClick: false,
+          autolink: true,
+          defaultProtocol: 'https',
+          protocols: ['everroom'],
+        },
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
       StableBlockIds,
+      DocumentBlockReference.configure({
+        sourceRoomId: room.id,
+        resolveReferences: async (input) => {
+          const documents = window.nxcore?.documents
+          if (!documents) throw new Error('文档引用服务不可用。')
+          return documents.resolveBlockReferences(input)
+        },
+        onNavigate: (target, resolution) => {
+          if (resolution && resolution.status !== 'available' && resolution.status !== 'block_missing') {
+            showToast({ title: '引用暂时不可用', message: resolution.status === 'document_trashed' ? '目标文档在回收站中。' : '目标文档已不可用。' })
+            return
+          }
+          requestDocumentBlockNavigation(target)
+        },
+      }),
+      DocumentPatchReviewExtension,
+      DocumentContinuationExtension,
       SelectionRewritePreviewExtension,
       Markdown,
       TableOfContents.configure({
@@ -300,27 +404,178 @@ export function TiptapDocumentEditor({
         'aria-label': 'Room 文档编辑器',
         spellcheck: 'true',
       },
+      handleDOMEvents: {
+        click: (_view, event) => {
+          const element = event.target instanceof Element ? event.target : null
+          const anchor = element?.closest<HTMLAnchorElement>('a[href]')
+          if (!anchor) return false
+          const href = anchor.getAttribute('href') ?? ''
+          const reference = parseSameRoomBlockReferenceLink(href, room.id)
+          if (reference) {
+            event.preventDefault()
+            requestDocumentBlockNavigation(reference)
+            return true
+          }
+          if (parseEverroomBlockReferenceUrl(href)) {
+            event.preventDefault()
+            showToast({ title: '无法打开块链接', message: '块链接只能在同一个 Room 内跳转。' })
+            return true
+          }
+          return false
+        },
+      },
     },
     onUpdate: ({ editor: currentEditor }) => {
       if (applyingRemote.current) return
       const currentDocument = backendRef.current
       if (currentDocument?.activeTransactionId) return
+      if (ensureStableBlockIds(currentEditor)) return
       queueDocumentSave(currentEditor.getJSON() as TiptapJsonContent)
     },
+    onCreate: ({ editor: currentEditor }) => {
+      ensureStableBlockIds(currentEditor)
+    },
   }, [documentId])
+  const reviewPatch = reviewPatchId ? fullPatchesById[reviewPatchId] : undefined
+  const visibleReviewPatch = reviewPatch?.kind === 'edit' && reviewPatch.documentId === documentId
+    ? reviewPatch
+    : undefined
+  const continuationPatchId = continuationPatchIdByDocument[documentId]
+  const continuationPatch = continuationPatchId ? fullPatchesById[continuationPatchId] : undefined
+  const continuationBlock = pendingContinuationBlock(continuationPatch)
+  const continuationBlocks = useMemo(
+    () => pendingContinuationBlocks(continuationPatch),
+    [continuationPatch],
+  )
+  const visibleContinuationPatch = continuationPatch?.documentId === documentId && continuationBlock
+    ? continuationPatch
+    : undefined
+  const editorLocked = writing || Boolean(visibleReviewPatch) || Boolean(visibleContinuationPatch)
   const selectionRewrite = useTiptapSelectionRewrite({
     editor,
     roomId: room.id,
     documentId,
     documentName,
-    externallyLocked: writing,
+    externallyLocked: editorLocked,
   })
   const editorInteractions = useTransientEditorInteractions(editor, selectionRewrite.cancel)
+
+  useEffect(() => {
+    if (!editor) return
+    if (!visibleReviewPatch) {
+      clearDocumentPatchReview(editor)
+      return
+    }
+    showDocumentPatchReview(
+      editor,
+      visibleReviewPatch,
+      decisionsByPatchId[visibleReviewPatch.id] ?? {},
+      currentHunkId,
+    )
+    if (visibleReviewPatch.status !== 'pending' && visibleReviewPatch.status !== 'conflicted') closeReview()
+  }, [closeReview, currentHunkId, decisionsByPatchId, editor, visibleReviewPatch])
+
+  useEffect(() => {
+    if (!editor || !visibleContinuationPatch || !continuationBlock) {
+      if (editor) clearDocumentContinuation(editor)
+      if (!visibleContinuationPatch) revealedContinuationPatchId.current = null
+      return
+    }
+    const autoReveal = revealedContinuationPatchId.current !== visibleContinuationPatch.id
+    revealedContinuationPatchId.current = visibleContinuationPatch.id
+    showDocumentContinuation(
+      editor,
+      continuationBlocks,
+      continuationBlock.blockId,
+      continuationDecisionsByPatchId[visibleContinuationPatch.id] ?? {},
+      busyPatchIds.has(visibleContinuationPatch.id),
+      autoReveal,
+      async (blockId) => {
+        decideContinuationBlock(visibleContinuationPatch.id, blockId, 'accepted')
+      },
+      async (blockId) => {
+        decideContinuationBlock(visibleContinuationPatch.id, blockId, 'rejected')
+      },
+      async () => {
+        await acceptAllContinuationBlocks(visibleContinuationPatch.id)
+      },
+    )
+  }, [
+    acceptAllContinuationBlocks,
+    busyPatchIds,
+    continuationBlock,
+    continuationBlocks,
+    continuationDecisionsByPatchId,
+    decideContinuationBlock,
+    editor,
+    visibleContinuationPatch,
+  ])
+
+  useEffect(() => {
+    if (!editor) return
+    if (editor.isEditable === editorLocked) editor.setEditable(!editorLocked, false)
+    if (editorLocked) setReferencePickerOpen(false)
+  }, [editor, editorLocked])
+
+  useEffect(() => {
+    if (!currentHunkId || !visibleReviewPatch) return
+    window.requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(
+        `[data-patch-hunk-id="${CSS.escape(currentHunkId)}"]`,
+      )
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }, [currentHunkId, visibleReviewPatch])
+
+  useEffect(() => {
+    if (!editor || !backendDocument || backendDocument.deletedAt) return
+    const handle = activateDocument({
+      roomId: room.id,
+      documentId,
+      title: documentName,
+      version: backendDocument.version,
+      getCursorAnchorCandidate: () => cursorAnchorCandidateFromEditorState(editor.state),
+      flush: async () => {
+        if (saveTimer.current !== null) {
+          window.clearTimeout(saveTimer.current)
+          saveTimer.current = null
+        }
+        while (saveInFlight.current) await wait(10)
+        if (pendingSave.current) await persistPendingSave()
+        while (saveInFlight.current) await wait(10)
+        if (pendingSave.current) throw new Error('文档尚未保存，请稍后重试。')
+        return { title: backendRef.current?.title ?? documentName, version: versionRef.current }
+      },
+    })
+    return handle.deactivate
+  }, [activateDocument, backendDocument, documentId, documentName, editor, room.id])
 
   useEffect(
     () => registerVisibleDocument(documentId),
     [documentId, registerVisibleDocument],
   )
+
+  const listDocumentBlocks = useCallback(async (targetDocumentId: string) => {
+    const documents = window.nxcore?.documents
+    if (!documents) throw new Error('文档块服务不可用。')
+    return documents.listBlocks(targetDocumentId)
+  }, [])
+
+  const copyBlockReference = useCallback(async (blockId: string, textPreview: string) => {
+    const url = createEverroomBlockReferenceUrl({
+      roomId: room.id,
+      documentId,
+      blockId,
+      fallbackTitle: documentName,
+      fallbackPreview: textPreview,
+    })
+    try {
+      await navigator.clipboard.writeText(url)
+      showToast({ title: '已复制块引用', message: '可粘贴到同一 Room 的文档中。' })
+    } catch {
+      showToast({ title: '复制失败', message: '请检查剪贴板权限。' })
+    }
+  }, [documentId, documentName, room.id])
 
   useEffect(() => {
     if (!editor || backendDocument || importedRef.current) return
@@ -352,9 +607,14 @@ export function TiptapDocumentEditor({
     versionRef.current = backendDocument.version
     importedRef.current = true
     const writing = Boolean(backendDocument.activeTransactionId) || presentingStream
-    if (editor.isEditable === writing) editor.setEditable(!writing, false)
-    setSaveState(writing ? 'Agent 正在写入' : '已保存')
-    if (!writing && recoveringDraft.current) {
+    const locked = writing || Boolean(visibleReviewPatch) || Boolean(visibleContinuationPatch)
+    if (editor.isEditable === locked) editor.setEditable(!locked, false)
+    setSaveState(writing
+      ? 'Agent 正在写入'
+      : visibleContinuationPatch
+        ? 'Agent 正在续写'
+        : visibleReviewPatch ? '正在审阅改动' : '已保存')
+    if (!locked && recoveringDraft.current) {
       if (!recoverySaveScheduled.current) {
         recoverySaveScheduled.current = true
         queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0)
@@ -373,7 +633,7 @@ export function TiptapDocumentEditor({
         applyingRemote.current = false
       }
     }
-  }, [backendDocument, editor, presentingStream])
+  }, [backendDocument, editor, presentingStream, visibleContinuationPatch, visibleReviewPatch])
 
   useEffect(() => {
     if (!editor) return
@@ -507,17 +767,72 @@ export function TiptapDocumentEditor({
     if (!dragging && editor && !editor.isDestroyed) editor.view.dom.dispatchEvent(new Event('dragend'))
   }
 
+  const deleteCurrentDocument = async (document: RoomDocument): Promise<void> => {
+    if (!onDeleteDocument) return
+    const pending = pendingSave.current
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    pendingSave.current = null
+    removeDocumentDraft(documentId)
+    try {
+      await onDeleteDocument(document)
+    } catch (error) {
+      if (pending) {
+        pendingSave.current = pending
+        writeDocumentDraft(documentId, pending.contentJson, versionRef.current)
+        setSaveState('删除失败，草稿已保留')
+      }
+      throw error
+    }
+  }
+
   const awaitingFirstContent = isAgentDocumentAwaitingContent(backendDocument)
   return (
     <div
       className="context-room-embedded-cloud-doc context-room-tiptap-editor"
       data-block-dragging={String(blockDragging)}
       data-agent-writing={String(writing)}
+      data-continuation-active={String(Boolean(visibleContinuationPatch))}
     >
       <div className="context-room-embedded-doc-status">
         <b>{saveState}</b>
-        <em>{documentName}</em>
+        <input
+          className="context-room-document-title-input"
+          aria-label="文档标题"
+          title="文档标题"
+          value={editableTitle}
+          maxLength={120}
+          disabled={writing || editorLocked}
+          onChange={(event) => updateDocumentTitle(event.target.value)}
+          onBlur={restoreEmptyDocumentTitle}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur()
+            if (event.key === 'Escape') {
+              const title = backendRef.current?.title ?? documentName
+              setEditableTitle(title)
+              titleRef.current = title
+              if (editor && !editor.isDestroyed) {
+                queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0, title)
+              }
+              event.currentTarget.blur()
+            }
+          }}
+        />
+        {editor ? (
+          <TiptapDocumentActions
+            editor={editor}
+            documentName={documentName}
+            backendDocument={backendDocument}
+            writing={writing}
+            saving={saveState === '正在保存...'}
+            onDeleteDocument={onDeleteDocument ? deleteCurrentDocument : undefined}
+          />
+        ) : null}
       </div>
+      {visibleReviewPatch ? <DocumentPatchReviewToolbar patch={visibleReviewPatch} /> : null}
+      {visibleContinuationPatch ? <DocumentContinuationToolbar patch={visibleContinuationPatch} /> : null}
       {awaitingFirstContent ? (
         <div className="context-room-agent-write-overlay" role="status" aria-live="polite">
           <span>
@@ -533,14 +848,18 @@ export function TiptapDocumentEditor({
       >
         <EditorContent editor={editor} />
       </div>
-      {editor && !writing ? (
+      {editor && !editorLocked ? (
         <>
           <TiptapBubbleToolbar
             editor={editor}
             onAskAi={selectionRewrite.requestRewrite}
           />
-          <TiptapBlockHandle editor={editor} onDraggingChange={handleBlockDraggingChange} />
-          <TiptapSlashCommandMenu editor={editor} />
+          <TiptapBlockHandle
+            editor={editor}
+            onDraggingChange={handleBlockDraggingChange}
+            onCopyBlockReference={copyBlockReference}
+          />
+          <TiptapSlashCommandMenu editor={editor} onRequestBlockReference={() => setReferencePickerOpen(true)} />
         </>
       ) : null}
       <TiptapSelectionRewritePreview
@@ -550,6 +869,19 @@ export function TiptapDocumentEditor({
         onRetry={selectionRewrite.retry}
       />
       {editor ? <TiptapContentScale items={tableOfContents} /> : null}
+      {editor && referencePickerOpen && !editorLocked ? (
+        <DocumentBlockReferencePicker
+          roomId={room.id}
+          currentDocumentId={documentId}
+          documents={roomDocuments.documentsByRoom[room.id] ?? []}
+          listBlocks={listDocumentBlocks}
+          onClose={() => setReferencePickerOpen(false)}
+          onSelect={(reference) => {
+            insertDocumentBlockReference(editor, reference)
+            setReferencePickerOpen(false)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

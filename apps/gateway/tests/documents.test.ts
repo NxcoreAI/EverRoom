@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   agentSessions,
+  contextRooms,
+  documentBlocks,
   documentOps,
   documentTransactions,
   documentVersions,
@@ -13,7 +15,8 @@ import {
 } from '../src/infrastructure/database/schema.js'
 import { eq } from 'drizzle-orm'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
-import { DocumentMcpHost } from '../src/modules/documents/mcp-host.js'
+import { normalizeDocumentContent, targetsOverlap } from '../src/modules/documents/content-model.js'
+import { DOCUMENT_MCP_TOOL_DEFINITIONS, DocumentMcpHost } from '../src/modules/documents/mcp-host.js'
 import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 import {
   DocumentService,
@@ -76,7 +79,10 @@ describe('document transactions', () => {
           title: '持久化文档',
           version: 2,
           status: 'active',
-          contentJson: savedContent,
+          contentJson: expect.objectContaining({
+            type: 'doc',
+            content: [expect.objectContaining({ type: 'paragraph', attrs: { id: expect.any(String) } })],
+          }),
         }),
       ])
       expect(second.db.select().from(documentVersions).all()).toHaveLength(2)
@@ -114,12 +120,15 @@ describe('document transactions', () => {
         expect.objectContaining({
           id: 'doc-trash-persisted',
           deletedAt: expect.any(String),
-          contentJson,
+          contentJson: expect.objectContaining({
+            type: 'doc',
+            content: [expect.objectContaining({ type: 'paragraph', attrs: { id: expect.any(String) } })],
+          }),
         }),
       ])
       await expect(secondService.restore('doc-trash-persisted')).resolves.toMatchObject({
         deletedAt: null,
-        contentJson,
+        contentJson: expect.objectContaining({ type: 'doc' }),
       })
     } finally {
       secondService.dispose()
@@ -143,11 +152,23 @@ describe('document transactions', () => {
     expect(updated.version).toBe(2)
     expect(service.list('room-1')).toHaveLength(1)
     expect(service.list('room-2')).toHaveLength(0)
+    const renamed = await service.save(updated.id, {
+      baseVersion: 2,
+      title: '  新项目标题  ',
+      contentJson: updated.contentJson,
+    })
+    expect(renamed).toMatchObject({ title: '新项目标题', version: 3 })
+    expect(service.list('room-1')[0]).toMatchObject({ title: '新项目标题', version: 3 })
+    expect(db.select().from(documentVersions).all()).toHaveLength(3)
+    await expect(service.save(renamed.id, {
+      baseVersion: 3,
+      title: '   ',
+      contentJson: renamed.contentJson,
+    })).rejects.toMatchObject({ code: 'INVALID_TITLE' })
     await expect(service.save(updated.id, {
       baseVersion: 1,
       contentJson: updated.contentJson,
-    })).resolves.toMatchObject({ version: 2 })
-    expect(db.select().from(documentVersions).all()).toHaveLength(2)
+    })).resolves.toMatchObject({ title: '新项目标题', version: 3 })
     await expect(service.save(imported.id, {
       baseVersion: 1,
       contentJson: { type: 'doc', content: [] },
@@ -295,15 +316,15 @@ describe('document transactions', () => {
     expect(persistedDraft?.contentJson.content).toEqual([
       expect.objectContaining({
         type: 'heading',
-        attrs: { level: 1, id: `${started.transactionId}:0` },
+        attrs: { level: 1, id: expect.any(String) },
       }),
       expect.objectContaining({
         type: 'paragraph',
-        attrs: { id: `${started.transactionId}:1` },
+        attrs: { id: expect.any(String) },
       }),
       expect.objectContaining({
         type: 'taskList',
-        attrs: { id: `${started.transactionId}:2` },
+        attrs: { id: expect.any(String) },
       }),
     ])
     expect(JSON.stringify(persistedDraft?.contentJson)).toContain('服务解耦')
@@ -576,7 +597,456 @@ describe('document transactions', () => {
     ])
   })
 
-  it('publishes exactly the five approved MCP tools', async () => {
+  it('assigns stable IDs recursively and resolves only same-Room block references', async () => {
+    const { db, service } = await createHarness()
+    db.insert(contextRooms).values([
+      { id: 'room-1', title: 'Room 1', data: {}, position: 0 },
+      { id: 'room-2', title: 'Room 2', data: {}, position: 1 },
+    ]).run()
+    const target = await service.import({
+      id: 'doc-block-target',
+      roomId: 'room-1',
+      title: '块目标',
+      contentJson: {
+        type: 'doc',
+        content: [{
+          type: 'taskList',
+          content: [{
+            type: 'taskItem',
+            attrs: { checked: false },
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: '第一项' }] }],
+          }],
+        }],
+      },
+    })
+    const blocks = service.listBlocks(target.id)
+    expect(blocks.map((block) => block.type)).toEqual(['taskList', 'taskItem', 'paragraph'])
+    expect(new Set(blocks.map((block) => block.id))).toHaveLength(3)
+    expect(db.select().from(documentBlocks).all()).toHaveLength(3)
+
+    const item = blocks.find((block) => block.type === 'taskItem')!
+    expect(service.resolveBlockReferences({
+      sourceRoomId: 'room-1',
+      references: [{ roomId: 'room-1', documentId: target.id, blockId: item.id }],
+    })).toEqual([expect.objectContaining({ status: 'available', textPreview: '第一项' })])
+    expect(() => service.resolveBlockReferences({
+      sourceRoomId: 'room-1',
+      references: [{ roomId: 'room-2', documentId: target.id, blockId: item.id }],
+    })).toThrow(expect.objectContaining({ code: 'CROSS_ROOM_REFERENCE' }))
+
+    await expect(service.import({
+      id: 'doc-cross-room-reference',
+      roomId: 'room-2',
+      title: '非法引用',
+      contentJson: {
+        type: 'doc',
+        content: [{
+          type: 'paragraph',
+          content: [{
+            type: 'documentBlockReference',
+            attrs: { targetRoomId: 'room-1', targetDocumentId: target.id, targetBlockId: item.id },
+          }],
+        }],
+      },
+    })).rejects.toMatchObject({ code: 'CROSS_ROOM_REFERENCE' })
+  })
+
+  it('does not let inserted or duplicated blocks steal existing stable IDs', () => {
+    const previous = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', attrs: { id: 'block-a' }, content: [{ type: 'text', text: 'A' }] },
+        { type: 'paragraph', attrs: { id: 'block-b' }, content: [{ type: 'text', text: 'B' }] },
+      ],
+    }
+    const incoming = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'inserted' }] },
+        { type: 'paragraph', attrs: { id: 'block-a' }, content: [{ type: 'text', text: 'A' }] },
+        { type: 'paragraph', attrs: { id: 'block-a' }, content: [{ type: 'text', text: 'copy' }] },
+        { type: 'paragraph', attrs: { id: 'block-b' }, content: [{ type: 'text', text: 'B' }] },
+      ],
+    }
+
+    const normalized = normalizeDocumentContent(incoming, 'doc-stable', 'room-1', {
+      previous,
+      owners: new Map([['block-a', 'doc-stable'], ['block-b', 'doc-stable']]),
+    })
+    const ids = normalized.content.content!.map((node) => node.attrs?.id)
+
+    expect(ids[1]).toBe('block-a')
+    expect(ids[3]).toBe('block-b')
+    expect(ids[0]).not.toBe('block-a')
+    expect(ids[0]).not.toBe('block-b')
+    expect(ids[2]).not.toBe('block-a')
+    expect(new Set(ids)).toHaveLength(ids.length)
+  })
+
+  it('detects range, descendant, and insertion-point hunk overlap from the base document', () => {
+    const content = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', attrs: { id: 'a' } },
+        {
+          type: 'bulletList',
+          attrs: { id: 'list' },
+          content: [{
+            type: 'listItem',
+            attrs: { id: 'item' },
+            content: [{ type: 'paragraph', attrs: { id: 'nested' } }],
+          }],
+        },
+        { type: 'paragraph', attrs: { id: 'c' } },
+      ],
+    }
+
+    expect(targetsOverlap(content, { fromBlockId: 'a', toBlockId: 'c' }, { blockId: 'list' })).toBe(true)
+    expect(targetsOverlap(content, { blockId: 'item' }, { blockId: 'nested' })).toBe(true)
+    expect(targetsOverlap(content, { blockId: 'a', edge: 'after' }, { blockId: 'list', edge: 'before' })).toBe(true)
+    expect(targetsOverlap(content, { at: 'end' }, { at: 'end' })).toBe(true)
+    expect(targetsOverlap(content, { blockId: 'a' }, { blockId: 'c' })).toBe(false)
+  })
+
+  it('prepares multi-hunk patches and applies the selected hunks atomically', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-patch',
+      roomId: 'room-1',
+      title: 'Patch 文档',
+      contentJson: {
+        type: 'doc',
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: '第一段' }] },
+          { type: 'paragraph', content: [{ type: 'text', text: '第二段' }] },
+        ],
+      },
+    })
+    const secondBlockId = service.listBlocks(document.id)[1]!.id
+    const started = await service.beginPatch({
+      documentId: document.id,
+      roomId: document.roomId,
+      baseVersion: document.version,
+      kind: 'edit',
+      summary: '续写结论并改写第二段',
+      agentSessionId: 'session-1',
+      runId: 'run-patch',
+    })
+    await service.appendPatchHunk({
+      patchId: started.patch.id,
+      sessionId: 'session-1',
+      sequence: 1,
+      operation: 'insert',
+      target: { at: 'end' },
+      markdown: '新增结论',
+    })
+    await service.appendPatchHunk({
+      patchId: started.patch.id,
+      sessionId: 'session-1',
+      sequence: 2,
+      operation: 'replace',
+      target: { blockId: secondBlockId },
+      markdown: '被拒绝的改写',
+    })
+    const prepared = await service.commitPatch({
+      patchId: started.patch.id,
+      sessionId: 'session-1',
+      finalSequence: 2,
+    })
+    expect(prepared).toMatchObject({ status: 'pending', hunkCount: 2, baseVersion: 1 })
+    expect(service.get(document.id)).toMatchObject({ version: 1 })
+    expect(JSON.stringify(service.get(document.id)?.contentJson)).not.toContain('新增结论')
+
+    const acceptedHunkId = prepared.hunks[0]!.id
+    const applied = await service.applyPatch(prepared.id, {
+      baseVersion: 1,
+      acceptedHunkIds: [acceptedHunkId],
+    })
+    expect(applied.document.version).toBe(2)
+    expect(JSON.stringify(applied.document.contentJson)).toContain('新增结论')
+    expect(JSON.stringify(applied.document.contentJson)).toContain('第二段')
+    expect(JSON.stringify(applied.document.contentJson)).not.toContain('被拒绝的改写')
+    expect(applied.patch).toMatchObject({
+      status: 'applied',
+      acceptedHunkIds: [acceptedHunkId],
+      rejectedHunkIds: [prepared.hunks[1]!.id],
+      appliedVersion: 2,
+    })
+    await expect(service.applyPatch(prepared.id, {
+      baseVersion: 1,
+      acceptedHunkIds: [acceptedHunkId],
+    })).resolves.toMatchObject({ document: { version: 2 } })
+  })
+
+  it('accepts a rich continuation one top-level block at a time and closes the remainder', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-continuation',
+      roomId: 'room-1',
+      title: '连续续写',
+      contentJson: {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: '已有正文' }] }],
+      },
+    })
+    const started = await service.beginPatch({
+      documentId: document.id,
+      roomId: document.roomId,
+      baseVersion: document.version,
+      kind: 'continue',
+      summary: '充分展开后续内容',
+      agentSessionId: 'session-1',
+      runId: 'run-continuation',
+    })
+    await service.appendPatchHunk({
+      patchId: started.patch.id,
+      sessionId: 'session-1',
+      sequence: 1,
+      operation: 'insert',
+      target: { at: 'end' },
+      markdown: [
+        '## 深入续写',
+        '',
+        '第一段解释核心背景和上下文。',
+        '',
+        '第二段给出具体例子和后续行动。',
+        '',
+        '- 检查结果',
+        '- 继续迭代',
+      ].join('\n'),
+    })
+    await expect(service.appendPatchHunk({
+      patchId: started.patch.id,
+      sessionId: 'session-1',
+      sequence: 2,
+      operation: 'insert',
+      target: { at: 'end' },
+      markdown: '不应拆成第二次 Agent hunk',
+    })).rejects.toMatchObject({ code: 'INVALID_CONTINUATION' })
+    const prepared = await service.commitPatch({
+      patchId: started.patch.id,
+      sessionId: 'session-1',
+      finalSequence: 1,
+    })
+    expect(prepared.continuationBlocks.length).toBeGreaterThanOrEqual(4)
+    expect(prepared.nextPendingBlock).toMatchObject({ sequence: 1, target: { at: 'end' } })
+    expect(service.get(document.id)).toMatchObject({ version: 1 })
+
+    const first = prepared.nextPendingBlock!
+    const acceptedFirst = await service.acceptContinuationBlock(prepared.id, {
+      baseVersion: 1,
+      blockId: first.blockId,
+    })
+    expect(acceptedFirst.document.version).toBe(2)
+    expect(acceptedFirst.patch).toMatchObject({
+      status: 'pending',
+      acceptedBlockIds: [first.blockId],
+      appliedVersion: 2,
+    })
+    expect(acceptedFirst.nextPendingBlock?.target).toEqual({ blockId: first.blockId, edge: 'after' })
+    expect(JSON.stringify(acceptedFirst.document.contentJson)).toContain('深入续写')
+
+    await expect(service.acceptContinuationBlock(prepared.id, {
+      baseVersion: 1,
+      blockId: first.blockId,
+    })).resolves.toMatchObject({ document: { version: 2 } })
+
+    const second = acceptedFirst.nextPendingBlock!
+    const rejectedSecond = await service.rejectContinuationBlock(prepared.id, {
+      baseVersion: 2,
+      blockId: second.blockId,
+    })
+    expect(service.get(document.id)?.version).toBe(2)
+    expect(rejectedSecond.patch).toMatchObject({
+      status: 'pending',
+      acceptedBlockIds: [first.blockId],
+      rejectedBlockIds: [second.blockId],
+      appliedVersion: 2,
+    })
+    expect(rejectedSecond.nextPendingBlock?.target).toEqual({ blockId: first.blockId, edge: 'after' })
+    await expect(service.rejectContinuationBlock(prepared.id, {
+      baseVersion: 2,
+      blockId: second.blockId,
+    })).resolves.toMatchObject({ patch: { rejectedBlockIds: [second.blockId] } })
+
+    const third = rejectedSecond.nextPendingBlock!
+    const acceptedThird = await service.acceptContinuationBlock(prepared.id, {
+      baseVersion: 2,
+      blockId: third.blockId,
+    })
+    expect(acceptedThird.document.version).toBe(3)
+    expect(acceptedThird.patch.rejectedBlockIds).toEqual([second.blockId])
+    expect(JSON.stringify(acceptedThird.document.contentJson)).not.toContain('第一段解释')
+
+    const closed = await service.closeContinuation(prepared.id)
+    expect(closed.status).toBe('applied')
+    expect(closed.acceptedBlockIds).toEqual([first.blockId, third.blockId])
+    expect(closed.rejectedBlockIds).toContain(second.blockId)
+    expect(closed.rejectedBlockIds.length).toBeGreaterThan(0)
+    expect(closed.nextPendingBlock).toBeNull()
+    expect(JSON.stringify(service.get(document.id)?.contentJson)).toContain('第二段给出')
+    await expect(service.closeContinuation(prepared.id)).resolves.toMatchObject({ status: 'applied' })
+    await expect(service.applyPatch(prepared.id, {
+      baseVersion: 1,
+      acceptedHunkIds: [prepared.hunks[0]!.id],
+    })).rejects.toMatchObject({ code: 'CONTINUATION_REQUIRES_BLOCK_ACCEPT' })
+  })
+
+  it('rejects leading continuation blocks without changing the document version or leaving a dangling target', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-reject-continuation', roomId: 'room-1', title: '拒绝续写块',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '原文' }] }] },
+    })
+    const started = await service.beginPatch({
+      documentId: document.id, roomId: document.roomId, baseVersion: 1, kind: 'continue',
+      summary: '生成三个候选块', agentSessionId: 'session-1', runId: 'run-reject-continuation',
+    })
+    await service.appendPatchHunk({
+      patchId: started.patch.id, sessionId: 'session-1', sequence: 1,
+      operation: 'insert', target: { at: 'end' }, markdown: '第一块\n\n第二块\n\n第三块',
+    })
+    const prepared = await service.commitPatch({
+      patchId: started.patch.id, sessionId: 'session-1', finalSequence: 1,
+    })
+    const first = prepared.nextPendingBlock!
+    const rejectedFirst = await service.rejectContinuationBlock(prepared.id, {
+      baseVersion: 1,
+      blockId: first.blockId,
+    })
+    expect(service.get(document.id)?.version).toBe(1)
+    expect(rejectedFirst.nextPendingBlock?.target).toEqual({ at: 'end' })
+    const second = rejectedFirst.nextPendingBlock!
+    const rejectedSecond = await service.rejectContinuationBlock(prepared.id, {
+      baseVersion: 1,
+      blockId: second.blockId,
+    })
+    expect(service.get(document.id)?.version).toBe(1)
+    expect(rejectedSecond.nextPendingBlock?.target).toEqual({ at: 'end' })
+    const third = rejectedSecond.nextPendingBlock!
+    const rejectedThird = await service.rejectContinuationBlock(prepared.id, {
+      baseVersion: 1,
+      blockId: third.blockId,
+    })
+    expect(rejectedThird.patch).toMatchObject({
+      status: 'rejected',
+      rejectedBlockIds: [first.blockId, second.blockId, third.blockId],
+      appliedVersion: null,
+    })
+    expect(rejectedThird.nextPendingBlock).toBeNull()
+    expect(service.get(document.id)).toMatchObject({ version: 1 })
+  })
+
+  it('keeps continuation block identities when accepting repeatedly at a block start', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-cursor-continuation', roomId: 'room-1', title: '光标续写',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '原段落' }] }] },
+    })
+    const sourceBlockId = service.listBlocks(document.id)[0]!.id
+    const started = await service.beginPatch({
+      documentId: document.id, roomId: document.roomId, baseVersion: 1, kind: 'continue',
+      summary: '从段落开头续写', agentSessionId: 'session-1', runId: 'run-cursor-continuation',
+    })
+    await service.appendPatchHunk({
+      patchId: started.patch.id, sessionId: 'session-1', sequence: 1,
+      operation: 'insert', target: { blockId: sourceBlockId, fromOffset: 0, toOffset: 0 },
+      markdown: '第一块\n\n第二块',
+    })
+    const prepared = await service.commitPatch({
+      patchId: started.patch.id, sessionId: 'session-1', finalSequence: 1,
+    })
+    const first = prepared.nextPendingBlock!
+    const firstResult = await service.acceptContinuationBlock(prepared.id, { baseVersion: 1, blockId: first.blockId })
+    expect(service.listBlocks(document.id).some((block) => block.id === first.blockId)).toBe(true)
+    const second = firstResult.nextPendingBlock!
+    const secondResult = await service.acceptContinuationBlock(prepared.id, { baseVersion: 2, blockId: second.blockId })
+    expect(secondResult.patch.status).toBe('applied')
+    expect(JSON.stringify(secondResult.document.contentJson)).toMatch(/第一块.*第二块.*原段落/)
+  })
+
+  it('marks pending patches conflicted after an ordinary document save', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-patch-conflict', roomId: 'room-1', title: '冲突文档',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '原文' }] }] },
+    })
+    const started = await service.beginPatch({
+      documentId: document.id, roomId: document.roomId, baseVersion: 1, kind: 'edit',
+      summary: '增加内容', agentSessionId: 'session-1', runId: 'run-conflict',
+    })
+    await service.appendPatchHunk({
+      patchId: started.patch.id, sessionId: 'session-1', sequence: 1,
+      operation: 'insert', target: { at: 'end' }, markdown: '建议内容',
+    })
+    await service.commitPatch({ patchId: started.patch.id, sessionId: 'session-1', finalSequence: 1 })
+    await service.save(document.id, {
+      baseVersion: 1,
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '用户修改' }] }] },
+    })
+    expect(service.getPatch(started.patch.id)).toMatchObject({ status: 'conflicted', conflictVersion: 2 })
+    await expect(service.applyPatch(started.patch.id, {
+      baseVersion: 1,
+      acceptedHunkIds: [service.getPatch(started.patch.id)!.hunks[0]!.id],
+    })).rejects.toMatchObject({ code: 'PATCH_CONFLICT' })
+  })
+
+  it('validates active document versions and UTF-16 cursor anchors before an Agent run', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-active-context', roomId: 'room-1', title: '活动文档',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'A😀B' }] }] },
+    })
+    const blockId = service.listBlocks(document.id)[0]!.id
+    expect(service.validateActiveDocumentContext({
+      roomId: 'room-1', documentId: document.id, title: '不可信标题', version: 1,
+      defaultAnchor: 'end', cursorAnchorCandidate: { blockId, offset: 3, affinity: 'after' },
+    }, 'room-1')).toMatchObject({
+      title: '活动文档', defaultAnchor: 'end', cursorAnchorCandidate: { blockId, offset: 3 },
+    })
+    expect(() => service.validateActiveDocumentContext({
+      roomId: 'room-1', documentId: document.id, title: document.title, version: 0, defaultAnchor: 'end',
+    }, 'room-1')).toThrow(expect.objectContaining({ code: 'DOCUMENT_CONFLICT' }))
+    expect(() => service.validateActiveDocumentContext({
+      roomId: 'room-1', documentId: document.id, title: document.title, version: 1,
+      defaultAnchor: 'end', cursorAnchorCandidate: { blockId, offset: 5, affinity: 'after' },
+    }, 'room-1')).toThrow(expect.objectContaining({ code: 'ANCHOR_INVALID' }))
+  })
+
+  it('prepares a continuation through Agent tools without exposing apply', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-agent-patch', roomId: 'room-1', title: 'Agent 续写目标',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '已有正文' }] }] },
+    })
+    const host = new DocumentMcpHost(service)
+    disposables.push(() => host.close())
+    const context = { agentSessionId: 'session-1', runId: 'run-agent-patch', roomId: 'room-1' }
+    const listed = await host.callTool('context_room_document_list', {}, context)
+    expect(listed.structuredContent).toMatchObject({
+      documents: [expect.objectContaining({ id: document.id, version: 1 })],
+      selectionRequired: true,
+    })
+    const read = await host.callTool('context_room_document_read', { documentId: document.id }, context)
+    expect(read.structuredContent).toMatchObject({ documentId: document.id, version: 1 })
+    const begun = await host.callTool('context_room_patch_begin', {
+      documentId: document.id, baseVersion: 1, kind: 'continue', summary: '补充结尾',
+    }, context)
+    const patchId = String(begun.structuredContent.patchId)
+    await host.callTool('context_room_patch_hunk', {
+      patchId, sequence: 1, operation: 'insert', target: { at: 'end' }, markdown: '续写正文',
+    }, context)
+    const committed = await host.callTool('context_room_patch_commit', {
+      patchId, finalSequence: 1,
+    }, context)
+    expect(committed.structuredContent).toMatchObject({
+      patch: { id: patchId, status: 'pending', documentId: document.id },
+    })
+    expect(service.get(document.id)).toMatchObject({ version: 1 })
+    expect(DOCUMENT_MCP_TOOL_DEFINITIONS.some((tool) => tool.name.includes('apply'))).toBe(false)
+  })
+
+  it('publishes all approved document and patch MCP tools', async () => {
     const { service } = await createHarness()
     const host = new DocumentMcpHost(service)
     disposables.push(() => host.close())
@@ -595,6 +1065,12 @@ describe('document transactions', () => {
     const result = messages[0]?.result as { tools?: Array<{ name: string; description: string }> }
     expect(result.tools?.map((tool) => tool.name)).toEqual([
       'context_room_list',
+      'context_room_document_list',
+      'context_room_document_read',
+      'context_room_patch_begin',
+      'context_room_patch_hunk',
+      'context_room_patch_commit',
+      'context_room_patch_abort',
       'context_room_write_begin',
       'context_room_write_append',
       'context_room_write_commit',
@@ -628,6 +1104,6 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(5)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(11)
   })
 })

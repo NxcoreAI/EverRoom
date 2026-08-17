@@ -35,7 +35,7 @@ export function PageCanvas({
 }: {
   page: PageId
   activeContextRoomId: string | null
-  agentDocumentFocus: { roomId: string; documentId: string } | null
+  agentDocumentFocus: { roomId: string; documentId: string; blockId?: string | null } | null
   contextRoomHomeRequest: number
   onContextRoomDetailFocusChange: (focused: boolean) => void
   onContextRoomOpenTab: (room: ContextRoomWorkspaceTab) => void
@@ -53,6 +53,9 @@ export function PageCanvas({
           activeRoomId={activeContextRoomId}
           focusedDocumentId={agentDocumentFocus?.roomId === activeContextRoomId
             ? agentDocumentFocus.documentId
+            : null}
+          focusedBlockId={agentDocumentFocus?.roomId === activeContextRoomId
+            ? agentDocumentFocus.blockId ?? null
             : null}
           homeRequest={contextRoomHomeRequest}
           onDetailFocusChange={onContextRoomDetailFocusChange}

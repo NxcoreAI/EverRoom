@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  AgentActiveDocumentContext,
   AgentMessage,
   AgentRoomReference,
   AgentSession,
@@ -192,6 +193,7 @@ export function buildAgentRunContext(
   rooms: AgentRoomReference[],
   selectedText?: string,
   selectedRoomId?: string,
+  activeDocument?: AgentActiveDocumentContext | null,
 ): NonNullable<StartAgentRunInput['context']> {
   return {
     rooms: rooms.map(({ id, title, kind }) => ({
@@ -201,6 +203,7 @@ export function buildAgentRunContext(
     })),
     ...(selectedText?.trim() ? { selectedText: selectedText.trim().slice(0, 8_000) } : {}),
     ...(selectedRoomId?.trim() ? { selectedRoomId: selectedRoomId.trim() } : {}),
+    ...(activeDocument ? { activeDocument } : {}),
   }
 }
 
@@ -672,6 +675,7 @@ export function useAgentSession(
     prompt: string,
     selectedText?: string,
     selectedRoomId?: string,
+    activeDocument?: AgentActiveDocumentContext | null,
   ): Promise<string | null> => {
     const message = prompt.trim()
     if (!message || activeRunId || loading || sending) return null
@@ -696,7 +700,7 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument),
       })
       const updatedAt = new Date().toISOString()
       setSessions((current) => current.map((session) => session.id === currentSessionId

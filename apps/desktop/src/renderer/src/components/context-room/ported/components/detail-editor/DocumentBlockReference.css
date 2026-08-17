@@ -1,0 +1,274 @@
+.context-room-document-block-reference {
+  margin: 10px 0;
+}
+
+.context-room-document-block-reference > button {
+  align-items: center;
+  background: color-mix(in srgb, var(--room-color, #2563eb) 7%, #fff);
+  border: 1px solid color-mix(in srgb, var(--room-color, #2563eb) 28%, #d4d4d8);
+  border-radius: 6px;
+  color: #27272a;
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  min-height: 58px;
+  padding: 9px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.context-room-document-block-reference > button:disabled {
+  cursor: default;
+}
+
+.context-room-document-block-reference > button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--room-color, #2563eb) 55%, #a1a1aa);
+}
+
+.context-room-document-block-reference-icon {
+  align-items: center;
+  color: var(--room-color, #2563eb);
+  display: flex;
+  justify-content: center;
+}
+
+.context-room-document-block-reference-icon svg {
+  height: 18px;
+  width: 18px;
+}
+
+.context-room-document-block-reference[data-status="loading"] .context-room-document-block-reference-icon svg,
+.context-room-reference-picker .is-spinning {
+  animation: context-room-reference-spin 0.9s linear infinite;
+}
+
+.context-room-document-block-reference > button > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.context-room-document-block-reference strong,
+.context-room-document-block-reference small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-document-block-reference strong {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.context-room-document-block-reference small,
+.context-room-document-block-reference em {
+  color: #71717a;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.context-room-document-block-reference[data-status]:not([data-status="available"]):not([data-status="loading"]) > button {
+  background: #fafafa;
+  border-color: #d4d4d8;
+}
+
+.context-room-document-block-reference[data-status]:not([data-status="available"]):not([data-status="loading"]) .context-room-document-block-reference-icon,
+.context-room-document-block-reference[data-status]:not([data-status="available"]):not([data-status="loading"]) em {
+  color: #a16207;
+}
+
+.context-room-reference-picker-backdrop {
+  align-items: center;
+  background: rgb(9 9 11 / 24%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: 1200;
+}
+
+.context-room-reference-picker {
+  background: #fff;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  box-shadow: 0 20px 50px rgb(9 9 11 / 18%);
+  height: min(600px, calc(100vh - 80px));
+  overflow: hidden;
+  width: min(760px, calc(100vw - 48px));
+}
+
+.context-room-reference-picker > header {
+  align-items: center;
+  border-bottom: 1px solid #e4e4e7;
+  display: flex;
+  height: 48px;
+  justify-content: space-between;
+  padding: 0 10px 0 16px;
+}
+
+.context-room-reference-picker > header span {
+  align-items: center;
+  display: flex;
+  font-size: 13px;
+  font-weight: 650;
+  gap: 8px;
+}
+
+.context-room-reference-picker > header svg,
+.context-room-reference-picker nav svg {
+  height: 16px;
+  width: 16px;
+}
+
+.context-room-reference-picker > header button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  display: flex;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+.context-room-reference-picker-body {
+  display: grid;
+  grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+  height: calc(100% - 48px);
+}
+
+.context-room-reference-picker nav {
+  background: #fafafa;
+  border-right: 1px solid #e4e4e7;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.context-room-reference-picker nav button,
+.context-room-reference-picker-blocks > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #3f3f46;
+  display: flex;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 9px;
+  text-align: left;
+  width: 100%;
+}
+
+.context-room-reference-picker nav button[data-selected="true"] {
+  background: #e4e4e7;
+  color: #18181b;
+}
+
+.context-room-reference-picker nav button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-reference-picker main {
+  min-width: 0;
+  padding: 12px;
+}
+
+.context-room-reference-picker main > label {
+  align-items: center;
+  border: 1px solid #d4d4d8;
+  border-radius: 5px;
+  display: flex;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+}
+
+.context-room-reference-picker main > label svg {
+  color: #71717a;
+  height: 15px;
+  width: 15px;
+}
+
+.context-room-reference-picker main input {
+  border: 0;
+  font: inherit;
+  min-width: 0;
+  outline: none;
+  width: 100%;
+}
+
+.context-room-reference-picker-blocks {
+  height: calc(100% - 48px);
+  margin-top: 12px;
+  overflow-y: auto;
+}
+
+.context-room-reference-picker-blocks > button {
+  border-bottom: 1px solid #f4f4f5;
+  border-radius: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 44px;
+}
+
+.context-room-reference-picker-blocks > button:hover {
+  background: #f4f4f5;
+}
+
+.context-room-reference-picker-blocks > button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-reference-picker-blocks small,
+.context-room-reference-picker p {
+  color: #71717a;
+  font-size: 11px;
+}
+
+.context-room-reference-picker p {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  justify-content: center;
+  min-height: 80px;
+  padding: 12px;
+  text-align: center;
+}
+
+.context-room-reference-picker p[data-error="true"] {
+  color: #b91c1c;
+}
+
+[data-block-id][data-reference-target="true"] {
+  animation: context-room-reference-flash 1.8s ease-out;
+  outline: 2px solid color-mix(in srgb, var(--room-color, #2563eb) 72%, #fff);
+  outline-offset: 4px;
+}
+
+@media (max-width: 640px) {
+  .context-room-reference-picker-body {
+    grid-template-columns: 140px minmax(0, 1fr);
+  }
+
+  .context-room-document-block-reference > button {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .context-room-document-block-reference em {
+    display: none;
+  }
+}
+
+@keyframes context-room-reference-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes context-room-reference-flash {
+  0%, 35% { background-color: color-mix(in srgb, var(--room-color, #2563eb) 18%, transparent); }
+  100% { background-color: transparent; }
+}

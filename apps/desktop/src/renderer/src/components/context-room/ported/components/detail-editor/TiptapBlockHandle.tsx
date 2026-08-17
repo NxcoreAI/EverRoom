@@ -11,6 +11,7 @@ import {
   Plus,
   Quote,
   Trash2,
+  Link2,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTiptapBlockHandleVisibility } from './useTiptapBlockHandleVisibility'
@@ -20,9 +21,11 @@ const BLOCK_HANDLE_POSITION = { placement: 'left-start' } as const
 export function TiptapBlockHandle({
   editor,
   onDraggingChange,
+  onCopyBlockReference,
 }: {
   editor: Editor
   onDraggingChange: (dragging: boolean) => void
+  onCopyBlockReference?: (blockId: string, textPreview: string) => void | Promise<void>
 }) {
   const [activeNode, setActiveNode] = useState<Node | null>(null)
   const [activePos, setActivePos] = useState(-1)
@@ -68,6 +71,13 @@ export function TiptapBlockHandle({
   const deleteBlock = () => {
     if (!activeNode || activePos < 0) return
     editor.chain().focus().deleteRange({ from: activePos, to: activePos + activeNode.nodeSize }).run()
+    setMenuOpen(false)
+  }
+
+  const copyBlockReference = () => {
+    const blockId = typeof activeNode?.attrs.id === 'string' ? activeNode.attrs.id.trim() : ''
+    if (!activeNode || !blockId) return
+    void onCopyBlockReference?.(blockId, activeNode.textContent.slice(0, 240))
     setMenuOpen(false)
   }
 
@@ -117,6 +127,9 @@ export function TiptapBlockHandle({
             <button type="button" role="menuitem" onClick={() => transformBlock('bulletList')}><List />项目列表</button>
             <button type="button" role="menuitem" onClick={() => transformBlock('blockquote')}><Quote />引用</button>
             <i />
+            {onCopyBlockReference ? (
+              <button type="button" role="menuitem" onClick={copyBlockReference}><Link2 />复制块引用</button>
+            ) : null}
             <button type="button" role="menuitem" onClick={duplicateBlock}><Copy />复制块</button>
             <button type="button" role="menuitem" data-danger="true" onClick={deleteBlock}><Trash2 />删除块</button>
           </div>

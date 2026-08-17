@@ -343,6 +343,7 @@ export function WorkspaceLayout({
               backendDocuments={backendDocuments}
               documentEvents={documentEvents}
               onBackendDocumentChange={onBackendDocumentChange}
+              onDeleteDocument={onDeleteDocument}
               onOpenRoom={onOpenRoom}
               onMobileBack={() => setMobileContent(false)}
               onCloseObject={onCloseObject}

@@ -1,0 +1,139 @@
+.agent-patch-card {
+  display: flex;
+  width: min(100%, 360px);
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e2e6eb;
+  border-radius: 8px;
+  background: #fbfcfd;
+  color: #303640;
+}
+
+.agent-patch-card.is-loading {
+  flex-direction: row;
+  align-items: center;
+  color: #667085;
+  font-size: 12px;
+}
+
+.agent-patch-card > header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.agent-patch-card-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: #eef3fb;
+  color: #2563eb;
+}
+
+.agent-patch-card[data-status='conflicted'] .agent-patch-card-icon {
+  background: #fff5e8;
+  color: #b45309;
+}
+
+.agent-patch-card[data-status='applied'] .agent-patch-card-icon {
+  background: #eaf8f0;
+  color: #16824b;
+}
+
+.agent-patch-card-icon svg,
+.agent-patch-card button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.agent-patch-card-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.agent-patch-card-title strong {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-patch-card-title small {
+  color: #7d8692;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.agent-patch-card > p {
+  margin: 0;
+  color: #515966;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.agent-patch-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #7d8692;
+  font-size: 10px;
+}
+
+.agent-patch-card-stats .is-added { color: #16824b; }
+.agent-patch-card-stats .is-deleted { color: #c2413b; }
+
+.agent-patch-card-error {
+  color: #b45309;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.agent-patch-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.agent-patch-card button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid #dce1e7;
+  border-radius: 6px;
+  background: #fff;
+  color: #4b5563;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.agent-patch-card button.is-primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.agent-patch-card button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.agent-patch-card-spinner {
+  width: 15px;
+  height: 15px;
+  animation: agent-patch-spin 800ms linear infinite;
+}
+
+@keyframes agent-patch-spin { to { transform: rotate(360deg); } }

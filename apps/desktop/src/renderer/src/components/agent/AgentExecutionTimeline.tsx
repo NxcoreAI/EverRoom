@@ -37,6 +37,8 @@ function toolLabel(tool: DisplayAgentToolCall): string {
   const name = tool.name.toLowerCase()
   const done = tool.status === 'completed'
   if (name === 'tool_search') return tool.status === 'completed' ? '已选择所需工具' : '选择所需工具'
+  if (name === 'context_room_document_intent') return done ? '已准备创建选项' : '准备创建选项'
+  if (name === 'context_room_list') return done ? '已获取 Room 列表' : '获取 Room 列表'
   if (/photo|image/.test(name)) return done ? '已查看图像' : '查看图像'
   if (/calendar/.test(name)) {
     if (/create|add/.test(name)) return done ? '已创建日程' : '创建日程'

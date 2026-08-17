@@ -42,12 +42,21 @@ describe("database migrations", () => {
     const tables = upgraded.sqlite.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
     ).all() as Array<{ name: string }>;
+    const patchColumns = upgraded.sqlite.prepare("PRAGMA table_info(document_patches)")
+      .all() as Array<{ name: string }>;
     upgraded.sqlite.close();
 
     expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining([
       "documents",
+      "document_blocks",
+      "document_patches",
+      "document_patch_hunks",
       "doc_transactions",
       "reality_events",
+    ]));
+    expect(patchColumns.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "accepted_block_ids",
+      "rejected_block_ids",
     ]));
   });
 });

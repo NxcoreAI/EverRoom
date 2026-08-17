@@ -6,6 +6,7 @@ import './ported/PortedAdapters.css'
 export function ContextRoomPage({
   activeRoomId,
   focusedDocumentId,
+  focusedBlockId,
   homeRequest,
   onDetailFocusChange,
   onOpenRoomTab,
@@ -14,6 +15,7 @@ export function ContextRoomPage({
 }: {
   activeRoomId: string | null
   focusedDocumentId: string | null
+  focusedBlockId: string | null
   homeRequest: number
   onDetailFocusChange: (focused: boolean) => void
   onOpenRoomTab: (room: ContextRoomWorkspaceTab) => void
@@ -24,6 +26,7 @@ export function ContextRoomPage({
     <PortedContextRoom
       activeRoomId={activeRoomId}
       focusedDocumentId={focusedDocumentId}
+      focusedBlockId={focusedBlockId}
       homeRequest={homeRequest}
       onDetailFocusChange={onDetailFocusChange}
       onOpenRoomTab={onOpenRoomTab}
