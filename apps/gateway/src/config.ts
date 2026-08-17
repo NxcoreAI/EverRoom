@@ -140,6 +140,9 @@ export interface GatewayConfig {
     nangoSecret: string;
     gmailConfigKey: string;
     outlookConfigKey: string;
+    googleDocsConfigKey: string;
+    notionConfigKey: string;
+    googleCalendarConfigKey: string;
     pollingIntervalMs: number;
   };
 }
@@ -412,6 +415,9 @@ export function loadConfig(
       nangoSecret: rawConfig.nangoSecret,
       gmailConfigKey: env.NXCORE_NANGO_GMAIL_CONFIG_KEY?.trim() ?? "google-mail",
       outlookConfigKey: env.NXCORE_NANGO_OUTLOOK_CONFIG_KEY?.trim() ?? "microsoft-mail",
+      googleDocsConfigKey: env.NXCORE_NANGO_GOOGLE_DOCS_CONFIG_KEY?.trim() ?? "google-drive",
+      notionConfigKey: env.NXCORE_NANGO_NOTION_CONFIG_KEY?.trim() ?? "notion",
+      googleCalendarConfigKey: env.NXCORE_NANGO_GOOGLE_CALENDAR_CONFIG_KEY?.trim() ?? "google-calendar",
       pollingIntervalMs: rawConfig.connectorPollMs,
     },
     pi: rawConfig.agentRuntime === "pi"

@@ -1,13 +1,17 @@
-import { ExternalLink, FolderOpen, Github, Globe } from 'lucide-react'
+import { ExternalLink, FileText, FolderOpen, Github, Globe, Network } from 'lucide-react'
 
 export function ConnectSourceMenu({
   busy,
   onLocalFolder,
   onGitHub,
+  onGoogleDocs,
+  onNotion,
 }: {
   busy: boolean
   onLocalFolder: () => void
   onGitHub: () => void
+  onGoogleDocs: () => void
+  onNotion: () => void
 }) {
   return (
     <div className="connect-source-menu" role="menu" aria-label="选择数据源类型">
@@ -16,6 +20,12 @@ export function ConnectSourceMenu({
       </button>
       <button type="button" role="menuitem" disabled={busy} onClick={onGitHub}>
         <Github aria-hidden="true" strokeWidth={1.8} /><span><strong>GitHub</strong><small>同步仓库代码与 Issue</small></span>
+      </button>
+      <button type="button" role="menuitem" disabled={busy} onClick={onGoogleDocs}>
+        <FileText aria-hidden="true" strokeWidth={1.8} /><span><strong>Google Docs</strong><small>转换为 Markdown 并同步到 LLM wiki</small></span>
+      </button>
+      <button type="button" role="menuitem" disabled={busy} onClick={onNotion}>
+        <Network aria-hidden="true" strokeWidth={1.8} /><span><strong>Notion</strong><small>同步页面并转换为 Markdown</small></span>
       </button>
       <button type="button" role="menuitem" className="connect-source-disabled" disabled>
         <ExternalLink aria-hidden="true" strokeWidth={1.8} /><span><strong>飞书文档 / 云盘</strong><small>即将支持只读同步</small></span>

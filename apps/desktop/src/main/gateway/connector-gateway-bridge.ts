@@ -2,11 +2,14 @@ import type { AxiosRequestConfig } from 'axios'
 import type {
   ConnectorAuthorizationAttempt,
   ConnectorConnection,
+  ConnectorJsonRecord,
   ConnectorStatus,
   MailMessage,
   SyncMode,
   SyncRun,
   SyncScope,
+  WikiDocumentPreview,
+  WikiDocumentSummary,
 } from '@nxcore/connector-contract'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
@@ -16,7 +19,7 @@ const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/
 const FAULT_POINTS = new Set(['before_page_commit', 'after_page_commit_before_cursor_cas', 'rate_limited', 'cursor_expired'])
 
 export interface ConnectorConnectionInput {
-  provider: 'gmail' | 'outlook'
+  provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'
   nangoConfigKey: string
   nangoConnectionId: string
   filters?: Record<string, unknown>
@@ -54,13 +57,13 @@ export class ConnectorGatewayBridge {
   }
 
   registerConnection(input: ConnectorConnectionInput): Promise<ConnectorConnection> {
-    if (input.provider !== 'gmail' && input.provider !== 'outlook') throw new Error('不支持的连接提供方。')
+    if (!['gmail', 'outlook', 'google-docs', 'notion', 'google-calendar'].includes(input.provider)) throw new Error('不支持的连接提供方。')
     if (!input.nangoConfigKey.trim() || !input.nangoConnectionId.trim()) throw new Error('连接配置不能为空。')
     return this.request('/v1/connectors/connections', { method: 'POST', data: { ...input, nangoConfigKey: input.nangoConfigKey.trim(), nangoConnectionId: input.nangoConnectionId.trim() } })
   }
 
-  async startAuthorization(provider: 'gmail' | 'outlook'): Promise<ConnectorAuthorizationAttempt> {
-    if (provider !== 'gmail' && provider !== 'outlook') throw new Error('不支持的连接提供方。')
+  async startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt> {
+    if (!['gmail', 'outlook', 'google-docs', 'notion', 'google-calendar'].includes(provider)) throw new Error('不支持的连接提供方。')
     const result = await this.request<ConnectorAuthorizationAttempt & { authorizationUrl: string }>(
       '/v1/connectors/authorizations',
       { method: 'POST', data: { provider } },
@@ -85,7 +88,7 @@ export class ConnectorGatewayBridge {
   }
 
   async disableConnection(id: string): Promise<void> {
-    await this.request(`/v1/connectors/connections/${this.id(id)}/disable`, { method: 'POST' })
+    await this.request(`/v1/connectors/connections/${this.id(id)}/disable`, { method: 'POST', data: {} })
   }
 
   async purgeConnection(id: string): Promise<void> {
@@ -98,7 +101,7 @@ export class ConnectorGatewayBridge {
   }
 
   cancelRun(id: string): Promise<SyncRun> {
-    return this.request(`/v1/connectors/runs/${this.id(id)}/cancel`, { method: 'POST' })
+    return this.request(`/v1/connectors/runs/${this.id(id)}/cancel`, { method: 'POST', data: {} })
   }
 
   async scopes(connectionId?: string): Promise<SyncScope[]> {
@@ -122,6 +125,19 @@ export class ConnectorGatewayBridge {
 
   failures(query: { connectionId?: string; runId?: string; limit?: number } = {}): Promise<ConnectorFailure[]> {
     return this.request('/v1/connectors/failures', { params: query })
+  }
+
+  documents(connectionId: string): Promise<WikiDocumentSummary[]> {
+    return this.request(`/v1/connectors/connections/${this.id(connectionId)}/documents`)
+  }
+
+  document(connectionId: string, documentId: string): Promise<WikiDocumentPreview> {
+    return this.request(`/v1/connectors/connections/${this.id(connectionId)}/documents/${this.id(documentId)}`)
+  }
+
+  records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]> {
+    if (type !== 'mail' && type !== 'calendar') throw new Error('无效的数据记录类型。')
+    return this.request(`/v1/connectors/connections/${this.id(connectionId)}/records`, { params: { type } })
   }
 
   armFault(point: string): Promise<void> {

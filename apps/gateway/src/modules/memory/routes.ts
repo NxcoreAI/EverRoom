@@ -42,6 +42,16 @@ const ConversationMessageDtoSchema = Type.Object({
   sessionId: Type.Union([Type.String(), Type.Null()]),
 });
 
+const SourceDocumentInput = Type.Object({
+  sourceId: Type.String({ minLength: 1, maxLength: 100 }),
+  sourceKind: Type.String({ minLength: 1, maxLength: 50 }),
+  documentId: Type.String({ minLength: 1, maxLength: 200 }),
+  title: Type.String({ minLength: 1, maxLength: 500 }),
+  markdown: Type.String({ minLength: 1, maxLength: 500_000 }),
+  uri: Type.Optional(Type.String({ maxLength: 2_000 })),
+  contentHash: Type.Optional(Type.String({ maxLength: 128 })),
+});
+
 const ScenarioEntryDtoSchema = Type.Object({
   path: Type.String(),
   summary: Type.Union([Type.String(), Type.Null()]),
@@ -269,6 +279,12 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
         },
       },
       async (request) => ({ captured: await service.captureSelectionRewrite(request.body) }),
+    );
+
+    app.post(
+      "/v1/memory/source-document",
+      { schema: { tags: ["memory"], body: SourceDocumentInput } },
+      async (request) => ({ captured: await service.captureSourceDocument(request.body) }),
     );
   };
 }

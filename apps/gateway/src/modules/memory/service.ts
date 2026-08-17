@@ -48,6 +48,16 @@ export interface SelectionRewriteMemoryInput {
   replacementText: string;
 }
 
+export interface SourceDocumentMemoryInput {
+  sourceId: string;
+  sourceKind: string;
+  documentId: string;
+  title: string;
+  markdown: string;
+  uri?: string;
+  contentHash?: string;
+}
+
 /** 渲染层 DTO：L2 场景目录项。 */
 export interface MemoryScenarioEntryDto {
   path: string;
@@ -353,6 +363,24 @@ export class MemoryService {
         content: ["已接受并应用以下改写结果：", input.replacementText].join("\n"),
         timestamp,
       },
+    ]));
+    return true;
+  }
+
+  async captureSourceDocument(input: SourceDocumentMemoryInput): Promise<boolean> {
+    const client = this.client;
+    if (!client) return false;
+    const timestamp = new Date().toISOString();
+    const sessionId = `wiki:${input.sourceId}:${input.documentId}`.slice(0, 100);
+    const metadata = [
+      `[wiki:source=${input.sourceKind}]`,
+      `[wiki:document=${input.documentId}]`,
+      input.uri ? `[wiki:url=${input.uri}]` : '',
+      input.contentHash ? `[wiki:sha256=${input.contentHash}]` : '',
+    ].filter(Boolean).join(' ');
+    await this.call(() => client.addConversation(sessionId, [
+      { role: "user", content: `[wiki:sync] 请将以下 Markdown 文档作为可检索知识保存。\n${metadata}\n标题：${input.title}`, timestamp },
+      { role: "assistant", content: input.markdown, timestamp },
     ]));
     return true;
   }

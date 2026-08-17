@@ -41,9 +41,29 @@
 .connector-table-row strong { display: block; overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; text-transform: capitalize; }
 .connector-table-row small { display: block; margin-top: 3px; overflow: hidden; color: var(--subtle); font-size: 9px; text-overflow: ellipsis; }
 .connector-primary-cell { width: 100%; border: 0; background: transparent; text-align: left; }
+.connector-wiki-source { border-bottom: 1px solid var(--border); }
+.connector-wiki-source:last-child { border-bottom: 0; }
+.connector-wiki-source > .connector-table-row { border-bottom: 0; }
+.connector-wiki-toggle { display: flex; align-items: center; gap: 8px; color: inherit; }
+.connector-wiki-toggle > svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--subtle); }
+.connector-wiki-toggle > span { min-width: 0; }
+.connector-wiki-documents { display: grid; gap: 1px; padding: 5px 12px 9px 34px; border-top: 1px solid var(--border); background: var(--surface-alt); }
+.connector-wiki-document { display: grid; grid-template-columns: 18px minmax(0, 1fr) 18px; min-height: 48px; align-items: center; gap: 9px; padding: 6px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); text-align: left; }
+.connector-wiki-document:hover { background: var(--hover); color: var(--text); }
+.connector-wiki-document > svg { width: 15px; height: 15px; color: var(--subtle); }
+.connector-wiki-document span { min-width: 0; }
+.connector-wiki-document strong, .connector-wiki-document small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connector-wiki-document strong { color: var(--text); font-size: 11px; }
+.connector-wiki-document small { margin-top: 4px; color: var(--subtle); font: 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.connector-wiki-state { display: flex; min-height: 58px; align-items: center; justify-content: center; gap: 8px; color: var(--subtle); font-size: 10px; }
+.connector-wiki-state svg { width: 15px; height: 15px; }
 .connector-mail-row { width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; text-align: left; }
 .connector-mail-row:last-child { border-bottom: 0; }
 .connector-actions, .run-state { display: flex; align-items: center; gap: 5px; overflow: visible; }
+.run-state { flex-wrap: wrap; align-content: center; }
+.run-error { flex-basis: 100%; min-width: 0; margin-top: 3px; color: var(--danger); font: 9px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: normal; }
+.run-error summary { cursor: pointer; color: var(--danger); font-weight: 700; }
+.run-error code { display: block; max-height: 180px; overflow: auto; margin-top: 4px; padding: 6px; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border)); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); overflow-wrap: anywhere; white-space: pre-wrap; }
 .connector-scope-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .connector-status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--subtle); }
 .connector-status-dot.active, .connector-status-dot.completed, .connector-status-dot.idle { background: #2c9a68; }
@@ -78,6 +98,17 @@
 .connector-inspector dt { color: var(--subtle); }
 .connector-inspector dd { margin: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .connector-message-body { max-height: 420px; overflow: auto; padding: 14px 12px; color: var(--muted); font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+.connector-table-head.calendar, .connector-table-row.calendar { grid-template-columns: minmax(230px, 1.35fr) minmax(210px, 1fr) minmax(150px, .8fr) 110px; }
+.connector-table-head.json, .connector-table-row.json { grid-template-columns: minmax(240px, 1.4fr) 90px 140px minmax(190px, 1fr); }
+.connector-calendar-facts { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.connector-calendar-facts span { display: inline-flex; min-width: 0; align-items: center; gap: 5px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-alt); color: var(--muted); font-size: 9px; }
+.connector-calendar-facts svg { width: 13px; height: 13px; flex: 0 0 auto; color: var(--subtle); }
+.connector-calendar-attendees { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; padding: 1px; border-bottom: 1px solid var(--border); background: var(--border); }
+.connector-calendar-attendees > span { min-width: 0; padding: 8px 10px; background: var(--surface); }
+.connector-calendar-attendees strong, .connector-calendar-attendees small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connector-calendar-attendees strong { color: var(--muted); font-size: 10px; }
+.connector-calendar-attendees small { margin-top: 3px; color: var(--subtle); font: 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.connector-json-inspector pre { max-height: min(68vh, 680px); margin: 0; overflow: auto; padding: 14px 12px; background: color-mix(in srgb, var(--surface-alt) 68%, var(--surface)); color: var(--muted); font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 900px) {
   .connector-table-wrap { overflow-x: auto; }
   .connector-table-head, .connector-table-row { min-width: 720px; }

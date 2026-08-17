@@ -76,6 +76,9 @@ const api: NxcoreDesktopApi = {
     runs: (connectionId) => invoke('connector:list-runs', connectionId),
     mail: (query) => invoke('connector:list-mail', query),
     failures: (query) => invoke('connector:list-failures', query),
+    documents: (connectionId) => invoke('connector:list-documents', connectionId),
+    document: (connectionId, documentId) => invoke('connector:read-document', connectionId, documentId),
+    records: (connectionId, type) => invoke('connector:list-records', connectionId, type),
     armFault: (point) => invoke('connector:arm-fault', point),
   },
   contextRooms: {
@@ -188,6 +191,7 @@ const api: NxcoreDesktopApi = {
     list: () => invoke('sources:list'),
     listFiles: (id) => invoke('sources:list-files', id),
     listEvidence: (id, fileId) => invoke('sources:list-evidence', id, fileId),
+    previewFile: (id, fileId) => invoke('sources:preview-file', id, fileId),
     searchEvidence: (query, id) => invoke('sources:search-evidence', query, id),
     onChanged: (listener) => {
       const handleChanged = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]) => {
@@ -199,6 +203,8 @@ const api: NxcoreDesktopApi = {
     showFile: (id, fileId) => invoke('sources:show-file', id, fileId),
     addLocalFolder: () => invoke('sources:add-local-folder'),
     addGitHub: (input) => invoke('sources:add-github', input),
+    addGoogleDocs: (input) => invoke('sources:add-google-docs', input),
+    addNotion: (input) => invoke('sources:add-notion', input),
     sync: (id) => invoke('sources:sync', id),
     setPaused: (id, paused) => invoke('sources:set-paused', id, paused),
     disconnect: (id, deleteLocalData) =>

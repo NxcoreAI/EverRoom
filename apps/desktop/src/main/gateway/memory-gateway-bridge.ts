@@ -107,6 +107,21 @@ export class MemoryGatewayBridge {
     })
   }
 
+  captureSourceDocument(input: {
+    sourceId: string
+    sourceKind: string
+    documentId: string
+    title: string
+    markdown: string
+    uri?: string
+    contentHash?: string
+  }): Promise<{ captured: boolean }> {
+    return this.request('/v1/memory/source-document', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
   private query(
     options: MemoryAtomicListOptions | MemoryConversationListOptions,
   ): string {

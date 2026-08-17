@@ -1,9 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import type {
+  ConnectorJsonRecord,
   ConnectorConnection,
   MailMessage,
+  NormalizedMail,
   NormalizedMailChange,
+  NormalizedCalendarChange,
   SyncRun,
   SyncScope,
 } from "@nxcore/connector-contract";
@@ -25,6 +28,11 @@ const key = (
   return createHash("sha256")
     .update(`${connectionId}:${scopeId}:${id}:${change.kind}:${rev}`)
     .digest("hex");
+};
+const calendarKey = (connectionId: string, scopeId: string, change: NormalizedCalendarChange) => {
+  const id = change.kind === "upsert" ? change.event.providerEventId : change.providerEventId;
+  const revision = change.kind === "upsert" ? (change.event.providerRevision ?? "current") : "removed";
+  return createHash("sha256").update(`${connectionId}:${scopeId}:calendar:${id}:${change.kind}:${revision}`).digest("hex");
 };
 export class ConnectorRepository {
   constructor(public readonly sqlite: Database.Database) {}
@@ -95,6 +103,9 @@ export class ConnectorRepository {
         .prepare(
           "DELETE FROM mail_attachments WHERE message_id IN (SELECT id FROM mail_messages WHERE connection_id=?)",
         )
+        .run(id);
+      this.sqlite
+        .prepare("DELETE FROM connector_records WHERE connection_id=?")
         .run(id);
       this.sqlite
         .prepare("DELETE FROM sync_changes WHERE connection_id=?")
@@ -206,6 +217,43 @@ export class ConnectorRepository {
       )
       .all();
   }
+  records(connectionId: string, recordType: "mail" | "calendar" = "mail") {
+    const rows = this.sqlite
+      .prepare(
+        "SELECT payload_json as payloadJson FROM connector_records WHERE connection_id=? AND record_type=? ORDER BY updated_at DESC LIMIT 200",
+      )
+      .all(connectionId, recordType) as Array<{ payloadJson: string }>;
+    return rows.map((row) => JSON.parse(row.payloadJson) as ConnectorJsonRecord);
+  }
+  upsertRecord(
+    connectionId: string,
+    provider: ConnectorJsonRecord["provider"],
+    recordType: ConnectorJsonRecord["type"],
+    providerRecordId: string,
+    data: ConnectorJsonRecord["data"],
+  ) {
+    const record: ConnectorJsonRecord = {
+      schemaVersion: 1,
+      type: recordType,
+      provider,
+      connectionId,
+      data,
+    };
+    this.sqlite
+      .prepare(
+        "INSERT INTO connector_records(id,connection_id,provider,record_type,provider_record_id,payload_json,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(connection_id,record_type,provider_record_id) DO UPDATE SET provider=excluded.provider,payload_json=excluded.payload_json,updated_at=excluded.updated_at",
+      )
+      .run(
+        randomUUID(),
+        connectionId,
+        provider,
+        recordType,
+        providerRecordId,
+        JSON.stringify(record),
+        now(),
+      );
+    return record;
+  }
   recover() {
     this.sqlite
       .prepare(
@@ -250,6 +298,12 @@ export class ConnectorRepository {
           if (!memberships)
             this.sqlite
               .prepare(
+                "DELETE FROM connector_records WHERE connection_id=? AND record_type='mail' AND provider_record_id=?",
+              )
+              .run(scope.connectionId, pid);
+          if (!memberships)
+            this.sqlite
+              .prepare(
                 "INSERT INTO mail_messages(id,connection_id,provider_message_id,provider_thread_id,is_tombstone,updated_at) VALUES(?,?,?,?,1,?) ON CONFLICT(connection_id,provider_message_id) DO UPDATE SET is_tombstone=1,updated_at=excluded.updated_at",
               )
               .run(
@@ -261,6 +315,13 @@ export class ConnectorRepository {
               );
         } else {
           const m = change.message;
+          this.upsertRecord(
+            scope.connectionId,
+            scope.provider,
+            "mail",
+            m.providerMessageId,
+            m satisfies NormalizedMail,
+          );
           this.sqlite
             .prepare(
               "INSERT INTO mail_messages(id,connection_id,provider_message_id,provider_thread_id,subject,snippet,text_body,html_body,received_at,sent_at,is_read,is_starred,is_draft,provider_revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_id,provider_message_id) DO UPDATE SET provider_thread_id=excluded.provider_thread_id,subject=excluded.subject,snippet=excluded.snippet,text_body=excluded.text_body,html_body=excluded.html_body,received_at=excluded.received_at,sent_at=excluded.sent_at,is_read=excluded.is_read,is_starred=excluded.is_starred,is_draft=excluded.is_draft,provider_revision=excluded.provider_revision,is_tombstone=0,updated_at=excluded.updated_at",
@@ -365,6 +426,25 @@ export class ConnectorRepository {
         .prepare("UPDATE sync_runs SET processed=processed+? WHERE id=?")
         .run(changes.length, runId);
     })();
+  }
+  applyCalendarPage(scopeId: string, runId: string, fence: number, changes: NormalizedCalendarChange[]) {
+    if (!changes.length) return;
+    this.sqlite.transaction(() => {
+      const scope = this.sqlite.prepare("SELECT s.connection_id as connectionId,s.fence_token as fenceToken,c.provider FROM sync_scopes s JOIN connector_connections c ON c.id=s.connection_id WHERE s.id=?").get(scopeId) as any;
+      if (!scope || scope.fenceToken !== fence) throw new Error("connector_fence_conflict");
+      for (const change of changes) {
+        const id = change.kind === "upsert" ? change.event.providerEventId : change.providerEventId;
+        if (change.kind === "upsert") this.upsertRecord(scope.connectionId, scope.provider, "calendar", id, change.event);
+        else this.sqlite.prepare("DELETE FROM connector_records WHERE connection_id=? AND record_type='calendar' AND provider_record_id=?").run(scope.connectionId, id);
+        this.sqlite.prepare("INSERT OR IGNORE INTO sync_changes(event_key,connection_id,scope_id,message_id,kind,created_at) VALUES(?,?,?,?,?,?)").run(calendarKey(scope.connectionId, scopeId, change), scope.connectionId, scopeId, null, change.kind, now());
+      }
+      this.sqlite.prepare("UPDATE sync_scopes SET delivery_cursor=(SELECT COALESCE(MAX(sequence),0) FROM sync_changes WHERE scope_id=?),updated_at=? WHERE id=?").run(scopeId, now(), scopeId);
+      this.sqlite.prepare("UPDATE sync_runs SET processed=processed+? WHERE id=?").run(changes.length, runId);
+    })();
+  }
+  incrementRunProcessed(runId: string, count: number) {
+    if (count <= 0) return;
+    this.sqlite.prepare("UPDATE sync_runs SET processed=processed+? WHERE id=?").run(count, runId);
   }
   finishRun(id: string, status: string, error?: string) {
     this.sqlite

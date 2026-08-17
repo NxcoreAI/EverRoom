@@ -41,6 +41,7 @@ import { ConnectorManager } from "../modules/connectors/manager.js";
 import { connectorRoutes } from "../modules/connectors/routes.js";
 import { NangoExecutor } from "../modules/connectors/nango-executor.js";
 import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
+import { ConnectorDocumentStore } from "../modules/connectors/document-store.js";
 
 function swaggerAssetsDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -63,9 +64,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
-  const connectorConfig = config.connectors ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"" };
+  const connectorConfig = config.connectors ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", pollingIntervalMs:300_000 };
   const connectorDb = createConnectorDatabase(connectorConfig.enabled ? connectorConfig.databasePath : ":memory:");
-  const connectorManager = new ConnectorManager(new ConnectorRepository(connectorDb.sqlite), connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, connectorConfig.nangoSecret) : null);
+  const connectorManager = new ConnectorManager(
+    new ConnectorRepository(connectorDb.sqlite),
+    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, connectorConfig.nangoSecret) : null,
+    connectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
+  );
   const connectorAuthorization = connectorConfig.enabled && "gmailConfigKey" in connectorConfig
     ? new NangoAuthorizationService(
         connectorConfig.nangoUrl,
@@ -73,6 +78,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         {
           gmail: connectorConfig.gmailConfigKey,
           outlook: connectorConfig.outlookConfigKey,
+          "google-docs": connectorConfig.googleDocsConfigKey,
+          notion: connectorConfig.notionConfigKey,
+          "google-calendar": connectorConfig.googleCalendarConfigKey,
         },
         connectorManager,
       )

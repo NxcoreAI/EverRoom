@@ -13,8 +13,10 @@ CREATE TABLE IF NOT EXISTS mail_messages (id TEXT PRIMARY KEY, connection_id TEX
 CREATE TABLE IF NOT EXISTS mail_addresses (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, role TEXT NOT NULL, position INTEGER NOT NULL, display_name TEXT, address TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS mail_memberships (message_id TEXT NOT NULL, scope_id TEXT NOT NULL, membership_key TEXT NOT NULL, PRIMARY KEY(message_id,scope_id,membership_key));
 CREATE TABLE IF NOT EXISTS mail_attachments (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, provider_id TEXT, filename TEXT, mime_type TEXT, size INTEGER, inline_attachment INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS connector_records (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, provider TEXT NOT NULL, record_type TEXT NOT NULL, provider_record_id TEXT NOT NULL, payload_json TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(connection_id,record_type,provider_record_id));
 CREATE TABLE IF NOT EXISTS sync_changes (sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT NOT NULL UNIQUE, connection_id TEXT NOT NULL, scope_id TEXT NOT NULL, message_id TEXT, kind TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_mail_messages_connection_updated ON mail_messages(connection_id,updated_at);
+CREATE INDEX IF NOT EXISTS idx_connector_records_type_updated ON connector_records(record_type,updated_at);
 `;
 
 function migrate(sqlite: Database.Database): void {

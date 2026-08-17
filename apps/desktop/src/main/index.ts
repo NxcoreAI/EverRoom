@@ -5,6 +5,8 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shel
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
+import { GoogleDocsConnector, type GoogleDocsConfig } from './connectors/google-docs-connector'
+import { NotionConnector, type NotionConfig } from './connectors/notion-connector'
 import { LocalDataService } from './core/local-data-service'
 import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
@@ -43,11 +45,14 @@ const SOURCE_CHANNELS = {
   list: 'sources:list',
   listFiles: 'sources:list-files',
   listEvidence: 'sources:list-evidence',
+  previewFile: 'sources:preview-file',
   searchEvidence: 'sources:search-evidence',
   changed: 'sources:changed',
   showFile: 'sources:show-file',
   addLocalFolder: 'sources:add-local-folder',
   addGitHub: 'sources:add-github',
+  addGoogleDocs: 'sources:add-google-docs',
+  addNotion: 'sources:add-notion',
   sync: 'sources:sync',
   setPaused: 'sources:set-paused',
   disconnect: 'sources:disconnect',
@@ -58,7 +63,7 @@ const GATEWAY_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', armFault: 'connector:arm-fault',
+  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', listDocuments: 'connector:list-documents', readDocument: 'connector:read-document', listRecords: 'connector:list-records', armFault: 'connector:arm-fault',
 } as const
 const CONTEXT_ROOM_CHANNELS = {
   list: 'context-rooms:list',
@@ -226,6 +231,11 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
       service.listEvidence(requireSourceId(id), requireSourceId(fileId)),
   )
   ipcMain.handle(
+    SOURCE_CHANNELS.previewFile,
+    (_event, id: unknown, fileId: unknown) =>
+      service.previewFile(requireSourceId(id), requireSourceId(fileId)),
+  )
+  ipcMain.handle(
     SOURCE_CHANNELS.searchEvidence,
     (_event, query: unknown, id: unknown) => {
       const sourceId = id === undefined ? null : requireSourceId(id)
@@ -267,6 +277,24 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     }
     return service.addConnection('github', config.repository, config)
   })
+  ipcMain.handle(SOURCE_CHANNELS.addGoogleDocs, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('无效的 Google Docs 配置。')
+    const value = input as Partial<GoogleDocsConfig>
+    if (!Array.isArray(value.documentIds) || value.documentIds.length < 1 || value.documentIds.length > 100) throw new Error('请至少提供一个 Google Docs 文档 ID。')
+    if (typeof value.token !== 'string' || !value.token.trim()) throw new Error('Google Docs access token 不能为空。')
+    const tokenCredentialKey = await credentials.set(value.token.trim())
+    const config = { documentIds: value.documentIds.map((id) => String(id).trim()).filter(Boolean), tokenCredentialKey }
+    return service.addConnection('google-docs', 'Google Docs', config)
+  })
+  ipcMain.handle(SOURCE_CHANNELS.addNotion, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('无效的 Notion 配置。')
+    const value = input as Partial<NotionConfig>
+    if (!Array.isArray(value.pageIds) || value.pageIds.length < 1 || value.pageIds.length > 100) throw new Error('请至少提供一个 Notion 页面 ID。')
+    if (typeof value.token !== 'string' || !value.token.trim()) throw new Error('Notion integration token 不能为空。')
+    const tokenCredentialKey = await credentials.set(value.token.trim())
+    const config = { pageIds: value.pageIds.map((id) => String(id).trim()).filter(Boolean), tokenCredentialKey }
+    return service.addConnection('notion', 'Notion', config)
+  })
 
   ipcMain.handle(SOURCE_CHANNELS.sync, (_event, id: unknown) => service.sync(requireSourceId(id)))
   ipcMain.handle(
@@ -302,6 +330,9 @@ function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.listRuns, (_event, connectionId) => bridge.runs(connectionId))
   ipcMain.handle(CONNECTOR_CHANNELS.listMail, (_event, query) => bridge.mail(query))
   ipcMain.handle(CONNECTOR_CHANNELS.listFailures, (_event, query) => bridge.failures(query))
+  ipcMain.handle(CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
   ipcMain.handle(CONNECTOR_CHANNELS.armFault, (_event, point) => {
     if (process.env.NXCORE_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
     return bridge.armFault(point)
@@ -546,7 +577,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     if (process.env.NXCORE_CONNECTOR_DEBUG_UI === '1') registerConnectorHandlers(connectorGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
-    registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
+    const memoryBridge = new MemoryGatewayBridge(gatewaySupervisor)
+    registerMemoryHandlers(memoryBridge)
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge)
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
@@ -566,10 +598,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
       .register(new GitHubConnector((key) => credentials.get(key)))
-    localDataService = new LocalDataService(
-      dataDirectory,
-      connectors,
-    )
+      .register(new GoogleDocsConnector((key) => credentials.get(key)))
+      .register(new NotionConnector((key) => credentials.get(key)))
+    localDataService = new LocalDataService(dataDirectory, connectors)
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
     createWindow()

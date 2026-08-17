@@ -109,16 +109,47 @@ export const connectorRoutes =
       const existing = manager.repository
         .listRuns()
         .find((r) => r.scopeId === scopeId && r.status === "running");
-      if (existing) return reply.code(409).send(existing);
+      if (existing) return reply.code(409).send({
+        error: "sync_already_running",
+        message: `该同步范围已有运行中的任务（${existing.id}）。`,
+        run: existing,
+      });
       try {
         return reply.code(202).send(manager.trigger(scopeId, mode));
-      } catch {
-        return reply.code(409).send({ error: "connection_unavailable" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "connection_unavailable";
+        return reply.code(409).send({ error: "sync_start_failed", message });
       }
     });
     app.get("/v1/connectors/connections/:id/messages", async (req) =>
       manager.repository.messages((req.params as any).id),
     );
+    app.get("/v1/connectors/connections/:id/documents", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      try {
+        return await manager.listDocuments((req.params as any).id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "document_list_failed";
+        return reply.code(message === "document_connection_not_found" ? 404 : 500).send({ error: message, message });
+      }
+    });
+    app.get("/v1/connectors/connections/:id/documents/:documentId", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      try {
+        const params = req.params as any;
+        return await manager.readDocument(params.id, params.documentId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "document_read_failed";
+        const status = message === "document_too_large" ? 413 : message === "connector_document_store_unavailable" ? 500 : 404;
+        return reply.code(status).send({ error: message, message });
+      }
+    });
+    app.get("/v1/connectors/connections/:id/records", async (req, reply) => {
+      const type = (req.query as any)?.type ?? "mail";
+      if (type !== "mail" && type !== "calendar")
+        return reply.code(400).send({ error: "invalid_record_type" });
+      return manager.repository.records((req.params as any).id, type);
+    });
     app.get("/v1/connectors/failures", async () =>
       manager.repository.listFailures(),
     );

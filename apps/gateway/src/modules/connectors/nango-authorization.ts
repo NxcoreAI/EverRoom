@@ -53,7 +53,7 @@ export class NangoAuthorizationService {
   constructor(
     baseURL: string,
     secret: string,
-    private readonly configKeys: Record<ConnectorProvider, string>,
+    private readonly configKeys: Partial<Record<ConnectorProvider, string>>,
     private readonly manager: ConnectorManager,
     http?: AxiosInstance,
   ) {
@@ -67,13 +67,15 @@ export class NangoAuthorizationService {
 
   async start(provider: ConnectorProvider): Promise<ConnectorAuthorizationStart> {
     this.prune();
+    const configKey = this.configKeys[provider];
+    if (!configKey) throw new Error(`nango_config_missing:${provider}`);
     const id = randomUUID();
     const response = await this.http.post("/connect/sessions", {
       tags: {
         end_user_id: `everroom-local-${id}`,
         auth_attempt_id: id,
       },
-      allowed_integrations: [this.configKeys[provider]],
+      allowed_integrations: [configKey],
     });
     const data = response.data?.data;
     if (
@@ -93,7 +95,7 @@ export class NangoAuthorizationService {
     const attempt: StoredAttempt = {
       id,
       provider,
-      configKey: this.configKeys[provider],
+      configKey,
       status: "pending",
       expiresAt: data.expires_at,
       connection: null,
