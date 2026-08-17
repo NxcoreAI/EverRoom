@@ -84,6 +84,7 @@
         "filter": [
           "**/*",
           "!**/.env*",
+          "!node_modules/better-sqlite3/**",
           "!**/{test,tests,__tests__}/**",
           "!**/{test,spec}.*",
           "!**/*.{test,spec}.*",
