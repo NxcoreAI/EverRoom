@@ -10,6 +10,7 @@ import {
   Minus,
   Pilcrow,
   Quote,
+  Link2,
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -50,7 +51,13 @@ const commands: SlashCommand[] = [
   { label: '分割线', description: '分隔内容区块', keywords: 'divider rule line 分割线', icon: Minus, run: (editor, range) => editor.chain().focus().deleteRange(range).setHorizontalRule().run() },
 ]
 
-export function TiptapSlashCommandMenu({ editor }: { editor: Editor }) {
+export function TiptapSlashCommandMenu({
+  editor,
+  onRequestBlockReference,
+}: {
+  editor: Editor
+  onRequestBlockReference?: () => void
+}) {
   const [match, setMatch] = useState<SlashMatch | null>(() => getSlashMatch(editor))
   const [selectedIndex, setSelectedIndex] = useState(0)
 
@@ -64,10 +71,23 @@ export function TiptapSlashCommandMenu({ editor }: { editor: Editor }) {
     }
   }, [editor])
 
+  const availableCommands = useMemo<SlashCommand[]>(() => onRequestBlockReference
+    ? [...commands, {
+      label: '引用文档块',
+      description: '链接到当前 Room 的具体内容块',
+      keywords: 'reference link block 引用 文档 块',
+      icon: Link2,
+      run: (currentEditor, range) => {
+        currentEditor.chain().focus().deleteRange(range).run()
+        onRequestBlockReference()
+      },
+    }]
+    : commands, [onRequestBlockReference])
+
   const filteredCommands = useMemo(() => {
     const query = match?.query.toLocaleLowerCase() ?? ''
-    return commands.filter((command) => `${command.label} ${command.keywords}`.toLocaleLowerCase().includes(query))
-  }, [match?.query])
+    return availableCommands.filter((command) => `${command.label} ${command.keywords}`.toLocaleLowerCase().includes(query))
+  }, [availableCommands, match?.query])
 
   useEffect(() => setSelectedIndex(0), [match?.query])
 

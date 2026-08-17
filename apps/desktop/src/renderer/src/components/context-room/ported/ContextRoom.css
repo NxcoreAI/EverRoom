@@ -1727,14 +1727,86 @@
   font-weight: 500;
 }
 
-.context-room-embedded-doc-status em {
+.context-room-document-title-input {
+  flex: 1;
   min-width: 0;
-  overflow: hidden;
+  height: 30px;
+  padding: 3px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.context-room-document-title-input:hover:not(:disabled) {
+  border-color: var(--cr-border);
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-document-title-input:focus {
+  border-color: color-mix(in srgb, var(--cr-blue) 46%, var(--cr-border));
+  background: var(--cr-surface);
+  outline: 2px solid color-mix(in srgb, var(--cr-blue) 14%, transparent);
+  outline-offset: 1px;
+}
+
+.context-room-document-title-input:disabled {
   color: var(--cr-muted);
-  font-size: 12px;
-  font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.context-room-document-actions {
+  flex: 0 0 auto;
+}
+
+.context-room-document-actions > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+}
+
+.context-room-document-actions > button:hover,
+.context-room-document-actions > button[data-state='open'] {
+  border-color: var(--cr-border);
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-document-actions > button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cr-blue) 28%, transparent);
+  outline-offset: 1px;
+}
+
+.context-room-document-actions > button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-document-actions-menu {
+  min-width: 164px;
+}
+
+.context-room-document-actions-menu [role='menuitem'][data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.context-room-document-actions-submenu-icon {
+  width: 13px !important;
+  height: 13px !important;
+  margin-left: auto;
+}
+
+.context-room-document-actions-separator {
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--cr-border);
 }
 
 .context-room-embedded-cloud-doc > :last-child {

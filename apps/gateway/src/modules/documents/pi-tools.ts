@@ -28,6 +28,7 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
         runId: input.runId,
         roomId: input.roomId,
         availableRooms: input.availableRooms ?? [],
+        ...(input.activeDocument ? { activeDocument: input.activeDocument } : {}),
       },
     )),
   }));

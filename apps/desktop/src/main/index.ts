@@ -26,6 +26,11 @@ import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
+import {
+  captureCurrentWindow,
+  createWindowScreenshotScheduler,
+} from './screenshot/window-screenshot-service'
+import { registerDocumentPdfExportHandler } from './document-pdf-export'
 
 const APP_NAME = 'EverRoom'
 
@@ -84,6 +89,15 @@ const DOCUMENT_CHANNELS = {
   list: 'documents:list',
   listTrash: 'documents:list-trash',
   get: 'documents:get',
+  listBlocks: 'documents:list-blocks',
+  resolveBlockReferences: 'documents:resolve-block-references',
+  listPatches: 'documents:list-patches',
+  getPatch: 'documents:get-patch',
+  applyPatch: 'documents:apply-patch',
+  rejectPatch: 'documents:reject-patch',
+  acceptContinuationBlock: 'documents:accept-continuation-block',
+  rejectContinuationBlock: 'documents:reject-continuation-block',
+  closeContinuation: 'documents:close-continuation',
   import: 'documents:import',
   save: 'documents:save',
   delete: 'documents:delete',
@@ -144,6 +158,14 @@ const MEMORY_CHANNELS = {
   captureDocumentRewrite: 'memory:capture-document-rewrite',
 } as const
 
+const SCREEN_CAPTURE_CHANNELS = {
+  captureCurrentWindow: 'screen-capture:capture-current-window',
+  start: 'screen-capture:start',
+  updateInterval: 'screen-capture:update-interval',
+  stop: 'screen-capture:stop',
+  status: 'screen-capture:status',
+} as const
+
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
@@ -154,6 +176,7 @@ let recordingStore: RecordingStore | null = null
 let saasClient: SaasClient | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
+const screenshotScheduler = createWindowScreenshotScheduler()
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -313,6 +336,20 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
   ipcMain.handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.listTrash, (_event, roomId) => bridge.listTrash(roomId))
   ipcMain.handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.listBlocks, (_event, documentId) => bridge.listBlocks(documentId))
+  ipcMain.handle(DOCUMENT_CHANNELS.resolveBlockReferences, (_event, input) =>
+    bridge.resolveBlockReferences(input))
+  ipcMain.handle(DOCUMENT_CHANNELS.listPatches, (_event, documentId, status) =>
+    bridge.listPatches(documentId, status))
+  ipcMain.handle(DOCUMENT_CHANNELS.getPatch, (_event, patchId) => bridge.getPatch(patchId))
+  ipcMain.handle(DOCUMENT_CHANNELS.applyPatch, (_event, patchId, input) => bridge.applyPatch(patchId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.rejectPatch, (_event, patchId) => bridge.rejectPatch(patchId))
+  ipcMain.handle(DOCUMENT_CHANNELS.acceptContinuationBlock, (_event, patchId, input) =>
+    bridge.acceptContinuationBlock(patchId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.rejectContinuationBlock, (_event, patchId, input) =>
+    bridge.rejectContinuationBlock(patchId, input))
+  ipcMain.handle(DOCUMENT_CHANNELS.closeContinuation, (_event, patchId) =>
+    bridge.closeContinuation(patchId))
   ipcMain.handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
   ipcMain.handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
   ipcMain.handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
@@ -415,6 +452,41 @@ function registerAccountHandlers(client: SaasClient): void {
   })
   ipcMain.handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
   ipcMain.handle(ACCOUNT_CHANNELS.logout, () => syncAccountMonitoring(client.logout()))
+}
+
+function registerScreenCaptureHandlers(): void {
+  const isAuthorized = (event: Electron.IpcMainInvokeEvent): boolean => {
+    const window = BrowserWindow.getAllWindows()[0]
+    return Boolean(
+      window &&
+      !window.isDestroyed() &&
+      !window.webContents.isDestroyed() &&
+      event.sender === window.webContents,
+    )
+  }
+
+  ipcMain.handle(SCREEN_CAPTURE_CHANNELS.captureCurrentWindow, async (event) => {
+    if (!isAuthorized(event)) {
+      return { ok: false, code: 'window-unavailable', message: '无法验证截图请求来源。' }
+    }
+    return captureCurrentWindow()
+  })
+  ipcMain.handle(SCREEN_CAPTURE_CHANNELS.start, async (event, intervalMs: unknown) => {
+    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
+    return screenshotScheduler.start(typeof intervalMs === 'number' ? intervalMs : NaN)
+  })
+  ipcMain.handle(SCREEN_CAPTURE_CHANNELS.updateInterval, async (event, intervalMs: unknown) => {
+    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
+    return screenshotScheduler.updateInterval(typeof intervalMs === 'number' ? intervalMs : NaN)
+  })
+  ipcMain.handle(SCREEN_CAPTURE_CHANNELS.stop, (event) => {
+    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
+    return screenshotScheduler.stop()
+  })
+  ipcMain.handle(SCREEN_CAPTURE_CHANNELS.status, (event) => {
+    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
+    return screenshotScheduler.getStatus()
+  })
 }
 
 function createWindow(): void {
@@ -533,6 +605,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge)
+    registerDocumentPdfExportHandler()
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')
@@ -546,6 +619,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     registerAccountHandlers(saasClient)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge))
+    registerScreenCaptureHandlers()
 
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
@@ -603,6 +677,7 @@ app.on('before-quit', (event) => {
   realityGatewayBridge = null
   recordingStore = null
   saasClient = null
+  screenshotScheduler.stop()
   agentBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()

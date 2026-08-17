@@ -63,6 +63,13 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
+  screenCapture: {
+    captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
+    start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),
+    updateInterval: (intervalMs: number) => invoke('screen-capture:update-interval', intervalMs),
+    stop: () => invoke('screen-capture:stop'),
+    status: () => invoke('screen-capture:status'),
+  },
   contextRooms: {
     list: () => invokeQuietly('context-rooms:list'),
     syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
@@ -152,6 +159,15 @@ const api: NxcoreDesktopApi = {
     list: (roomId) => invoke('documents:list', roomId),
     listTrash: (roomId) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
+    listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
+    resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),
+    listPatches: (documentId, status) => invoke('documents:list-patches', documentId, status),
+    getPatch: (patchId) => invoke('documents:get-patch', patchId),
+    applyPatch: (patchId, input) => invoke('documents:apply-patch', patchId, input),
+    rejectPatch: (patchId) => invoke('documents:reject-patch', patchId),
+    acceptContinuationBlock: (patchId, input) => invoke('documents:accept-continuation-block', patchId, input),
+    rejectContinuationBlock: (patchId, input) => invoke('documents:reject-continuation-block', patchId, input),
+    closeContinuation: (patchId) => invoke('documents:close-continuation', patchId),
     import: (input) => invoke('documents:import', input),
     save: (documentId, input) => invoke('documents:save', documentId, input),
     delete: (documentId) => invoke('documents:delete', documentId),
@@ -159,6 +175,7 @@ const api: NxcoreDesktopApi = {
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
     emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
     acknowledge: (transactionId, input) => invoke('documents:acknowledge', transactionId, input),
+    exportPdf: (input) => invoke('documents:export-pdf', input),
     subscribe: (roomId) => invoke('documents:subscribe', roomId),
     unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),
     onEvent: (listener) => {

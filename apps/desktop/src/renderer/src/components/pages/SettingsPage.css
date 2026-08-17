@@ -20,6 +20,13 @@
 .reality-setting-row > input { width: 16px; height: 16px; accent-color: var(--accent); }
 .reality-source-setting button { display: inline-flex; align-items: center; gap: 6px; }
 .reality-source-setting svg { width: 13px; height: 13px; }
+.reality-setting-row select { min-width: 108px; padding: 7px 9px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--surface); color: var(--text); font: inherit; font-size: 11px; }
+.settings-toggle { display: inline-flex; min-width: 74px; align-items: center; justify-content: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--surface); color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+.settings-toggle > span { width: 8px; height: 8px; border-radius: 50%; background: #a8a29e; }
+.settings-toggle[data-active='true'] { border-color: color-mix(in srgb, #22a06b 45%, var(--border)); color: #16845b; }
+.settings-toggle[data-active='true'] > span { background: #22a06b; box-shadow: 0 0 0 3px rgba(34, 160, 107, 0.12); }
+.settings-toggle:disabled, .reality-setting-row select:disabled { cursor: default; opacity: .5; }
+.reality-setting-row small { max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .cloud-account-header {
   display: grid;

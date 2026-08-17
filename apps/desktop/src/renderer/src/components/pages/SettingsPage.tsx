@@ -1,6 +1,7 @@
 import {
   AudioLines,
   Brain,
+  Camera,
   CalendarClock,
   Cloud,
   HardDrive,
@@ -16,13 +17,14 @@ import {
   WalletCards,
   type LucideIcon,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 
 import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
+import type { WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import './SettingsPage.css'
 
@@ -56,6 +58,20 @@ export function SettingsPage() {
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState<PendingAction>(null)
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
+  const [screenCaptureStatus, setScreenCaptureStatus] = useState<WindowScreenshotStatus | null>(null)
+  const [screenCaptureInterval, setScreenCaptureInterval] = useState(5)
+  const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
+  const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!window.nxcore) return
+    void window.nxcore.screenCapture.status()
+      .then((status) => {
+        setScreenCaptureStatus(status)
+        setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
+      })
+      .catch(() => undefined)
+  }, [])
 
   const updateRealitySettings = (patch: Partial<RealitySettings>) => {
     setRealitySettings((current) => {
@@ -112,6 +128,36 @@ export function SettingsPage() {
       // The preload request interceptor reports the error globally.
     } finally {
       setPending(null)
+    }
+  }
+
+  const updateScreenCapture = async (enabled: boolean) => {
+    if (!window.nxcore) return
+    setScreenCaptureBusy(true)
+    try {
+      const status = enabled
+        ? await window.nxcore.screenCapture.start(screenCaptureInterval * 60_000)
+        : await window.nxcore.screenCapture.stop()
+      setScreenCaptureStatus(status)
+    } catch {
+      // The preload request interceptor reports the error globally.
+    } finally {
+      setScreenCaptureBusy(false)
+    }
+  }
+
+  const captureWindowNow = async () => {
+    if (!window.nxcore) return
+    setScreenCaptureBusy(true)
+    try {
+      const result = await window.nxcore.screenCapture.captureCurrentWindow()
+      if (result.ok) setLastScreenshotPath(result.filePath)
+      const status = await window.nxcore.screenCapture.status()
+      setScreenCaptureStatus(status)
+    } catch {
+      // The preload request interceptor reports the error globally.
+    } finally {
+      setScreenCaptureBusy(false)
     }
   }
 
@@ -310,6 +356,56 @@ export function SettingsPage() {
               return <button key={value} type="button" data-active={String(active)} onClick={() => updateRealitySettings({ languages: active && realitySettings.languages.length > 1 ? realitySettings.languages.filter((item) => item !== value) : active ? realitySettings.languages : [...realitySettings.languages, value] })}>{label}</button>
             })}
           </div>
+        </div>
+      </section>
+
+      <section className="reality-settings-section" aria-labelledby="screen-capture-settings-title">
+        <header>
+          <span><Camera aria-hidden="true" /></span>
+          <div>
+            <h2 id="screen-capture-settings-title">窗口截图</h2>
+            <p>只保存 EverRoom 当前窗口，不会采集其他应用或上传网络。</p>
+          </div>
+        </header>
+        <div className="reality-setting-row">
+          <div><strong>自动截图</strong><small>截图保存在项目目录的 screenshots 文件夹。</small></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-checked={Boolean(screenCaptureStatus?.enabled)}
+            disabled={screenCaptureBusy || screenCaptureStatus === null}
+            data-active={String(Boolean(screenCaptureStatus?.enabled))}
+            onClick={() => void updateScreenCapture(!screenCaptureStatus?.enabled)}
+          >
+            <span aria-hidden="true" />
+            {screenCaptureStatus?.enabled ? '已开启' : '已关闭'}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>截图间隔</strong><small>自动截图最短间隔为 30 秒。</small></div>
+          <select
+            value={screenCaptureInterval}
+            disabled={screenCaptureBusy || screenCaptureStatus === null}
+            onChange={(event) => {
+              const minutes = Number(event.target.value)
+              setScreenCaptureInterval(minutes)
+              if (screenCaptureStatus?.enabled && window.nxcore) {
+                void window.nxcore.screenCapture.updateInterval(minutes * 60_000)
+                  .then(setScreenCaptureStatus)
+                  .catch(() => undefined)
+              }
+            }}
+          >
+            {[1, 5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
+          </select>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>立即截取</strong><small>{lastScreenshotPath || '用于确认当前窗口保存位置。'}</small></div>
+          <button className="secondary-button" type="button" disabled={screenCaptureBusy} onClick={() => void captureWindowNow()}>
+            {screenCaptureBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Camera aria-hidden="true" />}
+            截取当前窗口
+          </button>
         </div>
       </section>
 

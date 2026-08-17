@@ -2,6 +2,7 @@ import { AGENT_PROTOCOL_VERSION } from "@nxcore/agent-contract";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { AgentService } from "./service.js";
+import { DocumentServiceError } from "../documents/errors.js";
 
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
 const SessionParams = Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 100 }) });
@@ -16,6 +17,7 @@ const NavigationTarget = Type.Object({
   ]),
   roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
   objectId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+  blockId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
   objectType: Type.Optional(Type.Union([
     Type.Literal("room"),
     Type.Literal("document"),
@@ -177,6 +179,18 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
                 Type.String({ minLength: 1, maxLength: 100 }),
                 Type.Null(),
               ])),
+              activeDocument: Type.Optional(Type.Object({
+                roomId: Type.String({ minLength: 1, maxLength: 128 }),
+                documentId: Type.String({ minLength: 1, maxLength: 128 }),
+                title: Type.String({ minLength: 1, maxLength: 120 }),
+                version: Type.Integer({ minimum: 0 }),
+                defaultAnchor: Type.Literal("end"),
+                cursorAnchorCandidate: Type.Optional(Type.Object({
+                  blockId: Type.String({ minLength: 1, maxLength: 128 }),
+                  offset: Type.Integer({ minimum: 0 }),
+                  affinity: Type.Literal("after"),
+                })),
+              })),
             })),
           }),
         },
@@ -185,6 +199,13 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
         try {
           return reply.code(202).send(await service.startRun(request.params.sessionId, request.body));
         } catch (error) {
+          if (error instanceof DocumentServiceError) {
+            return reply.code(error.statusCode).send({
+              error: error.code,
+              message: error.message,
+              ...error.details,
+            });
+          }
           if (error instanceof Error && error.message === "agent_session_not_found") {
             return reply.code(404).send({ error: "not_found", message: "Agent session not found" });
           }

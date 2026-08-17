@@ -8,6 +8,19 @@ const TransactionParams = Type.Object({
   transactionId: Type.String({ minLength: 1, maxLength: 128 }),
 });
 const JsonDocument = Type.Object({ type: Type.Literal("doc") }, { additionalProperties: true });
+const PatchStatus = Type.Union([
+  Type.Literal("building"), Type.Literal("pending"), Type.Literal("applied"),
+  Type.Literal("rejected"), Type.Literal("conflicted"), Type.Literal("aborted"), Type.Literal("expired"),
+]);
+const BlockReference = Type.Object({
+  roomId: Type.String({ minLength: 1, maxLength: 128 }),
+  documentId: Type.String({ minLength: 1, maxLength: 128 }),
+  blockId: Type.String({ minLength: 1, maxLength: 128 }),
+});
+
+function errorPayload(error: DocumentServiceError) {
+  return { error: error.code, message: error.message, ...error.details };
+}
 
 export function documentRoutes(service: DocumentService): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -30,6 +43,155 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
       { schema: { tags: ["documents"], params: IdParams } },
       async (request, reply) => service.get(request.params.id)
         ?? reply.code(404).send({ error: "not_found", message: "Document not found" }),
+    );
+
+    app.get(
+      "/v1/documents/:id/blocks",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          const document = service.get(request.params.id);
+          if (!document) return reply.code(404).send({ error: "not_found", message: "Document not found" });
+          return { documentId: document.id, roomId: document.roomId, version: document.version, blocks: service.listBlocks(document.id) };
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/document-blocks/resolve",
+      {
+        schema: {
+          tags: ["documents"],
+          body: Type.Object({
+            sourceRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+            references: Type.Array(BlockReference, { maxItems: 200 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return { resolutions: service.resolveBlockReferences(request.body) };
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/document-patches",
+      {
+        schema: {
+          tags: ["documents"],
+          querystring: Type.Object({
+            documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            status: Type.Optional(PatchStatus),
+          }),
+        },
+      },
+      async (request) => service.listPatches(request.query.documentId, request.query.status),
+    );
+
+    app.get(
+      "/v1/document-patches/:id",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => service.getPatch(request.params.id)
+        ?? reply.code(404).send({ error: "patch_not_found", message: "Document patch not found" }),
+    );
+
+    app.post(
+      "/v1/document-patches/:id/continuation/accept",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          body: Type.Object({
+            baseVersion: Type.Integer({ minimum: 0 }),
+            blockId: Type.String({ minLength: 1, maxLength: 128 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.acceptContinuationBlock(request.params.id, request.body);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/document-patches/:id/continuation/reject",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          body: Type.Object({
+            baseVersion: Type.Integer({ minimum: 0 }),
+            blockId: Type.String({ minLength: 1, maxLength: 128 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.rejectContinuationBlock(request.params.id, request.body);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/document-patches/:id/continuation/close",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          return await service.closeContinuation(request.params.id);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/document-patches/:id/apply",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          body: Type.Object({
+            baseVersion: Type.Integer({ minimum: 0 }),
+            acceptedHunkIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.applyPatch(request.params.id, request.body);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/document-patches/:id/reject",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          return await service.rejectPatch(request.params.id);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
     );
 
     app.delete(
@@ -70,6 +232,7 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
           params: IdParams,
           body: Type.Object({
             baseVersion: Type.Integer({ minimum: 0 }),
+            title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
             contentJson: JsonDocument,
           }),
         },
@@ -79,7 +242,7 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
           return await service.save(request.params.id, request.body);
         } catch (error) {
           if (error instanceof DocumentServiceError) {
-            return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+            return reply.code(error.statusCode).send(errorPayload(error));
           }
           throw error;
         }
