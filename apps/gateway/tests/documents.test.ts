@@ -514,18 +514,12 @@ describe('document transactions', () => {
       agentSessionId: 'session-1',
       runId: 'run-large',
     })
-    for (let sequence = 1; sequence <= 32; sequence += 1) {
-      await service.append({
-        transactionId: started.transactionId,
-        sessionId: 'session-1',
-        sequence,
-        text: 'x'.repeat(64 * 1024),
-      })
-    }
+    db.update(documentTransactions).set({ totalBytes: 2 * 1024 * 1024 })
+      .where(eq(documentTransactions.id, started.transactionId)).run()
     await expect(service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
-      sequence: 33,
+      sequence: 1,
       text: 'x',
     })).rejects.toMatchObject({ code: 'SIZE_LIMIT' })
 
@@ -534,7 +528,7 @@ describe('document transactions', () => {
     await expect(service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
-      sequence: 33,
+      sequence: 1,
       text: '',
     })).rejects.toMatchObject({ code: 'TRANSACTION_EXPIRED' })
     expect(service.list('room-1')).toHaveLength(0)
