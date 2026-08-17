@@ -9,7 +9,7 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package:mac": "pnpm run build && electron-builder --mac dmg zip"
+    "package:mac": "pnpm run build && electron-builder --mac dmg zip --arm64"
   },
   "dependencies": {
     "@antv/g6": "^5.1.1",
@@ -84,21 +84,11 @@
         "filter": [
           "**/*",
           "!**/.env*",
+          "!node_modules/better-sqlite3/**",
           "!**/{test,tests,__tests__}/**",
           "!**/{test,spec}.*",
           "!**/*.{test,spec}.*",
           "!**/*.{map,ts,tsx,mts,cts}"
-        ]
-      },
-      {
-        "from": "../gateway/node_modules/better-sqlite3",
-        "to": "gateway/node_modules/better-sqlite3",
-        "filter": [
-          "**/*",
-          "!**/build/**",
-          "!**/src/**",
-          "!**/deps/**",
-          "!**/*.{cpp,h,hpp,gyp,gypi,md}"
         ]
       }
     ],
@@ -113,6 +103,18 @@
       "target": [
         "dmg",
         "zip"
+      ],
+      "extraResources": [
+        {
+          "from": "../gateway/dist/node_modules/better-sqlite3",
+          "to": "gateway/node_modules/better-sqlite3",
+          "filter": [
+            "lib/**/*",
+            "package.json",
+            "LICENSE",
+            "prebuilds/darwin-arm64.node"
+          ]
+        }
       ]
     },
     "win": {
