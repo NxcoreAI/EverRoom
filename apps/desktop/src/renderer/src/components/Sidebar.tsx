@@ -1,10 +1,9 @@
 import { ChevronDown, Server } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { navigationSections, type PageId } from '@/data/navigation'
-import { ProductBrand } from '@/components/ui/ProductBrand'
 import { useAccount } from '@/state/AccountContext'
-import type { GatewayStatus } from '../../../shared/sources'
+import type { GatewayState, GatewayStatus } from '../../../shared/sources'
 
 const INITIAL_GATEWAY_STATUS: GatewayStatus = {
   state: 'starting',
@@ -40,15 +39,21 @@ export function Sidebar({
 }) {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>(INITIAL_GATEWAY_STATUS)
+  const gatewayStateRef = useRef<GatewayState>(INITIAL_GATEWAY_STATUS.state)
   const { account } = useAccount()
 
   useEffect(() => {
     let disposed = false
 
+    const applyStatus = (status: GatewayStatus) => {
+      gatewayStateRef.current = status.state
+      setGatewayStatus(status)
+    }
+
     const refreshGatewayStatus = async () => {
       if (!window.nxcore) {
         if (!disposed) {
-          setGatewayStatus({
+          applyStatus({
             state: 'stopped',
             pid: null,
             baseUrl: null,
@@ -60,10 +65,10 @@ export function Sidebar({
       }
       try {
         const status = await window.nxcore.gateway.status()
-        if (!disposed) setGatewayStatus(status)
+        if (!disposed) applyStatus(status)
       } catch (error) {
         if (!disposed) {
-          setGatewayStatus({
+          applyStatus({
             state: 'error',
             pid: null,
             baseUrl: null,
@@ -75,10 +80,20 @@ export function Sidebar({
     }
 
     void refreshGatewayStatus()
-    const interval = window.setInterval(() => void refreshGatewayStatus(), 3_000)
+    // 启动中更密集地轮询(1s),让转圈尽快切换到就绪状态;就绪后降频(3s)。
+    let timeout = 0
+    const scheduleNext = () => {
+      timeout = window.setTimeout(
+        () => {
+          void refreshGatewayStatus().finally(scheduleNext)
+        },
+        gatewayStateRef.current === 'ready' ? 3_000 : 1_000,
+      )
+    }
+    scheduleNext()
     return () => {
       disposed = true
-      window.clearInterval(interval)
+      window.clearTimeout(timeout)
     }
   }, [])
 
@@ -102,7 +117,6 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <ProductBrand className="sidebar-brand" />
       <nav className="sidebar-nav" aria-label="主导航">
         {navigationSections.map((section) => (
           <section

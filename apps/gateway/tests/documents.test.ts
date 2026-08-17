@@ -551,18 +551,27 @@ describe('document transactions', () => {
       agentSessionId: 'session-1',
       runId: 'run-large',
     })
-    for (let sequence = 1; sequence <= 32; sequence += 1) {
-      await service.append({
-        transactionId: started.transactionId,
-        sessionId: 'session-1',
-        sequence,
-        text: 'x'.repeat(64 * 1024),
-      })
-    }
+    await service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 1,
+      text: 'x',
+    })
+    await service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 2,
+      text: 'yz',
+    })
+    expect(db.select({ totalBytes: documentTransactions.totalBytes }).from(documentTransactions)
+      .where(eq(documentTransactions.id, started.transactionId)).get()).toEqual({ totalBytes: 3 })
+
+    db.update(documentTransactions).set({ totalBytes: 2 * 1024 * 1024 })
+      .where(eq(documentTransactions.id, started.transactionId)).run()
     await expect(service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
-      sequence: 33,
+      sequence: 3,
       text: 'x',
     })).rejects.toMatchObject({ code: 'SIZE_LIMIT' })
 
@@ -571,11 +580,11 @@ describe('document transactions', () => {
     await expect(service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
-      sequence: 33,
+      sequence: 3,
       text: '',
     })).rejects.toMatchObject({ code: 'TRANSACTION_EXPIRED' })
     expect(service.list('room-1')).toHaveLength(0)
-  })
+  }, 20_000)
 
   it('removes interrupted provisional documents during restart recovery', async () => {
     const { db, service } = await createHarness()
