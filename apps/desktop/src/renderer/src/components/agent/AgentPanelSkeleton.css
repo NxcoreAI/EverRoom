@@ -57,7 +57,7 @@
   width: 22%;
 }
 
-/* 对话区:用户气泡靠右、灰色圆角;助手回复靠左、多行文本。 */
+/* 对话区:用户气泡靠右、灰色圆角;助手回复靠左、多行文本。背景与真实会话区一致为白色。 */
 .agent-skeleton-conversation {
   display: flex;
   flex: 1 1 auto;
@@ -66,6 +66,7 @@
   gap: 18px;
   padding: 18px 14px;
   overflow: hidden;
+  background: #fff;
 }
 
 .agent-skeleton-bubble,
