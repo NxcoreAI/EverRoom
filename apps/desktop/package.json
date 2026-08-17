@@ -101,6 +101,30 @@
         "dmg",
         "zip"
       ]
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-windows-${arch}.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "../gateway/dist/node_modules/better-sqlite3",
+          "to": "gateway/node_modules/better-sqlite3",
+          "filter": [
+            "lib/**/*",
+            "package.json",
+            "LICENSE",
+            "prebuilds/win32-x64.node"
+          ]
+        }
+      ]
     }
   }
 }
