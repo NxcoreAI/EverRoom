@@ -68,7 +68,7 @@ jobs:
             });
 
   issue:
-    if: github.event_name == 'issues'
+    if: github.event_name == 'issues' && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
     runs-on: ubuntu-24.04
     outputs:
       final-message: ${{ steps.codex.outputs.final-message }}
@@ -86,7 +86,7 @@ jobs:
           openai-api-key: ${{ secrets.CODEX_RELAY_API_KEY }}
           responses-api-endpoint: https://litellm.vyitec.com/v1/responses
           model: ${{ vars.CODEX_MODEL }}
-          allow-users: ${{ github.actor }}
+          allow-users: ${{ github.event.issue.user.login }}
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           prompt: |
