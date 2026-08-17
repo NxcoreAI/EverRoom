@@ -1,0 +1,145 @@
+/* Gateway 启动期间的整块 Agent 面板骨架屏,尺寸对齐真实的会话栏/消息/输入框。 */
+
+.agent-skeleton-line,
+.agent-skeleton-icon,
+.agent-skeleton-circle {
+  display: block;
+  border-radius: 5px;
+  background: linear-gradient(90deg, #eceef2 25%, #f7f8fa 40%, #eceef2 55%);
+  background-size: 300% 100%;
+  animation: agent-skeleton-shimmer 1.4s ease infinite;
+}
+
+@keyframes agent-skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+.agent-skeleton-line {
+  height: 11px;
+}
+
+/* 顶部会话选择栏:复刻 agent-session-trigger 的 40px 胶囊。 */
+.agent-skeleton-trigger {
+  display: flex;
+  width: 100%;
+  height: 40px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: #f3f4f6;
+}
+
+.agent-skeleton-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  border-radius: 4px;
+}
+
+.agent-skeleton-trigger-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.agent-skeleton-trigger-copy .agent-skeleton-line {
+  height: 9px;
+}
+
+.agent-skeleton-trigger-copy .agent-skeleton-line:first-child {
+  width: 34%;
+}
+
+.agent-skeleton-trigger-copy .agent-skeleton-line:last-child {
+  width: 22%;
+}
+
+/* 对话区:用户气泡靠右、灰色圆角;助手回复靠左、多行文本。 */
+.agent-skeleton-conversation {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 18px;
+  padding: 18px 14px;
+  overflow: hidden;
+}
+
+.agent-skeleton-bubble,
+.agent-skeleton-reply {
+  display: flex;
+  width: fit-content;
+  max-width: 76%;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-skeleton-bubble {
+  align-self: flex-end;
+  padding: 10px 14px;
+  border-radius: 12px 12px 3px 12px;
+  background: #f3f4f6;
+}
+
+.agent-skeleton-bubble .agent-skeleton-line {
+  height: 12px;
+  width: 132px;
+}
+
+.agent-skeleton-reply {
+  align-self: flex-start;
+}
+
+.agent-skeleton-reply .agent-skeleton-line:nth-child(1),
+.agent-skeleton-reply .agent-skeleton-line:nth-child(2) {
+  width: 88%;
+}
+
+.agent-skeleton-reply .agent-skeleton-line:nth-child(3) {
+  width: 56%;
+}
+
+/* 底部输入框:复刻 agent-composer-shell 的圆角卡片和操作按钮。 */
+.agent-skeleton-composer {
+  flex: 0 0 auto;
+  padding: 8px 12px 16px;
+}
+
+.agent-skeleton-composer-box {
+  display: flex;
+  min-height: 108px;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14px 14px 10px;
+  border: 1px solid rgba(23, 25, 29, 0.06);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(23, 25, 29, 0.04);
+}
+
+.agent-skeleton-composer-box > .agent-skeleton-line {
+  width: 58%;
+  margin-top: 4px;
+}
+
+.agent-skeleton-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.agent-skeleton-circle {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 50%;
+}
+
+.agent-skeleton-circle.accent {
+  background: linear-gradient(90deg, #d7e4fb 25%, #e8f1fd 40%, #d7e4fb 55%);
+  background-size: 300% 100%;
+}

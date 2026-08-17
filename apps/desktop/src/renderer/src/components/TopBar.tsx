@@ -54,7 +54,7 @@ export function TopBar({
         </button>
       </div>
 
-      <div className="tabs no-drag" role="tablist" aria-label="打开的页面">
+      <div className="tabs" role="tablist" aria-label="打开的页面">
         <div
           className="tab"
           data-active={String(activeContextRoomId === null)}
