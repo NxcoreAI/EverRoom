@@ -28,6 +28,7 @@ const EMPTY_INSIGHTS: RealityInsights = {
   people: [],
   projects: [],
   unresolvedQuestions: [],
+  representativeTags: [],
 };
 
 function toEvent(row: typeof realityEvents.$inferSelect): RealityEvent {
@@ -82,6 +83,7 @@ function deriveInsights(transcript: string, contextPrompt: string | null): Reali
     people: [],
     projects: contextPrompt ? unique(contextPrompt.split(/[，,、\n]/).map((item) => item.trim()).filter(Boolean)) : [],
     unresolvedQuestions: unique(lines.filter((line) => /[?？]$|吗[。]?$/u.test(line))),
+    representativeTags: [],
   };
 }
 

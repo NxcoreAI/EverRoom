@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
@@ -9,12 +9,12 @@ import type {
   SaasClient,
 } from '../cloud/saas-client'
 import type { AgentGatewayBridge } from '../gateway/agent-gateway-bridge'
-import { AccountKeyringService, combinedEncrypt, keyId } from '../security/account-keyring-service'
-import { decryptPrivateRecordPayload } from './private-transcription-sync'
+import { AccountKeyringService } from '../security/account-keyring-service'
 import type { PrivateTranscriptionSyncService } from './private-transcription-sync'
 
 const POLL_INTERVAL_MS = 30_000
 const LEASE_RENEW_INTERVAL_MS = 45_000
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 interface StoredProcessingJob {
   sourceRecordId: string
@@ -44,6 +44,18 @@ interface SummaryValue {
   decisions: string[]
   actionItems: Array<{ text: string; owner: string | null; dueDate: string | null }>
   topics: string[]
+  representativeTags: SummaryTagValue[]
+}
+
+interface SummaryTagValue {
+  kind: 'entity' | 'fact'
+  label: string
+  entityType?: 'person' | 'organization' | 'project' | 'product' | 'place' | 'other'
+  subject?: string
+  predicate?: string
+  object?: string
+  confidence: number
+  evidence: string
 }
 
 export class TranscriptionProcessingCoordinator {
@@ -107,12 +119,7 @@ export class TranscriptionProcessingCoordinator {
     await this.sync?.reconcileLocalTranscriptions()
     await this.sync?.flushPendingSources()
     await this.sync?.sync()
-    const keyringStatus = await this.keyring.status(this.client, account.user.id)
-    if (!keyringStatus.enabled || keyringStatus.deviceStatus !== 'ready') return
-    const umk = await this.keyring.getUmk(account.user.id)
-    if (!umk || umk.umkId !== keyringStatus.umkId || umk.version !== keyringStatus.activeVersion) return
-
-    const registrationKey = `${account.user.id}:${account.device.id}:${umk.umkId}:${umk.version}`
+    const registrationKey = `${account.user.id}:${account.device.id}`
     if (this.registeredKey !== registrationKey) {
       await this.client.registerProcessorDevice()
       this.registeredKey = registrationKey
@@ -148,7 +155,7 @@ export class TranscriptionProcessingCoordinator {
       try {
         if (!reusable) {
           const envelope = await this.client.getPrivateRecord(job.sourceRecordId)
-          const source = this.decryptSource(envelope, job, umk.value, umk.umkId, umk.version)
+          const source = this.readSource(envelope, job)
           const transcript = transcriptText(source)
           const response = await this.agent.summarizeTranscription({
             jobId: job.id,
@@ -157,7 +164,7 @@ export class TranscriptionProcessingCoordinator {
             language: 'zh-CN',
           })
           const summary = parseSummary(response.content)
-          const result = encryptSummary(job, summary, umk.value, umk.umkId, umk.version)
+          const result = createSummary(job, summary)
           this.state.jobs[job.id]!.result = result
           this.state.jobs[job.id]!.updatedAt = new Date().toISOString()
           await this.persist()
@@ -184,21 +191,17 @@ export class TranscriptionProcessingCoordinator {
     }
   }
 
-  private decryptSource(
+  private readSource(
     envelope: PrivateRecordEnvelope,
     job: ProcessingJob,
-    umk: Buffer,
-    umkId: string,
-    umkVersion: number,
   ): SourceRecord {
     if (envelope.recordType !== 'transcription_source') throw new Error('invalid_source_record_type')
     if (envelope.recordId !== job.sourceRecordId || envelope.revision !== job.sourceRevision || envelope.contentHash !== job.sourceContentHash) {
       throw new Error('source_revision_changed')
     }
-    const value = JSON.parse(
-      decryptPrivateRecordPayload(envelope, umk, umkId, umkVersion).toString('utf8'),
-    ) as Partial<SourceRecord>
-    if (value.kind !== 'everroom.transcription-source' || value.schemaVersion !== 3 || value.eventId !== envelope.recordId) {
+    const value = envelope.payload as Partial<SourceRecord> | undefined
+    if (!value || value.kind !== 'everroom.transcription-source' || value.schemaVersion !== 3
+      || typeof value.eventId !== 'string' || !UUID_PATTERN.test(value.eventId)) {
       throw new Error('invalid_transcription_source')
     }
     return value as SourceRecord
@@ -257,6 +260,9 @@ function parseSummary(raw: string): SummaryValue {
       dueDate: typeof action.dueDate === 'string' ? action.dueDate.trim().slice(0, 100) || null : null,
     }
   }).filter((item) => item.text)
+  const representativeTags = object.representativeTags === undefined
+    ? []
+    : parseRepresentativeTags(object.representativeTags)
   const summary = {
     title: string('title', 200),
     overview: string('overview', 5_000),
@@ -264,6 +270,7 @@ function parseSummary(raw: string): SummaryValue {
     decisions: strings('decisions', 50),
     actionItems,
     topics: strings('topics', 30),
+    representativeTags,
   }
   if (!summary.title || summary.title === '后台转写总结' || !summary.overview || !summary.keyPoints.length) {
     throw new Error('empty_agent_summary')
@@ -271,17 +278,44 @@ function parseSummary(raw: string): SummaryValue {
   return summary
 }
 
-function encryptSummary(
+function parseRepresentativeTags(value: unknown): SummaryTagValue[] {
+  if (!Array.isArray(value)) throw new Error('invalid_agent_representativeTags')
+  return value.slice(0, 12).map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('invalid_agent_representativeTag')
+    const tag = item as Record<string, unknown>
+    if (tag.kind !== 'entity' && tag.kind !== 'fact') throw new Error('invalid_agent_representativeTag_kind')
+    if (typeof tag.label !== 'string' || !tag.label.trim()) throw new Error('invalid_agent_representativeTag_label')
+    if (typeof tag.confidence !== 'number' || !Number.isFinite(tag.confidence)) throw new Error('invalid_agent_representativeTag_confidence')
+    if (typeof tag.evidence !== 'string') throw new Error('invalid_agent_representativeTag_evidence')
+    const common = {
+      kind: tag.kind,
+      label: tag.label.trim().slice(0, 200),
+      confidence: Math.max(0, Math.min(1, tag.confidence)),
+      evidence: tag.evidence.trim().slice(0, 1_000),
+    }
+    if (tag.kind === 'entity') {
+      if (!['person', 'organization', 'project', 'product', 'place', 'other'].includes(String(tag.entityType))) {
+        throw new Error('invalid_agent_representativeTag_entityType')
+      }
+      return { ...common, kind: 'entity', entityType: tag.entityType as SummaryTagValue['entityType'] }
+    }
+    if (typeof tag.subject !== 'string' || typeof tag.predicate !== 'string' || typeof tag.object !== 'string') {
+      throw new Error('invalid_agent_representativeTag_fact')
+    }
+    const subject = tag.subject.trim().slice(0, 200)
+    const predicate = tag.predicate.trim().slice(0, 200)
+    const factObject = tag.object.trim().slice(0, 500)
+    if (!subject || !predicate || !factObject) throw new Error('invalid_agent_representativeTag_fact')
+    return { ...common, kind: 'fact', subject, predicate, object: factObject }
+  })
+}
+
+function createSummary(
   job: ProcessingJob,
   summary: SummaryValue,
-  umk: Buffer,
-  umkId: string,
-  umkVersion: number,
 ): Omit<CompleteProcessingJobInput, 'leaseToken'> {
   const resultRecordId = randomUUID()
-  const dataKey = randomBytes(32)
-  const dataKeyId = keyId(dataKey)
-  const plaintext = Buffer.from(JSON.stringify({
+  const payload = {
     kind: 'everroom.transcription-summary',
     schemaVersion: 1,
     workflow: job.workflow,
@@ -291,20 +325,10 @@ function encryptSummary(
     sourceContentHash: job.sourceContentHash,
     summary,
     generatedAt: new Date().toISOString(),
-  }), 'utf8')
-  const ciphertext = combinedEncrypt(dataKey, plaintext, Buffer.from(`everroom.private-record.v3:${resultRecordId}:${dataKeyId}:${umkId}:${umkVersion}`, 'utf8'))
-  const wrappedKey = combinedEncrypt(umk, dataKey, Buffer.from(`everroom.wrapped-dek.v1:${resultRecordId}:${dataKeyId}:${umkId}:${umkVersion}`, 'utf8'))
+  }
   return {
     resultRecordId,
-    algorithm: 'AES-256-GCM',
-    schemaVersion: 3,
-    keyId: dataKeyId,
-    ciphertext,
-    contentHash: `sha256:${createHash('sha256').update(ciphertext).digest('hex')}`,
-    wrappingAlgorithm: 'AES-256-GCM',
-    wrappingKeyId: umkId,
-    wrappingKeyVersion: umkVersion,
-    wrappedKey,
+    payload,
   }
 }
 

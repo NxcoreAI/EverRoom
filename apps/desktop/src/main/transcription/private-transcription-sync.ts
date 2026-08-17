@@ -2,11 +2,11 @@ import { createHash, randomBytes } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import type { ImportRealityEventInput, RealityEvent, RealityInsights } from '@nxcore/reality-contract'
+import type { ImportRealityEventInput, RealityEvent, RealityInsights, RealityTag } from '@nxcore/reality-contract'
 import type { AccountKeyringStatus, AsrResult, AsrSegment, PrivateTranscriptionRecord, PrivateTranscriptionSyncResult } from '../../shared/sources'
 import type { PairingSessionResponse, PrivateRecordEnvelope, PutPrivateRecordInput, SaasClient } from '../cloud/saas-client'
 import type { RealityGatewayBridge } from '../gateway/reality-gateway-bridge'
-import { AccountKeyringService, combinedDecrypt, combinedEncrypt, keyId } from '../security/account-keyring-service'
+import { AccountKeyringService } from '../security/account-keyring-service'
 
 interface PendingSourcePublication {
   recordId: string
@@ -47,6 +47,33 @@ function stringArray(value: unknown): string[] {
     : []
 }
 
+function representativeTags(value: unknown): RealityTag[] {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 30).flatMap((item): RealityTag[] => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const tag = item as Record<string, unknown>
+    if ((tag.kind !== 'entity' && tag.kind !== 'fact') || typeof tag.label !== 'string' || !tag.label.trim()) return []
+    const common: RealityTag = {
+      ...(typeof tag.id === 'string' ? { id: tag.id } : {}),
+      kind: tag.kind,
+      label: tag.label.trim(),
+      ...(typeof tag.normalizedKey === 'string' ? { normalizedKey: tag.normalizedKey } : {}),
+      ...(typeof tag.confidence === 'number' ? { confidence: tag.confidence } : {}),
+      ...(typeof tag.evidence === 'string' ? { evidence: tag.evidence } : {}),
+      ...(typeof tag.occurrenceCount === 'number' ? { occurrenceCount: tag.occurrenceCount } : {}),
+    }
+    if (tag.kind === 'entity') {
+      return [{ ...common, ...(typeof tag.entityType === 'string' ? { entityType: tag.entityType as RealityTag['entityType'] } : {}) }]
+    }
+    return [{
+      ...common,
+      ...(typeof tag.subject === 'string' ? { subject: tag.subject } : {}),
+      ...(typeof tag.predicate === 'string' ? { predicate: tag.predicate } : {}),
+      ...(typeof tag.object === 'string' ? { object: tag.object } : {}),
+    }]
+  })
+}
+
 function importedInsights(record: PrivateTranscriptionRecord | undefined, transcript: string): RealityInsights | undefined {
   const value = record ? metadata(record).summary : null
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -56,6 +83,7 @@ function importedInsights(record: PrivateTranscriptionRecord | undefined, transc
   const keyPoints = stringArray(summary.keyPoints)
   const decisions = stringArray(summary.decisions)
   const topics = stringArray(summary.topics)
+  const tags = representativeTags(summary.representativeTags)
   const actionItems = Array.isArray(summary.actionItems) ? summary.actionItems.flatMap((item): string[] => {
     if (typeof item === 'string') return item.trim() ? [item.trim()] : []
     if (!item || typeof item !== 'object' || Array.isArray(item)) return []
@@ -76,9 +104,11 @@ function importedInsights(record: PrivateTranscriptionRecord | undefined, transc
     keyPoints,
     decisions,
     actionItems,
-    people: [],
-    projects: [],
+    people: tags.filter((tag) => tag.kind === 'entity' && tag.entityType === 'person').map((tag) => tag.label),
+    projects: tags.filter((tag) => tag.kind === 'entity' && tag.entityType === 'project').map((tag) => tag.label),
     unresolvedQuestions: [],
+    representativeTags: tags,
+    summaryRecordId: record?.recordId,
   }
 }
 
@@ -189,7 +219,11 @@ function parsePlaintext(recordId: string, plaintext: Buffer, envelope: PrivateRe
     object.kind !== undefined
     && !['everroom.transcription', 'everroom.transcription-source', 'everroom.transcription-summary'].includes(String(object.kind))
   ) throw new Error(`转写记录 ${recordId} 的类型无效。`)
-  if (object.eventId !== undefined && object.eventId !== recordId) throw new Error(`转写记录 ${recordId} 的事件标识无效。`)
+  if (object.eventId !== undefined && object.eventId !== null
+    && (typeof object.eventId !== 'string' || !UUID_PATTERN.test(object.eventId))) {
+    throw new Error(`转写记录 ${recordId} 的事件标识无效。`)
+  }
+  if (object.eventId === null || object.eventId === undefined) object.eventId = recordId
   const transcriptLines = Array.isArray(object.transcriptLines) ? object.transcriptLines : []
   const transcript = typeof object.transcript === 'string'
     ? object.transcript
@@ -250,7 +284,7 @@ export class PrivateTranscriptionSyncService {
     if (!account.authenticated || !account.user) {
       return { enabled: false, reason: '请先登录 EverRoom。', initialized: false, umkId: null, activeVersion: null, deviceStatus: 'unregistered', verificationCode: null }
     }
-    return this.keyring.status(this.client, account.user.id)
+    return { enabled: true, initialized: false, umkId: null, activeVersion: null, deviceStatus: 'ready', verificationCode: null }
   }
 
   async createPairingSession(): Promise<PairingSessionResponse> {
@@ -279,15 +313,7 @@ export class PrivateTranscriptionSyncService {
     await this.initialize()
     const account = await this.client.status()
     if (!account.authenticated || !account.user) throw new Error('请先登录 EverRoom。')
-    const status = await this.keyring.status(this.client, account.user.id)
-    const material = await this.keyring.getUmk(account.user.id)
-    if (!status.enabled || status.deviceStatus !== 'ready' || !material
-      || material.umkId !== status.umkId || material.version !== status.activeVersion) {
-      throw new Error('本机账号主密钥尚未就绪。')
-    }
     const recordId = event.id
-    const dataKey = randomBytes(32)
-    const dataKeyId = keyId(dataKey)
     const transcriptLines = result.segments.length
       ? result.segments.map((segment) => ({
         speaker: segment.speakerId === null ? '发言人' : `发言人 ${segment.speakerId}`,
@@ -295,7 +321,7 @@ export class PrivateTranscriptionSyncService {
         text: segment.text,
       }))
       : [{ speaker: '发言人', startOffsetMillis: 0, text: result.transcript }]
-    const plaintext = Buffer.from(JSON.stringify({
+    const payload = {
       kind: 'everroom.transcription-source',
       schemaVersion: 3,
       eventId: recordId,
@@ -308,19 +334,11 @@ export class PrivateTranscriptionSyncService {
       detailMarkdown: `# 转写结果\n\n${result.transcript}`,
       transcriptLines,
       completedAt: new Date().toISOString(),
-    }), 'utf8')
-    const ciphertext = combinedEncrypt(dataKey, plaintext, Buffer.from(`everroom.private-record.v3:${recordId}:${dataKeyId}:${material.umkId}:${material.version}`, 'utf8'))
+    }
     const input: PutPrivateRecordInput = {
       recordType: 'transcription_source',
-      algorithm: 'AES-256-GCM',
       schemaVersion: 3,
-      keyId: dataKeyId,
-      ciphertext,
-      contentHash: hashBase64(ciphertext),
-      wrappingAlgorithm: 'AES-256-GCM',
-      wrappingKeyId: material.umkId,
-      wrappingKeyVersion: material.version,
-      wrappedKey: combinedEncrypt(material.value, dataKey, Buffer.from(`everroom.wrapped-dek.v1:${recordId}:${dataKeyId}:${material.umkId}:${material.version}`, 'utf8')),
+      payload,
       expectedRevision: 0,
     }
     const current = this.state.accounts[account.user.id] ?? { cursor: 0, records: {} }
@@ -386,6 +404,25 @@ export class PrivateTranscriptionSyncService {
     return Object.values(this.state.accounts[account.user.id]?.records ?? {}).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   }
 
+  listTags(): Promise<RealityTag[]> {
+    return this.client.listSummaryTags()
+  }
+
+  async replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void> {
+    await this.client.replaceSummaryTags(summaryRecordId, tags)
+    await this.sync()
+  }
+
+  async renameTag(tagId: string, label: string): Promise<void> {
+    await this.client.renameSummaryTag(tagId, label)
+    await this.sync()
+  }
+
+  async mergeTag(targetTagId: string, sourceTagId: string): Promise<void> {
+    await this.client.mergeSummaryTag(targetTagId, sourceTagId)
+    await this.sync()
+  }
+
   async eventIdForSegment(segmentId: string): Promise<string | null> {
     const records = await this.list()
     for (const record of records) {
@@ -411,15 +448,8 @@ export class PrivateTranscriptionSyncService {
     const account = await this.client.status()
     if (!account.authenticated || !account.user) throw new Error('请先登录 EverRoom。')
     const userId = account.user.id
-    const status = await this.keyring.status(this.client, userId)
+    const status: AccountKeyringStatus = { enabled: true, initialized: false, umkId: null, activeVersion: null, deviceStatus: 'ready', verificationCode: null }
     const current = this.state.accounts[userId] ?? { cursor: 0, records: {} }
-    if (!status.enabled || status.deviceStatus !== 'ready' || !status.umkId || !status.activeVersion) {
-      return { status, cursor: current.cursor, synced: 0, removed: 0, records: Object.values(current.records) }
-    }
-    const material = await this.keyring.getUmk(userId)
-    if (!material || material.umkId !== status.umkId || material.version !== status.activeVersion) {
-      throw new Error('本机尚未保存当前 UMK，请等待 iPhone 批准后重试。')
-    }
     let cursor = current.cursor
     let synced = 0
     let removed = 0
@@ -433,7 +463,7 @@ export class PrivateTranscriptionSyncService {
           cursor = Math.max(cursor, envelope.cursor)
           continue
         }
-        current.records[envelope.recordId] = this.decryptRecord(envelope, material.value, material.umkId, material.version)
+        current.records[envelope.recordId] = this.readRecord(envelope)
         synced += 1
         cursor = Math.max(cursor, envelope.cursor)
       }
@@ -451,10 +481,11 @@ export class PrivateTranscriptionSyncService {
     return { status, cursor, synced, removed, records: Object.values(current.records).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)) }
   }
 
-  private decryptRecord(envelope: PrivateRecordEnvelope, umk: Buffer, umkId: string, umkVersion: number): PrivateTranscriptionRecord {
+  private readRecord(envelope: PrivateRecordEnvelope): PrivateTranscriptionRecord {
+    if (!envelope.payload) throw new Error(`转写记录 ${envelope.recordId} 缺少明文内容。`)
     return parsePlaintext(
       envelope.recordId,
-      decryptPrivateRecordPayload(envelope, umk, umkId, umkVersion),
+      Buffer.from(JSON.stringify(envelope.payload), 'utf8'),
       envelope,
     )
   }
@@ -514,26 +545,7 @@ export class PrivateTranscriptionSyncService {
   }
 }
 
-export function decryptPrivateRecordPayload(
-  envelope: PrivateRecordEnvelope,
-  umk: Buffer,
-  umkId: string,
-  umkVersion: number,
-): Buffer {
-    if (!envelope.ciphertext || !envelope.keyId || !envelope.contentHash || envelope.algorithm !== 'AES-256-GCM') throw new Error(`转写记录 ${envelope.recordId} 缺少加密字段。`)
-    if (hashBase64(envelope.ciphertext) !== envelope.contentHash) throw new Error(`转写记录 ${envelope.recordId} 完整性校验失败。`)
-    if (envelope.schemaVersion === 1) {
-      if (envelope.keyId !== keyId(umk)) throw new Error(`转写记录 ${envelope.recordId} 的旧版 UMK 不匹配。`)
-      return combinedDecrypt(umk, envelope.ciphertext, Buffer.from(`everroom.private-record.v1:${envelope.recordId}:${envelope.keyId}`, 'utf8'))
-    }
-    if (envelope.schemaVersion === 2 || envelope.schemaVersion === 3) {
-      if (envelope.wrappingAlgorithm !== 'AES-256-GCM' || envelope.wrappingKeyId !== umkId || envelope.wrappingKeyVersion !== umkVersion || !envelope.wrappedKey) {
-        throw new Error(`转写记录 ${envelope.recordId} 使用了不可用的 UMK 版本。`)
-      }
-      const wrappingAad = Buffer.from(`everroom.wrapped-dek.v1:${envelope.recordId}:${envelope.keyId}:${umkId}:${umkVersion}`, 'utf8')
-      const dek = combinedDecrypt(umk, envelope.wrappedKey, wrappingAad)
-      if (dek.length !== 32 || keyId(dek) !== envelope.keyId) throw new Error(`转写记录 ${envelope.recordId} 的 DEK 校验失败。`)
-      return combinedDecrypt(dek, envelope.ciphertext, Buffer.from(`everroom.private-record.v${envelope.schemaVersion}:${envelope.recordId}:${envelope.keyId}:${umkId}:${umkVersion}`, 'utf8'))
-    }
-    throw new Error(`转写记录 ${envelope.recordId} 的加密版本不受支持。`)
+export function decryptPrivateRecordPayload(envelope: PrivateRecordEnvelope): Buffer {
+  if (!envelope.payload) throw new Error(`转写记录 ${envelope.recordId} 缺少明文内容。`)
+  return Buffer.from(JSON.stringify(envelope.payload), 'utf8')
 }

@@ -122,6 +122,10 @@ const api: NxcoreDesktopApi = {
   transcriptions: {
     syncPrivate: (options) => options?.quiet ? invokeQuietly('transcription:sync-private') : invoke('transcription:sync-private'),
     listPrivate: () => invoke('transcription:list-private'),
+    listTags: () => invoke('transcription:list-tags'),
+    replaceSummaryTags: (summaryRecordId, tags) => invoke('transcription:replace-summary-tags', summaryRecordId, tags),
+    renameTag: (tagId, label) => invoke('transcription:rename-tag', tagId, label),
+    mergeTag: (targetTagId, sourceTagId) => invoke('transcription:merge-tag', targetTagId, sourceTagId),
   },
   memory: {
     overview: () => invoke('memory:overview'),

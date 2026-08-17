@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from 'node:crypto'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,38 +5,28 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { PrivateRecordEnvelope, ProcessingJob, SaasClient } from '../src/main/cloud/saas-client'
 import type { AgentGatewayBridge } from '../src/main/gateway/agent-gateway-bridge'
-import { combinedEncrypt, keyId, type AccountKeyringService } from '../src/main/security/account-keyring-service'
+import { type AccountKeyringService } from '../src/main/security/account-keyring-service'
 import { TranscriptionProcessingCoordinator } from '../src/main/transcription/processing-coordinator'
 
-const umk = Buffer.alloc(32, 7)
-const umkId = keyId(umk)
 const sourceRecordId = '10000000-0000-4000-8000-000000000001'
+const distinctEventId = '30000000-0000-4000-8000-000000000003'
 
-function sourceEnvelope(): PrivateRecordEnvelope {
-  const dataKey = randomBytes(32)
-  const dataKeyId = keyId(dataKey)
-  const plaintext = Buffer.from(JSON.stringify({
+function sourceEnvelope(eventId = sourceRecordId): PrivateRecordEnvelope {
+  const payload = {
     kind: 'everroom.transcription-source',
     schemaVersion: 3,
-    eventId: sourceRecordId,
+    eventId,
     detailMarkdown: '# 转写结果\n\n不能泄露的原始转写',
     transcriptLines: [{ speaker: '张三', startOffsetMillis: 0, text: '不能泄露的原始转写' }],
-  }))
-  const ciphertext = combinedEncrypt(dataKey, plaintext, Buffer.from(`everroom.private-record.v3:${sourceRecordId}:${dataKeyId}:${umkId}:1`))
+  }
   return {
     cursor: 1,
     operation: 'upsert',
     recordId: sourceRecordId,
     recordType: 'transcription_source',
-    algorithm: 'AES-256-GCM',
     schemaVersion: 3,
-    keyId: dataKeyId,
-    ciphertext,
-    contentHash: `sha256:${createHash('sha256').update(ciphertext).digest('hex')}`,
-    wrappingAlgorithm: 'AES-256-GCM',
-    wrappingKeyId: umkId,
-    wrappingKeyVersion: 1,
-    wrappedKey: combinedEncrypt(umk, dataKey, Buffer.from(`everroom.wrapped-dek.v1:${sourceRecordId}:${dataKeyId}:${umkId}:1`)),
+    payload,
+    contentHash: `sha256:${'a'.repeat(64)}`,
     revision: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -78,10 +67,7 @@ function dependencies(complete = vi.fn(async () => undefined)) {
     completeProcessingJob: complete,
     failProcessingJob: vi.fn(async () => undefined),
   }
-  const keyring = {
-    status: vi.fn(async () => ({ enabled: true, deviceStatus: 'ready', umkId, activeVersion: 1 })),
-    getUmk: vi.fn(async () => ({ value: umk, umkId, version: 1 })),
-  }
+  const keyring = {}
   const agent = {
     summarizeTranscription: vi.fn(async () => ({ content: JSON.stringify({
       title: '周会',
@@ -90,6 +76,10 @@ function dependencies(complete = vi.fn(async () => undefined)) {
       decisions: [],
       actionItems: [{ text: '准备发布', owner: null, dueDate: null }],
       topics: ['发布'],
+      representativeTags: [
+        { kind: 'entity', label: 'EverRoom', entityType: 'product', confidence: 0.98, evidence: '讨论了 EverRoom 发布计划' },
+        { kind: 'fact', label: 'EverRoom 准备发布', subject: 'EverRoom', predicate: '准备', object: '发布', confidence: 0.9, evidence: '准备发布' },
+      ],
     }) })),
   }
   return { client, keyring, agent }
@@ -100,7 +90,7 @@ async function processOne(coordinator: TranscriptionProcessingCoordinator) {
 }
 
 describe('TranscriptionProcessingCoordinator', () => {
-  it('claims, decrypts, summarizes, encrypts and completes a SaaS job', async () => {
+  it('claims, reads, summarizes and completes a SaaS job with plaintext', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
     const statePath = join(directory, 'state.json')
     const { client, keyring, agent } = dependencies()
@@ -114,15 +104,43 @@ describe('TranscriptionProcessingCoordinator', () => {
       transcript: expect.stringContaining('不能泄露的原始转写'),
     }))
     expect(client.completeProcessingJob).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      algorithm: 'AES-256-GCM',
-      schemaVersion: 3,
-      wrappingKeyId: umkId,
+      payload: expect.objectContaining({
+        kind: 'everroom.transcription-summary',
+        summary: expect.objectContaining({ representativeTags: expect.arrayContaining([expect.objectContaining({ kind: 'fact', subject: 'EverRoom' })]) }),
+      }),
       leaseToken: 'x'.repeat(43),
     }))
     expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ version: 1, jobs: {} })
   })
 
-  it('keeps only encrypted outbox data when completion is temporarily unavailable', async () => {
+  it('processes a source whose record and Reality event use different IDs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
+    const { client, keyring, agent } = dependencies()
+    client.getPrivateRecord.mockResolvedValueOnce(sourceEnvelope(distinctEventId))
+    const coordinator = new TranscriptionProcessingCoordinator(join(directory, 'state.json'), client as unknown as SaasClient, keyring as unknown as AccountKeyringService, agent as unknown as AgentGatewayBridge)
+
+    await processOne(coordinator)
+
+    expect(agent.summarizeTranscription).toHaveBeenCalledOnce()
+    expect(client.completeProcessingJob).toHaveBeenCalledOnce()
+  })
+
+  it('keeps legacy Agent summaries compatible when tags are absent', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
+    const { client, keyring, agent } = dependencies()
+    agent.summarizeTranscription.mockResolvedValueOnce({ content: JSON.stringify({
+      title: '旧版总结', overview: '旧版总结仍然有效。', keyPoints: ['兼容旧协议'], decisions: [], actionItems: [], topics: [],
+    }) })
+    const coordinator = new TranscriptionProcessingCoordinator(join(directory, 'state.json'), client as unknown as SaasClient, keyring as unknown as AccountKeyringService, agent as unknown as AgentGatewayBridge)
+
+    await processOne(coordinator)
+
+    expect(client.completeProcessingJob).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      payload: expect.objectContaining({ summary: expect.objectContaining({ representativeTags: [] }) }),
+    }))
+  })
+
+  it('keeps a plaintext summary outbox when completion is temporarily unavailable', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
     const statePath = join(directory, 'state.json')
     const complete = vi.fn(async () => { throw new Error('network_unavailable') })
@@ -132,8 +150,8 @@ describe('TranscriptionProcessingCoordinator', () => {
     await expect(processOne(coordinator)).rejects.toThrow('network_unavailable')
 
     const persisted = await readFile(statePath, 'utf8')
-    expect(persisted).not.toContain('不能泄露的原始转写')
-    expect(persisted).toContain('ciphertext')
+    expect(persisted).toContain('everroom.transcription-summary')
+    expect(persisted).not.toContain('ciphertext')
     expect(client.failProcessingJob).not.toHaveBeenCalled()
   })
 

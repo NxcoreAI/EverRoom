@@ -15,6 +15,7 @@ import type {
   CloudOidcProvider,
   CreateAsrJobInput,
 } from '../../shared/sources'
+import type { RealityTag } from '@nxcore/reality-contract'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
 
@@ -121,15 +122,16 @@ export interface PrivateRecordEnvelope {
   operation: 'upsert' | 'delete'
   recordId: string
   recordType?: 'legacy_transcription' | 'transcription_source' | 'transcription_summary'
-  algorithm?: 'AES-256-GCM'
   schemaVersion?: number
+  payload?: Record<string, unknown>
+  algorithm?: 'AES-256-GCM'
   keyId?: string
   ciphertext?: string
-  contentHash?: string
   wrappingAlgorithm?: 'AES-256-GCM'
   wrappingKeyId?: string
   wrappingKeyVersion?: number
   wrappedKey?: string
+  contentHash?: string
   revision: number
   createdAt: string
   updatedAt: string
@@ -137,15 +139,8 @@ export interface PrivateRecordEnvelope {
 
 export interface PutPrivateRecordInput {
   recordType: 'legacy_transcription' | 'transcription_source'
-  algorithm: 'AES-256-GCM'
   schemaVersion: number
-  keyId: string
-  ciphertext: string
-  contentHash: string
-  wrappingAlgorithm: 'AES-256-GCM'
-  wrappingKeyId: string
-  wrappingKeyVersion: number
-  wrappedKey: string
+  payload: Record<string, unknown>
   expectedRevision?: number
 }
 
@@ -159,19 +154,10 @@ export interface PrivateAudioAsset {
   fileName: string
   mimeType: string
   durationMs: number | null
-  plainSize: number
-  cipherSize: number
-  plainContentHash: string
-  cipherContentHash: string
-  encryptionAlgorithm: 'AES-256-GCM'
-  schemaVersion: number
-  dataKeyId: string
-  wrappingAlgorithm: 'AES-256-GCM'
-  wrappingKeyId: string
-  wrappingKeyVersion: number
-  wrappedKey: string
+  fileSize: number
+  contentHash: string
   chunkCount?: number
-  chunkPlainSize?: number
+  chunkSize?: number
   objectKey?: string | null
   status: 'created' | 'uploaded' | 'deleted'
   revision: number
@@ -201,15 +187,7 @@ export interface ProcessingJob {
 export interface CompleteProcessingJobInput {
   leaseToken: string
   resultRecordId: string
-  algorithm: 'AES-256-GCM'
-  schemaVersion: number
-  keyId: string
-  ciphertext: string
-  contentHash: string
-  wrappingAlgorithm: 'AES-256-GCM'
-  wrappingKeyId: string
-  wrappingKeyVersion: number
-  wrappedKey: string
+  payload: Record<string, unknown>
 }
 
 interface StoredAccountProfile {
@@ -585,6 +563,37 @@ export class SaasClient {
     return this.request(`/app/private-records/${encodeURIComponent(recordId)}`)
   }
 
+  listSummaryTags(): Promise<RealityTag[]> {
+    return this.request('/app/summary-tags')
+  }
+
+  async replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void> {
+    await this.request(`/app/summaries/${encodeURIComponent(summaryRecordId)}/tags`, {
+      method: 'PUT',
+      data: {
+        tags: tags.map((tag) => ({
+          ...(tag.id ? { id: tag.id } : {}),
+          kind: tag.kind,
+          label: tag.label,
+          ...(tag.entityType ? { entityType: tag.entityType } : {}),
+          ...(tag.subject ? { subject: tag.subject } : {}),
+          ...(tag.predicate ? { predicate: tag.predicate } : {}),
+          ...(tag.object ? { object: tag.object } : {}),
+          ...(tag.confidence !== undefined ? { confidence: tag.confidence } : {}),
+          ...(tag.evidence !== undefined ? { evidence: tag.evidence } : {}),
+        })),
+      },
+    })
+  }
+
+  async renameSummaryTag(tagId: string, label: string): Promise<void> {
+    await this.request(`/app/summary-tags/${encodeURIComponent(tagId)}`, { method: 'PUT', data: { label } })
+  }
+
+  async mergeSummaryTag(targetTagId: string, sourceTagId: string): Promise<void> {
+    await this.request(`/app/summary-tags/${encodeURIComponent(targetTagId)}/merge`, { method: 'POST', data: { sourceTagId } })
+  }
+
   async putPrivateRecord(recordId: string, input: PutPrivateRecordInput): Promise<PrivateRecordEnvelope> {
     return this.request(`/app/private-records/${encodeURIComponent(recordId)}`, {
       method: 'PUT',
@@ -611,10 +620,10 @@ export class SaasClient {
   async deletePrivateAudio(id: string): Promise<void> {
     await this.request(`/app/private-audio/${encodeURIComponent(id)}`, { method: 'DELETE' })
   }
-  async authorizePrivateAudioChunk(id: string, index: number, input: { plainSize: number; cipherSize: number; cipherContentHash: string }): Promise<{ uploadUrl: string; headers: Record<string,string>; expiresAt: string; objectKey: string }> { return this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks/${index}/upload-authorization`, { method: 'POST', data: { chunkIndex: index, ...input } }) }
+  async authorizePrivateAudioChunk(id: string, index: number, input: { fileSize: number; contentHash: string }): Promise<{ uploadUrl: string; headers: Record<string,string>; expiresAt: string; objectKey: string }> { return this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks/${index}/upload-authorization`, { method: 'POST', data: { chunkIndex: index, ...input } }) }
   async completePrivateAudioChunk(id: string, index: number): Promise<void> { await this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks/${index}/upload-complete`, { method: 'POST' }) }
   async authorizePrivateAudioChunkDownload(id: string, index: number): Promise<{ downloadUrl: string; expiresAt: string }> { return this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks/${index}/download-authorization`, { method: 'POST' }) }
-  async completePrivateAudioChunks(id: string): Promise<void> { await this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks-complete`, { method: 'POST' }) }
+  async completePrivateAudioChunks(id: string): Promise<PrivateAudioAsset> { return this.request(`/app/private-audio/${encodeURIComponent(id)}/chunks-complete`, { method: 'POST' }) }
 
   async registerProcessorDevice(): Promise<void> {
     await this.request('/app/processing/device', {

@@ -161,6 +161,10 @@ const ACCOUNT_CHANNELS = {
 const TRANSCRIPTION_CHANNELS = {
   syncPrivate: 'transcription:sync-private',
   listPrivate: 'transcription:list-private',
+  listTags: 'transcription:list-tags',
+  replaceSummaryTags: 'transcription:replace-summary-tags',
+  renameTag: 'transcription:rename-tag',
+  mergeTag: 'transcription:merge-tag',
 } as const
 
 const MEMORY_CHANNELS = {
@@ -491,6 +495,13 @@ function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncServ
   })
   ipcMain.handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => rateLimitAware(() => sync.sync()))
   ipcMain.handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.listTags, () => rateLimitAware(() => sync.listTags()))
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.replaceSummaryTags, (_event, summaryRecordId, tags) =>
+    rateLimitAware(() => sync.replaceSummaryTags(summaryRecordId, tags)))
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.renameTag, (_event, tagId, label) =>
+    rateLimitAware(() => sync.renameTag(tagId, label)))
+  ipcMain.handle(TRANSCRIPTION_CHANNELS.mergeTag, (_event, targetTagId, sourceTagId) =>
+    rateLimitAware(() => sync.mergeTag(targetTagId, sourceTagId)))
 }
 
 function createWindow(): void {
@@ -626,7 +637,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
     void saasClient.initialize()
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
-    await keyring.initialize()
     privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'))
     void privateAudioSync.drainPending().catch(() => undefined)
     privateTranscriptionSync = new PrivateTranscriptionSyncService(

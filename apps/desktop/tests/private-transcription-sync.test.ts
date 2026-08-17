@@ -7,6 +7,7 @@ import type { PrivateTranscriptionRecord } from '../src/shared/sources'
 import { PrivateTranscriptionSyncService, hasMeaningfulSummary, toImportedRealityEvent } from '../src/main/transcription/private-transcription-sync'
 
 const sourceId = '9f1c963d-2d6e-4ca8-abeb-71cae811a628'
+const distinctEventId = 'd5e7ac38-6e75-4a0c-b16f-b4db264b8ef2'
 
 function source(): PrivateTranscriptionRecord {
   return {
@@ -96,6 +97,81 @@ describe('private transcription reality import', () => {
 
     expect(hasMeaningfulSummary(empty)).toBe(false)
     expect(hasMeaningfulSummary(summary())).toBe(true)
+  })
+
+  it('syncs a transcription whose record and Reality event use different IDs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-private-sync-'))
+    const payload = {
+      ...source().metadata,
+      eventId: distinctEventId,
+    }
+    const client = {
+      status: vi.fn(async () => ({ authenticated: true, user: { id: 'user-1' } })),
+      listPrivateRecords: vi.fn(async () => ({
+        records: [{
+          cursor: 1,
+          operation: 'upsert',
+          recordId: sourceId,
+          recordType: 'transcription_source',
+          schemaVersion: 3,
+          payload,
+          revision: 1,
+          createdAt: '2026-08-16T16:40:08.068Z',
+          updatedAt: '2026-08-16T16:47:44.946Z',
+        }],
+        nextCursor: 1,
+      })),
+      acknowledgeSync: vi.fn(async () => undefined),
+    }
+    const reality = {
+      importEvent: vi.fn(async () => undefined),
+      discard: vi.fn(async () => undefined),
+    }
+    const service = new PrivateTranscriptionSyncService(
+      join(directory, 'state.json'),
+      client as never,
+      {} as never,
+      reality as never,
+    )
+
+    await expect(service.sync()).resolves.toMatchObject({ cursor: 1, synced: 1 })
+    expect(reality.importEvent).toHaveBeenCalledWith(expect.objectContaining({ id: distinctEventId }))
+    expect(client.acknowledgeSync).toHaveBeenCalledWith(1)
+  })
+
+  it('uses the record ID when a historical SaaS row has a null event ID', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-private-sync-'))
+    const client = {
+      status: vi.fn(async () => ({ authenticated: true, user: { id: 'user-1' } })),
+      listPrivateRecords: vi.fn(async () => ({
+        records: [{
+          cursor: 1,
+          operation: 'upsert',
+          recordId: sourceId,
+          recordType: 'transcription_source',
+          schemaVersion: 3,
+          payload: { ...source().metadata, eventId: null },
+          revision: 1,
+          createdAt: '2026-08-16T16:40:08.068Z',
+          updatedAt: '2026-08-16T16:47:44.946Z',
+        }],
+        nextCursor: 1,
+      })),
+      acknowledgeSync: vi.fn(async () => undefined),
+    }
+    const reality = {
+      importEvent: vi.fn(async () => undefined),
+      discard: vi.fn(async () => undefined),
+    }
+    const service = new PrivateTranscriptionSyncService(
+      join(directory, 'state.json'),
+      client as never,
+      {} as never,
+      reality as never,
+    )
+
+    await expect(service.sync()).resolves.toMatchObject({ cursor: 1, synced: 1 })
+    expect(reality.importEvent).toHaveBeenCalledWith(expect.objectContaining({ id: sourceId }))
   })
 
   it('publishes historical desktop transcriptions but skips synced device events', async () => {

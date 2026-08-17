@@ -356,42 +356,18 @@ export function SettingsPage() {
               ) : <small className="cloud-device-empty">暂未找到已绑定设备</small>}
             </div>
 
-            <div className="cloud-keyring" aria-label="端到端加密同步">
+            <div className="cloud-keyring" aria-label="云端同步">
               <div className="cloud-keyring-heading">
                 <span><ShieldCheck aria-hidden="true" /></span>
                 <div>
-                  <strong>端到端加密同步</strong>
-                  <small>{keyring?.enabled === false
-                    ? keyring.reason
-                    : keyring?.deviceStatus === 'ready'
-                      ? `UMK v${keyring.activeVersion} 已在本机安全保存`
-                      : keyring?.deviceStatus === 'pending'
-                        ? '等待 iPhone 批准此桌面设备'
-                        : pending === 'keyring' ? '正在检查密钥状态…' : '尚未初始化'}</small>
+                  <strong>云端明文同步</strong>
+                  <small>音频存储在 OSS，转写和总结存储在 SaaS 数据库</small>
                 </div>
               </div>
-              {keyring?.deviceStatus === 'pending' && keyring.verificationCode ? (
-                <div className="cloud-keyring-pending">
-                  <span>设备验证码</span>
-                  <code>{keyring.verificationCode}</code>
-                  <small>请在 iPhone 的账号设置中核对并批准，SaaS 无法读取你的密钥或转写内容。</small>
-                </div>
-              ) : null}
-              {keyring?.deviceStatus === 'ready' ? (
-                <div className="cloud-keyring-pairing">
-                  {!pairing ? <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void createPairing()}><ShieldCheck aria-hidden="true" />添加 iPhone</button> : null}
-                  {pairingQr && pairing?.status !== 'expired' ? <img className="cloud-keyring-qr" src={pairingQr} alt="iPhone 配对二维码" /> : null}
-                  {pairing ? <div className="cloud-keyring-pairing-info"><span>请用 iPhone 扫码，并核对确认码</span><code>{pairing.confirmationCode}</code><small>{pairing.targetDeviceName ? `待批准设备：${pairing.targetDeviceName}` : pairing.status === 'waiting_for_scan' ? '等待 iPhone 扫描' : '等待 iPhone 信息'}</small></div> : null}
-                  {pairing?.status === 'waiting_for_approval' ? <button className="primary-button" type="button" disabled={pending === 'keyring'} onClick={() => void approvePairing()}><ShieldCheck aria-hidden="true" />批准此 iPhone</button> : null}
-                  {pairing?.status === 'completed' ? <small className="cloud-keyring-result">iPhone 已完成授权</small> : null}
-                  {pairing?.status === 'expired' ? <><small className="cloud-keyring-result">二维码已过期，请重新生成</small><button className="secondary-button" type="button" onClick={resetPairing}><RefreshCw aria-hidden="true" />重新生成二维码</button></> : null}
-                  {pairingError ? <small className="cloud-keyring-result">{pairingError}</small> : null}
-                </div>
-              ) : null}
               <button
                 className="secondary-button cloud-keyring-sync"
                 type="button"
-                disabled={isBusy || keyring?.deviceStatus !== 'ready'}
+                disabled={isBusy}
                 onClick={() => void syncPrivate()}
               >
                 {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}

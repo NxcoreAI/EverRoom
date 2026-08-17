@@ -11,6 +11,23 @@ const IdParams = Type.Object({
 });
 const JobParams = Type.Object({ jobId: Type.String({ minLength: 1, maxLength: 120 }) });
 
+const RealityTagSchema = Type.Object({
+  id: Type.Optional(Type.String()),
+  kind: Type.Union([Type.Literal("entity"), Type.Literal("fact")]),
+  label: Type.String(),
+  normalizedKey: Type.Optional(Type.String()),
+  entityType: Type.Optional(Type.Union([
+    Type.Literal("person"), Type.Literal("organization"), Type.Literal("project"),
+    Type.Literal("product"), Type.Literal("place"), Type.Literal("other"),
+  ])),
+  subject: Type.Optional(Type.String()),
+  predicate: Type.Optional(Type.String()),
+  object: Type.Optional(Type.String()),
+  confidence: Type.Optional(Type.Number()),
+  evidence: Type.Optional(Type.String()),
+  occurrenceCount: Type.Optional(Type.Integer()),
+});
+
 const AsrBody = Type.Object({
   jobId: Type.String({ minLength: 1, maxLength: 120 }),
   source: Type.Union([Type.Literal("local"), Type.Literal("saas")]),
@@ -68,6 +85,8 @@ const InsightsSchema = Type.Object({
   people: Type.Array(Type.String()),
   projects: Type.Array(Type.String()),
   unresolvedQuestions: Type.Array(Type.String()),
+  representativeTags: Type.Optional(Type.Array(RealityTagSchema)),
+  summaryRecordId: Type.Optional(Type.String()),
 });
 
 function audioType(path: string): string {

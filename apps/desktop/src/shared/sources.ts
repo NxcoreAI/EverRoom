@@ -36,6 +36,7 @@ import type {
   MarkRealityEventInput,
   RealityEvent,
   RealityInsights,
+  RealityTag,
   RealityEventStatus,
   RealitySocketFrame,
   UpdateRealityTranscriptInput,
@@ -304,6 +305,10 @@ export interface NxcoreDesktopApi {
   transcriptions: {
     syncPrivate(options?: { quiet?: boolean }): Promise<PrivateTranscriptionSyncResult>
     listPrivate(): Promise<PrivateTranscriptionRecord[]>
+    listTags(): Promise<RealityTag[]>
+    replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void>
+    renameTag(tagId: string, label: string): Promise<void>
+    mergeTag(targetTagId: string, sourceTagId: string): Promise<void>
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>
@@ -400,6 +405,7 @@ export type {
   RealityEvent,
   RealityEventType,
   RealityInsights,
+  RealityTag,
   RealityEventStatus,
   RealitySocketFrame,
   UpdateRealityTranscriptInput,
