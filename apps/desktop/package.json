@@ -9,7 +9,7 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package:mac": "pnpm run build && electron-builder --mac dmg zip"
+    "package:mac": "pnpm run build && electron-builder --mac dmg zip --arm64"
   },
   "dependencies": {
     "@antv/g6": "^5.1.1",
