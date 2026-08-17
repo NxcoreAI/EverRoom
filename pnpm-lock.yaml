@@ -35,11 +35,11 @@ importers:
         specifier: ^1.1.23
         version: 1.1.23(@types/react-dom@18.3.5(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@tencentdb-agent-memory/knowledge-service':
-        specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#cfbb90401288cf9d51dd54f10291b973e2c3f10d&path:MemoryKnowledge
-        version: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/cfbb90401288cf9d51dd54f10291b973e2c3f10d#path:MemoryKnowledge(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.219.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@types/better-sqlite3@9.6.0)(graphology-types@0.24.8)(supports-color@8.1.1)
+        specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryKnowledge
+        version: git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryKnowledge(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.219.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@types/better-sqlite3@9.6.0)(graphology-types@0.24.8)(supports-color@8.1.1)
       '@tencentdb-agent-memory/memory-tencentdb-v2':
-        specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#cfbb90401288cf9d51dd54f10291b973e2c3f10d&path:MemoryCore
-        version: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/cfbb90401288cf9d51dd54f10291b973e2c3f10d#path:MemoryCore(socks@2.8.9)(supports-color@8.1.1)
+        specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryCore
+        version: git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryCore(socks@2.8.9)(supports-color@8.1.1)
       '@tiptap/extension-drag-handle-react':
         specifier: ^3.30.1
         version: 3.30.1(@tiptap/extension-drag-handle@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/extension-collaboration@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)(@tiptap/y-tiptap@3.0.8(prosemirror-model@1.25.11)(prosemirror-state@1.4.4)(prosemirror-view@1.42.2)(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32))(yjs@13.6.32))(@tiptap/extension-node-range@3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)(@tiptap/y-tiptap@3.0.8(prosemirror-model@1.25.11)(prosemirror-state@1.4.4)(prosemirror-view@1.42.2)(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32)))(@tiptap/pm@3.30.1)(@tiptap/react@3.30.1(@floating-ui/dom@1.8.0)(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))(@tiptap/pm@3.30.1)(@types/react-dom@18.3.5(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -2626,8 +2626,8 @@ packages:
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
     engines: {node: '>=10'}
 
-  '@tencentdb-agent-memory/knowledge-service@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/cfbb90401288cf9d51dd54f10291b973e2c3f10d#path:MemoryKnowledge':
-    resolution: {gitHosted: true, integrity: sha512-ZUVamfqUIu6NJnH4HYCDwUA72inOEjefX5zeNbUUOSnliruf3K3Y+kJARR6AQ3l1B2c3uWQmF0xv1GETFsxtLw==, path: MemoryKnowledge, tarball: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/cfbb90401288cf9d51dd54f10291b973e2c3f10d}
+  '@tencentdb-agent-memory/knowledge-service@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryKnowledge':
+    resolution: {commit: 446e9dd96a0035be8e465843bd0199f4061e6add, path: MemoryKnowledge, repo: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git, type: git}
     version: 0.1.0-everroom.1
     engines: {node: '>=22.0.0'}
     hasBin: true
@@ -2636,9 +2636,9 @@ packages:
     resolution: {integrity: sha512-f4a8fHxEB1V+gN7b04ttygPZX3GX5r2rDluJW47w5IBqbbEZMRdxx8Eo+owsaaukbi1uhHIuiE9qbclUbR6GFg==}
     engines: {node: '>=18.0.0'}
 
-  '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/cfbb90401288cf9d51dd54f10291b973e2c3f10d#path:MemoryCore':
-    resolution: {gitHosted: true, integrity: sha512-ZUVamfqUIu6NJnH4HYCDwUA72inOEjefX5zeNbUUOSnliruf3K3Y+kJARR6AQ3l1B2c3uWQmF0xv1GETFsxtLw==, path: MemoryCore, tarball: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/cfbb90401288cf9d51dd54f10291b973e2c3f10d}
-    version: 2.0.0-beta.1-everroom.4
+  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryCore':
+    resolution: {commit: 446e9dd96a0035be8e465843bd0199f4061e6add, path: MemoryCore, repo: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git, type: git}
+    version: 2.0.0-beta.1-everroom.5
     engines: {node: '>=22.16.0'}
     hasBin: true
     peerDependencies:
@@ -9236,7 +9236,7 @@ snapshots:
     dependencies:
       defer-to-connect: 2.0.1
 
-  '@tencentdb-agent-memory/knowledge-service@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/cfbb90401288cf9d51dd54f10291b973e2c3f10d#path:MemoryKnowledge(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.219.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@types/better-sqlite3@9.6.0)(graphology-types@0.24.8)(supports-color@8.1.1)':
+  '@tencentdb-agent-memory/knowledge-service@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryKnowledge(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.219.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@types/better-sqlite3@9.6.0)(graphology-types@0.24.8)(supports-color@8.1.1)':
     dependencies:
       '@ai-sdk/anthropic': 3.0.110(zod@4.4.3)
       '@ai-sdk/openai': 3.0.96(zod@4.4.3)
@@ -9307,7 +9307,7 @@ snapshots:
     dependencies:
       undici: 6.28.0
 
-  '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/cfbb90401288cf9d51dd54f10291b973e2c3f10d#path:MemoryCore(socks@2.8.9)(supports-color@8.1.1)':
+  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#446e9dd96a0035be8e465843bd0199f4061e6add&path:MemoryCore(socks@2.8.9)(supports-color@8.1.1)':
     dependencies:
       '@ai-sdk/openai': 3.0.96(zod@4.4.3)
       '@node-rs/jieba': 2.0.2
