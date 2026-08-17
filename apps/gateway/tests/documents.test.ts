@@ -514,12 +514,27 @@ describe('document transactions', () => {
       agentSessionId: 'session-1',
       runId: 'run-large',
     })
+    await service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 1,
+      text: 'x',
+    })
+    await service.append({
+      transactionId: started.transactionId,
+      sessionId: 'session-1',
+      sequence: 2,
+      text: 'yz',
+    })
+    expect(db.select({ totalBytes: documentTransactions.totalBytes }).from(documentTransactions)
+      .where(eq(documentTransactions.id, started.transactionId)).get()).toEqual({ totalBytes: 3 })
+
     db.update(documentTransactions).set({ totalBytes: 2 * 1024 * 1024 })
       .where(eq(documentTransactions.id, started.transactionId)).run()
     await expect(service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
-      sequence: 1,
+      sequence: 3,
       text: 'x',
     })).rejects.toMatchObject({ code: 'SIZE_LIMIT' })
 
@@ -528,7 +543,7 @@ describe('document transactions', () => {
     await expect(service.append({
       transactionId: started.transactionId,
       sessionId: 'session-1',
-      sequence: 1,
+      sequence: 3,
       text: '',
     })).rejects.toMatchObject({ code: 'TRANSACTION_EXPIRED' })
     expect(service.list('room-1')).toHaveLength(0)
