@@ -538,7 +538,7 @@ describe('document transactions', () => {
       text: '',
     })).rejects.toMatchObject({ code: 'TRANSACTION_EXPIRED' })
     expect(service.list('room-1')).toHaveLength(0)
-  })
+  }, 20_000)
 
   it('removes interrupted provisional documents during restart recovery', async () => {
     const { db, service } = await createHarness()

@@ -1,0 +1,166 @@
+name: Release Windows app
+
+on:
+  push:
+    tags:
+      - "windows-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2025
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF_NAME -notmatch '^windows-v(\d+\.\d+\.\d+)$') {
+            throw "Tag $env:GITHUB_REF_NAME must match windows-vX.Y.Z"
+          }
+          $tagVersion = $Matches[1]
+          $appVersion = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
+          if ($tagVersion -cne $appVersion) {
+            throw "Tag version $tagVersion does not match desktop version $appVersion"
+          }
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Tagged commit must be on main'
+          }
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check types
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build gateway and desktop
+        run: pnpm build
+
+      - name: Package Windows x64
+        run: pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never
+
+      - name: Audit package contents
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $resources = 'release/win-unpacked/resources'
+          $asar = Join-Path $resources 'app.asar'
+          if (-not (Test-Path $asar -PathType Leaf)) {
+            throw 'app.asar was not produced'
+          }
+          $forbidden = '(^|[\\/])(\.env($|\.)|(__tests__|tests?)([\\/]|$)|[^\\/]*(\.test|\.spec)\.[^\\/]+$|(test|spec)\.[^\\/]+$)|\.(map|ts|tsx|mts|cts)$'
+
+          $looseFiles = Get-ChildItem $resources -File -Recurse | ForEach-Object FullName
+          $forbiddenLooseFiles = @($looseFiles | Where-Object { $_ -match $forbidden })
+          if ($forbiddenLooseFiles.Count -gt 0) {
+            $forbiddenLooseFiles | Write-Error
+            throw 'Forbidden loose files found in packaged resources'
+          }
+
+          $asarFiles = pnpm --filter @nxcore/desktop exec asar list (Resolve-Path $asar)
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to list app.asar'
+          }
+          $forbiddenAsarFiles = @($asarFiles | Where-Object { $_ -match $forbidden })
+          if ($forbiddenAsarFiles.Count -gt 0) {
+            $forbiddenAsarFiles | Write-Error
+            throw 'Forbidden files found in app.asar'
+          }
+
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-PeMachine([string] $Path) {
+            $stream = [IO.File]::OpenRead((Resolve-Path $Path))
+            $reader = [IO.BinaryReader]::new($stream)
+            try {
+              $stream.Position = 0x3c
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) {
+                throw "$Path is not a PE file"
+              }
+              return $reader.ReadUInt16()
+            } finally {
+              $reader.Dispose()
+              $stream.Dispose()
+            }
+          }
+
+          $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
+          $installer = Get-Item "release/EverRoom-$version-windows-x64.exe"
+          $app = Get-Item 'release/win-unpacked/EverRoom.exe'
+          if ((Get-PeMachine $app.FullName) -ne 0x8664) {
+            throw 'EverRoom.exe is not PE x64'
+          }
+
+          $sqliteRoot = 'release/win-unpacked/resources/gateway/node_modules/better-sqlite3'
+          $nativeModules = @(Get-ChildItem $sqliteRoot -Filter '*.node' -File -Recurse)
+          if ($nativeModules.Count -ne 1 -or $nativeModules[0].Name -cne 'win32-x64.node') {
+            throw "Expected only win32-x64.node, found: $($nativeModules.FullName -join ', ')"
+          }
+          if ((Get-PeMachine $nativeModules[0].FullName) -ne 0x8664) {
+            throw 'win32-x64.node is not PE x64'
+          }
+
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          try {
+            $sqliteEntry = (Resolve-Path "$sqliteRoot/lib/win32-x64.js").Path
+            & $app.FullName -e "const Database=require(process.argv[1]);const db=new Database(':memory:');if(db.prepare('select 1 value').get().value!==1)process.exit(1);db.close()" $sqliteEntry
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Packaged Electron failed the SQLite smoke test'
+            }
+          } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          }
+
+          & 7z.exe t $installer.FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw 'NSIS installer integrity check failed'
+          }
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content "$($installer.FullName).sha256" "$hash  $($installer.Name)" -Encoding ascii
+
+      - name: Publish prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
+          $installer = Get-Item "release/EverRoom-$version-windows-x64.exe"
+          $checksum = Get-Item "$($installer.FullName).sha256"
+          gh release create $env:GITHUB_REF_NAME $installer.FullName $checksum.FullName `
+            --verify-tag `
+            --prerelease `
+            --generate-notes `
+            --notes 'Unsigned Windows x64 development build. Windows SmartScreen may require manual approval before installation.'
