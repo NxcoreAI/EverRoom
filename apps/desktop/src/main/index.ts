@@ -457,7 +457,7 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     }
     return service.addConnection('github', config.repository, config)
   })
-  ipcMain.handle(SOURCE_CHANNELS.addGoogleDocs, async (_event, input: unknown) => {
+  handle(SOURCE_CHANNELS.addGoogleDocs, async (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的 Google Docs 配置。')
     const value = input as Partial<GoogleDocsConfig>
     if (!Array.isArray(value.documentIds) || value.documentIds.length < 1 || value.documentIds.length > 100) throw new Error('请至少提供一个 Google Docs 文档 ID。')
@@ -466,7 +466,7 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     const config = { documentIds: value.documentIds.map((id) => String(id).trim()).filter(Boolean), tokenCredentialKey }
     return service.addConnection('google-docs', 'Google Docs', config)
   })
-  ipcMain.handle(SOURCE_CHANNELS.addNotion, async (_event, input: unknown) => {
+  handle(SOURCE_CHANNELS.addNotion, async (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的 Notion 配置。')
     const value = input as Partial<NotionConfig>
     if (!Array.isArray(value.pageIds) || value.pageIds.length < 1 || value.pageIds.length > 100) throw new Error('请至少提供一个 Notion 页面 ID。')
