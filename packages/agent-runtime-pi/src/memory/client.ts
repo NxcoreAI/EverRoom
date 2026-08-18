@@ -84,12 +84,18 @@ export class MemoryCoreClient {
     });
   }
 
-  /** L1：原子记忆混合检索（不限定 session，跨会话聚合）。 */
-  async searchAtomic(query: string, limit: number): Promise<MemoryAtomicItem[]> {
+  /** L1：原子记忆混合检索（不限定 session，跨会话聚合）；timeRange 按命中项 updated_at 过滤（含端点）。 */
+  async searchAtomic(
+    query: string,
+    limit: number,
+    timeRange?: { start?: string | undefined; end?: string | undefined },
+  ): Promise<MemoryAtomicItem[]> {
     const data = await this.post<{ items?: MemoryAtomicItem[] }>("/v3/atomic/search", {
       ...this.isolationBody,
       query,
       limit,
+      ...(timeRange?.start ? { time_start: timeRange.start } : {}),
+      ...(timeRange?.end ? { time_end: timeRange.end } : {}),
     });
     return data?.items ?? [];
   }

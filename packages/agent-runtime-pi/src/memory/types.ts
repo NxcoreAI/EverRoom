@@ -18,6 +18,8 @@ export interface MemoryAtomicItem {
   type: string;
   content: string;
   background?: string | undefined;
+  /** 场景/分组名（与 background 同源同值；文档派生原子 = 文档标题）。 */
+  scene_name?: string | undefined;
   /** 检索接口（atomic/search）命中时携带的相关性得分。 */
   score?: number | undefined;
   created_at: string;

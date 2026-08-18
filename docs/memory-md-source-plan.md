@@ -1,6 +1,6 @@
 # MemoryCore md 文档链路 + 记忆溯源 — 实施方案（v2）
 
-> 状态：v2 已全量落地（M0–M4，commit 81c3ef7）；2026-08-18 修订：L2/L3 排除文档派生原子（§5.4）+ 文档 type 限定收紧为 work_*（§5.3），fork a5dabc5
+> 状态：v2 已全量落地（M0–M4，commit 81c3ef7）；2026-08-18 修订：L2/L3 排除文档派生原子（§5.4）+ 文档 type 限定收紧为 work_*（§5.3），fork a5dabc5；2026-08-18 再修订：L2 恢复消费文档派生原子（仅 L3 触发计数排除，§5.4）+ 召回带 scene_name + atomic/search 时间范围，fork 3c5a571
 > 日期：2026-08-17；v2 修订：文档子系统整体下沉 MemoryCore 实现，gateway 退为薄代理（用户拍板）
 > 前置：`docs/pi-agent-memory-plan.md`（已实施，pi agent 接入 MemoryCore）、`docs/memory-app-plan.md`（已实施，MemoryPage 查看链路）
 > 范围：`TencentDB-Agent-Memory/MemoryCore`（fork，新增文档子系统）、`apps/gateway`（薄代理路由）、`apps/desktop`（MemoryPage 改造）
@@ -31,7 +31,7 @@
 
 - 不做 docx/txt 解析（对齐 knowledge file-convert 的拍板，仅收 md/markdown）
 - 不替代 wiki(KS)：文档全文结构化检索仍是 wiki 职责，本链路只提炼"值得长期记住的事实/约束/做法"
-- 文档原子**不参与** L2/L3（2026-08-18 修订，原"照常参与"已废止，§5.4）
+- 文档原子**参与 L2 场景块**（2026-08-18 再修订，恢复原行为）；仅 **L3 触发计数**排除文档派生（§5.4）
 - 不做文档模式的 memory-prompt 自定义（v1 内置模板）
 - 上游 PR 不作为交付条件（见 §12 风险）
 
@@ -53,9 +53,10 @@ MemoryCore 文档子系统（fork 新增，/v3/document/*；只存引用，不�
 MemoryCore 提炼管道（文档模式）
    L0（source_kind/ref）→ L1 文档模式提炼（新引言，type 限定，
    scene_name=文档标题，source_message_ids 落列）
-   → L2 场景块排除文档原子（fork 过滤）；L3 persona 不受文档影响（§5.4，2026-08-18 修订）
-   ✅ 召回零改动：L1 召回是 agent 维度跨 session（v2-router.ts:1199），
-      文档原子自动进入 pi agent 的 <memory-context> 与 memory_search
+   → L2 场景块照常消费文档原子；L3 触发计数排除文档派生（§5.4，2026-08-18 再修订）
+   ✅ 召回增强（fork 3c5a571）：L1 召回是 agent 维度跨 session（v2-router.ts:1199），
+      文档原子自动进入 pi agent 的 <memory-context> 与 memory_search；
+      命中项显式携带 scene_name；atomic/search 支持 time_start/time_end
 
 溯源：
    正向  L1.source_message_ids → L0 原话 / document_chunks 锚点（标题路径+行区间）
@@ -128,19 +129,17 @@ md 原文是**文档资产**，归调用方所有——EverRoom 侧即知识资�
    > 以下是一份文档《{title}》的分块内容，每块开头标注了它在文档中的标题路径。请从中提取值得长期记住的**事实、约束、做法、决策**——即未来对话中可直接复用、能减少重复工作的信息。不要把文档内容当作用户说过的话；不复述文档结构本身；每条记忆的 source_message_ids 指向其依据的分块消息 id。
 
 2. **type 限定**：只产 `work_fact / work_task / work_method / work_artifact`，不产 `persona / episodic / instruction`（文档不是用户人格与经历；instruction 是对话链路的"用户指令"类型，文档中的行为规则归 work_method——2026-08-18 收紧，原含 instruction 已废止）。
-3. **scene 处理**：不做 `previousSceneName` 连续性；`scene_name` = 文档标题（仅作 L1 分组/展示标签——文档原子不进 L2，§5.4 修订）。
+3. **scene 处理**：不做 `previousSceneName` 连续性；`scene_name` = 文档标题（L1 分组/召回展示标签——召回结果显式携带，§6.2）。
 4. **溯源落列**：`source_kind/source_ref/source_message_ids` 随 MemoryRecord 落新列（`l1-writer.ts`/`l1-reader.ts` 增字段）。
 5. **修 `/atomic/update` 清空行为**（`v2-router.ts:1073-1091`）：人工编辑内容时保留既有 source 三字段，只更新 content/version。
 
-### 5.4 L2 / L3（2026-08-18 修订：排除文档派生原子）
+### 5.4 L2 / L3（2026-08-18 再修订：L2 恢复消费，仅 L3 触发计数排除）
 
-原方案"照常参与"已废止——用户拍板改为**文档原子只服务 L1 召回与溯源，不进 L2 场景块、不催更 L3 画像**。实现（fork 446e9dd，`-everroom.5`）：
+决策演进（用户拍板）：08-17 原方案"照常参与" → 08-18 一度全排除（fork 446e9dd）→ **08-18 再修订回退 L2 半边**（fork 3c5a571，`-everroom.7`）：**文档知识照常参与场景组织；只有 L3 触发计数仍排除文档派生**。
 
-- **L2 内容闸门**：`createL2Runner` 查询 L1 后过滤 `source_kind='document'`。纯文档批次不触 LLM，但游标仍推进到本批最大 `updated_at`（含混合批次中晚于会话行的文档行），避免反复重查。
-- **L3 内容无需单独闸门**：persona 只从场景块生成（`persona-generator` 读 scene index，从不直接读 L1），L2 闸门即内容闸门。原方案的"persona prompt 文档表述框架"配套改动随之不需要。
-- **L3 触发计数**：`markL1ExtractionComplete` 新增 `personaVisibleExtracted` 参数，文档派生 stored 数不计入 `memories_since_last_persona`——否则批量导文档会催更画像，触发一次"内容其实没变"的空转重生成。`total_memories_extracted` 遥测仍计全量。
-- **L1 调度保留**：文档组仍 `profileScopes.add`（即仍会调度 L2）——这正是纯文档批次推进游标的通路。
-- 回归测试：fork `__tests__/pipeline/l2-l3-doc-exclusion.test.ts`；EverRoom e2e `apps/gateway/tests/memory-doc-pipeline.test.ts`。
+- **L2 照常消费**：`createL2Runner` 不再过滤 `source_kind='document'`——文档派生原子与会话原子一起进入场景提取提示词（分块标题路径前缀让 LLM 有足够语境归入场景）。
+- **L3 触发计数**：`markL1ExtractionComplete` 新增 `personaVisibleExtracted` 参数，文档派生 stored 数不计入 `memories_since_last_persona`——否则批量导文档会催更画像，触发一次"内容其实没变"的空转重生成。`total_memories_extracted` 遥测仍计全量。persona 内容只从场景块生成，文档知识经 L2 自然纳入画像，无需单独内容闸门。
+- 回归测试：fork `__tests__/pipeline/l2-l3-doc-semantics.test.ts`；EverRoom e2e `apps/gateway/tests/memory-doc-pipeline.test.ts`。
 
 ## 6. API（MemoryCore 新增 + 既有端点扩展）
 
@@ -158,7 +157,8 @@ md 原文是**文档资产**，归调用方所有——EverRoom 侧即知识资�
 
 | 位置 | 改动 |
 | --- | --- |
-| `AtomicDetail`（`v2-router.ts:1132`） | + `session_id`、`source_kind`、`source_ref`、`source_message_ids` |
+| `AtomicDetail`（`v2-router.ts:1132`） | + `session_id`、`source_kind`、`source_ref`、`source_message_ids`、`scene_name`（与 `background` 同源同值，fork 3c5a571） |
+| `atomic/search` 时间范围（fork 3c5a571） | 请求参数 `time_start`/`time_end`（ISO 8601，含端点）生效：`executeMemorySearch` 按 hit 的 `updated_at` 在 RRF 合并后、截断前过滤。EverRoom `memory_search` 工具已透传（`tools.ts` `time_start`/`time_end` 参数） |
 | conversation query/search 响应 | + `source_kind`、`source_ref` |
 | atomic/conversation 的 query/search | 请求加可选 `source_kind` 过滤（conversation_search 默认排除文档块） |
 | `queryL1` store 接口 | + `sourceRef` 过滤（反向溯源的查询基础） |
@@ -212,7 +212,7 @@ md 原文是**文档资产**，归调用方所有——EverRoom 侧即知识资�
 | **fork 性质升级**：从补丁集变子系统，该区域上游同步基本放弃 | FORK.md 策略改写为"MemoryCore 承载文档子系统特性分支"；改动收敛在 `core/document/` + 触点文件清单内，重放边界清晰；仍可尝试拆 PR 上 upstream |
 | FTS5 镜像表重建 | 跟随 `sqlite.ts:1080` 先例；迁移幂等 |
 | 文档模式提炼质量未知 | 引言模板独立可迭代；验收含人工抽查；type 限定收窄出错面 |
-| 批量导入文档挤占场景/persona 槽位 | 已消除（2026-08-18 修订：文档原子不进 L2/L3，§5.4） |
+| 批量导入文档挤占场景/persona 槽位 | 接受（2026-08-18 再修订：L2 恢复消费文档原子，`maxScenes=15` 分层警告兜底；L3 触发计数仍排除文档派生，不催更画像） |
 | generation-log best-effort 丢日志 | 正向溯源主路径读 AtomicDetail 直存字段，不依赖 log；log 仅存量数据兜底 |
 | 大文档多批写 L0 中途失败 | import 返回明确错误；重导整份重来（删 session 级联），不产生半截 L1 |
 | 2MB/6000 字符等参数不当 | 全部集中为常量/配置，跑过即调 |
@@ -235,5 +235,7 @@ md 原文是**文档资产**，归调用方所有——EverRoom 侧即知识资�
 6. **参数**：6000 字符/块、2MB 上限、2000 块上限——首版按此，跑过再调。
 
 已拍板记录：
-- ~~**L3 persona 不排除 document 记忆**（2026-08-17，本文档 §5.4）~~ → **2026-08-18 废止**：L2 与 L3 均排除文档派生原子（fork 446e9dd，见 §5.4 修订）。
+- ~~**L3 persona 不排除 document 记忆**（2026-08-17，本文档 §5.4）~~ → ~~**2026-08-18 废止**：L2 与 L3 均排除文档派生原子（fork 446e9dd）~~ → **2026-08-18 再修订**：L2 恢复照常消费文档派生原子，仅 L3 触发计数排除（fork 3c5a571，见 §5.4）。
+- **召回的每条 L1 记忆显式携带 scene_name**（2026-08-18）：`AtomicDetail`/search/query 响应统一加 `scene_name` 字段；EverRoom 自动召回注入与 `memory_search` 工具统一渲染 `（场景：X）`（`formatAtomicLine`，缺省回退 `background`）。
+- **记忆召回支持时间范围**（2026-08-18）：`atomic/search` 的 `time_start`/`time_end` 生效（此前 schema 有参但 handler 忽略）；`memory_search` 工具暴露同名参数。
 - **原文不落 MemoryCore**（2026-08-17，本文档 §4.3）：原文属调用方资产，EverRoom 走知识资产层（uploaded_files/parsed_contents）持原文，MemoryCore 只存 caller_ref + sha，导入内容随体过境不落盘。

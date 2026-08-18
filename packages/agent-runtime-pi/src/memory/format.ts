@@ -10,6 +10,17 @@ export interface MemoryRecallInput {
 }
 
 /**
+ * 渲染单条 L1 原子记忆为列表行：内容 + 场景（scene_name，缺省回退 background）+ 日期。
+ * 自动召回注入与 memory_search 工具共用，保证两处展示一致。
+ */
+export function formatAtomicLine(item: MemoryAtomicItem): string {
+  const date = item.updated_at?.slice(0, 10) ?? "";
+  const scene = item.scene_name ?? item.background;
+  const sceneStr = scene ? `（场景：${scene}）` : "";
+  return `- ${item.content}${sceneStr}${date ? ` [${date}]` : ""}`;
+}
+
+/**
  * 将召回结果格式化为注入 agent 的记忆块。
  * 超出字符预算时优先截断 L1 列表，画像与场景目录保留头部。
  * 结果为空时返回 null（调用方跳过注入）。
@@ -22,11 +33,7 @@ export function formatRecallResult(input: MemoryRecallInput, charBudget: number)
   }
 
   if (input.atomicItems.length > 0) {
-    const lines = input.atomicItems.map((item) => {
-      const date = item.updated_at?.slice(0, 10) ?? "";
-      const background = item.background ? `（${item.background}）` : "";
-      return `- ${item.content}${background}${date ? ` [${date}]` : ""}`;
-    });
+    const lines = input.atomicItems.map(formatAtomicLine);
     sections.push(`[相关记忆]\n${lines.join("\n")}`);
   }
 
