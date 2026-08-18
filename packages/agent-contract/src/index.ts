@@ -145,6 +145,10 @@ export interface StartAgentRunInput {
   idempotencyKey: string;
   /** Defaults to true. Temporary preview runs can defer capture until user confirmation. */
   captureMemory?: boolean;
+  /** Defaults to true. Lightweight runs can skip automatic memory recall. */
+  recallMemory?: boolean;
+  /** Defaults to true. Lightweight runs can hide all runtime tools from the model. */
+  toolsEnabled?: boolean;
   context?: {
     selectedText?: string;
     /** Current, non-deleted Rooms visible to the desktop when this run starts. */
@@ -153,6 +157,35 @@ export interface StartAgentRunInput {
     selectedRoomId?: string | null;
     activeDocument?: AgentActiveDocumentContext;
   };
+}
+
+export type PendingAgentIntentTargetCapability =
+  | "document.create"
+  | "document.edit"
+  | "document.continue";
+
+export interface PendingAgentIntent {
+  id: string;
+  sessionId: string;
+  sourceRunId: string;
+  originalPrompt: string;
+  targetCapability: PendingAgentIntentTargetCapability;
+  allowedRoomIds: string[];
+  allowedDocumentIds: string[];
+  expiresAt: string;
+  consumedAt: string | null;
+  createdAt: string;
+}
+
+export interface SubmitPendingAgentIntentInput {
+  roomId: string;
+  documentId?: string;
+  idempotencyKey: string;
+}
+
+export interface TrustedMcpSession {
+  sessionId: string;
+  expiresAt: string;
 }
 
 export interface AgentDocumentCursorAnchor {
@@ -184,6 +217,7 @@ export interface RoomDocument {
   roomId: string;
   title: string;
   contentJson: TiptapJsonContent;
+  contentSchemaVersion: number;
   version: number;
   status: "draft" | "active";
   activeTransactionId: string | null;
@@ -193,14 +227,18 @@ export interface RoomDocument {
 }
 
 export interface DocumentBlockSummary {
-  id: string;
+  blockId: string;
   documentId: string;
   roomId: string;
   parentBlockId: string | null;
+  rootBlockId: string;
   type: string;
+  siblingIndex: number;
   ordinal: number;
   path: number[];
+  depth: number;
   textPreview: string;
+  indexedVersion: number;
 }
 
 export interface DocumentBlockList {
@@ -215,7 +253,8 @@ export type DocumentBlockResolutionStatus =
   | "document_trashed"
   | "document_deleted"
   | "block_missing"
-  | "room_unavailable";
+  | "room_unavailable"
+  | "permission_denied";
 
 export interface DocumentBlockReferenceInput {
   roomId: string;
@@ -239,166 +278,167 @@ export interface ResolveDocumentBlockReferencesResult {
   resolutions: DocumentBlockResolution[];
 }
 
-export type DocumentPatchKind = "continue" | "edit";
-export type DocumentPatchStatus =
-  | "building"
-  | "pending"
-  | "applied"
+export interface DocumentBlockBacklink {
+  sourceRoomId: string;
+  sourceDocumentId: string;
+  sourceDocumentTitle: string;
+  sourceBlockId: string;
+  sourceTextPreview: string;
+  targetDocumentId: string;
+  targetBlockId: string;
+}
+
+export interface DocumentBlockBacklinkList {
+  documentId: string;
+  blockId: string | null;
+  backlinks: DocumentBlockBacklink[];
+}
+
+export interface DocumentVersionSummary {
+  documentId: string;
+  version: number;
+  contentSchemaVersion: number;
+  sourceTransactionId: string | null;
+  createdAt: string;
+}
+
+export interface RestoreDocumentVersionInput {
+  baseVersion: number;
+}
+
+export type DocumentOperationInteractionMode =
+  | "streaming_commit"
+  | "atomic_review"
+  | "incremental_review"
+  | "preview_replace";
+
+export type DocumentOperationStatus =
+  | "created"
+  | "running"
+  | "awaiting_input"
+  | "awaiting_review"
+  | "applying"
+  | "completed"
   | "rejected"
   | "conflicted"
-  | "aborted"
+  | "failed"
+  | "cancelled"
   | "expired";
-export type DocumentPatchOperation = "insert" | "replace" | "delete";
 
-export type DocumentPatchTarget =
+export type DocumentOperationItemStatus =
+  | "pending"
+  | "accepted"
+  | "rejected"
+  | "applied"
+  | "skipped";
+
+export interface DocumentOperationSummary {
+  id: string;
+  capabilityId: string;
+  capabilityVersion: number;
+  interactionMode: DocumentOperationInteractionMode;
+  presenterKey: string;
+  roomId: string;
+  documentId: string | null;
+  documentTitle: string;
+  sessionId: string;
+  runId: string;
+  baseVersion: number | null;
+  status: DocumentOperationStatus;
+  revision: number;
+  summary: string;
+  conflictVersion: number | null;
+  error: Record<string, unknown> | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface DocumentOperationItem {
+  id: string;
+  operationId: string;
+  sequence: number;
+  operation: DocumentMutationOperation | "stream_chunk" | "replace_selection";
+  target: DocumentMutationTarget | null;
+  before: TiptapJsonContent[];
+  after: TiptapJsonContent[];
+  markdown: string;
+  contentHash: string;
+  status: DocumentOperationItemStatus;
+  appliedVersion: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentOperation extends DocumentOperationSummary {
+  input: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  items: DocumentOperationItem[];
+}
+
+export interface DocumentOperationList {
+  operations: DocumentOperationSummary[];
+}
+
+export interface DocumentOperationCommandInput {
+  commandId: string;
+  expectedRevision: number;
+  type: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface DocumentOperationCommandResult {
+  operation: DocumentOperation;
+  document?: RoomDocument;
+  duplicate: boolean;
+}
+
+export interface StartDocumentOperationInput {
+  capabilityId: string;
+  context: {
+    roomId: string;
+    documentId?: string;
+    sessionId: string;
+    runId: string;
+  };
+  input: Record<string, unknown>;
+}
+
+export type DocumentCapabilityType = "query" | "mutation";
+
+export interface DocumentCapabilityManifest {
+  id: string;
+  version: number;
+  type: DocumentCapabilityType;
+  interactionMode: DocumentOperationInteractionMode | null;
+  presenterKey: string | null;
+  permissions: readonly ("room:read" | "document:read" | "document:write")[];
+  requiresRoom: boolean;
+  requiresDocument: boolean;
+}
+
+export type DocumentMutationOperation = "insert" | "replace" | "delete";
+
+export type DocumentMutationTarget =
   | { at: "end" }
   | { blockId: string; edge: "before" | "after" }
   | { blockId: string; fromOffset?: number; toOffset?: number }
   | { fromBlockId: string; toBlockId: string };
 
-export interface DocumentPatchHunk {
-  id: string;
-  sequence: number;
-  operation: DocumentPatchOperation;
-  target: DocumentPatchTarget;
-  markdown: string;
-  before: TiptapJsonContent[];
-  after: TiptapJsonContent[];
-  addedCharacters: number;
-  deletedCharacters: number;
-}
-
-export interface DocumentContinuationBlock {
-  blockId: string;
-  sequence: number;
-  hunkId: string;
-  target: DocumentPatchTarget;
-  contentJson: TiptapJsonContent;
-  textPreview: string;
-  addedCharacters: number;
-}
-
-export interface DocumentPatchSummary {
-  id: string;
-  roomId: string;
-  documentId: string;
-  documentTitle: string;
-  baseVersion: number;
-  sessionId: string;
-  runId: string;
-  kind: DocumentPatchKind;
-  status: DocumentPatchStatus;
-  summary: string;
-  hunkCount: number;
-  addedCharacters: number;
-  deletedCharacters: number;
-  acceptedHunkIds: string[];
-  rejectedHunkIds: string[];
-  acceptedBlockIds: string[];
-  rejectedBlockIds: string[];
-  appliedVersion: number | null;
-  conflictVersion: number | null;
-  expiresAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface DocumentPatch extends DocumentPatchSummary {
-  baseContentJson: TiptapJsonContent;
-  proposedContentJson: TiptapJsonContent;
-  hunks: DocumentPatchHunk[];
-  continuationBlocks: DocumentContinuationBlock[];
-  nextPendingBlock: DocumentContinuationBlock | null;
-}
-
-export interface CreateDocumentPatchInput {
-  documentId: string;
-  baseVersion: number;
-  kind: DocumentPatchKind;
-  summary: string;
-}
-
-export interface AppendDocumentPatchHunkInput {
-  patchId: string;
-  sequence: number;
-  operation: DocumentPatchOperation;
-  target: DocumentPatchTarget;
-  markdown?: string;
-}
-
-export interface ApplyDocumentPatchInput {
-  baseVersion: number;
-  acceptedHunkIds: string[];
-}
-
-export interface ApplyDocumentPatchResult {
-  patch: DocumentPatch;
-  document: RoomDocument;
-}
-
-export interface AcceptDocumentContinuationBlockInput {
-  /** The authoritative document version currently shown by the editor. */
-  baseVersion: number;
-  blockId: string;
-}
-
-export interface AcceptDocumentContinuationBlockResult {
-  patch: DocumentPatch;
-  document: RoomDocument;
-  nextPendingBlock: DocumentContinuationBlock | null;
-}
-
-export interface RejectDocumentContinuationBlockInput {
-  /** The authoritative document version currently shown by the editor. */
-  baseVersion: number;
-  blockId: string;
-}
-
-export interface RejectDocumentContinuationBlockResult {
-  patch: DocumentPatch;
-  nextPendingBlock: DocumentContinuationBlock | null;
-}
-
 export type DocumentEventType =
-  | "document.opened"
-  | "document.appended"
-  | "document.commit-requested"
-  | "document.committed"
-  | "document.aborted"
-  | "document.trashed"
-  | "document.restored"
-  | "document.deleted"
-  | "document.updated"
-  | "document.patch-building"
-  | "document.patch-prepared"
-  | "document.patch-continuation-advanced"
-  | "document.patch-applied"
-  | "document.patch-rejected"
-  | "document.patch-conflicted"
-  | "document.patch-aborted"
-  | "document.patch-expired";
+  | "document.changed"
+  | "document.operation.changed"
+  | "document.deleted";
 
 export interface DocumentEvent<T = unknown> {
   id: string;
   roomId: string;
   documentId: string;
-  transactionId: string | null;
+  operationId: string | null;
   type: DocumentEventType;
   occurredAt: string;
   payload: T;
-}
-
-export interface DocumentSnapshotEventPayload {
-  document: RoomDocument;
-}
-
-export interface DocumentAppendedEventPayload extends DocumentSnapshotEventPayload {
-  sequence: number;
-  text: string;
-}
-
-export interface DocumentCommitRequestedEventPayload extends DocumentSnapshotEventPayload {
-  finalSequence: number;
 }
 
 export interface DocumentEventFrame {
@@ -417,11 +457,6 @@ export interface ImportRoomDocumentInput {
 export interface SaveRoomDocumentInput {
   baseVersion: number;
   title?: string;
-  contentJson: TiptapJsonContent;
-}
-
-export interface AcknowledgeDocumentTransactionInput {
-  sequence: number;
   contentJson: TiptapJsonContent;
 }
 

@@ -83,6 +83,9 @@ const api: NxcoreDesktopApi = {
     },
     report: reportRequestError,
   },
+  diagnostics: {
+    log: (input) => ipcRenderer.send('app:diagnostic-log', input),
+  },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
@@ -198,26 +201,38 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('agent:event', handleEvent)
     },
   },
+  cursorCompletionAgent: {
+    createSession: (input) => invokeQuietly('cursor-completion-agent:create-session', input),
+    deleteSession: (sessionId) =>
+      invokeQuietly('cursor-completion-agent:delete-session', sessionId),
+    getEvents: (sessionId, runId, afterSeq) =>
+      invokeQuietly('cursor-completion-agent:get-events', sessionId, runId, afterSeq),
+    startRun: (sessionId, input) =>
+      invokeQuietly('cursor-completion-agent:start-run', sessionId, input),
+    cancelRun: (runId) => invokeQuietly('cursor-completion-agent:cancel-run', runId),
+  },
   documents: {
     list: (roomId) => invoke('documents:list', roomId),
     listTrash: (roomId) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
+    listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
+    listVersions: (documentId) => invoke('documents:list-versions', documentId),
+    restoreVersion: (documentId, version, baseVersion) =>
+      invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),
-    listPatches: (documentId, status) => invoke('documents:list-patches', documentId, status),
-    getPatch: (patchId) => invoke('documents:get-patch', patchId),
-    applyPatch: (patchId, input) => invoke('documents:apply-patch', patchId, input),
-    rejectPatch: (patchId) => invoke('documents:reject-patch', patchId),
-    acceptContinuationBlock: (patchId, input) => invoke('documents:accept-continuation-block', patchId, input),
-    rejectContinuationBlock: (patchId, input) => invoke('documents:reject-continuation-block', patchId, input),
-    closeContinuation: (patchId) => invoke('documents:close-continuation', patchId),
+    listOperations: (filters) => invoke('documents:list-operations', filters),
+    startOperation: (input) => invoke('documents:start-operation', input),
+    getOperation: (operationId) => invoke('documents:get-operation', operationId),
+    executeOperationCommand: (operationId, input) =>
+      invoke('documents:execute-operation-command', operationId, input),
+    storeImage: (documentId, input) => invoke('documents:store-image', documentId, input),
     import: (input) => invoke('documents:import', input),
     save: (documentId, input) => invoke('documents:save', documentId, input),
     delete: (documentId) => invoke('documents:delete', documentId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
     emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
-    acknowledge: (transactionId, input) => invoke('documents:acknowledge', transactionId, input),
     exportPdf: (input) => invoke('documents:export-pdf', input),
     subscribe: (roomId) => invoke('documents:subscribe', roomId),
     unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),
@@ -227,6 +242,13 @@ const api: NxcoreDesktopApi = {
       }
       ipcRenderer.on('documents:event', handleEvent)
       return () => ipcRenderer.removeListener('documents:event', handleEvent)
+    },
+    onOperationChanged: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, operationId: string) => {
+        listener(operationId)
+      }
+      ipcRenderer.on('documents:operation-changed', handleEvent)
+      return () => ipcRenderer.removeListener('documents:operation-changed', handleEvent)
     },
   },
   sources: {

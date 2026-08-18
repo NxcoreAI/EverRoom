@@ -1,0 +1,444 @@
+.document-patch-review-toolbar {
+  display: flex;
+  min-height: 46px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #dde3ea;
+  background: #fff;
+  color: #374151;
+}
+
+.document-continuation-toolbar {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--cr-blue) 18%, var(--cr-border));
+  background: color-mix(in srgb, var(--cr-blue) 5%, var(--cr-surface));
+  color: var(--cr-text);
+  font-size: 11px;
+}
+
+.document-continuation-toolbar > span {
+  font-weight: 600;
+}
+
+.document-continuation-toolbar > small {
+  overflow: hidden;
+  color: var(--cr-danger, #b83b35);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-continuation-toolbar > button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 0 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.document-continuation-toolbar > button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--cr-blue) 30%, var(--cr-border));
+  color: var(--cr-text);
+}
+
+.document-continuation-toolbar > button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.document-continuation-toolbar svg {
+  width: 14px;
+  height: 14px;
+}
+
+.document-continuation-candidate {
+  position: relative;
+  display: block;
+  margin: 8px 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 38%, var(--cr-border));
+  border-left: 3px solid var(--cr-blue);
+  border-radius: 6px;
+  outline: 0;
+  background: color-mix(in srgb, var(--cr-blue) 7%, var(--cr-surface));
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--cr-blue) 10%, transparent);
+  color: var(--cr-text);
+  cursor: default;
+}
+
+.document-continuation-block {
+  padding: 9px 12px 7px;
+}
+
+.document-continuation-block + .document-continuation-block {
+  border-top: 1px solid color-mix(in srgb, var(--cr-blue) 20%, var(--cr-border));
+}
+
+.document-continuation-block[data-current='true'] {
+  background: color-mix(in srgb, var(--cr-blue) 4%, transparent);
+}
+
+.document-continuation-block[data-decision='accepted'] {
+  background: color-mix(in srgb, #16834f 7%, transparent);
+}
+
+.document-continuation-block[data-decision='rejected'] {
+  background: color-mix(in srgb, var(--cr-danger, #b83b35) 6%, transparent);
+  opacity: 0.68;
+}
+
+.document-continuation-candidate:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cr-blue) 24%, transparent),
+    0 4px 14px color-mix(in srgb, var(--cr-blue) 10%, transparent);
+}
+
+.document-continuation-candidate[data-busy='true'] {
+  cursor: progress;
+  opacity: 0.64;
+}
+
+.document-continuation-candidate-editor,
+.document-patch-review-proposed-editor {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 76px;
+  max-height: min(42vh, 360px);
+  resize: vertical;
+  overflow: auto;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 18%, var(--cr-border));
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.document-continuation-candidate-editor:focus,
+.document-patch-review-proposed-editor:focus {
+  border-color: var(--cr-blue);
+  outline: 2px solid color-mix(in srgb, var(--cr-blue) 18%, transparent);
+}
+
+.document-continuation-candidate-editor:disabled,
+.document-patch-review-proposed-editor:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.document-continuation-candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  min-height: 28px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--cr-blue) 15%, transparent);
+}
+
+.document-continuation-candidate-actions button {
+  display: inline-flex;
+  height: 26px;
+  min-width: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.document-continuation-candidate-actions button:hover:not(:disabled),
+.document-continuation-candidate-actions button:focus-visible {
+  outline: 0;
+  background: var(--cr-surface);
+}
+
+.document-continuation-candidate-actions .is-accept {
+  color: #16834f;
+}
+
+.document-continuation-candidate-actions .is-reject {
+  color: var(--cr-danger, #b83b35);
+}
+
+.document-continuation-candidate-actions button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.document-continuation-candidate-actions button.is-selected {
+  background: var(--cr-surface);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.document-continuation-candidate-actions .is-accept-all {
+  border-color: color-mix(in srgb, var(--cr-blue) 28%, var(--cr-border));
+  background: var(--cr-surface);
+  color: var(--cr-blue);
+}
+
+.document-continuation-candidate-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.document-continuation-feedback {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.document-continuation-feedback textarea {
+  width: 100%;
+  min-height: 54px;
+  resize: vertical;
+  padding: 7px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.document-continuation-feedback textarea:focus {
+  border-color: var(--cr-blue);
+  outline: 2px solid color-mix(in srgb, var(--cr-blue) 18%, transparent);
+}
+
+.document-continuation-feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.document-continuation-feedback-actions button {
+  min-width: 28px;
+}
+
+.document-continuation-feedback-actions .is-submit {
+  border-color: color-mix(in srgb, var(--cr-blue) 28%, var(--cr-border));
+  background: var(--cr-surface);
+  color: var(--cr-blue);
+}
+
+.document-patch-review-progress {
+  display: flex;
+  min-width: 120px;
+  max-width: 260px;
+  flex-direction: column;
+}
+
+.document-patch-review-progress strong {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-patch-review-progress span,
+.document-patch-review-actions > span {
+  color: #7b8490;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.document-patch-review-proposed {
+  position: relative;
+  display: block;
+  margin: 8px 0;
+  padding: 10px 12px 7px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 34%, var(--cr-border));
+  border-left: 3px solid var(--cr-blue);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cr-blue) 6%, var(--cr-surface));
+  color: var(--cr-text);
+  outline: 0;
+}
+
+.document-patch-review-proposed-content {
+  white-space: pre-wrap;
+}
+
+.document-patch-review-proposed-actions {
+  display: flex;
+  min-height: 27px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--cr-blue) 15%, transparent);
+}
+
+.document-patch-review-proposed-actions button {
+  display: inline-flex;
+  height: 26px;
+  min-width: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.document-patch-review-proposed-actions button:hover:not(:disabled),
+.document-patch-review-proposed-actions button:focus-visible {
+  outline: 0;
+  background: var(--cr-surface);
+}
+
+.document-patch-review-proposed-actions .is-accept { color: #16834f; }
+.document-patch-review-proposed-actions .is-reject { color: var(--cr-danger, #b83b35); }
+.document-patch-review-proposed-actions .is-accept-all {
+  border-color: color-mix(in srgb, var(--cr-blue) 28%, var(--cr-border));
+  background: var(--cr-surface);
+  color: var(--cr-blue);
+}
+
+.document-patch-review-proposed-actions button svg { width: 15px; height: 15px; }
+.document-patch-review-proposed-actions button:disabled { cursor: default; opacity: 0.45; }
+
+.document-patch-review-navigation,
+.document-patch-review-decision,
+.document-patch-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.document-patch-review-actions {
+  margin-left: auto;
+}
+
+.document-patch-review-toolbar button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid #dce2e8;
+  border-radius: 6px;
+  background: #fff;
+  color: #525b68;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+}
+
+.document-patch-review-toolbar button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.document-patch-review-toolbar button.is-active.is-accepted {
+  border-color: #93d6b2;
+  background: #effaf4;
+  color: #147a46;
+}
+
+.document-patch-review-toolbar button.is-active.is-rejected {
+  border-color: #edaaa6;
+  background: #fff4f3;
+  color: #b83b35;
+}
+
+.document-patch-review-toolbar button.is-primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.document-patch-review-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.document-patch-review-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: #b45309;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.document-patch-review-spinner {
+  animation: document-patch-review-spin 800ms linear infinite;
+}
+
+.document-patch-review-added {
+  background: rgba(34, 197, 94, 0.12);
+  box-shadow: inset 3px 0 #22a45a;
+}
+
+.document-patch-review-deleted {
+  background: rgba(220, 38, 38, 0.09);
+  color: #9f3732;
+  text-decoration: line-through;
+  text-decoration-color: rgba(159, 55, 50, 0.7);
+}
+
+.document-patch-review-replaced {
+  background: rgba(245, 158, 11, 0.1);
+  box-shadow: inset 3px 0 #d69016;
+}
+
+.document-patch-review-proposed {
+  margin: 7px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #22a45a;
+  background: rgba(34, 197, 94, 0.11);
+  color: #17663d;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.document-patch-review-current {
+  outline: 2px solid rgba(37, 99, 235, 0.52);
+  outline-offset: 2px;
+}
+
+.document-patch-review-hunk-rejected { opacity: 0.5; }
+
+@keyframes document-patch-review-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 920px) {
+  .document-patch-review-actions { width: 100%; margin-left: 0; }
+  .document-patch-review-actions > span { margin-right: auto; }
+}

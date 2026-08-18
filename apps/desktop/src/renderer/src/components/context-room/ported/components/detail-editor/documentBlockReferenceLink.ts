@@ -152,6 +152,7 @@ const STATUS_LABELS: Record<DocumentBlockResolutionStatus, string> = {
   document_deleted: '文档已删除',
   block_missing: '原内容块已不存在',
   room_unavailable: '不在当前 Room',
+  permission_denied: '无权访问',
 }
 
 export function documentBlockResolutionLabel(

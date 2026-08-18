@@ -2,12 +2,6 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { DocumentMcpHost } from "./mcp-host.js";
 
-const ContextQuery = Type.Object({
-  agentSessionId: Type.String({ minLength: 1, maxLength: 128 }),
-  runId: Type.String({ minLength: 1, maxLength: 128 }),
-  roomId: Type.String({ minLength: 1, maxLength: 128 }),
-});
-
 const SessionParams = Type.Object({
   sessionId: Type.String({ minLength: 1, maxLength: 128 }),
 });
@@ -24,20 +18,26 @@ export function documentMcpRoutes(host: DocumentMcpHost): FastifyPluginAsyncType
         schema: {
           tags: ["documents", "mcp"],
           params: SessionParams,
-          querystring: ContextQuery,
           body: JsonRpcMessage,
         },
       },
       async (request, reply) => {
-        const messages = await host.exchange(request.params.sessionId, request.body, {
-          agentSessionId: request.query.agentSessionId,
-          runId: request.query.runId,
-          roomId: request.query.roomId,
-        });
-        if (messages.length === 0) return reply.code(202).send();
-        return reply
-          .type("application/json")
-          .send(messages.length === 1 ? messages[0] : messages);
+        try {
+          const messages = await host.exchangeTrusted(request.params.sessionId, request.body);
+          if (messages.length === 0) return reply.code(202).send();
+          return reply
+            .type("application/json")
+            .send(messages.length === 1 ? messages[0] : messages);
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith("MCP_SESSION_INVALID:")) {
+            return reply.code(404).send({
+              jsonrpc: "2.0",
+              error: { code: -32001, message: "Trusted MCP session is missing or expired" },
+              id: "id" in request.body ? request.body.id ?? null : null,
+            });
+          }
+          throw error;
+        }
       },
     );
 
@@ -57,7 +57,10 @@ export function documentMcpRoutes(host: DocumentMcpHost): FastifyPluginAsyncType
     app.delete(
       "/v1/mcp/documents/:sessionId",
       { schema: { tags: ["documents", "mcp"], params: SessionParams } },
-      methodNotAllowed,
+      async (request, reply) => {
+        await host.closeTrustedSession(request.params.sessionId);
+        return reply.code(204).send();
+      },
     );
   };
 }

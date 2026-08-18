@@ -14,6 +14,23 @@
   src: url('/fonts/context-room/inter-600.woff2') format('woff2');
 }
 
+.context-room-operation-shell {
+  --cr-canvas: #fff;
+  --cr-surface: #fff;
+  --cr-surface-secondary: #f7f8fa;
+  --cr-surface-hover: #f3f4f6;
+  --cr-text: #111827;
+  --cr-muted: #6b7280;
+  --cr-border: #e5e7eb;
+  --cr-blue: #3d6ff6;
+  --cr-danger: #c83232;
+  position: relative;
+  display: block;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .context-room-app {
   --cr-canvas: #fafafa;
   --cr-surface: #ffffff;
@@ -1713,7 +1730,6 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--cr-border);
 }
 
 .context-room-embedded-doc-status span,
@@ -1727,36 +1743,19 @@
   font-weight: 500;
 }
 
-.context-room-document-title-input {
-  flex: 1;
+.context-room-document-title {
   min-width: 0;
-  height: 30px;
-  padding: 3px 7px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
+  flex: 1;
+  overflow: hidden;
   color: var(--cr-text);
   font-size: 13px;
   font-weight: 600;
-}
-
-.context-room-document-title-input:hover:not(:disabled) {
-  border-color: var(--cr-border);
-  background: var(--cr-surface-secondary);
-}
-
-.context-room-document-title-input:focus {
-  border-color: color-mix(in srgb, var(--cr-blue) 46%, var(--cr-border));
-  background: var(--cr-surface);
-  outline: 2px solid color-mix(in srgb, var(--cr-blue) 14%, transparent);
-  outline-offset: 1px;
-}
-
-.context-room-document-title-input:disabled {
-  color: var(--cr-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .context-room-document-actions {
+  margin-left: auto;
   flex: 0 0 auto;
 }
 
@@ -4138,7 +4137,10 @@
 
 .context-room-editor .ProseMirror h1,
 .context-room-editor .ProseMirror h2,
-.context-room-editor .ProseMirror h3 {
+.context-room-editor .ProseMirror h3,
+.context-room-editor .ProseMirror h4,
+.context-room-editor .ProseMirror h5,
+.context-room-editor .ProseMirror h6 {
   color: rgb(24 24 27);
   font-weight: 650;
   line-height: 1.2;
@@ -8782,7 +8784,6 @@
     margin: 0 8px 8px;
   }
 }
-
 /* Keep the iOS treatment authoritative after the legacy parity rules above. */
 .context-room-dashboard-timeline {
   border-radius: 16px;

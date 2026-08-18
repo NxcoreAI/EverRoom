@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  documentBlockFocusRequestKey,
   documentBlockNavigationKey,
   planDocumentBlockNavigation,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 
 describe('document block navigation', () => {
   const target = { roomId: 'room-1', documentId: 'doc-1', blockId: 'block-1' }
+
+  it('creates a fresh focus key for repeated clicks on the same block', () => {
+    const firstClick = documentBlockFocusRequestKey('doc-1', 'block-1', 1)
+    const repeatedClick = documentBlockFocusRequestKey('doc-1', 'block-1', 2)
+
+    expect(repeatedClick).not.toBe(firstClick)
+    expect(documentBlockFocusRequestKey('doc-1', 'block-1', 1)).toBe(firstClick)
+  })
 
   it('opens the target document before trying to focus its block', () => {
     expect(planDocumentBlockNavigation(null, target, 'room-1', 'doc-2', true)).toEqual({

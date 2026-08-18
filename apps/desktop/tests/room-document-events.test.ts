@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   documentFromEvent,
-  isDocumentStreamPresentationEvent,
-  shouldRetainDocumentEvent,
+  mergeRoomDocuments,
+  replaceRoomDocuments,
 } from '../src/renderer/src/components/context-room/ported/hooks/useRoomDocuments'
 
 const document = {
@@ -18,28 +18,46 @@ const document = {
   updatedAt: '2026-08-16T00:00:01.000Z',
 }
 
-describe('Room document event presentation', () => {
-  it('treats append and commit requests as view-only stream events', () => {
-    expect(isDocumentStreamPresentationEvent({ type: 'document.appended' })).toBe(true)
-    expect(isDocumentStreamPresentationEvent({ type: 'document.commit-requested' })).toBe(true)
-    expect(isDocumentStreamPresentationEvent({ type: 'document.committed' })).toBe(false)
-  })
-
-  it('keeps stream events only for a hydrated visible editor', () => {
-    expect(shouldRetainDocumentEvent({ type: 'document.appended' }, false)).toBe(false)
-    expect(shouldRetainDocumentEvent({ type: 'document.appended' }, true)).toBe(true)
-    expect(shouldRetainDocumentEvent({ type: 'document.committed' }, false)).toBe(true)
-  })
-
-  it('reads the authoritative draft snapshot from an append event', () => {
+describe('Room document state events', () => {
+  it('reads the authoritative draft snapshot from a document change', () => {
     expect(documentFromEvent({
       id: 'event-1',
       roomId: 'room-1',
       documentId: 'doc-1',
-      transactionId: 'tx-1',
-      type: 'document.appended',
+      operationId: 'operation-1',
+      type: 'document.changed',
       occurredAt: '2026-08-16T00:00:01.000Z',
-      payload: { sequence: 1, text: '正文', document },
+      payload: { document },
     })).toEqual(document)
+  })
+
+  it('keeps a newly saved title when an older refresh arrives later', () => {
+    const renamed = {
+      ...document,
+      title: '新文档标题',
+      version: 3,
+      updatedAt: '2026-08-16T00:00:03.000Z',
+    }
+    const stale = {
+      ...document,
+      title: '旧文档标题',
+      version: 2,
+      updatedAt: '2026-08-16T00:00:02.000Z',
+    }
+
+    expect(mergeRoomDocuments([renamed], [stale])).toEqual([renamed])
+    expect(replaceRoomDocuments([renamed], [stale])).toEqual([renamed])
+  })
+
+  it('updates the document list from a newer authoritative title', () => {
+    const renamed = {
+      ...document,
+      title: '新文档标题',
+      version: 2,
+      updatedAt: '2026-08-16T00:00:02.000Z',
+    }
+
+    expect(mergeRoomDocuments([document], [renamed])).toEqual([renamed])
+    expect(replaceRoomDocuments([document], [renamed])).toEqual([renamed])
   })
 })

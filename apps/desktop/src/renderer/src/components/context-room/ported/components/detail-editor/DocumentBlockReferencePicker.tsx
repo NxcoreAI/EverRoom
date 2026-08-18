@@ -120,13 +120,13 @@ export function DocumentBlockReferencePicker({
               {!loading && !error && filteredBlocks.map((block) => (
                 <button
                   type="button"
-                  key={block.id}
+                  key={block.blockId}
                   onClick={() => {
                     if (!selectedDocument) return
                     onSelect({
                       roomId,
                       documentId: selectedDocument.id,
-                      blockId: block.id,
+                      blockId: block.blockId,
                       fallbackTitle: selectedDocument.title,
                       fallbackPreview: block.textPreview,
                     })

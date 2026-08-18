@@ -14,7 +14,7 @@ import {
 } from './agentRunActivity'
 import type { DisplayAgentMessage } from './useAgentSession'
 import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
-import { isDocumentStreamPresentationEvent } from '../context-room/ported/hooks/useRoomDocuments'
+import { useDocumentOperations } from '../context-room/operations'
 
 export interface LinkedAgentRunState {
   status: AgentRunStatus | null
@@ -123,16 +123,22 @@ function errorMessage(error: unknown): string {
 
 export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRunState {
   const api = window.nxcore?.agent
-  const { documentsByRoom, eventsByDocument } = useRoomDocumentsState()
+  const { documentsByRoom } = useRoomDocumentsState()
+  const { operations } = useDocumentOperations()
   const sourceSessionId = link?.sourceSessionId ?? null
   const sourceRunId = link?.sourceRunId ?? null
   const documentId = link?.target.objectType === 'document' ? link.target.objectId : undefined
   const document = documentId
     ? Object.values(documentsByRoom).flat().find((candidate) => candidate.id === documentId)
     : undefined
-  const documentPending = Boolean(document?.activeTransactionId || (
-    documentId && eventsByDocument[documentId]?.some(isDocumentStreamPresentationEvent)
-  ))
+  const documentPending = Boolean(document?.activeTransactionId || (documentId && operations.some((entry) => {
+    const operation = entry.summary
+    const draftDocumentId = entry.detail?.input.draftDocumentId
+    return operation.interactionMode === 'streaming_commit'
+      && operation.runId === sourceRunId
+      && (operation.documentId === documentId || draftDocumentId === documentId)
+      && (operation.status === 'created' || operation.status === 'running' || operation.status === 'applying')
+  })))
   const [state, setState] = useState<LinkedAgentRunState>(EMPTY_STATE)
   const stateRunKeyRef = useRef<string | null>(null)
   const documentPendingRef = useRef(documentPending)

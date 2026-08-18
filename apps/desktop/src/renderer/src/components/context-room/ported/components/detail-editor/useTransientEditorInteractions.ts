@@ -1,6 +1,6 @@
 import type { Editor } from '@tiptap/react'
 import { TextSelection } from '@tiptap/pm/state'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 const SCROLLBAR_HIDE_DELAY = 700
 const DOCUMENT_STREAM_FOLLOW_THRESHOLD = 96
@@ -54,6 +54,10 @@ export function isSelectionOutsideViewport({
   return selectionBottom <= viewportTop || selectionTop >= viewportBottom
 }
 
+export function setScrollElementScrolling(scrollElement: HTMLElement, scrolling: boolean): void {
+  scrollElement.dataset.scrolling = String(scrolling)
+}
+
 export function useTransientEditorInteractions(
   editor: Editor | null,
   onSelectionCleared?: () => void,
@@ -62,7 +66,6 @@ export function useTransientEditorInteractions(
   const scrollbarTimer = useRef<number | null>(null)
   const followingDocumentStream = useRef(true)
   const previousScrollTop = useRef(0)
-  const [scrolling, setScrolling] = useState(false)
 
   const shouldFollowDocumentStream = useCallback(() => followingDocumentStream.current, [])
   const followDocumentStream = useCallback(() => {
@@ -109,11 +112,11 @@ export function useTransientEditorInteractions(
         clientHeight: scrollElement.clientHeight,
       })
       previousScrollTop.current = scrollElement.scrollTop
-      setScrolling(true)
+      setScrollElementScrolling(scrollElement, true)
       if (scrollbarTimer.current !== null) window.clearTimeout(scrollbarTimer.current)
       scrollbarTimer.current = window.setTimeout(() => {
         scrollbarTimer.current = null
-        setScrolling(false)
+        setScrollElementScrolling(scrollElement, false)
       }, SCROLLBAR_HIDE_DELAY)
     }
     scrollElement.addEventListener('scroll', handleScroll, { passive: true })
@@ -124,5 +127,5 @@ export function useTransientEditorInteractions(
     }
   }, [editor, onSelectionCleared])
 
-  return { scrollRef, scrolling, shouldFollowDocumentStream, followDocumentStream }
+  return { scrollRef, shouldFollowDocumentStream, followDocumentStream }
 }

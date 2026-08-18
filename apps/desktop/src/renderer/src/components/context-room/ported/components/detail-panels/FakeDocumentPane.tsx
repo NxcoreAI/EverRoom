@@ -1,4 +1,4 @@
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract'
+import type { RoomDocument } from '@nxcore/agent-contract'
 import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText, Folder, FolderOpen, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
@@ -55,7 +55,7 @@ export function FakeDocumentPane({
       <div className="context-room-middle-divider" aria-hidden="true" />
       <section className="context-room-workspace-content">
         <button type="button" className="context-room-mobile-back" onClick={onBackToLibrary}><ChevronLeft aria-hidden="true" />返回文档</button>
-        <FakeDocumentContent room={room} resource={selected} backendDocuments={[]} documentEvents={{}} onBackendDocumentChange={() => undefined} />
+        <FakeDocumentContent room={room} resource={selected} backendDocuments={[]} onBackendDocumentChange={() => undefined} />
       </section>
     </>
   )
@@ -65,16 +65,18 @@ export function FakeDocumentContent({
   room,
   resource,
   backendDocuments,
-  documentEvents,
   onBackendDocumentChange,
   onDeleteDocument,
+  focusedBlockId,
+  documentFocusRequestId,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
   backendDocuments: RoomDocument[]
-  documentEvents: Record<string, DocumentEvent[]>
   onBackendDocumentChange: (document: RoomDocument) => void
   onDeleteDocument?: (document: RoomDocument) => Promise<void>
+  focusedBlockId?: string | null
+  documentFocusRequestId?: number | null
 }) {
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const backendDocument = backendDocuments.find((document) => document.id === documentId) ?? null
@@ -84,9 +86,10 @@ export function FakeDocumentContent({
       room={room}
       resource={resource}
       backendDocument={backendDocument}
-      events={documentEvents[documentId] ?? []}
       onBackendDocumentChange={onBackendDocumentChange}
       onDeleteDocument={onDeleteDocument}
+      focusedBlockId={focusedBlockId}
+      documentFocusRequestId={documentFocusRequestId}
     />
   )
 }

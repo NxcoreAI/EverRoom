@@ -2,38 +2,87 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin } from '@tiptap/pm/state'
 import { Extension, type Editor } from '@tiptap/react'
+import { addressableBlockTypes } from '@nxcore/document-model'
 
-export const stableBlockTypes = new Set([
-  'paragraph',
-  'heading',
-  'bulletList',
-  'orderedList',
-  'taskList',
-  'listItem',
-  'taskItem',
-  'blockquote',
-  'codeBlock',
-  'horizontalRule',
-  'documentBlockReference',
-])
+export const stableBlockTypes = addressableBlockTypes
 
 function newBlockId(): string {
   return crypto.randomUUID()
 }
 
-function freshenPastedNode(node: ProseMirrorNode): ProseMirrorNode {
-  if (node.isText) return node
-  const children: ProseMirrorNode[] = []
-  node.content.forEach((child) => children.push(freshenPastedNode(child)))
-  const attrs = stableBlockTypes.has(node.type.name)
-    ? { ...node.attrs, id: null }
-    : node.attrs
-  return node.type.create(attrs, Fragment.fromArray(children), node.marks)
+function collectPastedBlockIds(node: ProseMirrorNode, remap: Map<string, string>): void {
+  if (!node.isText && stableBlockTypes.has(node.type.name)) {
+    const id = typeof node.attrs.id === 'string' ? node.attrs.id.trim() : ''
+    if (id && !remap.has(id)) remap.set(id, newBlockId())
+  }
+  node.content.forEach((child) => collectPastedBlockIds(child, remap))
 }
 
-export function stripStableBlockIdsFromPaste(slice: Slice): Slice {
+function remapEverroomUrl(
+  value: unknown,
+  remap: Map<string, string>,
+  sourceDocumentId?: string,
+): unknown {
+  if (typeof value !== 'string') return value
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return value
+  }
+  if (url.protocol !== 'everroom:' || url.hostname !== 'room') return value
+  const parts = url.pathname.split('/').filter(Boolean)
+  if (parts.length !== 3) return value
+  let documentId: string
+  let blockId: string
+  try {
+    documentId = decodeURIComponent(parts[1]!)
+    blockId = decodeURIComponent(parts[2]!)
+  } catch {
+    return value
+  }
+  const replacement = (!sourceDocumentId || sourceDocumentId === documentId) ? remap.get(blockId) : undefined
+  if (!replacement) return value
+  parts[2] = encodeURIComponent(replacement)
+  url.pathname = `/${parts.join('/')}`
+  return url.toString()
+}
+
+function freshenPastedNode(
+  node: ProseMirrorNode,
+  remap: Map<string, string>,
+  sourceDocumentId?: string,
+): ProseMirrorNode {
+  if (node.isText) {
+    const marks = node.marks.map((mark) => mark.type.name === 'link'
+      ? mark.type.create({ ...mark.attrs, href: remapEverroomUrl(mark.attrs.href, remap, sourceDocumentId) })
+      : mark)
+    return node.mark(marks)
+  }
   const children: ProseMirrorNode[] = []
-  slice.content.forEach((child) => children.push(freshenPastedNode(child)))
+  node.content.forEach((child) => children.push(freshenPastedNode(child, remap, sourceDocumentId)))
+  const originalId = typeof node.attrs.id === 'string' ? node.attrs.id.trim() : ''
+  const attrs = {
+    ...node.attrs,
+    ...(stableBlockTypes.has(node.type.name) ? { id: remap.get(originalId) ?? newBlockId() } : {}),
+    ...(node.type.name === 'documentBlockReference'
+      && (!sourceDocumentId || node.attrs.targetDocumentId === sourceDocumentId)
+      && typeof node.attrs.targetBlockId === 'string'
+      && remap.has(node.attrs.targetBlockId)
+      ? { targetBlockId: remap.get(node.attrs.targetBlockId) }
+      : {}),
+  }
+  const marks = node.marks.map((mark) => mark.type.name === 'link'
+    ? mark.type.create({ ...mark.attrs, href: remapEverroomUrl(mark.attrs.href, remap) })
+    : mark)
+  return node.type.create(attrs, Fragment.fromArray(children), marks)
+}
+
+export function stripStableBlockIdsFromPaste(slice: Slice, sourceDocumentId?: string): Slice {
+  const remap = new Map<string, string>()
+  slice.content.forEach((child) => collectPastedBlockIds(child, remap))
+  const children: ProseMirrorNode[] = []
+  slice.content.forEach((child) => children.push(freshenPastedNode(child, remap, sourceDocumentId)))
   return new Slice(Fragment.fromArray(children), slice.openStart, slice.openEnd)
 }
 
@@ -61,8 +110,11 @@ export function ensureStableBlockIds(editor: Editor): boolean {
   return true
 }
 
-export const StableBlockIds = Extension.create({
+export const StableBlockIds = Extension.create<{ documentId?: string }>({
   name: 'stableBlockIds',
+  addOptions() {
+    return {}
+  },
   onTransaction({ editor, transaction }) {
     if (transaction.docChanged) ensureStableBlockIds(editor)
   },
@@ -81,7 +133,7 @@ export const StableBlockIds = Extension.create({
   addProseMirrorPlugins() {
     return [new Plugin({
       props: {
-        transformPasted: stripStableBlockIdsFromPaste,
+        transformPasted: (slice) => stripStableBlockIdsFromPaste(slice, this.options.documentId),
       },
       appendTransaction: (transactions, _oldState, newState) => {
         if (!transactions.some((transaction) => transaction.docChanged)) return null

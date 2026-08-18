@@ -1,6 +1,11 @@
 import { join } from 'node:path'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
+import type {
+  ImportRoomDocumentInput,
+  SaveRoomDocumentInput,
+  StartDocumentOperationInput,
+} from '@nxcore/agent-contract'
 
 import type { CloudAccountStatus } from '../shared/sources'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -25,7 +30,12 @@ import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
-import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
+import {
+  configureDesktopLogger,
+  flushDesktopLogs,
+  logDesktop,
+  logDocumentCursorCompletion,
+} from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
 import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
@@ -35,6 +45,11 @@ import {
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
+import {
+  assertNoEmbeddedDocumentImages,
+  DocumentAssetStore,
+  DOCUMENT_ASSET_SCHEME,
+} from './document-asset-store'
 
 const APP_NAME = 'EverRoom'
 
@@ -60,6 +75,11 @@ app.setName(APP_NAME)
 configureDesktopLogger(dataDirectory)
 configureSentry(app.getVersion(), app.isPackaged)
 if (process.platform === 'darwin') process.title = APP_NAME
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: DOCUMENT_ASSET_SCHEME,
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+}])
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
@@ -103,26 +123,34 @@ const AGENT_CHANNELS = {
   unsubscribe: 'agent:unsubscribe',
 } as const
 
+const CURSOR_COMPLETION_AGENT_CHANNELS = {
+  createSession: 'cursor-completion-agent:create-session',
+  deleteSession: 'cursor-completion-agent:delete-session',
+  getEvents: 'cursor-completion-agent:get-events',
+  startRun: 'cursor-completion-agent:start-run',
+  cancelRun: 'cursor-completion-agent:cancel-run',
+} as const
+
 const DOCUMENT_CHANNELS = {
   list: 'documents:list',
   listTrash: 'documents:list-trash',
   get: 'documents:get',
   listBlocks: 'documents:list-blocks',
+  listBlockBacklinks: 'documents:list-block-backlinks',
+  listVersions: 'documents:list-versions',
+  restoreVersion: 'documents:restore-version',
   resolveBlockReferences: 'documents:resolve-block-references',
-  listPatches: 'documents:list-patches',
-  getPatch: 'documents:get-patch',
-  applyPatch: 'documents:apply-patch',
-  rejectPatch: 'documents:reject-patch',
-  acceptContinuationBlock: 'documents:accept-continuation-block',
-  rejectContinuationBlock: 'documents:reject-continuation-block',
-  closeContinuation: 'documents:close-continuation',
+  listOperations: 'documents:list-operations',
+  startOperation: 'documents:start-operation',
+  getOperation: 'documents:get-operation',
+  executeOperationCommand: 'documents:execute-operation-command',
+  storeImage: 'documents:store-image',
   import: 'documents:import',
   save: 'documents:save',
   delete: 'documents:delete',
   restore: 'documents:restore',
   deletePermanently: 'documents:delete-permanently',
   emptyTrash: 'documents:empty-trash',
-  acknowledge: 'documents:acknowledge',
   subscribe: 'documents:subscribe',
   unsubscribe: 'documents:unsubscribe',
 } as const
@@ -209,6 +237,9 @@ const SCREEN_CAPTURE_CHANNELS = {
 // IpcHandler 的 never 参数让任意签名的处理器都可直接注册。
 type IpcHandler = (event: Electron.IpcMainInvokeEvent, ...args: never[]) => unknown
 type StoredHandler = (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown
+type IpcHandlerGroup<TChannels extends Record<string, string>> = {
+  [TKey in keyof TChannels]: IpcHandler
+}
 const handlerRegistry = new Map<string, StoredHandler>()
 let resolveServicesReady: (() => void) | null = null
 let rejectServicesReady: ((error: Error) => void) | null = null
@@ -224,12 +255,22 @@ function handle(channel: string, handler: IpcHandler): void {
   handlerRegistry.set(channel, handler as StoredHandler)
 }
 
+function handleGroup<TChannels extends Record<string, string>>(
+  channels: TChannels,
+  handlers: IpcHandlerGroup<TChannels>,
+): void {
+  for (const key of Object.keys(channels) as Array<keyof TChannels>) {
+    handle(channels[key], handlers[key])
+  }
+}
+
 function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
+    CURSOR_COMPLETION_AGENT_CHANNELS,
     DOCUMENT_CHANNELS,
     ASR_CHANNELS,
     PRIVATE_AUDIO_CHANNELS,
@@ -256,8 +297,10 @@ function installIpcRouters(): void {
 
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
+let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
@@ -280,6 +323,23 @@ function logRendererRequestError(input: unknown): void {
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
+
+function logRendererDiagnostic(input: unknown): void {
+  if (!input || typeof input !== 'object') return
+  const value = input as { module?: unknown; level?: unknown; event?: unknown }
+  if (value.module !== 'document-cursor-completion') return
+  if (value.level !== 'info' && value.level !== 'warn' && value.level !== 'error') return
+  if (!value.event || typeof value.event !== 'object' || Array.isArray(value.event)) return
+  try {
+    const serialized = JSON.stringify(value.event)
+    if (serialized.length > 16_000) return
+    logDocumentCursorCompletion(value.level, JSON.parse(serialized) as Record<string, unknown>)
+  } catch {
+    // Ignore malformed renderer diagnostics rather than affecting the editor.
+  }
+}
+
+ipcMain.on('app:diagnostic-log', (_event, input: unknown) => logRendererDiagnostic(input))
 
 function focusMainWindow(): void {
   const window = BrowserWindow.getAllWindows()[0]
@@ -428,35 +488,64 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
-function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
-  handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
-  handle(DOCUMENT_CHANNELS.listTrash, (_event, roomId) => bridge.listTrash(roomId))
-  handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
-  handle(DOCUMENT_CHANNELS.listBlocks, (_event, documentId) => bridge.listBlocks(documentId))
-  handle(DOCUMENT_CHANNELS.resolveBlockReferences, (_event, input) =>
-    bridge.resolveBlockReferences(input))
-  handle(DOCUMENT_CHANNELS.listPatches, (_event, documentId, status) =>
-    bridge.listPatches(documentId, status))
-  handle(DOCUMENT_CHANNELS.getPatch, (_event, patchId) => bridge.getPatch(patchId))
-  handle(DOCUMENT_CHANNELS.applyPatch, (_event, patchId, input) => bridge.applyPatch(patchId, input))
-  handle(DOCUMENT_CHANNELS.rejectPatch, (_event, patchId) => bridge.rejectPatch(patchId))
-  handle(DOCUMENT_CHANNELS.acceptContinuationBlock, (_event, patchId, input) =>
-    bridge.acceptContinuationBlock(patchId, input))
-  handle(DOCUMENT_CHANNELS.rejectContinuationBlock, (_event, patchId, input) =>
-    bridge.rejectContinuationBlock(patchId, input))
-  handle(DOCUMENT_CHANNELS.closeContinuation, (_event, patchId) =>
-    bridge.closeContinuation(patchId))
-  handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
-  handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
-  handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
-  handle(DOCUMENT_CHANNELS.restore, (_event, documentId) => bridge.restore(documentId))
-  handle(DOCUMENT_CHANNELS.deletePermanently, (_event, documentId) =>
-    bridge.deletePermanently(documentId))
-  handle(DOCUMENT_CHANNELS.emptyTrash, (_event, roomId) => bridge.emptyTrash(roomId))
-  handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
-    bridge.acknowledge(transactionId, input))
-  handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
-  handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
+function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void {
+  handleGroup(CURSOR_COMPLETION_AGENT_CHANNELS, {
+    createSession: (_event, input) => bridge.createSession(input),
+    deleteSession: (_event, sessionId) => bridge.deleteSession(sessionId),
+    getEvents: (_event, sessionId, runId, afterSeq) =>
+      bridge.getEvents(sessionId, runId, afterSeq),
+    startRun: (_event, sessionId, input) => bridge.startRun(sessionId, input),
+    cancelRun: (_event, runId) => bridge.cancelRun(runId),
+  })
+}
+
+function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: DocumentAssetStore): void {
+  handleGroup(DOCUMENT_CHANNELS, {
+    list: (_event, roomId) => bridge.list(roomId),
+    listTrash: (_event, roomId) => bridge.listTrash(roomId),
+    get: (_event, documentId) => bridge.get(documentId),
+    listBlocks: (_event, documentId) => bridge.listBlocks(documentId),
+    listBlockBacklinks: (_event, documentId, blockId) =>
+      bridge.listBlockBacklinks(documentId, blockId),
+    listVersions: (_event, documentId) => bridge.listVersions(documentId),
+    restoreVersion: (_event, documentId, version, baseVersion) =>
+      bridge.restoreVersion(documentId, version, baseVersion),
+    resolveBlockReferences: (_event, input) => bridge.resolveBlockReferences(input),
+    listOperations: (_event, filters) => bridge.listOperations(filters),
+    startOperation: (_event, input: StartDocumentOperationInput) => {
+      assertNoEmbeddedDocumentImages(input)
+      return bridge.startOperation(input)
+    },
+    getOperation: (_event, operationId) => bridge.getOperation(operationId),
+    executeOperationCommand: (_event, operationId, input) =>
+      bridge.executeOperationCommand(operationId, input),
+    storeImage: (_event, documentId, input) => assets.storeImage(documentId, input),
+    import: (_event, input: ImportRoomDocumentInput) => {
+      assertNoEmbeddedDocumentImages(input?.contentJson)
+      return bridge.import(input)
+    },
+    save: (_event, documentId, input: SaveRoomDocumentInput) => {
+      assertNoEmbeddedDocumentImages(input?.contentJson)
+      return bridge.save(documentId, input)
+    },
+    delete: (_event, documentId) => bridge.delete(documentId),
+    restore: (_event, documentId) => bridge.restore(documentId),
+    deletePermanently: async (_event, documentId) => {
+      await bridge.deletePermanently(documentId)
+      await assets.deleteDocument(documentId).catch((error) => {
+        console.error('Failed to delete local document assets', { documentId, error })
+      })
+    },
+    emptyTrash: async (_event, roomId) => {
+      const trashed = await bridge.listTrash(roomId)
+      await bridge.emptyTrash(roomId)
+      await Promise.all(trashed.map((document) => assets.deleteDocument(document.id).catch((error) => {
+        console.error('Failed to delete local document assets', { documentId: document.id, error })
+      })))
+    },
+    subscribe: (event, roomId) => bridge.subscribe(event.sender, roomId),
+    unsubscribe: (event, roomId) => bridge.unsubscribe(event.sender.id, roomId),
+  })
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
@@ -727,6 +816,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
+  const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
+  await documentAssets.initialize().catch((error) => {
+    console.error('Failed to initialize local document assets', error)
+  })
+  protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   installIpcRouters()
   registerGatewayHandlers()
   createWindow()
@@ -750,14 +844,31 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
+    cursorCompletionSupervisor = new GatewaySupervisor(
+      join(dataDirectory, 'cursor-completion-service'),
+      { NXCORE_MEMORY_ENABLED: 'false' },
+      {
+        devScript: 'dev:cursor-completion',
+        packagedEntry: 'cursor-completion-serve.js',
+        logLabel: 'cursor-completion',
+        devPortEnvironment: 'NXCORE_CURSOR_COMPLETION_DEV_PORT',
+      },
+    )
+    const cursorCompletionGateway = await cursorCompletionSupervisor.start()
+    console.info(
+      `Cursor completion service ready at ${cursorCompletionGateway.baseUrl} `
+      + `(pid=${cursorCompletionGateway.pid})`,
+    )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
+    registerCursorCompletionAgentHandlers(cursorCompletionAgentBridge)
     registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
-    registerDocumentHandlers(documentGatewayBridge)
+    registerDocumentHandlers(documentGatewayBridge, documentAssets)
     registerDocumentPdfExportHandler()
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
@@ -816,6 +927,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    cursorCompletionAgentBridge?.dispose()
+    cursorCompletionAgentBridge = null
     documentGatewayBridge?.dispose()
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
@@ -824,6 +937,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
+    await cursorCompletionSupervisor?.shutdown()
+    cursorCompletionSupervisor = null
     await memoryCoreSupervisor?.shutdown()
     memoryCoreSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
@@ -842,22 +957,27 @@ app.on('before-quit', (event) => {
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
+  const cursorCompletion = cursorCompletionSupervisor
   const memoryCore = memoryCoreSupervisor
   const agentBridge = agentGatewayBridge
+  const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
   const recordings = recordingStore
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
+  cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
   agentGatewayBridge = null
+  cursorCompletionAgentBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
   recordingStore = null
   saasClient = null
   screenshotScheduler.stop()
   agentBridge?.dispose()
+  cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
@@ -865,6 +985,7 @@ app.on('before-quit', (event) => {
     service?.shutdown(),
     recordings?.dispose(),
     gateway?.shutdown(),
+    cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })

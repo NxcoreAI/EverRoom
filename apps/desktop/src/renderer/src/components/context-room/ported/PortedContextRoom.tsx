@@ -58,6 +58,7 @@ export function PortedContextRoom({
   activeRoomId,
   focusedDocumentId,
   focusedBlockId,
+  documentFocusRequestId,
   homeRequest,
   onDetailFocusChange,
   onOpenRoomTab,
@@ -67,6 +68,7 @@ export function PortedContextRoom({
   activeRoomId: string | null
   focusedDocumentId: string | null
   focusedBlockId: string | null
+  documentFocusRequestId: number | null
   homeRequest: number
   onDetailFocusChange: (focused: boolean) => void
   onOpenRoomTab: (room: ContextRoomWorkspaceTab) => void
@@ -155,9 +157,9 @@ export function PortedContextRoom({
         rooms={state.rooms}
         backendDocuments={roomDocuments.documentsByRoom[activeRoom.id] ?? []}
         trashedDocuments={roomDocuments.trashedDocumentsByRoom[activeRoom.id] ?? []}
-        documentEvents={roomDocuments.eventsByDocument}
         focusedDocumentId={focusedDocumentId ?? roomDocuments.focusedDocumentByRoom[activeRoom.id] ?? null}
         focusedBlockId={focusedBlockId}
+        documentFocusRequestId={documentFocusRequestId}
         onBackendDocumentChange={roomDocuments.upsertDocument}
         onCreateDocument={roomDocuments.createDocument}
         onDeleteDocument={roomDocuments.deleteDocument}

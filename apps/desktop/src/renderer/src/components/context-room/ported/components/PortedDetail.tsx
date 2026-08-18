@@ -1,6 +1,5 @@
-import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { showToast } from '@/state/toast'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
 import {
@@ -23,9 +22,9 @@ export function PortedDetail({
   rooms,
   backendDocuments,
   trashedDocuments,
-  documentEvents,
   focusedDocumentId,
   focusedBlockId,
+  documentFocusRequestId,
   initialActivePane,
   initialObject,
   onActivePaneChange,
@@ -43,9 +42,9 @@ export function PortedDetail({
   rooms: ContextRoomRecord[]
   backendDocuments: RoomDocument[]
   trashedDocuments: RoomDocument[]
-  documentEvents: Record<string, DocumentEvent[]>
   focusedDocumentId: string | null
   focusedBlockId: string | null
+  documentFocusRequestId: number | null
   initialActivePane: DetailPane
   initialObject?: { kind: 'file' | 'mail' | 'meeting'; id: string } | null
   onActivePaneChange: (pane: DetailPane) => void
@@ -138,39 +137,11 @@ export function PortedDetail({
       room.id,
       focusedDocumentId,
       Boolean(resource),
+      documentFocusRequestId,
     )
     handledDocumentFocusKey.current = decision.handledKey
     if (decision.shouldOpen && resource && resource.id !== selectedResourceId) openResource(resource)
-  }, [focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
-
-  useEffect(() => {
-    if (!focusedBlockId || !focusedDocumentId) return
-    let cancelled = false
-    let frame = 0
-    let attempts = 0
-    const focusBlock = () => {
-      if (cancelled) return
-      const selector = `[data-block-id="${CSS.escape(focusedBlockId)}"]`
-      const block = document.querySelector<HTMLElement>(selector)
-      if (!block && attempts < 60) {
-        attempts += 1
-        frame = window.requestAnimationFrame(focusBlock)
-        return
-      }
-      if (!block) {
-        showToast({ title: '引用块已失效', message: '已打开文档，但原引用块不存在。' })
-        return
-      }
-      block.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      block.dataset.referenceFocus = 'true'
-      window.setTimeout(() => delete block.dataset.referenceFocus, 1800)
-    }
-    frame = window.requestAnimationFrame(focusBlock)
-    return () => {
-      cancelled = true
-      window.cancelAnimationFrame(frame)
-    }
-  }, [focusedBlockId, focusedDocumentId, selectedResourceId])
+  }, [documentFocusRequestId, focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
 
   useEffect(() => {
     if (selectedResourceId && getRoomResource(library, room.id, selectedResourceId)) return
@@ -235,7 +206,9 @@ export function PortedDetail({
           selectedResource={selectedResource}
           backendDocuments={backendDocuments}
           trashedDocuments={trashedDocuments}
-          documentEvents={documentEvents}
+          focusedDocumentId={focusedDocumentId}
+          focusedBlockId={focusedBlockId}
+          documentFocusRequestId={documentFocusRequestId}
           onBackendDocumentChange={onBackendDocumentChange}
           onCreateDocument={createDocument}
           onDeleteDocument={onDeleteDocument}

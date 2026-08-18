@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Settings,
   ShieldCheck,
+  Sparkles,
   Smartphone,
   WalletCards,
   type LucideIcon,
@@ -24,6 +25,11 @@ import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
+import {
+  loadDocumentCursorCompletionSettings,
+  saveDocumentCursorCompletionSettings,
+  type DocumentCursorCompletionSettings,
+} from '@/state/documentCursorCompletionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
@@ -68,6 +74,8 @@ export function SettingsPage() {
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState<PendingAction>(null)
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
+  const [cursorCompletionSettings, setCursorCompletionSettings] =
+    useState<DocumentCursorCompletionSettings>(loadDocumentCursorCompletionSettings)
   const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
   const [syncedCount, setSyncedCount] = useState<number | null>(null)
   const [syncedAudioCount, setSyncedAudioCount] = useState<number | null>(null)
@@ -176,6 +184,14 @@ export function SettingsPage() {
     setRealitySettings((current) => {
       const next = { ...current, ...patch }
       saveRealitySettings(next)
+      return next
+    })
+  }
+
+  const updateCursorCompletionSettings = (patch: Partial<DocumentCursorCompletionSettings>) => {
+    setCursorCompletionSettings((current) => {
+      const next = { ...current, ...patch }
+      saveDocumentCursorCompletionSettings(next)
       return next
     })
   }
@@ -494,6 +510,36 @@ export function SettingsPage() {
             </form>
           </div>
         )}
+      </section>
+
+      <section className="reality-settings-section" aria-labelledby="document-editing-settings-title">
+        <header>
+          <span><Sparkles aria-hidden="true" /></span>
+          <div>
+            <h2 id="document-editing-settings-title">文档编辑</h2>
+            <p>管理编辑器中的辅助能力。</p>
+          </div>
+        </header>
+        <div className="reality-setting-row">
+          <div>
+            <strong>文档智能补全</strong>
+            <small>输入、删除或移动光标后提供续写建议。</small>
+          </div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label="文档智能补全"
+            aria-checked={cursorCompletionSettings.enabled}
+            data-active={String(cursorCompletionSettings.enabled)}
+            onClick={() => updateCursorCompletionSettings({
+              enabled: !cursorCompletionSettings.enabled,
+            })}
+          >
+            <span aria-hidden="true" />
+            {cursorCompletionSettings.enabled ? '已开启' : '已关闭'}
+          </button>
+        </div>
       </section>
 
       <section className="reality-settings-section" aria-labelledby="reality-settings-title">

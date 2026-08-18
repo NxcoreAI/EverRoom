@@ -1,8 +1,10 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type {
   AgentNavigationTarget,
-  DocumentPatchOperation,
-  DocumentPatchTarget,
+  DocumentOperationInteractionMode,
+  DocumentOperationItemStatus,
+  DocumentOperationStatus,
+  DocumentMutationTarget,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
 import type {
@@ -181,10 +183,40 @@ export const agentEvents = sqliteTable(
   (table) => [uniqueIndex("agent_events_run_seq_idx").on(table.runId, table.seq)],
 );
 
+export const pendingAgentIntents = sqliteTable(
+  "pending_agent_intents",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    sourceRunId: text("source_run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    originalPrompt: text("original_prompt").notNull(),
+    targetCapability: text("target_capability", {
+      enum: ["document.create", "document.edit", "document.continue"],
+    }).notNull(),
+    allowedRoomIds: text("allowed_room_ids", { mode: "json" }).$type<string[]>().notNull(),
+    allowedDocumentIds: text("allowed_document_ids", { mode: "json" }).$type<string[]>().notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("pending_agent_intents_session_idx").on(table.sessionId),
+    index("pending_agent_intents_source_run_idx").on(table.sourceRunId),
+    index("pending_agent_intents_expires_idx").on(table.expiresAt),
+  ],
+);
+
 export const documents = sqliteTable("documents", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
   contentJson: text("content_json", { mode: "json" }).notNull(),
+  contentSchemaVersion: integer("content_schema_version").notNull().default(1),
   version: integer("version").notNull().default(0),
   status: text("status", { enum: ["draft", "active"] }).notNull().default("draft"),
   activeTransactionId: text("active_transaction_id"),
@@ -222,9 +254,10 @@ export const documentVersions = sqliteTable(
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
+    title: text("title").notNull().default("无标题文档"),
     contentJson: text("content_json", { mode: "json" }).notNull(),
+    contentSchemaVersion: integer("content_schema_version").notNull().default(1),
     sourceTransactionId: text("source_transaction_id"),
-    sourcePatchId: text("source_patch_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -232,138 +265,151 @@ export const documentVersions = sqliteTable(
   (table) => [uniqueIndex("doc_versions_document_version_idx").on(table.documentId, table.version)],
 );
 
+export const documentOperations = sqliteTable(
+  "document_operations",
+  {
+    id: text("id").primaryKey(),
+    capabilityId: text("capability_id").notNull(),
+    capabilityVersion: integer("capability_version").notNull(),
+    interactionMode: text("interaction_mode", {
+      enum: ["streaming_commit", "atomic_review", "incremental_review", "preview_replace"],
+    }).$type<DocumentOperationInteractionMode>().notNull(),
+    presenterKey: text("presenter_key").notNull(),
+    roomId: text("room_id").notNull(),
+    documentId: text("document_id").references(() => documents.id, { onDelete: "cascade" }),
+    documentTitle: text("document_title").notNull(),
+    agentSessionId: text("agent_session_id").notNull(),
+    runId: text("run_id").notNull(),
+    baseVersion: integer("base_version"),
+    status: text("status", {
+      enum: [
+        "created", "running", "awaiting_input", "awaiting_review", "applying",
+        "completed", "rejected", "conflicted", "failed", "cancelled", "expired",
+      ],
+    }).$type<DocumentOperationStatus>().notNull().default("created"),
+    revision: integer("revision").notNull().default(1),
+    summary: text("summary").notNull(),
+    input: text("input", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    result: text("result", { mode: "json" }).$type<Record<string, unknown>>(),
+    conflictVersion: integer("conflict_version"),
+    error: text("error", { mode: "json" }).$type<Record<string, unknown>>(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("document_operations_document_status_idx").on(table.documentId, table.status),
+    index("document_operations_room_status_idx").on(table.roomId, table.status),
+    index("document_operations_session_status_idx").on(table.agentSessionId, table.status),
+    index("document_operations_expiry_idx").on(table.status, table.expiresAt),
+  ],
+);
+
+export const documentOperationItems = sqliteTable(
+  "document_operation_items",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull()
+      .references(() => documentOperations.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    operation: text("operation", {
+      enum: ["insert", "replace", "delete", "stream_chunk", "replace_selection"],
+    }).notNull(),
+    target: text("target", { mode: "json" }).$type<DocumentMutationTarget>(),
+    beforeJson: text("before_json", { mode: "json" }).$type<TiptapJsonContent[]>().notNull(),
+    afterJson: text("after_json", { mode: "json" }).$type<TiptapJsonContent[]>().notNull(),
+    markdown: text("markdown").notNull().default(""),
+    contentHash: text("content_hash").notNull(),
+    status: text("status", {
+      enum: ["pending", "accepted", "rejected", "applied", "skipped"],
+    }).$type<DocumentOperationItemStatus>().notNull().default("pending"),
+    appliedVersion: integer("applied_version"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("document_operation_items_sequence_idx").on(table.operationId, table.sequence),
+    index("document_operation_items_status_idx").on(table.operationId, table.status),
+  ],
+);
+
+export const documentOperationCommands = sqliteTable(
+  "document_operation_commands",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull()
+      .references(() => documentOperations.id, { onDelete: "cascade" }),
+    expectedRevision: integer("expected_revision").notNull(),
+    type: text("type").notNull(),
+    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    result: text("result", { mode: "json" }).$type<Record<string, unknown>>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [uniqueIndex("document_operation_commands_operation_id_idx").on(table.operationId, table.id)],
+);
+
+export const documentOperationEvents = sqliteTable(
+  "document_operation_events",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull()
+      .references(() => documentOperations.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    type: text("type").notNull(),
+    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("document_operation_events_revision_idx").on(table.operationId, table.revision),
+    index("document_operation_events_created_idx").on(table.createdAt),
+  ],
+);
+
 export const documentBlocks = sqliteTable(
   "document_blocks",
   {
-    id: text("id").primaryKey(),
     documentId: text("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
+    blockId: text("block_id").notNull(),
     parentBlockId: text("parent_block_id"),
+    rootBlockId: text("root_block_id").notNull(),
     type: text("type").notNull(),
+    siblingIndex: integer("sibling_index").notNull(),
     ordinal: integer("ordinal").notNull(),
     path: text("path", { mode: "json" }).$type<number[]>().notNull(),
+    depth: integer("depth").notNull(),
     textPreview: text("text_preview").notNull(),
+    indexedVersion: integer("indexed_version").notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.documentId, table.blockId] }),
     uniqueIndex("document_blocks_document_ordinal_idx").on(table.documentId, table.ordinal),
     index("document_blocks_document_idx").on(table.documentId),
+    index("document_blocks_root_idx").on(table.documentId, table.rootBlockId),
   ],
 );
 
-export const documentPatches = sqliteTable(
-  "document_patches",
+export const documentBlockReferences = sqliteTable(
+  "document_block_references",
   {
-    id: text("id").primaryKey(),
-    roomId: text("room_id").notNull(),
-    documentId: text("document_id")
+    sourceDocumentId: text("source_document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
-    agentSessionId: text("agent_session_id").notNull(),
-    runId: text("run_id").notNull(),
-    kind: text("kind", { enum: ["continue", "edit"] }).notNull(),
-    status: text("status", {
-      enum: ["building", "pending", "applied", "rejected", "conflicted", "aborted", "expired"],
-    }).notNull().default("building"),
-    summary: text("summary").notNull(),
-    baseVersion: integer("base_version").notNull(),
-    baseContentJson: text("base_content_json", { mode: "json" }).$type<TiptapJsonContent>().notNull(),
-    proposedContentJson: text("proposed_content_json", { mode: "json" }).$type<TiptapJsonContent>().notNull(),
-    nextSequence: integer("next_sequence").notNull().default(1),
-    acceptedHunkIds: text("accepted_hunk_ids", { mode: "json" }).$type<string[]>(),
-    rejectedHunkIds: text("rejected_hunk_ids", { mode: "json" }).$type<string[]>(),
-    acceptedBlockIds: text("accepted_block_ids", { mode: "json" }).$type<string[]>(),
-    rejectedBlockIds: text("rejected_block_ids", { mode: "json" }).$type<string[]>(),
-    appliedVersion: integer("applied_version"),
-    conflictVersion: integer("conflict_version"),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    sourceBlockId: text("source_block_id").notNull(),
+    targetRoomId: text("target_room_id").notNull(),
+    targetDocumentId: text("target_document_id").notNull(),
+    targetBlockId: text("target_block_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    indexedVersion: integer("indexed_version").notNull(),
   },
   (table) => [
-    index("document_patches_document_status_idx").on(table.documentId, table.status),
-    index("document_patches_session_status_idx").on(table.agentSessionId, table.status),
-    index("document_patches_expiry_idx").on(table.status, table.expiresAt),
+    primaryKey({ columns: [table.sourceDocumentId, table.ordinal] }),
+    index("document_block_references_source_idx").on(table.sourceDocumentId, table.sourceBlockId),
+    index("document_block_references_target_idx").on(table.targetDocumentId, table.targetBlockId),
   ],
-);
-
-export const documentPatchHunks = sqliteTable(
-  "document_patch_hunks",
-  {
-    id: text("id").primaryKey(),
-    patchId: text("patch_id")
-      .notNull()
-      .references(() => documentPatches.id, { onDelete: "cascade" }),
-    sequence: integer("sequence").notNull(),
-    operation: text("operation", { enum: ["insert", "replace", "delete"] })
-      .$type<DocumentPatchOperation>().notNull(),
-    target: text("target", { mode: "json" }).$type<DocumentPatchTarget>().notNull(),
-    markdown: text("markdown").notNull(),
-    sha256: text("sha256").notNull(),
-    beforeJson: text("before_json", { mode: "json" }).$type<TiptapJsonContent[]>().notNull(),
-    afterJson: text("after_json", { mode: "json" }).$type<TiptapJsonContent[]>().notNull(),
-    addedCharacters: integer("added_characters").notNull().default(0),
-    deletedCharacters: integer("deleted_characters").notNull().default(0),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [uniqueIndex("document_patch_hunks_patch_sequence_idx").on(table.patchId, table.sequence)],
-);
-
-export const documentTransactions = sqliteTable(
-  "doc_transactions",
-  {
-    id: text("id").primaryKey(),
-    documentId: text("document_id").notNull(),
-    roomId: text("room_id").notNull(),
-    agentSessionId: text("agent_session_id")
-      .notNull()
-      .references(() => agentSessions.id, { onDelete: "cascade" }),
-    runId: text("run_id").notNull(),
-    status: text("status", {
-      enum: ["open", "committed", "aborted", "expired", "interrupted"],
-    }).notNull().default("open"),
-    nextSequence: integer("next_sequence").notNull().default(1),
-    totalBytes: integer("total_bytes").notNull().default(0),
-    workingContentJson: text("working_content_json", { mode: "json" }).notNull(),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    index("doc_transactions_session_idx").on(table.agentSessionId),
-    index("doc_transactions_expiry_idx").on(table.status, table.expiresAt),
-  ],
-);
-
-export const documentOps = sqliteTable(
-  "doc_ops",
-  {
-    id: text("id").primaryKey(),
-    transactionId: text("transaction_id")
-      .notNull()
-      .references(() => documentTransactions.id, { onDelete: "cascade" }),
-    sequence: integer("sequence").notNull(),
-    markdown: text("markdown").notNull(),
-    sha256: text("sha256").notNull(),
-    byteLength: integer("byte_length").notNull(),
-    appliedContentJson: text("applied_content_json", { mode: "json" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [uniqueIndex("doc_ops_transaction_sequence_idx").on(table.transactionId, table.sequence)],
 );
 
 export const realityEvents = sqliteTable(

@@ -36,6 +36,12 @@ export interface AgentSessionRouteRequest {
   blockId?: string | null
 }
 
+export function navigationRequiresSessionHandoff(request: AgentNavigationRequest): boolean {
+  const sourceRoomId = request.source.roomId?.trim() || null
+  const targetRoomId = request.target.roomId?.trim() || null
+  return !sourceRoomId || sourceRoomId !== targetRoomId
+}
+
 export function agentSessionLinkDestination(
   link: AgentSessionLink,
   currentSessionId: string | null,

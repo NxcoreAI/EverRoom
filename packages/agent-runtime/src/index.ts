@@ -22,6 +22,8 @@ export interface StartRuntimeRunInput {
   availableRooms?: AgentRoomReference[];
   roomSelectionRequired?: boolean;
   captureMemory?: boolean;
+  recallMemory?: boolean;
+  toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
 }
 

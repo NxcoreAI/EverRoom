@@ -25,6 +25,7 @@ export interface GatewayConnection {
 
 const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
+const CONNECTION_RECOVERY_TIMEOUT_MS = 5_000
 const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 })
 
 function delay(milliseconds: number): Promise<void> {
@@ -34,16 +35,17 @@ function delay(milliseconds: number): Promise<void> {
 function forwardGatewayOutput(
   stream: NodeJS.ReadableStream,
   destination: NodeJS.WriteStream,
+  label: string,
 ): void {
   let pending = ''
   stream.on('data', (chunk: string) => {
     pending += chunk
     const lines = pending.split(/\r?\n/)
     pending = lines.pop() ?? ''
-    for (const line of lines) destination.write(`[gateway] ${line}\n`)
+    for (const line of lines) destination.write(`[${label}] ${line}\n`)
   })
   stream.on('end', () => {
-    if (pending) destination.write(`[gateway] ${pending}\n`)
+    if (pending) destination.write(`[${label}] ${pending}\n`)
   })
 }
 
@@ -74,6 +76,7 @@ function resolveGatewayPackageDirectory(): string {
 export class GatewaySupervisor {
   private child: ChildProcessWithoutNullStreams | null = null
   private connection: GatewayConnection | null = null
+  private connectionRecovery: Promise<GatewayConnection> | null = null
   private stopping = false
   private lastError: string | null = null
 
@@ -81,11 +84,17 @@ export class GatewaySupervisor {
     private readonly dataDirectory: string,
     /** 注入 gateway 子进程的额外环境变量(如托管 MemoryCore 的连接信息)。 */
     private readonly extraEnvironment: Record<string, string> = {},
+    private readonly options: {
+      devScript?: string
+      packagedEntry?: string
+      logLabel?: string
+      devPortEnvironment?: string
+    } = {},
   ) {}
 
   async start(): Promise<GatewayConnection> {
     if (this.connection) return this.connection
-    if (this.child) throw new Error('NxCore Gateway is already starting')
+    if (this.child) throw new Error(`${this.serviceLabel()} is already starting`)
     this.lastError = null
 
     const gatewayDirectory = app.isPackaged
@@ -109,15 +118,17 @@ export class GatewaySupervisor {
       '--host',
       '127.0.0.1',
       '--port',
-      app.isPackaged ? '0' : (process.env.NXCORE_GATEWAY_DEV_PORT ?? '0'),
+      app.isPackaged
+        ? '0'
+        : (process.env[this.options.devPortEnvironment ?? 'NXCORE_GATEWAY_DEV_PORT'] ?? '0'),
       '--data-dir',
       this.dataDirectory,
       '--migrations-dir',
       migrationsPath,
     ]
     const commandArguments = app.isPackaged
-      ? [join(gatewayDirectory, 'serve.js'), ...gatewayArguments]
-      : ['--dir', gatewayDirectory, 'dev', '--', ...gatewayArguments]
+      ? [join(gatewayDirectory, this.options.packagedEntry ?? 'serve.js'), ...gatewayArguments]
+      : ['--dir', gatewayDirectory, this.options.devScript ?? 'dev', '--', ...gatewayArguments]
     const detached = !app.isPackaged && process.platform !== 'win32'
     const child = spawn(
       command,
@@ -136,13 +147,13 @@ export class GatewaySupervisor {
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    forwardGatewayOutput(child.stdout, process.stdout)
-    forwardGatewayOutput(child.stderr, process.stderr)
+    forwardGatewayOutput(child.stdout, process.stdout, this.options.logLabel ?? 'gateway')
+    forwardGatewayOutput(child.stderr, process.stderr, this.options.logLabel ?? 'gateway')
     child.on('exit', (code, signal) => {
       this.child = null
       this.connection = null
       if (!this.stopping) {
-        this.lastError = `Gateway 进程已退出（code=${String(code)}, signal=${String(signal)}）`
+        this.lastError = `${this.serviceLabel()} 进程已退出（code=${String(code)}, signal=${String(signal)}）`
         console.error(this.lastError)
       }
     })
@@ -159,7 +170,7 @@ export class GatewaySupervisor {
     } catch (error) {
       this.killChild(child, 'SIGTERM', detached)
       this.child = null
-      this.lastError = error instanceof Error ? error.message : 'Gateway 启动失败'
+      this.lastError = error instanceof Error ? error.message : `${this.serviceLabel()} 启动失败`
       throw error
     }
   }
@@ -179,12 +190,14 @@ export class GatewaySupervisor {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.runtimeManifestPath(), 'utf8'))
       if (!isGatewayManifest(parsed) || parsed.token !== connection.token) {
-        throw new Error('Gateway runtime manifest 无效')
+        throw new Error(`${this.serviceLabel()} runtime manifest 无效`)
       }
       const response = await healthHttp.get(`${parsed.baseUrl}/v1/health/ready`, {
         validateStatus: () => true,
       })
-      if (response.status >= 400) throw new Error(`Gateway 健康检查失败（${response.status}）`)
+      if (response.status >= 400) {
+        throw new Error(`${this.serviceLabel()} 健康检查失败（${response.status}）`)
+      }
 
       this.connection = {
         pid: parsed.pid,
@@ -205,22 +218,36 @@ export class GatewaySupervisor {
         pid: connection.pid,
         baseUrl: connection.baseUrl,
         version: connection.version,
-        message: error instanceof Error ? error.message : 'Gateway 当前不可用',
+        message: error instanceof Error ? error.message : `${this.serviceLabel()} 当前不可用`,
       }
     }
   }
 
   getConnection(): GatewayConnection {
-    if (!this.connection) throw new Error('NxCore Gateway 尚未就绪。')
+    if (!this.connection) throw new Error(`${this.serviceLabel()} 尚未就绪。`)
     return this.connection
   }
 
+  async recoverConnection(staleConnection: GatewayConnection): Promise<GatewayConnection> {
+    const current = this.connection
+    if (current && !this.isSameConnection(current, staleConnection)) return current
+    if (this.connectionRecovery) return this.connectionRecovery
+
+    const recovery = this.refreshConnection(staleConnection)
+    this.connectionRecovery = recovery
+    try {
+      return await recovery
+    } finally {
+      if (this.connectionRecovery === recovery) this.connectionRecovery = null
+    }
+  }
+
   async shutdown(): Promise<void> {
+    this.stopping = true
     const child = this.child
     this.connection = null
     if (!child) return
 
-    this.stopping = true
     await new Promise<void>((resolve) => {
       let settled = false
       const finish = (): void => {
@@ -251,7 +278,7 @@ export class GatewaySupervisor {
     const deadline = Date.now() + STARTUP_TIMEOUT_MS
     while (Date.now() < deadline) {
       if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`NxCore Gateway exited during startup with code ${String(child.exitCode)}`)
+        throw new Error(`${this.serviceLabel()} exited during startup with code ${String(child.exitCode)}`)
       }
 
       try {
@@ -268,7 +295,62 @@ export class GatewaySupervisor {
       await delay(50)
     }
 
-    throw new Error(`NxCore Gateway did not become ready within ${STARTUP_TIMEOUT_MS}ms`)
+    throw new Error(`${this.serviceLabel()} did not become ready within ${STARTUP_TIMEOUT_MS}ms`)
+  }
+
+  private async refreshConnection(staleConnection: GatewayConnection): Promise<GatewayConnection> {
+    const deadline = Date.now() + CONNECTION_RECOVERY_TIMEOUT_MS
+    let lastError: unknown = null
+
+    while (Date.now() < deadline) {
+      if (this.stopping) throw new Error(`${this.serviceLabel()} 正在停止。`)
+
+      const current = this.connection
+      if (current && !this.isSameConnection(current, staleConnection)) return current
+
+      try {
+        const parsed: unknown = JSON.parse(await readFile(this.runtimeManifestPath(), 'utf8'))
+        if (!isGatewayManifest(parsed) || parsed.token !== staleConnection.token) {
+          throw new Error(`${this.serviceLabel()} runtime manifest 无效`)
+        }
+        const response = await healthHttp.get(`${parsed.baseUrl}/v1/health/ready`, {
+          validateStatus: () => true,
+        })
+        if (response.status >= 400) {
+          throw new Error(`${this.serviceLabel()} 健康检查失败（${response.status}）`)
+        }
+        if (this.stopping) throw new Error(`${this.serviceLabel()} 正在停止。`)
+
+        this.connection = {
+          pid: parsed.pid,
+          baseUrl: parsed.baseUrl,
+          token: staleConnection.token,
+          version: parsed.version,
+        }
+        this.lastError = null
+        return this.connection
+      } catch (error) {
+        lastError = error
+      }
+
+      if (!this.child) {
+        this.connection = null
+        return this.start()
+      }
+      await delay(50)
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`${this.serviceLabel()} 连接恢复失败`)
+  }
+
+  private isSameConnection(left: GatewayConnection, right: GatewayConnection): boolean {
+    return left.baseUrl === right.baseUrl && left.token === right.token
+  }
+
+  private serviceLabel(): string {
+    return this.options.logLabel ?? 'NxCore Gateway'
   }
 
   private runtimeManifestPath(): string {
