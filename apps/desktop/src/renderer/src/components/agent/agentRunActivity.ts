@@ -366,11 +366,6 @@ export function reduceAgentRunActivity(
         const tool = tools.find((candidate) => candidate.id === steps[index]!.id)
         if (tool) steps[index] = { ...steps[index]!, tool }
       }
-      if (pendingText.trim() && steps.length) {
-        const last = steps[steps.length - 1]!
-        last.afterText = filterActivityText(pendingText.trim(), last.tool)
-      }
-      pendingText = ''
     }
     if (event.type === 'run.completed') completed = true
   }
