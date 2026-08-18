@@ -17,6 +17,7 @@ import {
   isNearDocumentStreamEnd,
   isSelectionOutsideViewport,
   nextDocumentStreamFollowState,
+  setScrollElementScrolling,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/useTransientEditorInteractions'
 
 describe('Markdown stream buffering', () => {
@@ -191,6 +192,14 @@ describe('Markdown stream buffering', () => {
       clientHeight: 600,
       scrollHeight: 2_000,
     })).toBe(true)
+  })
+
+  it('updates scrollbar activity without requiring an editor rerender', () => {
+    const scrollElement = { dataset: {} } as unknown as HTMLElement
+    setScrollElementScrolling(scrollElement, true)
+    expect(scrollElement.dataset.scrolling).toBe('true')
+    setScrollElementScrolling(scrollElement, false)
+    expect(scrollElement.dataset.scrolling).toBe('false')
   })
 
   it('clears a selection only after the whole selection leaves the scroll viewport', () => {

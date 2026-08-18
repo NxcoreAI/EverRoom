@@ -183,10 +183,14 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
     if (target.documentId === documentId) setFocusedOperationId(target.operationId)
   }), [documentId])
 
-  const operationEntries = operations.operations.filter((entry) => entry.detail)
-  const atomicEntry = newestOperation(operationEntries, documentId, 'atomic-diff', focusedOperationId)
-  const continuationEntry = newestOperation(operationEntries, documentId, 'continuation', focusedOperationId)
-  const streamingEntry = newestStreamingOperation(operationEntries, documentId)
+  const { atomicEntry, continuationEntry, streamingEntry } = useMemo(() => {
+    const operationEntries = operations.operations.filter((entry) => entry.detail)
+    return {
+      atomicEntry: newestOperation(operationEntries, documentId, 'atomic-diff', focusedOperationId),
+      continuationEntry: newestOperation(operationEntries, documentId, 'continuation', focusedOperationId),
+      streamingEntry: newestStreamingOperation(operationEntries, documentId),
+    }
+  }, [documentId, focusedOperationId, operations.operations])
 
   useEffect(() => {
     if (!focusedOperationId) return
@@ -195,8 +199,14 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
       setFocusedOperationId(null)
     }
   }, [focusedOperationId, operations.entriesById])
-  const atomicReview = presentDocumentOperation<DocumentOperationReviewView>(atomicEntry, 'atomic-diff') ?? undefined
-  const continuationReview = presentDocumentOperation<DocumentOperationReviewView>(continuationEntry, 'continuation') ?? undefined
+  const atomicReview = useMemo(
+    () => presentDocumentOperation<DocumentOperationReviewView>(atomicEntry, 'atomic-diff') ?? undefined,
+    [atomicEntry],
+  )
+  const continuationReview = useMemo(
+    () => presentDocumentOperation<DocumentOperationReviewView>(continuationEntry, 'continuation') ?? undefined,
+    [continuationEntry],
+  )
   const continuationItem = pendingContinuationBlock(continuationReview)
   const completionBlocked = operations.operations.some((entry) => entry.summary.documentId === documentId
     && completionBlockingStatuses.has(entry.summary.status))

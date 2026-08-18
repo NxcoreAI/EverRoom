@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildContinuationRevisionPrompt,
+  continuationRevealScrollTop,
   pendingContinuationBlock,
   pendingContinuationBlocks,
   shouldHandleContinuationTab,
@@ -164,6 +165,45 @@ describe('document operation review presenters', () => {
     expect(shouldHandleContinuationTab({ ...candidate, candidateVisible: false })).toBe(false)
     expect(shouldHandleContinuationTab({ ...candidate, busy: true })).toBe(false)
     expect(shouldHandleContinuationTab({ ...candidate, key: 'Enter' })).toBe(false)
+  })
+
+  it('reveals a continuation inside the editor without moving an already visible block', () => {
+    const viewport = { scrollHeight: 1600, clientHeight: 600 }
+    expect(continuationRevealScrollTop({
+      ...viewport,
+      scrollTop: 200,
+      candidateTop: 420,
+      candidateBottom: 560,
+    })).toBe(200)
+    expect(continuationRevealScrollTop({
+      ...viewport,
+      scrollTop: 200,
+      candidateTop: 760,
+      candidateBottom: 900,
+    })).toBe(324)
+    expect(continuationRevealScrollTop({
+      ...viewport,
+      scrollTop: 600,
+      candidateTop: 500,
+      candidateBottom: 640,
+    })).toBe(476)
+  })
+
+  it('aligns an oversized continuation once and clamps it to the scroll range', () => {
+    expect(continuationRevealScrollTop({
+      scrollTop: 100,
+      scrollHeight: 1800,
+      clientHeight: 500,
+      candidateTop: 700,
+      candidateBottom: 1300,
+    })).toBe(676)
+    expect(continuationRevealScrollTop({
+      scrollTop: 900,
+      scrollHeight: 1200,
+      clientHeight: 500,
+      candidateTop: 1100,
+      candidateBottom: 1180,
+    })).toBe(700)
   })
 
   it('builds a continuation revision prompt from feedback without accepting old candidates', () => {

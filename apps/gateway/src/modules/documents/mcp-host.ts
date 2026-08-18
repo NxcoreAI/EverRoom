@@ -46,6 +46,14 @@ export interface DocumentToolDiagnostic {
   error?: Record<string, unknown>;
 }
 
+export interface AgentCompletedMessageResolution {
+  content: string;
+  reason: string;
+  operationId: string;
+  operationStatus: string;
+  itemCount: number;
+}
+
 const DIAGNOSTIC_FIELDS = [
   "documentId", "operationId", "patchId", "baseVersion", "sequence",
   "finalSequence", "acceptedSequence", "kind", "operation", "state", "applied",
@@ -55,7 +63,16 @@ const DIAGNOSTIC_FIELDS = [
   "readReceiptResolved", "operationIdCorrected", "blockCount",
   "operationInferred", "finalSequenceCorrected", "adjacentContextStripped",
   "requiredMaximumCharacters", "expectedFinalSequence", "beforeCharacters", "afterCharacters",
+  "originalCode", "repeatedAttempts",
 ] as const;
+
+const NON_PROGRESS_PATCH_ERRORS = new Set([
+  "EDIT_EMPTY_REPLACEMENT",
+  "EDIT_NO_CHANGE",
+  "EDIT_NOT_SHORTER",
+  "EDIT_REPEATS_DOCUMENT",
+  "CONTINUATION_REPEATS_DOCUMENT",
+]);
 
 function diagnosticPayload(value: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -135,7 +152,12 @@ interface HostSession {
 
 export class DocumentMcpHost {
   private readonly sessions = new Map<string, Promise<HostSession>>();
-  private readonly toolAttempts = new Map<string, { attempt: number; lastFailureCode?: string }>();
+  private readonly toolAttempts = new Map<string, {
+    attempt: number;
+    lastFailureCode?: string;
+    lastInputSignature?: string;
+    identicalFailureCount: number;
+  }>();
   readonly capabilities: DocumentCapabilityRegistry;
 
   constructor(
@@ -221,6 +243,76 @@ export class DocumentMcpHost {
     this.clearToolAttempts(runId);
   }
 
+  resolveCompletedMessage(input: {
+    sessionId: string;
+    runId: string;
+    content: string;
+  }): AgentCompletedMessageResolution | null {
+    const operation = this.operations?.list({ sessionId: input.sessionId, runId: input.runId })[0];
+    if (!operation) return null;
+    const detail = this.operations?.get(operation.id);
+    const itemCount = detail?.items.length ?? 0;
+    const appliedItemCount = detail?.items.filter((item) =>
+      item.status === "applied" || item.appliedVersion !== null).length ?? 0;
+    const title = operation.documentTitle ? `《${operation.documentTitle}》` : "该文档";
+
+    if (operation.status === "awaiting_review") {
+      return {
+        content: appliedItemCount > 0
+          ? `${title}已有 ${appliedItemCount} 项修改写入，剩余建议仍需在文档中审阅。`
+          : `已为${title}准备好修改建议，正文尚未更改。请在文档中审阅并接受后应用。`,
+        reason: "document-operation-awaiting-review",
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    if (operation.status === "applying") {
+      return {
+        content: `${title}的修改建议正在应用，请稍后查看文档中的最终结果。`,
+        reason: "document-operation-applying",
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    if (operation.status === "completed") {
+      const action = operation.capabilityId === "document.create"
+        ? "创建"
+        : operation.capabilityId === "document.continue" ? "续写" : "修改";
+      return {
+        content: `${title}已完成${action}。`,
+        reason: "document-operation-completed",
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    if (operation.status === "conflicted") {
+      return {
+        content: `${title}的版本已发生变化，本次修改建议未应用。请基于最新内容重试。`,
+        reason: "document-operation-conflicted",
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    if (["cancelled", "failed", "expired", "rejected"].includes(operation.status)) {
+      return {
+        content: appliedItemCount > 0
+          ? `${title}已有 ${appliedItemCount} 项修改写入，但本次操作随后中止。请检查文档后再继续。`
+          : itemCount === 0
+            ? `未能为${title}生成有效的修改建议，文档未发生变化。请给出更具体的修改要求后重试。`
+            : `本次对${title}的修改建议已中止，文档未发生变化。`,
+        reason: `document-operation-${operation.status}`,
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    return null;
+  }
+
   async close(): Promise<void> {
     const sessions = await Promise.allSettled(this.sessions.values());
     this.sessions.clear();
@@ -282,6 +374,7 @@ export class DocumentMcpHost {
     const attemptKey = this.toolAttemptKey(name, args, context);
     const previous = this.toolAttempts.get(attemptKey);
     const attempt = (previous?.attempt ?? 0) + 1;
+    const inputSignature = JSON.stringify(args);
     try {
       const result = await this.capabilities.execute(name, args, context);
       const recoveredFromErrorCode = previous?.lastFailureCode;
@@ -304,10 +397,42 @@ export class DocumentMcpHost {
       this.toolAttempts.delete(attemptKey);
       return result;
     } catch (error) {
-      const payload = documentToolErrorPayload(error);
+      let payload = documentToolErrorPayload(error);
+      const failureCode = typeof payload.code === "string" ? payload.code : undefined;
+      const identicalFailureCount = previous?.lastInputSignature === inputSignature
+        && previous.lastFailureCode === failureCode
+        ? previous.identicalFailureCount + 1
+        : 1;
+      if (name === "context_room_patch_hunk"
+        && failureCode
+        && NON_PROGRESS_PATCH_ERRORS.has(failureCode)
+        && identicalFailureCount >= 2) {
+        this.operations?.cancelIncompleteForSession(
+          context.agentSessionId,
+          `repeated-${failureCode ?? "document-tool-error"}`,
+          context.runId,
+        );
+        const exhausted = new DocumentServiceError(
+          "DOCUMENT_TOOL_RETRY_EXHAUSTED",
+          "The same invalid patch_hunk arguments were submitted twice. The draft was cancelled; do not call another patch tool and tell the user that no modification was created.",
+          409,
+          {
+            originalCode: failureCode,
+            state: "cancelled",
+            retryable: false,
+            nextAction: "respond_document_unchanged",
+            repeatedAttempts: identicalFailureCount,
+            documentChanged: false,
+          },
+        );
+        payload = documentToolErrorPayload(exhausted);
+        error = exhausted;
+      }
       this.toolAttempts.set(attemptKey, {
         attempt,
-        ...(typeof payload.code === "string" ? { lastFailureCode: payload.code } : {}),
+        ...(failureCode ? { lastFailureCode: failureCode } : {}),
+        lastInputSignature: inputSignature,
+        identicalFailureCount,
       });
       this.emitDiagnostic({
         level: "warn",

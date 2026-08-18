@@ -367,6 +367,47 @@ describe('DocumentOperationProvider React state machine', () => {
     expect(editorState.locked).toBe(false)
   })
 
+  it('keeps continuation view references stable across unrelated parent rerenders', async () => {
+    const current = operation()
+    const api = bridge(current, vi.fn().mockResolvedValue(null))
+    let editorState!: ReturnType<typeof useDocumentEditorOperations>
+    const Consumer = ({ renderTick }: { renderTick: number }) => {
+      void renderTick
+      editorState = useDocumentEditorOperations('doc-1')
+      return null
+    }
+
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <DocumentOperationProvider operationBridge={api}>
+          <Consumer renderTick={0} />
+        </DocumentOperationProvider>,
+      )
+    })
+    await flush()
+    const viewModel = editorState
+    const continuation = editorState.continuation
+    const review = continuation?.review
+    const commands = editorState.commands
+    const decideContinuationItem = commands.decideContinuationItem
+    const acceptAllContinuationItems = commands.acceptAllContinuationItems
+
+    await act(async () => {
+      renderer?.update(
+        <DocumentOperationProvider operationBridge={api}>
+          <Consumer renderTick={1} />
+        </DocumentOperationProvider>,
+      )
+    })
+
+    expect(editorState).toBe(viewModel)
+    expect(editorState.continuation).toBe(continuation)
+    expect(editorState.continuation?.review).toBe(review)
+    expect(editorState.commands).toBe(commands)
+    expect(editorState.commands.decideContinuationItem).toBe(decideContinuationItem)
+    expect(editorState.commands.acceptAllContinuationItems).toBe(acceptAllContinuationItems)
+  })
+
   it('closes stale continuation candidates and starts a feedback-guided Agent run', async () => {
     const current = operation()
     const closed = operation({

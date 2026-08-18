@@ -111,6 +111,8 @@ function completionDecorations(
   }, {
     key: `document-cursor-completion:${completion.replaceFrom ?? completion.position}:${completion.position}:${completion.text}`,
     side: 1,
+    ignoreSelection: true,
+    relaxedSide: true,
   }))
   return DecorationSet.create(doc, decorations)
 }
@@ -211,6 +213,7 @@ export function showDocumentCursorCompletion(
   completion: DocumentCursorCompletionState,
 ): void {
   if (!completion.text || editor.isDestroyed || !editor.state.selection.empty
+    || editor.view.composing
     || editor.state.selection.from !== completion.position
     || (completion.replaceFrom !== undefined
       && (completion.replaceFrom < editor.state.selection.$from.start()
@@ -512,7 +515,7 @@ export function useDocumentCursorCompletion({
         return
       }
       const context = documentCursorCompletionContext(editor)
-      const api = window.nxcore?.agent
+      const api = window.nxcore?.cursorCompletionAgent
       if (!context || !api) {
         recordDocumentCursorCompletionDiagnostic('request.skipped', {
           trigger,

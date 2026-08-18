@@ -8,7 +8,10 @@ import { createElement, Fragment as ReactFragment, useState, type FormEvent, typ
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { DocumentContinuationCandidate } from './presenterRegistry'
-import { shouldHandleContinuationTab } from './documentContinuationState'
+import {
+  continuationRevealScrollTop,
+  shouldHandleContinuationTab,
+} from './documentContinuationState'
 
 interface DocumentContinuationDecorationState {
   blocks: DocumentContinuationCandidate[]
@@ -243,8 +246,23 @@ function continuationDecorations(
     if (state.autoReveal) {
       window.requestAnimationFrame(() => {
         if (!candidate.isConnected || document.visibilityState === 'hidden') return
-        candidate.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        candidate.focus({ preventScroll: true })
+        const scrollElement = candidate.closest<HTMLElement>('.context-room-tiptap-scroll')
+        if (scrollElement) {
+          const scrollBounds = scrollElement.getBoundingClientRect()
+          const candidateBounds = candidate.getBoundingClientRect()
+          const top = continuationRevealScrollTop({
+            scrollTop: scrollElement.scrollTop,
+            scrollHeight: scrollElement.scrollHeight,
+            clientHeight: scrollElement.clientHeight,
+            candidateTop: candidateBounds.top - scrollBounds.top + scrollElement.scrollTop,
+            candidateBottom: candidateBounds.bottom - scrollBounds.top + scrollElement.scrollTop,
+          })
+          if (Math.abs(top - scrollElement.scrollTop) >= 1) {
+            scrollElement.scrollTo({ top, behavior: 'auto' })
+          }
+        } else {
+          candidate.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+        }
       })
     }
     continuationActionRoots.set(candidate, actionsRoot)
@@ -252,6 +270,8 @@ function continuationDecorations(
   }, {
     key: `continuation:${state.currentBlockId}:${currentBlock.textPreview}:${state.busy}`,
     side: 1,
+    ignoreSelection: true,
+    stopEvent: () => true,
     destroy: (node) => {
       const root = continuationActionRoots.get(node)
       continuationActionRoots.delete(node)

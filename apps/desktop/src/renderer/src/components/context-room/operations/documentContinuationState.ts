@@ -39,6 +39,35 @@ export function shouldHandleContinuationTab(input: {
     && !input.busy
 }
 
+export function continuationRevealScrollTop({
+  scrollTop,
+  scrollHeight,
+  clientHeight,
+  candidateTop,
+  candidateBottom,
+  padding = 24,
+}: {
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+  candidateTop: number
+  candidateBottom: number
+  padding?: number
+}): number {
+  const maxScrollTop = Math.max(0, scrollHeight - clientHeight)
+  const availableHeight = Math.max(0, clientHeight - padding * 2)
+  const candidateHeight = Math.max(0, candidateBottom - candidateTop)
+  let nextScrollTop = scrollTop
+
+  if (candidateHeight > availableHeight || candidateTop < scrollTop + padding) {
+    nextScrollTop = candidateTop - padding
+  } else if (candidateBottom > scrollTop + clientHeight - padding) {
+    nextScrollTop = candidateBottom + padding - clientHeight
+  }
+
+  return Math.min(maxScrollTop, Math.max(0, nextScrollTop))
+}
+
 export function buildContinuationRevisionPrompt(input: {
   documentTitle: string
   previousSummary: string

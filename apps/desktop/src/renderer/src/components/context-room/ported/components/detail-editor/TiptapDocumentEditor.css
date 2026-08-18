@@ -650,6 +650,8 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
   padding-right: 30px;
   scrollbar-width: thin;
   container-type: inline-size;

@@ -20,7 +20,7 @@ import {
   roomDocumentLinks,
 } from '../src/infrastructure/database/schema.js'
 import { AgentEventBroker } from '../src/modules/agent/event-broker.js'
-import { AgentService } from '../src/modules/agent/service.js'
+import { AgentService, type AgentCompletedMessageResolver } from '../src/modules/agent/service.js'
 import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 
 const temporaryDirectories: string[] = []
@@ -51,15 +51,29 @@ class RecordingRuntime implements AgentRuntime {
   async dispose(): Promise<void> {}
 }
 
+class CompletingRuntime extends RecordingRuntime {
+  override async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+    this.starts.push(input)
+    const events = new AsyncEventQueue<RuntimeEvent>()
+    events.push({ type: 'message.completed', payload: { role: 'assistant', content: '文档已成功修改。' } })
+    events.push({ type: 'run.completed', payload: {} })
+    events.end()
+    return { runId: input.runId, runtimeSessionRef: `runtime-${input.sessionId}`, events }
+  }
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
-async function createHarness() {
+async function createHarness(options: {
+  runtime?: RecordingRuntime
+  completedMessageResolver?: AgentCompletedMessageResolver
+} = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-agent-room-selection-'))
   temporaryDirectories.push(dataDir)
   const database = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
-  const runtime = new RecordingRuntime()
+  const runtime = options.runtime ?? new RecordingRuntime()
   const rooms = new ContextRoomService(database.db)
   const service = new AgentService(
     database.db,
@@ -68,11 +82,40 @@ async function createHarness() {
     undefined,
     rooms,
     { validateActiveDocumentContext: (context) => context },
+    options.completedMessageResolver,
   )
   return { ...database, rooms, runtime, service }
 }
 
 describe('Agent Room selection', () => {
+  it('replaces a misleading completed message with the authoritative operation result', async () => {
+    const runtime = new CompletingRuntime()
+    const completedMessageResolver: AgentCompletedMessageResolver = {
+      resolveCompletedMessage: () => ({
+        content: '未能生成有效的修改建议，文档未发生变化。',
+        reason: 'document-operation-cancelled',
+        operationId: 'operation-cancelled',
+        operationStatus: 'cancelled',
+        itemCount: 0,
+      }),
+    }
+    const { service, sqlite } = await createHarness({ runtime, completedMessageResolver })
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+    const run = await service.startRun(session.id, {
+      prompt: '修改当前文档',
+      idempotencyKey: 'authoritative-completed-message',
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(service.getSnapshot(session.id)?.messages.at(-1)?.content)
+      .toBe('未能生成有效的修改建议，文档未发生变化。')
+    expect(service.listEvents(session.id, run.id, 0)
+      .find((event) => event.type === 'message.completed')?.payload).toMatchObject({
+      content: '未能生成有效的修改建议，文档未发生变化。',
+    })
+    sqlite.close()
+  })
+
   it('normalizes legacy empty Room ids to the global session scope', async () => {
     const { service, sqlite } = await createHarness()
     const session = service.createSession({ pageLabel: '首页', roomId: '' })

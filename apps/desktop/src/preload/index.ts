@@ -201,6 +201,16 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('agent:event', handleEvent)
     },
   },
+  cursorCompletionAgent: {
+    createSession: (input) => invokeQuietly('cursor-completion-agent:create-session', input),
+    deleteSession: (sessionId) =>
+      invokeQuietly('cursor-completion-agent:delete-session', sessionId),
+    getEvents: (sessionId, runId, afterSeq) =>
+      invokeQuietly('cursor-completion-agent:get-events', sessionId, runId, afterSeq),
+    startRun: (sessionId, input) =>
+      invokeQuietly('cursor-completion-agent:start-run', sessionId, input),
+    cancelRun: (runId) => invokeQuietly('cursor-completion-agent:cancel-run', runId),
+  },
   documents: {
     list: (roomId) => invoke('documents:list', roomId),
     listTrash: (roomId) => invoke('documents:list-trash', roomId),

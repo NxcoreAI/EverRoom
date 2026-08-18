@@ -18,6 +18,7 @@ import {
   currentDocumentCursorCompletion,
   documentCursorCompletionContext,
   DocumentCursorCompletionExtension,
+  showDocumentCursorCompletion,
   useDocumentCursorCompletion,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/DocumentCursorCompletion'
 import {
@@ -194,10 +195,31 @@ describe('DocumentCursorCompletionExtension', () => {
     ) as DecorationSet
     expect(decorations.find()).toHaveLength(1)
     expect(decorations.find()[0]).toMatchObject({ from: position, to: position })
+    expect(decorations.find()[0]?.spec).toMatchObject({
+      side: 1,
+      ignoreSelection: true,
+      relaxedSide: true,
+    })
     expect(harness.transactions).toHaveLength(1)
     expect(harness.transactions[0].docChanged).toBe(false)
     expect(harness.transactions[0].selectionSet).toBe(false)
     expect(harness.transactions[0].scrolledIntoView).toBe(false)
+  })
+
+  it('does not render a ghost while the editor is composing', () => {
+    const harness = createHarness()
+    const position = harness.state().selection.from
+    Object.defineProperty(harness.editor.view, 'composing', {
+      configurable: true,
+      value: true,
+    })
+
+    showDocumentCursorCompletion(harness.editor, {
+      position,
+      text: '输入法期间不显示',
+    })
+
+    expect(currentCompletion(harness)).toBeNull()
   })
 
   it('accepts with one transaction and one undo restores only the completion', () => {
@@ -661,12 +683,12 @@ function createHookEditor(
   }
 }
 
-function CompletionHook({ editor }: { editor: Editor }) {
+function CompletionHook({ editor, enabled = true }: { editor: Editor; enabled?: boolean }) {
   const running = useDocumentCursorCompletion({
     editor,
     roomId: 'room-1',
     documentName: '测试文档',
-    enabled: true,
+    enabled,
   })
   return React.createElement('span', { 'data-running': running })
 }
@@ -679,7 +701,7 @@ describe('useDocumentCursorCompletion input method commits', () => {
     vi.stubGlobal('window', {
       setTimeout: globalThis.setTimeout,
       clearTimeout: globalThis.clearTimeout,
-      nxcore: { agent: {} },
+      nxcore: { cursorCompletionAgent: {} },
     })
     vi.mocked(streamDocumentCursorCompletion).mockResolvedValue({ text: '补全结果', replaceCharacters: 0 })
     const hookEditor = createHookEditor(initialContent)
@@ -779,6 +801,33 @@ describe('useDocumentCursorCompletion input method commits', () => {
       await Promise.resolve()
     })
     expect(isRunning()).toBe(false)
+    act(() => renderer.unmount())
+  })
+
+  it('cancels the active request and clears its ghost when disabled', async () => {
+    const pending = deferred<{ text: string; replaceCharacters: number }>()
+    let onSuggestion: ((suggestion: { text: string; replaceCharacters: number }) => void) | null = null
+    let signal: AbortSignal | null = null
+    const { dom, editor, insertText, isRunning, renderer } = setup()
+    vi.mocked(streamDocumentCursorCompletion).mockImplementation((_api, _input, options) => {
+      onSuggestion = options.onSuggestion
+      signal = options.signal
+      return pending.promise
+    })
+
+    typeText(dom, insertText, '普通')
+    await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+    act(() => onSuggestion?.({ text: '补全内容', replaceCharacters: 0 }))
+    expect(isRunning()).toBe(true)
+    expect(currentDocumentCursorCompletion(editor)).not.toBeNull()
+
+    act(() => renderer.update(React.createElement(CompletionHook, { editor, enabled: false })))
+
+    expect(signal?.aborted).toBe(true)
+    expect(isRunning()).toBe(false)
+    expect(currentDocumentCursorCompletion(editor)).toBeNull()
+    pending.reject(new DOMException('cancelled', 'AbortError'))
+    await act(async () => { await Promise.resolve() })
     act(() => renderer.unmount())
   })
 

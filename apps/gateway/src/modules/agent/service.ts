@@ -40,6 +40,20 @@ export interface AgentServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
 }
 
+export interface AgentCompletedMessageResolver {
+  resolveCompletedMessage(input: {
+    sessionId: string;
+    runId: string;
+    content: string;
+  }): {
+    content: string;
+    reason: string;
+    operationId: string;
+    operationStatus: string;
+    itemCount: number;
+  } | null;
+}
+
 const silentLogger: AgentServiceLogger = { info: () => undefined };
 const PENDING_INTENT_TTL_MS = 10 * 60 * 1000;
 const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
@@ -243,6 +257,7 @@ export class AgentService {
     private readonly logger: AgentServiceLogger = silentLogger,
     private readonly roomRegistry?: AgentRoomRegistry,
     private readonly documentRegistry?: AgentDocumentRegistry,
+    private readonly completedMessageResolver?: AgentCompletedMessageResolver,
   ) {}
 
   async initialize(): Promise<void> {
@@ -868,6 +883,27 @@ export class AgentService {
   }
 
   private async appendEvent(sessionId: string, runId: string, runtimeEvent: RuntimeEvent): Promise<void> {
+    if (runtimeEvent.type === "message.completed") {
+      const payload = runtimeEvent.payload as { content?: unknown };
+      const content = typeof payload.content === "string" ? payload.content : "";
+      const resolution = this.completedMessageResolver?.resolveCompletedMessage({ sessionId, runId, content });
+      if (resolution && resolution.content !== content) {
+        runtimeEvent = {
+          ...runtimeEvent,
+          payload: { ...payload, content: resolution.content },
+        };
+        this.logger.info({
+          event: "agent.output.corrected",
+          sessionId,
+          runId,
+          reason: resolution.reason,
+          operationId: resolution.operationId,
+          operationStatus: resolution.operationStatus,
+          itemCount: resolution.itemCount,
+          originalContentBytes: Buffer.byteLength(content, "utf8"),
+        }, "agent assistant output corrected from authoritative operation state");
+      }
+    }
     if (runtimeEvent.type === "message.delta") {
       const delta = (runtimeEvent.payload as { delta?: unknown }).delta;
       if (typeof delta === "string") {

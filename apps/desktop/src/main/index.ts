@@ -123,6 +123,14 @@ const AGENT_CHANNELS = {
   unsubscribe: 'agent:unsubscribe',
 } as const
 
+const CURSOR_COMPLETION_AGENT_CHANNELS = {
+  createSession: 'cursor-completion-agent:create-session',
+  deleteSession: 'cursor-completion-agent:delete-session',
+  getEvents: 'cursor-completion-agent:get-events',
+  startRun: 'cursor-completion-agent:start-run',
+  cancelRun: 'cursor-completion-agent:cancel-run',
+} as const
+
 const DOCUMENT_CHANNELS = {
   list: 'documents:list',
   listTrash: 'documents:list-trash',
@@ -262,6 +270,7 @@ function installIpcRouters(): void {
     GATEWAY_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
+    CURSOR_COMPLETION_AGENT_CHANNELS,
     DOCUMENT_CHANNELS,
     ASR_CHANNELS,
     PRIVATE_AUDIO_CHANNELS,
@@ -288,8 +297,10 @@ function installIpcRouters(): void {
 
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
+let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
@@ -475,6 +486,17 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+}
+
+function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void {
+  handleGroup(CURSOR_COMPLETION_AGENT_CHANNELS, {
+    createSession: (_event, input) => bridge.createSession(input),
+    deleteSession: (_event, sessionId) => bridge.deleteSession(sessionId),
+    getEvents: (_event, sessionId, runId, afterSeq) =>
+      bridge.getEvents(sessionId, runId, afterSeq),
+    startRun: (_event, sessionId, input) => bridge.startRun(sessionId, input),
+    cancelRun: (_event, runId) => bridge.cancelRun(runId),
+  })
 }
 
 function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: DocumentAssetStore): void {
@@ -822,11 +844,28 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
+    cursorCompletionSupervisor = new GatewaySupervisor(
+      join(dataDirectory, 'cursor-completion-service'),
+      { NXCORE_MEMORY_ENABLED: 'false' },
+      {
+        devScript: 'dev:cursor-completion',
+        packagedEntry: 'cursor-completion-serve.js',
+        logLabel: 'cursor-completion',
+        devPortEnvironment: 'NXCORE_CURSOR_COMPLETION_DEV_PORT',
+      },
+    )
+    const cursorCompletionGateway = await cursorCompletionSupervisor.start()
+    console.info(
+      `Cursor completion service ready at ${cursorCompletionGateway.baseUrl} `
+      + `(pid=${cursorCompletionGateway.pid})`,
+    )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
+    registerCursorCompletionAgentHandlers(cursorCompletionAgentBridge)
     registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge, documentAssets)
@@ -888,6 +927,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    cursorCompletionAgentBridge?.dispose()
+    cursorCompletionAgentBridge = null
     documentGatewayBridge?.dispose()
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
@@ -896,6 +937,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
+    await cursorCompletionSupervisor?.shutdown()
+    cursorCompletionSupervisor = null
     await memoryCoreSupervisor?.shutdown()
     memoryCoreSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
@@ -914,22 +957,27 @@ app.on('before-quit', (event) => {
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
+  const cursorCompletion = cursorCompletionSupervisor
   const memoryCore = memoryCoreSupervisor
   const agentBridge = agentGatewayBridge
+  const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
   const recordings = recordingStore
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
+  cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
   agentGatewayBridge = null
+  cursorCompletionAgentBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
   recordingStore = null
   saasClient = null
   screenshotScheduler.stop()
   agentBridge?.dispose()
+  cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
@@ -937,6 +985,7 @@ app.on('before-quit', (event) => {
     service?.shutdown(),
     recordings?.dispose(),
     gateway?.shutdown(),
+    cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })

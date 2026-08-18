@@ -184,6 +184,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
     contextRoomService,
     documentService,
+    documentMcpHost,
   );
   await agentService.initialize();
   const backgroundAgentRuntime = createBackgroundAgentRuntime(config);

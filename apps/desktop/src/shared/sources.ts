@@ -432,6 +432,13 @@ export interface NxcoreDesktopApi {
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
+  cursorCompletionAgent: {
+    createSession(input: CreateAgentSessionInput): Promise<AgentSession>
+    deleteSession(sessionId: string): Promise<void>
+    getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
+    startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
+    cancelRun(runId: string): Promise<AgentRun>
+  }
   documents: {
     list(roomId: string): Promise<RoomDocument[]>
     listTrash(roomId: string): Promise<RoomDocument[]>

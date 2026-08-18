@@ -1047,6 +1047,109 @@ describe('document transactions', () => {
       applied: false,
       documentChanged: false,
     })
+    expect(host.resolveCompletedMessage({
+      sessionId: context.agentSessionId,
+      runId: context.runId,
+      content: '文档已成功修改。',
+    })).toMatchObject({
+      operationId,
+      operationStatus: 'awaiting_review',
+      itemCount: 1,
+      content: '已为《Java Guide》准备好修改建议，正文尚未更改。请在文档中审阅并接受后应用。',
+    })
+  })
+
+  it('returns a compact top-level block map for document editing', async () => {
+    const { db, service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-compact-agent-read', roomId: 'room-1', title: 'Compact Read',
+      contentJson: { type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Opening paragraph' }] },
+        { type: 'bulletList', content: [
+          { type: 'listItem', content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'First nested item' }] },
+          ] },
+          { type: 'listItem', content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'Second nested item' }] },
+          ] },
+        ] },
+      ] },
+    })
+    const operations = new DocumentOperationService(db, service.broker)
+    const host = new DocumentMcpHost(service, undefined, undefined, operations)
+    disposables.push(() => host.close())
+    const context = { agentSessionId: 'session-1', runId: 'run-compact-read', roomId: 'room-1' }
+
+    const read = await host.callTool('context_room_document_read', { documentId: document.id }, context)
+    expect(read.structuredContent).toMatchObject({
+      blockScope: 'top_level',
+      blockCount: 2,
+      indexedBlockCount: 6,
+      blocks: [
+        { type: 'paragraph', textPreview: 'Opening paragraph' },
+        { type: 'bulletList', textPreview: 'First nested itemSecond nested item' },
+      ],
+    })
+    expect((read.structuredContent.blocks as Array<Record<string, unknown>>)
+      .every((block) => !('parentBlockId' in block) && !('depth' in block))).toBe(true)
+  })
+
+  it('cancels a patch after identical invalid retries and reports that the document is unchanged', async () => {
+    const { db, service } = await createHarness()
+    const original = 'TypeScript adds static types to JavaScript.'
+    const document = await service.import({
+      id: 'doc-identical-retry', roomId: 'room-1', title: 'TypeScript Guide',
+      contentJson: { type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: original }] },
+      ] },
+    })
+    const operations = new DocumentOperationService(db, service.broker)
+    const diagnostics: Array<Record<string, unknown>> = []
+    const host = new DocumentMcpHost(
+      service, undefined, undefined, operations,
+      (diagnostic) => diagnostics.push(diagnostic as unknown as Record<string, unknown>),
+    )
+    disposables.push(() => host.close())
+    const context = { agentSessionId: 'session-1', runId: 'run-identical-retry', roomId: 'room-1' }
+    await host.callTool('context_room_document_read', { documentId: document.id }, context)
+    const begun = await host.callTool('context_room_patch_begin', {
+      documentId: document.id, baseVersion: document.version, kind: 'edit',
+      summary: 'Rewrite the opening paragraph',
+    }, context)
+    const operationId = String(begun.structuredContent.operationId)
+    const paragraphId = service.listBlocks(document.id).find((block) => block.depth === 0)!.blockId
+    const repeated = {
+      operationId, sequence: 1, target: { blockId: paragraphId }, markdown: original,
+    }
+
+    await expect(host.callTool('context_room_patch_hunk', repeated, context)).rejects.toMatchObject({
+      code: 'EDIT_NO_CHANGE',
+    })
+    await expect(host.callTool('context_room_patch_hunk', repeated, context)).rejects.toMatchObject({
+      code: 'DOCUMENT_TOOL_RETRY_EXHAUSTED',
+      details: {
+        originalCode: 'EDIT_NO_CHANGE', state: 'cancelled', retryable: false,
+        nextAction: 'respond_document_unchanged', repeatedAttempts: 2, documentChanged: false,
+      },
+    })
+    expect(operations.get(operationId)).toMatchObject({ status: 'cancelled', items: [] })
+    expect(host.resolveCompletedMessage({
+      sessionId: context.agentSessionId,
+      runId: context.runId,
+      content: '文档已成功修改。',
+    })).toMatchObject({
+      operationId,
+      operationStatus: 'cancelled',
+      itemCount: 0,
+      content: '未能为《TypeScript Guide》生成有效的修改建议，文档未发生变化。请给出更具体的修改要求后重试。',
+    })
+    expect(diagnostics.filter((item) => item.toolName === 'context_room_patch_hunk').at(-1))
+      .toMatchObject({
+        attempt: 2,
+        error: expect.objectContaining({
+          code: 'DOCUMENT_TOOL_RETRY_EXHAUSTED', retryable: false, state: 'cancelled',
+        }),
+      })
   })
 
   it('publishes all approved document and patch MCP tools', async () => {

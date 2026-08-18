@@ -80,6 +80,10 @@ import {
 } from './operationStreamState'
 import { useTransientEditorInteractions } from './useTransientEditorInteractions'
 import {
+  setEditorContentPreservingView,
+  shouldApplyBackendDocumentSnapshot,
+} from './documentEditorSync'
+import {
   DocumentBlockReference,
   insertDocumentBlockReference,
 } from './DocumentBlockReference'
@@ -95,6 +99,10 @@ import {
   requestDocumentBlockNavigation,
 } from './documentBlockNavigation'
 import { showToast } from '@/state/toast'
+import {
+  loadDocumentCursorCompletionSettings,
+  onDocumentCursorCompletionSettingsChanged,
+} from '@/state/documentCursorCompletionSettings'
 import './TiptapDocumentEditor.css'
 
 interface StreamState {
@@ -251,6 +259,7 @@ export function TiptapDocumentEditor({
   const saveInFlight = useRef(false)
   const pendingSave = useRef<{ contentJson: TiptapJsonContent; title: string; revision: number } | null>(null)
   const editRevision = useRef(0)
+  const persistedEditRevision = useRef(0)
   const recoveringDraft = useRef(canRecoverInitialDraft)
   const recoverySaveScheduled = useRef(false)
   const applyingRemote = useRef(false)
@@ -265,6 +274,9 @@ export function TiptapDocumentEditor({
   const [tableOfContents, setTableOfContents] = useState<TableOfContentData>([])
   const [blockDragging, setBlockDragging] = useState(false)
   const [referencePickerOpen, setReferencePickerOpen] = useState(false)
+  const [cursorCompletionEnabled, setCursorCompletionEnabled] = useState(
+    () => loadDocumentCursorCompletionSettings().enabled,
+  )
   const roomDocuments = useRoomDocumentsState()
   const { activateDocument } = useActiveDocument()
   const documentOperations = useDocumentEditorOperations(documentId)
@@ -294,7 +306,13 @@ export function TiptapDocumentEditor({
   presentingStreamRef.current = presentingStream
   const writing = Boolean(backendDocument?.activeTransactionId) || presentingStream
 
-  backendRef.current = backendDocument
+  if (!backendDocument) {
+    backendRef.current = null
+  } else if (!backendRef.current || backendDocument.version >= backendRef.current.version) {
+    // A delayed parent render must not roll the save base back after a newer
+    // save response has already been received locally.
+    backendRef.current = backendDocument
+  }
   onBackendChangeRef.current = onBackendDocumentChange
 
   useEffect(() => {
@@ -329,6 +347,10 @@ export function TiptapDocumentEditor({
             contentJson: pending.contentJson,
           })
           versionRef.current = updated.version
+          persistedEditRevision.current = Math.max(
+            persistedEditRevision.current,
+            pending.revision,
+          )
           backendRef.current = updated
           onBackendChangeRef.current(updated)
           recoveringDraft.current = false
@@ -494,10 +516,15 @@ export function TiptapDocumentEditor({
     documentName,
     enabled: Boolean(editor
       && !editorLocked
+      && cursorCompletionEnabled
       && !documentOperations.completionBlocked
       && !selectionRewrite.preview),
   })
   const editorInteractions = useTransientEditorInteractions(editor, selectionRewrite.cancel)
+
+  useEffect(() => onDocumentCursorCompletionSettingsChanged((settings) => {
+    setCursorCompletionEnabled(settings.enabled)
+  }), [])
 
   useEffect(() => {
     if (!editor) return
@@ -644,7 +671,7 @@ export function TiptapDocumentEditor({
         contentJson = localized.content
         applyingRemote.current = true
         try {
-          editor.commands.setContent(contentJson, { emitUpdate: false })
+          setEditorContentPreservingView(editor, contentJson)
         } finally {
           applyingRemote.current = false
         }
@@ -773,7 +800,6 @@ export function TiptapDocumentEditor({
         ? 'Agent 正在续写'
         : visibleReviewOperation ? '正在审阅改动' : '已保存')
     if (!backendDocument) return
-    versionRef.current = backendDocument.version
     importedRef.current = true
     if (!locked && recoveringDraft.current) {
       if (!recoverySaveScheduled.current) {
@@ -782,14 +808,26 @@ export function TiptapDocumentEditor({
       }
       return
     }
-    if (
-      !recoveringDraft.current
+    const canApplyBackendSnapshot = shouldApplyBackendDocumentSnapshot({
+      incomingVersion: backendDocument.version,
+      currentVersion: versionRef.current,
+      editRevision: editRevision.current,
+      persistedEditRevision: persistedEditRevision.current,
+      saveInFlight: saveInFlight.current,
+      hasPendingSave: pendingSave.current !== null,
+      composing: editor.view.composing,
+    })
+    if (!canApplyBackendSnapshot) return
+    versionRef.current = backendDocument.version
+    if (!recoveringDraft.current
       && !writing
-      && !sameContent(editor.getJSON(), stripDocumentTitle(backendDocument.contentJson).content)
-    ) {
+      && !sameContent(editor.getJSON(), stripDocumentTitle(backendDocument.contentJson).content)) {
       applyingRemote.current = true
       try {
-        editor.commands.setContent(stripDocumentTitle(backendDocument.contentJson).content, { emitUpdate: false })
+        setEditorContentPreservingView(
+          editor,
+          stripDocumentTitle(backendDocument.contentJson).content,
+        )
       } finally {
         applyingRemote.current = false
       }
@@ -811,7 +849,7 @@ export function TiptapDocumentEditor({
         if (localized.localized > 0) {
           applyingRemote.current = true
           try {
-            editor.commands.setContent(localized.content, { emitUpdate: false })
+            setEditorContentPreservingView(editor, localized.content)
           } finally {
             applyingRemote.current = false
           }
@@ -985,7 +1023,6 @@ export function TiptapDocumentEditor({
       <div
         ref={editorInteractions.scrollRef}
         className="context-room-tiptap-scroll"
-        data-scrolling={String(editorInteractions.scrolling)}
       >
         <div className="context-room-document-title-block">
           <textarea
