@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell, systemPreferences } from 'electron'
 
 import type { CloudAccountStatus } from '../shared/sources'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -8,6 +8,7 @@ import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
 import { LocalDataService } from './core/local-data-service'
 import { CredentialStore } from './security/credential-store'
+import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
@@ -22,10 +23,13 @@ import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
-import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
+import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
+import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
+import { PrivateAudioSyncService } from './transcription/private-audio-sync'
 import {
   captureCurrentWindow,
   createWindowScreenshotScheduler,
@@ -33,6 +37,20 @@ import {
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
 
 const APP_NAME = 'EverRoom'
+
+interface IpcRateLimitNotice {
+  __everroomRateLimited: true
+  message: string
+}
+
+async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRateLimitNotice> {
+  try {
+    return await operation()
+  } catch (error) {
+    if (!isSaasRateLimitError(error)) throw error
+    return { __everroomRateLimited: true, message: error.message }
+  }
+}
 
 const appDataDirectory = app.getPath('appData')
 const dataDirectory = join(appDataDirectory, APP_NAME)
@@ -110,6 +128,8 @@ const DOCUMENT_CHANNELS = {
 } as const
 
 const ASR_CHANNELS = {
+  requestMicrophoneAccess: 'asr:request-microphone-access',
+  openMicrophoneSettings: 'asr:open-microphone-settings',
   openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
   appendRecording: 'asr:append-recording',
@@ -117,6 +137,11 @@ const ASR_CHANNELS = {
   cancelRecording: 'asr:cancel-recording',
   createJob: 'asr:create-job',
   getJob: 'asr:get-job',
+} as const
+const PRIVATE_AUDIO_CHANNELS = {
+  list: 'private-audio:list',
+  download: 'private-audio:download',
+  read: 'private-audio:read',
 } as const
 
 const REALITY_CHANNELS = {
@@ -136,10 +161,24 @@ const REALITY_CHANNELS = {
 
 const ACCOUNT_CHANNELS = {
   status: 'account:status',
+  devices: 'account:devices',
   login: 'account:login',
   oidcLogin: 'account:oidc-login',
   oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
+  keyringStatus: 'account:keyring-status',
+  createPairingSession: 'account:create-pairing-session',
+  getPairingSession: 'account:get-pairing-session',
+  approvePairingSession: 'account:approve-pairing-session',
+} as const
+
+const TRANSCRIPTION_CHANNELS = {
+  syncPrivate: 'transcription:sync-private',
+  listPrivate: 'transcription:list-private',
+  listTags: 'transcription:list-tags',
+  replaceSummaryTags: 'transcription:replace-summary-tags',
+  renameTag: 'transcription:rename-tag',
+  mergeTag: 'transcription:merge-tag',
 } as const
 
 const MEMORY_CHANNELS = {
@@ -193,8 +232,10 @@ function installIpcRouters(): void {
     AGENT_CHANNELS,
     DOCUMENT_CHANNELS,
     ASR_CHANNELS,
+    PRIVATE_AUDIO_CHANNELS,
     REALITY_CHANNELS,
     ACCOUNT_CHANNELS,
+    TRANSCRIPTION_CHANNELS,
     MEMORY_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
   ]
@@ -220,18 +261,22 @@ let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
+let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
+let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
+let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
 const screenshotScheduler = createWindowScreenshotScheduler()
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
-  const value = input as { channel?: unknown; message?: unknown }
+  const value = input as { channel?: unknown; message?: unknown; severity?: unknown }
   if (typeof value.channel !== 'string' || typeof value.message !== 'string') return
   const channel = value.channel.slice(0, 120)
   const message = value.message.slice(0, 2_000)
-  logDesktop('renderer', 'error', { event: 'renderer.request.error', channel, message })
+  const notice = value.severity === 'notice'
+  logDesktop('renderer', notice ? 'warn' : 'error', { event: notice ? 'renderer.request.notice' : 'renderer.request.error', channel, message })
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
@@ -415,6 +460,19 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
+  handle(ASR_CHANNELS.requestMicrophoneAccess, async () => {
+    if (process.platform !== 'darwin') return true
+    const status = systemPreferences.getMediaAccessStatus('microphone')
+    if (status === 'granted') return true
+    if (status === 'denied' || status === 'restricted') return false
+    return systemPreferences.askForMediaAccess('microphone')
+  })
+  handle(ASR_CHANNELS.openMicrophoneSettings, () => {
+    if (process.platform !== 'darwin') throw new Error('麦克风隐私设置仅适用于 macOS。')
+    return shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+    )
+  })
   handle(ASR_CHANNELS.openSystemAudioSettings, () => {
     if (process.platform !== 'darwin') throw new Error('系统音频录制设置仅适用于 macOS。')
     return shell.openExternal(
@@ -425,8 +483,14 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
   handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
   handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
   handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
-  handle(ASR_CHANNELS.createJob, (_event, input) => coordinator.createJob(input))
-  handle(ASR_CHANNELS.getJob, (_event, id) => coordinator.getJob(id))
+  handle(ASR_CHANNELS.createJob, (_event, input) => rateLimitAware(() => coordinator.createJob(input)))
+  handle(ASR_CHANNELS.getJob, (_event, id) => rateLimitAware(() => coordinator.getJob(id)))
+}
+
+function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
+  handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(() => service.list(cursor ?? 0)))
+  handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => rateLimitAware(() => service.downloadById(assetId, outputPath)))
+  handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
 }
 
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
@@ -488,21 +552,46 @@ async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promi
 }
 
 function registerAccountHandlers(client: SaasClient): void {
-  handle(ACCOUNT_CHANNELS.status, () => syncAccountMonitoring(client.status()))
+  handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(() => syncAccountMonitoring(client.status(refreshSubscription === true))))
+  handle(ACCOUNT_CHANNELS.devices, () => rateLimitAware(() => client.listDevices()))
   handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
     const value = input as { identifier?: unknown; password?: unknown }
     if (typeof value.identifier !== 'string' || typeof value.password !== 'string') {
       throw new Error('请输入账号和密码。')
     }
-    return syncAccountMonitoring(client.login(value.identifier, value.password))
+    const identifier = value.identifier
+    const password = value.password
+    return rateLimitAware(() => syncAccountMonitoring(client.login(identifier, password)))
   })
   handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
     if (provider !== 'apple' && provider !== 'google') throw new Error('不支持的登录方式。')
-    return syncAccountMonitoring(client.loginWithOidc(provider))
+    return rateLimitAware(() => syncAccountMonitoring(client.loginWithOidc(provider)))
   })
   handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
-  handle(ACCOUNT_CHANNELS.logout, () => syncAccountMonitoring(client.logout()))
+  handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(() => syncAccountMonitoring(client.logout())))
+}
+
+function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncService): void {
+  handle(ACCOUNT_CHANNELS.keyringStatus, () => rateLimitAware(() => sync.keyringStatus()))
+  handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(() => sync.createPairingSession()))
+  handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('无效的配对会话。')
+    return rateLimitAware(() => sync.getPairingSession(id))
+  })
+  handle(ACCOUNT_CHANNELS.approvePairingSession, (_event, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('无效的配对会话。')
+    return rateLimitAware(() => sync.approvePairingSession(id))
+  })
+  handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => rateLimitAware(() => sync.sync()))
+  handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
+  handle(TRANSCRIPTION_CHANNELS.listTags, () => rateLimitAware(() => sync.listTags()))
+  handle(TRANSCRIPTION_CHANNELS.replaceSummaryTags, (_event, summaryRecordId, tags) =>
+    rateLimitAware(() => sync.replaceSummaryTags(summaryRecordId, tags)))
+  handle(TRANSCRIPTION_CHANNELS.renameTag, (_event, tagId, label) =>
+    rateLimitAware(() => sync.renameTag(tagId, label)))
+  handle(TRANSCRIPTION_CHANNELS.mergeTag, (_event, targetTagId, sourceTagId) =>
+    rateLimitAware(() => sync.mergeTag(targetTagId, sourceTagId)))
 }
 
 function registerScreenCaptureHandlers(): void {
@@ -561,6 +650,16 @@ function createWindow(): void {
 
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
+  })
+  window.webContents.session.setPermissionCheckHandler((_webContents, permission, _origin, details) => {
+    return permission === 'media' && details.mediaType === 'audio'
+  })
+  window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    if (permission !== 'media' || !('mediaTypes' in details)) {
+      callback(false)
+      return
+    }
+    callback(details.mediaTypes?.includes('audio') ?? false)
   })
   if (process.platform === 'darwin') {
     window.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
@@ -666,13 +765,38 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = new RecordingStore(recordingsDirectory)
     saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
     void saasClient.initialize()
+    const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
+    privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'))
+    void privateAudioSync.drainPending().catch(() => undefined)
+    privateTranscriptionSync = new PrivateTranscriptionSyncService(
+      join(dataDirectory, 'private-transcription-sync.json'),
+      saasClient,
+      keyring,
+      realityGatewayBridge,
+    )
+    await privateTranscriptionSync.initialize()
+    privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
+    void privateTranscriptionSync.materializeCached().catch((error) => {
+      console.warn('Unable to import cached private transcriptions into Reality.', error)
+    })
+    transcriptionProcessingCoordinator = new TranscriptionProcessingCoordinator(
+      join(dataDirectory, 'transcription-processing-state.json'),
+      saasClient,
+      keyring,
+      agentGatewayBridge,
+      privateTranscriptionSync,
+    )
+    await transcriptionProcessingCoordinator.initialize()
+    transcriptionProcessingCoordinator.start()
     if (process.platform !== 'darwin') {
       const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
       if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
     }
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     registerAccountHandlers(saasClient)
-    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge))
+    registerPrivateTranscriptionHandlers(privateTranscriptionSync)
+    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
+    registerPrivateAudioHandlers(privateAudioSync)
     registerScreenCaptureHandlers()
 
     const connectors = new ConnectorRegistry()

@@ -5,12 +5,23 @@ import axios, {
   type InternalAxiosRequestConfig,
 } from "axios";
 import type { Logger } from "pino";
+import { formatGatewayConsoleRecord } from "../server/logger.js";
 
 interface RequestMetadata {
   requestId: string;
   startedAt: number;
   method: string;
   url: string;
+}
+
+function writeFallbackLog(level: "info" | "warn" | "error", fields: Record<string, unknown>, message: string): void {
+  const numericLevel = level === "error" ? 50 : level === "warn" ? 40 : 30;
+  console[level](formatGatewayConsoleRecord({
+    ...fields,
+    time: new Date().toISOString(),
+    level: numericLevel,
+    msg: message,
+  }));
 }
 
 function safeUrl(rawUrl: string | undefined, baseUrl: string | undefined): string {
@@ -68,7 +79,7 @@ export function createLoggedHttpClient(client: string, logger?: Logger): AxiosIn
       startedAt: undefined,
     };
     if (logger) logger.info(fields, "[axios] request");
-    else console.info(`[gateway][axios] ${JSON.stringify(fields)}`);
+    else writeFallbackLog("info", fields, "request");
     return config;
   });
 
@@ -79,7 +90,7 @@ export function createLoggedHttpClient(client: string, logger?: Logger): AxiosIn
         if (response.status >= 400) logger.warn(fields, "[axios] response");
         else logger.info(fields, "[axios] response");
       } else {
-        console[response.status >= 400 ? "warn" : "info"](`[gateway][axios] ${JSON.stringify(fields)}`);
+        writeFallbackLog(response.status >= 400 ? "warn" : "info", fields, "response");
       }
       return response;
     },
@@ -100,7 +111,7 @@ export function createLoggedHttpClient(client: string, logger?: Logger): AxiosIn
           message: error.message,
         };
         if (logger) logger.error(fields, "[axios] request failed");
-        else console.error(`[gateway][axios] ${JSON.stringify(fields)}`);
+        else writeFallbackLog("error", fields, "request failed");
       }
       return Promise.reject(error);
     },

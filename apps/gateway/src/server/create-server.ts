@@ -18,8 +18,8 @@ import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
 import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
+import { createAgentRuntime, createBackgroundAgentRuntime } from "../modules/agent/runtime-factory.js";
 import { DocumentServiceError } from "../modules/documents/errors.js";
-import { createAgentRuntime } from "../modules/agent/runtime-factory.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { AsrError } from "../modules/asr/errors.js";
@@ -30,6 +30,8 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { processingRoutes } from "../modules/processing/routes.js";
+import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
@@ -155,6 +157,21 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentService,
   );
   await agentService.initialize();
+  const backgroundAgentRuntime = createBackgroundAgentRuntime(config);
+  app.log.info(
+    {
+      runtimeId: backgroundAgentRuntime.id,
+      ...(config.backgroundPi
+        ? {
+            provider: config.backgroundPi.provider,
+            model: config.backgroundPi.model,
+            maxTokens: config.backgroundPi.maxTokens,
+          }
+        : {}),
+    },
+    "background transcription runtime configured",
+  );
+  const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime);
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
@@ -166,6 +183,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   app.addHook("onClose", async () => {
     await agentService.dispose();
+    await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     documentService.dispose();
     await asrService.dispose();
@@ -178,6 +196,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(documentRoutes(documentService));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
 
   return app;

@@ -34,6 +34,7 @@
     "docx": "^9.7.1",
     "gsap": "3.15.0",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "prosemirror-changeset": "^2.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
