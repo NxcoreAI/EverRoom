@@ -343,7 +343,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   const voiceBusy = voiceState !== 'idle'
-  const controlsDisabled = active || loading || !available
+  // 会话快照加载时保留本地附件和录音状态。
+  const controlsDisabled = active || !available
   const voiceLabel = voiceState === 'recording'
     ? `录音 ${formatDuration(elapsed)}`
     : voiceState === 'requesting'
