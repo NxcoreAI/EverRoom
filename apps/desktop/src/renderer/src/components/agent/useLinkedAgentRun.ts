@@ -4,19 +4,22 @@ import type {
   AgentSessionLink,
   AgentSessionSnapshot,
 } from '@nxcore/agent-contract'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
+  reduceAgentRunActivity,
   reduceAgentRunEvents,
-  type DisplayAgentMessage,
+  type AgentRunActivity,
   type DisplayAgentToolCall,
-} from './useAgentSession'
+} from './agentRunActivity'
+import type { DisplayAgentMessage } from './useAgentSession'
 import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
 import { isDocumentStreamPresentationEvent } from '../context-room/ported/hooks/useRoomDocuments'
 
 export interface LinkedAgentRunState {
   status: AgentRunStatus | null
   messages: DisplayAgentMessage[]
+  activity: AgentRunActivity
   reasoning: string
   tools: DisplayAgentToolCall[]
   startedAt?: string
@@ -29,6 +32,7 @@ export interface LinkedAgentRunState {
 const EMPTY_STATE: LinkedAgentRunState = {
   status: null,
   messages: [],
+  activity: { steps: [], pendingAnswer: '', finalAnswer: '', hasTools: false, completed: false },
   reasoning: '',
   tools: [],
   error: null,
@@ -68,6 +72,10 @@ export function buildLinkedAgentRunState(
   documentPending = false,
 ): LinkedAgentRunState {
   const reduced = reduceAgentRunEvents(events)
+  const savedAnswer = snapshot.messages.find((message) => (
+    message.runId === runId && message.role === 'assistant'
+  ))?.content ?? ''
+  const activity = reduceAgentRunActivity(events, savedAnswer)
   const activeRun = snapshot.activeRun?.id === runId ? snapshot.activeRun : null
   const runStatus = terminalStatus(events) ?? activeRun?.status ?? null
   const status = documentPending && (runStatus === null || runStatus === 'completed') ? 'running' : runStatus
@@ -91,6 +99,7 @@ export function buildLinkedAgentRunState(
   return {
     status,
     messages,
+    activity,
     reasoning: reduced.reasoning,
     tools: reduced.tools,
     startedAt: reduced.startedAt ?? activeRun?.startedAt ?? undefined,
@@ -125,6 +134,26 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
     documentId && eventsByDocument[documentId]?.some(isDocumentStreamPresentationEvent)
   ))
   const [state, setState] = useState<LinkedAgentRunState>(EMPTY_STATE)
+  const stateRunKeyRef = useRef<string | null>(null)
+  const documentPendingRef = useRef(documentPending)
+  const linkedDataRef = useRef<{
+    runKey: string
+    snapshot: AgentSessionSnapshot
+    events: AgentEvent[]
+  } | null>(null)
+  documentPendingRef.current = documentPending
+
+  useEffect(() => {
+    const linkedData = linkedDataRef.current
+    if (!sourceSessionId || !sourceRunId) return
+    if (!linkedData || linkedData.runKey !== `${sourceSessionId}:${sourceRunId}`) return
+    setState(buildLinkedAgentRunState(
+      linkedData.snapshot,
+      sourceRunId,
+      linkedData.events,
+      documentPending,
+    ))
+  }, [documentPending, sourceRunId, sourceSessionId])
 
   useEffect(() => {
     let cancelled = false
@@ -133,11 +162,18 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
     const events: AgentEvent[] = []
 
     if (!api || !sourceSessionId || !sourceRunId) {
+      stateRunKeyRef.current = null
+      linkedDataRef.current = null
       setState(EMPTY_STATE)
       return
     }
 
-    setState({ ...EMPTY_STATE, loading: true })
+    const runKey = `${sourceSessionId}:${sourceRunId}`
+    if (stateRunKeyRef.current !== runKey) {
+      stateRunKeyRef.current = runKey
+      linkedDataRef.current = null
+      setState({ ...EMPTY_STATE, loading: true })
+    }
 
     const poll = async (): Promise<void> => {
       try {
@@ -148,7 +184,8 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
         if (cancelled) return
 
         events.push(...nextEvents)
-        const nextState = buildLinkedAgentRunState(snapshot, sourceRunId, events, documentPending)
+        linkedDataRef.current = { runKey, snapshot, events: [...events] }
+        const nextState = buildLinkedAgentRunState(snapshot, sourceRunId, events, documentPendingRef.current)
         afterSeq = Math.max(afterSeq, ...nextEvents.map((event) => event.seq))
         setState(nextState)
         if (isTerminal(nextState.status)) return
@@ -165,7 +202,7 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
       cancelled = true
       if (timer) globalThis.clearTimeout(timer)
     }
-  }, [api, documentPending, sourceRunId, sourceSessionId])
+  }, [api, sourceRunId, sourceSessionId])
 
   return state
 }

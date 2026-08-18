@@ -293,10 +293,90 @@
   padding: 18px;
 }
 
+.cloud-devices {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+
+.cloud-devices-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cloud-devices-heading > div { display: grid; gap: 3px; }
+.cloud-devices-heading strong { font-size: 12px; }
+.cloud-devices-heading small, .cloud-device-empty { color: var(--muted); font-size: 10px; }
+.cloud-devices-heading > svg { width: 16px; height: 16px; color: var(--muted); }
+.cloud-device-list { display: grid; gap: 6px; }
+.cloud-device-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 45px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); }
+.cloud-device-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 5px; background: var(--accent-soft); color: var(--accent); }
+.cloud-device-icon svg { width: 15px; height: 15px; }
+.cloud-device-info { display: grid; min-width: 0; gap: 3px; }
+.cloud-device-info strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-device-info span { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-device-status { display: grid; grid-template-columns: 6px auto; align-items: center; column-gap: 5px; min-width: 120px; }
+.cloud-device-status > span { grid-row: span 2; width: 6px; height: 6px; border-radius: 50%; background: #a8a29e; }
+.cloud-device-status[data-online='true'] { color: #16845b; }
+.cloud-device-status[data-online='true'] > span { background: #22a06b; box-shadow: 0 0 0 3px rgba(34, 160, 107, 0.12); }
+.cloud-device-status small { font-size: 10px; font-weight: 650; }
+.cloud-device-status em { color: var(--muted); font-size: 9px; font-style: normal; }
+
 .cloud-account-connected {
   display: grid;
 }
 
+.cloud-keyring {
+  display: grid;
+  gap: 12px;
+  margin: 0 18px 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cloud-keyring-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cloud-keyring-heading > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cloud-keyring-heading svg { width: 15px; height: 15px; }
+.cloud-keyring-heading div { display: grid; gap: 3px; }
+.cloud-keyring-heading strong { font-size: 12px; }
+.cloud-keyring-heading small, .cloud-keyring-pending small, .cloud-keyring-result { color: var(--muted); font-size: 10px; }
+
+.cloud-keyring-pending {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
+
+.cloud-keyring-pending > span { color: var(--muted); font-size: 10px; }
+.cloud-keyring-pending code { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+.cloud-keyring-sync { width: max-content; }
+.cloud-keyring-result { margin-left: 4px; }
+.cloud-keyring-pairing { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.cloud-keyring-pairing-info { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
+.cloud-keyring-pairing-info code { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+.cloud-keyring-qr { width: 220px; height: 220px; padding: 8px; background: #fff; border-radius: 6px; }
 .cloud-subscription {
   display: grid;
   grid-template-columns: minmax(120px, 0.8fr) minmax(240px, 1.6fr) minmax(130px, 0.8fr);

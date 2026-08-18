@@ -85,6 +85,19 @@ export class AgentGatewayBridge {
     return this.request(`/v1/agent/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
   }
 
+  summarizeTranscription(input: {
+    jobId: string
+    sourceRecordId: string
+    transcript: string
+    language?: string
+  }): Promise<{ content: string }> {
+    return this.request('/v1/processing/transcription-summary', {
+      method: 'POST',
+      data: input,
+      timeout: 10 * 60_000,
+    })
+  }
+
   subscribe(contents: WebContents, sessionId: string): void {
     this.unsubscribe(contents.id)
     const subscription: Subscription = {

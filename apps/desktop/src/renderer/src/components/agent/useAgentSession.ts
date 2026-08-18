@@ -11,6 +11,24 @@ import type {
 } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import {
+  mergeAgentToolEvent,
+  reduceAgentRunActivity,
+  reduceAgentRunEvents,
+  type AgentRunActivity,
+  type DisplayAgentToolCall,
+  type DisplayAgentToolStatus,
+  type ReducedAgentRunEvents,
+} from './agentRunActivity'
+
+export { mergeAgentToolEvent, reduceAgentRunEvents } from './agentRunActivity'
+export type {
+  AgentRunActivity,
+  DisplayAgentToolCall,
+  DisplayAgentToolStatus,
+  ReducedAgentRunEvents,
+} from './agentRunActivity'
+
 export interface DisplayAgentMessage extends AgentMessage {
   streaming?: boolean
 }
@@ -22,134 +40,6 @@ export function mergePendingAgentMessages(
   if (pendingMessages.length === 0) return messages
   const messageIds = new Set(messages.map((message) => message.id))
   return [...messages, ...pendingMessages.filter((message) => !messageIds.has(message.id))]
-}
-
-export type DisplayAgentToolStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped'
-
-export interface DisplayAgentToolCall {
-  id: string
-  runId: string
-  name: string
-  args: Record<string, unknown>
-  partialResult?: unknown
-  result?: unknown
-  error?: string
-  status: DisplayAgentToolStatus
-  startedAt: string
-  completedAt?: string
-}
-
-export interface ReducedAgentRunEvents {
-  tools: DisplayAgentToolCall[]
-  reasoning: string
-  startedAt?: string
-  completedAt?: string
-  streamingContent: string
-  messageStarted: boolean
-  messageCompleted: boolean
-  lastSequence: number
-}
-
-const terminalToolStatuses = new Set<DisplayAgentToolStatus>(['completed', 'error', 'stopped'])
-
-export function mergeAgentToolEvent(
-  tools: DisplayAgentToolCall[],
-  event: AgentEvent,
-): DisplayAgentToolCall[] {
-  const payload = event.payload as {
-    toolCallId?: unknown
-    name?: unknown
-    args?: unknown
-    partialResult?: unknown
-    result?: unknown
-    message?: unknown
-  }
-  if (typeof payload.toolCallId !== 'string') return tools
-
-  const existing = tools.find((tool) => tool.id === payload.toolCallId)
-  if (existing && terminalToolStatuses.has(existing.status)) return tools
-
-  const status: DisplayAgentToolStatus = event.type === 'tool.completed'
-    ? 'completed'
-    : event.type === 'tool.failed'
-      ? 'error'
-      : event.type === 'tool.requested'
-        ? 'pending'
-        : 'running'
-  const args = payload.args && typeof payload.args === 'object' && !Array.isArray(payload.args)
-    ? payload.args as Record<string, unknown>
-    : existing?.args ?? {}
-  const failureMessage = typeof payload.message === 'string'
-    ? payload.message
-    : typeof payload.result === 'string' ? payload.result : '工具调用失败。'
-  const next: DisplayAgentToolCall = {
-    id: payload.toolCallId,
-    runId: event.runId,
-    name: typeof payload.name === 'string' ? payload.name : existing?.name ?? 'tool',
-    args,
-    partialResult: payload.partialResult !== undefined ? payload.partialResult : existing?.partialResult,
-    result: payload.result !== undefined ? payload.result : existing?.result,
-    error: event.type === 'tool.failed' ? failureMessage : existing?.error,
-    status,
-    startedAt: existing?.startedAt ?? event.occurredAt,
-    completedAt: terminalToolStatuses.has(status) ? event.occurredAt : existing?.completedAt,
-  }
-
-  return existing
-    ? tools.map((tool) => tool.id === next.id ? next : tool)
-    : [...tools, next]
-}
-
-export function reduceAgentRunEvents(events: AgentEvent[]): ReducedAgentRunEvents {
-  const reduced: ReducedAgentRunEvents = {
-    tools: [],
-    reasoning: '',
-    streamingContent: '',
-    messageStarted: false,
-    messageCompleted: false,
-    lastSequence: 0,
-  }
-  for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
-    reduced.lastSequence = Math.max(reduced.lastSequence, event.seq)
-    if (event.type === 'run.accepted' && !reduced.startedAt) reduced.startedAt = event.occurredAt
-    if (event.type === 'run.started') reduced.startedAt = event.occurredAt
-    if (
-      event.type === 'run.completed' ||
-      event.type === 'run.cancelled' ||
-      event.type === 'run.failed' ||
-      event.type === 'run.interrupted'
-    ) {
-      reduced.completedAt = event.occurredAt
-      if (event.type !== 'run.completed') {
-        const terminalStatus: DisplayAgentToolStatus = event.type === 'run.failed' ? 'error' : 'stopped'
-        reduced.tools = reduced.tools.map((tool) => tool.status === 'pending' || tool.status === 'running'
-          ? { ...tool, status: terminalStatus, completedAt: event.occurredAt }
-          : tool)
-      }
-    }
-    if (
-      event.type === 'tool.requested' ||
-      event.type === 'tool.started' ||
-      event.type === 'tool.updated' ||
-      event.type === 'tool.completed' ||
-      event.type === 'tool.failed'
-    ) reduced.tools = mergeAgentToolEvent(reduced.tools, event)
-    if (event.type === 'reasoning.delta') {
-      const delta = (event.payload as { delta?: unknown }).delta
-      if (typeof delta === 'string') reduced.reasoning += delta
-    }
-    if (event.type === 'message.started') reduced.messageStarted = true
-    if (event.type === 'message.delta') {
-      const delta = (event.payload as { delta?: unknown }).delta
-      if (typeof delta === 'string') reduced.streamingContent += delta
-    }
-    if (event.type === 'message.completed') {
-      const content = (event.payload as { content?: unknown }).content
-      if (typeof content === 'string') reduced.streamingContent = content
-      reduced.messageCompleted = true
-    }
-  }
-  return reduced
 }
 
 const SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
@@ -219,6 +109,7 @@ export function useAgentSession(
   const [sessionLinks, setSessionLinks] = useState<AgentSessionLink[]>([])
   const [messages, setMessages] = useState<DisplayAgentMessage[]>([])
   const [toolCallsByRun, setToolCallsByRun] = useState<Record<string, DisplayAgentToolCall[]>>({})
+  const [activityByRun, setActivityByRun] = useState<Record<string, AgentRunActivity>>({})
   const [runStartedAtByRun, setRunStartedAtByRun] = useState<Record<string, string>>({})
   const [runCompletedAtByRun, setRunCompletedAtByRun] = useState<Record<string, string>>({})
   const [reasoningByRun, setReasoningByRun] = useState<Record<string, string>>({})
@@ -230,6 +121,8 @@ export function useAgentSession(
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const sequenceByRun = useRef(new Map<string, number>())
+  const eventsByRun = useRef(new Map<string, AgentEvent[]>())
+  const terminalRunIdsRef = useRef(new Set<string>())
   const sessionIdRef = useRef<string | null>(null)
   const activeScopeRef = useRef(sessionScope(pageLabel, roomId))
 
@@ -245,6 +138,12 @@ export function useAgentSession(
     const lastSequence = sequenceByRun.current.get(event.runId) ?? 0
     if (event.seq <= lastSequence) return
     sequenceByRun.current.set(event.runId, event.seq)
+    const runEvents = [...(eventsByRun.current.get(event.runId) ?? []), event]
+    eventsByRun.current.set(event.runId, runEvents)
+    setActivityByRun((current) => ({
+      ...current,
+      [event.runId]: reduceAgentRunActivity(runEvents),
+    }))
 
     if (event.type === 'run.accepted' || event.type === 'run.started') {
       setActiveRunId(event.runId)
@@ -342,6 +241,7 @@ export function useAgentSession(
       event.type === 'run.failed' ||
       event.type === 'run.interrupted'
     ) {
+      terminalRunIdsRef.current.add(event.runId)
       setActiveRunId((current) => current === event.runId ? null : current)
       setMessages((current) => current.map((message) => message.runId === event.runId && message.streaming
         ? { ...message, streaming: false }
@@ -379,6 +279,8 @@ export function useAgentSession(
   ) => {
     if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
     sequenceByRun.current.clear()
+    eventsByRun.current.clear()
+    terminalRunIdsRef.current.clear()
     const runIds = [...new Set([
       ...snapshot.messages.map((message) => message.runId),
       ...(snapshot.activeRun ? [snapshot.activeRun.id] : []),
@@ -391,14 +293,20 @@ export function useAgentSession(
       : []
     const nextSessionLinks = api ? await api.listSessionLinks(snapshot.session.id) : []
     const nextTools: Record<string, DisplayAgentToolCall[]> = {}
+    const nextActivity: Record<string, AgentRunActivity> = {}
     const nextReasoning: Record<string, string> = {}
     const nextStartedAt: Record<string, string> = {}
     const nextCompletedAt: Record<string, string> = {}
     const reducedByRun = new Map<string, ReducedAgentRunEvents>()
     for (const group of eventGroups) {
       const reduced = reduceAgentRunEvents(group.events)
+      const savedAnswer = snapshot.messages.find((message) => (
+        message.runId === group.runId && message.role === 'assistant'
+      ))?.content ?? ''
       reducedByRun.set(group.runId, reduced)
       sequenceByRun.current.set(group.runId, reduced.lastSequence)
+      eventsByRun.current.set(group.runId, group.events)
+      nextActivity[group.runId] = reduceAgentRunActivity(group.events, savedAnswer)
       if (reduced.tools.length) nextTools[group.runId] = reduced.tools
       if (reduced.reasoning) nextReasoning[group.runId] = reduced.reasoning
       if (reduced.startedAt) nextStartedAt[group.runId] = reduced.startedAt
@@ -430,6 +338,7 @@ export function useAgentSession(
     setMessages(nextMessages)
     setSessionLinks(nextSessionLinks)
     setToolCallsByRun(nextTools)
+    setActivityByRun(nextActivity)
     setReasoningByRun(nextReasoning)
     setRunStartedAtByRun(nextStartedAt)
     setRunCompletedAtByRun(nextCompletedAt)
@@ -484,6 +393,7 @@ export function useAgentSession(
     setScopeReady(false)
     setMessages([])
     setToolCallsByRun({})
+    setActivityByRun({})
     setRunStartedAtByRun({})
     setRunCompletedAtByRun({})
     setReasoningByRun({})
@@ -493,6 +403,7 @@ export function useAgentSession(
     setSessionLinks([])
     sessionIdRef.current = null
     sequenceByRun.current.clear()
+    eventsByRun.current.clear()
     setError(null)
 
     if (api) {
@@ -616,9 +527,12 @@ export function useAgentSession(
           setSessionLinks([])
           setMessages([])
           setToolCallsByRun({})
+          setActivityByRun({})
           setReasoningByRun({})
           setRunStartedAtByRun({})
           setRunCompletedAtByRun({})
+          eventsByRun.current.clear()
+          sequenceByRun.current.clear()
           setConnected(false)
           storeSession(pageLabel, roomId, null)
           try {
@@ -703,18 +617,31 @@ export function useAgentSession(
         context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument),
       })
       const updatedAt = new Date().toISOString()
+      const runCompleted = terminalRunIdsRef.current.has(run.id)
       setSessions((current) => current.map((session) => session.id === currentSessionId
-        ? { ...session, title: session.title ?? message.slice(0, 48), status: 'running', updatedAt }
+        ? {
+            ...session,
+            title: session.title ?? message.slice(0, 48),
+            ...(!runCompleted ? { status: 'running' as const } : {}),
+            updatedAt,
+          }
         : session))
       setCurrentSession((current) => current?.id === currentSessionId
-        ? { ...current, title: current.title ?? message.slice(0, 48), status: 'running', updatedAt }
+        ? {
+            ...current,
+            title: current.title ?? message.slice(0, 48),
+            ...(!runCompleted ? { status: 'running' as const } : {}),
+            updatedAt,
+          }
         : current)
       const nextTitle = currentSession?.id === currentSessionId && currentSession.title?.trim()
         ? currentSession.title.trim()
         : message.slice(0, 48)
       setDisplayTitle(nextTitle)
-      setActiveRunId(run.id)
-      setReasoningByRun((current) => ({ ...current, [run.id]: '' }))
+      if (!runCompleted) {
+        setActiveRunId(run.id)
+        setReasoningByRun((current) => ({ ...current, [run.id]: '' }))
+      }
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, runId: run.id }
         : item))
@@ -741,6 +668,7 @@ export function useAgentSession(
 
   return {
     activeRunId,
+    activityByRun,
     connected,
     createSession,
     createSessionLink,

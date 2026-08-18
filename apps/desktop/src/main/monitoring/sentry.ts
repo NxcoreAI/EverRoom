@@ -1,6 +1,13 @@
-import * as Sentry from '@sentry/electron/main'
+import { createRequire } from 'node:module'
+
+import type * as SentryApi from '@sentry/electron/main'
 
 import type { CloudAccountStatus } from '../../shared/sources'
+
+const require = createRequire(import.meta.url)
+const Sentry = process.versions.electron
+  ? require('@sentry/electron/main') as typeof SentryApi
+  : null
 
 const PRODUCTION_DSN = 'https://a5e0b3306fef49aa9103551d4b492868@logs.everroom.vyitec.com/2'
 
@@ -20,6 +27,7 @@ function isRemoteDebugActive(): boolean {
 }
 
 export function configureSentry(version: string, packaged: boolean): void {
+  if (!Sentry) return
   const dsn = process.env.NXCORE_SENTRY_DSN?.trim() || (packaged ? PRODUCTION_DSN : '')
   if (!dsn) return
 
@@ -46,7 +54,7 @@ export function configureSentry(version: string, packaged: boolean): void {
 }
 
 function applyAccountScope(account: CloudAccountStatus): void {
-  if (!configured) return
+  if (!configured || !Sentry) return
   const eligible = isRemoteDebugEligible(account)
   Sentry.getCurrentScope().clearBreadcrumbs()
   Sentry.setUser(eligible ? { id: account.user!.id } : null)
@@ -69,7 +77,7 @@ export function captureSentryLog(
   level: 'info' | 'warn' | 'error',
   event: Record<string, unknown>,
 ): void {
-  if (!configured || !Sentry.isInitialized() || !isRemoteDebugActive()) return
+  if (!configured || !Sentry || !Sentry.isInitialized() || !isRemoteDebugActive()) return
   const message = typeof event.event === 'string' ? event.event : `${module}.${level}`
   Sentry.logger[level](message, { source: 'desktop', module, ...event })
 }

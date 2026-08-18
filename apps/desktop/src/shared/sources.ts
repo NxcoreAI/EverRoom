@@ -50,6 +50,7 @@ import type {
   MarkRealityEventInput,
   RealityEvent,
   RealityInsights,
+  RealityTag,
   RealityEventStatus,
   RealitySocketFrame,
   UpdateRealityTranscriptInput,
@@ -215,13 +216,62 @@ export interface CloudAccountStatus {
   }
 }
 
+export interface CloudDevice {
+  id: string
+  name: string
+  platform: string
+  appVersion?: string | null
+  status: string
+  lastSeenAt: string
+  createdAt?: string
+}
+
+export type KeyringDeviceStatus = 'unregistered' | 'pending' | 'ready'
+
+export interface AccountKeyringStatus {
+  enabled: boolean
+  reason?: string
+  initialized: boolean
+  umkId: string | null
+  activeVersion: number | null
+  deviceStatus: KeyringDeviceStatus
+  verificationCode: string | null
+}
+
+export interface PrivateTranscriptionRecord {
+  recordId: string
+  revision: number
+  createdAt: string
+  updatedAt: string
+  transcript: string
+  segments: AsrSegment[]
+  metadata?: Record<string, unknown>
+}
+
+export interface PrivateTranscriptionSyncResult {
+  status: AccountKeyringStatus
+  cursor: number
+  synced: number
+  removed: number
+  records: PrivateTranscriptionRecord[]
+}
+export interface SyncedPrivateAudioAsset {
+  id: string
+  recordingId: string
+  eventId?: string
+  sequence?: number
+  mimeType: string
+  status: string
+}
+
 export type CloudOidcProvider = 'apple' | 'google'
 
 export interface DesktopRequestError {
   channel: string
   message: string
   title?: string
-  action?: 'open-system-audio-settings'
+  severity?: 'error' | 'notice'
+  action?: 'open-microphone-settings' | 'open-system-audio-settings'
   actionLabel?: string
 }
 
@@ -276,13 +326,20 @@ export interface NxcoreDesktopApi {
     syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
   }
   account: {
-    status(): Promise<CloudAccountStatus>
+    status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>
+    devices(options?: { quiet?: boolean }): Promise<CloudDevice[]>
     login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
     loginWithOidc(provider: CloudOidcProvider): Promise<CloudAccountStatus>
     cancelOidcLogin(): Promise<void>
     logout(): Promise<CloudAccountStatus>
+    keyringStatus(options?: { quiet?: boolean }): Promise<AccountKeyringStatus>
+    createPairingSession(): Promise<{ pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string }>
+    getPairingSession(id: string, options?: { quiet?: boolean }): Promise<{ pairingSessionId: string; status: string; confirmationCode: string; expiresAt: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null; targetAlgorithm?: string | null }>
+    approvePairingSession(id: string): Promise<{ pairingSessionId: string; status: string; targetDeviceId?: string | null }>
   }
   asr: {
+    requestMicrophoneAccess(): Promise<boolean>
+    openMicrophoneSettings(): Promise<void>
     openSystemAudioSettings(): Promise<void>
     beginRecording(mimeType: string): Promise<{ id: string }>
     appendRecording(id: string, chunk: Uint8Array): Promise<void>
@@ -290,6 +347,19 @@ export interface NxcoreDesktopApi {
     cancelRecording(id: string): Promise<void>
     createJob(input: CreateAsrJobInput): Promise<AsrJob>
     getJob(id: string): Promise<AsrJob>
+  }
+  privateAudio: {
+    list(cursor?: number): Promise<{ assets: SyncedPrivateAudioAsset[]; nextCursor: number }>
+    download(assetId: string, outputPath: string): Promise<string>
+    read(assetId: string): Promise<{ bytes: Uint8Array; mimeType: string }>
+  }
+  transcriptions: {
+    syncPrivate(options?: { quiet?: boolean }): Promise<PrivateTranscriptionSyncResult>
+    listPrivate(): Promise<PrivateTranscriptionRecord[]>
+    listTags(): Promise<RealityTag[]>
+    replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void>
+    renameTag(tagId: string, label: string): Promise<void>
+    mergeTag(targetTagId: string, sourceTagId: string): Promise<void>
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>
@@ -405,6 +475,7 @@ export type {
   RealityEvent,
   RealityEventType,
   RealityInsights,
+  RealityTag,
   RealityEventStatus,
   RealitySocketFrame,
   UpdateRealityTranscriptInput,

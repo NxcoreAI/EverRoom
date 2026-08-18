@@ -67,6 +67,8 @@ export class MemoryCoreSupervisor {
     const apiKey = randomBytes(24).toString('base64url')
     const { packageDirectory, tsxEntryUrl } = this.resolvePackage()
     await mkdir(this.dataDirectory, { recursive: true })
+    const logDirectory = process.env.LOG_PATH?.trim() || join(this.dataDirectory, 'logs', 'memory-core')
+    await mkdir(logDirectory, { recursive: true })
 
     const command = app.isPackaged ? process.execPath : (process.env.NXCORE_MEMORY_NODE ?? 'node')
     // Windows + Node 22 的组合下:--import 必须是 file:// URL,而主入口必须是
@@ -82,6 +84,7 @@ export class MemoryCoreSupervisor {
           TDAI_GATEWAY_HOST: '127.0.0.1',
           TDAI_GATEWAY_PORT: String(MEMORY_CORE_PORT),
           TDAI_GATEWAY_API_KEY: apiKey,
+          LOG_PATH: logDirectory,
           ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
           ...this.llmEnvironment(),
         },
