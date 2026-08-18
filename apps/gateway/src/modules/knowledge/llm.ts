@@ -156,7 +156,10 @@ export class KnowledgeLlm {
           model: this.config.model,
           messages,
           temperature: 0.1,
-          max_tokens: 1_024,
+          // 思考型模型（GLM-5.x 等）先烧推理 token 再出正文：实测 12K 字文档
+          // 抽取约 900+ token（推理 435+正文 472），1024 上限一碰就正文为空
+          // （finish_reason=length、content=null）。4K 给推理留足余量。
+          max_tokens: 4_096,
         }),
         signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
       });
@@ -170,11 +173,21 @@ export class KnowledgeLlm {
       throw new KnowledgeLlmError(`knowledge LLM HTTP ${response.status}: ${body.slice(0, 300)}`);
     }
     const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{
+        finish_reason?: string;
+        message?: { content?: string; reasoning_content?: string };
+      }>;
     };
-    const content = payload.choices?.[0]?.message?.content;
+    const choice = payload.choices?.[0];
+    const content = choice?.message?.content;
     if (typeof content !== "string" || content.length === 0) {
-      throw new KnowledgeLlmError("knowledge LLM response missing choices[0].message.content");
+      // 空正文最常见的两个来源:思考模型推理耗尽 max_tokens(finish=length),
+      // 或内容被安全策略过滤(content_filter)。带上两者便于一眼定位。
+      throw new KnowledgeLlmError(
+        `knowledge LLM response missing choices[0].message.content`
+        + ` (finish_reason=${choice?.finish_reason ?? "unknown"}`
+        + `, reasoning_content=${choice?.message?.reasoning_content ? "present" : "absent"})`,
+      );
     }
     return content.slice(0, MAX_RESPONSE_CHARS);
   }
