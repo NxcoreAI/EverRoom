@@ -1,0 +1,318 @@
+name: Release desktop app
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    runs-on: macos-14
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          test "$GITHUB_REF_NAME" = "desktop-v$version" || {
+            echo "Tag $GITHUB_REF_NAME does not match desktop version $version" >&2
+            exit 1
+          }
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "Tagged commit must be on main" >&2
+            exit 1
+          }
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check types
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build gateway and desktop
+        run: pnpm build
+
+      - name: Package macOS arm64
+        run: pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never
+
+      - name: Audit package contents
+        shell: bash
+        run: |
+          app_path="$(find release -type d -name EverRoom.app -print -quit)"
+          test -n "$app_path" || { echo "EverRoom.app was not produced" >&2; exit 1; }
+          resources="$app_path/Contents/Resources"
+          forbidden='(^|/)(\.env($|\.)|(__tests__|tests?)(/|$)|[^/]*(\.test|\.spec)\.[^/]+$|(test|spec)\.[^/]+$)|\.(map|ts|tsx|mts|cts)$'
+
+          loose_files="$(find "$resources" -type f -print)"
+          if printf '%s\n' "$loose_files" | grep -Eiq "$forbidden"; then
+            printf '%s\n' "$loose_files" | grep -Ei "$forbidden" >&2
+            exit 1
+          fi
+
+          asar_path="$(cd "$resources" && pwd)/app.asar"
+          pnpm --filter @nxcore/desktop exec asar list "$asar_path" > "$RUNNER_TEMP/asar-files.txt"
+          if grep -Eiq "$forbidden" "$RUNNER_TEMP/asar-files.txt"; then
+            grep -Ei "$forbidden" "$RUNNER_TEMP/asar-files.txt" >&2
+            exit 1
+          fi
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          app_path="$(find release -type d -name EverRoom.app -print -quit)"
+          dmgs=(release/*.dmg)
+          zips=(release/*.zip)
+          test "${#dmgs[@]}" -eq 1 && test -f "${dmgs[0]}" || { echo "Expected one DMG" >&2; exit 1; }
+          test "${#zips[@]}" -eq 1 && test -f "${zips[0]}" || { echo "Expected one ZIP" >&2; exit 1; }
+          test "$(lipo -archs "$app_path/Contents/MacOS/EverRoom")" = "arm64"
+          test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
+          hdiutil verify "${dmgs[0]}"
+          unzip -t "${zips[0]}"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-assets
+          path: |
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  windows:
+    runs-on: windows-2025
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF_NAME -notmatch '^desktop-v(\d+\.\d+\.\d+)$') {
+            throw "Tag $env:GITHUB_REF_NAME must match desktop-vX.Y.Z"
+          }
+          $tagVersion = $Matches[1]
+          $appVersion = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
+          if ($tagVersion -cne $appVersion) {
+            throw "Tag version $tagVersion does not match desktop version $appVersion"
+          }
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Tagged commit must be on main'
+          }
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check types
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build gateway and desktop
+        run: pnpm build
+
+      - name: Package Windows x64
+        run: pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never
+
+      - name: Audit package contents
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $resources = 'release/win-unpacked/resources'
+          $asar = Join-Path $resources 'app.asar'
+          if (-not (Test-Path $asar -PathType Leaf)) {
+            throw 'app.asar was not produced'
+          }
+          $forbidden = '(^|[\\/])(\.env($|\.)|(__tests__|tests?)([\\/]|$)|[^\\/]*(\.test|\.spec)\.[^\\/]+$|(test|spec)\.[^\\/]+$)|\.(map|ts|tsx|mts|cts)$'
+
+          $looseFiles = Get-ChildItem $resources -File -Recurse | ForEach-Object FullName
+          $forbiddenLooseFiles = @($looseFiles | Where-Object { $_ -match $forbidden })
+          if ($forbiddenLooseFiles.Count -gt 0) {
+            $forbiddenLooseFiles | Write-Error
+            throw 'Forbidden loose files found in packaged resources'
+          }
+
+          $asarFiles = pnpm --filter @nxcore/desktop exec asar list (Resolve-Path $asar)
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to list app.asar'
+          }
+          $forbiddenAsarFiles = @($asarFiles | Where-Object { $_ -match $forbidden })
+          if ($forbiddenAsarFiles.Count -gt 0) {
+            $forbiddenAsarFiles | Write-Error
+            throw 'Forbidden files found in app.asar'
+          }
+
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-PeMachine([string] $Path) {
+            $stream = [IO.File]::OpenRead((Resolve-Path $Path))
+            $reader = [IO.BinaryReader]::new($stream)
+            try {
+              $stream.Position = 0x3c
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) {
+                throw "$Path is not a PE file"
+              }
+              return $reader.ReadUInt16()
+            } finally {
+              $reader.Dispose()
+              $stream.Dispose()
+            }
+          }
+
+          $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
+          $installer = Get-Item "release/EverRoom-$version-windows-x64.exe"
+          $app = Get-Item 'release/win-unpacked/EverRoom.exe'
+          if ((Get-PeMachine $app.FullName) -ne 0x8664) {
+            throw 'EverRoom.exe is not PE x64'
+          }
+
+          $sqliteRoot = 'release/win-unpacked/resources/gateway/node_modules/better-sqlite3'
+          $nativeModules = @(Get-ChildItem $sqliteRoot -Filter '*.node' -File -Recurse)
+          if ($nativeModules.Count -ne 1 -or $nativeModules[0].Name -cne 'win32-x64.node') {
+            throw "Expected only win32-x64.node, found: $($nativeModules.FullName -join ', ')"
+          }
+          if ((Get-PeMachine $nativeModules[0].FullName) -ne 0x8664) {
+            throw 'win32-x64.node is not PE x64'
+          }
+
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          try {
+            $electron = (Resolve-Path 'apps/desktop/node_modules/electron/dist/electron.exe').Path
+            $sqliteEntry = (Resolve-Path "$sqliteRoot/lib/win32-x64.js").Path
+            $stdoutPath = Join-Path $env:RUNNER_TEMP 'sqlite-smoke.stdout.log'
+            $stderrPath = Join-Path $env:RUNNER_TEMP 'sqlite-smoke.stderr.log'
+            $script = "const Database=require(process.argv[1]);const db=new Database(':memory:');if(db.prepare('select 1 value').get().value!==1)process.exit(1);db.close();console.log('SQLite smoke test passed')"
+            $arguments = @('-e', ('"' + $script + '"'), ('"' + $sqliteEntry + '"'))
+            $process = Start-Process -FilePath $electron -ArgumentList $arguments -NoNewWindow -Wait -PassThru `
+              -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+            $standardOutput = [string](Get-Content $stdoutPath -Raw -ErrorAction SilentlyContinue)
+            $standardError = [string](Get-Content $stderrPath -Raw -ErrorAction SilentlyContinue)
+            if ($standardOutput) { Write-Host $standardOutput.TrimEnd() }
+            if ($standardError) { Write-Host $standardError.TrimEnd() }
+            if ($process.ExitCode -ne 0) {
+              throw "Electron failed the packaged SQLite smoke test (exit code $($process.ExitCode)): $standardError"
+            }
+          } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          }
+
+          & 7z.exe t $installer.FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw 'NSIS installer integrity check failed'
+          }
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content "$($installer.FullName).sha256" "$hash  $($installer.Name)" -Encoding ascii
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-assets
+          path: |
+            release/*.exe
+            release/*.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  publish:
+    needs: [macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: macos-assets
+          path: release-assets
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-assets
+          path: release-assets
+
+      - name: Publish prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#desktop-v}"
+          expected=(
+            "release-assets/EverRoom-$version-arm64.dmg"
+            "release-assets/EverRoom-$version-arm64.zip"
+            "release-assets/EverRoom-$version-windows-x64.exe"
+            "release-assets/EverRoom-$version-windows-x64.exe.sha256"
+          )
+          files=(release-assets/*)
+          test "${#files[@]}" -eq "${#expected[@]}" || {
+            printf 'Unexpected release assets:\n%s\n' "${files[*]}" >&2
+            exit 1
+          }
+          for asset in "${expected[@]}"; do
+            test -f "$asset" || { echo "Missing release asset: $asset" >&2; exit 1; }
+          done
+          gh release create "$GITHUB_REF_NAME" "${expected[@]}" \
+            --verify-tag \
+            --prerelease \
+            --generate-notes \
+            --notes "Unsigned Apple Silicon and Windows x64 development builds. macOS Gatekeeper or Windows SmartScreen may require manual approval before first launch."

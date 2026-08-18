@@ -2,14 +2,17 @@ import type {
   AgentEvent,
   AgentRun,
   AgentSession,
+  AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
   CreateAgentSessionInput,
+  CreateAgentSessionLinkInput,
   StartAgentRunInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
 import { isAgentSocketFrame } from '@nxcore/agent-contract'
 import type { AxiosRequestConfig } from 'axios'
+import { isAxiosError } from 'axios'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import { createLoggedHttpClient } from '../network/http-client'
@@ -17,6 +20,18 @@ import type { GatewaySupervisor } from './gateway-supervisor'
 
 const AGENT_EVENT_CHANNEL = 'agent:event'
 const http = createLoggedHttpClient('gateway-agent')
+const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'ERR_SOCKET_CLOSED',
+])
+
+function isRecoverableConnectionError(error: unknown): boolean {
+  if (!isAxiosError(error)) return false
+  if (error.code && RECOVERABLE_CONNECTION_ERROR_CODES.has(error.code)) return true
+  return typeof error.message === 'string' && /socket hang up/i.test(error.message)
+}
 
 interface Subscription {
   sessionId: string
@@ -32,6 +47,18 @@ export class AgentGatewayBridge {
 
   createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
     return this.request('/v1/agent/sessions', { method: 'POST', data: input })
+  }
+
+  createSessionLink(input: CreateAgentSessionLinkInput): Promise<AgentSessionLink> {
+    return this.request('/v1/agent/session-links', { method: 'POST', data: input })
+  }
+
+  listSessionLinks(sessionId: string): Promise<AgentSessionLink[]> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/links`)
+  }
+
+  markSessionLinkReturned(linkId: string): Promise<AgentSessionLink> {
+    return this.request(`/v1/agent/session-links/${encodeURIComponent(linkId)}/return`, { method: 'POST' })
   }
 
   listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]> {
@@ -69,6 +96,19 @@ export class AgentGatewayBridge {
 
   cancelRun(runId: string): Promise<AgentRun> {
     return this.request(`/v1/agent/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
+  }
+
+  summarizeTranscription(input: {
+    jobId: string
+    sourceRecordId: string
+    transcript: string
+    language?: string
+  }): Promise<{ content: string }> {
+    return this.request('/v1/processing/transcription-summary', {
+      method: 'POST',
+      data: input,
+      timeout: 10 * 60_000,
+    })
   }
 
   subscribe(contents: WebContents, sessionId: string): void {
@@ -126,12 +166,27 @@ export class AgentGatewayBridge {
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
+    try {
+      return await this.requestWithConnection<T>(connection, path, config)
+    } catch (error) {
+      if (!isRecoverableConnectionError(error)) throw error
+      const recoveredConnection = await this.supervisor.recoverConnection(connection)
+      return this.requestWithConnection<T>(recoveredConnection, path, config)
+    }
+  }
+
+  private async requestWithConnection<T>(
+    connection: ReturnType<GatewaySupervisor['getConnection']>,
+    path: string,
+    config: AxiosRequestConfig,
+  ): Promise<T> {
+    const hasBody = config.data !== undefined && config.data !== null
     const response = await http.request<T & { message?: unknown }>({
       url: `${connection.baseUrl}${path}`,
       ...config,
       headers: {
         Authorization: `Bearer ${connection.token}`,
-        'Content-Type': 'application/json',
+        'Content-Type': hasBody ? 'application/json' : false,
         ...config.headers,
       },
       validateStatus: () => true,

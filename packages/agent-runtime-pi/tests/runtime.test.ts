@@ -32,7 +32,7 @@ describe("PiAgentRuntime", () => {
     await expect(runtime.getCapabilities()).resolves.toEqual({
       streaming: true,
       reasoning: false,
-      tools: false,
+      tools: true,
       steering: true,
       resume: false,
     });
@@ -119,6 +119,91 @@ describe("PiAgentRuntime", () => {
     }
   });
 
+  it("hides every tool for a disabled run and restores them by default", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        requestBodies.push(JSON.parse(raw) as Record<string, unknown>);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-tools-toggle",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: { content: "完成" }, finish_reason: null }],
+        })}\n\n`);
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-tools-toggle",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-tools-toggle-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+    }, {
+      promptGuidelines: ["document tool guidance"],
+      tools: [{
+        name: "context_room_document_read",
+        label: "读取文档",
+        description: "读取文档",
+        parameters: { type: "object", properties: {} },
+        execute: async () => ({ content: "{}" }),
+      }],
+    });
+
+    try {
+      const disabled = await runtime.start({
+        runId: "run-tools-disabled",
+        sessionId: "agent-session",
+        runtimeSessionRef: null,
+        prompt: "补全",
+        pageLabel: "文档",
+        roomId: "room-a",
+        toolsEnabled: false,
+      });
+      for await (const _event of disabled.events) { /* consume */ }
+      const enabled = await runtime.start({
+        runId: "run-tools-default",
+        sessionId: "agent-session",
+        runtimeSessionRef: disabled.runtimeSessionRef,
+        prompt: "正常聊天",
+        pageLabel: "文档",
+        roomId: "room-a",
+      });
+      for await (const _event of enabled.events) { /* consume */ }
+
+      expect(requestBodies[0]?.tools).toBeUndefined();
+      expect(JSON.stringify(requestBodies[0])).not.toContain("document tool guidance");
+      expect(JSON.stringify(requestBodies[1]?.tools)).toContain("context_room_document_read");
+      expect(JSON.stringify(requestBodies[1]?.tools)).toContain('"name":"bash"');
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
   it("executes custom tools with the latest run context on a persistent Pi session", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     let requestIndex = 0;
@@ -182,6 +267,7 @@ describe("PiAgentRuntime", () => {
       workingDirectory: join(dataDir, "workspace"),
       agentDirectory: join(dataDir, "config"),
     }, {
+      promptGuidelines: ["动态文档能力规范：只使用当前注册表提供的能力说明。"],
       tools: [{
         name: "context_room_write_begin",
         label: "开始创建 Room 文档",
@@ -242,9 +328,22 @@ describe("PiAgentRuntime", () => {
       expect(firstEvents.map((event) => event.type)).toContain("tool.started");
       expect(firstEvents.map((event) => event.type)).toContain("tool.completed");
       expect(secondEvents.map((event) => event.type)).toContain("tool.completed");
+      const reusedRunRequest = JSON.stringify(requestBodies[2]);
+      expect(reusedRunRequest).toContain("本轮执行 ID：run-room-b");
+      expect(reusedRunRequest).toContain("历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效");
+      expect(reusedRunRequest).toContain("document_read 成功只是第一步");
+      expect(reusedRunRequest).toContain("不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown");
+      expect(reusedRunRequest).toContain("工具调用、文档全文、块标识、读取凭证、Operation 标识和工具错误均已移除");
+      expect(reusedRunRequest).toContain("用户：创建文档");
+      expect(reusedRunRequest).not.toContain('{\\"roomId\\":\\"room-a\\",\\"state\\":\\"open\\"}');
       expect(requestBodies).toHaveLength(4);
       expect(JSON.stringify(requestBodies[0]?.tools)).toContain("context_room_write_begin");
-      expect(JSON.stringify(requestBodies[0])).toContain("必须使用简体中文");
+      expect(JSON.stringify(requestBodies[0]?.tools)).toContain('"name":"bash"');
+      expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("v2_desktop_user_pc_bash");
+      const firstRequest = JSON.stringify(requestBodies[0]);
+      expect(firstRequest).toContain("必须使用简体中文");
+      expect(firstRequest).toContain("动态文档能力规范：只使用当前注册表提供的能力说明。");
+      expect(firstRequest).not.toContain("准备写入正文的实际核心内容、重点或结论");
       expect(requestBodies[1]?.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: "tool", content: '{"roomId":"room-a","state":"open"}' }),
       ]));

@@ -1,15 +1,27 @@
 import type {
-  AcknowledgeDocumentTransactionInput,
+  DocumentBlockList,
+  DocumentBlockBacklinkList,
   DocumentEventFrame,
+  DocumentOperation,
+  DocumentOperationCommandInput,
+  DocumentOperationCommandResult,
+  DocumentOperationList,
+  DocumentOperationStatus,
+  DocumentOperationSummary,
+  DocumentVersionSummary,
   ImportRoomDocumentInput,
   RoomDocument,
+  ResolveDocumentBlockReferencesInput,
+  ResolveDocumentBlockReferencesResult,
   SaveRoomDocumentInput,
+  StartDocumentOperationInput,
 } from '@nxcore/agent-contract'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
 export const DOCUMENT_EVENT_CHANNEL = 'documents:event'
+export const DOCUMENT_OPERATION_EVENT_CHANNEL = 'documents:operation-changed'
 
 interface Subscription {
   roomId: string
@@ -36,6 +48,26 @@ function isDocumentEventFrame(value: unknown): value is DocumentEventFrame {
   return frame.type === 'document.event' && frame.protocol === 1 && Boolean(frame.event)
 }
 
+export function operationIdFromDocumentEvent(frame: DocumentEventFrame): string | null {
+  if (frame.event.type !== 'document.operation.changed') return null
+  const payload = frame.event.payload
+  if (!payload || typeof payload !== 'object') return null
+  const value = payload as Record<string, unknown>
+  const operation = value.operation && typeof value.operation === 'object'
+    ? value.operation as Record<string, unknown>
+    : null
+  const id = typeof operation?.id === 'string'
+    ? operation.id
+    : typeof value.operationId === 'string' ? value.operationId : ''
+  return id.trim() || null
+}
+
+export function documentOperationListResult(
+  result: DocumentOperationList,
+): DocumentOperationSummary[] {
+  return result.operations
+}
+
 export class DocumentGatewayBridge {
   private readonly subscriptions = new Map<number, Map<string, Subscription>>()
 
@@ -45,8 +77,76 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents?${new URLSearchParams({ roomId })}`)
   }
 
+  listTrash(roomId: string): Promise<RoomDocument[]> {
+    return this.request(`/v1/documents?${new URLSearchParams({ roomId, trashed: 'true' })}`)
+  }
+
   get(documentId: string): Promise<RoomDocument> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}`)
+  }
+
+  listBlocks(documentId: string): Promise<DocumentBlockList> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/blocks`)
+  }
+
+  listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList> {
+    const query = blockId ? `?${new URLSearchParams({ blockId })}` : ''
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/backlinks${query}`)
+  }
+
+  listVersions(documentId: string): Promise<DocumentVersionSummary[]> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/versions`)
+  }
+
+  restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument> {
+    return this.request(
+      `/v1/documents/${encodeURIComponent(documentId)}/versions/${String(version)}/restore`,
+      { method: 'POST', body: JSON.stringify({ baseVersion }) },
+      true,
+    )
+  }
+
+  resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult> {
+    return this.request('/v1/document-blocks/resolve', { method: 'POST', body: JSON.stringify(input) })
+  }
+
+  async listOperations(filters: {
+    roomId?: string
+    documentId?: string
+    sessionId?: string
+    status?: DocumentOperationStatus
+  } = {}): Promise<DocumentOperationSummary[]> {
+    const query = new URLSearchParams()
+    if (filters.roomId) query.set('roomId', filters.roomId)
+    if (filters.documentId) query.set('documentId', filters.documentId)
+    if (filters.sessionId) query.set('sessionId', filters.sessionId)
+    if (filters.status) query.set('status', filters.status)
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    const result = await this.request<DocumentOperationList>(
+      `/v1/document-operations${suffix}`,
+    )
+    return documentOperationListResult(result)
+  }
+
+  startOperation(input: StartDocumentOperationInput): Promise<DocumentOperation> {
+    return this.request('/v1/document-operations', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true)
+  }
+
+  getOperation(operationId: string): Promise<DocumentOperation> {
+    return this.request(`/v1/document-operations/${encodeURIComponent(operationId)}`)
+  }
+
+  executeOperationCommand(
+    operationId: string,
+    input: DocumentOperationCommandInput,
+  ): Promise<DocumentOperationCommandResult> {
+    return this.request(`/v1/document-operations/${encodeURIComponent(operationId)}/commands`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true)
   }
 
   import(input: ImportRoomDocumentInput): Promise<RoomDocument> {
@@ -64,11 +164,16 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' })
   }
 
-  acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void> {
-    return this.request(`/v1/document-transactions/${encodeURIComponent(transactionId)}/ack`, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    })
+  restore(documentId: string): Promise<RoomDocument> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/restore`, { method: 'POST' })
+  }
+
+  deletePermanently(documentId: string): Promise<void> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/permanent`, { method: 'DELETE' })
+  }
+
+  emptyTrash(roomId: string): Promise<void> {
+    return this.request(`/v1/documents/trash?${new URLSearchParams({ roomId })}`, { method: 'DELETE' })
   }
 
   subscribe(contents: WebContents, roomId: string): void {
@@ -115,7 +220,11 @@ export class DocumentGatewayBridge {
       if (contents.isDestroyed()) return
       try {
         const frame: unknown = JSON.parse(data.toString())
-        if (isDocumentEventFrame(frame)) contents.send(DOCUMENT_EVENT_CHANNEL, frame)
+        if (isDocumentEventFrame(frame)) {
+          contents.send(DOCUMENT_EVENT_CHANNEL, frame)
+          const operationId = operationIdFromDocumentEvent(frame)
+          if (operationId) contents.send(DOCUMENT_OPERATION_EVENT_CHANNEL, operationId)
+        }
       } catch {
         // A reconnect refreshes the authoritative document list.
       }
@@ -135,16 +244,17 @@ export class DocumentGatewayBridge {
 
   private async request<T>(path: string, init?: RequestInit, retryWhenUnavailable = false): Promise<T> {
     const connection = this.supervisor.getConnection()
+    const headers = new Headers(init?.headers)
+    headers.set('Authorization', `Bearer ${connection.token}`)
+    if (init?.body !== undefined && init.body !== null && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
     let response: Response | null = null
     for (let attempt = 0; response === null; attempt += 1) {
       try {
         response = await fetch(`${connection.baseUrl}${path}`, {
           ...init,
-          headers: {
-            Authorization: `Bearer ${connection.token}`,
-            'Content-Type': 'application/json',
-            ...init?.headers,
-          },
+          headers,
         })
       } catch (error) {
         const retryDelay = SAVE_RETRY_DELAYS_MS[attempt]

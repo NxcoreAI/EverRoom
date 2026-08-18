@@ -8,6 +8,8 @@ import {
   CornerDownRight,
   FileText,
   GitBranch,
+  Info,
+  Network,
   Zap,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -15,13 +17,14 @@ import { useMemo, useState } from 'react';
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { roomKindIcon, roomKindTone } from '../utils';
+import { PanelEmptyState } from './PanelEmptyState';
 type WorkspaceObjectPreview =
   | { kind: 'meeting'; id: string }
   | { kind: 'task'; id: string };
 
 type TimelineView = 'day' | 'week' | 'month';
 
-// 时间轴的"今天"以会话启动时的真实日期为基准（原演示固定 2026-08-11 已移除）。
+// 时间轴的“今天”以会话启动时的真实日期为基准（原演示固定 2026-08-11 已移除）。
 const REFERENCE_TODAY = new Date();
 
 // 逐 Room 的 AI 状态文案覆盖表（原演示 Room 词条已移除）；缺省走下方真实数据派生。
@@ -101,6 +104,7 @@ export function OverviewDashboard({
   const recentMaterials = room.materials.slice(0, 3);
   const todayMeeting = room.materials.find((item) => item.type === '会议');
   const openTasks = room.actionItems.filter((item) => !item.completed && item.status !== '已完成').slice(0, 3);
+  const hasBrief = Boolean(room.brief.background.trim() || room.brief.goal.trim());
   const moveTimeline = (delta: number) =>
     setTimelineCursor((current) => {
       const next = new Date(current);
@@ -123,22 +127,27 @@ export function OverviewDashboard({
       <div className="context-room-dashboard-grid">
         <article>
           <header data-icon-tone="document"><FileText aria-hidden="true" />Room 简介</header>
-          <p>{room.brief.background}</p><small><b>目标：</b>{room.brief.goal}</small>
+          {hasBrief ? (
+            <><p>{room.brief.background || '暂无背景说明'}</p><small><b>目标：</b>{room.brief.goal || '暂未设置'}</small></>
+          ) : (
+            <PanelEmptyState compact icon={FileText} title="还没有简介" description="Room 的背景和目标会显示在这里。" />
+          )}
         </article>
         <article>
           <header data-icon-tone="room"><BarChart3 aria-hidden="true" />当前状态 <em>AI</em></header>
-          <p>{dashboard.aiStatus}</p>
+          {dashboard.aiStatus.trim() ? <p>{dashboard.aiStatus}</p> : <PanelEmptyState compact icon={Info} title="尚未形成状态摘要" description="有新的资料和活动后，状态会在这里更新。" />}
         </article>
         <article>
           <header data-icon-tone="ai"><Zap aria-hidden="true" />建议下一步 <em>AI</em></header>
-          <ul>{dashboard.nextSteps.map((item) => <li key={item}><CornerDownRight aria-hidden="true" />{item}</li>)}</ul>
+          {dashboard.nextSteps.length ? <ul>{dashboard.nextSteps.map((item) => <li key={item}><CornerDownRight aria-hidden="true" />{item}</li>)}</ul> : <PanelEmptyState compact icon={Zap} title="暂时没有下一步建议" description="新的上下文进入 Room 后会重新生成建议。" />}
         </article>
         <article>
           <header data-icon-tone="memory"><Bookmark aria-hidden="true" />关联记忆实体</header>
-          <div className="context-room-dashboard-entities">
-            {dashboard.entities.map((entity) => <span key={entity.label} title={entity.description}>{entity.label}</span>)}
-            {!dashboard.entities.length ? '暂无关联实体' : null}
-          </div>
+          {dashboard.entities.length ? (
+            <div className="context-room-dashboard-entities">
+              {dashboard.entities.map((entity) => <span key={entity.label} title={entity.description}>{entity.label}</span>)}
+            </div>
+          ) : <PanelEmptyState compact icon={Network} title="还没有关联实体" description="识别到的人物、项目和主题会显示在这里。" />}
         </article>
       </div>
 
@@ -149,14 +158,16 @@ export function OverviewDashboard({
             const resource = library.resources.find((item) => item.name === material.title);
             return <button type="button" key={material.id} onClick={() => resource && onSelectResource(resource)}><span>{material.type}</span><b>{material.title}</b><time>{material.time}</time></button>;
           })}
+          {!recentMaterials.length ? <PanelEmptyState compact icon={FileText} title="还没有资料" description="Room 收集的文档、邮件和会议会显示在这里。" /> : null}
         </article>
         <article>
           <header data-icon-tone="calendar"><CalendarDays aria-hidden="true" />今日日程</header>
-          {todayMeeting ? <button type="button" onClick={() => onOpenObject({ kind: 'meeting', id: todayMeeting.id })}><time>10:30</time><b>{todayMeeting.title}</b></button> : <p>今天没有日程</p>}
+          {todayMeeting ? <button type="button" onClick={() => onOpenObject({ kind: 'meeting', id: todayMeeting.id })}><time>10:30</time><b>{todayMeeting.title}</b></button> : <PanelEmptyState compact icon={CalendarDays} title="今天没有日程" description="今天的会议和到期任务会显示在这里。" />}
         </article>
         <article>
           <header data-icon-tone="task"><CheckSquare2 aria-hidden="true" />待办任务</header>
           {openTasks.map((task) => <div className="context-room-dashboard-task" key={task.id}><button type="button" aria-label={`完成 ${task.title}`} onClick={() => onToggleTask(task.id)}><i /></button><button type="button" onClick={() => onOpenObject({ kind: 'task', id: task.id })}><b>{task.title}</b><time>{task.deadline}</time></button></div>)}
+          {!openTasks.length ? <PanelEmptyState compact icon={CheckSquare2} title="没有待办任务" description="未完成的 Room 任务会显示在这里。" /> : null}
         </article>
       </div>
 
@@ -175,7 +186,7 @@ export function OverviewDashboard({
           const material = recentMaterials[index] as (typeof recentMaterials)[number] | undefined;
           const resource = material ? library.resources.find((candidate) => candidate.name === material.title) : null;
           return <li key={`${item.time}-${item.title}`}><i data-kind={item.kind} /><div><div><b>{item.title}</b><time>{item.time}</time></div><p>{item.description}</p>{resource ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />相关资料 <span>1</span></button>{expanded.has(index) ? <button type="button" className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{resource.name}</button> : null}</> : null}</div></li>;
-        })}</ol> : <div className="context-room-dashboard-empty">该范围内暂无事件</div>}
+        })}</ol> : <PanelEmptyState compact icon={GitBranch} title="当前范围没有事件" description="可切换时间范围查看 Room 的其他活动。" />}
       </article>
     </section>
   );

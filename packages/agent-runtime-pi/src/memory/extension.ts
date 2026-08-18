@@ -15,6 +15,10 @@ export interface MemoryRunContext {
   pageLabel: string;
   /** 回合被取消时置位，agent_end 不再回写。 */
   cancelled: boolean;
+  /** 临时预览类运行关闭自动沉淀，由用户确认后的领域事件负责写入。 */
+  captureEnabled: boolean;
+  /** 轻量运行可关闭自动召回，避免将历史记忆注入本轮上下文。 */
+  recallEnabled: boolean;
 }
 
 export interface MemoryLogger {
@@ -47,13 +51,14 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
     factory: (pi) => {
       pi.on("before_agent_start", async () => {
         const run = getRunContext();
-        if (!run || run.cancelled) return;
+        if (!run || run.cancelled || !run.recallEnabled) return;
 
         const query = run.originalPrompt.slice(0, RECALL_QUERY_MAX_CHARS);
-        const [atomic, core, scenarios] = await Promise.allSettled([
+        const [atomic, core, scenarios, conversations] = await Promise.allSettled([
           client.searchAtomic(query, config.recallLimit),
           client.readCore(),
           client.listScenarios(),
+          client.searchConversation(query, config.recallLimit),
         ]);
         if (atomic.status === "rejected") {
           log.warn(`${TAG} L1 recall failed: ${String(atomic.reason)}`);
@@ -64,12 +69,16 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
         if (scenarios.status === "rejected") {
           log.warn(`${TAG} L2 scenario list failed: ${String(scenarios.reason)}`);
         }
+        if (conversations.status === "rejected") {
+          log.warn(`${TAG} L0 conversation recall failed: ${String(conversations.reason)}`);
+        }
 
         const content = formatRecallResult(
           {
             atomicItems: atomic.status === "fulfilled" ? atomic.value : [],
             coreContent: core.status === "fulfilled" ? core.value?.content ?? null : null,
             scenarios: scenarios.status === "fulfilled" ? scenarios.value : [],
+            conversationHits: conversations.status === "fulfilled" ? conversations.value : [],
           },
           config.charBudget,
         );
@@ -86,7 +95,7 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
 
       pi.on("agent_end", async (event) => {
         const run = getRunContext();
-        if (!run || run.cancelled) return;
+        if (!run || run.cancelled || !run.captureEnabled) return;
 
         const messages = extractCapturableMessages(event.messages, run);
         if (messages.length === 0) return;

@@ -1,4 +1,4 @@
-import type { ContextRoomRecommendation, ContextRoomRecord } from './types';
+import type { ContextRoomRecord } from './types';
 
 const cloudWorkspaceId = '5fc9205a-8077-4e39-bf77-aa5ae6262b93';
 
@@ -925,6 +925,3 @@ export const CONTEXT_ROOMS: ContextRoomRecord[] = [
     },
   },
 ];
-
-// 推荐引擎未接入前留空（原演示卡已移除）：首页推荐区在空数组时不渲染。
-export const CONTEXT_ROOM_RECOMMENDATIONS: ContextRoomRecommendation[] = [];

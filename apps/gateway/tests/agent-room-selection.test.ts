@@ -1,0 +1,480 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
+import type { RuntimeCapabilities } from '@nxcore/agent-contract'
+import {
+  AsyncEventQueue,
+  type AgentRuntime,
+  type ResumeRuntimeRunInput,
+  type RuntimeEvent,
+  type RuntimeRun,
+  type StartRuntimeRunInput,
+} from '@nxcore/agent-runtime'
+import { createDatabase } from '../src/infrastructure/database/client.js'
+import {
+  agentSessions,
+  documents,
+  pendingAgentIntents,
+  roomDocumentLinks,
+} from '../src/infrastructure/database/schema.js'
+import { AgentEventBroker } from '../src/modules/agent/event-broker.js'
+import { AgentService, type AgentCompletedMessageResolver } from '../src/modules/agent/service.js'
+import { ContextRoomService } from '../src/modules/context-rooms/service.js'
+
+const temporaryDirectories: string[] = []
+
+class RecordingRuntime implements AgentRuntime {
+  readonly id = 'recording'
+  readonly starts: StartRuntimeRunInput[] = []
+
+  async getCapabilities(): Promise<RuntimeCapabilities> {
+    return { streaming: true, reasoning: false, tools: true, steering: false, resume: false }
+  }
+
+  async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+    this.starts.push(input)
+    const events = new AsyncEventQueue<RuntimeEvent>()
+    events.push({ type: 'run.completed', payload: {} })
+    events.end()
+    return { runId: input.runId, runtimeSessionRef: `runtime-${input.sessionId}`, events }
+  }
+
+  async resume(_input: ResumeRuntimeRunInput): Promise<RuntimeRun> {
+    throw new Error('not supported')
+  }
+
+  async sendInput(): Promise<void> {}
+  async cancel(): Promise<void> {}
+  async deleteSession(): Promise<void> {}
+  async dispose(): Promise<void> {}
+}
+
+class CompletingRuntime extends RecordingRuntime {
+  override async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+    this.starts.push(input)
+    const events = new AsyncEventQueue<RuntimeEvent>()
+    events.push({ type: 'message.completed', payload: { role: 'assistant', content: '文档已成功修改。' } })
+    events.push({ type: 'run.completed', payload: {} })
+    events.end()
+    return { runId: input.runId, runtimeSessionRef: `runtime-${input.sessionId}`, events }
+  }
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+})
+
+async function createHarness(options: {
+  runtime?: RecordingRuntime
+  completedMessageResolver?: AgentCompletedMessageResolver
+} = {}) {
+  const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-agent-room-selection-'))
+  temporaryDirectories.push(dataDir)
+  const database = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
+  const runtime = options.runtime ?? new RecordingRuntime()
+  const rooms = new ContextRoomService(database.db)
+  const service = new AgentService(
+    database.db,
+    runtime,
+    new AgentEventBroker(),
+    undefined,
+    rooms,
+    { validateActiveDocumentContext: (context) => context },
+    options.completedMessageResolver,
+  )
+  return { ...database, rooms, runtime, service }
+}
+
+describe('Agent Room selection', () => {
+  it('replaces a misleading completed message with the authoritative operation result', async () => {
+    const runtime = new CompletingRuntime()
+    const completedMessageResolver: AgentCompletedMessageResolver = {
+      resolveCompletedMessage: () => ({
+        content: '未能生成有效的修改建议，文档未发生变化。',
+        reason: 'document-operation-cancelled',
+        operationId: 'operation-cancelled',
+        operationStatus: 'cancelled',
+        itemCount: 0,
+      }),
+    }
+    const { service, sqlite } = await createHarness({ runtime, completedMessageResolver })
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+    const run = await service.startRun(session.id, {
+      prompt: '修改当前文档',
+      idempotencyKey: 'authoritative-completed-message',
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(service.getSnapshot(session.id)?.messages.at(-1)?.content)
+      .toBe('未能生成有效的修改建议，文档未发生变化。')
+    expect(service.listEvents(session.id, run.id, 0)
+      .find((event) => event.type === 'message.completed')?.payload).toMatchObject({
+      content: '未能生成有效的修改建议，文档未发生变化。',
+    })
+    sqlite.close()
+  })
+
+  it('normalizes legacy empty Room ids to the global session scope', async () => {
+    const { service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: '首页', roomId: '' })
+
+    expect(session.roomId).toBeNull()
+    expect(service.listSessions('首页', null)).toEqual([
+      expect.objectContaining({ id: session.id, roomId: null }),
+    ])
+    sqlite.close()
+  })
+
+  it('keeps a Room-scoped session bound to its current Room', async () => {
+    const { rooms, runtime, service, sqlite } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [{ id: 'room-current', title: '当前 Room', data: { id: 'room-current', title: '当前 Room' } }],
+      deletedRooms: [],
+    })
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: 'room-current' })
+    await service.startRun(session.id, {
+      prompt: '创建文档',
+      idempotencyKey: 'room-scoped-run',
+      context: {
+        rooms: [{ id: 'room-other', title: '其他 Room' }],
+        selectedRoomId: 'room-other',
+      },
+    })
+
+    expect(runtime.starts[0]).toMatchObject({
+      roomId: 'room-current',
+      roomSelectionRequired: false,
+    })
+    sqlite.close()
+  })
+
+  it('passes lightweight run controls to the runtime while preserving enabled defaults', async () => {
+    const { rooms, runtime, service, sqlite } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [{ id: 'room-current', title: '当前 Room', data: { id: 'room-current', title: '当前 Room' } }],
+      deletedRooms: [],
+    })
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: 'room-current' })
+    await service.startRun(session.id, {
+      prompt: '补全文档当前句子',
+      idempotencyKey: 'cursor-completion-run',
+      captureMemory: false,
+      recallMemory: false,
+      toolsEnabled: false,
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+    await service.startRun(session.id, {
+      prompt: '普通聊天',
+      idempotencyKey: 'default-agent-run',
+    })
+
+    expect(runtime.starts[0]).toMatchObject({
+      captureMemory: false,
+      recallMemory: false,
+      toolsEnabled: false,
+    })
+    expect(runtime.starts[1]).toMatchObject({
+      captureMemory: true,
+      recallMemory: true,
+      toolsEnabled: true,
+    })
+    sqlite.close()
+  })
+
+  it('requires selection in a global session and binds a validated selection for one run', async () => {
+    const { rooms: roomRegistry, runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+    const rooms = [
+      { id: 'room-a', title: '产品规划', kind: '项目' },
+      { id: 'room-b', title: '后端进阶', kind: '主题' },
+    ]
+    roomRegistry.saveSnapshot({
+      rooms: rooms.map((room) => ({ ...room, data: room })),
+      deletedRooms: [],
+    })
+
+    const listRun = await service.startRun(session.id, {
+      prompt: '创建一份后端学习文档',
+      idempotencyKey: 'global-list-run',
+      context: { rooms },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+    await service.startRun(session.id, {
+      prompt: '选择后端进阶',
+      idempotencyKey: 'global-selected-run',
+      context: { rooms, selectedRoomId: 'room-b' },
+    })
+
+    expect(runtime.starts).toEqual([
+      expect.objectContaining({
+        roomId: 'room-b',
+        availableRooms: rooms,
+        roomSelectionRequired: false,
+      }),
+    ])
+    expect(listRun.status).toBe('completed')
+    expect(service.listEvents(session.id, listRun.id, 0).map((event) => event.type)).toEqual([
+      'run.accepted',
+      'tool.requested',
+      'tool.started',
+      'tool.completed',
+      'run.completed',
+    ])
+    expect(service.listEvents(session.id, listRun.id, 0)[3]?.payload).toMatchObject({
+      name: 'context_room_list',
+      result: { rooms, selectionRequired: true },
+    })
+    expect(service.getSnapshot(session.id)?.session.roomId).toBeNull()
+    sqlite.close()
+  })
+
+  it('keeps document discussion in the Agent instead of opening the Room picker', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '如何创建一篇结构清晰的文档？',
+      idempotencyKey: 'document-discussion-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toEqual([
+      expect.objectContaining({
+        prompt: '如何创建一篇结构清晰的文档？',
+        roomId: null,
+        roomSelectionRequired: true,
+      }),
+    ])
+    sqlite.close()
+  })
+
+  it('asks for document confirmation when a global creation request has only a topic', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    const run = await service.startRun(session.id, {
+      prompt: '帮我创建一个C语言',
+      idempotencyKey: 'ambiguous-document-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+
+    expect(runtime.starts).toEqual([])
+    expect(run.status).toBe('completed')
+    expect(service.listEvents(session.id, run.id, 0)[3]?.payload).toMatchObject({
+      name: 'context_room_document_intent',
+      result: {
+        clarificationRequired: true,
+        originalPrompt: '帮我创建一个C语言',
+        topic: 'C语言',
+      },
+    })
+    sqlite.close()
+  })
+
+  it('keeps explicit non-document creation targets in the Agent', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '帮我创建一个C语言学习计划',
+      idempotencyKey: 'explicit-plan-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toEqual([
+      expect.objectContaining({ prompt: '帮我创建一个C语言学习计划' }),
+    ])
+    sqlite.close()
+  })
+
+  it('does not open the Room picker when document creation is explicitly declined', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '不要创建文档，直接在聊天里回答。',
+      idempotencyKey: 'declined-document-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toEqual([
+      expect.objectContaining({ prompt: '不要创建文档，直接在聊天里回答。' }),
+    ])
+    sqlite.close()
+  })
+
+  it('rejects an invalid or stale Room before starting the Agent run', async () => {
+    const { rooms, runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+    rooms.saveSnapshot({
+      rooms: [{ id: 'room-current', title: '仍然存在', data: { id: 'room-current', title: '仍然存在' } }],
+      deletedRooms: [{ id: 'room-deleted', title: '已经删除', data: { id: 'room-deleted', title: '已经删除' } }],
+    })
+
+    await expect(service.startRun(session.id, {
+      prompt: '就选刚才那个 Room',
+      idempotencyKey: 'stale-room-run',
+      context: {
+        rooms: [{ id: 'room-current', title: '仍然存在' }],
+        selectedRoomId: 'room-deleted',
+      },
+    })).rejects.toThrow('agent_room_not_available')
+    expect(runtime.starts).toEqual([])
+    expect(service.getSnapshot(session.id)?.messages).toEqual([])
+    sqlite.close()
+  })
+
+  it('persists the original document intent and resumes it once with a validated Room', async () => {
+    const { db, rooms: roomRegistry, runtime, service, sqlite } = await createHarness()
+    const rooms = [
+      { id: 'room-a', title: '产品规划' },
+      { id: 'room-b', title: '后端进阶' },
+    ]
+    roomRegistry.saveSnapshot({
+      rooms: rooms.map((room) => ({ ...room, data: room })),
+      deletedRooms: [],
+    })
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+    const originalPrompt = '创建一份后端并发控制的学习文档'
+    const sourceRun = await service.startRun(session.id, {
+      prompt: originalPrompt,
+      idempotencyKey: 'pending-source-run',
+      context: { rooms },
+    })
+
+    const [intent] = service.listPendingIntents(session.id)
+    expect(intent).toMatchObject({
+      sessionId: session.id,
+      sourceRunId: sourceRun.id,
+      originalPrompt,
+      targetCapability: 'document.create',
+      allowedRoomIds: ['room-a', 'room-b'],
+      allowedDocumentIds: [],
+      consumedAt: null,
+    })
+    expect(new Date(intent!.expiresAt).getTime()).toBeGreaterThan(Date.now())
+    expect(service.listEvents(session.id, sourceRun.id, 0)[3]?.payload).toMatchObject({
+      result: { pendingIntent: { id: intent!.id, originalPrompt } },
+    })
+
+    await expect(service.submitPendingIntent(intent!.id, {
+      roomId: 'room-outside',
+      idempotencyKey: 'pending-invalid-room',
+    })).rejects.toThrow('pending_agent_intent_resource_not_allowed')
+    expect(service.getPendingIntent(intent!.id)?.consumedAt).toBeNull()
+
+    const resumed = await service.submitPendingIntent(intent!.id, {
+      roomId: 'room-b',
+      idempotencyKey: 'pending-resumed-run',
+    })
+    expect(resumed.intent.consumedAt).not.toBeNull()
+    expect(resumed.run.prompt).toBe(originalPrompt)
+    expect(runtime.starts.at(-1)).toMatchObject({
+      prompt: originalPrompt,
+      roomId: 'room-b',
+      availableRooms: rooms,
+    })
+    expect(service.listPendingIntents(session.id)).toEqual([])
+    await expect(service.submitPendingIntent(intent!.id, {
+      roomId: 'room-b',
+      idempotencyKey: 'pending-second-submit',
+    })).rejects.toThrow('pending_agent_intent_consumed')
+    expect(db.select().from(pendingAgentIntents).where(eq(pendingAgentIntents.id, intent!.id)).get()?.consumedAt)
+      .not.toBeNull()
+    sqlite.close()
+  })
+
+  it('keeps an intent available when the Agent session is busy and rejects expired intents', async () => {
+    const { db, rooms, service, sqlite } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [{ id: 'room-a', title: '产品规划', data: {} }],
+      deletedRooms: [],
+    })
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+    const sourceRun = await service.startRun(session.id, {
+      prompt: '创建一份产品规划文档',
+      idempotencyKey: 'busy-intent-source',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    const intent = service.listPendingIntents(session.id)[0]!
+
+    db.update(agentSessions).set({ status: 'running' }).where(eq(agentSessions.id, session.id)).run()
+    await expect(service.submitPendingIntent(intent.id, {
+      roomId: 'room-a',
+      idempotencyKey: 'busy-intent-submit',
+    })).rejects.toThrow('agent_session_busy')
+    expect(service.getPendingIntent(intent.id)?.consumedAt).toBeNull()
+
+    db.update(agentSessions).set({ status: 'idle' }).where(eq(agentSessions.id, session.id)).run()
+    db.update(pendingAgentIntents).set({ expiresAt: new Date(0) })
+      .where(eq(pendingAgentIntents.id, intent.id)).run()
+    await expect(service.submitPendingIntent(intent.id, {
+      roomId: 'room-a',
+      idempotencyKey: 'expired-intent-submit',
+    })).rejects.toThrow('pending_agent_intent_expired')
+    expect(service.getRun(sourceRun.id)).not.toBeNull()
+    expect(service.getPendingIntent(intent.id)?.consumedAt).toBeNull()
+    sqlite.close()
+  })
+
+  it('restores a prepared document intent with the authoritative active document context', async () => {
+    const { db, rooms, runtime, service, sqlite } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [{ id: 'room-a', title: '产品规划', data: {} }],
+      deletedRooms: [],
+    })
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+    const sourceRun = await service.startRun(session.id, {
+      prompt: '创建一份产品规划文档',
+      idempotencyKey: 'document-intent-source',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    db.insert(documents).values({
+      id: 'document-a',
+      title: '权威标题',
+      contentJson: { type: 'doc', content: [] },
+      contentSchemaVersion: 1,
+      version: 4,
+      status: 'active',
+    }).run()
+    db.insert(roomDocumentLinks).values({ roomId: 'room-a', documentId: 'document-a' }).run()
+    expect(() => service.preparePendingIntent({
+      sessionId: session.id,
+      sourceRunId: sourceRun.id,
+      targetCapability: 'document.edit',
+      allowedRoomIds: ['room-a'],
+    })).toThrow('pending_agent_intent_resource_required')
+    const intent = service.preparePendingIntent({
+      sessionId: session.id,
+      sourceRunId: sourceRun.id,
+      targetCapability: 'document.edit',
+      allowedRoomIds: ['room-a'],
+      allowedDocumentIds: ['document-a'],
+    })
+
+    await expect(service.submitPendingIntent(intent.id, {
+      roomId: 'room-a',
+      idempotencyKey: 'missing-document-submit',
+    })).rejects.toThrow('pending_agent_intent_resource_required')
+    const resumed = await service.submitPendingIntent(intent.id, {
+      roomId: 'room-a',
+      documentId: 'document-a',
+      idempotencyKey: 'document-intent-submit',
+    })
+
+    expect(resumed.run.prompt).toBe(sourceRun.prompt)
+    expect(runtime.starts.at(-1)?.activeDocument).toEqual({
+      roomId: 'room-a',
+      documentId: 'document-a',
+      title: '权威标题',
+      version: 4,
+      defaultAnchor: 'end',
+    })
+    sqlite.close()
+  })
+})

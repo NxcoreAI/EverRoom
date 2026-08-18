@@ -1,7 +1,11 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/bin/serve.ts", "src/bin/migrate.ts"],
+  entry: [
+    "src/bin/serve.ts",
+    "src/bin/cursor-completion-serve.ts",
+    "src/bin/migrate.ts",
+  ],
   format: ["esm"],
   target: "node22",
   platform: "node",

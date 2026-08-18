@@ -1,4 +1,9 @@
-import type { AgentEventType, RuntimeCapabilities } from "@nxcore/agent-contract";
+import type {
+  AgentActiveDocumentContext,
+  AgentEventType,
+  AgentRoomReference,
+  RuntimeCapabilities,
+} from "@nxcore/agent-contract";
 
 export { AsyncEventQueue } from "./async-event-queue.js";
 
@@ -14,6 +19,12 @@ export interface StartRuntimeRunInput {
   prompt: string;
   pageLabel: string;
   roomId: string | null;
+  availableRooms?: AgentRoomReference[];
+  roomSelectionRequired?: boolean;
+  captureMemory?: boolean;
+  recallMemory?: boolean;
+  toolsEnabled?: boolean;
+  activeDocument?: AgentActiveDocumentContext;
 }
 
 export interface ResumeRuntimeRunInput extends StartRuntimeRunInput {

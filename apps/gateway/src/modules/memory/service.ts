@@ -35,6 +35,23 @@ export interface MemoryConversationMessageDto {
   sourceKind: string | null;
 }
 
+export interface DocumentCreationMemoryInput {
+  sessionId: string;
+  roomId: string;
+  documentId: string;
+  title: string;
+  markdown: string;
+}
+
+export interface SelectionRewriteMemoryInput {
+  roomId: string;
+  documentId: string;
+  documentTitle: string;
+  instruction: string;
+  originalText: string;
+  replacementText: string;
+}
+
 /** 渲染层 DTO：L2 场景目录项。 */
 export interface MemoryScenarioEntryDto {
   path: string;
@@ -618,6 +635,53 @@ export class MemoryService {
       );
     }
     return this.files;
+  }
+
+  async captureDocumentCreation(input: DocumentCreationMemoryInput): Promise<boolean> {
+    const client = this.client;
+    if (!client) return false;
+    const timestamp = new Date().toISOString();
+    await this.call(() => client.addConversation(input.sessionId, [
+      {
+        role: "user",
+        content: `[document:create] 在 Context Room ${input.roomId} 中创建文档。`,
+        timestamp,
+      },
+      {
+        role: "assistant",
+        content: [
+          `[document:${input.documentId}] 已创建文档《${input.title}》。`,
+          "",
+          input.markdown,
+        ].join("\n"),
+        timestamp,
+      },
+    ]));
+    return true;
+  }
+
+  async captureSelectionRewrite(input: SelectionRewriteMemoryInput): Promise<boolean> {
+    const client = this.client;
+    if (!client) return false;
+    const timestamp = new Date().toISOString();
+    await this.call(() => client.addConversation(`document:${input.documentId}`, [
+      {
+        role: "user",
+        content: [
+          `[document:rewrite] 文档《${input.documentTitle}》（Room ${input.roomId}）选区重写。`,
+          `改写要求：${input.instruction}`,
+          "原文：",
+          input.originalText,
+        ].join("\n"),
+        timestamp,
+      },
+      {
+        role: "assistant",
+        content: ["已接受并应用以下改写结果：", input.replacementText].join("\n"),
+        timestamp,
+      },
+    ]));
+    return true;
   }
 
   private require(): MemoryCoreClient {

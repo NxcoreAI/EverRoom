@@ -26,6 +26,7 @@ const RealityPage = lazy(() =>
 export function PageCanvas({
   page,
   activeContextRoomId,
+  agentDocumentFocus,
   contextRoomHomeRequest,
   onContextRoomDetailFocusChange,
   onContextRoomOpenTab,
@@ -36,6 +37,12 @@ export function PageCanvas({
 }: {
   page: PageId
   activeContextRoomId: string | null
+  agentDocumentFocus: {
+    roomId: string
+    documentId: string
+    blockId?: string | null
+    requestId: number
+  } | null
   contextRoomHomeRequest: number
   onContextRoomDetailFocusChange: (focused: boolean) => void
   onContextRoomOpenTab: (room: ContextRoomWorkspaceTab) => void
@@ -51,6 +58,15 @@ export function PageCanvas({
       <Suspense fallback={<ContextRoomHomeSkeleton />}>
         <ContextRoomPage
           activeRoomId={activeContextRoomId}
+          focusedDocumentId={agentDocumentFocus?.roomId === activeContextRoomId
+            ? agentDocumentFocus.documentId
+            : null}
+          focusedBlockId={agentDocumentFocus?.roomId === activeContextRoomId
+            ? agentDocumentFocus.blockId ?? null
+            : null}
+          documentFocusRequestId={agentDocumentFocus?.roomId === activeContextRoomId
+            ? agentDocumentFocus.requestId
+            : null}
           homeRequest={contextRoomHomeRequest}
           onDetailFocusChange={onContextRoomDetailFocusChange}
           onOpenRoomTab={onContextRoomOpenTab}

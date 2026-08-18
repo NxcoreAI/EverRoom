@@ -24,9 +24,10 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
-    remoteAgent: null,
+    memory: null,
     pi: null,
     knowledge: null,
+    backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
   };
@@ -223,6 +224,46 @@ describe("agent gateway", () => {
     await app.close();
   });
 
+  it("rejects a stale Room selection before creating an Agent run", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "首页", roomId: null },
+    })).json<AgentSession>();
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: {
+        prompt: "在已删除的 Room 中创建文档",
+        idempotencyKey: "stale-room-selection-key",
+        context: {
+          rooms: [{ id: "room-current", title: "当前 Room" }],
+          selectedRoomId: "room-deleted",
+        },
+      },
+    });
+    const snapshot = (await app.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${session.id}`,
+      headers,
+    })).json<AgentSessionSnapshot>();
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: "room_not_available",
+      message: "The selected Context Room is no longer available",
+    });
+    expect(snapshot.messages).toEqual([]);
+    expect(snapshot.activeRun).toBeNull();
+    await app.close();
+  });
+
   it("moves a cancelled run to a terminal state", async () => {
     const config = await testConfig();
     const app = await createServer(config);
@@ -237,7 +278,7 @@ describe("agent gateway", () => {
       method: "POST",
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
-      payload: { prompt: "生成一份长文档", idempotencyKey: "cancel-request-key" },
+      payload: { prompt: "请慢慢回答这个问题", idempotencyKey: "cancel-request-key" },
     })).json<AgentRun>();
 
     const cancelled = await app.inject({

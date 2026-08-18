@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryCoreClient, MemoryCoreError } from "../src/memory/client.js";
 import { formatRecallResult } from "../src/memory/format.js";
-import { extractCapturableMessages } from "../src/memory/extension.js";
+import { createMemoryExtension, extractCapturableMessages } from "../src/memory/extension.js";
 import { createMemoryTools } from "../src/memory/tools.js";
 import type { MemoryRuntimeConfig } from "../src/memory/types.js";
 
@@ -214,6 +214,11 @@ describe("formatRecallResult", () => {
         ],
         coreContent: "用户是桌面应用开发者",
         scenarios: [{ path: "工作.md", created_at: "", updated_at: "" }],
+        conversationHits: [{
+          role: "assistant",
+          content: "[document:doc-1] 认证服务演进路线\n\n旧文档正文",
+          timestamp: "2026-08-03T10:00:00Z",
+        }],
       },
       2000,
     );
@@ -221,6 +226,8 @@ describe("formatRecallResult", () => {
     expect(result).toContain("[用户画像]");
     expect(result).toContain("用户偏好中文回复");
     expect(result).toContain("工作.md");
+    expect(result).toContain("[相关历史对话与文档]");
+    expect(result).toContain("认证服务演进路线");
     expect(result).toContain("[2026-08-02]");
   });
 
@@ -281,6 +288,84 @@ describe("extractCapturableMessages", () => {
 
   it("returns empty when no user/assistant text is present", () => {
     expect(extractCapturableMessages([{ role: "custom", customType: "x", content: "c", display: true, timestamp: 1 }], run)).toEqual([]);
+  });
+});
+
+describe("memory extension capture policy", () => {
+  it("recalls memory but skips automatic capture for deferred preview runs", async () => {
+    const client = new MemoryCoreClient(config);
+    const searchAtomic = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
+    const readCore = vi.spyOn(client, "readCore").mockResolvedValue(null);
+    const listScenarios = vi.spyOn(client, "listScenarios").mockResolvedValue([]);
+    const searchConversation = vi.spyOn(client, "searchConversation").mockResolvedValue([]);
+    const addConversation = vi.spyOn(client, "addConversation").mockResolvedValue();
+    const handlers = new Map<string, (event: unknown) => Promise<unknown>>();
+    const extension = createMemoryExtension({
+      client,
+      config,
+      getRunContext: () => ({
+        sessionId: "rewrite-preview",
+        originalPrompt: "把选区改得更简洁",
+        pageLabel: "AI 重写",
+        cancelled: false,
+        captureEnabled: false,
+        recallEnabled: true,
+      }),
+    });
+    if (!("factory" in extension)) throw new Error("Expected an inline extension object");
+    extension.factory({
+      on: (event: string, handler: (event: unknown) => Promise<unknown>) => {
+        handlers.set(event, handler);
+      },
+    } as never);
+
+    await handlers.get("before_agent_start")?.({});
+    await handlers.get("agent_end")?.({
+      messages: [
+        { role: "user", content: "把选区改得更简洁" },
+        { role: "assistant", content: "改写后的预览内容" },
+      ],
+    });
+
+    expect(searchAtomic).toHaveBeenCalled();
+    expect(readCore).toHaveBeenCalled();
+    expect(listScenarios).toHaveBeenCalled();
+    expect(searchConversation).toHaveBeenCalledWith("把选区改得更简洁", 5);
+    expect(addConversation).not.toHaveBeenCalled();
+  });
+
+  it("skips automatic recall when recall is disabled", async () => {
+    const client = new MemoryCoreClient(config);
+    const searchAtomic = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
+    const readCore = vi.spyOn(client, "readCore").mockResolvedValue(null);
+    const listScenarios = vi.spyOn(client, "listScenarios").mockResolvedValue([]);
+    const searchConversation = vi.spyOn(client, "searchConversation").mockResolvedValue([]);
+    const handlers = new Map<string, (event: unknown) => Promise<unknown>>();
+    const extension = createMemoryExtension({
+      client,
+      config,
+      getRunContext: () => ({
+        sessionId: "cursor-completion",
+        originalPrompt: "补全文档",
+        pageLabel: "AI 补全",
+        cancelled: false,
+        captureEnabled: false,
+        recallEnabled: false,
+      }),
+    });
+    if (!("factory" in extension)) throw new Error("Expected an inline extension object");
+    extension.factory({
+      on: (event: string, handler: (event: unknown) => Promise<unknown>) => {
+        handlers.set(event, handler);
+      },
+    } as never);
+
+    await handlers.get("before_agent_start")?.({});
+
+    expect(searchAtomic).not.toHaveBeenCalled();
+    expect(readCore).not.toHaveBeenCalled();
+    expect(listScenarios).not.toHaveBeenCalled();
+    expect(searchConversation).not.toHaveBeenCalled();
   });
 });
 

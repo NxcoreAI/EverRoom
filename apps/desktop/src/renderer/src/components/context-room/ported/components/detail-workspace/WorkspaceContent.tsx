@@ -1,11 +1,13 @@
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract';
-import { ChevronLeft } from 'lucide-react';
+import type { RoomDocument } from '@nxcore/agent-contract';
+import { BrainCircuit, CalendarDays, CheckSquare2, ChevronLeft, FileText, Mail, Network } from 'lucide-react';
 
+import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { ObjectDetailView } from '../ObjectDetailView';
 import type { DetailPane } from '../RoomIconSidebar';
 import { ObjectPreview, type WorkspaceObjectPreview } from '../detail-panels';
 import { FakeDocumentContent } from '../detail-panels/FakeDocumentPane';
+import { PanelEmptyState } from '../detail-panels/PanelEmptyState';
 import { OfficePreview } from '../detail-panels/ResourcePanel';
 import { WikiPageReader } from '../detail-panels/WikiPageReader';
 
@@ -16,8 +18,11 @@ export function WorkspaceContent({
   selectedObject,
   selectedResource,
   backendDocuments,
-  documentEvents,
+  focusedDocumentId,
+  focusedBlockId,
+  documentFocusRequestId,
   onBackendDocumentChange,
+  onDeleteDocument,
   onOpenRoom,
   onMobileBack,
   onCloseObject,
@@ -29,8 +34,11 @@ export function WorkspaceContent({
   selectedObject: WorkspaceObjectPreview | null;
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
-  documentEvents: Record<string, DocumentEvent[]>;
+  focusedDocumentId: string | null;
+  focusedBlockId: string | null;
+  documentFocusRequestId: number | null;
   onBackendDocumentChange: (document: RoomDocument) => void;
+  onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onOpenRoom: (roomId: string) => void;
   onMobileBack: () => void;
   onCloseObject: () => void;
@@ -58,6 +66,21 @@ export function WorkspaceContent({
   const selectedMeeting = visibleObject?.kind === 'meeting'
     ? room.materials.find((item) => item.id === visibleObject.id && item.type === '会议')
     : null;
+  const hasAvailableResources = createContextRoomResourceLibrary(room, backendDocuments).resources
+    .some((resource) => !('trashed' in resource) || !resource.trashed);
+  const emptySelection = panels.includes('documents')
+    ? hasAvailableResources
+      ? { icon: FileText, title: '选择一份资料', description: '从左侧资源列表中选择要查看的文档。' }
+      : { icon: FileText, title: '还没有文档', description: '新建文档或添加本地 Office 文件后，可在这里查看内容。' }
+    : panels.includes('tasks')
+      ? { icon: CheckSquare2, title: '选择一项任务', description: '从左侧任务列表中选择要查看的任务。' }
+      : panels.includes('schedule')
+        ? { icon: CalendarDays, title: '选择一个日程', description: '从左侧日程列表中选择要查看的会议或任务。' }
+        : panels.includes('relations')
+          ? { icon: Network, title: '选择一个关联 Room', description: '从左侧关系图中选择要查看的 Room。' }
+          : panels.includes('memories')
+            ? { icon: BrainCircuit, title: '选择一条记忆', description: '从左侧图谱中选择要查看的实体或事实。' }
+            : { icon: Mail, title: '选择一封邮件', description: '从左侧邮件列表中选择要查看的邮件。' };
 
   return (
     <section className="context-room-workspace-content">
@@ -95,17 +118,24 @@ export function WorkspaceContent({
           room={room}
           resource={visibleResource}
           backendDocuments={backendDocuments}
-          documentEvents={documentEvents}
+          focusedBlockId={focusedDocumentId === visibleResource.binding.docId ? focusedBlockId : null}
+          documentFocusRequestId={focusedDocumentId === visibleResource.binding.docId
+            ? documentFocusRequestId
+            : null}
           onBackendDocumentChange={onBackendDocumentChange}
+          onDeleteDocument={onDeleteDocument}
         />
       ) : visibleResource?.kind === 'office-file' ? (
         <OfficePreview resource={visibleResource} />
       ) : visibleResource?.kind === 'wiki-page' ? (
         <WikiPageReader resource={visibleResource} />
-      ) : panels.includes('documents') ? (
-        <div className="context-room-workspace-empty">暂无文档</div>
       ) : (
-        <div className="context-room-workspace-empty">从左侧选择一个资源</div>
+        <PanelEmptyState
+          className="context-room-content-empty"
+          icon={emptySelection.icon}
+          title={emptySelection.title}
+          description={emptySelection.description}
+        />
       )}
     </section>
   );

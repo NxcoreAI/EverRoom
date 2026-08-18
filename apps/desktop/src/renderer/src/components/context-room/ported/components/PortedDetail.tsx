@@ -1,6 +1,7 @@
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { consumeDocumentFocusRequest } from '../documentFocus'
 import {
   createContextRoomFileItem,
   createContextRoomResourceLibrary,
@@ -20,8 +21,10 @@ export function PortedDetail({
   room,
   rooms,
   backendDocuments,
-  documentEvents,
+  trashedDocuments,
   focusedDocumentId,
+  focusedBlockId,
+  documentFocusRequestId,
   initialActivePane,
   initialObject,
   onActivePaneChange,
@@ -29,13 +32,19 @@ export function PortedDetail({
   onOpenRoom,
   onUpdateRoom,
   onBackendDocumentChange,
+  onCreateDocument,
   onDeleteDocument,
+  onRestoreDocument,
+  onDeleteDocumentPermanently,
+  onEmptyTrash,
 }: {
   room: ContextRoomRecord
   rooms: ContextRoomRecord[]
   backendDocuments: RoomDocument[]
-  documentEvents: Record<string, DocumentEvent[]>
+  trashedDocuments: RoomDocument[]
   focusedDocumentId: string | null
+  focusedBlockId: string | null
+  documentFocusRequestId: number | null
   initialActivePane: DetailPane
   initialObject?: { kind: 'file' | 'mail' | 'meeting'; id: string } | null
   onActivePaneChange: (pane: DetailPane) => void
@@ -43,7 +52,11 @@ export function PortedDetail({
   onOpenRoom: (roomId: string) => void
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void
   onBackendDocumentChange: (document: RoomDocument) => void
+  onCreateDocument: (roomId: string, title: string, contentJson?: TiptapJsonContent) => Promise<RoomDocument>
   onDeleteDocument: (document: RoomDocument) => Promise<void>
+  onRestoreDocument: (document: RoomDocument) => Promise<void>
+  onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>
+  onEmptyTrash: (roomId: string) => Promise<void>
 }) {
   const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
@@ -52,6 +65,7 @@ export function PortedDetail({
   const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
   const [selectedMailId, setSelectedMailId] = useState<string | null>(null)
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
+  const handledDocumentFocusKey = useRef<string | null>(null)
   const [standaloneObject, setStandaloneObject] = useState<DetailObject | null>(() => {
     if (!initialObject) return null
     if (initialObject.kind === 'file') {
@@ -108,13 +122,46 @@ export function PortedDetail({
     layout.setMobileContent(true)
   }, [layout, room.id])
 
+  const createDocument = useCallback(async (title: string, contentJson?: TiptapJsonContent) => {
+    const document = await onCreateDocument(room.id, title, contentJson)
+    const resource = createContextRoomResourceLibrary(room, [document]).resources.find((candidate) =>
+      candidate.kind === 'cloud-doc' && candidate.binding.docId === document.id)
+    if (resource) openResource(resource)
+  }, [onCreateDocument, openResource, room])
+
+  const addLocalFile = useCallback((file: LocalOfficeFile) => {
+    const item = createContextRoomFileItem(file)
+    onUpdateRoom((current) => {
+      if (current.fileItems.some((candidate) => candidate.hostfsPath === file.path)) return current
+      return {
+        ...current,
+        fileItems: [...current.fileItems, item],
+        stats: { ...current.stats, docs: current.stats.docs + 1 },
+      }
+    })
+    setSelectedResourceId(`${room.id}:file:${item.id}`)
+    setSelectedObject(null)
+    layout.setPanels(['documents'])
+    layout.setPanelWeights([1])
+    layout.setActivePanelIndex(0)
+    layout.setMiddleHidden(false)
+    layout.setMobileContent(true)
+    setActivePane('documents')
+  }, [layout, onUpdateRoom, room.id, setActivePane])
+
   useEffect(() => {
-    if (!focusedDocumentId) return
     const resource = library.resources.find((candidate) =>
       candidate.kind === 'cloud-doc' && candidate.binding.docId === focusedDocumentId)
-    if (!resource || resource.id === selectedResourceId) return
-    openResource(resource)
-  }, [focusedDocumentId, library.resources, openResource, selectedResourceId])
+    const decision = consumeDocumentFocusRequest(
+      handledDocumentFocusKey.current,
+      room.id,
+      focusedDocumentId,
+      Boolean(resource),
+      documentFocusRequestId,
+    )
+    handledDocumentFocusKey.current = decision.handledKey
+    if (decision.shouldOpen && resource && resource.id !== selectedResourceId) openResource(resource)
+  }, [documentFocusRequestId, focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
 
   useEffect(() => {
     if (selectedResourceId
@@ -139,26 +186,6 @@ export function PortedDetail({
     if (!layout.panels.includes(pane)) layout.switchPane(pane)
     layout.setMobileContent(true)
   }, [layout])
-
-  const addLocalFile = useCallback((file: LocalOfficeFile) => {
-    const item = createContextRoomFileItem(file)
-    onUpdateRoom((current) => {
-      if (current.fileItems.some((candidate) => candidate.hostfsPath === file.path)) return current
-      return {
-        ...current,
-        fileItems: [...current.fileItems, item],
-        stats: { ...current.stats, docs: current.stats.docs + 1 },
-      }
-    })
-    setSelectedResourceId(`${room.id}:file:${item.id}`)
-    setSelectedObject(null)
-    layout.setPanels(['documents'])
-    layout.setPanelWeights([1])
-    layout.setActivePanelIndex(0)
-    layout.setMiddleHidden(false)
-    layout.setMobileContent(true)
-    setActivePane('documents')
-  }, [layout, onUpdateRoom, room.id])
 
   const toggleTask = (taskId: string) => onUpdateRoom((current) => ({
     ...current,
@@ -200,9 +227,16 @@ export function PortedDetail({
           selectedObject={selectedObject}
           selectedResource={selectedResource}
           backendDocuments={backendDocuments}
-          documentEvents={documentEvents}
+          trashedDocuments={trashedDocuments}
+          focusedDocumentId={focusedDocumentId}
+          focusedBlockId={focusedBlockId}
+          documentFocusRequestId={documentFocusRequestId}
           onBackendDocumentChange={onBackendDocumentChange}
+          onCreateDocument={createDocument}
           onDeleteDocument={onDeleteDocument}
+          onRestoreDocument={onRestoreDocument}
+          onDeleteDocumentPermanently={onDeleteDocumentPermanently}
+          onEmptyTrash={onEmptyTrash}
           onSelectResource={openResource}
           onOpenWikiPage={openWikiPage}
           onAddFile={addLocalFile}

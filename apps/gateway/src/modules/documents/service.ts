@@ -1,38 +1,50 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
-  AcknowledgeDocumentTransactionInput,
+  AgentActiveDocumentContext,
+  DocumentBlockResolution,
+  DocumentBlockBacklink,
+  DocumentBlockSummary,
   DocumentEvent,
+  DocumentVersionSummary,
   ImportRoomDocumentInput,
+  ResolveDocumentBlockReferencesInput,
   RoomDocument,
   SaveRoomDocumentInput,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
-import { and, asc, eq, lt } from "drizzle-orm";
+import TaskItem from "@tiptap/extension-task-item";
+import TaskList from "@tiptap/extension-task-list";
+import { MarkdownManager } from "@tiptap/markdown";
+import StarterKit from "@tiptap/starter-kit";
+import { and, asc, eq } from "drizzle-orm";
+import { freshenDocumentContent } from "@nxcore/document-model";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
-  documentOps,
-  documentTransactions,
   documentVersions,
   documents,
   roomDocumentLinks,
 } from "../../infrastructure/database/schema.js";
+import {
+  documentBodyContent,
+  findBlockPath,
+  nodeAtPath,
+  tiptapText,
+} from "./content-model.js";
 import { DocumentEventBroker } from "./event-broker.js";
+import { DocumentServiceError } from "./errors.js";
+import {
+  DocumentCommitService,
+  DocumentContentEngine,
+  DocumentLifecycleService,
+  DocumentQueryService,
+  DocumentRepository,
+  type AtomicDocumentCreateInput,
+  type AtomicDocumentCommitInput,
+} from "./core/index.js";
 
-const EMPTY_DOCUMENT: TiptapJsonContent = { type: "doc", content: [] };
-const CHUNK_MAX_BYTES = 64 * 1024;
+export { DocumentServiceError } from "./errors.js";
+
 const TRANSACTION_MAX_BYTES = 2 * 1024 * 1024;
-const TRANSACTION_TTL_MS = 10 * 60 * 1000;
-const RENDERER_ACK_TIMEOUT_MS = 180_000;
-
-export class DocumentServiceError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly statusCode = 400,
-  ) {
-    super(message);
-  }
-}
 
 class DocumentWriteQueue {
   private tail = Promise.resolve();
@@ -44,16 +56,50 @@ class DocumentWriteQueue {
   }
 }
 
-interface PendingAcknowledgement {
-  promise: Promise<TiptapJsonContent>;
-  resolve: (content: TiptapJsonContent) => void;
-  reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
+export interface CommittedAgentDocument {
+  sessionId: string;
+  roomId: string;
+  runId: string;
+  documentId: string;
+  title: string;
+  markdown: string;
 }
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
+export interface PreparedAgentDocumentCommit {
+  commit: AtomicDocumentCommitInput;
+  afterCommit: (document?: RoomDocument) => void;
 }
+
+export type DocumentCommittedHandler = (document: CommittedAgentDocument) => void;
+
+export interface AppliedAgentDocumentRewrite {
+  sessionId: string;
+  roomId: string;
+  runId: string;
+  operationId: string;
+  documentId: string;
+  title: string;
+  instruction: string;
+  originalText: string;
+  replacementText: string;
+}
+
+export type DocumentRewriteAppliedHandler = (patch: AppliedAgentDocumentRewrite) => void;
+export interface DocumentVersionAdvanceCoordination {
+  mutate(tx: GatewayDatabase, now: Date): void;
+  afterCommit?(): void;
+}
+
+export type DocumentVersionCommittedHandler = (
+  documentId: string,
+  currentVersion: number,
+) => DocumentVersionAdvanceCoordination;
+
+export type DocumentAfterCommitErrorHandler = (
+  error: unknown,
+  documentId: string,
+  currentVersion: number,
+) => void;
 
 function assertContentJson(value: unknown): asserts value is TiptapJsonContent {
   if (!value || typeof value !== "object" || (value as { type?: unknown }).type !== "doc") {
@@ -61,97 +107,279 @@ function assertContentJson(value: unknown): asserts value is TiptapJsonContent {
   }
 }
 
-function toDocument(
-  row: typeof documents.$inferSelect,
-  roomId: string,
-): RoomDocument {
+function comparableDocumentTitle(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\p{P}\p{S}\p{Z}\s]+/gu, "");
+}
+
+function stripRedundantLeadingDocumentHeading(
+  source: TiptapJsonContent,
+  title: string,
+): { content: TiptapJsonContent; changed: boolean; removedHeadingLevel: number | null } {
+  const content = structuredClone(documentBodyContent(source));
+  const children = [...(content.content ?? [])];
+  let changed = JSON.stringify(content) !== JSON.stringify(source);
+  let removedHeadingLevel: number | null = null;
+  const firstVisibleIndex = children.findIndex((node) =>
+    tiptapText(node).trim().length > 0 || node.type !== "paragraph");
+  const firstVisible = firstVisibleIndex >= 0 ? children[firstVisibleIndex] : undefined;
+  if (
+    firstVisible?.type === "heading"
+    && comparableDocumentTitle(tiptapText(firstVisible)) === comparableDocumentTitle(title)
+  ) {
+    removedHeadingLevel = typeof firstVisible.attrs?.level === "number"
+      ? firstVisible.attrs.level
+      : null;
+    children.splice(firstVisibleIndex, 1);
+    changed = true;
+  }
+  return { content: { ...content, content: children }, changed, removedHeadingLevel };
+}
+
+function promoteBodyHeadings(
+  source: TiptapJsonContent,
+): { content: TiptapJsonContent; changed: boolean } {
+  const children = [...(source.content ?? [])];
+  const levels = children.flatMap((node) =>
+    node.type === "heading" && typeof node.attrs?.level === "number"
+      ? [node.attrs.level]
+      : []);
+  const shallowest = levels.length ? Math.min(...levels) : 2;
+  const offset = Math.max(0, shallowest - 2);
+  if (!offset) return { content: source, changed: false };
   return {
-    id: row.id,
-    roomId,
-    title: row.title,
-    contentJson: row.contentJson as TiptapJsonContent,
-    version: row.version,
-    status: row.status,
-    activeTransactionId: row.activeTransactionId,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
+    content: {
+      ...source,
+      content: children.map((node) => {
+        const level = node.type === "heading" ? node.attrs?.level : undefined;
+        return typeof level === "number"
+          ? { ...node, attrs: { ...node.attrs, level: Math.max(2, level - offset) } }
+          : node;
+      }),
+    },
+    changed: true,
+  };
+}
+
+function normalizePersistedDocumentBody(
+  source: TiptapJsonContent,
+  title: string,
+): { content: TiptapJsonContent; changed: boolean } {
+  const stripped = stripRedundantLeadingDocumentHeading(source, title);
+  const promoted = promoteBodyHeadings(stripped.content);
+  return {
+    content: promoted.content,
+    changed: stripped.changed || promoted.changed,
+  };
+}
+
+function normalizeAgentDocumentBody(
+  source: TiptapJsonContent,
+  title: string,
+): { content: TiptapJsonContent; changed: boolean } {
+  const stripped = stripRedundantLeadingDocumentHeading(source, title);
+  const promoted = stripped.removedHeadingLevel !== null
+    ? promoteBodyHeadings(stripped.content)
+    : { content: stripped.content, changed: false };
+  const children = [...(promoted.content.content ?? [])];
+  let changed = stripped.changed || promoted.changed;
+  const shiftHeadingHierarchy = children.some((node) =>
+    node.type === "heading" && node.attrs?.level === 1);
+  const normalizedChildren = children.map((node) => {
+    const level = node.type === "heading" ? node.attrs?.level : undefined;
+    if (!shiftHeadingHierarchy || typeof level !== "number") return node;
+    changed = true;
+    return { ...node, attrs: { ...node.attrs, level: Math.min(level + 1, 6) } };
+  });
+  return { content: { ...promoted.content, content: normalizedChildren }, changed };
+}
+
+function normalizeCompleteAgentDocumentBody(
+  source: TiptapJsonContent,
+  title: string,
+): { content: TiptapJsonContent; changed: boolean } {
+  const agentNormalized = normalizeAgentDocumentBody(source, title);
+  const persisted = normalizePersistedDocumentBody(agentNormalized.content, title);
+  return {
+    content: persisted.content,
+    changed: agentNormalized.changed || persisted.changed,
   };
 }
 
 export class DocumentService {
   private readonly queue = new DocumentWriteQueue();
-  private readonly pending = new Map<string, PendingAcknowledgement>();
-  private readonly expiryTimer: NodeJS.Timeout;
+  private readonly markdown = new MarkdownManager({
+    extensions: [StarterKit, TaskList, TaskItem],
+  });
+  private readonly repository: DocumentRepository;
+  private readonly contentEngine: DocumentContentEngine;
+  private readonly commitService: DocumentCommitService;
+  private readonly queryService: DocumentQueryService;
+  private readonly lifecycleService: DocumentLifecycleService;
 
   constructor(
     private readonly db: GatewayDatabase,
     readonly broker: DocumentEventBroker,
+    private readonly onDocumentCommitted?: DocumentCommittedHandler,
+    private readonly onDocumentRewriteApplied?: DocumentRewriteAppliedHandler,
+    private readonly onDocumentVersionCommitted?: DocumentVersionCommittedHandler,
+    private readonly onAfterCommitError?: DocumentAfterCommitErrorHandler,
   ) {
-    this.recoverInterruptedTransactions();
-    this.expiryTimer = setInterval(() => void this.expireTransactions(), 30_000);
-    this.expiryTimer.unref();
+    this.repository = new DocumentRepository(db);
+    this.contentEngine = new DocumentContentEngine({
+      findDocumentRoom: (documentId) => this.repository.get(documentId)?.roomId ?? null,
+    });
+    this.commitService = new DocumentCommitService(db, this.repository, this.contentEngine);
+    this.queryService = new DocumentQueryService(db, this.repository, this.contentEngine);
+    this.lifecycleService = new DocumentLifecycleService(db, this.repository, {
+      trashed: (document) => this.publish(
+        document.roomId,
+        document.id,
+        null,
+        "document.changed",
+        { document },
+      ),
+      restored: (document) => this.publish(
+        document.roomId,
+        document.id,
+        null,
+        "document.changed",
+        { document },
+      ),
+      deleted: (document) => this.publish(
+        document.roomId,
+        document.id,
+        null,
+        "document.deleted",
+        { documentId: document.id },
+      ),
+    });
+    this.normalizeStoredDocuments();
   }
 
-  dispose(): void {
-    clearInterval(this.expiryTimer);
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error("Document service stopped"));
-    }
-    this.pending.clear();
-  }
-
-  list(roomId: string): RoomDocument[] {
-    return this.db.select({ document: documents })
-      .from(roomDocumentLinks)
-      .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
-      .where(eq(roomDocumentLinks.roomId, roomId))
-      .orderBy(asc(roomDocumentLinks.linkedAt))
-      .all()
-      .map(({ document }) => toDocument(document, roomId));
+  list(roomId: string, trashed = false): RoomDocument[] {
+    return this.queryService.list(roomId, trashed);
   }
 
   get(documentId: string): RoomDocument | null {
-    const result = this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
-      .from(documents)
-      .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
-      .where(eq(documents.id, documentId))
-      .get();
-    return result ? toDocument(result.document, result.roomId) : null;
+    return this.queryService.get(documentId);
   }
 
-  replayPending(roomId: string): DocumentEvent[] {
-    const transactions = this.db.select().from(documentTransactions).where(and(
-      eq(documentTransactions.roomId, roomId),
-      eq(documentTransactions.status, "open"),
-    )).all();
-    const events: DocumentEvent[] = [];
-    for (const transaction of transactions) {
-      const operations = this.db.select().from(documentOps).where(eq(
-        documentOps.transactionId,
-        transaction.id,
-      )).orderBy(asc(documentOps.sequence)).all();
-      for (const operation of operations) {
-        if (operation.appliedContentJson) continue;
-        events.push(this.createEvent(
-          transaction.roomId,
-          transaction.documentId,
-          transaction.id,
-          "document.appended",
-          { sequence: operation.sequence, text: operation.markdown },
-        ));
+  listBlocks(documentId: string): DocumentBlockSummary[] {
+    return this.queryService.listBlocks(documentId);
+  }
+
+  listBlockBacklinks(documentId: string, blockId?: string): DocumentBlockBacklink[] {
+    return this.queryService.listBlockBacklinks(documentId, blockId);
+  }
+
+  listVersions(documentId: string): DocumentVersionSummary[] {
+    return this.queryService.listVersions(documentId);
+  }
+
+  restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument> {
+    return this.queue.enqueue(() => {
+      const document = this.get(documentId);
+      if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
+      if (document.activeTransactionId) throw new DocumentServiceError("DOCUMENT_BUSY", "Document is busy", 409);
+      if (document.version !== baseVersion) {
+        throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409);
       }
-      if (this.pending.has(`${transaction.id}:commit`)) {
-        events.push(this.createEvent(
-          transaction.roomId,
-          transaction.documentId,
-          transaction.id,
-          "document.commit-requested",
-          { finalSequence: transaction.nextSequence - 1 },
-        ));
+      const historical = this.db.select().from(documentVersions).where(and(
+        eq(documentVersions.documentId, documentId),
+        eq(documentVersions.version, version),
+      )).get();
+      if (!historical) throw new DocumentServiceError("VERSION_NOT_FOUND", "Document version not found", 404);
+      const nextVersion = document.version + 1;
+      const coordination = this.onDocumentVersionCommitted?.(documentId, nextVersion);
+      const content = normalizePersistedDocumentBody(
+        historical.contentJson as TiptapJsonContent,
+        historical.title,
+      ).content;
+      const restored = this.commitService.commit({
+        documentId,
+        roomId: document.roomId,
+        title: historical.title,
+        content,
+        version: nextVersion,
+        ...(coordination ? { mutate: (tx, _normalized, now) => coordination.mutate(tx, now) } : {}),
+      });
+      this.completeVersionAdvance(coordination, documentId, restored.version);
+      this.publish(restored.roomId, documentId, null, "document.changed", { document: restored });
+      return restored;
+    });
+  }
+
+  resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): DocumentBlockResolution[] {
+    return this.queryService.resolveBlockReferences(input);
+  }
+
+  validateActiveDocumentContext(
+    context: AgentActiveDocumentContext,
+    roomId: string | null,
+  ): AgentActiveDocumentContext {
+    const document = this.get(context.documentId);
+    if (!document) throw new DocumentServiceError("NOT_FOUND", "Active document not found", 404);
+    if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Active document is in trash", 409);
+    if (document.activeTransactionId) throw new DocumentServiceError("DOCUMENT_BUSY", "Active document is busy", 409);
+    if (document.roomId !== context.roomId || (roomId && document.roomId !== roomId)) {
+      throw new DocumentServiceError("ROOM_MISMATCH", "Active document belongs to another Room", 409);
+    }
+    if (document.version !== context.version) {
+      throw new DocumentServiceError("DOCUMENT_CONFLICT", "Active document version has changed", 409, {
+        currentVersion: document.version,
+        currentDocument: document,
+      });
+    }
+    const candidate = context.cursorAnchorCandidate;
+    if (candidate) {
+      const path = findBlockPath(document.contentJson, candidate.blockId);
+      if (!path) throw new DocumentServiceError("BLOCK_NOT_FOUND", "Cursor block was not found", 409);
+      const text = tiptapText(nodeAtPath(document.contentJson, path));
+      const length = text.length;
+      if (!Number.isSafeInteger(candidate.offset) || candidate.offset < 0 || candidate.offset > length) {
+        throw new DocumentServiceError("ANCHOR_INVALID", "Cursor offset is outside the target block", 409);
+      }
+      if (candidate.offset > 0 && candidate.offset < length) {
+        const previous = text.charCodeAt(candidate.offset - 1);
+        const next = text.charCodeAt(candidate.offset);
+        if (previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
+          throw new DocumentServiceError("ANCHOR_INVALID", "Cursor offset splits a Unicode character", 409);
+        }
       }
     }
-    return events;
+    return {
+      ...context,
+      roomId: document.roomId,
+      documentId: document.id,
+      title: document.title,
+      version: document.version,
+      defaultAnchor: "end",
+    };
+  }
+
+  readDocumentForAgent(documentId: string, roomId: string): {
+    document: RoomDocument;
+    blocks: DocumentBlockSummary[];
+    markdown: string;
+  } {
+    const document = this.get(documentId);
+    if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    if (document.roomId !== roomId) {
+      throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
+    }
+    if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
+    const blocks = this.listBlocks(documentId);
+    let markdown: string;
+    try {
+      markdown = this.markdown.serialize(documentBodyContent(document.contentJson));
+    } catch {
+      markdown = blocks.map((block) => `<!-- block:${block.blockId} type:${block.type} -->\n${block.textPreview}`).join("\n\n");
+    }
+    return { document, blocks, markdown };
   }
 
   import(input: ImportRoomDocumentInput): Promise<RoomDocument> {
@@ -164,28 +392,16 @@ export class DocumentService {
         }
         return existing;
       }
-      const now = new Date();
-      this.db.transaction((tx) => {
-        tx.insert(documents).values({
-          id: input.id,
-          title: input.title.trim().slice(0, 120),
-          contentJson: input.contentJson,
-          version: 1,
-          status: "active",
-          createdAt: now,
-          updatedAt: now,
-        }).run();
-        tx.insert(roomDocumentLinks).values({ roomId: input.roomId, documentId: input.id, linkedAt: now }).run();
-        tx.insert(documentVersions).values({
-          id: randomUUID(),
-          documentId: input.id,
-          version: 1,
-          contentJson: input.contentJson,
-          createdAt: now,
-        }).run();
+      const title = input.title.trim().slice(0, 120);
+      const content = normalizePersistedDocumentBody(input.contentJson, title).content;
+      const imported = this.commitService.create({
+        documentId: input.id,
+        roomId: input.roomId,
+        title,
+        content: freshenDocumentContent(content, input.id),
+        version: 1,
       });
-      const imported = this.get(input.id)!;
-      this.publish(input.roomId, input.id, null, "document.updated", { document: imported });
+      this.publish(input.roomId, input.id, null, "document.changed", { document: imported });
       return imported;
     });
   }
@@ -195,378 +411,247 @@ export class DocumentService {
     return this.queue.enqueue(() => {
       const current = this.get(documentId);
       if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+      if (current.deletedAt) {
+        throw new DocumentServiceError("DOCUMENT_TRASHED", "Restore the document before editing it", 409);
+      }
       if (current.activeTransactionId) {
         throw new DocumentServiceError("DOCUMENT_BUSY", "Agent is writing this document", 409);
       }
+      const title = input.title === undefined ? current.title : input.title.trim();
+      if (!title) throw new DocumentServiceError("INVALID_TITLE", "Document title cannot be empty");
+      if (title.length > 120) {
+        throw new DocumentServiceError("INVALID_TITLE", "Document title cannot exceed 120 characters");
+      }
+      const nextVersion = current.version + 1;
+      const content = normalizePersistedDocumentBody(input.contentJson, title).content;
+      const normalized = this.contentEngine.normalizeDocument(content, documentId, current.roomId, nextVersion);
+      const contentChanged = JSON.stringify(current.contentJson) !== JSON.stringify(normalized.content);
+      const titleChanged = current.title !== title;
+      if (!contentChanged && !titleChanged) return current;
       if (current.version !== input.baseVersion) {
         throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409);
       }
-      const nextVersion = current.version + 1;
-      const now = new Date();
-      this.db.transaction((tx) => {
-        tx.update(documents).set({ contentJson: input.contentJson, version: nextVersion, updatedAt: now })
-          .where(eq(documents.id, documentId)).run();
-        tx.insert(documentVersions).values({
-          id: randomUUID(),
-          documentId,
-          version: nextVersion,
-          contentJson: input.contentJson,
-          createdAt: now,
-        }).run();
+      const coordination = this.onDocumentVersionCommitted?.(documentId, nextVersion);
+      const updated = this.commitService.commit({
+        documentId,
+        roomId: current.roomId,
+        title,
+        content: normalized.content,
+        version: nextVersion,
+        ...(coordination ? { mutate: (tx, _normalized, now) => coordination.mutate(tx, now) } : {}),
       });
-      const updated = this.get(documentId)!;
-      this.publish(updated.roomId, documentId, null, "document.updated", { document: updated });
+      this.completeVersionAdvance(coordination, documentId, updated.version);
+      this.publish(updated.roomId, documentId, null, "document.changed", { document: updated });
       return updated;
     });
   }
 
-  delete(documentId: string): Promise<void> {
-    return this.queue.enqueue(() => {
-      const current = this.get(documentId);
-      if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (current.activeTransactionId) {
-        throw new DocumentServiceError("DOCUMENT_BUSY", "Agent is writing this document", 409);
-      }
-      const transactions = this.db.select({ id: documentTransactions.id })
-        .from(documentTransactions)
-        .where(eq(documentTransactions.documentId, documentId))
-        .all();
-      for (const transaction of transactions) {
-        this.rejectTransactionAcknowledgements(
-          transaction.id,
-          new DocumentServiceError("DOCUMENT_DELETED", "Document was deleted", 410),
-        );
-      }
-      this.db.transaction((tx) => {
-        tx.delete(documentTransactions).where(eq(documentTransactions.documentId, documentId)).run();
-        tx.delete(documents).where(eq(documents.id, documentId)).run();
-      });
-      this.publish(current.roomId, documentId, null, "document.deleted", { documentId });
-    });
-  }
-
-  begin(input: {
-    title: string;
-    roomId: string;
-    agentSessionId: string;
-    runId: string;
-  }): Promise<{ transactionId: string; document: RoomDocument; expiresAt: string }> {
-    return this.queue.enqueue(() => {
-      if (!input.roomId) throw new DocumentServiceError("ROOM_REQUIRED", "Open a Context Room first");
-      const transactionId = randomUUID();
-      const documentId = randomUUID();
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + TRANSACTION_TTL_MS);
-      this.db.transaction((tx) => {
-        tx.insert(documents).values({
-          id: documentId,
-          title: input.title.trim().slice(0, 120),
-          contentJson: EMPTY_DOCUMENT,
-          version: 0,
-          status: "draft",
-          activeTransactionId: transactionId,
-          createdAt: now,
-          updatedAt: now,
-        }).run();
-        tx.insert(roomDocumentLinks).values({ roomId: input.roomId, documentId, linkedAt: now }).run();
-        tx.insert(documentTransactions).values({
-          id: transactionId,
-          documentId,
-          roomId: input.roomId,
-          agentSessionId: input.agentSessionId,
-          runId: input.runId,
-          workingContentJson: EMPTY_DOCUMENT,
-          expiresAt,
-          createdAt: now,
-          updatedAt: now,
-        }).run();
-      });
-      const document = this.get(documentId)!;
-      this.publish(input.roomId, documentId, transactionId, "document.opened", { document });
-      return { transactionId, document, expiresAt: expiresAt.toISOString() };
-    });
-  }
-
-  async append(input: {
-    transactionId: string;
-    sessionId: string;
-    sequence: number;
-    text: string;
-  }): Promise<{ duplicate: boolean; totalBytes: number; nextSequence: number }> {
-    const prepared = await this.queue.enqueue(() => this.prepareAppend(input));
-    if (prepared.appliedContent) return prepared.result;
-    const acknowledgement = this.waitForAcknowledgement(`${input.transactionId}:${String(input.sequence)}`);
-    this.publish(
-      prepared.transaction.roomId,
-      prepared.transaction.documentId,
-      input.transactionId,
-      "document.appended",
-      { sequence: input.sequence, text: input.text },
-    );
-    await acknowledgement;
-    return prepared.result;
-  }
-
-  async commit(input: {
-    transactionId: string;
-    sessionId: string;
-    finalSequence: number;
-  }): Promise<RoomDocument> {
-    const transaction = await this.queue.enqueue(() => {
-      const current = this.requireTransaction(input.transactionId, input.sessionId);
-      if (input.finalSequence !== current.nextSequence - 1) {
-        throw new DocumentServiceError("SEQUENCE_GAP", "Final sequence does not match received chunks");
-      }
-      return current;
-    });
-    const acknowledgement = this.waitForAcknowledgement(`${input.transactionId}:commit`);
-    this.publish(transaction.roomId, transaction.documentId, transaction.id, "document.commit-requested", {
-      finalSequence: input.finalSequence,
-    });
-    const finalContent = await acknowledgement;
-    return this.queue.enqueue(() => {
-      const current = this.requireTransaction(input.transactionId, input.sessionId);
-      const now = new Date();
-      this.db.transaction((tx) => {
-        tx.update(documentTransactions).set({
-          status: "committed",
-          workingContentJson: finalContent,
-          updatedAt: now,
-          completedAt: now,
-        }).where(eq(documentTransactions.id, current.id)).run();
-        tx.update(documents).set({
-          contentJson: finalContent,
-          version: 1,
-          status: "active",
-          activeTransactionId: null,
-          updatedAt: now,
-        }).where(eq(documents.id, current.documentId)).run();
-        tx.insert(documentVersions).values({
-          id: randomUUID(),
-          documentId: current.documentId,
-          version: 1,
-          contentJson: finalContent,
-          sourceTransactionId: current.id,
-          createdAt: now,
-        }).run();
-      });
-      const document = this.get(current.documentId)!;
-      this.publish(current.roomId, current.documentId, current.id, "document.committed", { document });
-      return document;
-    });
-  }
-
-  abort(transactionId: string, sessionId: string, reason = "aborted"): Promise<void> {
-    return this.queue.enqueue(() => this.abortInternal(transactionId, sessionId, reason, "aborted"));
-  }
-
-  abortSession(sessionId: string, reason: string): Promise<void> {
-    return this.queue.enqueue(() => {
-      const transactions = this.db.select().from(documentTransactions)
-        .where(and(eq(documentTransactions.agentSessionId, sessionId), eq(documentTransactions.status, "open")))
-        .all();
-      for (const transaction of transactions) this.abortRow(transaction, reason, "aborted");
-    });
-  }
-
-  acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void> {
+  prepareOperationCommit(documentId: string, input: SaveRoomDocumentInput): AtomicDocumentCommitInput {
     assertContentJson(input.contentJson);
-    return this.queue.enqueue(() => {
-      const transaction = this.db.select().from(documentTransactions)
-        .where(eq(documentTransactions.id, transactionId)).get();
-      if (!transaction || transaction.status !== "open") {
-        throw new DocumentServiceError("TRANSACTION_NOT_FOUND", "Open transaction not found", 404);
-      }
-      const now = new Date();
-      if (input.sequence > 0) {
-        const op = this.db.select().from(documentOps).where(and(
-          eq(documentOps.transactionId, transactionId),
-          eq(documentOps.sequence, input.sequence),
-        )).get();
-        if (!op) throw new DocumentServiceError("SEQUENCE_GAP", "Document operation not found", 409);
-        this.db.update(documentOps).set({ appliedContentJson: input.contentJson }).where(eq(documentOps.id, op.id)).run();
-      }
-      this.db.update(documentTransactions).set({ workingContentJson: input.contentJson, updatedAt: now })
-        .where(eq(documentTransactions.id, transactionId)).run();
-      this.db.update(documents).set({ contentJson: input.contentJson, updatedAt: now })
-        .where(eq(documents.id, transaction.documentId)).run();
-      this.resolveAcknowledgement(`${transactionId}:${String(input.sequence)}`, input.contentJson);
-      if (input.sequence === transaction.nextSequence - 1) {
-        this.resolveAcknowledgement(`${transactionId}:commit`, input.contentJson);
-      }
-    });
-  }
-
-  private prepareAppend(input: {
-    transactionId: string;
-    sessionId: string;
-    sequence: number;
-    text: string;
-  }) {
-    const transaction = this.requireTransaction(input.transactionId, input.sessionId);
-    const bytes = Buffer.byteLength(input.text, "utf8");
-    if (bytes > CHUNK_MAX_BYTES) {
-      throw new DocumentServiceError("SIZE_LIMIT", "Document chunk exceeds 64 KiB");
+    const current = this.get(documentId);
+    if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    if (current.deletedAt) {
+      throw new DocumentServiceError("DOCUMENT_TRASHED", "Restore the document before editing it", 409);
     }
-    const hash = sha256(input.text);
-    const existing = this.db.select().from(documentOps).where(and(
-      eq(documentOps.transactionId, input.transactionId),
-      eq(documentOps.sequence, input.sequence),
-    )).get();
-    if (existing) {
-      if (existing.sha256 !== hash || existing.markdown !== input.text) {
-        throw new DocumentServiceError("SEQUENCE_CONFLICT", "Sequence already contains different content", 409);
-      }
-      return {
-        transaction,
-        appliedContent: existing.appliedContentJson as TiptapJsonContent | null,
-        result: {
-          duplicate: true,
-          totalBytes: transaction.totalBytes,
-          nextSequence: transaction.nextSequence,
-        },
-      };
+    if (current.activeTransactionId) {
+      throw new DocumentServiceError("DOCUMENT_BUSY", "Agent is writing this document", 409);
     }
-    if (!Number.isSafeInteger(input.sequence) || input.sequence !== transaction.nextSequence) {
-      throw new DocumentServiceError("SEQUENCE_GAP", "Document chunks must be strictly consecutive", 409);
+    if (current.version !== input.baseVersion) {
+      throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409, {
+        currentVersion: current.version,
+        currentDocument: current,
+      });
     }
-    if (transaction.totalBytes + bytes > TRANSACTION_MAX_BYTES) {
-      throw new DocumentServiceError("SIZE_LIMIT", "Document transaction exceeds 2 MiB");
+    const title = input.title === undefined ? current.title : input.title.trim();
+    if (!title) throw new DocumentServiceError("INVALID_TITLE", "Document title cannot be empty");
+    if (title.length > 120) {
+      throw new DocumentServiceError("INVALID_TITLE", "Document title cannot exceed 120 characters");
     }
-    const now = new Date();
-    const nextSequence = input.sequence + 1;
-    const totalBytes = transaction.totalBytes + bytes;
-    const expiresAt = new Date(now.getTime() + TRANSACTION_TTL_MS);
-    this.db.transaction((tx) => {
-      tx.insert(documentOps).values({
-        id: randomUUID(),
-        transactionId: input.transactionId,
-        sequence: input.sequence,
-        markdown: input.text,
-        sha256: hash,
-        byteLength: bytes,
-        createdAt: now,
-      }).run();
-      tx.update(documentTransactions).set({ nextSequence, totalBytes, expiresAt, updatedAt: now })
-        .where(eq(documentTransactions.id, input.transactionId)).run();
-    });
+    const content = normalizePersistedDocumentBody(input.contentJson, title).content;
     return {
-      transaction: { ...transaction, nextSequence, totalBytes, expiresAt },
-      appliedContent: null,
-      result: { duplicate: false, totalBytes, nextSequence },
+      documentId,
+      roomId: current.roomId,
+      title,
+      content,
+      expectedVersion: current.version,
+      version: current.version + 1,
     };
   }
 
-  private requireTransaction(transactionId: string, sessionId: string) {
-    const transaction = this.db.select().from(documentTransactions)
-      .where(eq(documentTransactions.id, transactionId)).get();
-    if (!transaction || transaction.status !== "open") {
-      throw new DocumentServiceError("TRANSACTION_NOT_FOUND", "Open transaction not found", 404);
+  prepareAgentDocumentDraft(input: {
+    documentId: string;
+    roomId: string;
+    title: string;
+    markdown: string;
+  }): AtomicDocumentCreateInput {
+    const title = input.title.trim();
+    if (!title) throw new DocumentServiceError("INVALID_TITLE", "Document title cannot be empty");
+    if (title.length > 120) {
+      throw new DocumentServiceError("INVALID_TITLE", "Document title cannot exceed 120 characters");
     }
-    if (transaction.agentSessionId !== sessionId) {
-      throw new DocumentServiceError("TRANSACTION_FORBIDDEN", "Transaction belongs to another Agent session", 403);
+    if (Buffer.byteLength(input.markdown, "utf8") > TRANSACTION_MAX_BYTES) {
+      throw new DocumentServiceError("SIZE_LIMIT", "Document operation exceeds 2 MiB");
     }
-    if (transaction.expiresAt.getTime() <= Date.now()) {
-      this.abortRow(transaction, "transaction-expired", "expired");
-      throw new DocumentServiceError("TRANSACTION_EXPIRED", "Document transaction expired", 410);
+    const content = normalizeCompleteAgentDocumentBody(this.parseMarkdown(input.markdown), title).content;
+    return {
+      documentId: input.documentId,
+      roomId: input.roomId,
+      title,
+      content,
+    };
+  }
+
+  normalizeAgentDocumentChunk(title: string, markdown: string): string {
+    if (!markdown) return markdown;
+    const normalized = normalizeAgentDocumentBody(this.parseMarkdown(markdown), title);
+    return normalized.changed ? this.markdown.serialize(normalized.content) : markdown;
+  }
+
+  prepareAgentDocumentFinalize(input: {
+    operationId: string;
+    documentId: string;
+    roomId: string;
+    title: string;
+    markdown: string;
+    sessionId: string;
+    runId: string;
+  }): PreparedAgentDocumentCommit {
+    const draft = this.get(input.documentId);
+    if (!draft
+      || draft.roomId !== input.roomId
+      || draft.status !== "draft"
+      || draft.version !== 0
+      || draft.activeTransactionId !== input.operationId) {
+      throw new DocumentServiceError("DOCUMENT_BUSY", "Document draft is not owned by this operation", 409);
     }
-    return transaction;
+    const normalizedBody = normalizeCompleteAgentDocumentBody(
+      this.parseMarkdown(input.markdown),
+      input.title,
+    ).content;
+    const markdown = this.markdown.serialize(normalizedBody);
+    const prepared = this.prepareAgentDocumentDraft({ ...input, markdown });
+    return {
+      commit: {
+        ...prepared,
+        expectedVersion: 0,
+        version: 1,
+        status: "active",
+        activeTransactionId: null,
+        sourceTransactionId: input.operationId,
+      },
+      afterCommit: (document) => {
+        if (!document) return;
+        this.onDocumentCommitted?.({
+          sessionId: input.sessionId,
+          roomId: input.roomId,
+          runId: input.runId,
+          documentId: input.documentId,
+          title: document.title,
+          markdown,
+        });
+      },
+    };
   }
 
-  private abortInternal(
-    transactionId: string,
-    sessionId: string,
-    reason: string,
-    status: "aborted" | "expired" | "interrupted",
-  ): void {
-    const transaction = this.requireTransaction(transactionId, sessionId);
-    this.abortRow(transaction, reason, status);
+  notifyDocumentRewriteApplied(input: AppliedAgentDocumentRewrite): void {
+    this.onDocumentRewriteApplied?.(input);
   }
 
-  private abortRow(
-    transaction: typeof documentTransactions.$inferSelect,
-    reason: string,
-    status: "aborted" | "expired" | "interrupted",
-  ): void {
-    const now = new Date();
-    this.publish(transaction.roomId, transaction.documentId, transaction.id, "document.aborted", { reason });
-    this.rejectTransactionAcknowledgements(transaction.id, new Error(`Document transaction ${status}`));
-    this.db.transaction((tx) => {
-      tx.update(documentTransactions).set({ status, completedAt: now, updatedAt: now })
-        .where(eq(documentTransactions.id, transaction.id)).run();
-      tx.delete(documents).where(eq(documents.id, transaction.documentId)).run();
-    });
-  }
-
-  private waitForAcknowledgement(key: string): Promise<TiptapJsonContent> {
-    const existing = this.pending.get(key);
-    if (existing) return existing.promise;
-    let resolvePromise!: (content: TiptapJsonContent) => void;
-    let rejectPromise!: (error: Error) => void;
-    const promise = new Promise<TiptapJsonContent>((resolve, reject) => {
-      resolvePromise = resolve;
-      rejectPromise = reject;
-    });
-    const timer = setTimeout(() => {
-      this.pending.delete(key);
-      rejectPromise(new DocumentServiceError("EDITOR_TIMEOUT", "Editor did not acknowledge document content", 504));
-    }, RENDERER_ACK_TIMEOUT_MS);
-    this.pending.set(key, {
-      promise,
-      resolve: resolvePromise,
-      reject: rejectPromise,
-      timer,
-    });
-    return promise;
-  }
-
-  private resolveAcknowledgement(key: string, content: TiptapJsonContent): void {
-    const pending = this.pending.get(key);
-    if (!pending) return;
-    this.pending.delete(key);
-    clearTimeout(pending.timer);
-    pending.resolve(content);
-  }
-
-  private rejectTransactionAcknowledgements(transactionId: string, error: Error): void {
-    for (const [key, pending] of this.pending) {
-      if (!key.startsWith(`${transactionId}:`)) continue;
-      this.pending.delete(key);
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
-  }
-
-  private recoverInterruptedTransactions(): void {
-    const open = this.db.select().from(documentTransactions)
-      .where(eq(documentTransactions.status, "open")).all();
-    for (const transaction of open) this.abortRow(transaction, "gateway-restarted", "interrupted");
-  }
-
-  private expireTransactions(): Promise<void> {
+  delete(documentId: string): Promise<void> {
     return this.queue.enqueue(() => {
-      const expired = this.db.select().from(documentTransactions).where(and(
-        eq(documentTransactions.status, "open"),
-        lt(documentTransactions.expiresAt, new Date()),
-      )).all();
-      for (const transaction of expired) this.abortRow(transaction, "transaction-expired", "expired");
+      this.lifecycleService.trash(documentId);
+    });
+  }
+
+  restore(documentId: string): Promise<RoomDocument> {
+    return this.queue.enqueue(() => {
+      return this.lifecycleService.restore(documentId);
+    });
+  }
+
+  deletePermanently(documentId: string): Promise<void> {
+    return this.queue.enqueue(() => {
+      this.lifecycleService.deletePermanently(documentId);
+    });
+  }
+
+  emptyTrash(roomId: string): Promise<void> {
+    return this.queue.enqueue(() => {
+      this.lifecycleService.emptyTrash(roomId);
+    });
+  }
+
+
+  private parseMarkdown(markdown: string): TiptapJsonContent {
+    return this.markdown.parse(markdown) as TiptapJsonContent;
+  }
+
+  private normalizeStoredDocuments(): void {
+    const rows = this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
+      .from(documents)
+      .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
+      .orderBy(asc(documents.createdAt)).all();
+    this.db.transaction((tx) => {
+      for (const row of rows) {
+        const body = normalizePersistedDocumentBody(
+          row.document.contentJson as TiptapJsonContent,
+          row.document.title,
+        );
+        const normalized = this.contentEngine.normalizeStoredDocument(
+          body.content,
+          row.document.id,
+          row.roomId,
+          row.document.contentSchemaVersion,
+          row.document.version,
+        );
+        if (body.changed || normalized.changed || row.document.contentSchemaVersion !== normalized.schemaVersion) {
+          tx.update(documents).set({
+            contentJson: normalized.content,
+            contentSchemaVersion: normalized.schemaVersion,
+          })
+            .where(eq(documents.id, row.document.id)).run();
+          tx.update(documentVersions).set({
+            title: row.document.title,
+            contentJson: normalized.content,
+            contentSchemaVersion: normalized.schemaVersion,
+          }).where(and(
+            eq(documentVersions.documentId, row.document.id),
+            eq(documentVersions.version, row.document.version),
+          )).run();
+        }
+        this.repository.replaceProjection(tx, row.document.id, normalized);
+      }
     });
   }
 
   private publish(
     roomId: string,
     documentId: string,
-    transactionId: string | null,
+    operationId: string | null,
     type: DocumentEvent["type"],
     payload: unknown,
   ): void {
-    this.broker.publish(this.createEvent(roomId, documentId, transactionId, type, payload));
+    this.broker.publish(this.createEvent(roomId, documentId, operationId, type, payload));
+  }
+
+  private completeVersionAdvance(
+    coordination: DocumentVersionAdvanceCoordination | undefined,
+    documentId: string,
+    currentVersion: number,
+  ): void {
+    try {
+      coordination?.afterCommit?.();
+    } catch (error) {
+      try {
+        this.onAfterCommitError?.(error, documentId, currentVersion);
+      } catch {}
+    }
   }
 
   private createEvent(
     roomId: string,
     documentId: string,
-    transactionId: string | null,
+    operationId: string | null,
     type: DocumentEvent["type"],
     payload: unknown,
   ): DocumentEvent {
@@ -574,7 +659,7 @@ export class DocumentService {
       id: randomUUID(),
       roomId,
       documentId,
-      transactionId,
+      operationId,
       type,
       occurredAt: new Date().toISOString(),
       payload,

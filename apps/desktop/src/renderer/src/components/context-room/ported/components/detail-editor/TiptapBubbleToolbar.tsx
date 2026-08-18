@@ -1,10 +1,31 @@
-import type { Editor } from '@tiptap/react'
+import { useEditorState, type Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { TextSelection } from '@tiptap/pm/state'
-import { ArrowUp, Bold, Code2, Italic, Link2, Sparkles, Strikethrough, Underline, Unlink2, X } from 'lucide-react'
-import { useState } from 'react'
+import {
+  ArrowUp,
+  Bold,
+  Code2,
+  Italic,
+  Link2,
+  Maximize2,
+  Replace,
+  Sparkles,
+  Strikethrough,
+  TextCursorInput,
+  Trash2,
+  Underline,
+  Unlink2,
+  X,
+} from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 
+import { showToast } from '../../../../../state/toast'
 import { EditorIconButton } from './EditorIconButton'
+import { DOCUMENT_IMAGE_ACCEPT, storeDocumentImageFile } from './documentImageAssets'
+import {
+  clearSelectionRewritePromptDecoration,
+  showSelectionRewritePromptDecoration,
+} from './TiptapSelectionRewrite'
 
 function normalizeLink(value: string): string | null {
   const link = value.trim()
@@ -15,19 +36,42 @@ function normalizeLink(value: string): string | null {
 
 export function TiptapBubbleToolbar({
   editor,
-  dragging,
-  selecting,
+  documentId,
   onAskAi,
 }: {
   editor: Editor
-  dragging: boolean
-  selecting: boolean
+  documentId: string
   onAskAi: (instruction: string) => void
 }) {
   const [linkOpen, setLinkOpen] = useState(false)
   const [linkValue, setLinkValue] = useState('')
   const [askAiOpen, setAskAiOpen] = useState(false)
   const [askAiInstruction, setAskAiInstruction] = useState('')
+  const [imageAltOpen, setImageAltOpen] = useState(false)
+  const [imageAltValue, setImageAltValue] = useState('')
+  const askAiFormRef = useRef<HTMLFormElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const imagePositionRef = useRef<number | null>(null)
+  const toolbarState = useEditorState({
+    editor,
+    selector: ({ editor: currentEditor }) => {
+      const selection = currentEditor.state.selection
+
+      return {
+        askAiDisabled: !(selection instanceof TextSelection) ||
+          selection.empty,
+        boldActive: currentEditor.isActive('bold'),
+        codeActive: currentEditor.isActive('code'),
+        italicActive: currentEditor.isActive('italic'),
+        imageActive: currentEditor.isActive('image'),
+        imageHeight: currentEditor.getAttributes('image').height as number | null | undefined,
+        imageWidth: currentEditor.getAttributes('image').width as number | null | undefined,
+        linkActive: currentEditor.isActive('link'),
+        strikeActive: currentEditor.isActive('strike'),
+        underlineActive: currentEditor.isActive('underline'),
+      }
+    },
+  })
 
   const openLink = () => {
     setLinkValue(editor.getAttributes('link').href ?? '')
@@ -41,34 +85,142 @@ export function TiptapBubbleToolbar({
     setLinkOpen(false)
   }
 
+  const closeAskAi = () => {
+    clearSelectionRewritePromptDecoration(editor)
+    setAskAiOpen(false)
+  }
+
+  const updateSelectedImage = (attrs: Record<string, unknown>) => {
+    const position = imagePositionRef.current
+    const chain = editor.chain().focus()
+    if (position !== null) chain.setNodeSelection(position)
+    chain.updateAttributes('image', attrs).run()
+  }
+
+  const replaceImage = async (file: File) => {
+    const documents = window.nxcore?.documents
+    if (!documents) throw new Error('本地图片服务不可用。')
+    const stored = await storeDocumentImageFile(file, documentId, documents.storeImage)
+    updateSelectedImage({
+      src: stored.src,
+      alt: file.name.replace(/\.[^.]+$/, ''),
+      width: null,
+      height: null,
+    })
+  }
+
+  const applyImageAlt = () => {
+    updateSelectedImage({ alt: imageAltValue.trim() || null })
+    setImageAltOpen(false)
+  }
+
   const submitAskAi = () => {
     onAskAi(askAiInstruction)
     setAskAiInstruction('')
     setAskAiOpen(false)
   }
 
-  const selection = editor.state.selection
-  const askAiDisabled = !(selection instanceof TextSelection) ||
-    selection.empty ||
-    !selection.$from.sameParent(selection.$to)
+  useEffect(() => () => {
+    clearSelectionRewritePromptDecoration(editor)
+  }, [editor])
+
+  useEffect(() => {
+    const closeEditorsOnSelectionChange = () => {
+      setLinkOpen(false)
+      setImageAltOpen(false)
+    }
+    editor.on('selectionUpdate', closeEditorsOnSelectionChange)
+    return () => {
+      editor.off('selectionUpdate', closeEditorsOnSelectionChange)
+    }
+  }, [editor])
+
+  useEffect(() => {
+    if (!askAiOpen) return
+    const closeForOutsidePointer = (event: PointerEvent) => {
+      if (askAiFormRef.current?.contains(event.target as globalThis.Node)) return
+      clearSelectionRewritePromptDecoration(editor)
+      setAskAiOpen(false)
+    }
+    document.addEventListener('pointerdown', closeForOutsidePointer)
+    return () => document.removeEventListener('pointerdown', closeForOutsidePointer)
+  }, [askAiOpen, editor])
 
   return (
     <BubbleMenu
       editor={editor}
       className="context-room-tiptap-bubble"
-      updateDelay={0}
-      options={{ placement: 'top', offset: 8 }}
-      shouldShow={({ editor: currentEditor, state }) => (
-        !dragging &&
-        !selecting &&
-        state.selection instanceof TextSelection &&
-        !state.selection.empty &&
-        currentEditor.isEditable &&
-        !currentEditor.isActive('codeBlock')
+      shouldShow={({ editor: currentEditor }) => currentEditor.isActive('image') || (
+        !currentEditor.state.selection.empty && !currentEditor.isActive('table')
       )}
     >
-      {askAiOpen ? (
-        <form className="context-room-tiptap-bubble-ai" onSubmit={(event) => { event.preventDefault(); submitAskAi() }}>
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept={DOCUMENT_IMAGE_ACCEPT}
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.currentTarget.value = ''
+          if (!file) return
+          void replaceImage(file).catch((error: unknown) => {
+            showToast({
+              title: '无法替换图片',
+              message: error instanceof Error ? error.message : '请稍后重试。',
+            })
+          })
+        }}
+      />
+      {toolbarState.imageActive ? imageAltOpen ? (
+        <form className="context-room-tiptap-bubble-link" onSubmit={(event) => { event.preventDefault(); applyImageAlt() }}>
+          <input
+            autoFocus
+            aria-label="图片替代文本"
+            placeholder="替代文本"
+            value={imageAltValue}
+            onChange={(event) => setImageAltValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setImageAltOpen(false)
+              }
+            }}
+          />
+          <button type="submit">应用</button>
+        </form>
+      ) : (
+        <>
+          <EditorIconButton
+            label="替换图片"
+            onClick={() => {
+              imagePositionRef.current = editor.state.selection.from
+              imageInputRef.current?.click()
+            }}
+          ><Replace /></EditorIconButton>
+          <EditorIconButton
+            label="替代文本"
+            onClick={() => {
+              imagePositionRef.current = editor.state.selection.from
+              setImageAltValue(String(editor.getAttributes('image').alt ?? ''))
+              setImageAltOpen(true)
+            }}
+          ><TextCursorInput /></EditorIconButton>
+          <EditorIconButton
+            label="恢复原始尺寸"
+            disabled={toolbarState.imageWidth == null && toolbarState.imageHeight == null}
+            onClick={() => {
+              imagePositionRef.current = editor.state.selection.from
+              updateSelectedImage({ width: null, height: null })
+            }}
+          ><Maximize2 /></EditorIconButton>
+          <span className="context-room-tiptap-bubble-divider" />
+          <EditorIconButton
+            label="删除图片"
+            onClick={() => editor.chain().focus().deleteSelection().run()}
+          ><Trash2 /></EditorIconButton>
+        </>
+      ) : askAiOpen ? (
+        <form ref={askAiFormRef} className="context-room-tiptap-bubble-ai" onSubmit={(event) => { event.preventDefault(); submitAskAi() }}>
           <Sparkles aria-hidden="true" />
           <input
             autoFocus
@@ -79,12 +231,12 @@ export function TiptapBubbleToolbar({
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
                 event.preventDefault()
-                setAskAiOpen(false)
+                closeAskAi()
               }
             }}
           />
           <button type="submit" aria-label="开始重写" title="开始重写"><ArrowUp /></button>
-          <button type="button" aria-label="关闭" title="关闭" onClick={() => setAskAiOpen(false)}><X /></button>
+          <button type="button" aria-label="关闭" title="关闭" onClick={closeAskAi}><X /></button>
         </form>
       ) : linkOpen ? (
         <form className="context-room-tiptap-bubble-link" onSubmit={(event) => { event.preventDefault(); applyLink() }}>
@@ -96,17 +248,17 @@ export function TiptapBubbleToolbar({
             onChange={(event) => setLinkValue(event.target.value)}
           />
           <button type="submit">应用</button>
-        </form>
+          </form>
       ) : (
         <>
-          <EditorIconButton label="粗体" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></EditorIconButton>
-          <EditorIconButton label="斜体" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></EditorIconButton>
-          <EditorIconButton label="下划线" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline /></EditorIconButton>
-          <EditorIconButton label="删除线" active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></EditorIconButton>
-          <EditorIconButton label="行内代码" active={editor.isActive('code')} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 /></EditorIconButton>
+          <EditorIconButton label="粗体" active={toolbarState.boldActive} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></EditorIconButton>
+          <EditorIconButton label="斜体" active={toolbarState.italicActive} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></EditorIconButton>
+          <EditorIconButton label="下划线" active={toolbarState.underlineActive} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline /></EditorIconButton>
+          <EditorIconButton label="删除线" active={toolbarState.strikeActive} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></EditorIconButton>
+          <EditorIconButton label="行内代码" active={toolbarState.codeActive} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 /></EditorIconButton>
           <span className="context-room-tiptap-bubble-divider" />
-          <EditorIconButton label="添加链接" active={editor.isActive('link')} onClick={openLink}><Link2 /></EditorIconButton>
-          {editor.isActive('link') ? (
+          <EditorIconButton label="添加链接" active={toolbarState.linkActive} onClick={openLink}><Link2 /></EditorIconButton>
+          {toolbarState.linkActive ? (
             <EditorIconButton label="移除链接" onClick={() => editor.chain().focus().unsetLink().run()}><Unlink2 /></EditorIconButton>
           ) : null}
           <span className="context-room-tiptap-bubble-divider" />
@@ -114,10 +266,11 @@ export function TiptapBubbleToolbar({
             type="button"
             className="context-room-tiptap-ask-ai"
             aria-label="Ask AI"
-            title={askAiDisabled ? '请选择单个段落中的文字' : 'Ask AI'}
-            disabled={askAiDisabled}
+            title={toolbarState.askAiDisabled ? '请选择文本' : 'Ask AI'}
+            disabled={toolbarState.askAiDisabled}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
+              if (!showSelectionRewritePromptDecoration(editor)) return
               setLinkOpen(false)
               setAskAiOpen(true)
             }}

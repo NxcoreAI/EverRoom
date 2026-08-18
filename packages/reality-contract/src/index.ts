@@ -42,7 +42,34 @@ export interface RealityMarker {
   createdAt: string;
 }
 
-export type RealityEventType = "MEETING" | "MEAL" | "WORK" | "REST" | "EXERCISE" | "OTHER";
+export type RealityEventType =
+  | "MEETING"
+  | "WORK"
+  | "MEAL"
+  | "SOCIAL"
+  | "LEARNING"
+  | "CHITCHAT"
+  | "REST"
+  | "EXERCISE"
+  | "OTHER";
+
+export type RealityTagKind = "entity" | "fact";
+export type RealityEntityType = "person" | "organization" | "project" | "product" | "place" | "other";
+
+export interface RealityTag {
+  /** SaaS 规范标签 ID；旧记录或尚未同步的本地结果可以没有。 */
+  id?: string;
+  kind: RealityTagKind;
+  label: string;
+  normalizedKey?: string;
+  entityType?: RealityEntityType;
+  subject?: string;
+  predicate?: string;
+  object?: string;
+  confidence?: number;
+  evidence?: string;
+  occurrenceCount?: number;
+}
 
 export interface RealityInsights {
   source?: "mock" | "generated";
@@ -55,6 +82,9 @@ export interface RealityInsights {
   people: string[];
   projects: string[];
   unresolvedQuestions: string[];
+  representativeTags?: RealityTag[];
+  /** 供 Electron 将标签编辑回写到对应的 SaaS 总结记录。 */
+  summaryRecordId?: string;
 }
 
 export interface RealityEvent {
@@ -99,6 +129,25 @@ export interface FinishRealityCaptureInput {
   durationMs: number;
   audioFileName: string;
   endedAt?: string;
+}
+
+export interface ImportRealityEventInput {
+  id: string;
+  title: string;
+  captureDevice: RealityCaptureDevice;
+  audioSource: RealityAudioSource;
+  durationMs: number;
+  transcript: string;
+  transcriptSegments: Array<{
+    text: string;
+    beginTime: number;
+    endTime: number;
+    speakerId: number | null;
+  }>;
+  insights?: RealityInsights;
+  resultVersion: number;
+  startedAt: string;
+  endedAt: string;
 }
 
 export interface ApplyRealityAsrInput {

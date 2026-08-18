@@ -11,6 +11,7 @@ import type {
   MemoryDocumentDetailDto,
   MemoryDocumentDto,
   MemoryImportMarkdownResultDto,
+  MemoryDocumentRewriteInput,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
@@ -117,6 +118,13 @@ export class MemoryGatewayBridge {
     filename?: string
   }): Promise<MemoryImportMarkdownResultDto> {
     return this.request('/v1/memory/import/markdown', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
+  captureDocumentRewrite(input: MemoryDocumentRewriteInput): Promise<{ captured: boolean }> {
+    return this.request('/v1/memory/document-rewrite', {
       method: 'POST',
       body: JSON.stringify(input),
     })

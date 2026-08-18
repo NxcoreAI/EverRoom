@@ -21,7 +21,6 @@ const LogLevelSchema = Type.Union([
 const AgentRuntimeSchema = Type.Union([
   Type.Literal("fake"),
   Type.Literal("pi"),
-  Type.Literal("remote-http"),
 ]);
 const AsrProviderSchema = Type.Union([Type.Literal("disabled"), Type.Literal("aliyun")]);
 const AiApiSchema = Type.Union([
@@ -48,15 +47,14 @@ const RawConfigSchema = Type.Object(
     logLevel: LogLevelSchema,
     authToken: Type.String({ minLength: 16 }),
     agentRuntime: AgentRuntimeSchema,
-    remoteAgentBaseUrl: Type.String({ minLength: 1 }),
-    remoteAgentToken: Type.String(),
-    remoteAgentMcpWebSocketUrl: Type.String(),
     aiProvider: Type.String(),
     aiModel: Type.String(),
+    aiBackgroundModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
     aiApi: AiApiSchema,
     aiMaxTokens: Type.Integer({ minimum: 1 }),
+    aiBackgroundMaxTokens: Type.Integer({ minimum: 1 }),
     aiContextWindow: Type.Integer({ minimum: 1 }),
     aiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
     aiReasoning: AiReasoningSchema,
@@ -180,13 +178,10 @@ export interface GatewayConfig {
   logLevel: LogLevel;
   authToken: string;
   agentRuntime: AgentRuntimeMode;
-  remoteAgent: {
-    baseUrl: string;
-    token: string | null;
-    mcpWebSocketUrl: string | null;
-  } | null;
+  memory: MemoryRuntimeConfig | null;
   pi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
+  backgroundPi: PiRuntimeConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
 }
@@ -336,25 +331,24 @@ export function loadConfig(
   });
 
   const dataDir = resolve(values["data-dir"] ?? env.NXCORE_GATEWAY_DATA_DIR ?? defaultDataDir());
-  const remoteAgentBaseUrl = env.NXCORE_REMOTE_AGENT_BASE_URL?.trim()
-    ?? "http://192.168.1.27:8280/ai/api";
   const rawConfig = {
     host: values.host ?? env.NXCORE_GATEWAY_HOST ?? "127.0.0.1",
     port: parsePort(values.port ?? env.NXCORE_GATEWAY_PORT ?? "0"),
     dataDir,
     logLevel: values["log-level"] ?? env.NXCORE_GATEWAY_LOG_LEVEL ?? "info",
     authToken: values.token ?? env.NXCORE_GATEWAY_TOKEN ?? randomBytes(32).toString("base64url"),
-    agentRuntime: env.NXCORE_AGENT_RUNTIME ?? "remote-http",
-    remoteAgentBaseUrl,
-    remoteAgentToken: env.NXCORE_REMOTE_AGENT_TOKEN?.trim() ?? "",
-    remoteAgentMcpWebSocketUrl: env.NXCORE_REMOTE_AGENT_MCP_WS_URL?.trim()
-      ?? inferMcpWebSocketUrl(remoteAgentBaseUrl),
+    agentRuntime: env.NXCORE_AGENT_RUNTIME ?? "fake",
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
+    aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
     aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "8192"),
+    aiBackgroundMaxTokens: parsePositiveInteger(
+      "NXCORE_AI_BACKGROUND_MAX_TOKENS",
+      env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "4096",
+    ),
     aiContextWindow: parsePositiveInteger(
       "NXCORE_AI_CONTEXT_WINDOW",
       env.NXCORE_AI_CONTEXT_WINDOW ?? "128000",
@@ -450,21 +444,6 @@ export function loadConfig(
       throw new Error(`Pi runtime requires: ${missing.join(", ")}`);
     }
     validateAiEndpoint(rawConfig.aiBaseUrl);
-  }
-
-  if (rawConfig.agentRuntime === "remote-http") {
-    validateAiEndpoint(rawConfig.remoteAgentBaseUrl);
-    if (rawConfig.remoteAgentMcpWebSocketUrl) {
-      let mcpUrl: URL;
-      try {
-        mcpUrl = new URL(rawConfig.remoteAgentMcpWebSocketUrl);
-      } catch {
-        throw new Error("Invalid NXCORE_REMOTE_AGENT_MCP_WS_URL: expected an absolute WS(S) URL");
-      }
-      if (mcpUrl.protocol !== "ws:" && mcpUrl.protocol !== "wss:") {
-        throw new Error("Invalid NXCORE_REMOTE_AGENT_MCP_WS_URL: expected an absolute WS(S) URL");
-      }
-    }
   }
 
   if (rawConfig.asrProvider === "aliyun") {
@@ -564,6 +543,25 @@ export function loadConfig(
     // 自动晋升依赖抽取产出的证据，没有 LLM 同样不会发生——不构成错误。
   }
 
+  const pi: PiRuntimeConfig | null = rawConfig.agentRuntime === "pi"
+    ? {
+        provider: rawConfig.aiProvider,
+        model: rawConfig.aiModel,
+        baseUrl: rawConfig.aiBaseUrl,
+        apiKey: rawConfig.aiApiKey,
+        api: rawConfig.aiApi,
+        maxTokens: rawConfig.aiMaxTokens,
+        contextWindow: rawConfig.aiContextWindow,
+        temperature: rawConfig.aiTemperature,
+        reasoning: rawConfig.aiReasoning,
+        sessionsDir: join(dataDir, "agent", "pi-sessions"),
+        workingDirectory: join(dataDir, "agent", "workspace"),
+        agentDirectory: join(dataDir, "agent", "pi-config"),
+        ...(memory ? { memory } : {}),
+        ...(knowledge ? { knowledge } : {}),
+      }
+    : null;
+
   return {
     host: rawConfig.host,
     port: rawConfig.port,
@@ -571,13 +569,7 @@ export function loadConfig(
     logLevel: rawConfig.logLevel,
     authToken: rawConfig.authToken,
     agentRuntime: rawConfig.agentRuntime,
-    remoteAgent: rawConfig.agentRuntime === "remote-http"
-      ? {
-          baseUrl: rawConfig.remoteAgentBaseUrl,
-          token: rawConfig.remoteAgentToken || null,
-          mcpWebSocketUrl: rawConfig.remoteAgentMcpWebSocketUrl || null,
-        }
-      : null,
+    memory,
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
@@ -603,22 +595,12 @@ export function loadConfig(
             : null,
         }
       : null,
-    pi: rawConfig.agentRuntime === "pi"
+    pi,
+    backgroundPi: pi
       ? {
-          provider: rawConfig.aiProvider,
-          model: rawConfig.aiModel,
-          baseUrl: rawConfig.aiBaseUrl,
-          apiKey: rawConfig.aiApiKey,
-          api: rawConfig.aiApi,
-          maxTokens: rawConfig.aiMaxTokens,
-          contextWindow: rawConfig.aiContextWindow,
-          temperature: rawConfig.aiTemperature,
-          reasoning: rawConfig.aiReasoning,
-          sessionsDir: join(dataDir, "agent", "pi-sessions"),
-          workingDirectory: join(dataDir, "agent", "workspace"),
-          agentDirectory: join(dataDir, "agent", "pi-config"),
-          ...(memory ? { memory } : {}),
-          ...(knowledge ? { knowledge } : {}),
+          ...pi,
+          model: rawConfig.aiBackgroundModel,
+          maxTokens: rawConfig.aiBackgroundMaxTokens,
         }
       : null,
     knowledge: knowledgeGateway,

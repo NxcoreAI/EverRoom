@@ -10,7 +10,6 @@ export interface CloudDocBinding {
 
 export type ContextRoomKind = '人物' | '项目' | '主题' | '长期目标' | '议题' | '事件';
 export type ContextRoomTone = 'sky' | 'emerald' | 'amber' | 'rose' | 'zinc';
-export type ContextRoomRecommendationStatus = 'later' | 'ignored' | 'created';
 export type ViewState =
   | { name: 'home' }
   | {
@@ -138,26 +137,6 @@ export interface ContextRoomFileItem {
   mimeType?: string;
 }
 
-export interface ContextRoomRecommendationSource {
-  type: '邮件' | '会议' | '文件';
-  name: string;
-  roomId?: string;
-  objectId?: string;
-}
-
-export interface ContextRoomRecommendation {
-  id: string;
-  name: string;
-  kind: '议题' | '事件';
-  reason: string;
-  dataCount: number;
-  triggered: string;
-  confidence: string;
-  anchorEntity?: { name: string; type: string; description: string };
-  factCount?: number;
-  sources: ContextRoomRecommendationSource[];
-}
-
 export interface ContextRoomResourceFolder {
   id: string;
   roomId: string;
@@ -178,6 +157,7 @@ export interface ContextRoomCloudDocResource extends ContextRoomResourceBase {
   binding: CloudDocBinding;
   version: string;
   saveState: string;
+  trashed?: boolean;
 }
 
 export type ContextRoomOfficeFormat =

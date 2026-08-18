@@ -574,8 +574,7 @@ export class KnowledgeService {
   handleDocumentEvent(event: DocumentEvent): void {
     if (!this.config.roomWikisEnabled) return;
     switch (event.type) {
-      case "document.committed":
-      case "document.updated": {
+      case "document.changed": {
         const document = (event.payload as { document?: RoomDocument }).document;
         if (document && document.version > 0) this.scheduleIngest(document);
         break;
@@ -645,6 +644,7 @@ export class KnowledgeService {
       roomId: roomId ?? "",
       title: row.title,
       contentJson: row.contentJson as RoomDocument["contentJson"],
+      contentSchemaVersion: row.contentSchemaVersion,
       version: row.version,
       status: row.status,
       activeTransactionId: row.activeTransactionId,

@@ -6,85 +6,96 @@ import {
   type JSONRPCMessage,
   type RequestId,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createBuiltinDocumentCapabilityRegistry } from "./capabilities/builtins.js";
+import { DocumentCapabilityRegistry } from "./capabilities/registry.js";
+import {
+  record,
+  type DocumentExecutionContext,
+  type DocumentRoomRegistry,
+  type DocumentToolDefinition,
+  type DocumentToolResult,
+} from "./capabilities/types.js";
 import type { DocumentService } from "./service.js";
+import type { DocumentOperationService } from "./operations/service.js";
+import { DocumentServiceError } from "./errors.js";
+import {
+  resolveTrustedMcpSession,
+  revokeTrustedMcpSession,
+} from "../agent/mcp-session-authority.js";
 
-export interface DocumentMcpContext {
-  agentSessionId: string;
+export type DocumentMcpContext = DocumentExecutionContext;
+export type { DocumentRoomRegistry } from "./capabilities/types.js";
+export type DocumentMcpToolDefinition = DocumentToolDefinition;
+export type DocumentMcpToolResult = DocumentToolResult;
+
+export interface DocumentToolDiagnostic {
+  level: "debug" | "info" | "warn";
+  event: "document.tool.completed" | "document.tool.failed";
+  toolName: string;
+  sessionId: string;
   runId: string;
   roomId: string | null;
+  durationMs: number;
+  /** Number of attempts for the same run/tool/operation/sequence tuple. */
+  attempt?: number;
+  /** True when this successful call follows a failed attempt. */
+  recovered?: boolean;
+  recoveredFromErrorCode?: string;
+  input: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  error?: Record<string, unknown>;
 }
 
-export const DOCUMENT_MCP_TOOL_DEFINITIONS = [
-  {
-    name: "context_room_write_begin",
-    title: "开始创建 Room 文档",
-    description: "在当前 Agent 会话绑定的 Context Room 中创建文档并开始事务。成功后从 sequence=1 调用 write_append，最后调用 write_commit。",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        mode: { type: "string", enum: ["create"] },
-        title: { type: "string", minLength: 1, maxLength: 120 },
-        format: { type: "string", enum: ["markdown"] },
-      },
-      required: ["mode", "title", "format"],
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  },
-  {
-    name: "context_room_write_append",
-    title: "流式追加 Room 文档正文",
-    description: "按严格连续的 sequence 向文档事务追加 Markdown，正文完成后必须调用 write_commit。",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        transactionId: { type: "string" },
-        sequence: { type: "integer", minimum: 1 },
-        text: { type: "string" },
-      },
-      required: ["transactionId", "sequence", "text"],
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  },
-  {
-    name: "context_room_write_commit",
-    title: "提交 Room 文档",
-    description: "提交完整正文并生成不可变版本。finalSequence 必须等于最后一个已接收序号。",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        transactionId: { type: "string" },
-        finalSequence: { type: "integer", minimum: 0 },
-      },
-      required: ["transactionId", "finalSequence"],
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  },
-  {
-    name: "context_room_write_abort",
-    title: "中止 Room 文档事务",
-    description: "中止事务并回滚本事务创建的文档。",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        transactionId: { type: "string" },
-        reason: { type: "string", maxLength: 1000 },
-      },
-      required: ["transactionId"],
-    },
-    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-  },
+export interface AgentCompletedMessageResolution {
+  content: string;
+  reason: string;
+  operationId: string;
+  operationStatus: string;
+  itemCount: number;
+}
+
+const DIAGNOSTIC_FIELDS = [
+  "documentId", "operationId", "patchId", "baseVersion", "sequence",
+  "finalSequence", "acceptedSequence", "kind", "operation", "state", "applied",
+  "documentChanged", "documentVersion", "nextAction", "target", "code", "statusCode",
+  "currentVersion", "retryable", "invalidBlockIds", "expectedSequence", "message",
+  "rejectedMarkdownBytes", "doNotRepeatPreviousArguments", "fragmentReduced",
+  "readReceiptResolved", "operationIdCorrected", "blockCount",
+  "operationInferred", "finalSequenceCorrected", "adjacentContextStripped",
+  "requiredMaximumCharacters", "expectedFinalSequence", "beforeCharacters", "afterCharacters",
+  "originalCode", "repeatedAttempts",
 ] as const;
 
-export type DocumentMcpToolDefinition = (typeof DOCUMENT_MCP_TOOL_DEFINITIONS)[number];
+const NON_PROGRESS_PATCH_ERRORS = new Set([
+  "EDIT_EMPTY_REPLACEMENT",
+  "EDIT_NO_CHANGE",
+  "EDIT_NOT_SHORTER",
+  "EDIT_REPEATS_DOCUMENT",
+  "CONTINUATION_REPEATS_DOCUMENT",
+]);
 
-export type DocumentMcpToolResult = Record<string, unknown> & {
-  content: Array<{ type: "text"; text: string }>;
-  structuredContent: Record<string, unknown>;
-};
+function diagnosticPayload(value: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const field of DIAGNOSTIC_FIELDS) {
+    if (value[field] !== undefined) result[field] = value[field];
+  }
+  if (typeof value.markdown === "string") result.markdownBytes = Buffer.byteLength(value.markdown, "utf8");
+  if (typeof value.text === "string") result.textBytes = Buffer.byteLength(value.text, "utf8");
+  return result;
+}
+
+export function documentToolErrorPayload(error: unknown): Record<string, unknown> {
+  if (error instanceof DocumentServiceError) {
+    return {
+      code: error.code,
+      message: error.message,
+      statusCode: error.statusCode,
+      ...(error.details ?? {}),
+    };
+  }
+  const message = error instanceof Error ? error.message : "Document tool failed";
+  return { code: message.split(":", 1)[0], message };
+}
 
 function requestId(message: JSONRPCMessage): RequestId | undefined {
   return "id" in message ? message.id : undefined;
@@ -92,33 +103,6 @@ function requestId(message: JSONRPCMessage): RequestId | undefined {
 
 function keyFor(id: RequestId): string {
   return `${typeof id}:${String(id)}`;
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function stringArg(args: Record<string, unknown>, name: string, allowEmpty = false): string {
-  const value = args[name];
-  if (typeof value !== "string" || (!allowEmpty && !value.trim())) {
-    throw new Error(`INVALID_REQUEST: ${name} is required`);
-  }
-  return value;
-}
-
-function integerArg(args: Record<string, unknown>, name: string): number {
-  const value = args[name];
-  if (!Number.isSafeInteger(value) || Number(value) < 0) {
-    throw new Error(`INVALID_REQUEST: ${name} must be a non-negative integer`);
-  }
-  return Number(value);
-}
-
-function success(value: unknown) {
-  const structuredContent = record(value);
-  return { content: [{ type: "text" as const, text: JSON.stringify(value) }], structuredContent };
 }
 
 class ExchangeTransport implements Transport {
@@ -163,16 +147,35 @@ class ExchangeTransport implements Transport {
 interface HostSession {
   server: Server;
   transport: ExchangeTransport;
-  context: DocumentMcpContext;
+  readonly context: DocumentMcpContext;
 }
 
 export class DocumentMcpHost {
   private readonly sessions = new Map<string, Promise<HostSession>>();
+  private readonly toolAttempts = new Map<string, {
+    attempt: number;
+    lastFailureCode?: string;
+    lastInputSignature?: string;
+    identicalFailureCount: number;
+  }>();
+  readonly capabilities: DocumentCapabilityRegistry;
 
-  constructor(private readonly documents: DocumentService) {}
+  constructor(
+    documents: DocumentService,
+    rooms?: DocumentRoomRegistry,
+    capabilities?: DocumentCapabilityRegistry,
+    private readonly operations?: DocumentOperationService,
+    private readonly onDiagnostic?: (diagnostic: DocumentToolDiagnostic) => void,
+  ) {
+    this.capabilities = capabilities ?? createBuiltinDocumentCapabilityRegistry(documents, rooms, operations);
+  }
 
   listTools(): readonly DocumentMcpToolDefinition[] {
-    return DOCUMENT_MCP_TOOL_DEFINITIONS;
+    return this.capabilities.listTools();
+  }
+
+  instructions(): string {
+    return this.capabilities.promptGuidelines().join(" ");
   }
 
   async exchange(
@@ -193,17 +196,127 @@ export class DocumentMcpHost {
       throw new Error("MCP session must start with initialize");
     }
     const current = await session;
-    current.context = context;
+    this.assertSameContext(current.context, context);
     return await current.transport.exchange(message as JSONRPCMessage) as Record<string, unknown>[];
   }
 
-  abortAgentSession(sessionId: string, reason: string): Promise<void> {
-    return this.documents.abortSession(sessionId, reason);
+  async exchangeTrusted(
+    sessionId: string,
+    message: Record<string, unknown>,
+  ): Promise<Record<string, unknown>[]> {
+    const context = resolveTrustedMcpSession(sessionId);
+    if (!context) throw new Error("MCP_SESSION_INVALID: Trusted MCP session is missing or expired");
+    return this.exchange(sessionId, message, context);
+  }
+
+  async closeTrustedSession(sessionId: string): Promise<void> {
+    revokeTrustedMcpSession(sessionId);
+    const session = this.sessions.get(sessionId);
+    this.sessions.delete(sessionId);
+    if (session) await (await session).server.close().catch(() => undefined);
+  }
+
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    context: DocumentMcpContext,
+  ): Promise<DocumentMcpToolResult> {
+    return this.executeTool(name, args, context);
+  }
+
+  async abortAgentSession(sessionId: string, reason: string, runId?: string): Promise<void> {
+    this.operations?.cancelActiveForSession(sessionId, reason, runId);
+  }
+
+  async finishAgentRun(
+    sessionId: string,
+    outcome: "completed" | "failed" | "cancelled",
+    runId?: string,
+  ): Promise<void> {
+    const reason = `pi-agent-run-${outcome}`;
+    if (outcome === "completed") {
+      this.operations?.cancelIncompleteForSession(sessionId, reason, runId);
+      this.clearToolAttempts(runId);
+      return;
+    }
+    this.operations?.cancelActiveForSession(sessionId, reason, runId);
+    this.clearToolAttempts(runId);
+  }
+
+  resolveCompletedMessage(input: {
+    sessionId: string;
+    runId: string;
+    content: string;
+  }): AgentCompletedMessageResolution | null {
+    const operation = this.operations?.list({ sessionId: input.sessionId, runId: input.runId })[0];
+    if (!operation) return null;
+    const detail = this.operations?.get(operation.id);
+    const itemCount = detail?.items.length ?? 0;
+    const appliedItemCount = detail?.items.filter((item) =>
+      item.status === "applied" || item.appliedVersion !== null).length ?? 0;
+    const title = operation.documentTitle ? `《${operation.documentTitle}》` : "该文档";
+
+    if (operation.status === "awaiting_review") {
+      return {
+        content: appliedItemCount > 0
+          ? `${title}已有 ${appliedItemCount} 项修改写入，剩余建议仍需在文档中审阅。`
+          : `已为${title}准备好修改建议，正文尚未更改。请在文档中审阅并接受后应用。`,
+        reason: "document-operation-awaiting-review",
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    if (operation.status === "applying") {
+      return {
+        content: `${title}的修改建议正在应用，请稍后查看文档中的最终结果。`,
+        reason: "document-operation-applying",
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    if (operation.status === "completed") {
+      const action = operation.capabilityId === "document.create"
+        ? "创建"
+        : operation.capabilityId === "document.continue" ? "续写" : "修改";
+      return {
+        content: `${title}已完成${action}。`,
+        reason: "document-operation-completed",
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    if (operation.status === "conflicted") {
+      return {
+        content: `${title}的版本已发生变化，本次修改建议未应用。请基于最新内容重试。`,
+        reason: "document-operation-conflicted",
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    if (["cancelled", "failed", "expired", "rejected"].includes(operation.status)) {
+      return {
+        content: appliedItemCount > 0
+          ? `${title}已有 ${appliedItemCount} 项修改写入，但本次操作随后中止。请检查文档后再继续。`
+          : itemCount === 0
+            ? `未能为${title}生成有效的修改建议，文档未发生变化。请给出更具体的修改要求后重试。`
+            : `本次对${title}的修改建议已中止，文档未发生变化。`,
+        reason: `document-operation-${operation.status}`,
+        operationId: operation.id,
+        operationStatus: operation.status,
+        itemCount,
+      };
+    }
+    return null;
   }
 
   async close(): Promise<void> {
     const sessions = await Promise.allSettled(this.sessions.values());
     this.sessions.clear();
+    this.toolAttempts.clear();
     await Promise.all(sessions.flatMap((result) => result.status === "fulfilled"
       ? [result.value.server.close().catch(() => undefined)]
       : []));
@@ -211,24 +324,29 @@ export class DocumentMcpHost {
 
   private async createSession(context: DocumentMcpContext): Promise<HostSession> {
     const transport = new ExchangeTransport();
-    const holder: HostSession = { server: null as unknown as Server, transport, context };
+    const holder: HostSession = {
+      server: null as unknown as Server,
+      transport,
+      context: structuredClone(context),
+    };
     const server = new Server(
-      { name: "everroom-context-room", version: "1.0.0" },
-      {
-        capabilities: { tools: {} },
-        instructions: "Document tools create Markdown documents only in the Context Room bound to this Agent session.",
-      },
+      { name: "everroom-context-room", version: "2.0.0" },
+      { capabilities: { tools: {} }, instructions: this.instructions() },
     );
     holder.server = server;
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...DOCUMENT_MCP_TOOL_DEFINITIONS] }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: this.capabilities.listTools() }));
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
-        return await this.callTool(request.params.name, record(request.params.arguments), holder.context);
+        return await this.executeTool(
+          request.params.name,
+          record(request.params.arguments),
+          holder.context,
+        );
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Document tool failed";
+        const payload = documentToolErrorPayload(error);
         return {
-          content: [{ type: "text" as const, text: message }],
-          structuredContent: { code: message.split(":", 1)[0], message },
+          content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+          structuredContent: payload,
           isError: true,
         };
       }
@@ -237,64 +355,117 @@ export class DocumentMcpHost {
     return holder;
   }
 
-  async callTool(
+  private assertSameContext(bound: DocumentMcpContext, request: DocumentMcpContext): void {
+    if (
+      bound.agentSessionId !== request.agentSessionId
+      || bound.runId !== request.runId
+      || bound.roomId !== request.roomId
+    ) {
+      throw new Error("MCP_CONTEXT_MISMATCH: MCP session is bound to another Agent run or Room");
+    }
+  }
+
+  private async executeTool(
     name: string,
     args: Record<string, unknown>,
     context: DocumentMcpContext,
   ): Promise<DocumentMcpToolResult> {
-    if (!context.roomId) throw new Error("ROOM_REQUIRED: Open a Context Room first");
-    switch (name) {
-      case "context_room_write_begin": {
-        if (stringArg(args, "mode") !== "create" || stringArg(args, "format") !== "markdown") {
-          throw new Error("INVALID_REQUEST: only create/markdown is supported");
-        }
-        const result = await this.documents.begin({
-          title: stringArg(args, "title"),
-          roomId: context.roomId,
-          agentSessionId: context.agentSessionId,
-          runId: context.runId,
-        });
-        return success({
-          transactionId: result.transactionId,
-          roomId: context.roomId,
-          docId: result.document.id,
-          state: "open",
-          nextSequence: 1,
-          nextAction: "context_room_write_append",
-          expiresAt: result.expiresAt,
-        });
+    const startedAt = performance.now();
+    const attemptKey = this.toolAttemptKey(name, args, context);
+    const previous = this.toolAttempts.get(attemptKey);
+    const attempt = (previous?.attempt ?? 0) + 1;
+    const inputSignature = JSON.stringify(args);
+    try {
+      const result = await this.capabilities.execute(name, args, context);
+      const recoveredFromErrorCode = previous?.lastFailureCode;
+      const recovered = Boolean(recoveredFromErrorCode);
+      this.emitDiagnostic({
+        // Hunk retries are important operational events: logging only the
+        // rejection makes a recovered run look like "failed -> commit".
+        level: name.endsWith("_begin") || name.endsWith("_commit") || recovered ? "info" : "debug",
+        event: "document.tool.completed",
+        toolName: name,
+        sessionId: context.agentSessionId,
+        runId: context.runId,
+        roomId: context.roomId,
+        durationMs: Math.round(performance.now() - startedAt),
+        attempt,
+        ...(recoveredFromErrorCode ? { recovered: true, recoveredFromErrorCode } : {}),
+        input: diagnosticPayload(args),
+        output: diagnosticPayload(result.structuredContent),
+      });
+      this.toolAttempts.delete(attemptKey);
+      return result;
+    } catch (error) {
+      let payload = documentToolErrorPayload(error);
+      const failureCode = typeof payload.code === "string" ? payload.code : undefined;
+      const identicalFailureCount = previous?.lastInputSignature === inputSignature
+        && previous.lastFailureCode === failureCode
+        ? previous.identicalFailureCount + 1
+        : 1;
+      if (name === "context_room_patch_hunk"
+        && failureCode
+        && NON_PROGRESS_PATCH_ERRORS.has(failureCode)
+        && identicalFailureCount >= 2) {
+        this.operations?.cancelIncompleteForSession(
+          context.agentSessionId,
+          `repeated-${failureCode ?? "document-tool-error"}`,
+          context.runId,
+        );
+        const exhausted = new DocumentServiceError(
+          "DOCUMENT_TOOL_RETRY_EXHAUSTED",
+          "The same invalid patch_hunk arguments were submitted twice. The draft was cancelled; do not call another patch tool and tell the user that no modification was created.",
+          409,
+          {
+            originalCode: failureCode,
+            state: "cancelled",
+            retryable: false,
+            nextAction: "respond_document_unchanged",
+            repeatedAttempts: identicalFailureCount,
+            documentChanged: false,
+          },
+        );
+        payload = documentToolErrorPayload(exhausted);
+        error = exhausted;
       }
-      case "context_room_write_append": {
-        const result = await this.documents.append({
-          transactionId: stringArg(args, "transactionId"),
-          sessionId: context.agentSessionId,
-          sequence: integerArg(args, "sequence"),
-          text: stringArg(args, "text", true),
-        });
-        return success({
-          transactionId: args.transactionId,
-          acceptedSequence: args.sequence,
-          ...result,
-          commitRequired: true,
-        });
-      }
-      case "context_room_write_commit": {
-        const transactionId = stringArg(args, "transactionId");
-        const document = await this.documents.commit({
-          transactionId,
-          sessionId: context.agentSessionId,
-          finalSequence: integerArg(args, "finalSequence"),
-        });
-        return success({ transactionId, state: "committed", roomId: document.roomId, docId: document.id });
-      }
-      case "context_room_write_abort": {
-        const transactionId = stringArg(args, "transactionId");
-        const reason = typeof args.reason === "string" ? args.reason : "agent-aborted";
-        await this.documents.abort(transactionId, context.agentSessionId, reason);
-        return success({ transactionId, state: "aborted" });
-      }
-      default:
-        throw new Error(`METHOD_NOT_FOUND: Unknown tool ${name}`);
+      this.toolAttempts.set(attemptKey, {
+        attempt,
+        ...(failureCode ? { lastFailureCode: failureCode } : {}),
+        lastInputSignature: inputSignature,
+        identicalFailureCount,
+      });
+      this.emitDiagnostic({
+        level: "warn",
+        event: "document.tool.failed",
+        toolName: name,
+        sessionId: context.agentSessionId,
+        runId: context.runId,
+        roomId: context.roomId,
+        durationMs: Math.round(performance.now() - startedAt),
+        attempt,
+        input: diagnosticPayload(args),
+        error: diagnosticPayload(payload),
+      });
+      throw error;
+    }
+  }
+
+  private emitDiagnostic(diagnostic: DocumentToolDiagnostic): void {
+    try {
+      this.onDiagnostic?.(diagnostic);
+    } catch {}
+  }
+
+  private toolAttemptKey(name: string, args: Record<string, unknown>, context: DocumentMcpContext): string {
+    const operationId = typeof args.operationId === "string" ? args.operationId : "";
+    const sequence = typeof args.sequence === "number" ? String(args.sequence) : "";
+    return `${context.runId}:${name}:${operationId}:${sequence}`;
+  }
+
+  private clearToolAttempts(runId?: string): void {
+    if (!runId) return;
+    for (const key of this.toolAttempts.keys()) {
+      if (key.startsWith(`${runId}:`)) this.toolAttempts.delete(key);
     }
   }
 }

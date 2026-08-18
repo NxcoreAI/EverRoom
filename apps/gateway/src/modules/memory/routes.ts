@@ -417,5 +417,23 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
       },
       async (request) => service.atomicProvenance(request.params.id),
     );
+
+    app.post(
+      "/v1/memory/document-rewrite",
+      {
+        schema: {
+          tags: ["memory"],
+          body: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 100 }),
+            documentId: Type.String({ minLength: 1, maxLength: 100 }),
+            documentTitle: Type.String({ minLength: 1, maxLength: 120 }),
+            instruction: Type.String({ minLength: 1, maxLength: 4_000 }),
+            originalText: Type.String({ minLength: 1, maxLength: 100_000 }),
+            replacementText: Type.String({ minLength: 1, maxLength: 100_000 }),
+          }),
+        },
+      },
+      async (request) => ({ captured: await service.captureSelectionRewrite(request.body) }),
+    );
   };
 }

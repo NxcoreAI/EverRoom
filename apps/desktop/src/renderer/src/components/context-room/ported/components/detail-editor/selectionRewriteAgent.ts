@@ -21,6 +21,13 @@ export interface SelectionRewriteRequest {
   instruction: string
   contextBefore: string
   contextAfter: string
+  formatContext?: SelectionRewriteFormatContext
+}
+
+export interface SelectionRewriteFormatContext {
+  blockType: string
+  ancestorTypes: string[]
+  codeLanguage?: string | null
 }
 
 interface StreamSelectionRewriteOptions {
@@ -28,6 +35,12 @@ interface StreamSelectionRewriteOptions {
   onText: (text: string) => void
   pollIntervalMs?: number
   timeoutMs?: number
+}
+
+export interface SelectionRewriteAgentResult {
+  replacementText: string
+  sessionId: string
+  runId: string
 }
 
 const DEFAULT_INSTRUCTION = '保持原意，重写得更清晰、自然。'
@@ -38,21 +51,40 @@ export function buildSelectionRewritePrompt(input: SelectionRewriteRequest): str
     selectedText: input.selectedText,
     contextBefore: input.contextBefore,
     contextAfter: input.contextAfter,
+    ...(input.formatContext ? { formatContext: input.formatContext } : {}),
   }
   return [
     '重写文档中的指定选区。',
-    '严格遵守 instruction，只输出可直接替换 selectedText 的最终纯文本。',
-    '不要调用任何工具，不要解释，不要添加标题、引号、Markdown 代码围栏或前后缀。',
+    '严格遵守 instruction，只输出可直接替换 selectedText 的最终 Markdown 片段。',
+    '不要调用任何工具，不要解释，不要添加引号、无关的标题或前后缀。',
+    '当 instruction 要求列表、标题、引用、强调或代码块等结构时，使用对应 Markdown；否则保持 selectedText 原有的文档结构。',
+    '如果选区位于代码块内，只输出原始代码并保留缩进、空格和换行，不得添加或删除代码围栏、语言标记或解释文字；如果只重写现有标题文字，不要添加 #；如果只重写现有列表项、引用或任务项的内容，不要重复添加结构标记。',
     'contextBefore 和 contextAfter 只用于保持语气与衔接，不得复述到输出中。',
     '',
     JSON.stringify(payload),
   ].join('\n')
 }
 
-export function sanitizeSelectionRewriteOutput(value: string): string {
-  let output = value.trimStart()
-  output = output.replace(/^```[^\n]*\n?/, '')
-  output = output.replace(/\n?```\s*$/, '')
+export function sanitizeSelectionRewriteOutput(
+  value: string,
+  options: { preserveWhitespace?: boolean } = {},
+): string {
+  const preserveWhitespace = options.preserveWhitespace === true
+  let output = preserveWhitespace ? value : value.trimStart()
+  const openingFence = /^```([^\r\n]*)(?:\r?\n|$)/.exec(output)
+  const fenceLanguage = openingFence?.[1]?.trim().toLowerCase() ?? ''
+  const unwrapFence = preserveWhitespace
+    || fenceLanguage === ''
+    || fenceLanguage === 'text'
+    || fenceLanguage === 'plain'
+    || fenceLanguage === 'plaintext'
+    || fenceLanguage === 'markdown'
+    || fenceLanguage === 'md'
+  if (openingFence && unwrapFence) {
+    output = output.slice(openingFence[0].length)
+    output = output.replace(/(\r?\n)```[ \t]*$/, '$1')
+  }
+  if (preserveWhitespace) return output
   output = output.replace(/^(?:改写|重写)(?:后的文本|结果)?\s*[:：]\s*/i, '')
   output = output.replace(/^replacement\s*[:：]\s*/i, '')
   return output.trimEnd()
@@ -102,7 +134,7 @@ export async function streamSelectionRewrite(
   api: SelectionRewriteAgentApi,
   input: SelectionRewriteRequest,
   options: StreamSelectionRewriteOptions,
-): Promise<string> {
+): Promise<SelectionRewriteAgentResult> {
   const pollIntervalMs = options.pollIntervalMs ?? 70
   const timeoutMs = options.timeoutMs ?? 120_000
   const startedAt = Date.now()
@@ -110,8 +142,11 @@ export async function streamSelectionRewrite(
   let runId: string | null = null
   let cancelPromise: Promise<unknown> | null = null
   let runSettled = false
+  let completed = false
   let rawText = ''
   let afterSeq = 0
+  const preserveWhitespace = input.formatContext?.blockType === 'codeBlock'
+    || input.formatContext?.ancestorTypes.includes('codeBlock') === true
 
   const cancelRun = () => {
     if (!runId || cancelPromise) return
@@ -131,6 +166,7 @@ export async function streamSelectionRewrite(
     const run = await api.startRun(session.id, {
       prompt: buildSelectionRewritePrompt(input),
       idempotencyKey: crypto.randomUUID(),
+      captureMemory: false,
     })
     runId = run.id
     if (options.signal.aborted) {
@@ -147,17 +183,18 @@ export async function streamSelectionRewrite(
           const delta = eventText(event, 'delta')
           if (delta) {
             rawText += delta
-            options.onText(sanitizeSelectionRewriteOutput(rawText))
+            options.onText(sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace }))
           }
         } else if (event.type === 'message.completed') {
           const content = eventText(event, 'content')
           if (content !== null) rawText = content
-          options.onText(sanitizeSelectionRewriteOutput(rawText))
+          options.onText(sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace }))
         } else if (event.type === 'run.completed') {
           runSettled = true
-          const output = sanitizeSelectionRewriteOutput(rawText)
+          const output = sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace })
           if (!output) throw new Error('Agent 没有返回可替换的文本。')
-          return output
+          completed = true
+          return { replacementText: output, sessionId: session.id, runId: run.id }
         } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {
           runSettled = true
           const message = eventText(event, 'message')
@@ -175,6 +212,6 @@ export async function streamSelectionRewrite(
     options.signal.removeEventListener('abort', onAbort)
     if (!runSettled) cancelRun()
     if (cancelPromise) await cancelPromise
-    if (sessionId) await deleteTemporarySession(api, sessionId)
+    if (sessionId && !completed) await deleteTemporarySession(api, sessionId)
   }
 }

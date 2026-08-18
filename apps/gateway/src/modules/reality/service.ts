@@ -5,6 +5,7 @@ import {
   type ApplyRealityAsrInput,
   type CreateRealityEventInput,
   type FinishRealityCaptureInput,
+  type ImportRealityEventInput,
   type MarkRealityEventInput,
   type RealityEvent,
   type RealityInsights,
@@ -27,6 +28,7 @@ const EMPTY_INSIGHTS: RealityInsights = {
   people: [],
   projects: [],
   unresolvedQuestions: [],
+  representativeTags: [],
 };
 
 function toEvent(row: typeof realityEvents.$inferSelect): RealityEvent {
@@ -81,6 +83,7 @@ function deriveInsights(transcript: string, contextPrompt: string | null): Reali
     people: [],
     projects: contextPrompt ? unique(contextPrompt.split(/[，,、\n]/).map((item) => item.trim()).filter(Boolean)) : [],
     unresolvedQuestions: unique(lines.filter((line) => /[?？]$|吗[。]?$/u.test(line))),
+    representativeTags: [],
   };
 }
 
@@ -169,6 +172,63 @@ export class RealityService {
       audioFileName: input.audioFileName,
       endedAt: input.endedAt ? new Date(input.endedAt) : new Date(),
     }, "reality capture finished");
+  }
+
+  importEvent(input: ImportRealityEventInput): RealityEvent {
+    const startedAt = new Date(input.startedAt);
+    const endedAt = new Date(input.endedAt);
+    if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) {
+      throw new RealityError("invalid_import_time", "Invalid imported reality event time", 400);
+    }
+    const current = this.row(input.id);
+    if (current && input.resultVersion <= current.resultVersion) return toEvent(current);
+
+    const fallbackInsights = deriveInsights(input.transcript, null);
+    const insights = input.insights ?? fallbackInsights;
+    const effectiveInsights = current?.transcriptEditedAt ? current.insights : insights;
+    const transcriptSegments: RealityTranscriptSegment[] = input.transcriptSegments.map((segment, index) => ({
+      id: `${input.id}:${segment.beginTime}:${index}`,
+      ...segment,
+      version: input.resultVersion,
+      isFinal: true,
+      manuallyEdited: false,
+    }));
+    const imported = {
+      title: input.title.trim() || insights.currentTopic || "iPhone 录音",
+      status: current?.status === "completed" ? "completed" as const : "pending_confirmation" as const,
+      processingState: "ready" as const,
+      captureDevice: input.captureDevice,
+      processingDevice: "SaaS",
+      audioSource: input.audioSource,
+      durationMs: Math.max(0, input.durationMs),
+      currentTopic: effectiveInsights.currentTopic,
+      transcript: current?.transcriptEditedAt ? current.transcript : input.transcript,
+      transcriptSegments: current?.transcriptEditedAt ? current.transcriptSegments : transcriptSegments,
+      insights: effectiveInsights,
+      asrSource: "saas" as const,
+      resultVersion: input.resultVersion,
+      error: null,
+      startedAt,
+      endedAt,
+      updatedAt: new Date(),
+    };
+
+    if (current) return this.update(current, imported, "synced reality event imported");
+    const now = new Date();
+    this.db.insert(realityEvents).values({
+      id: input.id,
+      ...imported,
+      audioFileName: null,
+      audioMimeType: null,
+      transcriptEditedAt: null,
+      markers: [],
+      important: false,
+      asrJobId: null,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+    return this.publish(input.id, "synced reality event imported");
   }
 
   applyAsr(id: string, input: ApplyRealityAsrInput): RealityEvent {

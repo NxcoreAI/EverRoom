@@ -9,6 +9,7 @@ function documentOf(contentJson: TiptapJsonContent, overrides: Partial<RoomDocum
     roomId: "room-1",
     title: "示例文档",
     contentJson,
+    contentSchemaVersion: 1,
     version: 3,
     status: "active",
     activeTransactionId: null,

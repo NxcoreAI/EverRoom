@@ -172,3 +172,12 @@ export interface MemoryAtomicProvenanceDto {
   anchorMessageIds: string[]
   anchors: MemoryProvenanceAnchorDto[]
 }
+
+export interface MemoryDocumentRewriteInput {
+  roomId: string
+  documentId: string
+  documentTitle: string
+  instruction: string
+  originalText: string
+  replacementText: string
+}

@@ -124,6 +124,7 @@ export interface PiAgentRuntimeIntegration {
    * roomId 解析本 Room 的 wiki 集合；未提供或解析失败时回退配置默认集。
    */
   resolveKnowledgeWikiIds?: (input: StartRuntimeRunInput) => Promise<string[]>;
+  promptGuidelines?: readonly string[];
   onRunFinished?: (
     input: StartRuntimeRunInput,
     outcome: "completed" | "failed" | "cancelled",
@@ -137,6 +138,7 @@ interface PiRunContextRef {
 interface PiSessionHandle {
   ref: string;
   session: AgentSession;
+  toolNames: string[];
   setMemoryRunContext: (context: MemoryRunContext | null) => void;
   cancelMemoryRun: () => void;
   /** 会话级 wiki 作用域（Room wiki 优先，缺省为配置默认集）。 */
@@ -158,6 +160,79 @@ interface ActivePiRun {
 }
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const TOOL_HISTORY_SUMMARY_MAX_CHARS = 8_000;
+
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    return record.type === "text" && typeof record.text === "string" ? [record.text] : [];
+  }).join("");
+}
+
+function stripRunEnvelope(text: string): string {
+  const marker = "\n用户请求：";
+  const index = text.lastIndexOf(marker);
+  return (index >= 0 ? text.slice(index + marker.length) : text).trim();
+}
+
+function sanitizeConversationText(text: string): string {
+  return text
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[internal-id]")
+    .replace(/<\/?think>/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeLeakedToolProtocol(text: string): boolean {
+  return /\{\s*["']name["']\s*:\s*["']context_room_/i.test(text)
+    || /context_room_\w+["']?\s*,\s*["']arguments/i.test(text);
+}
+
+/** Keep conversation continuity while removing run-scoped tool payloads from the next run. */
+function compactHistoricalToolState(session: AgentSession): boolean {
+  const messages = session.messages;
+  const hasRunScopedPayload = messages.some((message) => message.role === "toolResult"
+    || (message.role === "custom" && message.customType === "memory-recall"));
+  if (!hasRunScopedPayload) return false;
+
+  const transcript: string[] = [];
+  for (const message of messages) {
+    if (message.role === "compactionSummary") {
+      const summary = sanitizeConversationText(message.summary);
+      if (summary) transcript.push(summary);
+      continue;
+    }
+    if (message.role === "user") {
+      const text = sanitizeConversationText(stripRunEnvelope(messageText(message.content)));
+      if (text) transcript.push(`用户：${text.slice(0, 1_500)}`);
+      continue;
+    }
+    if (message.role !== "assistant" || message.stopReason !== "stop") continue;
+    const text = sanitizeConversationText(messageText(message.content));
+    if (text && !looksLikeLeakedToolProtocol(text)) transcript.push(`助手：${text.slice(0, 1_500)}`);
+  }
+
+  const summaryBody = transcript.join("\n").slice(-TOOL_HISTORY_SUMMARY_MAX_CHARS);
+  const summary = [
+    "以下是同一对话此前轮次的简要上下文。工具调用、文档全文、块标识、读取凭证、Operation 标识和工具错误均已移除，不得据此判断本轮工具执行结果。",
+    summaryBody || "此前轮次没有需要保留的对话内容。",
+  ].join("\n");
+  const markerId = session.sessionManager.appendCustomEntry("nxcore-run-tool-boundary", {
+    removedToolPayloads: true,
+  });
+  session.sessionManager.appendCompaction(
+    summary,
+    markerId,
+    Math.ceil(JSON.stringify(messages).length / 4),
+    { reason: "nxcore-run-tool-boundary" },
+    true,
+  );
+  session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
+  return true;
+}
 
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
@@ -179,10 +254,7 @@ export class PiAgentRuntime implements AgentRuntime {
     return {
       streaming: true,
       reasoning: this.config.reasoning !== "off",
-      tools:
-        this.memoryClient !== null ||
-        this.knowledgeClient !== null ||
-        (this.integration.tools?.length ?? 0) > 0,
+      tools: true,
       steering: true,
       resume: false,
     };
@@ -190,7 +262,7 @@ export class PiAgentRuntime implements AgentRuntime {
 
   async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
     if (this.activeRuns.has(input.runId)) throw new Error(`Pi run is already active: ${input.runId}`);
-    const handle = await this.getSession(input.runtimeSessionRef);
+    const handle = await this.getSession(input.runtimeSessionRef, input);
     if (handle.activeRunId) throw new Error(`Pi session is already active: ${handle.activeRunId}`);
     if (handle.ownerSessionId && handle.ownerSessionId !== input.sessionId) {
       throw new Error("Pi session belongs to a different Agent session");
@@ -204,7 +276,9 @@ export class PiAgentRuntime implements AgentRuntime {
         handle.setKnowledgeWikiIds(this.knowledgeClient.defaultWikiIds);
       }
     }
+    compactHistoricalToolState(handle.session);
     handle.context.current = input;
+    handle.session.setActiveToolsByName(input.toolsEnabled === false ? [] : handle.toolNames);
     handle.activeRunId = input.runId;
     const queue = new AsyncEventQueue<RuntimeEvent>();
     const active: ActivePiRun = {
@@ -307,7 +381,10 @@ export class PiAgentRuntime implements AgentRuntime {
     return this.modelRuntimePromise;
   }
 
-  private async getSession(runtimeSessionRef: string | null): Promise<PiSessionHandle> {
+  private async getSession(
+    runtimeSessionRef: string | null,
+    initialInput: StartRuntimeRunInput,
+  ): Promise<PiSessionHandle> {
     if (runtimeSessionRef) {
       const cached = this.sessions.get(runtimeSessionRef);
       if (cached) return cached;
@@ -318,7 +395,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const model = modelRuntime.getModel(this.config.provider, this.config.model);
     if (!model) throw new Error(`Pi model is unavailable: ${this.config.provider}/${this.config.model}`);
 
-    const context: PiRunContextRef = { current: null };
+    const context: PiRunContextRef = { current: initialInput };
     const customTools = (this.integration.tools ?? []).map((tool) => defineTool({
       name: tool.name,
       label: tool.label,
@@ -378,27 +455,23 @@ export class PiAgentRuntime implements AgentRuntime {
         const lines = [
           "你是 NxCore 桌面工作区中的 AI 助手。",
           "回答应准确、简洁，并使用与用户相同的语言。",
+          "聊天回复使用自然、简洁的纯文本格式；不要使用 Markdown 标题符、粗体或斜体标记、反引号、代码围栏、表格或不常用装饰符号。需要列举时只使用普通数字列表或短句。文档正文仍按文档工具要求使用 Markdown。",
           "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
+          "使用工具时，过程说明只补充工具行本身无法表达的信息，例如调用原因、关键发现、判断或对用户的影响；不要复述工具名称、执行状态、参数或下一项工具。没有新增信息时直接继续调用工具，不要强制输出过渡句。过程说明必须基于真实结果，不能臆测成功或输出冗长执行日志。",
+          "最后一项工具完成后，必须给出独立、完整的最终答复，简洁总结完成了什么、关键结果以及仍需用户处理的事项；不要把过程说明直接拼接成最终答复。",
         ];
-        if (memory && memoryClient) {
+        if (memory && memoryClient && context.current?.toolsEnabled !== false) {
           lines.push(
             "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入。",
           );
         }
-        if (knowledge && knowledgeClient) {
+        if (knowledge && knowledgeClient && context.current?.toolsEnabled !== false) {
           lines.push(
             "你可以使用 wiki_search 和 wiki_read 两个工具按需查询当前 Room 的知识库（wiki，Room 内文档沉淀的结构化知识）。问题涉及知识库沉淀的领域知识时先检索再回答；知识库没有相关内容时如实说明，不要编造。",
           );
         }
-        if (customTools.length > 0) {
-          lines.push(
-            "你只能使用当前会话提供的 Context Room 文档工具，不能使用文件、Shell 或其他外部产品工具。",
-            "当用户要求创建或撰写文档时，依次调用 context_room_write_begin、一个或多个 context_room_write_append，最后调用 context_room_write_commit。",
-            "正文必须使用 Markdown；append 的 sequence 从 1 开始并严格连续。工具调用失败时不要声称文档已经创建。",
-          );
-        }
-        if (!memory && !knowledge && customTools.length === 0) {
-          lines.push("当前运行未授权任何文件、Shell 或外部产品工具；不要声称执行了未提供的操作。");
+        if (context.current?.toolsEnabled !== false) {
+          lines.push(...(this.integration.promptGuidelines ?? []));
         }
         return lines.join("\n");
       },
@@ -415,11 +488,8 @@ export class PiAgentRuntime implements AgentRuntime {
       modelRuntime,
       model,
       thinkingLevel: this.config.reasoning,
-      noTools:
-        customTools.length > 0 || (memory && memoryClient) || (knowledge && knowledgeClient)
-          ? "builtin"
-          : "all",
       tools: [
+        "bash",
         ...toolNames,
         ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
         ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
@@ -443,6 +513,12 @@ export class PiAgentRuntime implements AgentRuntime {
     const handle: PiSessionHandle = {
       ref,
       session,
+      toolNames: [
+        "bash",
+        ...toolNames,
+        ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
+        ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
+      ],
       setMemoryRunContext: (value) => {
         memoryRunContext = value;
       },
@@ -474,8 +550,42 @@ export class PiAgentRuntime implements AgentRuntime {
         originalPrompt: input.prompt,
         pageLabel: input.pageLabel,
         cancelled: false,
+        captureEnabled: input.captureMemory !== false,
+        recallEnabled: input.recallMemory !== false,
       });
-      const prompt = `当前工作区：${input.pageLabel}\n\n用户请求：${input.prompt}`;
+      const selectedRoom = input.roomId
+        ? input.availableRooms?.find((room) => room.id === input.roomId)
+        : undefined;
+      const roomContext = input.roomSelectionRequired
+        ? "当前视口未绑定具体 Context Room。若用户本轮明确要求把内容创建、保存或写入工作区文档，必须立即调用 context_room_list 以展示 Room 选择 UI；不要只回复无法创建、请用户先选择或询问是否需要列表。普通聊天不要主动提示 Room 选择。用户选择前不得创建文档。"
+        : input.roomId
+          ? `本轮文档目标 Room 已确认：${selectedRoom?.title ?? input.pageLabel}（ID: ${input.roomId}）。`
+          : "本轮没有可用的 Context Room 文档目标。";
+      const documentContext = input.activeDocument
+        ? [
+            `当前活动文档：${input.activeDocument.title}（ID: ${input.activeDocument.documentId}，版本: ${input.activeDocument.version}）。`,
+            "普通续写的默认锚点是文档末尾。",
+            input.activeDocument.cursorAnchorCandidate
+              ? `仅在用户明确要求当前位置时可使用光标候选：块 ${input.activeDocument.cursorAnchorCandidate.blockId}，UTF-16 偏移 ${input.activeDocument.cursorAnchorCandidate.offset}。`
+              : "本轮没有可靠的光标候选锚点。",
+          ].join("\n")
+        : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 context_room_document_list 触发选择。";
+      const runBoundary = input.toolsEnabled === false
+        ? null
+        : [
+            `本轮执行 ID：${input.runId}。这是同一对话中的一次全新工具执行。`,
+            "历史对话只用于理解用户意图；历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效，不得复用，也不得把历史错误当成本轮结果直接回复用户。",
+            "如果用户本轮明确要求创建、续写或修改文档，必须在本轮重新完成所需工具链。修改已有文档时，document_read 成功只是第一步，必须继续 patch_begin、patch_hunk 和 patch_commit，除非本轮工具返回不可恢复错误。",
+            "不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown；这些都是 Agent 应通过工具获取和组织的内部参数。",
+          ].join("\n");
+      const prompt = [
+        `当前工作区：${input.pageLabel}`,
+        roomContext,
+        documentContext,
+        ...(runBoundary ? [runBoundary] : []),
+        "",
+        `用户请求：${input.prompt}`,
+      ].join("\n");
       await active.handle.session.prompt(prompt, { expandPromptTemplates: false, source: "rpc" });
       if (!active.terminal) await this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
     } catch (error) {

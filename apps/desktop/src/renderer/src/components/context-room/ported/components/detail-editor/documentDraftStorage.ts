@@ -4,20 +4,36 @@ import type { ContextRoomRecord } from '../../types'
 
 const DOCUMENT_DRAFT_PREFIX = 'everroom:context-room:document:v1:'
 
+export interface DocumentDraft {
+  content: JSONContent
+  title?: string
+  baseVersion: number | null
+  updatedAt: string
+}
+
+export function shouldRecoverDocumentDraft(
+  draft: DocumentDraft | null,
+  backend: { version: number; updatedAt: string; contentJson: JSONContent } | null,
+): boolean {
+  if (!draft || !backend || draft.baseVersion === null || draft.content.type !== 'doc') return false
+  if (JSON.stringify(draft.content) === JSON.stringify(backend.contentJson)) return false
+  if (draft.baseVersion === backend.version) return true
+  return draft.baseVersion < backend.version && draft.updatedAt > backend.updatedAt
+}
+
 function textNode(text: string): JSONContent {
   return { type: 'text', text }
 }
 
 export function createRoomDocumentContent(
   room: ContextRoomRecord,
-  title: string,
+  _title: string,
 ): JSONContent {
   const decisions = room.brief.decisions.length ? room.brief.decisions : ['暂无关键结论']
 
   return {
     type: 'doc',
     content: [
-      { type: 'heading', attrs: { level: 1 }, content: [textNode(title)] },
       { type: 'paragraph', content: [textNode(room.brief.background)] },
       { type: 'heading', attrs: { level: 2 }, content: [textNode('目标')] },
       { type: 'paragraph', content: [textNode(room.brief.goal)] },
@@ -33,22 +49,39 @@ export function createRoomDocumentContent(
   }
 }
 
-export function readDocumentDraft(documentId: string): JSONContent | null {
+export function readDocumentDraftRecord(documentId: string): DocumentDraft | null {
   try {
     const raw = localStorage.getItem(`${DOCUMENT_DRAFT_PREFIX}${documentId}`)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as { content?: JSONContent }
-    return parsed.content?.type === 'doc' ? parsed.content : null
+    const parsed = JSON.parse(raw) as Partial<DocumentDraft>
+    if (parsed.content?.type !== 'doc') return null
+    return {
+      content: parsed.content,
+      ...(typeof parsed.title === 'string' ? { title: parsed.title } : {}),
+      baseVersion: Number.isSafeInteger(parsed.baseVersion) && Number(parsed.baseVersion) >= 0
+        ? Number(parsed.baseVersion)
+        : null,
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString(),
+    }
   } catch {
     return null
   }
 }
 
-export function writeDocumentDraft(documentId: string, content: JSONContent): boolean {
+export function readDocumentDraft(documentId: string): JSONContent | null {
+  return readDocumentDraftRecord(documentId)?.content ?? null
+}
+
+export function writeDocumentDraft(
+  documentId: string,
+  content: JSONContent,
+  baseVersion: number | null = null,
+  title?: string,
+): boolean {
   try {
     localStorage.setItem(
       `${DOCUMENT_DRAFT_PREFIX}${documentId}`,
-      JSON.stringify({ content, updatedAt: new Date().toISOString() }),
+      JSON.stringify({ content, baseVersion, ...(title ? { title } : {}), updatedAt: new Date().toISOString() }),
     )
     return true
   } catch {

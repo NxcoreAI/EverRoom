@@ -3,6 +3,7 @@ import {
   type ApplyRealityAsrInput,
   type CreateRealityEventInput,
   type FinishRealityCaptureInput,
+  type ImportRealityEventInput,
   type MarkRealityEventInput,
   type RealityEvent,
   type RealityEventStatus,
@@ -48,6 +49,13 @@ export class RealityGatewayBridge {
     })
   }
 
+  importEvent(input: ImportRealityEventInput): Promise<RealityEvent> {
+    return this.request(`/v1/reality/events/${this.id(input.id)}/import`, {
+      method: 'PUT',
+      data: input,
+    })
+  }
+
   applyAsr(id: string, job: AsrJob): Promise<RealityEvent> {
     return this.request(`/v1/reality/events/${this.id(id)}/asr`, {
       method: 'POST',
@@ -77,7 +85,7 @@ export class RealityGatewayBridge {
   }
 
   confirm(id: string): Promise<RealityEvent> {
-    return this.request(`/v1/reality/events/${this.id(id)}/confirm`, { method: 'POST' })
+    return this.request(`/v1/reality/events/${this.id(id)}/confirm`, { method: 'POST', data: {} })
   }
 
   async discard(id: string): Promise<void> {

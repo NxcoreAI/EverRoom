@@ -131,16 +131,18 @@ pnpm dev
 
 ### Agent 服务
 
-Gateway 会读取仓库根目录的 `.env`，也兼容 `apps/gateway/.env` 和通过 `NXCORE_ENV_FILE` 指定的文件。桌面安装包默认使用 Remote HTTP Runtime 连接 Agent 服务；文档 MCP 需要独立的可用传输：
+Gateway 会读取仓库根目录的 `.env`，也兼容 `apps/gateway/.env` 和通过 `NXCORE_ENV_FILE` 指定的文件。默认使用隔离的 `fake` runtime，确保没有模型密钥时桌面应用仍可启动。需要真实 Agent 时，配置内置 Pi runtime；Context Room 文档工具会直接注入 Agent：
 
 ```dotenv
-NXCORE_AGENT_RUNTIME=remote-http
-NXCORE_REMOTE_AGENT_BASE_URL=http://192.168.1.27:8280/ai/api
-NXCORE_REMOTE_AGENT_TOKEN=
-NXCORE_REMOTE_AGENT_MCP_WS_URL=ws://192.168.1.27:8280/ai/api/device-mcp
+NXCORE_AGENT_RUNTIME=pi
+NXCORE_AI_PROVIDER=openai
+NXCORE_AI_MODEL=gpt-5.2
+NXCORE_AI_BASE_URL=https://api.openai.com/v1
+NXCORE_AI_API_KEY=
+NXCORE_AI_API=openai-responses
 ```
 
-直连服务需提供 `/session`、`/chat`、`/chat/abort` 和 `/device-mcp`。最后一个入口是 Agent 调用本机文档工具的必要条件；如果当前部署尚未提供，可将 `NXCORE_REMOTE_AGENT_MCP_WS_URL` 显式留空以保持纯对话模式。CE Gateway 同时提供受 Bearer 保护的 `/v1/mcp/documents/:sessionId` HTTP MCP 入口。`fake` 与 `pi` Runtime 代码仍保留用于开发和后续切换，本版本不依赖 Pi。
+CE Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessionId` Streamable HTTP MCP 入口，供经过认证的 MCP 客户端使用。已废弃的远端聊天传输不再属于 runtime 配置。
 
 ### 常用命令
 

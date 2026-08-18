@@ -11,12 +11,88 @@
   display: none;
 }
 
+.context-room-all-skeleton {
+  container: context-room-all-skeleton / inline-size;
+  height: 100%;
+  overflow: hidden;
+  background: #fafafa;
+}
+
+.context-room-all-skeleton-layout {
+  width: min(calc(100% - 64px), 1280px);
+  margin: 28px auto 44px;
+}
+
+.context-room-all-skeleton-layout > header {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(220px, 300px);
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.context-room-all-skeleton-back {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #c5c9ce;
+}
+
+.context-room-all-skeleton-back svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-all-skeleton-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.context-room-all-skeleton-heading > span:nth-child(1) {
+  width: 68px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.context-room-all-skeleton-heading > span:nth-child(2) {
+  width: 112px;
+  height: 18px;
+  border-radius: 3px;
+}
+
+.context-room-all-skeleton-heading > span:nth-child(3) {
+  width: 54px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.context-room-all-skeleton-search {
+  height: 34px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.context-room-all-skeleton-grid {
+  margin-top: 18px;
+}
+
 .context-room-home-loading-layout {
   display: flex;
   width: min(calc(100% - 64px), 1280px);
   margin: 28px auto 44px;
   flex-direction: column;
   gap: 24px;
+}
+
+.context-room-home-loading-layout > section {
+  min-width: 0;
 }
 
 .context-room-skeleton-status {
@@ -43,9 +119,15 @@
 
 .context-room-skeleton-title {
   display: flex;
+  height: 40px;
   margin-bottom: 12px;
+  justify-content: center;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
+}
+
+.context-room-skeleton-title.is-compact {
+  margin-bottom: 0;
 }
 
 .context-room-skeleton-line {
@@ -80,8 +162,28 @@
   gap: 12px;
   padding: 12px;
   border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #ffffff;
+}
+
+.context-room-skeleton-card-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+}
+
+.context-room-skeleton-card.is-room {
+  gap: 0;
+  min-height: 89px;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.context-room-skeleton-card.is-room .context-room-skeleton-card-main {
+  align-self: stretch;
+  padding: 12px 4px 12px 12px;
 }
 
 .context-room-skeleton-icon {
@@ -99,9 +201,18 @@
   gap: 8px;
 }
 
-.context-room-skeleton-card-copy .context-room-skeleton-line:last-child {
+.context-room-skeleton-card-copy .context-room-skeleton-line:nth-child(n + 2) {
   height: 8px;
   background: #eef0f2;
+}
+
+.context-room-skeleton-card.is-room .context-room-skeleton-card-copy {
+  gap: 6px;
+}
+
+.context-room-skeleton-card.is-room .context-room-skeleton-card-copy .context-room-skeleton-line:last-child {
+  height: 7px;
+  background: #f1f2f3;
 }
 
 .context-room-skeleton-chip {
@@ -112,29 +223,85 @@
   background: #f0f1f2;
 }
 
-.context-room-skeleton-toolbar {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
+.context-room-skeleton-menu {
+  display: grid;
+  width: 52px;
+  align-self: stretch;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 0 7px 7px 0;
 }
 
-.context-room-skeleton-search {
-  width: clamp(220px, 28cqw, 300px);
-  height: 34px;
+.context-room-skeleton-menu i {
+  width: 4px;
+  height: 18px;
+  border-radius: 3px;
+}
+
+.context-room-skeleton-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 12px;
+}
+
+.context-room-skeleton-my-title,
+.context-room-skeleton-actions {
+  display: flex;
+  align-items: center;
+}
+
+.context-room-skeleton-my-title {
+  min-width: 0;
+  gap: 8px;
+}
+
+.context-room-skeleton-actions {
+  gap: 4px;
+}
+
+.context-room-skeleton-actions i {
+  width: 26px;
+  height: 26px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #ffffff;
 }
 
-.context-room-skeleton-graph {
-  position: relative;
-  height: 300px;
-  overflow: hidden;
+.context-room-skeleton-search {
+  width: clamp(220px, 28cqw, 300px);
+  height: 34px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.context-room-skeleton-show-all {
+  width: 196px;
+  height: 36px;
+  margin: 12px auto 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.context-room-skeleton-graph-frame {
+  padding: 12px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   background: #ffffff;
+}
+
+.context-room-skeleton-graph {
+  position: relative;
+  height: 440px;
+  overflow: hidden;
+  border-radius: 8px;
+  background:
+    linear-gradient(#eef0f3 1px, transparent 1px),
+    linear-gradient(90deg, #eef0f3 1px, transparent 1px), #fbfcfd;
+  background-size: 24px 24px;
 }
 
 .context-room-skeleton-graph::before,
@@ -175,6 +342,18 @@
 .context-room-skeleton-graph > span:nth-child(3) { top: 36%; left: 48%; }
 .context-room-skeleton-graph > span:nth-child(4) { top: 66%; left: 65%; }
 .context-room-skeleton-graph > span:nth-child(5) { top: 20%; left: 76%; }
+.context-room-skeleton-graph > span:nth-child(6) { top: 46%; left: 82%; }
+
+.context-room-skeleton-graph > i {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 58px;
+  height: 30px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
 
 @keyframes context-room-skeleton-pulse {
   0%,
@@ -193,25 +372,69 @@
   }
 }
 
-@container context-room-home-loading (max-width: 620px) {
+@container context-room-home-loading (max-width: 979px) {
+  .context-room-home-loading-layout {
+    width: calc(100% - 48px);
+    margin: 24px auto 44px;
+  }
+}
+
+@container context-room-home-loading (max-width: 759px) {
   .context-room-home-loading-layout {
     width: calc(100% - 32px);
     margin: 18px auto 32px;
   }
 
-  .context-room-skeleton-recommendations,
-  .context-room-skeleton-grid {
-    grid-template-columns: 1fr;
-  }
-
   .context-room-skeleton-toolbar {
     align-items: stretch;
     flex-direction: column;
-    gap: 0;
+    gap: 12px;
   }
 
   .context-room-skeleton-search {
     width: 100%;
+  }
+
+  .context-room-skeleton-graph {
+    height: 360px;
+  }
+}
+
+@container context-room-home-loading (max-width: 620px) {
+  .context-room-skeleton-recommendations,
+  .context-room-skeleton-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 1100px) {
+  .context-room-home-loading .context-room-skeleton-grid:not(.context-room-skeleton-recommendations) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container context-room-all-skeleton (max-width: 860px) {
+  .context-room-all-skeleton-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container context-room-all-skeleton (max-width: 620px) {
+  .context-room-all-skeleton-layout {
+    width: calc(100% - 32px);
+    margin: 18px auto 32px;
+  }
+
+  .context-room-all-skeleton-layout > header {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .context-room-all-skeleton-search {
+    grid-column: 1 / -1;
+  }
+
+  .context-room-all-skeleton-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -1,4 +1,4 @@
-import type { RoomDocument } from '@nxcore/agent-contract';
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import type { DetailPane } from '../RoomIconSidebar';
 import {
@@ -17,9 +17,14 @@ export function WorkspacePaneBody({
   room,
   selectedResourceId,
   backendDocuments,
+  trashedDocuments,
   onSelectResource,
   onOpenWikiPage,
+  onCreateDocument,
   onDeleteDocument,
+  onRestoreDocument,
+  onDeleteDocumentPermanently,
+  onEmptyTrash,
   onAddFile,
   onOpenMemory,
   onOpenObject,
@@ -32,9 +37,14 @@ export function WorkspacePaneBody({
   room: ContextRoomRecord;
   selectedResourceId: string | null;
   backendDocuments: RoomDocument[];
+  trashedDocuments: RoomDocument[];
   onSelectResource: (resource: ContextRoomResource) => void;
   onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
+  onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
+  onRestoreDocument: (document: RoomDocument) => Promise<void>;
+  onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
+  onEmptyTrash: (roomId: string) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (id: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
@@ -49,8 +59,13 @@ export function WorkspacePaneBody({
         room={room}
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments}
+        trashedDocuments={trashedDocuments}
         onSelect={onSelectResource}
+        onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}
+        onRestoreDocument={onRestoreDocument}
+        onDeleteDocumentPermanently={onDeleteDocumentPermanently}
+        onEmptyTrash={onEmptyTrash}
         onAddFile={onAddFile}
       />
     );

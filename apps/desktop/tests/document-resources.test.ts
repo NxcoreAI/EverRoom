@@ -1,0 +1,129 @@
+import type { RoomDocument } from '@nxcore/agent-contract'
+import { describe, expect, it } from 'vitest'
+
+import { consumeDocumentFocusRequest } from '../src/renderer/src/components/context-room/ported/documentFocus'
+import { createContextRoomResourceLibrary } from '../src/renderer/src/components/context-room/ported/resources'
+import { createContextRoomFixture } from './context-room-fixture'
+
+const room = createContextRoomFixture()
+
+function backendDocument(id: string, title: string): RoomDocument {
+  return {
+    id,
+    roomId: room.id,
+    title,
+    contentJson: { type: 'doc', content: [] },
+    version: 2,
+    status: 'active',
+    activeTransactionId: null,
+    deletedAt: null,
+    createdAt: '2026-08-15T10:00:00.000Z',
+    updatedAt: '2026-08-15T11:00:00.000Z',
+  }
+}
+
+describe('Context Room document resource mapping', () => {
+  it('shows only Gateway documents in the cloud document folder', () => {
+    const document = backendDocument('gateway-doc-1', '真实文档')
+    const library = createContextRoomResourceLibrary(room, [document])
+    const documentFolder = library.folders.find((folder) => folder.name === '云文档')!
+    const cloudResources = library.resources.filter((resource) => resource.folderId === documentFolder.id)
+
+    expect(cloudResources).toHaveLength(1)
+    expect(cloudResources[0]).toMatchObject({
+      kind: 'cloud-doc',
+      name: '真实文档',
+      binding: { workspaceId: 'gateway', docId: 'gateway-doc-1' },
+    })
+    expect(cloudResources.some((resource) => resource.binding?.docId === room.cloudDoc.docId)).toBe(false)
+  })
+
+  it('does not create a placeholder cloud document when the Gateway list is empty', () => {
+    const library = createContextRoomResourceLibrary(room, [])
+    const documentFolder = library.folders.find((folder) => folder.name === '云文档')!
+
+    expect(library.resources.filter((resource) => resource.folderId === documentFolder.id)).toEqual([])
+  })
+
+  it('places persisted trashed documents in a recycle bin after design attachments', () => {
+    const trashed = {
+      ...backendDocument('gateway-doc-trash', '已删除文档'),
+      deletedAt: '2026-08-15T12:00:00.000Z',
+    }
+    const library = createContextRoomResourceLibrary(room, [], [trashed])
+
+    expect(library.folders.map((folder) => folder.name)).toEqual([
+      '云文档',
+      'Office 文件',
+      '设计与附件',
+      '回收站',
+    ])
+    const trashFolder = library.folders.at(-1)!
+    expect(library.resources).toContainEqual(expect.objectContaining({
+      folderId: trashFolder.id,
+      name: '已删除文档',
+      trashed: true,
+      binding: expect.objectContaining({ docId: 'gateway-doc-trash' }),
+    }))
+  })
+})
+
+describe('Context Room document focus requests', () => {
+  it('does not override a manual document switch with an already handled Agent focus', () => {
+    const firstFocus = consumeDocumentFocusRequest(null, 'room-a', 'document-a', true)
+    expect(firstFocus.shouldOpen).toBe(true)
+
+    const afterManualSwitch = consumeDocumentFocusRequest(
+      firstFocus.handledKey,
+      'room-a',
+      'document-a',
+      true,
+    )
+    expect(afterManualSwitch.shouldOpen).toBe(false)
+  })
+
+  it('waits for the focused document to load and accepts the same document after reset', () => {
+    const beforeListLoads = consumeDocumentFocusRequest(null, 'room-a', 'document-a', false)
+    expect(beforeListLoads).toEqual({ handledKey: null, shouldOpen: false })
+
+    const afterListLoads = consumeDocumentFocusRequest(
+      beforeListLoads.handledKey,
+      'room-a',
+      'document-a',
+      true,
+    )
+    expect(afterListLoads.shouldOpen).toBe(true)
+
+    const cleared = consumeDocumentFocusRequest(afterListLoads.handledKey, 'room-a', null, false)
+    const nextAgentOpen = consumeDocumentFocusRequest(
+      cleared.handledKey,
+      'room-a',
+      'document-a',
+      true,
+    )
+    expect(nextAgentOpen.shouldOpen).toBe(true)
+  })
+
+  it('treats repeated navigation to the same document as a new request', () => {
+    const first = consumeDocumentFocusRequest(null, 'room-a', 'document-a', true, 1)
+    expect(first.shouldOpen).toBe(true)
+
+    const alreadyHandled = consumeDocumentFocusRequest(
+      first.handledKey,
+      'room-a',
+      'document-a',
+      true,
+      1,
+    )
+    expect(alreadyHandled.shouldOpen).toBe(false)
+
+    const repeatedClick = consumeDocumentFocusRequest(
+      alreadyHandled.handledKey,
+      'room-a',
+      'document-a',
+      true,
+      2,
+    )
+    expect(repeatedClick.shouldOpen).toBe(true)
+  })
+})
