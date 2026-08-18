@@ -143,6 +143,12 @@ export interface GatewayConfig {
     googleDocsConfigKey: string;
     notionConfigKey: string;
     googleCalendarConfigKey: string;
+    googleClientId: string;
+    googleClientSecret: string;
+    notionClientId: string;
+    notionClientSecret: string;
+    outlookClientId: string;
+    outlookClientSecret: string;
     pollingIntervalMs: number;
   };
 }
@@ -418,6 +424,12 @@ export function loadConfig(
       googleDocsConfigKey: env.NXCORE_NANGO_GOOGLE_DOCS_CONFIG_KEY?.trim() ?? "google-drive",
       notionConfigKey: env.NXCORE_NANGO_NOTION_CONFIG_KEY?.trim() ?? "notion",
       googleCalendarConfigKey: env.NXCORE_NANGO_GOOGLE_CALENDAR_CONFIG_KEY?.trim() ?? "google-calendar",
+      googleClientId: env.NXCORE_NANGO_GOOGLE_CLIENT_ID?.trim() ?? "",
+      googleClientSecret: env.NXCORE_NANGO_GOOGLE_CLIENT_SECRET?.trim() ?? "",
+      notionClientId: env.NXCORE_NANGO_NOTION_CLIENT_ID?.trim() ?? "",
+      notionClientSecret: env.NXCORE_NANGO_NOTION_CLIENT_SECRET?.trim() ?? "",
+      outlookClientId: env.NXCORE_NANGO_OUTLOOK_CLIENT_ID?.trim() ?? "",
+      outlookClientSecret: env.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET?.trim() ?? "",
       pollingIntervalMs: rawConfig.connectorPollMs,
     },
     pi: rawConfig.agentRuntime === "pi"

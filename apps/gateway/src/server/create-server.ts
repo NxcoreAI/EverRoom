@@ -41,6 +41,7 @@ import { ConnectorManager } from "../modules/connectors/manager.js";
 import { connectorRoutes } from "../modules/connectors/routes.js";
 import { NangoExecutor } from "../modules/connectors/nango-executor.js";
 import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
+import { bootstrapNango } from "../modules/connectors/nango-bootstrap.js";
 import { ConnectorDocumentStore } from "../modules/connectors/document-store.js";
 
 function swaggerAssetsDirectory(): string {
@@ -64,17 +65,19 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
-  const connectorConfig = config.connectors ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", pollingIntervalMs:300_000 };
+  const connectorConfig = config.connectors ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
+  // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
+  const nangoSecret = connectorConfig.enabled ? await bootstrapNango(connectorConfig) : connectorConfig.nangoSecret;
   const connectorDb = createConnectorDatabase(connectorConfig.enabled ? connectorConfig.databasePath : ":memory:");
   const connectorManager = new ConnectorManager(
     new ConnectorRepository(connectorDb.sqlite),
-    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, connectorConfig.nangoSecret) : null,
+    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, nangoSecret) : null,
     connectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
   );
   const connectorAuthorization = connectorConfig.enabled && "gmailConfigKey" in connectorConfig
     ? new NangoAuthorizationService(
         connectorConfig.nangoUrl,
-        connectorConfig.nangoSecret,
+        nangoSecret,
         {
           gmail: connectorConfig.gmailConfigKey,
           outlook: connectorConfig.outlookConfigKey,

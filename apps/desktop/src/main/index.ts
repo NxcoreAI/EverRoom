@@ -12,6 +12,7 @@ import { CredentialStore } from './security/credential-store'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import type {
@@ -153,6 +154,7 @@ const MEMORY_CHANNELS = {
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
+let nangoSupervisor: NangoSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
@@ -557,15 +559,27 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
       return null
     })
+    // 数据同步用的 Nango 实例与 gateway 一并拉起(外部配置了 URL 时自动跳过)。
+    nangoSupervisor = new NangoSupervisor()
+    const nango = await nangoSupervisor.start().catch((error) => {
+      console.error('Managed Nango failed to start; connectors stay disabled.', error)
+      return null
+    })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
-      memoryCore
-        ? {
-          NXCORE_MEMORY_ENABLED: 'true',
-          NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
-          NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
-        }
-        : {},
+      {
+        ...(memoryCore
+          ? {
+            NXCORE_MEMORY_ENABLED: 'true',
+            NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
+            NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
+          }
+          : {}),
+        // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_SECRET。
+        ...((nango && process.env.NXCORE_NANGO_SECRET?.trim())
+          ? { NXCORE_NANGO_URL: nango.baseUrl }
+          : {}),
+      },
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
@@ -638,6 +652,7 @@ app.on('before-quit', (event) => {
   const service = localDataService
   const gateway = gatewaySupervisor
   const memoryCore = memoryCoreSupervisor
+  const nango = nangoSupervisor
   const agentBridge = agentGatewayBridge
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
@@ -646,6 +661,7 @@ app.on('before-quit', (event) => {
   localDataService = null
   gatewaySupervisor = null
   memoryCoreSupervisor = null
+  nangoSupervisor = null
   agentGatewayBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
@@ -661,6 +677,7 @@ app.on('before-quit', (event) => {
     recordings?.dispose(),
     gateway?.shutdown(),
     memoryCore?.shutdown(),
+    nango?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())
