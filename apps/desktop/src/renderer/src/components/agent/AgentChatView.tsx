@@ -512,8 +512,12 @@ export function AgentChatView({
                 activity?.completed && !message.streaming && runCompletedAtByRun[message.runId] ? message.content : ''
               )
               : message.content
+            const partialContent = Boolean(
+              hasToolActivity && activity && !activity.completed && runCompletedAtByRun[message.runId] && finalContent,
+            )
             const previousUserMessage = [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')
-            const showActions = message.role === 'assistant' && !message.streaming && Boolean(finalContent.trim())
+            const showActions = message.role === 'assistant' && !message.streaming
+              && !partialContent && Boolean(finalContent.trim())
             const patchResults = tools.flatMap((tool) => {
               if (tool.name !== 'context_room_patch_commit' || tool.status !== 'completed') return []
               const result = parseAgentPatchToolResult(tool.result)
@@ -551,6 +555,9 @@ export function AgentChatView({
                 ) : (
                   <ReasoningBlock active={message.runId === activeRunId} content={reasoningByRun[message.runId] ?? ''} />
                 )}
+                {partialContent ? (
+                  <div className="agent-linked-status" role="status">运行未正常完成，以下为中断前的部分回答</div>
+                ) : null}
                 {finalContent ? (
                   <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
                 ) : null}
