@@ -76,6 +76,18 @@ describe('DocumentGatewayBridge CRUD', () => {
     await expect(bridge.list('room-crud')).resolves.toHaveLength(1)
     await expect(bridge.listTrash('room-crud')).resolves.toHaveLength(1)
     await expect(bridge.get('doc-crud')).resolves.toMatchObject({ id: 'doc-crud', version: 1 })
+    await bridge.listBlocks('doc-crud')
+    await bridge.resolveBlockReferences({
+      sourceRoomId: 'room-crud',
+      references: [{ roomId: 'room-crud', documentId: 'doc-crud', blockId: 'block-1' }],
+    })
+    await bridge.listPatches('doc-crud', 'pending')
+    await bridge.getPatch('patch-1')
+    await bridge.applyPatch('patch-1', { baseVersion: 1, acceptedHunkIds: ['hunk-1'] })
+    await bridge.rejectPatch('patch-2')
+    await bridge.acceptContinuationBlock('patch-3', { baseVersion: 1, blockId: 'block-1' })
+    await bridge.rejectContinuationBlock('patch-3', { baseVersion: 2, blockId: 'block-2' })
+    await bridge.closeContinuation('patch-3')
     await expect(bridge.save('doc-crud', {
       baseVersion: 1,
       contentJson: { type: 'doc', content: [{ type: 'paragraph' }] },
@@ -90,6 +102,15 @@ describe('DocumentGatewayBridge CRUD', () => {
       ['GET', '/v1/documents?roomId=room-crud'],
       ['GET', '/v1/documents?roomId=room-crud&trashed=true'],
       ['GET', '/v1/documents/doc-crud'],
+      ['GET', '/v1/documents/doc-crud/blocks'],
+      ['POST', '/v1/document-blocks/resolve'],
+      ['GET', '/v1/document-patches?documentId=doc-crud&status=pending'],
+      ['GET', '/v1/document-patches/patch-1'],
+      ['POST', '/v1/document-patches/patch-1/apply'],
+      ['POST', '/v1/document-patches/patch-2/reject'],
+      ['POST', '/v1/document-patches/patch-3/continuation/accept'],
+      ['POST', '/v1/document-patches/patch-3/continuation/reject'],
+      ['POST', '/v1/document-patches/patch-3/continuation/close'],
       ['PUT', '/v1/documents/doc-crud'],
       ['DELETE', '/v1/documents/doc-crud'],
       ['POST', '/v1/documents/doc-crud/restore'],
@@ -101,8 +122,12 @@ describe('DocumentGatewayBridge CRUD', () => {
     expect(requests[1]).not.toHaveProperty('contentType')
     expect(requests[2]).not.toHaveProperty('contentType')
     expect(requests[3]).not.toHaveProperty('contentType')
-    expect(requests[4]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('baseVersion') })
-    for (const index of [5, 6, 7, 8]) {
+    expect(requests[5]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('sourceRoomId') })
+    expect(requests[8]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('acceptedHunkIds') })
+    expect(requests[10]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('blockId') })
+    expect(requests[11]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('baseVersion') })
+    expect(requests[13]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('baseVersion') })
+    for (const index of [4, 6, 7, 9, 12, 14, 15, 16, 17]) {
       expect(requests[index]).toMatchObject({ body: '' })
       expect(requests[index]).not.toHaveProperty('contentType')
     }

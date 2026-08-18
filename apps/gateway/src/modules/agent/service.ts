@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AgentActiveDocumentContext,
   AgentEvent,
   AgentEventType,
   AgentNavigationTarget,
@@ -38,6 +39,13 @@ export interface AgentRoomRegistry {
   isActive(roomId: string): boolean;
 }
 
+export interface AgentDocumentRegistry {
+  validateActiveDocumentContext(
+    context: AgentActiveDocumentContext,
+    roomId: string | null,
+  ): AgentActiveDocumentContext;
+}
+
 function normalizeRoomId(roomId: string | null | undefined): string | null {
   const normalized = roomId?.trim();
   return normalized ? normalized : null;
@@ -56,6 +64,17 @@ function requestsWorkspaceDocument(prompt: string): boolean {
     || /(?:文档|文件).{0,20}(?:创建|新建|写入|保存|落盘)/iu.test(text)
     || /(?:我要|我想要|给我|帮我做).{0,24}(?:文档|文件)/iu.test(text)
     || /(?:保存|写入|落盘|存入).{0,20}(?:文档|Room|房间)/iu.test(text);
+}
+
+const NON_DOCUMENT_CREATION_TARGET = /(?:Room|房间|项目|任务|计划|方案|列表|代码|程序|函数|类|表格|图片|图像|幻灯片|演示|提醒|日记|记录|目录|文件夹|数据源|页面|会话|对话|仓库|分支|数据库|接口)/iu;
+
+function ambiguousDocumentTopic(prompt: string): string | null {
+  const text = prompt.trim().replace(/[。！？!?，,]+$/gu, "");
+  if (!text || requestsWorkspaceDocument(text)) return null;
+  const match = /^(?:(?:请|麻烦|能否|能不能|可以)\s*)?(?:(?:帮我|给我)\s*)?(?:创建|新建|生成|建立|做)(?:\s*(?:一个|一份|一篇))?\s*(.{1,40})$/iu.exec(text);
+  const topic = match?.[1]?.trim();
+  if (!topic || NON_DOCUMENT_CREATION_TARGET.test(topic)) return null;
+  return topic;
 }
 
 function iso(value: Date | null): string | null {
@@ -123,11 +142,18 @@ function normalizeNavigationTarget(target: AgentNavigationTarget): AgentNavigati
     ...(target.roomId !== undefined ? { roomId: normalizeRoomId(target.roomId) } : {}),
     ...(target.objectId?.trim() ? { objectId: target.objectId.trim() } : {}),
     ...(target.objectType ? { objectType: target.objectType } : {}),
+    ...(target.blockId?.trim() ? { blockId: target.blockId.trim() } : {}),
   };
 }
 
 function navigationTargetKey(target: AgentNavigationTarget): string {
-  return [target.pageId, target.roomId ?? "", target.objectType ?? "", target.objectId ?? ""].join("\u0000");
+  return [
+    target.pageId,
+    target.roomId ?? "",
+    target.objectType ?? "",
+    target.objectId ?? "",
+    target.blockId ?? "",
+  ].join("\u0000");
 }
 
 function runtimePrompt(input: StartAgentRunInput, pageLabel: string): string {
@@ -163,7 +189,8 @@ function selectedRunRoomId(
     }
     return sessionRoomId;
   }
-  const selectedRoomId = input.context?.selectedRoomId?.trim();
+  const selectedRoomId = input.context?.selectedRoomId?.trim()
+    || input.context?.activeDocument?.roomId.trim();
   if (!selectedRoomId) return null;
   const selectedExists = registry
     ? registry.isActive(selectedRoomId)
@@ -183,6 +210,7 @@ export class AgentService {
     readonly broker: AgentEventBroker,
     private readonly logger: AgentServiceLogger = silentLogger,
     private readonly roomRegistry?: AgentRoomRegistry,
+    private readonly documentRegistry?: AgentDocumentRegistry,
   ) {}
 
   async initialize(): Promise<void> {
@@ -404,6 +432,10 @@ export class AgentService {
     const sessionRoomId = normalizeRoomId(session.roomId);
     const rooms = availableRooms(input, this.roomRegistry);
     const runRoomId = selectedRunRoomId(sessionRoomId, input, this.roomRegistry);
+    const activeDocument = input.context?.activeDocument
+      ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument, runRoomId)
+        ?? input.context.activeDocument
+      : undefined;
 
     if (session.runtimeId !== this.runtime.id) {
       session = this.db.update(agentSessions)
@@ -446,26 +478,43 @@ export class AgentService {
     );
     await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: {} });
 
-    // The client can only render the Room picker after a completed list-tool event.
-    // Make that preflight deterministic for explicit document requests instead of
-    // relying on the model to decide whether to call the read-only tool.
-    if (!sessionRoomId && !runRoomId && requestsWorkspaceDocument(input.prompt)) {
+    // Selection and clarification controls are driven by completed tool events.
+    // Emit those preflights deterministically instead of relying on model behavior.
+    const documentTopic = !sessionRoomId && !runRoomId
+      ? ambiguousDocumentTopic(input.prompt)
+      : null;
+    const preflightTool = !sessionRoomId && !runRoomId && requestsWorkspaceDocument(input.prompt)
+      ? {
+          name: "context_room_list",
+          result: { rooms, selectionRequired: true },
+        }
+      : documentTopic
+        ? {
+            name: "context_room_document_intent",
+            result: {
+              clarificationRequired: true,
+              originalPrompt: input.prompt.trim(),
+              topic: documentTopic,
+            },
+          }
+        : null;
+    if (preflightTool) {
       const toolCallId = randomUUID();
       await this.appendEvent(sessionId, runId, {
         type: "tool.requested",
-        payload: { toolCallId, name: "context_room_list", args: {} },
+        payload: { toolCallId, name: preflightTool.name, args: {} },
       });
       await this.appendEvent(sessionId, runId, {
         type: "tool.started",
-        payload: { toolCallId, name: "context_room_list", args: {} },
+        payload: { toolCallId, name: preflightTool.name, args: {} },
       });
       await this.appendEvent(sessionId, runId, {
         type: "tool.completed",
         payload: {
           toolCallId,
-          name: "context_room_list",
+          name: preflightTool.name,
           args: {},
-          result: { rooms, selectionRequired: true },
+          result: preflightTool.result,
         },
       });
       await this.appendEvent(sessionId, runId, { type: "run.completed", payload: {} });
@@ -484,6 +533,7 @@ export class AgentService {
         availableRooms: rooms,
         roomSelectionRequired: sessionRoomId === null && runRoomId === null,
         captureMemory: input.captureMemory !== false,
+        ...(activeDocument ? { activeDocument } : {}),
       });
     } catch (error) {
       await this.appendEvent(sessionId, runId, {

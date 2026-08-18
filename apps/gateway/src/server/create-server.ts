@@ -19,6 +19,7 @@ import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
 import { createAgentRuntime, createBackgroundAgentRuntime } from "../modules/agent/runtime-factory.js";
+import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { AsrError } from "../modules/asr/errors.js";
@@ -78,6 +79,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
       return;
     }
+    if (error instanceof DocumentServiceError) {
+      await reply.code(error.statusCode).send({
+        error: error.code,
+        message: error.message,
+        ...error.details,
+        requestId: request.id,
+      });
+      return;
+    }
     const statusCode = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
     await reply.code(statusCode).send({
       error: statusCode === 500 ? "internal_error" : "request_error",
@@ -110,6 +120,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     void memoryService.captureDocumentCreation(document).catch((error: unknown) => {
       app.log.warn({ err: error, documentId: document.documentId }, "document memory capture failed");
     });
+  }, (patch) => {
+    void memoryService.captureSelectionRewrite({
+      roomId: patch.roomId,
+      documentId: patch.documentId,
+      documentTitle: patch.title,
+      instruction: patch.instruction,
+      originalText: patch.originalText,
+      replacementText: patch.replacementText,
+    }).catch((error: unknown) => {
+      app.log.warn({ err: error, patchId: patch.patchId }, "document patch memory capture failed");
+    });
   });
   const documentMcpHost = new DocumentMcpHost(documentService, contextRoomService);
   const agentRuntime = createAgentRuntime(config, documentMcpHost);
@@ -133,6 +154,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     new AgentEventBroker(),
     app.log,
     contextRoomService,
+    documentService,
   );
   await agentService.initialize();
   const backgroundAgentRuntime = createBackgroundAgentRuntime(config);

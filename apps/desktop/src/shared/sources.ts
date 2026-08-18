@@ -13,6 +13,10 @@ export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' |
 
 import type {
   AcknowledgeDocumentTransactionInput,
+  AcceptDocumentContinuationBlockInput,
+  AcceptDocumentContinuationBlockResult,
+  ApplyDocumentPatchInput,
+  ApplyDocumentPatchResult,
   AgentEvent,
   AgentRun,
   AgentSession,
@@ -23,8 +27,16 @@ import type {
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   DocumentEventFrame,
+  DocumentBlockList,
+  DocumentPatch,
+  DocumentPatchStatus,
+  DocumentPatchSummary,
   ImportRoomDocumentInput,
   RoomDocument,
+  ResolveDocumentBlockReferencesInput,
+  ResolveDocumentBlockReferencesResult,
+  RejectDocumentContinuationBlockInput,
+  RejectDocumentContinuationBlockResult,
   SaveRoomDocumentInput,
   SaveContextRoomSnapshotInput,
   StartAgentRunInput,
@@ -261,6 +273,36 @@ export interface DesktopRequestError {
   actionLabel?: string
 }
 
+export type WindowScreenshotResult =
+  | {
+      ok: true
+      filePath: string
+      fileName: string
+      width: number
+      height: number
+      bytes: number
+      capturedAt: string
+    }
+  | {
+      ok: false
+      code: 'window-unavailable' | 'capture-failed' | 'save-failed'
+      message: string
+    }
+
+export interface WindowScreenshotStatus {
+  enabled: boolean
+  intervalMs: number
+  lastResult: WindowScreenshotResult | null
+}
+
+export interface ExportDocumentPdfInput {
+  fileName: string
+}
+
+export type ExportDocumentPdfResult =
+  | { canceled: true }
+  | { canceled: false; filePath: string; fileName: string }
+
 export interface NxcoreDesktopApi {
   platform: string
   errors: {
@@ -269,6 +311,13 @@ export interface NxcoreDesktopApi {
   }
   gateway: {
     status(): Promise<GatewayStatus>
+  }
+  screenCapture: {
+    captureCurrentWindow(): Promise<WindowScreenshotResult>
+    start(intervalMs: number): Promise<WindowScreenshotStatus>
+    updateInterval(intervalMs: number): Promise<WindowScreenshotStatus>
+    stop(): Promise<WindowScreenshotStatus>
+    status(): Promise<WindowScreenshotStatus>
   }
   contextRooms: {
     list(): Promise<ContextRoomSnapshot>
@@ -360,6 +409,21 @@ export interface NxcoreDesktopApi {
     list(roomId: string): Promise<RoomDocument[]>
     listTrash(roomId: string): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
+    listBlocks(documentId: string): Promise<DocumentBlockList>
+    resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
+    listPatches(documentId?: string, status?: DocumentPatchStatus): Promise<DocumentPatchSummary[]>
+    getPatch(patchId: string): Promise<DocumentPatch>
+    applyPatch(patchId: string, input: ApplyDocumentPatchInput): Promise<ApplyDocumentPatchResult>
+    rejectPatch(patchId: string): Promise<DocumentPatch>
+    acceptContinuationBlock(
+      patchId: string,
+      input: AcceptDocumentContinuationBlockInput,
+    ): Promise<AcceptDocumentContinuationBlockResult>
+    rejectContinuationBlock(
+      patchId: string,
+      input: RejectDocumentContinuationBlockInput,
+    ): Promise<RejectDocumentContinuationBlockResult>
+    closeContinuation(patchId: string): Promise<DocumentPatch>
     import(input: ImportRoomDocumentInput): Promise<RoomDocument>
     save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
     delete(documentId: string): Promise<void>
@@ -367,6 +431,7 @@ export interface NxcoreDesktopApi {
     deletePermanently(documentId: string): Promise<void>
     emptyTrash(roomId: string): Promise<void>
     acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void>
+    exportPdf(input: ExportDocumentPdfInput): Promise<ExportDocumentPdfResult>
     subscribe(roomId: string): Promise<void>
     unsubscribe(roomId?: string): Promise<void>
     onEvent(listener: (frame: DocumentEventFrame) => void): () => void

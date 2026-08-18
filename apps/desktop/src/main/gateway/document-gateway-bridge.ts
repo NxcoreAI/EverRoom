@@ -1,8 +1,20 @@
 import type {
   AcknowledgeDocumentTransactionInput,
+  AcceptDocumentContinuationBlockInput,
+  AcceptDocumentContinuationBlockResult,
+  ApplyDocumentPatchInput,
+  ApplyDocumentPatchResult,
+  DocumentBlockList,
   DocumentEventFrame,
+  DocumentPatch,
+  DocumentPatchStatus,
+  DocumentPatchSummary,
   ImportRoomDocumentInput,
   RoomDocument,
+  ResolveDocumentBlockReferencesInput,
+  ResolveDocumentBlockReferencesResult,
+  RejectDocumentContinuationBlockInput,
+  RejectDocumentContinuationBlockResult,
   SaveRoomDocumentInput,
 } from '@nxcore/agent-contract'
 import type { WebContents } from 'electron'
@@ -51,6 +63,63 @@ export class DocumentGatewayBridge {
 
   get(documentId: string): Promise<RoomDocument> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}`)
+  }
+
+  listBlocks(documentId: string): Promise<DocumentBlockList> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/blocks`)
+  }
+
+  resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult> {
+    return this.request('/v1/document-blocks/resolve', { method: 'POST', body: JSON.stringify(input) })
+  }
+
+  listPatches(documentId?: string, status?: DocumentPatchStatus): Promise<DocumentPatchSummary[]> {
+    const query = new URLSearchParams()
+    if (documentId) query.set('documentId', documentId)
+    if (status) query.set('status', status)
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    return this.request(`/v1/document-patches${suffix}`)
+  }
+
+  getPatch(patchId: string): Promise<DocumentPatch> {
+    return this.request(`/v1/document-patches/${encodeURIComponent(patchId)}`)
+  }
+
+  applyPatch(patchId: string, input: ApplyDocumentPatchInput): Promise<ApplyDocumentPatchResult> {
+    return this.request(`/v1/document-patches/${encodeURIComponent(patchId)}/apply`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true)
+  }
+
+  rejectPatch(patchId: string): Promise<DocumentPatch> {
+    return this.request(`/v1/document-patches/${encodeURIComponent(patchId)}/reject`, { method: 'POST' })
+  }
+
+  acceptContinuationBlock(
+    patchId: string,
+    input: AcceptDocumentContinuationBlockInput,
+  ): Promise<AcceptDocumentContinuationBlockResult> {
+    return this.request(`/v1/document-patches/${encodeURIComponent(patchId)}/continuation/accept`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true)
+  }
+
+  rejectContinuationBlock(
+    patchId: string,
+    input: RejectDocumentContinuationBlockInput,
+  ): Promise<RejectDocumentContinuationBlockResult> {
+    return this.request(`/v1/document-patches/${encodeURIComponent(patchId)}/continuation/reject`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true)
+  }
+
+  closeContinuation(patchId: string): Promise<DocumentPatch> {
+    return this.request(`/v1/document-patches/${encodeURIComponent(patchId)}/continuation/close`, {
+      method: 'POST',
+    })
   }
 
   import(input: ImportRoomDocumentInput): Promise<RoomDocument> {

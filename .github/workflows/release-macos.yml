@@ -76,7 +76,8 @@ jobs:
             exit 1
           fi
 
-          pnpm --filter @nxcore/desktop exec asar list "$resources/app.asar" > "$RUNNER_TEMP/asar-files.txt"
+          asar_path="$(cd "$resources" && pwd)/app.asar"
+          pnpm --filter @nxcore/desktop exec asar list "$asar_path" > "$RUNNER_TEMP/asar-files.txt"
           if grep -Eiq "$forbidden" "$RUNNER_TEMP/asar-files.txt"; then
             grep -Ei "$forbidden" "$RUNNER_TEMP/asar-files.txt" >&2
             exit 1

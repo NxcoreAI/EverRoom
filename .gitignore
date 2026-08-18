@@ -4,6 +4,7 @@ node_modules/
 dist/
 out/
 release/
+screenshots/
 *.log
 .env
 .env.*

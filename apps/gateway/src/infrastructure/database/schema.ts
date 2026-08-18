@@ -1,5 +1,10 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-import type { AgentNavigationTarget } from "@nxcore/agent-contract";
+import type {
+  AgentNavigationTarget,
+  DocumentPatchOperation,
+  DocumentPatchTarget,
+  TiptapJsonContent,
+} from "@nxcore/agent-contract";
 import type {
   RealityCaptureDevice,
   RealityInsights,
@@ -219,11 +224,96 @@ export const documentVersions = sqliteTable(
     version: integer("version").notNull(),
     contentJson: text("content_json", { mode: "json" }).notNull(),
     sourceTransactionId: text("source_transaction_id"),
+    sourcePatchId: text("source_patch_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
   },
   (table) => [uniqueIndex("doc_versions_document_version_idx").on(table.documentId, table.version)],
+);
+
+export const documentBlocks = sqliteTable(
+  "document_blocks",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    parentBlockId: text("parent_block_id"),
+    type: text("type").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    path: text("path", { mode: "json" }).$type<number[]>().notNull(),
+    textPreview: text("text_preview").notNull(),
+  },
+  (table) => [
+    uniqueIndex("document_blocks_document_ordinal_idx").on(table.documentId, table.ordinal),
+    index("document_blocks_document_idx").on(table.documentId),
+  ],
+);
+
+export const documentPatches = sqliteTable(
+  "document_patches",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    agentSessionId: text("agent_session_id").notNull(),
+    runId: text("run_id").notNull(),
+    kind: text("kind", { enum: ["continue", "edit"] }).notNull(),
+    status: text("status", {
+      enum: ["building", "pending", "applied", "rejected", "conflicted", "aborted", "expired"],
+    }).notNull().default("building"),
+    summary: text("summary").notNull(),
+    baseVersion: integer("base_version").notNull(),
+    baseContentJson: text("base_content_json", { mode: "json" }).$type<TiptapJsonContent>().notNull(),
+    proposedContentJson: text("proposed_content_json", { mode: "json" }).$type<TiptapJsonContent>().notNull(),
+    nextSequence: integer("next_sequence").notNull().default(1),
+    acceptedHunkIds: text("accepted_hunk_ids", { mode: "json" }).$type<string[]>(),
+    rejectedHunkIds: text("rejected_hunk_ids", { mode: "json" }).$type<string[]>(),
+    acceptedBlockIds: text("accepted_block_ids", { mode: "json" }).$type<string[]>(),
+    rejectedBlockIds: text("rejected_block_ids", { mode: "json" }).$type<string[]>(),
+    appliedVersion: integer("applied_version"),
+    conflictVersion: integer("conflict_version"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("document_patches_document_status_idx").on(table.documentId, table.status),
+    index("document_patches_session_status_idx").on(table.agentSessionId, table.status),
+    index("document_patches_expiry_idx").on(table.status, table.expiresAt),
+  ],
+);
+
+export const documentPatchHunks = sqliteTable(
+  "document_patch_hunks",
+  {
+    id: text("id").primaryKey(),
+    patchId: text("patch_id")
+      .notNull()
+      .references(() => documentPatches.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    operation: text("operation", { enum: ["insert", "replace", "delete"] })
+      .$type<DocumentPatchOperation>().notNull(),
+    target: text("target", { mode: "json" }).$type<DocumentPatchTarget>().notNull(),
+    markdown: text("markdown").notNull(),
+    sha256: text("sha256").notNull(),
+    beforeJson: text("before_json", { mode: "json" }).$type<TiptapJsonContent[]>().notNull(),
+    afterJson: text("after_json", { mode: "json" }).$type<TiptapJsonContent[]>().notNull(),
+    addedCharacters: integer("added_characters").notNull().default(0),
+    deletedCharacters: integer("deleted_characters").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("document_patch_hunks_patch_sequence_idx").on(table.patchId, table.sequence)],
 );
 
 export const documentTransactions = sqliteTable(

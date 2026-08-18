@@ -39,21 +39,56 @@ Tiptap:
 - `apps/gateway/src/modules/documents/service.ts`: SQLite persistence,
   sequencing, size limits, versioning, acknowledgement waits, abort, expiry,
   restart recovery, and WebSocket event publication.
-- `apps/gateway/src/modules/documents/mcp-host.ts`: the four Agent MCP tools.
+- `apps/gateway/src/modules/documents/mcp-host.ts`: Room/document discovery,
+  create transactions, and reviewable existing-document Patch tools.
 - `apps/gateway/src/modules/documents/mcp-routes.ts`: authenticated HTTP MCP at
   `/v1/mcp/documents/:sessionId`.
 - `apps/desktop/src/main/gateway/document-gateway-bridge.ts`: REST/WebSocket to
   Electron IPC bridge.
 - `apps/desktop/src/renderer/src/components/context-room/ported/hooks/useRoomDocuments.ts`:
-  Room document subscription and editor acknowledgement.
+  Room document subscription and presentation state.
 - `apps/desktop/src/renderer/src/components/context-room/ported/components/detail-editor/markdownStream.ts`:
   chunk-safe Markdown block buffering and stable block IDs.
-- `TiptapDocumentEditor.tsx`: applies completed Markdown blocks to the live
-  editor and acknowledges the resulting Tiptap JSON.
+- `TiptapDocumentEditor.tsx`: presents streamed Markdown blocks when visible;
+  Gateway persistence does not depend on an editor acknowledgement.
 
-An MCP append does not complete merely because the Gateway stored its Markdown.
-It completes only after the renderer applies the content and acknowledges the
-resulting Tiptap document. Commit similarly waits for the final editor state.
+An MCP append is persisted and converted to authoritative Tiptap JSON by the
+Gateway before the tool returns. Renderer animation is presentation-only.
+
+Existing-document edits use a separate review boundary:
+
+```text
+context_room_document_read
+  -> context_room_patch_begin
+  -> context_room_patch_hunk(sequence=1..N)
+  -> context_room_patch_commit
+  -> user reviews hunks
+  -> POST /v1/document-patches/{id}/apply or /reject
+```
+
+The Agent can prepare but cannot apply a Patch. A `kind=edit` apply is
+version-bound and atomically creates one new document version.
+
+Continuation patches use a direct editor flow instead of an Agent-chat review
+card. The Agent sends one rich Markdown insert hunk; the Gateway projects its
+top-level Tiptap nodes as `continuationBlocks`. The editor displays
+`nextPendingBlock` at its authoritative `target` and Tab calls:
+
+```text
+POST /v1/document-patches/{id}/continuation/accept
+  { baseVersion, blockId }
+
+POST /v1/document-patches/{id}/continuation/reject
+  { baseVersion, blockId }
+```
+
+Each accepted block is persisted immediately, creates one document version,
+and returns the next block. Rejecting the current block does not change the
+document version and advances to the next candidate. “Accept all” deliberately
+repeats the accept call so every accepted block keeps its own durable version
+and can resume after interruption. Closing `/continuation/close` retains accepted
+blocks and rejects only the remaining candidates. Continuation content is
+captured into memory only after each block is actually accepted.
 
 ## Runtime integration
 
@@ -82,7 +117,7 @@ reachability and bind the URL to the current Room/run.
 - Append chunk: 64 KiB UTF-8 maximum.
 - Transaction body: 2 MiB maximum.
 - Transaction TTL: 10 minutes, refreshed after accepted appends.
-- Editor acknowledgement timeout: 180 seconds.
+- Building Patch TTL: 10 minutes; pending review patches do not expire.
 - Gateway restart: open provisional documents are removed as interrupted.
 - Agent cancellation/failure: open transactions for that local Agent session
   are aborted and provisional documents are removed.

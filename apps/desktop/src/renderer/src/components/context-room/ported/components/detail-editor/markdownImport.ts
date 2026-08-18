@@ -3,12 +3,14 @@ import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import { MarkdownManager } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
+import { DocumentBlockReference } from './DocumentBlockReference'
 
 const markdownManager = new MarkdownManager({
   extensions: [
     StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
     TaskList,
     TaskItem.configure({ nested: true }),
+    DocumentBlockReference.configure({ sourceRoomId: '' }),
   ],
 })
 

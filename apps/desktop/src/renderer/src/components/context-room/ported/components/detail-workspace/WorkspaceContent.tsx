@@ -19,6 +19,7 @@ export function WorkspaceContent({
   backendDocuments,
   documentEvents,
   onBackendDocumentChange,
+  onDeleteDocument,
   onOpenRoom,
   onMobileBack,
   onCloseObject,
@@ -32,6 +33,7 @@ export function WorkspaceContent({
   backendDocuments: RoomDocument[];
   documentEvents: Record<string, DocumentEvent[]>;
   onBackendDocumentChange: (document: RoomDocument) => void;
+  onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onOpenRoom: (roomId: string) => void;
   onMobileBack: () => void;
   onCloseObject: () => void;
@@ -109,6 +111,7 @@ export function WorkspaceContent({
           backendDocuments={backendDocuments}
           documentEvents={documentEvents}
           onBackendDocumentChange={onBackendDocumentChange}
+          onDeleteDocument={onDeleteDocument}
         />
       ) : visibleResource?.kind === 'office-file' ? (
         <OfficePreview resource={visibleResource} />

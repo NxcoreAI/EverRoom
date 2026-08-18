@@ -666,6 +666,15 @@
   position: relative;
 }
 
+.context-room-tiptap-content [data-reference-focus='true'] {
+  animation: context-room-reference-focus 1.8s ease-out;
+}
+
+@keyframes context-room-reference-focus {
+  0%, 28% { background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent); }
+  100% { background: transparent; box-shadow: 0 0 0 0 transparent; }
+}
+
 .context-room-tiptap-content .is-empty::before {
   content: attr(data-placeholder);
   float: left;
@@ -792,8 +801,85 @@
   text-underline-offset: 3px;
 }
 
+.context-room-tiptap-content a[href^='everroom://'] {
+  color: color-mix(in srgb, var(--cr-blue) 72%, #8bc6ff);
+  cursor: pointer;
+  font-weight: 500;
+  text-decoration-color: color-mix(in srgb, var(--cr-blue) 45%, transparent);
+}
+
+.context-room-tiptap-content a[href^='everroom://']:hover {
+  color: var(--cr-blue);
+  text-decoration-color: currentColor;
+}
+
 .context-room-tiptap-content ::selection {
   background: var(--cr-blue-soft);
+}
+
+.context-room-pdf-export {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 18mm 16mm 20mm;
+  }
+
+  html,
+  body {
+    width: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+
+  body > *:not(.context-room-pdf-export) {
+    display: none !important;
+  }
+
+  .context-room-pdf-export {
+    display: block !important;
+    width: auto;
+    height: auto !important;
+    min-height: 0;
+    overflow: visible !important;
+    background: #ffffff;
+    color: var(--cr-text);
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .context-room-pdf-export .context-room-tiptap-content {
+    width: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    outline: 0;
+  }
+
+  .context-room-pdf-export .is-empty::before {
+    content: none;
+  }
+
+  .context-room-pdf-export :is(h1, h2, h3) {
+    break-after: avoid-page;
+  }
+
+  .context-room-pdf-export :is(pre, blockquote, li) {
+    break-inside: avoid-page;
+  }
+
+  .context-room-pdf-export pre {
+    overflow: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .context-room-pdf-export a {
+    color: inherit;
+  }
 }
 
 @container context-room-shell (max-width: 620px) {

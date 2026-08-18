@@ -351,6 +351,10 @@ export class PiAgentRuntime implements AgentRuntime {
             "除非用户明确要求简短版本，否则文档正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结。内容长度应与主题复杂度相称，不得空泛、重复或为了变长而凑字。",
             "正文的 Markdown 标题层级应服务于内容结构：默认让同一层级的章节使用一致的标题级别，避免只为强调某一段临时放大标题；通常可用 ## 表示主章节、### 表示子章节，普通强调使用加粗或段落。不要机械套用这一默认规则：如果用户明确要求一级标题、特定标题层级或特定排版，必须尊重用户要求，并保持其指定结构前后一致。",
             "正文必须使用 Markdown；append 的 sequence 从 1 开始并严格连续。每次 append 只能发送新增片段，严禁用新的 sequence 重发此前内容或累计全文。工具调用失败时不要声称文档已经创建。",
+            "只有用户明确要求续写、补充、改写、替换或删除已有工作区文档内容时，才进入已有文档修改流程。普通讨论、评价、总结某篇文档，或仅把文档当作参考资料，不构成修改意图。目标 Room 未确认时先调用 context_room_list；Room 已确认但目标文档未确认时调用 context_room_document_list，让用户选择，不得猜测。",
+            "修改已有文档前必须调用 context_room_document_read 读取权威版本，再通过 context_room_patch_begin、context_room_patch_hunk、context_room_patch_commit 生成 Patch。Agent 没有直接应用正文的权限，不得声称未被用户接受的内容已经写入。kind=edit 的修改等待用户审阅；kind=continue 的候选会直接出现在文档编辑区，由用户连续接受，不要要求用户回到智能区点击确认。",
+            "用户只说“续写”或“继续写”时，Patch 必须插入文档末尾。只有用户明确说“当前位置”“光标处”“这里继续”，或由明确的“在此续写”入口发起时，才可采用当前文档上下文提供的 cursorAnchorCandidate。不得因为编辑器中恰好存在光标就改变默认位置。除非用户明确要求简短续写，续写内容必须充分展开并形成多个连贯、有信息量的 Markdown 块，通常包含若干段落、必要的小标题、示例或后续论述；不得只生成一小段就结束。一个 continue Patch 只调用一次 patch_hunk，把完整的多块 Markdown 作为该 hunk 发送，编辑器会按顶层块让用户连续接受。",
+            "已有文档修改若与用户历史偏好、项目背景或旧文档明显相关，可先检索记忆以增强客制化；用户要求不要参考历史时不检索。只有用户最终接受并应用的 Patch 才视为实际文档改动。",
           );
         }
         lines.push(
@@ -426,9 +430,19 @@ export class PiAgentRuntime implements AgentRuntime {
         : input.roomId
           ? `本轮文档目标 Room 已确认：${selectedRoom?.title ?? input.pageLabel}（ID: ${input.roomId}）。`
           : "本轮没有可用的 Context Room 文档目标。";
+      const documentContext = input.activeDocument
+        ? [
+            `当前活动文档：${input.activeDocument.title}（ID: ${input.activeDocument.documentId}，版本: ${input.activeDocument.version}）。`,
+            "普通续写的默认锚点是文档末尾。",
+            input.activeDocument.cursorAnchorCandidate
+              ? `仅在用户明确要求当前位置时可使用光标候选：块 ${input.activeDocument.cursorAnchorCandidate.blockId}，UTF-16 偏移 ${input.activeDocument.cursorAnchorCandidate.offset}。`
+              : "本轮没有可靠的光标候选锚点。",
+          ].join("\n")
+        : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 context_room_document_list 触发选择。";
       const prompt = [
         `当前工作区：${input.pageLabel}`,
         roomContext,
+        documentContext,
         "",
         `用户请求：${input.prompt}`,
       ].join("\n");

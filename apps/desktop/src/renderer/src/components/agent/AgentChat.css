@@ -404,6 +404,14 @@
   text-align: center;
 }
 
+.agent-document-intent-question {
+  margin: 0;
+  padding: 2px 5px 7px;
+  color: #555e6b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .agent-thinking {
   display: inline-flex;
   width: fit-content;

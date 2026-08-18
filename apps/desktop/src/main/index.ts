@@ -30,6 +30,11 @@ import { configureSentry, syncSentryAccount } from './monitoring/sentry'
 import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
 import { PrivateAudioSyncService } from './transcription/private-audio-sync'
+import {
+  captureCurrentWindow,
+  createWindowScreenshotScheduler,
+} from './screenshot/window-screenshot-service'
+import { registerDocumentPdfExportHandler } from './document-pdf-export'
 
 const APP_NAME = 'EverRoom'
 
@@ -102,6 +107,15 @@ const DOCUMENT_CHANNELS = {
   list: 'documents:list',
   listTrash: 'documents:list-trash',
   get: 'documents:get',
+  listBlocks: 'documents:list-blocks',
+  resolveBlockReferences: 'documents:resolve-block-references',
+  listPatches: 'documents:list-patches',
+  getPatch: 'documents:get-patch',
+  applyPatch: 'documents:apply-patch',
+  rejectPatch: 'documents:reject-patch',
+  acceptContinuationBlock: 'documents:accept-continuation-block',
+  rejectContinuationBlock: 'documents:reject-continuation-block',
+  closeContinuation: 'documents:close-continuation',
   import: 'documents:import',
   save: 'documents:save',
   delete: 'documents:delete',
@@ -183,6 +197,63 @@ const MEMORY_CHANNELS = {
   captureDocumentRewrite: 'memory:capture-document-rewrite',
 } as const
 
+const SCREEN_CAPTURE_CHANNELS = {
+  captureCurrentWindow: 'screen-capture:capture-current-window',
+  start: 'screen-capture:start',
+  updateInterval: 'screen-capture:update-interval',
+  stop: 'screen-capture:stop',
+  status: 'screen-capture:status',
+} as const
+
+// 窗口先显示、服务后台初始化:所有 IPC 通道提前挂上路由,处理器注册前先等待就绪。
+// IpcHandler 的 never 参数让任意签名的处理器都可直接注册。
+type IpcHandler = (event: Electron.IpcMainInvokeEvent, ...args: never[]) => unknown
+type StoredHandler = (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown
+const handlerRegistry = new Map<string, StoredHandler>()
+let resolveServicesReady: (() => void) | null = null
+let rejectServicesReady: ((error: Error) => void) | null = null
+const servicesReady = new Promise<void>((resolve, reject) => {
+  resolveServicesReady = resolve
+  rejectServicesReady = reject
+})
+servicesReady.catch(() => {
+  // 初始化失败的传播由启动流程负责;这里只吞掉无调用方时的未处理拒绝。
+})
+
+function handle(channel: string, handler: IpcHandler): void {
+  handlerRegistry.set(channel, handler as StoredHandler)
+}
+
+function installIpcRouters(): void {
+  const channelGroups = [
+    SOURCE_CHANNELS,
+    GATEWAY_CHANNELS,
+    CONTEXT_ROOM_CHANNELS,
+    AGENT_CHANNELS,
+    DOCUMENT_CHANNELS,
+    ASR_CHANNELS,
+    PRIVATE_AUDIO_CHANNELS,
+    REALITY_CHANNELS,
+    ACCOUNT_CHANNELS,
+    TRANSCRIPTION_CHANNELS,
+    MEMORY_CHANNELS,
+    SCREEN_CAPTURE_CHANNELS,
+  ]
+  for (const group of channelGroups) {
+    for (const channel of Object.values(group)) {
+      ipcMain.handle(channel, (event, ...args: unknown[]) => {
+        const handler = handlerRegistry.get(channel)
+        if (handler) return handler(event, ...args)
+        return servicesReady.then(() => {
+          const ready = handlerRegistry.get(channel)
+          if (!ready) throw new Error(`服务尚未提供 ${channel}。`)
+          return ready(event, ...args)
+        })
+      })
+    }
+  }
+}
+
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
@@ -196,6 +267,7 @@ let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
+const screenshotScheduler = createWindowScreenshotScheduler()
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -257,23 +329,23 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
       if (!window.isDestroyed()) window.webContents.send(SOURCE_CHANNELS.changed, event)
     }
   })
-  ipcMain.handle(SOURCE_CHANNELS.list, () => service.listSources())
-  ipcMain.handle(SOURCE_CHANNELS.listFiles, (_event, id: unknown) =>
+  handle(SOURCE_CHANNELS.list, () => service.listSources())
+  handle(SOURCE_CHANNELS.listFiles, (_event, id: unknown) =>
     service.listFiles(requireSourceId(id)),
   )
-  ipcMain.handle(
+  handle(
     SOURCE_CHANNELS.listEvidence,
     (_event, id: unknown, fileId: unknown) =>
       service.listEvidence(requireSourceId(id), requireSourceId(fileId)),
   )
-  ipcMain.handle(
+  handle(
     SOURCE_CHANNELS.searchEvidence,
     (_event, query: unknown, id: unknown) => {
       const sourceId = id === undefined ? null : requireSourceId(id)
       return service.searchEvidence(requireSearchQuery(query), sourceId)
     },
   )
-  ipcMain.handle(
+  handle(
     SOURCE_CHANNELS.showFile,
     (_event, id: unknown, fileId: unknown) => {
       const location = service.getSourceItemLocation(
@@ -285,7 +357,7 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     },
   )
 
-  ipcMain.handle(SOURCE_CHANNELS.addLocalFolder, async () => {
+  handle(SOURCE_CHANNELS.addLocalFolder, async () => {
     const result = await dialog.showOpenDialog({
       title: '选择要连接的文件夹',
       buttonLabel: '连接文件夹',
@@ -294,7 +366,7 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     const rootPath = result.filePaths[0]
     return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
   })
-  ipcMain.handle(SOURCE_CHANNELS.addGitHub, async (_event, input: unknown) => {
+  handle(SOURCE_CHANNELS.addGitHub, async (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的 GitHub 配置。')
     const value = input as Partial<GitHubConfig> & { token?: unknown }
     if (typeof value.repository !== 'string' || !value.repository.trim()) throw new Error('请输入 GitHub 仓库。')
@@ -309,15 +381,15 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     return service.addConnection('github', config.repository, config)
   })
 
-  ipcMain.handle(SOURCE_CHANNELS.sync, (_event, id: unknown) => service.sync(requireSourceId(id)))
-  ipcMain.handle(
+  handle(SOURCE_CHANNELS.sync, (_event, id: unknown) => service.sync(requireSourceId(id)))
+  handle(
     SOURCE_CHANNELS.setPaused,
     (_event, id: unknown, paused: unknown) => {
       if (typeof paused !== 'boolean') throw new Error('无效的暂停状态。')
       return service.setPaused(requireSourceId(id), paused)
     },
   )
-  ipcMain.handle(
+  handle(
     SOURCE_CHANNELS.disconnect,
     (_event, id: unknown, deleteLocalData: unknown) => {
       if (typeof deleteLocalData !== 'boolean') throw new Error('无效的清理选项。')
@@ -326,133 +398,151 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
   )
 }
 
-function registerGatewayHandlers(supervisor: GatewaySupervisor): void {
-  ipcMain.handle(GATEWAY_CHANNELS.status, () => supervisor.getStatus())
+// 窗口先显示,服务在后台初始化;supervisor 尚未创建时视为启动中。
+function registerGatewayHandlers(): void {
+  handle(GATEWAY_CHANNELS.status, () =>
+    gatewaySupervisor
+      ? gatewaySupervisor.getStatus()
+      : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
 }
 
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
-  ipcMain.handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
-  ipcMain.handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
+  handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
+  handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
-  ipcMain.handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
-  ipcMain.handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
-  ipcMain.handle(AGENT_CHANNELS.createSessionLink, (_event, input) => bridge.createSessionLink(input))
-  ipcMain.handle(AGENT_CHANNELS.listSessionLinks, (_event, sessionId) => bridge.listSessionLinks(sessionId))
-  ipcMain.handle(AGENT_CHANNELS.markSessionLinkReturned, (_event, linkId) => bridge.markSessionLinkReturned(linkId))
-  ipcMain.handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
-  ipcMain.handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
-  ipcMain.handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))
-  ipcMain.handle(AGENT_CHANNELS.getEvents, (_event, sessionId, runId, afterSeq) =>
+  handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
+  handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
+  handle(AGENT_CHANNELS.createSessionLink, (_event, input) => bridge.createSessionLink(input))
+  handle(AGENT_CHANNELS.listSessionLinks, (_event, sessionId) => bridge.listSessionLinks(sessionId))
+  handle(AGENT_CHANNELS.markSessionLinkReturned, (_event, linkId) => bridge.markSessionLinkReturned(linkId))
+  handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
+  handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
+  handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))
+  handle(AGENT_CHANNELS.getEvents, (_event, sessionId, runId, afterSeq) =>
     bridge.getEvents(sessionId, runId, afterSeq))
-  ipcMain.handle(AGENT_CHANNELS.startRun, (_event, sessionId, input) => bridge.startRun(sessionId, input))
-  ipcMain.handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
-  ipcMain.handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
-  ipcMain.handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+  handle(AGENT_CHANNELS.startRun, (_event, sessionId, input) => bridge.startRun(sessionId, input))
+  handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
+  handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
+  handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
 function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
-  ipcMain.handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
-  ipcMain.handle(DOCUMENT_CHANNELS.listTrash, (_event, roomId) => bridge.listTrash(roomId))
-  ipcMain.handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
-  ipcMain.handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
-  ipcMain.handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
-  ipcMain.handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
-  ipcMain.handle(DOCUMENT_CHANNELS.restore, (_event, documentId) => bridge.restore(documentId))
-  ipcMain.handle(DOCUMENT_CHANNELS.deletePermanently, (_event, documentId) =>
+  handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
+  handle(DOCUMENT_CHANNELS.listTrash, (_event, roomId) => bridge.listTrash(roomId))
+  handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
+  handle(DOCUMENT_CHANNELS.listBlocks, (_event, documentId) => bridge.listBlocks(documentId))
+  handle(DOCUMENT_CHANNELS.resolveBlockReferences, (_event, input) =>
+    bridge.resolveBlockReferences(input))
+  handle(DOCUMENT_CHANNELS.listPatches, (_event, documentId, status) =>
+    bridge.listPatches(documentId, status))
+  handle(DOCUMENT_CHANNELS.getPatch, (_event, patchId) => bridge.getPatch(patchId))
+  handle(DOCUMENT_CHANNELS.applyPatch, (_event, patchId, input) => bridge.applyPatch(patchId, input))
+  handle(DOCUMENT_CHANNELS.rejectPatch, (_event, patchId) => bridge.rejectPatch(patchId))
+  handle(DOCUMENT_CHANNELS.acceptContinuationBlock, (_event, patchId, input) =>
+    bridge.acceptContinuationBlock(patchId, input))
+  handle(DOCUMENT_CHANNELS.rejectContinuationBlock, (_event, patchId, input) =>
+    bridge.rejectContinuationBlock(patchId, input))
+  handle(DOCUMENT_CHANNELS.closeContinuation, (_event, patchId) =>
+    bridge.closeContinuation(patchId))
+  handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
+  handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
+  handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
+  handle(DOCUMENT_CHANNELS.restore, (_event, documentId) => bridge.restore(documentId))
+  handle(DOCUMENT_CHANNELS.deletePermanently, (_event, documentId) =>
     bridge.deletePermanently(documentId))
-  ipcMain.handle(DOCUMENT_CHANNELS.emptyTrash, (_event, roomId) => bridge.emptyTrash(roomId))
-  ipcMain.handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
+  handle(DOCUMENT_CHANNELS.emptyTrash, (_event, roomId) => bridge.emptyTrash(roomId))
+  handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
     bridge.acknowledge(transactionId, input))
-  ipcMain.handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
-  ipcMain.handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
+  handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
+  handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
-  ipcMain.handle(ASR_CHANNELS.requestMicrophoneAccess, async () => {
+  handle(ASR_CHANNELS.requestMicrophoneAccess, async () => {
     if (process.platform !== 'darwin') return true
     const status = systemPreferences.getMediaAccessStatus('microphone')
     if (status === 'granted') return true
     if (status === 'denied' || status === 'restricted') return false
     return systemPreferences.askForMediaAccess('microphone')
   })
-  ipcMain.handle(ASR_CHANNELS.openMicrophoneSettings, () => {
+  handle(ASR_CHANNELS.openMicrophoneSettings, () => {
     if (process.platform !== 'darwin') throw new Error('麦克风隐私设置仅适用于 macOS。')
     return shell.openExternal(
       'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
     )
   })
-  ipcMain.handle(ASR_CHANNELS.openSystemAudioSettings, () => {
+  handle(ASR_CHANNELS.openSystemAudioSettings, () => {
     if (process.platform !== 'darwin') throw new Error('系统音频录制设置仅适用于 macOS。')
     return shell.openExternal(
       'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
     )
   })
-  ipcMain.handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
-  ipcMain.handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
-  ipcMain.handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
-  ipcMain.handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
-  ipcMain.handle(ASR_CHANNELS.createJob, (_event, input) => rateLimitAware(() => coordinator.createJob(input)))
-  ipcMain.handle(ASR_CHANNELS.getJob, (_event, id) => rateLimitAware(() => coordinator.getJob(id)))
+  handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
+  handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
+  handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
+  handle(ASR_CHANNELS.cancelRecording, (_event, id) => store.cancel(id))
+  handle(ASR_CHANNELS.createJob, (_event, input) => rateLimitAware(() => coordinator.createJob(input)))
+  handle(ASR_CHANNELS.getJob, (_event, id) => rateLimitAware(() => coordinator.getJob(id)))
 }
 
 function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
-  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(() => service.list(cursor ?? 0)))
-  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => rateLimitAware(() => service.downloadById(assetId, outputPath)))
-  ipcMain.handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
+  handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(() => service.list(cursor ?? 0)))
+  handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => rateLimitAware(() => service.downloadById(assetId, outputPath)))
+  handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
 }
 
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
-  ipcMain.handle(MEMORY_CHANNELS.overview, () => bridge.overview())
-  ipcMain.handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
+  handle(MEMORY_CHANNELS.overview, () => bridge.overview())
+  handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
     bridge.listAtomic(options))
-  ipcMain.handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
+  handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
     bridge.searchAtomic(query, limit))
-  ipcMain.handle(
+  handle(
     MEMORY_CHANNELS.updateAtomic,
     (_event, id: string, content: string, background?: string) =>
       bridge.updateAtomic(id, content, background),
   )
-  ipcMain.handle(MEMORY_CHANNELS.deleteAtomic, (_event, ids: string[]) => bridge.deleteAtomic(ids))
-  ipcMain.handle(MEMORY_CHANNELS.listScenarios, (_event, pathPrefix?: string) =>
+  handle(MEMORY_CHANNELS.deleteAtomic, (_event, ids: string[]) => bridge.deleteAtomic(ids))
+  handle(MEMORY_CHANNELS.listScenarios, (_event, pathPrefix?: string) =>
     bridge.listScenarios(pathPrefix))
-  ipcMain.handle(MEMORY_CHANNELS.readScenario, (_event, path: string) => bridge.readScenario(path))
-  ipcMain.handle(MEMORY_CHANNELS.readCore, () => bridge.readCore())
-  ipcMain.handle(MEMORY_CHANNELS.writeCore, (_event, content: string) => bridge.writeCore(content))
-  ipcMain.handle(
+  handle(MEMORY_CHANNELS.readScenario, (_event, path: string) => bridge.readScenario(path))
+  handle(MEMORY_CHANNELS.readCore, () => bridge.readCore())
+  handle(MEMORY_CHANNELS.writeCore, (_event, content: string) => bridge.writeCore(content))
+  handle(
     MEMORY_CHANNELS.listConversations,
     (_event, options: MemoryConversationListOptions) => bridge.listConversations(options),
   )
-  ipcMain.handle(
+  handle(
     MEMORY_CHANNELS.searchConversations,
     (_event, query: string, limit?: number, sessionId?: string) =>
       bridge.searchConversations(query, limit, sessionId),
   )
-  ipcMain.handle(
+  handle(
     MEMORY_CHANNELS.deleteConversations,
     (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
       bridge.deleteConversations(target),
   )
-  ipcMain.handle(
+  handle(
     MEMORY_CHANNELS.captureDocumentRewrite,
     (_event, input: MemoryDocumentRewriteInput) => bridge.captureDocumentRewrite(input),
   )
 }
 
 function registerRealityHandlers(bridge: RealityGatewayBridge): void {
-  ipcMain.handle(REALITY_CHANNELS.listEvents, (_event, filters) => bridge.listEvents(filters))
-  ipcMain.handle(REALITY_CHANNELS.getEvent, (_event, id) => bridge.getEvent(id))
-  ipcMain.handle(REALITY_CHANNELS.createEvent, (_event, input) => bridge.createEvent(input))
-  ipcMain.handle(REALITY_CHANNELS.finishCapture, (_event, id, input) => bridge.finishCapture(id, input))
-  ipcMain.handle(REALITY_CHANNELS.updateTranscript, (_event, id, input) => bridge.updateTranscript(id, input))
-  ipcMain.handle(REALITY_CHANNELS.addMarker, (_event, id, input) => bridge.addMarker(id, input))
-  ipcMain.handle(REALITY_CHANNELS.confirm, (_event, id) => bridge.confirm(id))
-  ipcMain.handle(REALITY_CHANNELS.discard, (_event, id) => bridge.discard(id))
-  ipcMain.handle(REALITY_CHANNELS.fail, (_event, id, error) => bridge.fail(id, error))
-  ipcMain.handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
-  ipcMain.handle(REALITY_CHANNELS.subscribe, (event) => bridge.subscribe(event.sender))
-  ipcMain.handle(REALITY_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
+  handle(REALITY_CHANNELS.listEvents, (_event, filters) => bridge.listEvents(filters))
+  handle(REALITY_CHANNELS.getEvent, (_event, id) => bridge.getEvent(id))
+  handle(REALITY_CHANNELS.createEvent, (_event, input) => bridge.createEvent(input))
+  handle(REALITY_CHANNELS.finishCapture, (_event, id, input) => bridge.finishCapture(id, input))
+  handle(REALITY_CHANNELS.updateTranscript, (_event, id, input) => bridge.updateTranscript(id, input))
+  handle(REALITY_CHANNELS.addMarker, (_event, id, input) => bridge.addMarker(id, input))
+  handle(REALITY_CHANNELS.confirm, (_event, id) => bridge.confirm(id))
+  handle(REALITY_CHANNELS.discard, (_event, id) => bridge.discard(id))
+  handle(REALITY_CHANNELS.fail, (_event, id, error) => bridge.fail(id, error))
+  handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
+  handle(REALITY_CHANNELS.subscribe, (event) => bridge.subscribe(event.sender))
+  handle(REALITY_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
 async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promise<CloudAccountStatus> {
@@ -462,9 +552,9 @@ async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promi
 }
 
 function registerAccountHandlers(client: SaasClient): void {
-  ipcMain.handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(() => syncAccountMonitoring(client.status(refreshSubscription === true))))
-  ipcMain.handle(ACCOUNT_CHANNELS.devices, () => rateLimitAware(() => client.listDevices()))
-  ipcMain.handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
+  handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(() => syncAccountMonitoring(client.status(refreshSubscription === true))))
+  handle(ACCOUNT_CHANNELS.devices, () => rateLimitAware(() => client.listDevices()))
+  handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
     const value = input as { identifier?: unknown; password?: unknown }
     if (typeof value.identifier !== 'string' || typeof value.password !== 'string') {
@@ -474,34 +564,69 @@ function registerAccountHandlers(client: SaasClient): void {
     const password = value.password
     return rateLimitAware(() => syncAccountMonitoring(client.login(identifier, password)))
   })
-  ipcMain.handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
+  handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
     if (provider !== 'apple' && provider !== 'google') throw new Error('不支持的登录方式。')
     return rateLimitAware(() => syncAccountMonitoring(client.loginWithOidc(provider)))
   })
-  ipcMain.handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
-  ipcMain.handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(() => syncAccountMonitoring(client.logout())))
+  handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
+  handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(() => syncAccountMonitoring(client.logout())))
 }
 
 function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncService): void {
-  ipcMain.handle(ACCOUNT_CHANNELS.keyringStatus, () => rateLimitAware(() => sync.keyringStatus()))
-  ipcMain.handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(() => sync.createPairingSession()))
-  ipcMain.handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
+  handle(ACCOUNT_CHANNELS.keyringStatus, () => rateLimitAware(() => sync.keyringStatus()))
+  handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(() => sync.createPairingSession()))
+  handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('无效的配对会话。')
     return rateLimitAware(() => sync.getPairingSession(id))
   })
-  ipcMain.handle(ACCOUNT_CHANNELS.approvePairingSession, (_event, id: unknown) => {
+  handle(ACCOUNT_CHANNELS.approvePairingSession, (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('无效的配对会话。')
     return rateLimitAware(() => sync.approvePairingSession(id))
   })
-  ipcMain.handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => rateLimitAware(() => sync.sync()))
-  ipcMain.handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
-  ipcMain.handle(TRANSCRIPTION_CHANNELS.listTags, () => rateLimitAware(() => sync.listTags()))
-  ipcMain.handle(TRANSCRIPTION_CHANNELS.replaceSummaryTags, (_event, summaryRecordId, tags) =>
+  handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => rateLimitAware(() => sync.sync()))
+  handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
+  handle(TRANSCRIPTION_CHANNELS.listTags, () => rateLimitAware(() => sync.listTags()))
+  handle(TRANSCRIPTION_CHANNELS.replaceSummaryTags, (_event, summaryRecordId, tags) =>
     rateLimitAware(() => sync.replaceSummaryTags(summaryRecordId, tags)))
-  ipcMain.handle(TRANSCRIPTION_CHANNELS.renameTag, (_event, tagId, label) =>
+  handle(TRANSCRIPTION_CHANNELS.renameTag, (_event, tagId, label) =>
     rateLimitAware(() => sync.renameTag(tagId, label)))
-  ipcMain.handle(TRANSCRIPTION_CHANNELS.mergeTag, (_event, targetTagId, sourceTagId) =>
+  handle(TRANSCRIPTION_CHANNELS.mergeTag, (_event, targetTagId, sourceTagId) =>
     rateLimitAware(() => sync.mergeTag(targetTagId, sourceTagId)))
+}
+
+function registerScreenCaptureHandlers(): void {
+  const isAuthorized = (event: Electron.IpcMainInvokeEvent): boolean => {
+    const window = BrowserWindow.getAllWindows()[0]
+    return Boolean(
+      window &&
+      !window.isDestroyed() &&
+      !window.webContents.isDestroyed() &&
+      event.sender === window.webContents,
+    )
+  }
+
+  handle(SCREEN_CAPTURE_CHANNELS.captureCurrentWindow, async (event) => {
+    if (!isAuthorized(event)) {
+      return { ok: false, code: 'window-unavailable', message: '无法验证截图请求来源。' }
+    }
+    return captureCurrentWindow()
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.start, async (event, intervalMs: unknown) => {
+    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
+    return screenshotScheduler.start(typeof intervalMs === 'number' ? intervalMs : NaN)
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.updateInterval, async (event, intervalMs: unknown) => {
+    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
+    return screenshotScheduler.updateInterval(typeof intervalMs === 'number' ? intervalMs : NaN)
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.stop, (event) => {
+    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
+    return screenshotScheduler.stop()
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.status, (event) => {
+    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
+    return screenshotScheduler.getStatus()
+  })
 }
 
 function createWindow(): void {
@@ -514,7 +639,7 @@ function createWindow(): void {
     title: 'Everroom',
     backgroundColor: '#f5f5f5',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 7 },
+    trafficLightPosition: { x: 14, y: 17 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -601,6 +726,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
+  // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
+  installIpcRouters()
+  registerGatewayHandlers()
+  createWindow()
   try {
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
@@ -621,7 +750,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
-    registerGatewayHandlers(gatewaySupervisor)
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
@@ -630,6 +758,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge)
+    registerDocumentPdfExportHandler()
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')
@@ -668,6 +797,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerPrivateTranscriptionHandlers(privateTranscriptionSync)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
     registerPrivateAudioHandlers(privateAudioSync)
+    registerScreenCaptureHandlers()
 
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
@@ -678,8 +808,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
-    createWindow()
+    resolveServicesReady?.()
   } catch (error) {
+    rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
     const service = localDataService
     localDataService = null
     await service?.shutdown()
@@ -725,6 +856,7 @@ app.on('before-quit', (event) => {
   realityGatewayBridge = null
   recordingStore = null
   saasClient = null
+  screenshotScheduler.stop()
   agentBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()
