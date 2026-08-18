@@ -17,7 +17,7 @@ import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextR
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
 import { onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
-import { onDocumentPatchNavigation } from '@/components/context-room/patches/documentPatchNavigation'
+import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
 const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nxcore'])
@@ -138,7 +138,7 @@ export function App() {
   }, [availableContextRooms, openContextRoomTab])
 
   useEffect(() => onDocumentBlockNavigation(openDocumentTarget), [openDocumentTarget])
-  useEffect(() => onDocumentPatchNavigation(openDocumentTarget), [openDocumentTarget])
+  useEffect(() => onDocumentOperationNavigation(openDocumentTarget), [openDocumentTarget])
 
   const activateContextRoomTab = useCallback((roomId: string) => {
     setActivePage('rooms')

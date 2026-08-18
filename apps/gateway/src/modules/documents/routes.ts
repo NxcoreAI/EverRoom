@@ -1,23 +1,12 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import type { DocumentService } from "./service.js";
-import { DocumentServiceError } from "./service.js";
-
+import { DocumentServiceError, type DocumentService } from "./service.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
-const TransactionParams = Type.Object({
-  transactionId: Type.String({ minLength: 1, maxLength: 128 }),
-});
 const JsonDocument = Type.Object({ type: Type.Literal("doc") }, { additionalProperties: true });
-const PatchStatus = Type.Union([
-  Type.Literal("building"), Type.Literal("pending"), Type.Literal("applied"),
-  Type.Literal("rejected"), Type.Literal("conflicted"), Type.Literal("aborted"), Type.Literal("expired"),
-]);
 const BlockReference = Type.Object({
   roomId: Type.String({ minLength: 1, maxLength: 128 }),
-  documentId: Type.String({ minLength: 1, maxLength: 128 }),
-  blockId: Type.String({ minLength: 1, maxLength: 128 }),
+  documentId: Type.String({ minLength: 1, maxLength: 128 }), blockId: Type.String({ minLength: 1, maxLength: 128 }),
 });
-
 function errorPayload(error: DocumentServiceError) {
   return { error: error.code, message: error.message, ...error.details };
 }
@@ -150,119 +139,6 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
       },
     );
 
-    app.get(
-      "/v1/document-patches",
-      {
-        schema: {
-          tags: ["documents"],
-          querystring: Type.Object({
-            documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-            status: Type.Optional(PatchStatus),
-          }),
-        },
-      },
-      async (request) => service.listPatches(request.query.documentId, request.query.status),
-    );
-
-    app.get(
-      "/v1/document-patches/:id",
-      { schema: { tags: ["documents"], params: IdParams } },
-      async (request, reply) => service.getPatch(request.params.id)
-        ?? reply.code(404).send({ error: "patch_not_found", message: "Document patch not found" }),
-    );
-
-    app.post(
-      "/v1/document-patches/:id/continuation/accept",
-      {
-        schema: {
-          tags: ["documents"],
-          params: IdParams,
-          body: Type.Object({
-            baseVersion: Type.Integer({ minimum: 0 }),
-            blockId: Type.String({ minLength: 1, maxLength: 128 }),
-          }),
-        },
-      },
-      async (request, reply) => {
-        try {
-          return await service.acceptContinuationBlock(request.params.id, request.body);
-        } catch (error) {
-          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
-          throw error;
-        }
-      },
-    );
-
-    app.post(
-      "/v1/document-patches/:id/continuation/reject",
-      {
-        schema: {
-          tags: ["documents"],
-          params: IdParams,
-          body: Type.Object({
-            baseVersion: Type.Integer({ minimum: 0 }),
-            blockId: Type.String({ minLength: 1, maxLength: 128 }),
-          }),
-        },
-      },
-      async (request, reply) => {
-        try {
-          return await service.rejectContinuationBlock(request.params.id, request.body);
-        } catch (error) {
-          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
-          throw error;
-        }
-      },
-    );
-
-    app.post(
-      "/v1/document-patches/:id/continuation/close",
-      { schema: { tags: ["documents"], params: IdParams } },
-      async (request, reply) => {
-        try {
-          return await service.closeContinuation(request.params.id);
-        } catch (error) {
-          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
-          throw error;
-        }
-      },
-    );
-
-    app.post(
-      "/v1/document-patches/:id/apply",
-      {
-        schema: {
-          tags: ["documents"],
-          params: IdParams,
-          body: Type.Object({
-            baseVersion: Type.Integer({ minimum: 0 }),
-            acceptedHunkIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1 }),
-          }),
-        },
-      },
-      async (request, reply) => {
-        try {
-          return await service.applyPatch(request.params.id, request.body);
-        } catch (error) {
-          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
-          throw error;
-        }
-      },
-    );
-
-    app.post(
-      "/v1/document-patches/:id/reject",
-      { schema: { tags: ["documents"], params: IdParams } },
-      async (request, reply) => {
-        try {
-          return await service.rejectPatch(request.params.id);
-        } catch (error) {
-          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
-          throw error;
-        }
-      },
-    );
-
     app.delete(
       "/v1/documents/trash",
       {
@@ -365,40 +241,12 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
       },
     );
 
-    app.post(
-      "/v1/document-transactions/:transactionId/ack",
-      {
-        schema: {
-          tags: ["documents"],
-          params: TransactionParams,
-          body: Type.Object({
-            sequence: Type.Integer({ minimum: 0 }),
-            contentJson: JsonDocument,
-          }),
-        },
-      },
-      async (request, reply) => {
-        try {
-          await service.acknowledge(request.params.transactionId, request.body);
-          return reply.code(204).send();
-        } catch (error) {
-          if (error instanceof DocumentServiceError) {
-            return reply.code(error.statusCode).send({ error: error.code, message: error.message });
-          }
-          throw error;
-        }
-      },
-    );
-
     app.get(
       "/v1/documents/rooms/:id/stream",
       { websocket: true, schema: { tags: ["documents"], params: IdParams } },
       (socket, request) => {
         const unsubscribe = service.broker.subscribe(request.params.id, socket);
         socket.send(JSON.stringify({ type: "document.ready", protocol: 1, roomId: request.params.id }));
-        for (const event of service.replayPending(request.params.id)) {
-          socket.send(JSON.stringify({ type: "document.event", protocol: 1, event }));
-        }
         socket.once("close", unsubscribe);
       },
     );

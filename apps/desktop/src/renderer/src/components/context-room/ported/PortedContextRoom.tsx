@@ -157,7 +157,6 @@ export function PortedContextRoom({
         rooms={state.rooms}
         backendDocuments={roomDocuments.documentsByRoom[activeRoom.id] ?? []}
         trashedDocuments={roomDocuments.trashedDocumentsByRoom[activeRoom.id] ?? []}
-        documentEvents={roomDocuments.eventsByDocument}
         focusedDocumentId={focusedDocumentId ?? roomDocuments.focusedDocumentByRoom[activeRoom.id] ?? null}
         focusedBlockId={focusedBlockId}
         documentFocusRequestId={documentFocusRequestId}

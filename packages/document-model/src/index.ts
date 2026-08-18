@@ -1,6 +1,6 @@
 import type { TiptapJsonContent } from "@nxcore/agent-contract";
 
-export const DOCUMENT_CONTENT_SCHEMA_VERSION = 2;
+export const DOCUMENT_CONTENT_SCHEMA_VERSION = 3;
 export const DOCUMENT_TITLE_NODE_TYPE = "documentTitle";
 
 export const ADDRESSABLE_BLOCK_TYPES = [
@@ -41,12 +41,14 @@ export interface ProjectedDocumentReference {
 
 export interface NormalizeDocumentOptions {
   createId?: () => string;
-  documentTitle?: string;
+}
+
+export interface FreshenDocumentOptions {
+  createId?: () => string;
 }
 
 export interface NormalizedDocumentContent {
   content: TiptapJsonContent;
-  title: string;
   blocks: ProjectedDocumentBlock[];
   references: ProjectedDocumentReference[];
   changed: boolean;
@@ -75,45 +77,89 @@ export function documentTitleText(node: TiptapJsonContent | undefined): string {
   return tiptapText(node).trim().slice(0, DOCUMENT_TITLE_LIMIT);
 }
 
-function titleNode(title: string): TiptapJsonContent {
-  return {
-    type: DOCUMENT_TITLE_NODE_TYPE,
-    content: title ? [{ type: "text", text: title }] : [],
-  };
-}
-
-/** Keeps the title as the unique first node in the persisted document tree. */
-export function ensureDocumentTitle(
+/** Removes the retired editor title node from persisted body content. */
+export function stripDocumentTitle(
   source: TiptapJsonContent,
-  fallbackTitle = "无标题文档",
-): { content: TiptapJsonContent; title: string; changed: boolean } {
+): { content: TiptapJsonContent; legacyTitle: string | null; changed: boolean } {
   const input = clone(source);
-  const fallback = fallbackTitle.trim().slice(0, DOCUMENT_TITLE_LIMIT) || "无标题文档";
   const children = [...(input.content ?? [])];
   const existingTitle = children.find((node) => node.type === DOCUMENT_TITLE_NODE_TYPE);
-  let title = documentTitleText(existingTitle);
-  let body = children.filter((node) => node.type !== DOCUMENT_TITLE_NODE_TYPE);
-  if (!title && body[0]?.type === "heading" && body[0].attrs?.level === 1) {
-    const legacyTitle = tiptapText(body[0]).trim().slice(0, DOCUMENT_TITLE_LIMIT);
-    if (legacyTitle && legacyTitle === fallback) {
-      title = legacyTitle;
-      body = body.slice(1);
-    }
-  }
-  title = title || fallback;
-  const normalized = { ...input, content: [titleNode(title), ...body] };
+  const normalized = {
+    ...input,
+    content: children.filter((node) => node.type !== DOCUMENT_TITLE_NODE_TYPE),
+  };
   return {
     content: normalized,
-    title,
+    legacyTitle: documentTitleText(existingTitle) || null,
     changed: JSON.stringify(normalized) !== JSON.stringify(source),
   };
 }
 
 export function documentBodyContent(source: TiptapJsonContent): TiptapJsonContent {
-  return {
-    ...clone(source),
-    content: (source.content ?? []).filter((node) => node.type !== DOCUMENT_TITLE_NODE_TYPE),
+  return stripDocumentTitle(source).content;
+}
+
+export function hasEmbeddedDocumentImages(source: TiptapJsonContent): boolean {
+  if (source.type === "image" && typeof source.attrs?.src === "string") {
+    return source.attrs.src.startsWith("data:image/");
+  }
+  return (source.content ?? []).some(hasEmbeddedDocumentImages);
+}
+
+/** Assigns fresh IDs to an imported tree and preserves its internal references. */
+export function freshenDocumentContent(
+  source: TiptapJsonContent,
+  documentId: string,
+  options: FreshenDocumentOptions = {},
+): TiptapJsonContent {
+  const createId = options.createId ?? defaultCreateId;
+  const idMap = new Map<string, string>();
+  const assignIds = (input: TiptapJsonContent): TiptapJsonContent => {
+    const node = clone(input);
+    if (addressableBlockTypes.has(node.type)) {
+      const nextId = createId();
+      const previousId = node.attrs?.id;
+      if (isValidBlockId(previousId) && !idMap.has(previousId)) idMap.set(previousId, nextId);
+      node.attrs = { ...node.attrs, id: nextId };
+    }
+    if (node.content) node.content = node.content.map(assignIds);
+    return node;
   };
+  const rewriteReferences = (input: TiptapJsonContent): TiptapJsonContent => {
+    const node: TiptapJsonContent = {
+      ...input,
+      ...(input.attrs ? { attrs: { ...input.attrs } } : {}),
+      ...(input.marks ? { marks: input.marks.map((mark) => ({
+        ...mark,
+        ...(mark.attrs ? { attrs: { ...mark.attrs } } : {}),
+      })) } : {}),
+    };
+    if (node.type === "documentBlockReference"
+      && node.attrs?.targetDocumentId === documentId
+      && typeof node.attrs.targetBlockId === "string") {
+      node.attrs.targetBlockId = idMap.get(node.attrs.targetBlockId) ?? node.attrs.targetBlockId;
+    }
+    if (node.marks) {
+      node.marks = node.marks.map((mark) => {
+        if (mark.type !== "link" || typeof mark.attrs?.href !== "string") return mark;
+        const reference = parseEverroomReference(mark.attrs.href);
+        const targetBlockId = reference?.documentId === documentId
+          ? idMap.get(reference.blockId)
+          : null;
+        if (!reference || !targetBlockId) return mark;
+        return {
+          ...mark,
+          attrs: {
+            ...mark.attrs,
+            href: `everroom://room/${encodeURIComponent(reference.roomId)}/${encodeURIComponent(reference.documentId)}/${encodeURIComponent(targetBlockId)}`,
+          },
+        };
+      });
+    }
+    if (node.content) node.content = node.content.map(rewriteReferences);
+    return node;
+  };
+  return rewriteReferences(assignIds(documentBodyContent(source)));
 }
 
 function textPreview(node: TiptapJsonContent): string {
@@ -191,7 +237,7 @@ export function normalizeDocumentContent(
   options: NormalizeDocumentOptions = {},
 ): NormalizedDocumentContent {
   const createId = options.createId ?? defaultCreateId;
-  const titled = ensureDocumentTitle(source, options.documentTitle);
+  const stripped = stripDocumentTitle(source);
   const seen = new Set<string>();
   const blocks: ProjectedDocumentBlock[] = [];
   const references: ProjectedDocumentReference[] = [];
@@ -262,13 +308,19 @@ export function normalizeDocumentContent(
   };
 
   return {
-    content: visit(titled.content, [], null, null),
-    title: titled.title,
+    content: visit(stripped.content, [], null, null),
     blocks,
     references,
-    changed: changed || titled.changed,
+    changed: changed || stripped.changed,
     schemaVersion: DOCUMENT_CONTENT_SCHEMA_VERSION,
   };
+}
+
+export function normalizeDocumentFragment(
+  source: TiptapJsonContent,
+  options: NormalizeDocumentOptions = {},
+): NormalizedDocumentContent {
+  return normalizeDocumentContent(documentBodyContent(source), options);
 }
 
 export function findBlockPath(content: TiptapJsonContent, blockId: string): number[] | null {

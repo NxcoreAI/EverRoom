@@ -8,6 +8,7 @@ import { AgentToolbar } from '@/components/agent/AgentToolbar'
 import {
   agentSessionLinkDestination,
   navigationKey,
+  navigationRequiresSessionHandoff,
   parseAgentNavigationTarget,
   type AgentNavigationRequest,
   type AgentSessionRouteRequest,
@@ -148,8 +149,13 @@ export function AgentPanel({
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
     if ((navigationRequest.target.roomId ?? null) !== roomId) return
-    if (!roomBackendReady || !session.scopeReady || session.loading || session.activeRunId || submitting) return
     if (handledRequestKeysRef.current.has(navigationRequest.key)) return
+    if (!navigationRequiresSessionHandoff(navigationRequest)) {
+      handledRequestKeysRef.current.add(navigationRequest.key)
+      onNavigationConsumed(navigationRequest.key)
+      return
+    }
+    if (!roomBackendReady || !session.scopeReady || session.loading || session.activeRunId || submitting) return
     handledRequestKeysRef.current.add(navigationRequest.key)
     setSubmitting(true)
     void (async () => {
@@ -329,7 +335,6 @@ export function AgentPanel({
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt) => void sendPrompt(prompt)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
-        onOpenPatchDocument={({ roomId, documentId }) => onOpenDocument({ roomId, documentId })}
         onSelectRoom={(room) => void selectDocumentRoom(room)}
         onSelectDocument={(selection) => void selectDocument(selection)}
         onSelectPrompt={(prompt) => {

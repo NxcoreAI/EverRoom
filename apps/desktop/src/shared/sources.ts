@@ -12,11 +12,6 @@ export type SourceFileStatus =
 export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' | 'unsupported'
 
 import type {
-  AcknowledgeDocumentTransactionInput,
-  AcceptDocumentContinuationBlockInput,
-  AcceptDocumentContinuationBlockResult,
-  ApplyDocumentPatchInput,
-  ApplyDocumentPatchResult,
   AgentEvent,
   AgentRun,
   AgentSession,
@@ -27,21 +22,22 @@ import type {
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   DocumentEventFrame,
+  DocumentOperation,
+  DocumentOperationCommandInput,
+  DocumentOperationCommandResult,
+  DocumentOperationStatus,
+  DocumentOperationSummary,
   DocumentBlockList,
   DocumentBlockBacklinkList,
-  DocumentPatch,
-  DocumentPatchStatus,
-  DocumentPatchSummary,
   DocumentVersionSummary,
   ImportRoomDocumentInput,
   RoomDocument,
   ResolveDocumentBlockReferencesInput,
   ResolveDocumentBlockReferencesResult,
-  RejectDocumentContinuationBlockInput,
-  RejectDocumentContinuationBlockResult,
   SaveRoomDocumentInput,
   SaveContextRoomSnapshotInput,
   StartAgentRunInput,
+  StartDocumentOperationInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
 import type {
@@ -305,11 +301,40 @@ export type ExportDocumentPdfResult =
   | { canceled: true }
   | { canceled: false; filePath: string; fileName: string }
 
+export type DocumentImageMimeType =
+  | 'image/avif'
+  | 'image/gif'
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/webp'
+
+export interface StoreDocumentImageInput {
+  fileName: string
+  mimeType: DocumentImageMimeType
+  bytes: ArrayBuffer
+}
+
+export interface StoredDocumentImage {
+  assetId: string
+  src: string
+  mimeType: DocumentImageMimeType
+  bytes: number
+}
+
+export interface DesktopDiagnosticLogInput {
+  module: string
+  level: 'info' | 'warn' | 'error'
+  event: Record<string, unknown>
+}
+
 export interface NxcoreDesktopApi {
   platform: string
   errors: {
     onRequestError(listener: (error: DesktopRequestError) => void): () => void
     report(error: DesktopRequestError): void
+  }
+  diagnostics?: {
+    log(input: DesktopDiagnosticLogInput): void
   }
   gateway: {
     status(): Promise<GatewayStatus>
@@ -416,30 +441,30 @@ export interface NxcoreDesktopApi {
     listVersions(documentId: string): Promise<DocumentVersionSummary[]>
     restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
-    listPatches(documentId?: string, status?: DocumentPatchStatus): Promise<DocumentPatchSummary[]>
-    getPatch(patchId: string): Promise<DocumentPatch>
-    applyPatch(patchId: string, input: ApplyDocumentPatchInput): Promise<ApplyDocumentPatchResult>
-    rejectPatch(patchId: string): Promise<DocumentPatch>
-    acceptContinuationBlock(
-      patchId: string,
-      input: AcceptDocumentContinuationBlockInput,
-    ): Promise<AcceptDocumentContinuationBlockResult>
-    rejectContinuationBlock(
-      patchId: string,
-      input: RejectDocumentContinuationBlockInput,
-    ): Promise<RejectDocumentContinuationBlockResult>
-    closeContinuation(patchId: string): Promise<DocumentPatch>
+    listOperations(filters?: {
+      roomId?: string
+      documentId?: string
+      sessionId?: string
+      status?: DocumentOperationStatus
+    }): Promise<DocumentOperationSummary[]>
+    startOperation(input: StartDocumentOperationInput): Promise<DocumentOperation>
+    getOperation(operationId: string): Promise<DocumentOperation>
+    executeOperationCommand(
+      operationId: string,
+      input: DocumentOperationCommandInput,
+    ): Promise<DocumentOperationCommandResult>
+    storeImage(documentId: string, input: StoreDocumentImageInput): Promise<StoredDocumentImage>
     import(input: ImportRoomDocumentInput): Promise<RoomDocument>
     save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
     delete(documentId: string): Promise<void>
     restore(documentId: string): Promise<RoomDocument>
     deletePermanently(documentId: string): Promise<void>
     emptyTrash(roomId: string): Promise<void>
-    acknowledge(transactionId: string, input: AcknowledgeDocumentTransactionInput): Promise<void>
     exportPdf(input: ExportDocumentPdfInput): Promise<ExportDocumentPdfResult>
     subscribe(roomId: string): Promise<void>
     unsubscribe(roomId?: string): Promise<void>
     onEvent(listener: (frame: DocumentEventFrame) => void): () => void
+    onOperationChanged(listener: (operationId: string) => void): () => void
   }
   sources: {
     list(): Promise<DataSourceSummary[]>

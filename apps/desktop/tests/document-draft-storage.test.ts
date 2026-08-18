@@ -22,8 +22,8 @@ describe('document draft persistence', () => {
   it('stores content with the SQLite base version and removes it after persistence', () => {
     const content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '待保存' }] }] }
 
-    expect(writeDocumentDraft('doc-1', content, 4)).toBe(true)
-    expect(readDocumentDraftRecord('doc-1')).toMatchObject({ content, baseVersion: 4 })
+    expect(writeDocumentDraft('doc-1', content, 4, '独立标题')).toBe(true)
+    expect(readDocumentDraftRecord('doc-1')).toMatchObject({ content, title: '独立标题', baseVersion: 4 })
 
     removeDocumentDraft('doc-1')
     expect(readDocumentDraftRecord('doc-1')).toBeNull()

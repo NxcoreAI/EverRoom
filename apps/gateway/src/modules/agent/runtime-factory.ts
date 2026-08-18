@@ -11,10 +11,8 @@ export function createAgentRuntime(config: GatewayConfig, mcpHost: DocumentMcpHo
   if (!config.pi) throw new Error("Pi runtime configuration is missing");
   return new PiAgentRuntime(config.pi, {
     tools: createDocumentPiTools(mcpHost),
-    onRunFinished: (input, outcome) => mcpHost.abortAgentSession(
-      input.sessionId,
-      `pi-agent-run-${outcome}`,
-    ),
+    promptGuidelines: mcpHost.capabilities.promptGuidelines(),
+    onRunFinished: (input, outcome) => mcpHost.finishAgentRun(input.sessionId, outcome, input.runId),
   });
 }
 

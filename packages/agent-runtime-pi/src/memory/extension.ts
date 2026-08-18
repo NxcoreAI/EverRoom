@@ -17,6 +17,8 @@ export interface MemoryRunContext {
   cancelled: boolean;
   /** 临时预览类运行关闭自动沉淀，由用户确认后的领域事件负责写入。 */
   captureEnabled: boolean;
+  /** 轻量运行可关闭自动召回，避免将历史记忆注入本轮上下文。 */
+  recallEnabled: boolean;
 }
 
 export interface MemoryLogger {
@@ -49,7 +51,7 @@ export function createMemoryExtension(options: MemoryExtensionOptions): InlineEx
     factory: (pi) => {
       pi.on("before_agent_start", async () => {
         const run = getRunContext();
-        if (!run || run.cancelled) return;
+        if (!run || run.cancelled || !run.recallEnabled) return;
 
         const query = run.originalPrompt.slice(0, RECALL_QUERY_MAX_CHARS);
         const [atomic, core, scenarios, conversations] = await Promise.allSettled([

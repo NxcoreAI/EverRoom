@@ -3,8 +3,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { DocumentEventBroker } from "../src/modules/documents/event-broker.js";
-import { DocumentService } from "../src/modules/documents/service.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -44,11 +42,11 @@ describe("database migrations", () => {
     const tables = upgraded.sqlite.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
     ).all() as Array<{ name: string }>;
-    const patchColumns = upgraded.sqlite.prepare("PRAGMA table_info(document_patches)")
-      .all() as Array<{ name: string }>;
     const blockColumns = upgraded.sqlite.prepare("PRAGMA table_info(document_blocks)")
       .all() as Array<{ name: string }>;
     const documentColumns = upgraded.sqlite.prepare("PRAGMA table_info(documents)")
+      .all() as Array<{ name: string }>;
+    const versionColumns = upgraded.sqlite.prepare("PRAGMA table_info(doc_versions)")
       .all() as Array<{ name: string }>;
     upgraded.sqlite.close();
 
@@ -56,15 +54,21 @@ describe("database migrations", () => {
       "documents",
       "document_blocks",
       "document_block_references",
+      "document_operations",
+      "document_operation_items",
+      "document_operation_commands",
+      "document_operation_events",
+      "pending_agent_intents",
+      "reality_events",
+    ]));
+    for (const removedTable of [
       "document_patches",
       "document_patch_hunks",
       "doc_transactions",
-      "reality_events",
-    ]));
-    expect(patchColumns.map(({ name }) => name)).toEqual(expect.arrayContaining([
-      "accepted_block_ids",
-      "rejected_block_ids",
-    ]));
+      "doc_ops",
+    ]) {
+      expect(tables.map(({ name }) => name)).not.toContain(removedTable);
+    }
     expect(blockColumns.map(({ name }) => name)).toEqual(expect.arrayContaining([
       "document_id",
       "block_id",
@@ -75,9 +79,10 @@ describe("database migrations", () => {
     ]));
     expect(blockColumns.map(({ name }) => name)).not.toContain("id");
     expect(documentColumns.map(({ name }) => name)).toContain("content_schema_version");
+    expect(versionColumns.map(({ name }) => name)).toContain("title");
   });
 
-  it("preserves canonical content and rebuilds disposable block projections from a 0009 database", async () => {
+  it("clears the document domain at cutover while preserving Rooms and Agent sessions", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-block-migration-test-"));
     temporaryDirectories.push(dataDir);
     const databasePath = join(dataDir, "gateway.sqlite");
@@ -89,7 +94,7 @@ describe("database migrations", () => {
       dialect: string;
       entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
     };
-    const legacyEntries = journal.entries.filter((entry) => entry.idx <= 9);
+    const legacyEntries = journal.entries.filter((entry) => entry.idx <= 12);
     await Promise.all(legacyEntries.map((entry) => copyFile(
       join(currentMigrationsDir, `${entry.tag}.sql`),
       join(legacyMigrationsDir, `${entry.tag}.sql`),
@@ -107,15 +112,17 @@ describe("database migrations", () => {
         content: [{ type: "text", text: "canonical content" }],
       }],
     };
-    const expectedCanonical = {
-      type: "doc",
-      content: [
-        { type: "documentTitle", content: [{ type: "text", text: "Migrated" }] },
-        ...canonical.content,
-      ],
-    };
     const legacy = createDatabase(databasePath, legacyMigrationsDir);
     const now = Date.now();
+    legacy.sqlite.prepare(
+      "INSERT INTO context_rooms (id, title, kind, data, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("room-1", "Preserved Room", "workspace", "{}", 0, now, now);
+    legacy.sqlite.prepare(
+      "INSERT INTO agent_sessions (id, room_id, page_label, runtime_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("session-1", "room-1", "rooms", "test", "idle", now, now);
+    legacy.sqlite.prepare(
+      "INSERT INTO agent_runs (id, session_id, idempotency_key, status, prompt, last_event_seq, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("run-1", "session-1", "run-key", "completed", "prompt", 0, now);
     legacy.sqlite.prepare(
       "INSERT INTO documents (id, title, content_json, version, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     ).run("doc-migrated", "Migrated", JSON.stringify(canonical), 1, "active", now, now);
@@ -123,27 +130,31 @@ describe("database migrations", () => {
       "INSERT INTO room_doc_links (room_id, document_id, linked_at) VALUES (?, ?, ?)",
     ).run("room-1", "doc-migrated", now);
     legacy.sqlite.prepare(
-      "INSERT INTO doc_versions (id, document_id, version, content_json, created_at) VALUES (?, ?, ?, ?, ?)",
-    ).run("version-1", "doc-migrated", 1, JSON.stringify(canonical), now);
+      "INSERT INTO doc_versions (id, document_id, version, title, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("version-1", "doc-migrated", 1, "Migrated", JSON.stringify(canonical), now);
     legacy.sqlite.prepare(
-      "INSERT INTO document_blocks (id, document_id, parent_block_id, type, ordinal, path, text_preview) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run("stale-block", "doc-migrated", null, "paragraph", 0, "[0]", "stale");
+      "INSERT INTO document_blocks (document_id, block_id, parent_block_id, root_block_id, type, sibling_index, ordinal, path, depth, text_preview, indexed_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("doc-migrated", "stale-block", null, "stale-block", "paragraph", 0, 0, "[0]", 0, "stale", 1);
+    legacy.sqlite.prepare(
+      "INSERT INTO document_operations (id, capability_id, capability_version, interaction_mode, presenter_key, room_id, document_id, document_title, agent_session_id, run_id, base_version, status, revision, summary, input, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("operation-1", "document.edit", 1, "atomic_review", "atomic-diff", "room-1", "doc-migrated", "Migrated", "session-1", "run-1", 1, "awaiting_review", 1, "Review", "{}", now, now);
+    legacy.sqlite.prepare(
+      "INSERT INTO pending_agent_intents (id, session_id, source_run_id, original_prompt, target_capability, allowed_room_ids, allowed_document_ids, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("intent-1", "session-1", "run-1", "Edit", "document.edit", '["room-1"]', '["doc-migrated"]', now + 60_000, now);
     legacy.sqlite.close();
 
     const upgraded = createDatabase(databasePath, currentMigrationsDir);
-    const service = new DocumentService(upgraded.db, new DocumentEventBroker());
-    try {
-      expect(service.get("doc-migrated")?.contentJson).toEqual(expectedCanonical);
-      expect(service.listBlocks("doc-migrated")).toEqual([
-        expect.objectContaining({
-          blockId: "preserved-block",
-          textPreview: "canonical content",
-          indexedVersion: 1,
-        }),
-      ]);
-    } finally {
-      service.dispose();
-      upgraded.sqlite.close();
-    }
+    expect(upgraded.sqlite.prepare("SELECT * FROM documents").all()).toEqual([]);
+    expect(upgraded.sqlite.prepare("SELECT * FROM doc_versions").all()).toEqual([]);
+    expect(upgraded.sqlite.prepare("SELECT * FROM document_blocks").all()).toEqual([]);
+    expect(upgraded.sqlite.prepare("SELECT * FROM document_operations").all()).toEqual([]);
+    expect(upgraded.sqlite.prepare("SELECT * FROM pending_agent_intents").all()).toEqual([]);
+    expect(upgraded.sqlite.prepare("SELECT id, title FROM context_rooms").all()).toEqual([
+      { id: "room-1", title: "Preserved Room" },
+    ]);
+    expect(upgraded.sqlite.prepare("SELECT id, room_id FROM agent_sessions").all()).toEqual([
+      { id: "session-1", room_id: "room-1" },
+    ]);
+    upgraded.sqlite.close();
   });
 });

@@ -6,6 +6,7 @@ const DOCUMENT_DRAFT_PREFIX = 'everroom:context-room:document:v1:'
 
 export interface DocumentDraft {
   content: JSONContent
+  title?: string
   baseVersion: number | null
   updatedAt: string
 }
@@ -26,14 +27,13 @@ function textNode(text: string): JSONContent {
 
 export function createRoomDocumentContent(
   room: ContextRoomRecord,
-  title: string,
+  _title: string,
 ): JSONContent {
   const decisions = room.brief.decisions.length ? room.brief.decisions : ['暂无关键结论']
 
   return {
     type: 'doc',
     content: [
-      { type: 'documentTitle', content: [textNode(title)] },
       { type: 'paragraph', content: [textNode(room.brief.background)] },
       { type: 'heading', attrs: { level: 2 }, content: [textNode('目标')] },
       { type: 'paragraph', content: [textNode(room.brief.goal)] },
@@ -57,6 +57,7 @@ export function readDocumentDraftRecord(documentId: string): DocumentDraft | nul
     if (parsed.content?.type !== 'doc') return null
     return {
       content: parsed.content,
+      ...(typeof parsed.title === 'string' ? { title: parsed.title } : {}),
       baseVersion: Number.isSafeInteger(parsed.baseVersion) && Number(parsed.baseVersion) >= 0
         ? Number(parsed.baseVersion)
         : null,
@@ -75,11 +76,12 @@ export function writeDocumentDraft(
   documentId: string,
   content: JSONContent,
   baseVersion: number | null = null,
+  title?: string,
 ): boolean {
   try {
     localStorage.setItem(
       `${DOCUMENT_DRAFT_PREFIX}${documentId}`,
-      JSON.stringify({ content, baseVersion, updatedAt: new Date().toISOString() }),
+      JSON.stringify({ content, baseVersion, ...(title ? { title } : {}), updatedAt: new Date().toISOString() }),
     )
     return true
   } catch {

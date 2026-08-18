@@ -12,8 +12,6 @@ import {
   findPendingAgentDocumentSelection,
   type AgentDocumentSelectionSubmission,
 } from './agentDocumentSelection'
-import { AgentPatchReviewCard } from './AgentPatchReviewCard'
-import { parseAgentPatchToolResult } from './agentPatchResult'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink } from '@nxcore/agent-contract'
@@ -282,7 +280,6 @@ export function AgentChatView({
   messages,
   onRetryPrompt,
   onOpenSessionLink,
-  onOpenPatchDocument,
   onConfirmDocumentIntent,
   onRejectDocumentIntent,
   onSelectRoom,
@@ -309,7 +306,6 @@ export function AgentChatView({
   messages: DisplayAgentMessage[]
   onRetryPrompt: (prompt: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
-  onOpenPatchDocument: (target: { roomId: string; documentId: string; patchId: string }) => void
   onConfirmDocumentIntent: (topic: string) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (room: AgentRoomReference) => void
@@ -518,11 +514,6 @@ export function AgentChatView({
             const previousUserMessage = [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')
             const showActions = message.role === 'assistant' && !message.streaming
               && !partialContent && Boolean(finalContent.trim())
-            const patchResults = tools.flatMap((tool) => {
-              if (tool.name !== 'context_room_patch_commit' || tool.status !== 'completed') return []
-              const result = parseAgentPatchToolResult(tool.result)
-              return result ? [{ toolId: tool.id, patchId: result.patchId }] : []
-            })
 
             if (message.role === 'user') {
               const link = outgoingLinks.find((item) => item.sourceRunId === message.runId)
@@ -561,14 +552,6 @@ export function AgentChatView({
                 {finalContent ? (
                   <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
                 ) : null}
-                {patchResults.map(({ toolId, patchId }) => (
-                  <AgentPatchReviewCard
-                    key={toolId}
-                    patchId={patchId}
-                    onOpenDocument={onOpenPatchDocument}
-                    onRetry={() => previousUserMessage && onRetryPrompt(previousUserMessage.content)}
-                  />
-                ))}
                 {showActions ? (
                   <div className="agent-message-actions">
                     <button type="button" aria-label="复制回答" title="复制回答" onClick={() => void copyMessage(message.id, finalContent)}>

@@ -2,7 +2,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { DocumentGatewayBridge } from '../src/main/gateway/document-gateway-bridge'
+import type { DocumentEventFrame, DocumentOperation, DocumentOperationSummary } from '@nxcore/agent-contract'
+import {
+  DocumentGatewayBridge,
+  documentOperationListResult,
+  operationIdFromDocumentEvent,
+} from '../src/main/gateway/document-gateway-bridge'
 import type { GatewaySupervisor } from '../src/main/gateway/gateway-supervisor'
 
 const servers: Array<ReturnType<typeof createServer>> = []
@@ -81,13 +86,6 @@ describe('DocumentGatewayBridge CRUD', () => {
       sourceRoomId: 'room-crud',
       references: [{ roomId: 'room-crud', documentId: 'doc-crud', blockId: 'block-1' }],
     })
-    await bridge.listPatches('doc-crud', 'pending')
-    await bridge.getPatch('patch-1')
-    await bridge.applyPatch('patch-1', { baseVersion: 1, acceptedHunkIds: ['hunk-1'] })
-    await bridge.rejectPatch('patch-2')
-    await bridge.acceptContinuationBlock('patch-3', { baseVersion: 1, blockId: 'block-1' })
-    await bridge.rejectContinuationBlock('patch-3', { baseVersion: 2, blockId: 'block-2' })
-    await bridge.closeContinuation('patch-3')
     await expect(bridge.save('doc-crud', {
       baseVersion: 1,
       contentJson: { type: 'doc', content: [{ type: 'paragraph' }] },
@@ -104,13 +102,6 @@ describe('DocumentGatewayBridge CRUD', () => {
       ['GET', '/v1/documents/doc-crud'],
       ['GET', '/v1/documents/doc-crud/blocks'],
       ['POST', '/v1/document-blocks/resolve'],
-      ['GET', '/v1/document-patches?documentId=doc-crud&status=pending'],
-      ['GET', '/v1/document-patches/patch-1'],
-      ['POST', '/v1/document-patches/patch-1/apply'],
-      ['POST', '/v1/document-patches/patch-2/reject'],
-      ['POST', '/v1/document-patches/patch-3/continuation/accept'],
-      ['POST', '/v1/document-patches/patch-3/continuation/reject'],
-      ['POST', '/v1/document-patches/patch-3/continuation/close'],
       ['PUT', '/v1/documents/doc-crud'],
       ['DELETE', '/v1/documents/doc-crud'],
       ['POST', '/v1/documents/doc-crud/restore'],
@@ -123,13 +114,138 @@ describe('DocumentGatewayBridge CRUD', () => {
     expect(requests[2]).not.toHaveProperty('contentType')
     expect(requests[3]).not.toHaveProperty('contentType')
     expect(requests[5]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('sourceRoomId') })
-    expect(requests[8]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('acceptedHunkIds') })
-    expect(requests[10]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('blockId') })
-    expect(requests[11]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('baseVersion') })
-    expect(requests[13]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('baseVersion') })
-    for (const index of [4, 6, 7, 9, 12, 14, 15, 16, 17]) {
+    expect(requests[6]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('baseVersion') })
+    for (const index of [4, 7, 8, 9, 10]) {
       expect(requests[index]).toMatchObject({ body: '' })
       expect(requests[index]).not.toHaveProperty('contentType')
     }
+  })
+
+  it('lists, loads, and commands document operations with revision-safe inputs', async () => {
+    const requests: Array<{ method: string; path: string; body: string }> = []
+    const summary: DocumentOperationSummary = {
+      id: 'operation-1',
+      capabilityId: 'document.edit',
+      capabilityVersion: 1,
+      interactionMode: 'atomic_review',
+      presenterKey: 'atomic-diff',
+      roomId: 'room 1',
+      documentId: 'doc/1',
+      documentTitle: '计划',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      baseVersion: 3,
+      status: 'awaiting_review',
+      revision: 2,
+      summary: '调整计划',
+      conflictVersion: null,
+      error: null,
+      expiresAt: null,
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '2026-08-17T00:00:01.000Z',
+      completedAt: null,
+    }
+    const operation: DocumentOperation = { ...summary, input: {}, result: null, items: [] }
+    const server = createServer(async (request, response) => {
+      const requestBody = await body(request)
+      requests.push({ method: request.method ?? '', path: request.url ?? '', body: requestBody })
+      if (request.method === 'POST' && request.url === '/v1/document-operations') {
+        return json(response, 200, operation)
+      }
+      if (request.method === 'POST') {
+        return json(response, 200, { operation: { ...operation, revision: 3 }, duplicate: false })
+      }
+      if (request.url?.includes('/commands')) return json(response, 404, {})
+      if (request.url?.startsWith('/v1/document-operations?')) {
+        return json(response, 200, { operations: [summary] })
+      }
+      return json(response, 200, operation)
+    })
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const bridge = new DocumentGatewayBridge({
+      getConnection: () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'operation-token',
+        version: 'test',
+      }),
+    } as GatewaySupervisor)
+
+    await expect(bridge.listOperations({
+      roomId: 'room 1',
+      documentId: 'doc/1',
+      sessionId: 'session/1',
+      status: 'awaiting_review',
+    })).resolves.toEqual([summary])
+    const startInput = {
+      capabilityId: 'document.selection-rewrite',
+      context: {
+        roomId: 'room 1',
+        documentId: 'doc/1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+      },
+      input: {
+        baseVersion: 3,
+        proposedContentJson: { type: 'doc', content: [] },
+        originalText: '原文',
+        replacementText: '新文',
+        instruction: '重写',
+      },
+    }
+    await expect(bridge.startOperation(startInput)).resolves.toEqual(operation)
+    await expect(bridge.getOperation('operation/1')).resolves.toEqual(operation)
+    await expect(bridge.executeOperationCommand('operation/1', {
+      commandId: 'command-1',
+      expectedRevision: 2,
+      type: 'review.apply',
+      payload: { acceptedItemIds: ['item-1'] },
+    })).resolves.toMatchObject({ operation: { revision: 3 }, duplicate: false })
+
+    expect(requests).toEqual([
+      {
+        method: 'GET',
+        path: '/v1/document-operations?roomId=room+1&documentId=doc%2F1&sessionId=session%2F1&status=awaiting_review',
+        body: '',
+      },
+      { method: 'POST', path: '/v1/document-operations', body: JSON.stringify(startInput) },
+      { method: 'GET', path: '/v1/document-operations/operation%2F1', body: '' },
+      {
+        method: 'POST',
+        path: '/v1/document-operations/operation%2F1/commands',
+        body: JSON.stringify({
+          commandId: 'command-1',
+          expectedRevision: 2,
+          type: 'review.apply',
+          payload: { acceptedItemIds: ['item-1'] },
+        }),
+      },
+    ])
+    expect(documentOperationListResult({ operations: [summary] })).toEqual([summary])
+  })
+
+  it('extracts operation ids from summary and compact operation events', () => {
+    const frame = (payload: unknown): DocumentEventFrame => ({
+      type: 'document.event',
+      protocol: 1,
+      event: {
+        id: 'event-1',
+        roomId: 'room-1',
+        documentId: 'doc-1',
+        operationId: null,
+        type: 'document.operation.changed',
+        occurredAt: '2026-08-17T00:00:00.000Z',
+        payload,
+      },
+    })
+    expect(operationIdFromDocumentEvent(frame({ operation: { id: 'operation-1' } }))).toBe('operation-1')
+    expect(operationIdFromDocumentEvent(frame({ operationId: 'operation-2' }))).toBe('operation-2')
+    expect(operationIdFromDocumentEvent(frame({ operation: {}, operationId: 'operation-3' }))).toBe('operation-3')
+    expect(operationIdFromDocumentEvent({ ...frame({ operationId: 'operation-4' }), event: {
+      ...frame({ operationId: 'operation-4' }).event,
+      type: 'document.changed',
+    } })).toBeNull()
   })
 })

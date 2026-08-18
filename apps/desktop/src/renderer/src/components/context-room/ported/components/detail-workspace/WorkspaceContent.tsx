@@ -1,4 +1,4 @@
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract';
+import type { RoomDocument } from '@nxcore/agent-contract';
 import { BrainCircuit, CalendarDays, CheckSquare2, ChevronLeft, FileText, Mail, Network } from 'lucide-react';
 
 import { createContextRoomResourceLibrary } from '../../resources';
@@ -17,7 +17,6 @@ export function WorkspaceContent({
   selectedObject,
   selectedResource,
   backendDocuments,
-  documentEvents,
   focusedDocumentId,
   focusedBlockId,
   documentFocusRequestId,
@@ -34,7 +33,6 @@ export function WorkspaceContent({
   selectedObject: WorkspaceObjectPreview | null;
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
-  documentEvents: Record<string, DocumentEvent[]>;
   focusedDocumentId: string | null;
   focusedBlockId: string | null;
   documentFocusRequestId: number | null;
@@ -115,7 +113,6 @@ export function WorkspaceContent({
           room={room}
           resource={visibleResource}
           backendDocuments={backendDocuments}
-          documentEvents={documentEvents}
           focusedBlockId={focusedDocumentId === visibleResource.binding.docId ? focusedBlockId : null}
           documentFocusRequestId={focusedDocumentId === visibleResource.binding.docId
             ? documentFocusRequestId

@@ -1,39 +1,54 @@
 import { describe, expect, it } from "vitest";
-import { ensureDocumentTitle, normalizeDocumentContent } from "../src/index.js";
+import {
+  freshenDocumentContent,
+  hasEmbeddedDocumentImages,
+  normalizeDocumentContent,
+  normalizeDocumentFragment,
+  stripDocumentTitle,
+} from "../src/index.js";
 
 describe("document model", () => {
-  it("keeps one canonical title node before the body", () => {
-    const normalized = ensureDocumentTitle({
+  it("detects embedded image bytes but allows stable asset URLs", () => {
+    expect(hasEmbeddedDocumentImages({
+      type: "doc",
+      content: [{ type: "image", attrs: { src: "data:image/png;base64,iVBORw0KGgo=" } }],
+    })).toBe(true);
+    expect(hasEmbeddedDocumentImages({
+      type: "doc",
+      content: [{ type: "image", attrs: { src: "nxcore-document-asset://local/key/image.png" } }],
+    })).toBe(false);
+  });
+
+  it("strips retired title nodes from persisted body content", () => {
+    const normalized = stripDocumentTitle({
       type: "doc",
       content: [
         { type: "documentTitle", content: [{ type: "text", text: "  新标题  " }] },
         { type: "documentTitle", content: [{ type: "text", text: "重复标题" }] },
         { type: "paragraph", content: [{ type: "text", text: "正文" }] },
       ],
-    }, "旧标题");
+    });
 
-    expect(normalized.title).toBe("新标题");
+    expect(normalized.legacyTitle).toBe("新标题");
     expect(normalized.content.content).toEqual([
-      { type: "documentTitle", content: [{ type: "text", text: "新标题" }] },
       { type: "paragraph", content: [{ type: "text", text: "正文" }] },
     ]);
   });
 
-  it("migrates only a legacy H1 that matches the stored title", () => {
-    const matching = ensureDocumentTitle({
+  it("normalizes Markdown fragments without injecting document metadata", () => {
+    const normalized = normalizeDocumentFragment({
       type: "doc",
       content: [
-        { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "旧标题" }] },
+        { type: "documentTitle", content: [{ type: "text", text: "不应进入片段" }] },
         { type: "paragraph", content: [{ type: "text", text: "正文" }] },
       ],
-    }, "旧标题");
-    const unrelated = ensureDocumentTitle({
-      type: "doc",
-      content: [{ type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "正文标题" }] }],
-    }, "旧标题");
+    }, { createId: () => "fragment-block" });
 
-    expect(matching.content.content?.map((node) => node.type)).toEqual(["documentTitle", "paragraph"]);
-    expect(unrelated.content.content?.map((node) => node.type)).toEqual(["documentTitle", "heading"]);
+    expect(normalized.content.content).toEqual([{
+      type: "paragraph",
+      attrs: { id: "fragment-block" },
+      content: [{ type: "text", text: "正文" }],
+    }]);
   });
 
   it("projects a nested block tree and keeps identity document-local", () => {
@@ -82,6 +97,43 @@ describe("document model", () => {
     expect(normalized.references).toEqual([
       expect.objectContaining({ sourceBlockId: "source", targetDocumentId: "doc-1" }),
       expect.objectContaining({ sourceBlockId: "reference", targetDocumentId: "doc-2" }),
+    ]);
+  });
+
+  it("freshens imported block IDs and remaps only internal references", () => {
+    const generated = ["fresh-source", "fresh-reference"];
+    const content = freshenDocumentContent({
+      type: "doc",
+      content: [{
+        type: "paragraph",
+        attrs: { id: "source" },
+        content: [{
+          type: "text",
+          text: "links",
+          marks: [
+            { type: "link", attrs: { href: "everroom://room/room-1/doc-import/source" } },
+            { type: "link", attrs: { href: "everroom://room/room-1/doc-other/source" } },
+          ],
+        }],
+      }, {
+        type: "documentBlockReference",
+        attrs: {
+          id: "reference",
+          targetRoomId: "room-1",
+          targetDocumentId: "doc-import",
+          targetBlockId: "source",
+        },
+      }],
+    }, "doc-import", { createId: () => generated.shift()! });
+
+    expect(content.content?.[0]?.attrs?.id).toBe("fresh-source");
+    expect(content.content?.[1]?.attrs).toMatchObject({
+      id: "fresh-reference",
+      targetBlockId: "fresh-source",
+    });
+    expect(content.content?.[0]?.content?.[0]?.marks?.map((mark) => mark.attrs?.href)).toEqual([
+      "everroom://room/room-1/doc-import/fresh-source",
+      "everroom://room/room-1/doc-other/source",
     ]);
   });
 });

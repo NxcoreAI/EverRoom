@@ -1,4 +1,4 @@
-import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
@@ -22,7 +22,6 @@ export function PortedDetail({
   rooms,
   backendDocuments,
   trashedDocuments,
-  documentEvents,
   focusedDocumentId,
   focusedBlockId,
   documentFocusRequestId,
@@ -43,7 +42,6 @@ export function PortedDetail({
   rooms: ContextRoomRecord[]
   backendDocuments: RoomDocument[]
   trashedDocuments: RoomDocument[]
-  documentEvents: Record<string, DocumentEvent[]>
   focusedDocumentId: string | null
   focusedBlockId: string | null
   documentFocusRequestId: number | null
@@ -208,7 +206,6 @@ export function PortedDetail({
           selectedResource={selectedResource}
           backendDocuments={backendDocuments}
           trashedDocuments={trashedDocuments}
-          documentEvents={documentEvents}
           focusedDocumentId={focusedDocumentId}
           focusedBlockId={focusedBlockId}
           documentFocusRequestId={documentFocusRequestId}

@@ -23,7 +23,7 @@ const SENSITIVE_KEY = /authorization|cookie|credential|password|secret|signature
 const MAX_VALUE_LENGTH = 500
 
 const LOG_RETENTION_DAYS = 30
-const LOG_FILE_PATTERN = /^desktop-(\d{4}-\d{2}-\d{2})\.log$/
+const LOG_FILE_PATTERN = /^(?:desktop|cursor-completion)-(\d{4}-\d{2}-\d{2})\.log$/
 
 let logsDirectory: string | null = null
 let writeQueue = Promise.resolve()
@@ -150,6 +150,23 @@ export function logDesktop(
   module: string,
   level: LogLevel,
   event: Record<string, unknown>,
+): void {
+  writeDesktopLog(module, level, event, true)
+}
+
+export function logDocumentCursorCompletion(
+  level: LogLevel,
+  event: Record<string, unknown>,
+): void {
+  writeDesktopLog('document-cursor-completion', level, event, false, 'cursor-completion')
+}
+
+function writeDesktopLog(
+  module: string,
+  level: LogLevel,
+  event: Record<string, unknown>,
+  captureRemote: boolean,
+  filePrefix = 'desktop',
 ): void {
   const now = new Date()
   writeToOriginalConsole(level, formatConsoleLine(now, module, level, event))

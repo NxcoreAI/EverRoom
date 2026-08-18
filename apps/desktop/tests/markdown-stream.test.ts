@@ -6,11 +6,11 @@ import {
   countTiptapTextCharacters,
   documentStreamCharactersPerFrame,
   documentStreamRevealDelay,
-  eventsAfterLastDocumentTerminal,
   hasVisibleTiptapContent,
   isAgentDocumentAwaitingContent,
   isEmptyTiptapParagraph,
   MarkdownBlockBuffer,
+  operationStreamChunksToApply,
   revealTiptapNode,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/markdownStream'
 import {
@@ -88,18 +88,35 @@ describe('Markdown stream buffering', () => {
     expect(tracker.record(2)).toBe(true)
   })
 
-  it('does not replay append events from a transaction that already committed', () => {
-    const events = [
-      { id: 'append-1', type: 'document.appended' },
-      { id: 'commit-requested', type: 'document.commit-requested' },
-      { id: 'committed', type: 'document.committed' },
-      { id: 'updated', type: 'document.updated' },
+  it('baselines persisted operation chunks when the editor mounts from an authoritative draft', () => {
+    const chunks = [
+      { id: 'chunk-1', sequence: 1 },
+      { id: 'chunk-2', sequence: 2 },
     ]
+    const lateMount = new AppliedSequenceTracker()
+    expect(operationStreamChunksToApply(chunks, lateMount, true)).toEqual([])
+    expect(lateMount.has(1)).toBe(true)
+    expect(lateMount.has(2)).toBe(true)
 
-    expect(eventsAfterLastDocumentTerminal(events)).toEqual([
-      { id: 'committed', type: 'document.committed' },
-      { id: 'updated', type: 'document.updated' },
-    ])
+    const mountedAtBegin = new AppliedSequenceTracker()
+    expect(operationStreamChunksToApply(chunks, mountedAtBegin, false)).toEqual(chunks)
+  })
+
+  it('flushes a completed operation only after all ordered chunks reach the Markdown buffer', async () => {
+    const buffer = new MarkdownBlockBuffer()
+    const revealed: string[] = []
+    const chunks = [
+      { sequence: 1, markdown: '# 标题\n\n尾段还' },
+      { sequence: 2, markdown: '没有结束' },
+    ]
+    let queue = Promise.resolve()
+    for (const chunk of chunks) {
+      queue = queue.then(() => { revealed.push(...buffer.append(chunk.markdown)) })
+    }
+    queue = queue.then(() => { revealed.push(...buffer.append('', true)) })
+    await queue
+
+    expect(revealed).toEqual(['# 标题', '尾段还没有结束'])
   })
 
   it('reveals nested Tiptap content without losing structure or marks', () => {

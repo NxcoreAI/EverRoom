@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
   DocumentBlockSummary,
-  DocumentPatchOperation,
-  DocumentPatchTarget,
+  DocumentMutationOperation,
+  DocumentMutationTarget,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
 import {
@@ -11,6 +11,7 @@ import {
   isValidBlockId,
   nodeAtPath as sharedNodeAtPath,
   normalizeDocumentContent as normalizeSharedDocumentContent,
+  normalizeDocumentFragment as normalizeSharedDocumentFragment,
   tiptapText,
   type ProjectedDocumentReference,
 } from "@nxcore/document-model";
@@ -34,7 +35,6 @@ function pathKey(path: number[]): string {
 export interface NormalizeDocumentOptions {
   indexedVersion?: number;
   createId?: () => string;
-  documentTitle?: string;
 }
 
 /**
@@ -74,7 +74,6 @@ export function normalizeDocumentContent(
   options: NormalizeDocumentOptions = {},
 ): {
   content: TiptapJsonContent;
-  title: string;
   blocks: DocumentBlockSummary[];
   references: ProjectedDocumentReference[];
   changed: boolean;
@@ -82,7 +81,27 @@ export function normalizeDocumentContent(
 } {
   const normalized = normalizeSharedDocumentContent(content, {
     createId: options.createId ?? randomUUID,
-    ...(options.documentTitle !== undefined ? { documentTitle: options.documentTitle } : {}),
+  });
+  const indexedVersion = options.indexedVersion ?? 0;
+  return {
+    ...normalized,
+    blocks: normalized.blocks.map((block) => ({
+      ...block,
+      documentId,
+      roomId,
+      indexedVersion,
+    })),
+  };
+}
+
+export function normalizeDocumentFragment(
+  content: TiptapJsonContent,
+  documentId: string,
+  roomId: string,
+  options: NormalizeDocumentOptions = {},
+): ReturnType<typeof normalizeDocumentContent> {
+  const normalized = normalizeSharedDocumentFragment(content, {
+    createId: options.createId ?? randomUUID,
   });
   const indexedVersion = options.indexedVersion ?? 0;
   return {
@@ -235,16 +254,16 @@ function inlineReplacement(
   return result;
 }
 
-export function patchTargetBlockIds(target: DocumentPatchTarget): string[] {
+export function mutationTargetBlockIds(target: DocumentMutationTarget): string[] {
   if ("at" in target) return [];
   if ("blockId" in target) return [target.blockId];
   return [target.fromBlockId, target.toBlockId];
 }
 
-export function applyDocumentPatchHunk(
+export function applyDocumentMutation(
   source: TiptapJsonContent,
-  operation: DocumentPatchOperation,
-  target: DocumentPatchTarget,
+  operation: DocumentMutationOperation,
+  target: DocumentMutationTarget,
   after: TiptapJsonContent[],
 ): { content: TiptapJsonContent; before: TiptapJsonContent[] } {
   const content = clone(source);
@@ -326,7 +345,7 @@ function pathStartsWith(path: number[], prefix: number[]): boolean {
   return prefix.length <= path.length && prefix.every((value, index) => path[index] === value);
 }
 
-function targetRegion(content: TiptapJsonContent, target: DocumentPatchTarget): PatchTargetRegion {
+function targetRegion(content: TiptapJsonContent, target: DocumentMutationTarget): PatchTargetRegion {
   if ("at" in target) {
     return { kind: "insert", key: `:${content.content?.length ?? 0}`, anchorPath: null };
   }
@@ -356,8 +375,8 @@ function targetRegion(content: TiptapJsonContent, target: DocumentPatchTarget): 
 
 export function targetsOverlap(
   content: TiptapJsonContent,
-  left: DocumentPatchTarget,
-  right: DocumentPatchTarget,
+  left: DocumentMutationTarget,
+  right: DocumentMutationTarget,
 ): boolean {
   const leftRegion = targetRegion(content, left);
   const rightRegion = targetRegion(content, right);

@@ -8,11 +8,12 @@ import type { RuntimeEvent, StartRuntimeRunInput } from '@nxcore/agent-runtime'
 import { asc, eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createDatabase } from '../src/infrastructure/database/client.js'
-import { agentSessions, documentTransactions } from '../src/infrastructure/database/schema.js'
+import { agentSessions, documentOperationItems, documentOperations } from '../src/infrastructure/database/schema.js'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { DocumentMcpHost } from '../src/modules/documents/mcp-host.js'
 import { createDocumentPiTools } from '../src/modules/documents/pi-tools.js'
 import { DocumentService } from '../src/modules/documents/service.js'
+import { DocumentOperationService } from '../src/modules/documents/operations/service.js'
 
 const temporaryDirectories: string[] = []
 const disposables: Array<() => void | Promise<void>> = []
@@ -28,28 +29,54 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
 }
 
-function findTransactionId(value: unknown): string | null {
+function findOperationId(value: unknown): string | null {
   if (typeof value === 'string') {
-    if (!value.includes('transactionId')) return null
+    if (!value.includes('operationId')) return null
     try {
-      return findTransactionId(JSON.parse(value) as unknown)
+      return findOperationId(JSON.parse(value) as unknown)
     } catch {
       return null
     }
   }
   if (Array.isArray(value)) {
     for (const item of [...value].reverse()) {
-      const transactionId = findTransactionId(item)
-      if (transactionId) return transactionId
+      const operationId = findOperationId(item)
+      if (operationId) return operationId
     }
     return null
   }
   if (!value || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
-  if (typeof record.transactionId === 'string') return record.transactionId
+  if (typeof record.operationId === 'string') return record.operationId
   for (const item of Object.values(record).reverse()) {
-    const transactionId = findTransactionId(item)
-    if (transactionId) return transactionId
+    const operationId = findOperationId(item)
+    if (operationId) return operationId
+  }
+  return null
+}
+
+function findStringProperty(value: unknown, property: string): string | null {
+  if (typeof value === 'string') {
+    if (!value.includes(property)) return null
+    try {
+      return findStringProperty(JSON.parse(value) as unknown, property)
+    } catch {
+      return null
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const item of [...value].reverse()) {
+      const result = findStringProperty(item, property)
+      if (result) return result
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (typeof record[property] === 'string') return record[property]
+  for (const item of Object.values(record).reverse()) {
+    const result = findStringProperty(item, property)
+    if (result) return result
   }
   return null
 }
@@ -128,7 +155,7 @@ describe('Pi document tool integration', () => {
           return
         }
         const body = await readJson(request)
-        const transactionId = findTransactionId(body)
+        const operationId = findOperationId(body)
         switch (requestStep++) {
           case 0:
             sendToolCall(response, 'call-begin-a', 'context_room_write_begin', {
@@ -136,15 +163,15 @@ describe('Pi document tool integration', () => {
             })
             return
           case 1:
-            if (!transactionId) throw new Error('begin result did not reach the model')
+            if (!operationId) throw new Error('begin result did not reach the model')
             sendToolCall(response, 'call-append-a', 'context_room_write_append', {
-              transactionId, sequence: 1, text: '# Room A 文档\n',
+              operationId, sequence: 1, text: '# Room A 文档\n',
             })
             return
           case 2:
-            if (!transactionId) throw new Error('append result did not reach the model')
+            if (!operationId) throw new Error('append result did not reach the model')
             sendToolCall(response, 'call-commit-a', 'context_room_write_commit', {
-              transactionId, finalSequence: 1,
+              operationId, finalSequence: 1,
             })
             return
           case 3:
@@ -156,9 +183,9 @@ describe('Pi document tool integration', () => {
             })
             return
           case 5:
-            if (!transactionId) throw new Error('second begin result did not reach the model')
+            if (!operationId) throw new Error('second begin result did not reach the model')
             sendToolCall(response, 'call-abort-b', 'context_room_write_abort', {
-              transactionId, reason: 'integration-test',
+              operationId, reason: 'integration-test',
             })
             return
           case 6:
@@ -187,8 +214,10 @@ describe('Pi document tool integration', () => {
     db.insert(agentSessions).values({
       id: 'session-shared', roomId: 'room-a', pageLabel: 'Context Room', runtimeId: 'pi',
     }).run()
-    const service = new DocumentService(db, new DocumentEventBroker())
-    const host = new DocumentMcpHost(service)
+    const broker = new DocumentEventBroker()
+    const service = new DocumentService(db, broker)
+    const operations = new DocumentOperationService(db, broker)
+    const host = new DocumentMcpHost(service, undefined, undefined, operations)
     const runtime = new PiAgentRuntime({
       provider: 'nxcore-pi-document-test',
       model: 'nxcore-pi-document-test',
@@ -204,12 +233,11 @@ describe('Pi document tool integration', () => {
       agentDirectory: join(dataDir, 'config'),
     }, {
       tools: createDocumentPiTools(host),
-      onRunFinished: (input, outcome) => host.abortAgentSession(input.sessionId, `test-run-${outcome}`),
+      onRunFinished: (input, outcome) => host.finishAgentRun(input.sessionId, outcome, input.runId),
     })
     disposables.push(async () => {
       await runtime.dispose()
       await host.close()
-      service.dispose()
       sqlite.close()
     })
 
@@ -250,14 +278,14 @@ describe('Pi document tool integration', () => {
     ])
     expect(service.list('room-b')).toEqual([])
 
-    const transactions = db.select().from(documentTransactions)
-      .orderBy(asc(documentTransactions.createdAt)).all()
-    expect(transactions).toEqual([
+    const persistedOperations = db.select().from(documentOperations)
+      .orderBy(asc(documentOperations.createdAt)).all()
+    expect(persistedOperations).toEqual([
       expect.objectContaining({
-        agentSessionId: 'session-shared', runId: 'run-a', roomId: 'room-a', status: 'committed',
+        agentSessionId: 'session-shared', runId: 'run-a', roomId: 'room-a', status: 'completed',
       }),
       expect.objectContaining({
-        agentSessionId: 'session-shared', runId: 'run-b', roomId: 'room-b', status: 'aborted',
+        agentSessionId: 'session-shared', runId: 'run-b', roomId: 'room-b', status: 'cancelled',
       }),
     ])
     await expect(runtime.start({
@@ -266,8 +294,170 @@ describe('Pi document tool integration', () => {
       sessionId: 'another-local-session',
       runtimeSessionRef: firstRun.runtimeSessionRef,
     })).rejects.toThrow('different Agent session')
-    expect(db.select().from(documentTransactions)
-      .where(eq(documentTransactions.runId, 'run-forbidden')).all()).toEqual([])
+    expect(db.select().from(documentOperations)
+      .where(eq(documentOperations.runId, 'run-forbidden')).all()).toEqual([])
+  }, 20_000)
+
+  it('keeps a prepared edit awaiting review after the Pi run completes', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-pi-edit-review-integration-'))
+    temporaryDirectories.push(dataDir)
+    const { db, sqlite } = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
+    db.insert(agentSessions).values({
+      id: 'session-edit-review', roomId: 'room-edit-review', pageLabel: 'Context Room', runtimeId: 'pi',
+    }).run()
+    const broker = new DocumentEventBroker()
+    const service = new DocumentService(db, broker)
+    const unchangedParagraphs = [
+      '后续正文第一部分保持不变，介绍类型系统、函数签名和基础工程配置。'.repeat(2),
+      '后续正文第二部分保持不变，介绍类、接口、泛型以及常见组合方式。'.repeat(2),
+      '后续正文第三部分保持不变，介绍构建、测试、发布和运行时诊断。'.repeat(2),
+      '后续正文第四部分保持不变，通过实践项目串联前面的语言知识。'.repeat(2),
+    ]
+    const document = await service.import({
+      id: 'doc-edit-review', roomId: 'room-edit-review', title: 'Java 学习文档',
+      contentJson: { type: 'doc', content: [
+        { type: 'paragraph', content: [{ type: 'text', text: '原始开头。' }] },
+        ...unchangedParagraphs.map((text) => ({
+          type: 'paragraph' as const,
+          content: [{ type: 'text' as const, text }],
+        })),
+      ] },
+    })
+    const firstBlockId = service.listBlocks(document.id)[0]!.blockId
+
+    let requestStep = 0
+    const endpoint = createServer((request, response) => {
+      void (async () => {
+        if (request.url !== '/v1/chat/completions' || request.method !== 'POST') {
+          response.writeHead(404).end()
+          return
+        }
+        const body = await readJson(request)
+        const operationId = findStringProperty(body, 'operationId')
+        switch (requestStep++) {
+          case 0:
+            // Reproduce the production failure: the model starts the patch before reading.
+            sendToolCall(response, 'call-edit-begin-without-read', 'context_room_patch_begin', {
+              documentId: document.id,
+              baseVersion: document.version,
+              kind: 'edit',
+              summary: '重写 Java 学习文档的开头部分，使其更加详细',
+            })
+            return
+          case 1:
+            sendToolCall(response, 'call-edit-read-after-error', 'context_room_document_read', {
+              documentId: document.id,
+            })
+            return
+          case 2:
+            sendToolCall(response, 'call-edit-begin', 'context_room_patch_begin', {
+              documentId: document.id,
+              baseVersion: document.version,
+              kind: 'edit',
+              summary: '重写 Java 学习文档的开头部分，使其更加详细',
+            })
+            return
+          case 3:
+            if (!operationId) throw new Error('patch begin result did not reach the model')
+            sendToolCall(response, 'call-edit-hunk-with-full-document', 'context_room_patch_hunk', {
+              sequence: 1,
+              operation: 'replace',
+              target: { blockId: firstBlockId },
+              markdown: ['重写后的详细开头。', ...unchangedParagraphs].join('\n\n'),
+            })
+            return
+          case 4:
+            if (!operationId) throw new Error('patch hunk result did not reach the model')
+            sendToolCall(response, 'call-edit-commit', 'context_room_patch_commit', {
+              operationId: '725555bb-8699-47fd-adb4-1f72a91562bc',
+              finalSequence: 1,
+            })
+            return
+          case 5:
+            sendText(response, '修改建议已准备好，等待你审阅。')
+            return
+          default:
+            throw new Error(`unexpected model request ${String(requestStep)}`)
+        }
+      })().catch((error: unknown) => {
+        if (!response.headersSent) response.writeHead(500, { 'content-type': 'text/plain' })
+        response.end(error instanceof Error ? error.message : 'model test failure')
+      })
+    })
+    endpoint.listen(0, '127.0.0.1')
+    await once(endpoint, 'listening')
+    const address = endpoint.address()
+    if (!address || typeof address === 'string') throw new Error('Test endpoint did not bind')
+
+    const operations = new DocumentOperationService(db, broker)
+    const host = new DocumentMcpHost(service, undefined, undefined, operations)
+    const runtime = new PiAgentRuntime({
+      provider: 'nxcore-pi-edit-review-test',
+      model: 'nxcore-pi-edit-review-test',
+      baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
+      apiKey: 'test-key',
+      api: 'openai-completions',
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0,
+      reasoning: 'off',
+      sessionsDir: join(dataDir, 'sessions'),
+      workingDirectory: join(dataDir, 'workspace'),
+      agentDirectory: join(dataDir, 'config'),
+    }, {
+      tools: createDocumentPiTools(host),
+      onRunFinished: (input, outcome) => host.finishAgentRun(input.sessionId, outcome, input.runId),
+    })
+    disposables.push(async () => {
+      await runtime.dispose()
+      await host.close()
+      sqlite.close()
+      endpoint.close()
+      await once(endpoint, 'close')
+    })
+
+    const run = await runtime.start({
+      runId: 'run-edit-review',
+      sessionId: 'session-edit-review',
+      runtimeSessionRef: null,
+      prompt: '重写 Java 学习文档的开头部分，使其更加详细',
+      pageLabel: 'Context Room',
+      roomId: 'room-edit-review',
+      activeDocument: {
+        roomId: 'room-edit-review', documentId: document.id, title: document.title,
+        version: document.version, defaultAnchor: 'end',
+      },
+    })
+    const events = await collect(run.events)
+    expect(events.at(-1)?.type).toBe('run.completed')
+    const failedBegin = events.find((event) => event.type === 'tool.failed'
+      && (event.payload as { name?: string }).name === 'context_room_patch_begin')
+    expect(failedBegin).toBeDefined()
+    expect(JSON.stringify(failedBegin?.payload)).toContain('DOCUMENT_READ_REQUIRED')
+    expect(JSON.stringify(failedBegin?.payload)).toContain('context_room_document_read')
+    expect(events.filter((event) => event.type === 'tool.completed').map((event) =>
+      (event.payload as { name?: string }).name)).toEqual([
+      'context_room_document_read',
+      'context_room_patch_begin',
+      'context_room_patch_hunk',
+      'context_room_patch_commit',
+    ])
+    const hunkEvent = events.find((event) => event.type === 'tool.completed'
+      && (event.payload as { name?: string }).name === 'context_room_patch_hunk')
+    expect(JSON.stringify(hunkEvent?.payload)).toContain('"fragmentReduced":true')
+    expect(JSON.stringify(hunkEvent?.payload)).toContain('"operationIdCorrected":true')
+    const commitEvent = events.find((event) => event.type === 'tool.completed'
+      && (event.payload as { name?: string }).name === 'context_room_patch_commit')
+    expect(JSON.stringify(commitEvent?.payload)).toContain('"documentChanged":false')
+    expect(JSON.stringify(commitEvent?.payload)).toContain('"operationIdCorrected":true')
+    expect(db.select().from(documentOperations)
+      .where(eq(documentOperations.runId, 'run-edit-review')).get()).toMatchObject({
+      status: 'awaiting_review',
+    })
+    expect(service.get(document.id)).toMatchObject({
+      version: 1,
+      contentJson: document.contentJson,
+    })
   }, 20_000)
 
   it('cancels a run after a persisted append and rolls back the draft', async () => {
@@ -285,10 +475,10 @@ describe('Pi document tool integration', () => {
           })
           return
         }
-        const transactionId = findTransactionId(body)
-        if (!transactionId) throw new Error('cancel begin result did not reach the model')
+        const operationId = findOperationId(body)
+        if (!operationId) throw new Error('cancel begin result did not reach the model')
         sendToolCall(response, 'call-cancel-append', 'context_room_write_append', {
-          transactionId, sequence: 1, text: '尚未确认的正文',
+          operationId, sequence: 1, text: '尚未确认的正文',
         })
       })().catch((error: unknown) => {
         if (!response.headersSent) response.writeHead(500, { 'content-type': 'text/plain' })
@@ -310,8 +500,10 @@ describe('Pi document tool integration', () => {
     db.insert(agentSessions).values({
       id: 'session-cancel', roomId: 'room-cancel', pageLabel: 'Context Room', runtimeId: 'pi',
     }).run()
-    const service = new DocumentService(db, new DocumentEventBroker())
-    const host = new DocumentMcpHost(service)
+    const broker = new DocumentEventBroker()
+    const service = new DocumentService(db, broker)
+    const operations = new DocumentOperationService(db, broker)
+    const host = new DocumentMcpHost(service, undefined, undefined, operations)
     const runtime = new PiAgentRuntime({
       provider: 'nxcore-pi-cancel-test',
       model: 'nxcore-pi-cancel-test',
@@ -327,12 +519,11 @@ describe('Pi document tool integration', () => {
       agentDirectory: join(dataDir, 'config'),
     }, {
       tools: createDocumentPiTools(host),
-      onRunFinished: (input, outcome) => host.abortAgentSession(input.sessionId, `test-run-${outcome}`),
+      onRunFinished: (input, outcome) => host.finishAgentRun(input.sessionId, outcome, input.runId),
     })
     disposables.push(async () => {
       await runtime.dispose()
       await host.close()
-      service.dispose()
       sqlite.close()
     })
 
@@ -341,8 +532,15 @@ describe('Pi document tool integration', () => {
     const unsubscribe = service.broker.subscribe('room-cancel', {
       readyState: 1,
       send(data) {
-        const frame = JSON.parse(data) as { event?: { type?: string } }
-        if (frame.event?.type === 'document.appended') appendNotifications.shift()?.()
+        const frame = JSON.parse(data) as { event?: { type?: string; payload?: { operation?: { id?: unknown } } } }
+        if (frame.event?.type !== 'document.operation.changed') return
+        const operationId = typeof frame.event?.payload?.operation?.id === 'string'
+          ? frame.event.payload.operation.id
+          : null
+        if (!operationId) return
+        const hasChunk = db.select().from(documentOperationItems)
+          .where(eq(documentOperationItems.operationId, operationId)).get()
+        if (hasChunk) appendNotifications.shift()?.()
       },
     })
     disposables.push(unsubscribe)
@@ -359,7 +557,12 @@ describe('Pi document tool integration', () => {
     const eventsPromise = collect(run.events)
     await firstAppend
     expect(service.list('room-cancel')).toEqual([
-      expect.objectContaining({ title: '等待 ACK 的文档', status: 'draft' }),
+      expect.objectContaining({
+        title: '等待 ACK 的文档',
+        status: 'draft',
+        version: 0,
+        activeTransactionId: expect.any(String),
+      }),
     ])
 
     await runtime.cancel('run-cancel')
@@ -367,11 +570,11 @@ describe('Pi document tool integration', () => {
 
     expect(events.at(-1)?.type).toBe('run.cancelled')
     expect(service.list('room-cancel')).toEqual([])
-    expect(db.select().from(documentTransactions)
-      .where(eq(documentTransactions.runId, 'run-cancel')).get()).toMatchObject({
+    expect(db.select().from(documentOperations)
+      .where(eq(documentOperations.runId, 'run-cancel')).get()).toMatchObject({
       agentSessionId: 'session-cancel',
       roomId: 'room-cancel',
-      status: 'aborted',
+      status: 'cancelled',
     })
 
     const secondAppend = waitForAppend()
@@ -390,11 +593,11 @@ describe('Pi document tool integration', () => {
 
     expect(disposeEvents.at(-1)?.type).toBe('run.cancelled')
     expect(service.list('room-cancel')).toEqual([])
-    expect(db.select().from(documentTransactions)
-      .where(eq(documentTransactions.runId, 'run-dispose')).get()).toMatchObject({
+    expect(db.select().from(documentOperations)
+      .where(eq(documentOperations.runId, 'run-dispose')).get()).toMatchObject({
       agentSessionId: 'session-cancel',
       roomId: 'room-cancel',
-      status: 'aborted',
+      status: 'cancelled',
     })
   }, 20_000)
 
@@ -439,8 +642,10 @@ describe('Pi document tool integration', () => {
     db.insert(agentSessions).values({
       id: 'session-terminal', roomId: 'room-terminal', pageLabel: 'Context Room', runtimeId: 'pi',
     }).run()
-    const service = new DocumentService(db, new DocumentEventBroker())
-    const host = new DocumentMcpHost(service)
+    const broker = new DocumentEventBroker()
+    const service = new DocumentService(db, broker)
+    const operations = new DocumentOperationService(db, broker)
+    const host = new DocumentMcpHost(service, undefined, undefined, operations)
     const runtime = new PiAgentRuntime({
       provider: 'nxcore-pi-terminal-test',
       model: 'nxcore-pi-terminal-test',
@@ -457,12 +662,11 @@ describe('Pi document tool integration', () => {
       retry: { enabled: false },
     }, {
       tools: createDocumentPiTools(host),
-      onRunFinished: (input, outcome) => host.abortAgentSession(input.sessionId, `test-run-${outcome}`),
+      onRunFinished: (input, outcome) => host.finishAgentRun(input.sessionId, outcome, input.runId),
     })
     disposables.push(async () => {
       await runtime.dispose()
       await host.close()
-      service.dispose()
       sqlite.close()
     })
 
@@ -477,11 +681,11 @@ describe('Pi document tool integration', () => {
     const failedEvents = await collect(failedRun.events)
     expect(failedEvents.at(-1)?.type).toBe('run.failed')
     expect(service.list('room-terminal')).toEqual([])
-    expect(db.select().from(documentTransactions)
-      .where(eq(documentTransactions.runId, 'run-failed')).get()).toMatchObject({
+    expect(db.select().from(documentOperations)
+      .where(eq(documentOperations.runId, 'run-failed')).get()).toMatchObject({
       agentSessionId: 'session-terminal',
       roomId: 'room-terminal',
-      status: 'aborted',
+      status: 'cancelled',
     })
 
     const completedRun = await runtime.start({
@@ -495,11 +699,11 @@ describe('Pi document tool integration', () => {
     const completedEvents = await collect(completedRun.events)
     expect(completedEvents.at(-1)?.type).toBe('run.completed')
     expect(service.list('room-terminal')).toEqual([])
-    expect(db.select().from(documentTransactions)
-      .where(eq(documentTransactions.runId, 'run-uncommitted')).get()).toMatchObject({
+    expect(db.select().from(documentOperations)
+      .where(eq(documentOperations.runId, 'run-uncommitted')).get()).toMatchObject({
       agentSessionId: 'session-terminal',
       roomId: 'room-terminal',
-      status: 'aborted',
+      status: 'cancelled',
     })
   }, 20_000)
 })

@@ -25,16 +25,18 @@ export function ContextRoomPage({
   onShowHome: () => void
 }) {
   return (
-    <PortedContextRoom
-      activeRoomId={activeRoomId}
-      focusedDocumentId={focusedDocumentId}
-      focusedBlockId={focusedBlockId}
-      documentFocusRequestId={documentFocusRequestId}
-      homeRequest={homeRequest}
-      onDetailFocusChange={onDetailFocusChange}
-      onOpenRoomTab={onOpenRoomTab}
-      onRoomsChange={onRoomsChange}
-      onShowHome={onShowHome}
-    />
+    <div className="context-room-operation-shell">
+      <PortedContextRoom
+        activeRoomId={activeRoomId}
+        focusedDocumentId={focusedDocumentId}
+        focusedBlockId={focusedBlockId}
+        documentFocusRequestId={documentFocusRequestId}
+        homeRequest={homeRequest}
+        onDetailFocusChange={onDetailFocusChange}
+        onOpenRoomTab={onOpenRoomTab}
+        onRoomsChange={onRoomsChange}
+        onShowHome={onShowHome}
+      />
+    </div>
   )
 }
