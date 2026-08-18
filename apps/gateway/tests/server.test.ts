@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, describe, expect, it } from "vitest";
+import type { AgentRun, AgentSession, TrustedMcpSession } from "@nxcore/agent-contract";
 import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
 
@@ -24,6 +25,7 @@ async function testConfig(): Promise<GatewayConfig> {
     agentRuntime: "fake",
     memory: null,
     pi: null,
+    backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
   };
@@ -57,6 +59,41 @@ describe("gateway server", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
+  });
+
+  it("serves authenticated background transcription summaries", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const payload = {
+      jobId: "job-1",
+      sourceRecordId: "source-1",
+      transcript: "这是待总结的转写内容。",
+    };
+
+    const unauthorized = await app.inject({
+      method: "POST",
+      url: "/v1/processing/transcription-summary",
+      payload,
+    });
+    const authorized = await app.inject({
+      method: "POST",
+      url: "/v1/processing/transcription-summary",
+      headers: { authorization: `Bearer ${config.authToken}` },
+      payload,
+    });
+    await app.close();
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(authorized.statusCode).toBe(200);
+    const response = authorized.json<{ content: string }>();
+    expect(JSON.parse(response.content)).toMatchObject({
+      title: expect.any(String),
+      overview: expect.any(String),
+      keyPoints: expect.any(Array),
+      decisions: expect.any(Array),
+      actionItems: expect.any(Array),
+      topics: expect.any(Array),
+    });
   });
 
   it("persists and serves the complete Context Room snapshot", async () => {
@@ -231,9 +268,35 @@ describe("gateway server", () => {
   it("serves the document MCP protocol over authenticated HTTP", async () => {
     const config = await testConfig();
     const app = await createServer(config);
-    const url = "/v1/mcp/documents/mcp-test"
-      + "?agentSessionId=agent-test&runId=run-test&roomId=room-test";
     const headers = { authorization: `Bearer ${config.authToken}` };
+    await app.inject({
+      method: "PUT",
+      url: "/v1/context-rooms/snapshot",
+      headers,
+      payload: {
+        rooms: [{ id: "room-test", title: "MCP Room", data: {} }],
+        deletedRooms: [],
+      },
+    });
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "Context Room", roomId: "room-test" },
+    })).json<AgentSession>();
+    const run = (await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: { prompt: "列出当前文档", idempotencyKey: "mcp-http-run" },
+    })).json<AgentRun>();
+    const trusted = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/mcp-sessions",
+      headers,
+      payload: { agentSessionId: session.id, runId: run.id, roomId: "room-test" },
+    })).json<TrustedMcpSession>();
+    const url = `/v1/mcp/documents/${trusted.sessionId}`;
 
     const initialize = await app.inject({
       method: "POST",
@@ -269,6 +332,12 @@ describe("gateway server", () => {
     expect(initialized.statusCode).toBe(202);
     expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "context_room_list",
+      "context_room_document_list",
+      "context_room_document_read",
+      "context_room_patch_begin",
+      "context_room_patch_hunk",
+      "context_room_patch_commit",
+      "context_room_patch_abort",
       "context_room_write_begin",
       "context_room_write_append",
       "context_room_write_commit",
@@ -280,10 +349,35 @@ describe("gateway server", () => {
     const config = await testConfig();
     const app = await createServer(config);
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
-    const endpoint = new URL("/v1/mcp/documents/mcp-client-test", address);
-    endpoint.searchParams.set("agentSessionId", "agent-client-test");
-    endpoint.searchParams.set("runId", "run-client-test");
-    endpoint.searchParams.set("roomId", "room-client-test");
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    await app.inject({
+      method: "PUT",
+      url: "/v1/context-rooms/snapshot",
+      headers,
+      payload: {
+        rooms: [{ id: "room-client-test", title: "Client Room", data: {} }],
+        deletedRooms: [],
+      },
+    });
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "Context Room", roomId: "room-client-test" },
+    })).json<AgentSession>();
+    const run = (await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: { prompt: "列出当前文档", idempotencyKey: "mcp-client-run" },
+    })).json<AgentRun>();
+    const trusted = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/mcp-sessions",
+      headers,
+      payload: { agentSessionId: session.id, runId: run.id, roomId: "room-client-test" },
+    })).json<TrustedMcpSession>();
+    const endpoint = new URL(`/v1/mcp/documents/${trusted.sessionId}`, address);
     const client = new Client({ name: "gateway-test", version: "1.0.0" });
     const transport = new StreamableHTTPClientTransport(endpoint, {
       requestInit: { headers: { authorization: `Bearer ${config.authToken}` } },
@@ -294,6 +388,12 @@ describe("gateway server", () => {
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name)).toEqual([
         "context_room_list",
+        "context_room_document_list",
+        "context_room_document_read",
+        "context_room_patch_begin",
+        "context_room_patch_hunk",
+        "context_room_patch_commit",
+        "context_room_patch_abort",
         "context_room_write_begin",
         "context_room_write_append",
         "context_room_write_commit",

@@ -1,6 +1,7 @@
 import {
   AudioLines,
   Brain,
+  Camera,
   CalendarClock,
   Cloud,
   HardDrive,
@@ -8,21 +9,31 @@ import {
   LockKeyhole,
   LogIn,
   LogOut,
+  Laptop,
   Mic,
   MonitorSpeaker,
   RefreshCw,
   Settings,
   ShieldCheck,
+  Sparkles,
+  Smartphone,
   WalletCards,
   type LucideIcon,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
+import {
+  loadDocumentCursorCompletionSettings,
+  saveDocumentCursorCompletionSettings,
+  type DocumentCursorCompletionSettings,
+} from '@/state/documentCursorCompletionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import './SettingsPage.css'
 
@@ -33,7 +44,8 @@ const SETTINGS: Array<{ icon: LucideIcon; title: string; description: string }> 
   { icon: Settings, title: '通用', description: '语言、启动行为与界面偏好' },
 ]
 
-type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | null
+type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
+type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, rounding: 'down' | 'up' = 'down'): string {
   const minutes = rounding === 'up' ? Math.ceil(seconds / 60) : Math.floor(seconds / 60)
@@ -50,17 +62,136 @@ function formatPeriodEnd(value: string): string {
   }).format(date)
 }
 
+function deviceLastSeen(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '最近在线时间未知'
+  return `最近在线 ${date.toLocaleString('zh-CN')}`
+}
+
 export function SettingsPage({ onOpenConnectorDebug }: { onOpenConnectorDebug?: () => void }) {
   const { account, refreshAccount, setAccount } = useAccount()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState<PendingAction>(null)
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
+  const [cursorCompletionSettings, setCursorCompletionSettings] =
+    useState<DocumentCursorCompletionSettings>(loadDocumentCursorCompletionSettings)
+  const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
+  const [syncedCount, setSyncedCount] = useState<number | null>(null)
+  const [syncedAudioCount, setSyncedAudioCount] = useState<number | null>(null)
+  const [devices, setDevices] = useState<CloudDevice[]>([])
+  const [pairing, setPairing] = useState<PairingSession | null>(null)
+  const [pairingQr, setPairingQr] = useState<string | null>(null)
+  const [pairingError, setPairingError] = useState<string | null>(null)
+  const [screenCaptureStatus, setScreenCaptureStatus] = useState<WindowScreenshotStatus | null>(null)
+  const [screenCaptureInterval, setScreenCaptureInterval] = useState(5)
+  const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
+  const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!account?.authenticated || !window.nxcore) {
+      setKeyring(null)
+      setDevices([])
+      return
+    }
+    const desktopApi = window.nxcore
+    let cancelled = false
+    const check = async () => {
+      try {
+        const [next, nextDevices] = await Promise.all([
+          desktopApi.account.keyringStatus({ quiet: true }),
+          desktopApi.account.devices({ quiet: true }),
+        ])
+        if (cancelled) return
+        setKeyring(next)
+        setDevices(nextDevices)
+      } catch {
+        // Keep the last known status during transient network or rate-limit failures.
+      } finally {
+        setPending((current) => current === 'keyring' ? null : current)
+      }
+    }
+    setPending('keyring')
+    void check()
+    const timer = window.setInterval(() => void check(), 15_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [account?.authenticated, account?.user?.id])
+
+  useEffect(() => {
+    if (!pairing || !window.nxcore) return
+    let cancelled = false
+    const poll = async () => {
+      if (cancelled) return
+      try {
+        const next = await window.nxcore!.account.getPairingSession(pairing.pairingSessionId, { quiet: true })
+        if (!cancelled) setPairing((current) => current ? { ...current, ...next } : current)
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('请求过于频繁')) return
+        cancelled = true
+        setPairingError(`${error instanceof Error ? error.message : '配对会话读取失败。'} 请重启 SaaS 服务后重新创建二维码。`)
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), 2_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [pairing?.pairingSessionId])
+
+  const createPairing = async () => {
+    if (!window.nxcore) return
+    setPairingError(null)
+    try {
+      const session = await window.nxcore.account.createPairingSession()
+      const payload = JSON.stringify({ version: 1, origin: session.origin, pairingSessionId: session.pairingSessionId, pairingToken: session.pairingToken })
+      const dataUrl = await QRCode.toDataURL(payload, { margin: 1, width: 220, errorCorrectionLevel: 'M' })
+      setPairingQr(dataUrl)
+      setPairing(session)
+    } catch (error) {
+      setPairingError(error instanceof Error ? error.message : '无法创建配对会话。')
+    }
+  }
+
+  const resetPairing = () => {
+    setPairing(null)
+    setPairingQr(null)
+    setPairingError(null)
+  }
+
+  const approvePairing = async () => {
+    if (!window.nxcore || !pairing) return
+    setPending('keyring')
+    try {
+      await window.nxcore.account.approvePairingSession(pairing.pairingSessionId)
+      setPairingError(null)
+    } catch (error) {
+      setPairingError(error instanceof Error ? error.message : '批准设备失败。')
+    } finally { setPending(null) }
+  }
+
+  useEffect(() => {
+    if (!window.nxcore) return
+    void window.nxcore.screenCapture.status()
+      .then((status) => {
+        setScreenCaptureStatus(status)
+        setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
+      })
+      .catch(() => undefined)
+  }, [])
 
   const updateRealitySettings = (patch: Partial<RealitySettings>) => {
     setRealitySettings((current) => {
       const next = { ...current, ...patch }
       saveRealitySettings(next)
+      return next
+    })
+  }
+
+  const updateCursorCompletionSettings = (patch: Partial<DocumentCursorCompletionSettings>) => {
+    setCursorCompletionSettings((current) => {
+      const next = { ...current, ...patch }
+      saveDocumentCursorCompletionSettings(next)
       return next
     })
   }
@@ -112,6 +243,54 @@ export function SettingsPage({ onOpenConnectorDebug }: { onOpenConnectorDebug?: 
       // The preload request interceptor reports the error globally.
     } finally {
       setPending(null)
+    }
+  }
+
+  const syncPrivate = async () => {
+    if (!window.nxcore) return
+    setPending('sync')
+    try {
+      const [result, audio] = await Promise.all([
+        window.nxcore.transcriptions.syncPrivate(),
+        window.nxcore.privateAudio.list(0),
+      ])
+      setKeyring(result.status)
+      setSyncedCount(result.synced)
+      setSyncedAudioCount(audio.assets.filter((asset) => asset.status === 'uploaded').length)
+    } catch {
+      // The preload request interceptor reports the error globally.
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const updateScreenCapture = async (enabled: boolean) => {
+    if (!window.nxcore) return
+    setScreenCaptureBusy(true)
+    try {
+      const status = enabled
+        ? await window.nxcore.screenCapture.start(screenCaptureInterval * 60_000)
+        : await window.nxcore.screenCapture.stop()
+      setScreenCaptureStatus(status)
+    } catch {
+      // The preload request interceptor reports the error globally.
+    } finally {
+      setScreenCaptureBusy(false)
+    }
+  }
+
+  const captureWindowNow = async () => {
+    if (!window.nxcore) return
+    setScreenCaptureBusy(true)
+    try {
+      const result = await window.nxcore.screenCapture.captureCurrentWindow()
+      if (result.ok) setLastScreenshotPath(result.filePath)
+      const status = await window.nxcore.screenCapture.status()
+      setScreenCaptureStatus(status)
+    } catch {
+      // The preload request interceptor reports the error globally.
+    } finally {
+      setScreenCaptureBusy(false)
     }
   }
 
@@ -203,6 +382,60 @@ export function SettingsPage({ onOpenConnectorDebug }: { onOpenConnectorDebug?: 
                 </div>
               </div>
             ) : null}
+
+            <div className="cloud-devices" aria-label="已绑定设备">
+              <div className="cloud-devices-heading">
+                <div>
+                  <strong>已绑定设备</strong>
+                  <small>{devices.length ? `${devices.length} 台设备可同步私密数据` : '正在读取设备列表'}</small>
+                </div>
+                <Laptop aria-hidden="true" />
+              </div>
+              {devices.length ? (
+                <div className="cloud-device-list">
+                  {devices.map((device) => {
+                    const isCurrent = device.id === account.device?.id
+                    const isOnline = device.status === 'online'
+                    return (
+                      <div key={device.id} className="cloud-device-row">
+                        <span className="cloud-device-icon" aria-hidden="true">
+                          {device.platform.toLowerCase().includes('ios') ? <Smartphone /> : <Laptop />}
+                        </span>
+                        <div className="cloud-device-info">
+                          <strong>{device.name || (device.platform.toLowerCase().includes('ios') ? 'iPhone' : 'Mac')}</strong>
+                          <span>{device.platform}{device.appVersion ? ` · v${device.appVersion}` : ''}{isCurrent ? ' · 本机' : ''}</span>
+                        </div>
+                        <div className="cloud-device-status" data-online={String(isOnline)}>
+                          <span aria-hidden="true" />
+                          <small>{isOnline ? '在线' : '离线'}</small>
+                          <em>{deviceLastSeen(device.lastSeenAt)}</em>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : <small className="cloud-device-empty">暂未找到已绑定设备</small>}
+            </div>
+
+            <div className="cloud-keyring" aria-label="云端同步">
+              <div className="cloud-keyring-heading">
+                <span><ShieldCheck aria-hidden="true" /></span>
+                <div>
+                  <strong>云端同步</strong>
+                  <small>在已登录设备间同步录音、转写和总结</small>
+                </div>
+              </div>
+              <button
+                className="secondary-button cloud-keyring-sync"
+                type="button"
+                disabled={isBusy}
+                onClick={() => void syncPrivate()}
+              >
+                {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+                同步多端数据
+              </button>
+              {syncedCount !== null ? <small className="cloud-keyring-result">本次同步 {syncedCount} 条转写，发现 {syncedAudioCount ?? 0} 个音频片段</small> : null}
+            </div>
           </div>
         ) : (
           <div className="cloud-login-content">
@@ -279,6 +512,36 @@ export function SettingsPage({ onOpenConnectorDebug }: { onOpenConnectorDebug?: 
         )}
       </section>
 
+      <section className="reality-settings-section" aria-labelledby="document-editing-settings-title">
+        <header>
+          <span><Sparkles aria-hidden="true" /></span>
+          <div>
+            <h2 id="document-editing-settings-title">文档编辑</h2>
+            <p>管理编辑器中的辅助能力。</p>
+          </div>
+        </header>
+        <div className="reality-setting-row">
+          <div>
+            <strong>文档智能补全</strong>
+            <small>输入、删除或移动光标后提供续写建议。</small>
+          </div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label="文档智能补全"
+            aria-checked={cursorCompletionSettings.enabled}
+            data-active={String(cursorCompletionSettings.enabled)}
+            onClick={() => updateCursorCompletionSettings({
+              enabled: !cursorCompletionSettings.enabled,
+            })}
+          >
+            <span aria-hidden="true" />
+            {cursorCompletionSettings.enabled ? '已开启' : '已关闭'}
+          </button>
+        </div>
+      </section>
+
       <section className="reality-settings-section" aria-labelledby="reality-settings-title">
         <header>
           <span><AudioLines aria-hidden="true" /></span>
@@ -310,6 +573,56 @@ export function SettingsPage({ onOpenConnectorDebug }: { onOpenConnectorDebug?: 
               return <button key={value} type="button" data-active={String(active)} onClick={() => updateRealitySettings({ languages: active && realitySettings.languages.length > 1 ? realitySettings.languages.filter((item) => item !== value) : active ? realitySettings.languages : [...realitySettings.languages, value] })}>{label}</button>
             })}
           </div>
+        </div>
+      </section>
+
+      <section className="reality-settings-section" aria-labelledby="screen-capture-settings-title">
+        <header>
+          <span><Camera aria-hidden="true" /></span>
+          <div>
+            <h2 id="screen-capture-settings-title">窗口截图</h2>
+            <p>只保存 EverRoom 当前窗口，不会采集其他应用或上传网络。</p>
+          </div>
+        </header>
+        <div className="reality-setting-row">
+          <div><strong>自动截图</strong><small>截图保存在项目目录的 screenshots 文件夹。</small></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-checked={Boolean(screenCaptureStatus?.enabled)}
+            disabled={screenCaptureBusy || screenCaptureStatus === null}
+            data-active={String(Boolean(screenCaptureStatus?.enabled))}
+            onClick={() => void updateScreenCapture(!screenCaptureStatus?.enabled)}
+          >
+            <span aria-hidden="true" />
+            {screenCaptureStatus?.enabled ? '已开启' : '已关闭'}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>截图间隔</strong><small>自动截图最短间隔为 30 秒。</small></div>
+          <select
+            value={screenCaptureInterval}
+            disabled={screenCaptureBusy || screenCaptureStatus === null}
+            onChange={(event) => {
+              const minutes = Number(event.target.value)
+              setScreenCaptureInterval(minutes)
+              if (screenCaptureStatus?.enabled && window.nxcore) {
+                void window.nxcore.screenCapture.updateInterval(minutes * 60_000)
+                  .then(setScreenCaptureStatus)
+                  .catch(() => undefined)
+              }
+            }}
+          >
+            {[1, 5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
+          </select>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>立即截取</strong><small>{lastScreenshotPath || '用于确认当前窗口保存位置。'}</small></div>
+          <button className="secondary-button" type="button" disabled={screenCaptureBusy} onClick={() => void captureWindowNow()}>
+            {screenCaptureBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Camera aria-hidden="true" />}
+            截取当前窗口
+          </button>
         </div>
       </section>
 

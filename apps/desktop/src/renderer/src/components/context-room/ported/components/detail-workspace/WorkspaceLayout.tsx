@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
@@ -53,7 +53,9 @@ export function WorkspaceLayout({
   selectedResource,
   backendDocuments,
   trashedDocuments,
-  documentEvents,
+  focusedDocumentId,
+  focusedBlockId,
+  documentFocusRequestId,
   onBackendDocumentChange,
   onCreateDocument,
   onDeleteDocument,
@@ -109,7 +111,9 @@ export function WorkspaceLayout({
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
-  documentEvents: Record<string, DocumentEvent[]>;
+  focusedDocumentId: string | null;
+  focusedBlockId: string | null;
+  documentFocusRequestId: number | null;
   onBackendDocumentChange: (document: RoomDocument) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
@@ -341,8 +345,11 @@ export function WorkspaceLayout({
               selectedObject={selectedObject}
               selectedResource={selectedResource}
               backendDocuments={backendDocuments}
-              documentEvents={documentEvents}
+              focusedDocumentId={focusedDocumentId}
+              focusedBlockId={focusedBlockId}
+              documentFocusRequestId={documentFocusRequestId}
               onBackendDocumentChange={onBackendDocumentChange}
+              onDeleteDocument={onDeleteDocument}
               onOpenRoom={onOpenRoom}
               onMobileBack={() => setMobileContent(false)}
               onCloseObject={onCloseObject}

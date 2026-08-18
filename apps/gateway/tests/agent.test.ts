@@ -26,6 +26,7 @@ async function testConfig(): Promise<GatewayConfig> {
     agentRuntime: "fake",
     memory: null,
     pi: null,
+    backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
   };
@@ -276,7 +277,7 @@ describe("agent gateway", () => {
       method: "POST",
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
-      payload: { prompt: "生成一份长文档", idempotencyKey: "cancel-request-key" },
+      payload: { prompt: "请慢慢回答这个问题", idempotencyKey: "cancel-request-key" },
     })).json<AgentRun>();
 
     const cancelled = await app.inject({

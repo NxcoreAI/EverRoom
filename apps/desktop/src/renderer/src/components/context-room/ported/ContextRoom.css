@@ -14,6 +14,23 @@
   src: url('/fonts/context-room/inter-600.woff2') format('woff2');
 }
 
+.context-room-operation-shell {
+  --cr-canvas: #fff;
+  --cr-surface: #fff;
+  --cr-surface-secondary: #f7f8fa;
+  --cr-surface-hover: #f3f4f6;
+  --cr-text: #111827;
+  --cr-muted: #6b7280;
+  --cr-border: #e5e7eb;
+  --cr-blue: #3d6ff6;
+  --cr-danger: #c83232;
+  position: relative;
+  display: block;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .context-room-app {
   --cr-canvas: #fafafa;
   --cr-surface: #ffffff;
@@ -1713,7 +1730,6 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--cr-border);
 }
 
 .context-room-embedded-doc-status span,
@@ -1727,14 +1743,69 @@
   font-weight: 500;
 }
 
-.context-room-embedded-doc-status em {
+.context-room-document-title {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
-  color: var(--cr-muted);
-  font-size: 12px;
-  font-style: normal;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.context-room-document-actions {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.context-room-document-actions > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+}
+
+.context-room-document-actions > button:hover,
+.context-room-document-actions > button[data-state='open'] {
+  border-color: var(--cr-border);
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-document-actions > button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cr-blue) 28%, transparent);
+  outline-offset: 1px;
+}
+
+.context-room-document-actions > button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-document-actions-menu {
+  min-width: 164px;
+}
+
+.context-room-document-actions-menu [role='menuitem'][data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.context-room-document-actions-submenu-icon {
+  width: 13px !important;
+  height: 13px !important;
+  margin-left: auto;
+}
+
+.context-room-document-actions-separator {
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--cr-border);
 }
 
 .context-room-embedded-cloud-doc > :last-child {
@@ -3724,6 +3795,307 @@
   }
 }
 
+/* iOS-inspired timeline surface: grouped content, quiet chrome, and a clear
+   vertical reading path for events. Kept scoped so the rest of the Room UI
+   can retain its existing desktop card treatment. */
+.context-room-dashboard-timeline {
+  overflow: visible;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+}
+
+.context-room-dashboard-timeline > header {
+  min-height: 0;
+  padding: 2px 4px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--cr-text);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.context-room-dashboard-timeline > header svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.25;
+}
+
+.context-room-dashboard-timeline > header span {
+  align-self: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(118, 118, 128, 0.12);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-timeline-toolbar {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 4px 6px;
+  border: 1px solid rgba(60, 60, 67, 0.08);
+  border-radius: 11px;
+  background: rgba(118, 118, 128, 0.12);
+}
+
+.context-room-timeline-toolbar > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.context-room-timeline-toolbar > div button {
+  min-width: 34px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-weight: 550;
+  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.context-room-timeline-toolbar > div button:hover {
+  color: var(--cr-text);
+}
+
+.context-room-timeline-toolbar > div button[aria-pressed='true'] {
+  background: var(--cr-surface);
+  color: var(--cr-blue);
+  box-shadow: 0 1px 4px rgba(31, 31, 31, 0.12);
+}
+
+.context-room-timeline-toolbar nav {
+  min-width: 0;
+  gap: 2px;
+}
+
+.context-room-timeline-toolbar nav span {
+  min-width: 118px;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.context-room-timeline-toolbar nav button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--cr-muted);
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.context-room-timeline-toolbar nav button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--cr-blue);
+}
+
+.context-room-timeline-toolbar nav button:last-child {
+  width: auto;
+  min-width: 42px;
+  padding: 0 9px;
+  color: var(--cr-blue);
+  font-weight: 550;
+}
+
+.context-room-dashboard-timeline > ol {
+  margin: 0;
+  padding: 2px 18px;
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 16px;
+  background: var(--cr-surface);
+  box-shadow: 0 6px 20px rgba(31, 31, 31, 0.045);
+}
+
+.context-room-dashboard-timeline > ol > li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 14px;
+  padding: 15px 0;
+}
+
+.context-room-dashboard-timeline > ol > li + li {
+  border-top: 1px solid var(--cr-border);
+}
+
+.context-room-dashboard-timeline > ol > li > i {
+  position: relative;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border: 3px solid var(--cr-blue);
+  border-radius: 50%;
+  background: var(--cr-surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue) 12%, transparent);
+}
+
+.context-room-dashboard-timeline > ol > li > i::after {
+  position: absolute;
+  top: 7px;
+  left: 2px;
+  width: 1px;
+  height: calc(100% + 24px);
+  background: var(--cr-border);
+  content: '';
+}
+
+.context-room-dashboard-timeline > ol > li:last-child > i::after {
+  display: none;
+}
+
+.context-room-dashboard-timeline > ol > li > i[data-kind='done'] {
+  border-color: #34c759;
+  box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.12);
+}
+
+.context-room-dashboard-timeline > ol > li > i[data-kind='warn'] {
+  border-color: #ff9500;
+  box-shadow: 0 0 0 3px rgba(255, 149, 0, 0.14);
+}
+
+.context-room-dashboard-timeline > ol > li > div {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.context-room-dashboard-timeline li > div > div:first-child {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.context-room-dashboard-timeline li b {
+  overflow: visible;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.38;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.context-room-dashboard-timeline li time {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: #f2f2f7;
+  color: var(--cr-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.context-room-dashboard-timeline li p {
+  margin: 5px 0 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.context-room-dashboard-timeline li button {
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  color: var(--cr-blue);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.context-room-dashboard-timeline li button:hover {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.context-room-timeline-material {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: #f2f2f7;
+  color: var(--cr-text) !important;
+  font-size: 11px !important;
+}
+
+.context-room-timeline-material svg {
+  flex: 0 0 auto;
+  color: var(--cr-blue);
+}
+
+.context-room-dashboard-empty {
+  min-height: 112px;
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 16px;
+  background: var(--cr-surface);
+}
+
+@container context-room-shell (max-width: 759px) {
+  .context-room-dashboard-timeline > header {
+    padding-inline: 0;
+  }
+
+  .context-room-timeline-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+    padding: 5px;
+  }
+
+  .context-room-timeline-toolbar > div {
+    width: 100%;
+  }
+
+  .context-room-timeline-toolbar > div button {
+    flex: 1 1 0;
+  }
+
+  .context-room-timeline-toolbar nav {
+    justify-content: space-between;
+  }
+
+  .context-room-timeline-toolbar nav span {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .context-room-dashboard-timeline > ol {
+    padding-inline: 14px;
+  }
+
+  .context-room-dashboard-timeline > ol > li {
+    gap: 12px;
+    padding-block: 14px;
+  }
+
+  .context-room-dashboard-timeline li > div > div:first-child {
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .context-room-dashboard-timeline li time {
+    order: -1;
+    align-self: flex-start;
+  }
+}
+
 @container context-room-shell (max-width: 620px) {
   .context-room-home-grid {
     grid-template-columns: 1fr;
@@ -3765,7 +4137,10 @@
 
 .context-room-editor .ProseMirror h1,
 .context-room-editor .ProseMirror h2,
-.context-room-editor .ProseMirror h3 {
+.context-room-editor .ProseMirror h3,
+.context-room-editor .ProseMirror h4,
+.context-room-editor .ProseMirror h5,
+.context-room-editor .ProseMirror h6 {
   color: rgb(24 24 27);
   font-weight: 650;
   line-height: 1.2;
@@ -8408,4 +8783,30 @@
   .context-room-memory-overview > .context-room-memory-inline-detail {
     margin: 0 8px 8px;
   }
+}
+/* Keep the iOS treatment authoritative after the legacy parity rules above. */
+.context-room-dashboard-timeline {
+  border-radius: 16px;
+}
+
+.context-room-timeline-toolbar nav span {
+  min-width: 118px;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.context-room-timeline-toolbar nav button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.context-room-timeline-toolbar nav button:last-child {
+  min-width: 42px;
+  padding-inline: 9px;
+}
+
+.context-room-dashboard-empty {
+  min-height: 112px;
 }

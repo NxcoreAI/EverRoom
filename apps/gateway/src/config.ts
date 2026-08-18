@@ -49,10 +49,12 @@ const RawConfigSchema = Type.Object(
     agentRuntime: AgentRuntimeSchema,
     aiProvider: Type.String(),
     aiModel: Type.String(),
+    aiBackgroundModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
     aiApi: AiApiSchema,
     aiMaxTokens: Type.Integer({ minimum: 1 }),
+    aiBackgroundMaxTokens: Type.Integer({ minimum: 1 }),
     aiContextWindow: Type.Integer({ minimum: 1 }),
     aiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
     aiReasoning: AiReasoningSchema,
@@ -131,6 +133,7 @@ export interface GatewayConfig {
   agentRuntime: AgentRuntimeMode;
   memory: MemoryRuntimeConfig | null;
   pi: PiRuntimeConfig | null;
+  backgroundPi: PiRuntimeConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
   connectors?: {
@@ -282,10 +285,15 @@ export function loadConfig(
     agentRuntime: env.NXCORE_AGENT_RUNTIME ?? "fake",
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
+    aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
     aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "8192"),
+    aiBackgroundMaxTokens: parsePositiveInteger(
+      "NXCORE_AI_BACKGROUND_MAX_TOKENS",
+      env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "4096",
+    ),
     aiContextWindow: parsePositiveInteger(
       "NXCORE_AI_CONTEXT_WINDOW",
       env.NXCORE_AI_CONTEXT_WINDOW ?? "128000",
@@ -381,6 +389,24 @@ export function loadConfig(
     validateMemoryEndpoint("NXCORE_MEMORY_BASE_URL", memory.baseUrl);
   }
 
+  const pi: PiRuntimeConfig | null = rawConfig.agentRuntime === "pi"
+    ? {
+        provider: rawConfig.aiProvider,
+        model: rawConfig.aiModel,
+        baseUrl: rawConfig.aiBaseUrl,
+        apiKey: rawConfig.aiApiKey,
+        api: rawConfig.aiApi,
+        maxTokens: rawConfig.aiMaxTokens,
+        contextWindow: rawConfig.aiContextWindow,
+        temperature: rawConfig.aiTemperature,
+        reasoning: rawConfig.aiReasoning,
+        sessionsDir: join(dataDir, "agent", "pi-sessions"),
+        workingDirectory: join(dataDir, "agent", "workspace"),
+        agentDirectory: join(dataDir, "agent", "pi-config"),
+        ...(memory ? { memory } : {}),
+      }
+    : null;
+
   return {
     host: rawConfig.host,
     port: rawConfig.port,
@@ -432,21 +458,12 @@ export function loadConfig(
       outlookClientSecret: env.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET?.trim() ?? "",
       pollingIntervalMs: rawConfig.connectorPollMs,
     },
-    pi: rawConfig.agentRuntime === "pi"
+    pi,
+    backgroundPi: pi
       ? {
-          provider: rawConfig.aiProvider,
-          model: rawConfig.aiModel,
-          baseUrl: rawConfig.aiBaseUrl,
-          apiKey: rawConfig.aiApiKey,
-          api: rawConfig.aiApi,
-          maxTokens: rawConfig.aiMaxTokens,
-          contextWindow: rawConfig.aiContextWindow,
-          temperature: rawConfig.aiTemperature,
-          reasoning: rawConfig.aiReasoning,
-          sessionsDir: join(dataDir, "agent", "pi-sessions"),
-          workingDirectory: join(dataDir, "agent", "workspace"),
-          agentDirectory: join(dataDir, "agent", "pi-config"),
-          ...(memory ? { memory } : {}),
+          ...pi,
+          model: rawConfig.aiBackgroundModel,
+          maxTokens: rawConfig.aiBackgroundMaxTokens,
         }
       : null,
   };

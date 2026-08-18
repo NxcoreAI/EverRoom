@@ -16,5 +16,6 @@
     "sourceMap": true,
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "drizzle.config.ts", "tsup.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "drizzle.config.ts", "tsup.config.ts"],
+  "exclude": ["src/modules/connector/**"]
 }

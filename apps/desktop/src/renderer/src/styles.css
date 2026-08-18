@@ -127,6 +127,13 @@ summary:focus-visible {
   gap: 8px;
 }
 
+.topbar-brand {
+  transition:
+    opacity 120ms ease,
+    transform var(--shell-motion-duration) var(--shell-motion-easing),
+    visibility 0s linear 0s;
+}
+
 .product-brand-name {
   display: inline-flex;
   height: 20px;
@@ -139,9 +146,14 @@ summary:focus-visible {
   transition: opacity 120ms ease, transform var(--shell-motion-duration) var(--shell-motion-easing);
 }
 
-.app-shell[data-nav-collapsed='true'] .topbar-brand .product-brand-name {
+.app-shell[data-nav-collapsed='true'] .topbar-brand {
   opacity: 0;
+  visibility: hidden;
   transform: translateX(-6px);
+  transition:
+    opacity 120ms ease,
+    transform var(--shell-motion-duration) var(--shell-motion-easing),
+    visibility 0s linear 120ms;
 }
 
 .product-brand-logo {
@@ -150,10 +162,6 @@ summary:focus-visible {
   flex: 0 0 20px;
   border-radius: 5px;
   object-fit: contain;
-}
-
-.app-shell[data-mac-desktop='true'] .topbar-brand {
-  display: none;
 }
 
 .nav-collapse {
@@ -189,10 +197,10 @@ summary:focus-visible {
   display: flex;
   min-width: 0;
   flex: 1;
-  align-items: end;
+  align-items: center;
   gap: 2px;
   overflow-x: auto;
-  padding: 6px 0 0;
+  padding: 0;
   scrollbar-width: none;
 }
 
@@ -207,9 +215,13 @@ summary:focus-visible {
   height: 35px;
   align-items: center;
   border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: 6px 6px 0 0;
+  border-radius: 6px;
   color: var(--muted);
+  -webkit-app-region: no-drag;
+}
+
+.tab * {
+  -webkit-app-region: no-drag;
 }
 
 .tab[data-active='true'] {
@@ -417,23 +429,6 @@ summary:focus-visible {
   transform: translate3d(0, 0, 0);
   transition: transform var(--shell-motion-duration) var(--shell-motion-easing);
   will-change: transform;
-}
-
-.sidebar-brand {
-  display: none;
-}
-
-.app-shell[data-mac-desktop='true'] .sidebar-brand {
-  display: flex;
-  min-height: 48px;
-  flex: 0 0 48px;
-  padding: 0 12px 8px;
-  border-bottom: 1px solid var(--border);
-}
-
-.sidebar-brand .product-brand-name {
-  font-size: 15px;
-  font-weight: 700;
 }
 
 .app-shell[data-nav-collapsed='true'] .sidebar {
@@ -644,6 +639,23 @@ summary:focus-visible {
   border-radius: 50%;
   background: var(--gateway-state-color);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--gateway-state-color) 16%, transparent);
+}
+
+.gateway-status[data-state='starting'] .gateway-status-dot {
+  width: 12px;
+  height: 12px;
+  flex-basis: 12px;
+  background: transparent;
+  box-shadow: none;
+  border: 2px solid color-mix(in srgb, var(--gateway-state-color) 24%, transparent);
+  border-top-color: var(--gateway-state-color);
+  animation: gateway-status-spin 0.8s linear infinite;
+}
+
+@keyframes gateway-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .account-row {
@@ -2083,19 +2095,6 @@ summary:focus-visible {
 
   .app-shell[data-agent-open='false'] {
     grid-template-columns: 0 minmax(0, 1fr) 0;
-  }
-
-  .brand-area {
-    width: 74px;
-  }
-
-  .app-shell[data-mac-desktop='true'] .brand-area {
-    width: 112px;
-  }
-
-  .topbar-brand .product-brand-name {
-    opacity: 0;
-    transform: translateX(-6px);
   }
 
   .sidebar {

@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/bin/serve.ts",
+    "dev:cursor-completion": "tsx watch src/bin/cursor-completion-serve.ts",
     "build": "tsup && node scripts/copy-migrations.mjs",
     "start": "node dist/serve.js",
     "typecheck": "tsc --noEmit",
@@ -24,6 +25,7 @@
     "@fastify/websocket": "^11.3.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@nxcore/agent-contract": "workspace:*",
+    "@nxcore/document-model": "workspace:*",
     "@nxcore/agent-runtime": "workspace:*",
     "@nxcore/agent-runtime-pi": "workspace:*",
     "@nxcore/connector-contract": "workspace:*",

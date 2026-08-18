@@ -1,13 +1,21 @@
-import { Brain, Check, ChevronRight, Copy, FileText, Folder, FolderKanban, Link2, RotateCcw, X } from 'lucide-react'
+import { Brain, Check, ChevronRight, CircleHelp, Copy, FileText, Folder, FolderKanban, Link2, MessageSquareText, RotateCcw, X } from 'lucide-react'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
+import type { AgentRunActivity } from './agentRunActivity'
+import { parseAgentDocumentIntentResult } from './agentDocumentIntent'
 import { parseAgentNavigationTarget } from './agentNavigation'
 import { formatAgentOutput } from './agentOutputFormat'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
+import { AgentDocumentPicker } from './AgentDocumentPicker'
+import {
+  findPendingAgentDocumentSelection,
+  type AgentDocumentSelectionSubmission,
+} from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink } from '@nxcore/agent-contract'
+import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 
 const quickPrompts = [
   ['总结当前页面的重点，并列出下一步', '总结当前页面最重要的内容，并按优先级列出下一步。'],
@@ -34,9 +42,9 @@ function ReasoningBlock({ active, content }: { active: boolean; content: string 
 }
 
 function getThinkingLabel(message: DisplayAgentMessage | undefined, tools: DisplayAgentToolCall[]): string {
-  if (message?.content.trim()) return '正在生成回答...'
   const runningTool = tools.find((tool) => tool.status === 'running' || tool.status === 'pending')
   if (runningTool) return '正在调用工具...'
+  if (message?.content.trim()) return '正在生成回答...'
   if (tools.length > 0) return '正在整理结果...'
   return '正在分析问题...'
 }
@@ -84,6 +92,39 @@ function RoomSelection({
             </button>
           )
         }) : <p>暂无可用 Room</p>}
+      </div>
+    </section>
+  )
+}
+
+function DocumentIntentClarification({
+  busy,
+  onConfirm,
+  onReject,
+  topic,
+}: {
+  busy: boolean
+  onConfirm: () => void
+  onReject: () => void
+  topic: string
+}) {
+  return (
+    <section className="agent-room-selection agent-document-intent" aria-label="确认是否创建文档">
+      <header>
+        <span><CircleHelp aria-hidden="true" /><strong>确认创建方式</strong></span>
+      </header>
+      <p className="agent-document-intent-question">你是想创建一篇关于“{topic}”的文档吗？</p>
+      <div className="agent-room-selection-list">
+        <button type="button" disabled={busy} onClick={onConfirm}>
+          <FileText aria-hidden="true" />
+          <span><strong>创建文档</strong><small>下一步选择保存到哪个 Room</small></span>
+          <ChevronRight aria-hidden="true" />
+        </button>
+        <button type="button" disabled={busy} onClick={onReject}>
+          <MessageSquareText aria-hidden="true" />
+          <span><strong>不是</strong><small>继续补充你的具体需求</small></span>
+          <ChevronRight aria-hidden="true" />
+        </button>
       </div>
     </section>
   )
@@ -187,36 +228,49 @@ function RunNavigation({
 function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
+  const finalContent = state.documentPending
+    ? ''
+    : state.activity.hasTools
+      ? state.activity.finalAnswer
+        || state.activity.pendingAnswer
+        || (state.activity.completed ? assistantMessage?.content || '' : '')
+      : assistantMessage?.content || ''
 
   return (
-    <section className="agent-linked-run" aria-label="引用任务进度">
-      {state.loading ? <ThinkingStatus label="正在同步工作进度..." /> : null}
-      {active ? (
-        <ThinkingStatus label={state.documentPending ? '正在编辑文档...' : getThinkingLabel(assistantMessage, state.tools)} />
-      ) : null}
-      <ReasoningBlock active={active} content={state.reasoning} />
-      <AgentExecutionTimeline
-        tools={state.tools}
-        runStartedAt={state.startedAt}
-        runCompletedAt={state.completedAt}
-        continuing={state.documentPending}
-        continuationLabel="正在编辑文档"
-      />
-      {assistantMessage?.content ? (
+    <>
+      <section className="agent-linked-run" aria-label="引用任务进度">
+        {state.loading ? <ThinkingStatus label="正在同步工作进度..." /> : null}
+        {active ? (
+          <ThinkingStatus label={state.documentPending ? '正在编辑文档...' : getThinkingLabel(assistantMessage, state.tools)} />
+        ) : null}
+        {state.activity.hasTools ? (
+          <AgentExecutionTimeline
+            activity={state.activity}
+            reasoning={state.reasoning}
+            runStartedAt={state.startedAt}
+            runCompletedAt={state.completedAt}
+            continuing={state.documentPending}
+            continuationLabel="正在编辑文档"
+          />
+        ) : <ReasoningBlock active={active} content={state.reasoning} />}
+        {state.status === 'completed' && !finalContent ? (
+          <div className="agent-linked-status" role="status">创建已完成</div>
+        ) : null}
+        {state.error ? <div className="agent-error" role="alert">{state.error}</div> : null}
+      </section>
+      {finalContent ? (
         <article className="agent-message" data-role="assistant">
-          <AssistantMessageContent content={assistantMessage.content} />
+          <AssistantMessageContent content={finalContent} />
         </article>
       ) : null}
-      {state.status === 'completed' && !assistantMessage?.content ? (
-        <div className="agent-linked-status" role="status">创建已完成</div>
-      ) : null}
-      {state.error ? <div className="agent-error" role="alert">{state.error}</div> : null}
-    </section>
+    </>
   )
 }
 
 export function AgentChatView({
+  activeDocument,
   activeRunId,
+  activityByRun,
   availableRooms,
   composer,
   currentSessionId,
@@ -226,17 +280,23 @@ export function AgentChatView({
   messages,
   onRetryPrompt,
   onOpenSessionLink,
+  onConfirmDocumentIntent,
+  onRejectDocumentIntent,
   onSelectRoom,
+  onSelectDocument,
   onSelectPrompt,
   pendingNavigationByRun,
   reasoningByRun,
   runCompletedAtByRun,
   runStartedAtByRun,
+  scopeReady,
   sessionLinks,
   submitting,
   toolCallsByRun,
 }: {
+  activeDocument: ActiveDocumentDescriptor | null
   activeRunId: string | null
+  activityByRun: Record<string, AgentRunActivity>
   availableRooms: AgentRoomReference[]
   composer: ReactNode
   currentSessionId: string | null
@@ -246,26 +306,34 @@ export function AgentChatView({
   messages: DisplayAgentMessage[]
   onRetryPrompt: (prompt: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
+  onConfirmDocumentIntent: (topic: string) => void
+  onRejectDocumentIntent: () => void
   onSelectRoom: (room: AgentRoomReference) => void
+  onSelectDocument: (selection: AgentDocumentSelectionSubmission) => void
   onSelectPrompt: (prompt: string) => void
   pendingNavigationByRun: Record<string, AgentNavigationTarget>
   reasoningByRun: Record<string, string>
   runCompletedAtByRun: Record<string, string>
   runStartedAtByRun: Record<string, string>
+  scopeReady: boolean
   sessionLinks: AgentSessionLink[]
   submitting: boolean
   toolCallsByRun: Record<string, DisplayAgentToolCall[]>
 }) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [dismissedDocumentIntents, setDismissedDocumentIntents] = useState<Set<string>>(() => new Set())
   const [dismissedRoomSelections, setDismissedRoomSelections] = useState<Set<string>>(() => new Set())
+  const [dismissedDocumentSelections, setDismissedDocumentSelections] = useState<Set<string>>(() => new Set())
+  const handledDocumentSelectionsRef = useRef(new Set<string>())
   const conversationRef = useRef<HTMLDivElement>(null)
   const hasConversation = messages.length > 0 || sessionLinks.length > 0
     || Boolean(activeRunId) || Boolean(error)
-  const empty = !hasConversation
-  const previousEmptyRef = useRef(empty)
-  const [quickPromptsReady, setQuickPromptsReady] = useState(empty)
-  const [contentReady, setContentReady] = useState(!empty)
-  const previousContentEmptyRef = useRef(empty)
+  const confirmedEmpty = scopeReady && !hasConversation
+  const [emptyLayout, setEmptyLayout] = useState(confirmedEmpty)
+  const previousEmptyRef = useRef(confirmedEmpty)
+  const [quickPromptsReady, setQuickPromptsReady] = useState(confirmedEmpty)
+  const [contentReady, setContentReady] = useState(!confirmedEmpty)
+  const previousContentEmptyRef = useRef(confirmedEmpty)
   const previousContentSessionRef = useRef(currentSessionId)
   const incomingLink = [...sessionLinks].reverse().find((link) => link.targetSessionId === currentSessionId)
   const outgoingLinks = useMemo(
@@ -281,9 +349,11 @@ export function AgentChatView({
     [activeRunId, messages],
   )
   const latestTools = activeRunId ? toolCallsByRun[activeRunId] ?? [] : []
+  const latestActivity = activeRunId ? activityByRun[activeRunId] : undefined
   const activeHasAssistant = activeRunId
     ? messages.some((message) => message.runId === activeRunId && message.role === 'assistant')
     : false
+  const activeRunPending = Boolean(activeRunId && !runCompletedAtByRun[activeRunId])
   const pendingRoomSelection = useMemo(() => {
     const candidates = Object.values(toolCallsByRun)
       .flat()
@@ -301,6 +371,31 @@ export function AgentChatView({
     }
     return null
   }, [dismissedRoomSelections, messages, toolCallsByRun])
+  const pendingDocumentIntent = useMemo(() => {
+    const candidates = Object.values(toolCallsByRun)
+      .flat()
+      .filter((tool) => tool.name === 'context_room_document_intent' && tool.status === 'completed')
+      .sort((left, right) => Date.parse(right.completedAt ?? right.startedAt) - Date.parse(left.completedAt ?? left.startedAt))
+    for (const tool of candidates) {
+      if (dismissedDocumentIntents.has(tool.id)) continue
+      const result = parseAgentDocumentIntentResult(tool.result)
+      if (!result) continue
+      const completedAt = Date.parse(tool.completedAt ?? tool.startedAt)
+      const hasLaterUserMessage = messages.some((message) => (
+        message.role === 'user' && Date.parse(message.createdAt) > completedAt
+      ))
+      if (!hasLaterUserMessage) return { tool, result }
+    }
+    return null
+  }, [dismissedDocumentIntents, messages, toolCallsByRun])
+  const pendingDocumentSelection = useMemo(() => {
+    if (activeDocument) return null
+    return findPendingAgentDocumentSelection(
+      Object.values(toolCallsByRun).flat(),
+      messages,
+      dismissedDocumentSelections,
+    )
+  }, [activeDocument, dismissedDocumentSelections, messages, toolCallsByRun])
 
   useEffect(() => {
     const reset = () => setCopiedMessageId(null)
@@ -321,10 +416,15 @@ export function AgentChatView({
     element.scrollTop = element.scrollHeight
   }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, toolCallsByRun])
 
+  useLayoutEffect(() => {
+    if (scopeReady) setEmptyLayout(confirmedEmpty)
+  }, [confirmedEmpty, scopeReady])
+
   useEffect(() => {
+    if (!scopeReady) return
     const wasEmpty = previousEmptyRef.current
-    previousEmptyRef.current = empty
-    if (!empty) {
+    previousEmptyRef.current = confirmedEmpty
+    if (!confirmedEmpty) {
       setQuickPromptsReady(false)
       return
     }
@@ -333,13 +433,17 @@ export function AgentChatView({
       return
     }
     setQuickPromptsReady(false)
-  }, [empty])
+  }, [confirmedEmpty, scopeReady])
 
   useLayoutEffect(() => {
+    if (!scopeReady) {
+      setContentReady(false)
+      return
+    }
     const wasEmpty = previousContentEmptyRef.current
     const sessionChanged = previousContentSessionRef.current !== currentSessionId
     previousContentSessionRef.current = currentSessionId
-    if (empty) {
+    if (confirmedEmpty) {
       previousContentEmptyRef.current = true
       setContentReady(false)
       return
@@ -360,12 +464,12 @@ export function AgentChatView({
     setContentReady(false)
     const timer = window.setTimeout(() => setContentReady(true), wasEmpty ? 320 : 80)
     return () => window.clearTimeout(timer)
-  }, [currentSessionId, empty, loading])
+  }, [confirmedEmpty, currentSessionId, loading, scopeReady])
 
-  const copyMessage = async (message: DisplayAgentMessage) => {
+  const copyMessage = async (messageId: string, content: string) => {
     try {
-      await navigator.clipboard.writeText(message.content)
-      setCopiedMessageId(message.id)
+      await navigator.clipboard.writeText(content)
+      setCopiedMessageId(messageId)
     } catch {
       setCopiedMessageId(null)
     }
@@ -376,17 +480,17 @@ export function AgentChatView({
       className="agent-chat-conversation-frame"
       data-drafting={String(draftHasContent)}
       data-content-ready={String(contentReady)}
-      data-empty={String(empty)}
+      data-empty={String(emptyLayout)}
       data-prompts-ready={String(quickPromptsReady)}
       onTransitionEnd={(event) => {
         if (
-          empty
+          emptyLayout
           && event.propertyName === 'bottom'
           && (event.target as HTMLElement).classList.contains('agent-composer-shell')
         ) setQuickPromptsReady(true)
       }}
     >
-      <div className="agent-chat-empty-heading"><h2>开始一段新对话</h2></div>
+      {emptyLayout ? <div className="agent-chat-empty-heading"><h2>开始一段新对话</h2></div> : null}
       <div ref={conversationRef} className="agent-conversation" aria-live="polite">
           {incomingLink ? (
             <>
@@ -397,8 +501,19 @@ export function AgentChatView({
           {messages.map((message, index) => {
             if (message.role === 'system') return null
             const tools = toolCallsByRun[message.runId] ?? []
+            const activity = activityByRun[message.runId]
+            const hasToolActivity = Boolean(activity?.hasTools)
+            const finalContent = hasToolActivity
+              ? activity?.finalAnswer || activity?.pendingAnswer || (
+                activity?.completed && !message.streaming && runCompletedAtByRun[message.runId] ? message.content : ''
+              )
+              : message.content
+            const partialContent = Boolean(
+              hasToolActivity && activity && !activity.completed && runCompletedAtByRun[message.runId] && finalContent,
+            )
             const previousUserMessage = [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')
-            const showActions = message.role === 'assistant' && !message.streaming && Boolean(message.content.trim())
+            const showActions = message.role === 'assistant' && !message.streaming
+              && !partialContent && Boolean(finalContent.trim())
 
             if (message.role === 'user') {
               const link = outgoingLinks.find((item) => item.sourceRunId === message.runId)
@@ -421,18 +536,25 @@ export function AgentChatView({
                 {message.streaming && message.runId === activeRunId
                   ? <ThinkingStatus label={getThinkingLabel(message, tools)} />
                   : null}
-                <ReasoningBlock active={message.runId === activeRunId} content={reasoningByRun[message.runId] ?? ''} />
-                <AgentExecutionTimeline
-                  tools={tools}
-                  runStartedAt={runStartedAtByRun[message.runId]}
-                  runCompletedAt={runCompletedAtByRun[message.runId]}
-                />
-                {message.content ? (
-                  <article className="agent-message" data-role="assistant"><AssistantMessageContent content={message.content} /></article>
+                {hasToolActivity && activity ? (
+                  <AgentExecutionTimeline
+                    activity={activity}
+                    reasoning={reasoningByRun[message.runId] ?? ''}
+                    runStartedAt={runStartedAtByRun[message.runId]}
+                    runCompletedAt={runCompletedAtByRun[message.runId]}
+                  />
+                ) : (
+                  <ReasoningBlock active={message.runId === activeRunId} content={reasoningByRun[message.runId] ?? ''} />
+                )}
+                {partialContent ? (
+                  <div className="agent-linked-status" role="status">运行未正常完成，以下为中断前的部分回答</div>
+                ) : null}
+                {finalContent ? (
+                  <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
                 ) : null}
                 {showActions ? (
                   <div className="agent-message-actions">
-                    <button type="button" aria-label="复制回答" title="复制回答" onClick={() => void copyMessage(message)}>
+                    <button type="button" aria-label="复制回答" title="复制回答" onClick={() => void copyMessage(message.id, finalContent)}>
                       {copiedMessageId === message.id ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
                     </button>
                     <button
@@ -452,26 +574,59 @@ export function AgentChatView({
           {activeRunId && !activeHasAssistant ? (
             <div className="agent-assistant-turn is-pending">
               <ThinkingStatus label={getThinkingLabel(undefined, latestTools)} />
-              <ReasoningBlock active content={reasoningByRun[activeRunId] ?? ''} />
-              <AgentExecutionTimeline
-                tools={latestTools}
-                runStartedAt={runStartedAtByRun[activeRunId]}
-                runCompletedAt={runCompletedAtByRun[activeRunId]}
-              />
+              {latestActivity?.hasTools ? (
+                <AgentExecutionTimeline
+                  activity={latestActivity}
+                  reasoning={reasoningByRun[activeRunId] ?? ''}
+                  runStartedAt={runStartedAtByRun[activeRunId]}
+                  runCompletedAt={runCompletedAtByRun[activeRunId]}
+                />
+              ) : <ReasoningBlock active content={reasoningByRun[activeRunId] ?? ''} />}
             </div>
           ) : null}
-          {activeRunId && activeHasAssistant && !latestStreamingMessage
+          {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
             ? <ThinkingStatus label={getThinkingLabel(undefined, latestTools)} />
             : null}
+          {pendingDocumentIntent ? (
+            <DocumentIntentClarification
+              busy={loading || submitting || activeRunPending}
+              topic={pendingDocumentIntent.result.topic}
+              onConfirm={() => onConfirmDocumentIntent(pendingDocumentIntent.result.topic)}
+              onReject={() => {
+                setDismissedDocumentIntents((current) => new Set(current).add(pendingDocumentIntent.tool.id))
+                onRejectDocumentIntent()
+              }}
+            />
+          ) : null}
           {pendingRoomSelection ? (
             <RoomSelection
               availableRooms={availableRooms}
-              busy={loading || submitting || Boolean(activeRunId)}
+              busy={loading || submitting || activeRunPending}
               rooms={pendingRoomSelection.rooms}
               onCancel={() => {
                 setDismissedRoomSelections((current) => new Set(current).add(pendingRoomSelection.tool.id))
               }}
               onSelect={onSelectRoom}
+            />
+          ) : null}
+          {pendingDocumentSelection ? (
+            <AgentDocumentPicker
+              busy={loading || submitting || activeRunPending}
+              documents={pendingDocumentSelection.documents}
+              onCancel={() => {
+                handledDocumentSelectionsRef.current.add(pendingDocumentSelection.toolId)
+                setDismissedDocumentSelections((current) => new Set(current).add(pendingDocumentSelection.toolId))
+              }}
+              onSelect={(document) => {
+                if (handledDocumentSelectionsRef.current.has(pendingDocumentSelection.toolId)) return
+                handledDocumentSelectionsRef.current.add(pendingDocumentSelection.toolId)
+                setDismissedDocumentSelections((current) => new Set(current).add(pendingDocumentSelection.toolId))
+                onSelectDocument({
+                  document,
+                  originalPrompt: pendingDocumentSelection.originalPrompt,
+                  toolId: pendingDocumentSelection.toolId,
+                })
+              }}
             />
           ) : null}
           {loading && messages.length === 0 ? <div className="agent-loading">正在载入会话...</div> : null}

@@ -33,6 +33,13 @@ export interface AgentSessionRouteRequest {
   pageId: PageId
   roomId: string | null
   sessionId: string
+  blockId?: string | null
+}
+
+export function navigationRequiresSessionHandoff(request: AgentNavigationRequest): boolean {
+  const sourceRoomId = request.source.roomId?.trim() || null
+  const targetRoomId = request.target.roomId?.trim() || null
+  return !sourceRoomId || sourceRoomId !== targetRoomId
 }
 
 export function agentSessionLinkDestination(
@@ -58,6 +65,7 @@ export function resolveAgentSessionLinkRoute(
     documentId: destination === 'target' && link.target.objectType === 'document'
       ? link.target.objectId ?? null
       : null,
+    blockId: destination === 'target' ? link.target.blockId ?? null : null,
   }
 }
 
@@ -93,6 +101,7 @@ export function parseAgentNavigationTarget(result: unknown): (AgentNavigationTar
   const roomId = typeof candidate.roomId === 'string' ? candidate.roomId.trim() : null
   const objectId = typeof candidate.objectId === 'string' ? candidate.objectId.trim() : ''
   const objectType = candidate.objectType as AgentNavigationObjectType | undefined
+  const blockId = typeof candidate.blockId === 'string' ? candidate.blockId.trim() : ''
   if (candidate.objectType !== undefined && !objectTypes.has(objectType as AgentNavigationObjectType)) return null
   if (pageId === 'rooms' && !roomId) return null
   if (objectType === 'document' && !objectId) return null
@@ -104,9 +113,10 @@ export function parseAgentNavigationTarget(result: unknown): (AgentNavigationTar
     ...(candidate.roomId !== undefined ? { roomId } : {}),
     ...(objectId ? { objectId } : {}),
     ...(objectType ? { objectType } : {}),
+    ...(blockId ? { blockId } : {}),
   }
 }
 
 export function navigationKey(tool: DisplayAgentToolCall, target: AgentNavigationTarget): string {
-  return [tool.runId, tool.id, target.pageId, target.roomId ?? '', target.objectId ?? ''].join('\u0000')
+  return [tool.runId, tool.id, target.pageId, target.roomId ?? '', target.objectId ?? '', target.blockId ?? ''].join('\u0000')
 }

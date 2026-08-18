@@ -8,6 +8,7 @@ import { AgentToolbar } from '@/components/agent/AgentToolbar'
 import {
   agentSessionLinkDestination,
   navigationKey,
+  navigationRequiresSessionHandoff,
   parseAgentNavigationTarget,
   type AgentNavigationRequest,
   type AgentSessionRouteRequest,
@@ -15,6 +16,11 @@ import {
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { PageId } from '@/data/navigation'
+import { useActiveDocument } from '@/state/ActiveDocumentContext'
+import {
+  buildAgentDocumentSelectionRunRequest,
+  type AgentDocumentSelectionSubmission,
+} from '@/components/agent/agentDocumentSelection'
 
 import './agent/AgentPanel.css'
 import './agent/AgentChat.css'
@@ -30,6 +36,7 @@ export function AgentPanel({
   onNavigate,
   onNavigationConsumed,
   onOpenSessionLink,
+  onOpenDocument,
   onSessionRouteConsumed,
   focusRequest = 0,
 }: {
@@ -43,6 +50,7 @@ export function AgentPanel({
   onNavigate: (request: AgentNavigationRequest) => void
   onNavigationConsumed: (key: string) => void
   onOpenSessionLink: (link: AgentSessionLink, destination: 'source' | 'target') => void
+  onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onSessionRouteConsumed: (key: string) => void
   focusRequest?: number
 }) {
@@ -61,6 +69,7 @@ export function AgentPanel({
     ? `${pageLabel} · “${selectedTextSummary}”`
     : `${pageLabel} · 未选择文本`
   const session = useAgentSession(pageLabel, roomId, rooms)
+  const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
 
   const focusComposer = () => {
     window.requestAnimationFrame(() => composerRef.current?.focus())
@@ -140,12 +149,22 @@ export function AgentPanel({
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
     if ((navigationRequest.target.roomId ?? null) !== roomId) return
-    if (!roomBackendReady || session.loading || session.activeRunId || submitting) return
     if (handledRequestKeysRef.current.has(navigationRequest.key)) return
+    if (!navigationRequiresSessionHandoff(navigationRequest)) {
+      handledRequestKeysRef.current.add(navigationRequest.key)
+      onNavigationConsumed(navigationRequest.key)
+      return
+    }
+    if (!roomBackendReady || !session.scopeReady || session.loading || session.activeRunId || submitting) return
     handledRequestKeysRef.current.add(navigationRequest.key)
     setSubmitting(true)
     void (async () => {
-      const targetSession = await session.createSession()
+      const reusableSession = session.sessions.length === 1
+        && session.currentSession?.id === session.sessionId
+        && !session.currentSession.title?.trim()
+        && session.messages.length === 0
+        && session.sessionLinks.length === 0
+      const targetSession = reusableSession ? session.currentSession! : await session.createSession()
       const targetSessionId = targetSession.id
       await session.renameSession(targetSessionId, navigationRequest.target.title.trim().slice(0, 120))
       await session.createSessionLink({
@@ -183,11 +202,28 @@ export function AgentPanel({
     setDraft('')
     setSubmitting(true)
     try {
-      await session.sendPrompt(submittedPrompt, submittedContext)
+      const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
+      await session.sendPrompt(submittedPrompt, submittedContext, undefined, activeDocumentContext)
       setSelectedText('')
       setComposerResetKey((current) => current + 1)
     } catch {
       setDraft(submittedPrompt)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const selectDocument = async ({ document, originalPrompt }: AgentDocumentSelectionSubmission) => {
+    if (!roomBackendReady) return
+    setSubmitting(true)
+    try {
+      const documents = window.nxcore?.documents
+      if (!documents) throw new Error('文档服务不可用。')
+      const snapshot = await documents.get(document.documentId)
+      const request = buildAgentDocumentSelectionRunRequest(originalPrompt, snapshot)
+      await session.sendPrompt(request.prompt, undefined, undefined, request.activeDocument)
+    } catch {
+      // useAgentSession exposes the request error inside the conversation.
     } finally {
       setSubmitting(false)
     }
@@ -209,6 +245,18 @@ export function AgentPanel({
           },
         }))
       }
+    } catch {
+      // useAgentSession exposes the request error inside the conversation.
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const confirmDocumentIntent = async (topic: string) => {
+    if (!roomBackendReady) return
+    setSubmitting(true)
+    try {
+      await session.sendPrompt(`请围绕“${topic}”创建一篇文档。`)
     } catch {
       // useAgentSession exposes the request error inside the conversation.
     } finally {
@@ -251,9 +299,7 @@ export function AgentPanel({
         <AgentSessionSwitcher
           activeRunId={session.activeRunId}
           connected={session.connected}
-          currentSession={session.currentSession}
-          loading={session.loading}
-          transitionTitle={navigationRequest?.target.title ?? null}
+          displayTitle={navigationRequest?.target.title ?? session.displayTitle}
           sessionId={session.sessionId}
           sessions={session.sessions}
           onCreate={async () => {
@@ -274,17 +320,23 @@ export function AgentPanel({
       </AgentToolbar>
 
       <AgentChatView
+        activeDocument={activeDocument}
         activeRunId={session.activeRunId}
+        activityByRun={session.activityByRun}
         availableRooms={rooms}
         composer={composer}
         currentSessionId={session.sessionId}
+        scopeReady={session.scopeReady}
         draftHasContent={Boolean(draft.trim())}
         error={session.error}
         loading={session.loading}
         messages={session.messages}
+        onConfirmDocumentIntent={(topic) => void confirmDocumentIntent(topic)}
+        onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt) => void sendPrompt(prompt)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
         onSelectRoom={(room) => void selectDocumentRoom(room)}
+        onSelectDocument={(selection) => void selectDocument(selection)}
         onSelectPrompt={(prompt) => {
           setDraft(prompt)
           focusComposer()

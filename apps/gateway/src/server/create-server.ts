@@ -15,10 +15,13 @@ import { agentRoutes } from "../modules/agent/routes.js";
 import { AgentService } from "../modules/agent/service.js";
 import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
+import { DocumentOperationService } from "../modules/documents/operations/service.js";
 import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
+import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
-import { createAgentRuntime } from "../modules/agent/runtime-factory.js";
+import { createAgentRuntime, createBackgroundAgentRuntime } from "../modules/agent/runtime-factory.js";
+import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { AsrError } from "../modules/asr/errors.js";
@@ -29,6 +32,8 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { processingRoutes } from "../modules/processing/routes.js";
+import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
@@ -108,6 +113,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
       return;
     }
+    if (error instanceof DocumentServiceError) {
+      await reply.code(error.statusCode).send({
+        error: error.code,
+        message: error.message,
+        ...error.details,
+        requestId: request.id,
+      });
+      return;
+    }
     const statusCode = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
     await reply.code(statusCode).send({
       error: statusCode === 500 ? "internal_error" : "request_error",
@@ -136,12 +150,50 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(systemRoutes);
   const memoryService = new MemoryService(config.memory, app.log);
   const contextRoomService = new ContextRoomService(db);
-  const documentService = new DocumentService(db, new DocumentEventBroker(), (document) => {
+  const documentEventBroker = new DocumentEventBroker();
+  const documentOperationService = new DocumentOperationService(db, documentEventBroker);
+  const documentService = new DocumentService(db, documentEventBroker, (document) => {
     void memoryService.captureDocumentCreation(document).catch((error: unknown) => {
       app.log.warn({ err: error, documentId: document.documentId }, "document memory capture failed");
     });
+  }, (patch) => {
+    void memoryService.captureSelectionRewrite({
+      roomId: patch.roomId,
+      documentId: patch.documentId,
+      documentTitle: patch.title,
+      instruction: patch.instruction,
+      originalText: patch.originalText,
+      replacementText: patch.replacementText,
+    }).catch((error: unknown) => {
+      app.log.warn({ err: error, operationId: patch.operationId }, "document rewrite memory capture failed");
+    });
+  }, (documentId, currentVersion) => (
+    documentOperationService.prepareExternalVersionAdvance(documentId, currentVersion)
+  ), (error, documentId, currentVersion) => {
+    app.log.warn({ err: error, documentId, currentVersion }, "document after-commit observer failed");
   });
-  const documentMcpHost = new DocumentMcpHost(documentService, contextRoomService);
+  const recoveredDocumentOperations = documentOperationService.recoverInterrupted();
+  if (recoveredDocumentOperations > 0) {
+    app.log.info({ recoveredDocumentOperations }, "interrupted document operations recovered");
+  }
+  const documentOperationExpiryTimer = setInterval(() => {
+    const expiredDocumentOperations = documentOperationService.expire();
+    if (expiredDocumentOperations > 0) {
+      app.log.info({ expiredDocumentOperations }, "document operations expired");
+    }
+  }, 30_000);
+  documentOperationExpiryTimer.unref();
+  const documentMcpHost = new DocumentMcpHost(
+    documentService,
+    contextRoomService,
+    undefined,
+    documentOperationService,
+    (diagnostic) => {
+      const { level, event, ...fields } = diagnostic;
+      app.log[level](fields, event);
+    },
+  );
+  await documentMcpHost.capabilities.recover();
   const agentRuntime = createAgentRuntime(config, documentMcpHost);
   app.log.info(
     {
@@ -163,8 +215,25 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     new AgentEventBroker(),
     app.log,
     contextRoomService,
+    documentService,
+    documentMcpHost,
   );
   await agentService.initialize();
+  const backgroundAgentRuntime = createBackgroundAgentRuntime(config);
+  app.log.info(
+    {
+      runtimeId: backgroundAgentRuntime.id,
+      ...(config.backgroundPi
+        ? {
+            provider: config.backgroundPi.provider,
+            model: config.backgroundPi.model,
+            maxTokens: config.backgroundPi.maxTokens,
+          }
+        : {}),
+    },
+    "background transcription runtime configured",
+  );
+  const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime);
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
@@ -177,9 +246,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   app.addHook("onClose", async () => {
     await connectorManager.dispose();
     connectorDb.close();
+    clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
+    await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
-    documentService.dispose();
     await asrService.dispose();
     sqlite.close();
     await gatewayLogger.close();
@@ -188,8 +258,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(contextRoomRoutes(contextRoomService));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));
+  await app.register(documentOperationRoutes(
+    documentOperationService,
+    documentMcpHost.capabilities,
+    (context) => agentService.validateDocumentOperationContext(context),
+  ));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
   await app.register(connectorRoutes(connectorManager, connectorConfig.enabled, connectorAuthorization));
 

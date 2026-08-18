@@ -25,6 +25,7 @@ async function testConfig(): Promise<GatewayConfig> {
     agentRuntime: "fake",
     memory: null,
     pi: null,
+    backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
   };
@@ -37,6 +38,71 @@ afterEach(async () => {
 });
 
 describe("reality routes", () => {
+  it("imports a synced iPhone transcription idempotently and preserves confirmation", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const eventId = randomUUID();
+    const payload = {
+      id: eventId,
+      title: "产品讨论",
+      captureDevice: { id: "synced-iphone", name: "iPhone", kind: "iphone" },
+      audioSource: "microphone",
+      durationMs: 11_300,
+      transcript: "你好，你能听到吗？",
+      transcriptSegments: [{ text: "你好，你能听到吗？", beginTime: 960, endTime: 11_300, speakerId: 0 }],
+      insights: {
+        source: "generated",
+        currentTopic: "产品讨论",
+        summary: "测试跨设备同步。",
+        keyPoints: ["跨设备同步"],
+        decisions: [],
+        actionItems: [],
+        people: [],
+        projects: [],
+        unresolvedQuestions: [],
+      },
+      resultVersion: 100,
+      startedAt: "2026-08-16T16:47:25.000Z",
+      endedAt: "2026-08-16T16:47:37.000Z",
+    } as const;
+
+    const imported = (await app.inject({
+      method: "PUT",
+      url: `/v1/reality/events/${eventId}/import`,
+      headers,
+      payload,
+    })).json<RealityEvent>();
+    expect(imported).toMatchObject({
+      id: eventId,
+      status: "pending_confirmation",
+      processingState: "ready",
+      captureDevice: { name: "iPhone", kind: "iphone" },
+      durationMs: 11_300,
+      transcript: payload.transcript,
+      audioFileName: null,
+      asrSource: "saas",
+    });
+    expect(imported.transcriptSegments[0]).toMatchObject({ beginTime: 960, speakerId: 0, isFinal: true });
+
+    const confirmed = (await app.inject({
+      method: "POST",
+      url: `/v1/reality/events/${eventId}/confirm`,
+      headers,
+    })).json<RealityEvent>();
+    expect(confirmed.status).toBe("completed");
+
+    const repeated = (await app.inject({
+      method: "PUT",
+      url: `/v1/reality/events/${eventId}/import`,
+      headers,
+      payload,
+    })).json<RealityEvent>();
+    expect(repeated.status).toBe("completed");
+    expect(repeated.version).toBe(confirmed.version);
+    await app.close();
+  });
+
   it("keeps at most one active capture and recovers it after restart", async () => {
     const config = await testConfig();
     const headers = { authorization: `Bearer ${config.authToken}` };

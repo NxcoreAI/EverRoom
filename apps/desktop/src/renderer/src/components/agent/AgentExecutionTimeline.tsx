@@ -3,7 +3,6 @@ import {
   Brain,
   CalendarDays,
   Check,
-  ChevronDown,
   ChevronRight,
   Circle,
   FileText,
@@ -17,7 +16,15 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import type { DisplayAgentToolCall } from './useAgentSession'
+import {
+  agentToolCommand,
+  agentToolLabel,
+  agentToolResultSummary,
+  agentToolStageText,
+  agentToolSubject,
+  type AgentRunActivity,
+  type DisplayAgentToolCall,
+} from './agentRunActivity'
 
 type ToolKind = 'search' | 'memory' | 'file' | 'email' | 'calendar' | 'image' | 'command' | 'other'
 
@@ -31,69 +38,6 @@ function toolKind(name: string): ToolKind {
   if (/read|write|edit|patch|glob|grep|file|document/.test(normalized)) return 'file'
   if (/bash|command|terminal|shell/.test(normalized)) return 'command'
   return 'other'
-}
-
-function toolLabel(tool: DisplayAgentToolCall): string {
-  const name = tool.name.toLowerCase()
-  const done = tool.status === 'completed'
-  if (name === 'tool_search') return tool.status === 'completed' ? '已选择所需工具' : '选择所需工具'
-  if (/photo|image/.test(name)) return done ? '已查看图像' : '查看图像'
-  if (/calendar/.test(name)) {
-    if (/create|add/.test(name)) return done ? '已创建日程' : '创建日程'
-    return done ? '已查询日历' : '查询日历'
-  }
-  if (/scheduler/.test(name)) return '管理定时任务'
-  if (/memory/.test(name)) return done ? '已查询个人记忆' : '查询个人记忆'
-  if (/email|mail/.test(name)) {
-    if (/sync/.test(name)) return done ? '已同步邮件' : '同步邮件'
-    return done ? '已查询邮件' : '查询邮件'
-  }
-  if (/meeting/.test(name)) return done ? '已查询会议' : '查询会议'
-  if (/diary/.test(name)) return done ? '已查询日记' : '查询日记'
-  if (/search|web/.test(name)) return done ? '已搜索网页' : '搜索网页'
-  if (/read/.test(name)) return done ? '已读取文件' : '读取文件'
-  if (/write|edit|patch/.test(name)) return done ? '已修改文件' : '修改文件'
-  if (/bash|command|terminal|shell/.test(name)) return done ? '已运行命令' : '运行命令'
-  return tool.name.replace(/[_-]+/g, ' ').trim() || '调用工具'
-}
-
-function userText(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const text = value.trim()
-  if (!text || text.startsWith('{') || text.startsWith('[')) return undefined
-  return text.slice(0, 600)
-}
-
-function toolSubject(tool: DisplayAgentToolCall): string | undefined {
-  for (const key of [
-    'command', 'cmd', 'script', 'code', 'input',
-    'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'title', 'url',
-  ]) {
-    const value = userText(tool.args[key])
-    if (value) return value
-  }
-  return undefined
-}
-
-function resultSummary(result: unknown): string | undefined {
-  if (!result) return undefined
-  if (typeof result === 'string') {
-    try {
-      return resultSummary(JSON.parse(result))
-    } catch {
-      return result.trim().slice(0, 160) || undefined
-    }
-  }
-  if (typeof result !== 'object' || Array.isArray(result)) return undefined
-  const record = result as Record<string, unknown>
-  for (const key of ['results', 'items', 'messages', 'events', 'photos']) {
-    if (Array.isArray(record[key])) return `获得 ${record[key].length} 条结果`
-  }
-  for (const key of ['summary', 'message', 'title']) {
-    const value = userText(record[key])
-    if (value) return value
-  }
-  return undefined
 }
 
 function detailText(value: unknown): string | undefined {
@@ -114,7 +58,11 @@ function durationMs(startedAt: string, completedAt: string | undefined, now: num
 
 function formatDuration(duration: number): string {
   if (duration < 1_000) return '<1 秒'
-  return `${Math.max(1, Math.round(duration / 1_000))} 秒`
+  const seconds = Math.max(1, Math.round(duration / 1_000))
+  if (seconds < 60) return `${seconds} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分`
 }
 
 function ToolIcon({ kind }: { kind: ToolKind }) {
@@ -148,35 +96,56 @@ function statusLabel(status: DisplayAgentToolCall['status']): string {
 }
 
 export function AgentExecutionTimeline({
-  tools,
+  activity,
+  reasoning,
   runStartedAt,
   runCompletedAt,
   continuing = false,
   continuationLabel = '正在继续处理',
 }: {
-  tools: DisplayAgentToolCall[]
+  activity: AgentRunActivity
+  reasoning?: string
   runStartedAt?: string
   runCompletedAt?: string
   continuing?: boolean
   continuationLabel?: string
 }) {
+  const tools = activity.steps.map((step) => step.tool)
   const running = tools.some((tool) => tool.status === 'pending' || tool.status === 'running')
-  const active = running || continuing
-  const [expanded, setExpanded] = useState(active)
+  const active = continuing || !runCompletedAt
+  const summaryStarted = !continuing && Boolean(activity.pendingAnswer || activity.finalAnswer)
+  const [expanded, setExpanded] = useState(active && !summaryStarted)
   const [now, setNow] = useState(Date.now())
   const wasActiveRef = useRef(active)
+  const runKey = tools[0]?.runId ?? runStartedAt ?? ''
+  const runKeyRef = useRef(runKey)
+  const userCollapsedRef = useRef(false)
+  const summaryStartedRef = useRef(summaryStarted)
 
   useEffect(() => {
+    if (runKeyRef.current !== runKey) {
+      runKeyRef.current = runKey
+      userCollapsedRef.current = false
+      summaryStartedRef.current = summaryStarted
+      wasActiveRef.current = active
+      setExpanded(active && !summaryStarted)
+      return undefined
+    }
     const wasActive = wasActiveRef.current
     wasActiveRef.current = active
     if (active) {
-      setExpanded(true)
+      if (!wasActive && !userCollapsedRef.current) setExpanded(true)
       return undefined
     }
-    if (!wasActive) return undefined
-    const timer = window.setTimeout(() => setExpanded(false), 600)
-    return () => window.clearTimeout(timer)
-  }, [active])
+    return undefined
+  }, [active, runKey, summaryStarted])
+
+  useEffect(() => {
+    const wasSummaryStarted = summaryStartedRef.current
+    if (!wasSummaryStarted && summaryStarted) setExpanded(false)
+    if (wasSummaryStarted && !summaryStarted && active && !userCollapsedRef.current) setExpanded(true)
+    summaryStartedRef.current = summaryStarted
+  }, [active, summaryStarted])
 
   useEffect(() => {
     if (!active) return undefined
@@ -188,7 +157,19 @@ export function AgentExecutionTimeline({
     ? durationMs(runStartedAt, continuing ? undefined : runCompletedAt, now)
     : 0, [continuing, now, runCompletedAt, runStartedAt])
 
-  if (tools.length === 0) return null
+  if (!activity.hasTools) return null
+
+  const failed = tools.some((tool) => tool.status === 'error')
+  const stopped = tools.some((tool) => tool.status === 'stopped')
+  const summary = continuing && !running
+    ? continuationLabel
+    : active
+      ? '正在处理'
+      : failed
+        ? '处理失败'
+        : stopped
+          ? '已停止'
+          : '已处理'
 
   return (
     <section className="agent-execution" data-running={String(active)} data-expanded={String(expanded)}>
@@ -197,13 +178,16 @@ export function AgentExecutionTimeline({
         className="agent-execution-summary"
         aria-expanded={expanded}
         onClick={() => {
-          if (!active) setExpanded((current) => !current)
+          setExpanded((current) => {
+            userCollapsedRef.current = current
+            return !current
+          })
         }}
       >
         {active ? <LoaderCircle className="spin" aria-hidden="true" /> : <Wrench aria-hidden="true" />}
-        <strong>{continuing && !running ? continuationLabel : running ? '正在执行' : `已执行 ${tools.length} 个操作`}</strong>
-        <ChevronDown className="agent-execution-chevron" aria-hidden="true" />
+        <strong>{summary}</strong>
         <span>{totalDuration ? formatDuration(totalDuration) : ''}</span>
+        <ChevronRight className="agent-execution-chevron" aria-hidden="true" />
       </button>
       <div
         className="agent-execution-region"
@@ -212,40 +196,54 @@ export function AgentExecutionTimeline({
       >
         <div>
           <div className="agent-tool-list">
-            {tools.map((tool) => {
-              const summary = resultSummary(tool.result ?? tool.partialResult)
-              const subject = toolSubject(tool)
-              const preview = subject ?? summary ?? tool.error
+            {reasoning ? (
+              <details className="agent-execution-reasoning">
+                <summary><Brain aria-hidden="true" />思考过程</summary>
+                <p>{reasoning}</p>
+              </details>
+            ) : null}
+            {activity.steps.map((step) => {
+              const tool = step.tool
+              const summaryText = agentToolResultSummary(tool.result ?? tool.partialResult)
+              const subject = agentToolSubject(tool)
+              const preview = subject ?? summaryText ?? tool.error
               const duration = durationMs(tool.startedAt, tool.completedAt, now)
+              const command = agentToolCommand(tool)
               const args = Object.keys(tool.args).length ? detailText(tool.args) : undefined
               const result = detailText(tool.result ?? tool.partialResult)
-              const label = toolLabel(tool)
+              const label = agentToolLabel(tool)
+              const stageText = step.afterText || agentToolStageText(tool)
               return (
-                <details key={tool.id} className="agent-tool-row" data-status={tool.status}>
-                  <summary className="agent-tool-command" title={preview ? `${label} ${preview}` : label}>
-                    <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
-                    <span className="agent-tool-command-text">
-                      <strong>{label}</strong>
-                      {preview ? <span>{preview}</span> : null}
-                    </span>
-                    <span className="agent-tool-status" title={statusLabel(tool.status)}>
-                      <StatusIcon status={tool.status} />
-                    </span>
-                    <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
-                  </summary>
-                  <div className="agent-tool-details">
-                    <div>
-                      <div className="agent-tool-meta">
-                        <code>{tool.name}</code>
-                        <span>{statusLabel(tool.status)} · {formatDuration(duration)}</span>
+                <div key={step.id} className="agent-tool-step" data-status={tool.status}>
+                  {step.beforeText ? <p className="agent-activity-commentary">{step.beforeText}</p> : null}
+                  <details className="agent-tool-row" data-status={tool.status}>
+                    <summary className="agent-tool-command" title={preview ? `${label} ${preview}` : label}>
+                      <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
+                      <span className="agent-tool-command-text">
+                        <strong>{label}</strong>
+                        {preview ? <span>{preview}</span> : null}
+                      </span>
+                      <span className="agent-tool-status" title={statusLabel(tool.status)}>
+                        <StatusIcon status={tool.status} />
+                      </span>
+                      <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
+                    </summary>
+                    <div className="agent-tool-details">
+                      <div>
+                        <div className="agent-tool-meta">
+                          <code>{tool.name}</code>
+                          <span>{statusLabel(tool.status)} · {formatDuration(duration)}</span>
+                        </div>
+                        {tool.error ? <p className="agent-tool-error">{tool.error}</p> : null}
+                        {command ? <><small>命令</small><pre>{command}</pre></> : null}
+                        {!command && args ? <><small>参数</small><pre>{args}</pre></> : null}
+                        {result ? <><small>结果</small><pre>{result}</pre></> : null}
+                        {!command && !args && !result && !tool.error ? <p>暂无更多详情</p> : null}
                       </div>
-                      {tool.error ? <p className="agent-tool-error">{tool.error}</p> : null}
-                      {args ? <><small>参数</small><pre>{args}</pre></> : null}
-                      {result ? <><small>结果</small><pre>{result}</pre></> : null}
-                      {!args && !result && !tool.error ? <p>暂无更多详情</p> : null}
                     </div>
-                  </div>
-                </details>
+                  </details>
+                  {stageText ? <p className="agent-tool-stage" data-status={tool.status}>{stageText}</p> : null}
+                </div>
               )
             })}
           </div>

@@ -56,7 +56,13 @@ function reportRecordingError(error: unknown, audioSource: AudioSource): void {
         action: 'open-system-audio-settings',
         actionLabel: '打开系统设置',
       }
-    : { channel: 'media:microphone', title: '录音未开始', message })
+    : {
+        channel: 'media:microphone',
+        title: '录音未开始',
+        message,
+        action: 'open-microphone-settings',
+        actionLabel: '打开麦克风设置',
+      })
 }
 
 function desktopApi(): NxcoreDesktopApi {
@@ -214,6 +220,12 @@ export function RecordingPage({
     setResult(null)
     setElapsed(0)
     try {
+      if (audioSource === 'microphone') {
+        const microphoneAllowed = await desktopApi().asr.requestMicrophoneAccess()
+        if (!microphoneAllowed) {
+          throw new DOMException('Microphone access was denied.', 'NotAllowedError')
+        }
+      }
       const stream = audioSource === 'system'
         ? await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true })
         : await navigator.mediaDevices.getUserMedia({ audio: true })

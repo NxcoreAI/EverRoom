@@ -2,6 +2,7 @@ import type { AgentMessage } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
 import { parseAgentRoomSelectionResult } from '../src/renderer/src/components/agent/agentRoomSelection'
+import { parseAgentDocumentIntentResult } from '../src/renderer/src/components/agent/agentDocumentIntent'
 import {
   buildAgentRunContext,
   mergePendingAgentMessages,
@@ -66,6 +67,25 @@ describe('Agent conversation display', () => {
         rooms: [{ id: 'room-1', title: '项目 A' }],
         selectionRequired: false,
       },
+    })).toBeNull()
+  })
+
+  it('reads a document-intent clarification from a completed preflight tool', () => {
+    expect(parseAgentDocumentIntentResult({
+      clarificationRequired: true,
+      originalPrompt: '帮我创建一个C语言',
+      topic: 'C语言',
+    })).toEqual({
+      clarificationRequired: true,
+      originalPrompt: '帮我创建一个C语言',
+      topic: 'C语言',
+    })
+  })
+
+  it('ignores incomplete document-intent clarification results', () => {
+    expect(parseAgentDocumentIntentResult({
+      clarificationRequired: true,
+      originalPrompt: '帮我创建一个C语言',
     })).toBeNull()
   })
 })

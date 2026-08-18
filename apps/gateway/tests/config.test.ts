@@ -7,6 +7,7 @@ describe("loadConfig", () => {
 
     expect(config.agentRuntime).toBe("fake");
     expect(config.pi).toBeNull();
+    expect(config.backgroundPi).toBeNull();
   });
 
   it("prefers command line arguments over environment variables", () => {
@@ -71,6 +72,26 @@ describe("loadConfig", () => {
       reasoning: "off",
       temperature: 0.3,
     });
+    expect(config.backgroundPi).toMatchObject({
+      model: "deepseek-chat",
+      maxTokens: 4096,
+    });
+  });
+
+  it("supports a stronger model and larger output budget for background summaries", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_AI_PROVIDER: "openai",
+      NXCORE_AI_MODEL: "qwen-turbo",
+      NXCORE_AI_BACKGROUND_MODEL: "qwen-plus",
+      NXCORE_AI_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      NXCORE_AI_API_KEY: "test-key",
+      NXCORE_AI_MAX_TOKENS: "800",
+      NXCORE_AI_BACKGROUND_MAX_TOKENS: "4096",
+    });
+
+    expect(config.pi).toMatchObject({ model: "qwen-turbo", maxTokens: 800 });
+    expect(config.backgroundPi).toMatchObject({ model: "qwen-plus", maxTokens: 4096 });
   });
 
   it("rejects incomplete or unsafe Pi endpoint configuration", () => {

@@ -1,13 +1,15 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import type { DocumentService } from "./service.js";
-import { DocumentServiceError } from "./service.js";
-
+import { DocumentServiceError, type DocumentService } from "./service.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
-const TransactionParams = Type.Object({
-  transactionId: Type.String({ minLength: 1, maxLength: 128 }),
-});
 const JsonDocument = Type.Object({ type: Type.Literal("doc") }, { additionalProperties: true });
+const BlockReference = Type.Object({
+  roomId: Type.String({ minLength: 1, maxLength: 128 }),
+  documentId: Type.String({ minLength: 1, maxLength: 128 }), blockId: Type.String({ minLength: 1, maxLength: 128 }),
+});
+function errorPayload(error: DocumentServiceError) {
+  return { error: error.code, message: error.message, ...error.details };
+}
 
 export function documentRoutes(service: DocumentService): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -30,6 +32,111 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
       { schema: { tags: ["documents"], params: IdParams } },
       async (request, reply) => service.get(request.params.id)
         ?? reply.code(404).send({ error: "not_found", message: "Document not found" }),
+    );
+
+    app.get(
+      "/v1/documents/:id/blocks",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          const document = service.get(request.params.id);
+          if (!document) return reply.code(404).send({ error: "not_found", message: "Document not found" });
+          return {
+            documentId: document.id,
+            roomId: document.roomId,
+            version: document.version,
+            blocks: service.listBlocks(document.id),
+          };
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/documents/:id/backlinks",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          querystring: Type.Object({
+            blockId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return {
+            documentId: request.params.id,
+            blockId: request.query.blockId ?? null,
+            backlinks: service.listBlockBacklinks(request.params.id, request.query.blockId),
+          };
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/documents/:id/versions",
+      { schema: { tags: ["documents"], params: IdParams } },
+      async (request, reply) => {
+        try {
+          return service.listVersions(request.params.id);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/documents/:id/versions/:version/restore",
+      {
+        schema: {
+          tags: ["documents"],
+          params: Type.Object({
+            id: Type.String({ minLength: 1, maxLength: 128 }),
+            version: Type.Integer({ minimum: 1 }),
+          }),
+          body: Type.Object({ baseVersion: Type.Integer({ minimum: 0 }) }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.restoreVersion(
+            request.params.id,
+            request.params.version,
+            request.body.baseVersion,
+          );
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/document-blocks/resolve",
+      {
+        schema: {
+          tags: ["documents"],
+          body: Type.Object({
+            sourceRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+            references: Type.Array(BlockReference, { maxItems: 200 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return { resolutions: service.resolveBlockReferences(request.body) };
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
     );
 
     app.delete(
@@ -70,6 +177,7 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
           params: IdParams,
           body: Type.Object({
             baseVersion: Type.Integer({ minimum: 0 }),
+            title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
             contentJson: JsonDocument,
           }),
         },
@@ -79,7 +187,7 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
           return await service.save(request.params.id, request.body);
         } catch (error) {
           if (error instanceof DocumentServiceError) {
-            return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+            return reply.code(error.statusCode).send(errorPayload(error));
           }
           throw error;
         }
@@ -133,40 +241,12 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
       },
     );
 
-    app.post(
-      "/v1/document-transactions/:transactionId/ack",
-      {
-        schema: {
-          tags: ["documents"],
-          params: TransactionParams,
-          body: Type.Object({
-            sequence: Type.Integer({ minimum: 0 }),
-            contentJson: JsonDocument,
-          }),
-        },
-      },
-      async (request, reply) => {
-        try {
-          await service.acknowledge(request.params.transactionId, request.body);
-          return reply.code(204).send();
-        } catch (error) {
-          if (error instanceof DocumentServiceError) {
-            return reply.code(error.statusCode).send({ error: error.code, message: error.message });
-          }
-          throw error;
-        }
-      },
-    );
-
     app.get(
       "/v1/documents/rooms/:id/stream",
       { websocket: true, schema: { tags: ["documents"], params: IdParams } },
       (socket, request) => {
         const unsubscribe = service.broker.subscribe(request.params.id, socket);
         socket.send(JSON.stringify({ type: "document.ready", protocol: 1, roomId: request.params.id }));
-        for (const event of service.replayPending(request.params.id)) {
-          socket.send(JSON.stringify({ type: "document.event", protocol: 1, event }));
-        }
         socket.once("close", unsubscribe);
       },
     );

@@ -22,8 +22,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    void refreshAccount().catch(() => undefined)
-  }, [refreshAccount])
+    if (!window.nxcore) {
+      setAccount({ authenticated: false, apiBaseUrl: '' })
+      return
+    }
+    void window.nxcore.account.status({ quiet: true }).then(setAccount).catch(() => undefined)
+  }, [])
 
   const value = useMemo(() => ({ account, refreshAccount, setAccount }), [account, refreshAccount])
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>

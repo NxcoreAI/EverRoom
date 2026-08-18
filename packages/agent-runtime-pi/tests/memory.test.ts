@@ -309,6 +309,7 @@ describe("memory extension capture policy", () => {
         pageLabel: "AI 重写",
         cancelled: false,
         captureEnabled: false,
+        recallEnabled: true,
       }),
     });
     if (!("factory" in extension)) throw new Error("Expected an inline extension object");
@@ -331,6 +332,40 @@ describe("memory extension capture policy", () => {
     expect(listScenarios).toHaveBeenCalled();
     expect(searchConversation).toHaveBeenCalledWith("把选区改得更简洁", 5);
     expect(addConversation).not.toHaveBeenCalled();
+  });
+
+  it("skips automatic recall when recall is disabled", async () => {
+    const client = new MemoryCoreClient(config);
+    const searchAtomic = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
+    const readCore = vi.spyOn(client, "readCore").mockResolvedValue(null);
+    const listScenarios = vi.spyOn(client, "listScenarios").mockResolvedValue([]);
+    const searchConversation = vi.spyOn(client, "searchConversation").mockResolvedValue([]);
+    const handlers = new Map<string, (event: unknown) => Promise<unknown>>();
+    const extension = createMemoryExtension({
+      client,
+      config,
+      getRunContext: () => ({
+        sessionId: "cursor-completion",
+        originalPrompt: "补全文档",
+        pageLabel: "AI 补全",
+        cancelled: false,
+        captureEnabled: false,
+        recallEnabled: false,
+      }),
+    });
+    if (!("factory" in extension)) throw new Error("Expected an inline extension object");
+    extension.factory({
+      on: (event: string, handler: (event: unknown) => Promise<unknown>) => {
+        handlers.set(event, handler);
+      },
+    } as never);
+
+    await handlers.get("before_agent_start")?.({});
+
+    expect(searchAtomic).not.toHaveBeenCalled();
+    expect(readCore).not.toHaveBeenCalled();
+    expect(listScenarios).not.toHaveBeenCalled();
+    expect(searchConversation).not.toHaveBeenCalled();
   });
 });
 

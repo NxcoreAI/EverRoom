@@ -5,22 +5,42 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  ImagePlus,
   List,
   ListOrdered,
   Minus,
   Pilcrow,
   Quote,
+  Table2,
+  Link2,
   type LucideIcon,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+
+import { showToast } from '../../../../../state/toast'
+import {
+  DOCUMENT_IMAGE_ACCEPT,
+  storeDocumentImageFile,
+} from './documentImageAssets'
 
 type SlashMatch = { from: number; to: number; query: string }
+const SLASH_MENU_WIDTH = 284
+const TABLE_GRID_MENU_WIDTH = 252
+const TABLE_GRID_MENU_HEIGHT = 286
+
 type SlashCommand = {
   label: string
   description: string
   keywords: string
   icon: LucideIcon
-  run: (editor: Editor, range: Pick<SlashMatch, 'from' | 'to'>) => void
+  run: (
+    editor: Editor,
+    range: Pick<SlashMatch, 'from' | 'to'>,
+    actions?: {
+      requestImage: (range: Pick<SlashMatch, 'from' | 'to'>) => void
+      requestTable: (range: Pick<SlashMatch, 'from' | 'to'>) => void
+    },
+  ) => void
 }
 
 function getSlashMatch(editor: Editor): SlashMatch | null {
@@ -48,14 +68,53 @@ const commands: SlashCommand[] = [
   { label: '引用', description: '突出一段引用', keywords: 'quote blockquote 引用', icon: Quote, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleBlockquote().run() },
   { label: '代码块', description: '等宽代码区域', keywords: 'code block 代码', icon: Code2, run: (editor, range) => editor.chain().focus().deleteRange(range).setCodeBlock().run() },
   { label: '分割线', description: '分隔内容区块', keywords: 'divider rule line 分割线', icon: Minus, run: (editor, range) => editor.chain().focus().deleteRange(range).setHorizontalRule().run() },
+  { label: '表格', description: '选择行列后插入', keywords: 'table grid 表格 网格', icon: Table2, run: (_editor, range, actions) => actions?.requestTable(range) },
+  {
+    label: '图片',
+    description: '从本地选择图片',
+    keywords: 'image picture 图片 图像',
+    icon: ImagePlus,
+    run: (_editor, range, actions) => actions?.requestImage(range),
+  },
 ]
 
-export function TiptapSlashCommandMenu({ editor }: { editor: Editor }) {
+export function TiptapSlashCommandMenu({
+  editor,
+  documentId,
+  onRequestBlockReference,
+}: {
+  editor: Editor
+  documentId: string
+  onRequestBlockReference?: () => void
+}) {
   const [match, setMatch] = useState<SlashMatch | null>(() => getSlashMatch(editor))
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [tableRequest, setTableRequest] = useState<{
+    range: Pick<SlashMatch, 'from' | 'to'>
+    rows: number
+    cols: number
+  } | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const imageRangeRef = useRef<Pick<SlashMatch, 'from' | 'to'> | null>(null)
+
+  const requestImage = (range: Pick<SlashMatch, 'from' | 'to'>) => {
+    imageRangeRef.current = { from: range.from, to: range.to }
+    imageInputRef.current?.click()
+  }
+  const requestTable = (range: Pick<SlashMatch, 'from' | 'to'>) => {
+    setTableRequest({
+      range: { from: range.from, to: range.to },
+      rows: 3,
+      cols: 3,
+    })
+  }
 
   useEffect(() => {
-    const update = () => setMatch(getSlashMatch(editor))
+    const update = () => {
+      const nextMatch = getSlashMatch(editor)
+      setMatch(nextMatch)
+      if (!nextMatch) setTableRequest(null)
+    }
     editor.on('transaction', update)
     editor.on('selectionUpdate', update)
     return () => {
@@ -64,10 +123,23 @@ export function TiptapSlashCommandMenu({ editor }: { editor: Editor }) {
     }
   }, [editor])
 
+  const availableCommands = useMemo<SlashCommand[]>(() => onRequestBlockReference
+    ? [...commands, {
+      label: '引用文档块',
+      description: '链接到当前 Room 的具体内容块',
+      keywords: 'reference link block 引用 文档 块',
+      icon: Link2,
+      run: (currentEditor, range) => {
+        currentEditor.chain().focus().deleteRange(range).run()
+        onRequestBlockReference()
+      },
+    }]
+    : commands, [onRequestBlockReference])
+
   const filteredCommands = useMemo(() => {
     const query = match?.query.toLocaleLowerCase() ?? ''
-    return commands.filter((command) => `${command.label} ${command.keywords}`.toLocaleLowerCase().includes(query))
-  }, [match?.query])
+    return availableCommands.filter((command) => `${command.label} ${command.keywords}`.toLocaleLowerCase().includes(query))
+  }, [availableCommands, match?.query])
 
   useEffect(() => setSelectedIndex(0), [match?.query])
 
@@ -80,9 +152,10 @@ export function TiptapSlashCommandMenu({ editor }: { editor: Editor }) {
         setSelectedIndex((index) => (index + direction + filteredCommands.length) % filteredCommands.length)
       } else if (event.key === 'Enter') {
         event.preventDefault()
-        filteredCommands[selectedIndex]?.run(editor, match)
+        filteredCommands[selectedIndex]?.run(editor, match, { requestImage, requestTable })
       } else if (event.key === 'Escape') {
         event.preventDefault()
+        setTableRequest(null)
         setMatch(null)
       }
     }
@@ -93,14 +166,97 @@ export function TiptapSlashCommandMenu({ editor }: { editor: Editor }) {
   if (!match || filteredCommands.length === 0) return null
 
   const coords = editor.view.coordsAtPos(match.from)
-  const menuHeight = Math.min(filteredCommands.length * 52 + 40, 356)
+  const menuHeight = tableRequest
+    ? TABLE_GRID_MENU_HEIGHT
+    : Math.min(filteredCommands.length * 52 + 40, 356)
+  const menuWidth = tableRequest ? TABLE_GRID_MENU_WIDTH : SLASH_MENU_WIDTH
   const top = coords.bottom + menuHeight > window.innerHeight
     ? Math.max(8, coords.top - menuHeight - 8)
     : coords.bottom + 8
-  const left = Math.max(8, Math.min(coords.left, window.innerWidth - 292))
+  const left = Math.max(8, Math.min(coords.left, window.innerWidth - menuWidth - 8))
+
+  if (tableRequest) {
+    return (
+      <div
+        className="context-room-tiptap-slash-menu context-room-tiptap-table-grid-menu"
+        role="dialog"
+        aria-label="选择表格尺寸"
+        style={{ left, top }}
+      >
+        <div className="context-room-tiptap-table-grid-title">
+          <strong>插入表格</strong>
+          <span>{tableRequest.rows} × {tableRequest.cols}</span>
+        </div>
+        <div className="context-room-tiptap-table-grid" role="grid" aria-label="表格尺寸">
+          {Array.from({ length: 64 }, (_, index) => {
+            const row = Math.floor(index / 8) + 1
+            const col = index % 8 + 1
+            const selected = row <= tableRequest.rows && col <= tableRequest.cols
+            return (
+              <button
+                type="button"
+                key={`${row}-${col}`}
+                role="gridcell"
+                aria-label={`${row} 行 ${col} 列`}
+                aria-selected={selected}
+                data-selected={String(selected)}
+                onMouseEnter={() => setTableRequest((current) => current ? { ...current, rows: row, cols: col } : current)}
+                onFocus={() => setTableRequest((current) => current ? { ...current, rows: row, cols: col } : current)}
+                onClick={() => {
+                  editor.chain().focus().deleteRange(tableRequest.range).insertTable({
+                    rows: row,
+                    cols: col,
+                    withHeaderRow: true,
+                  }).run()
+                  setTableRequest(null)
+                  setMatch(null)
+                }}
+              />
+            )
+          })}
+        </div>
+        <button type="button" className="context-room-tiptap-table-grid-cancel" onClick={() => setTableRequest(null)}>取消</button>
+      </div>
+    )
+  }
 
   return (
     <div className="context-room-tiptap-slash-menu" role="listbox" aria-label="插入内容" style={{ left, top }}>
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept={DOCUMENT_IMAGE_ACCEPT}
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.currentTarget.value = ''
+          if (!file) {
+            imageRangeRef.current = null
+            return
+          }
+          const range = imageRangeRef.current
+          if (!range) return
+          imageRangeRef.current = null
+          const documents = window.nxcore?.documents
+          if (!documents) {
+            showToast({ title: '无法插入图片', message: '本地图片服务不可用。' })
+            return
+          }
+          void storeDocumentImageFile(file, documentId, documents.storeImage).then((stored) => {
+            editor.chain().focus().deleteRange(range).setImage({
+              src: stored.src,
+              alt: file.name.replace(/\.[^.]+$/, ''),
+            }).run()
+            setMatch(null)
+          }).catch((error: unknown) => {
+            showToast({
+              title: '无法插入图片',
+              message: error instanceof Error ? error.message : '读取图片失败，请重试。',
+            })
+            console.error('Failed to store document image', error)
+          })
+        }}
+      />
       <div className="context-room-tiptap-slash-title">基础块</div>
       {filteredCommands.map((command, index) => {
         const Icon = command.icon
@@ -113,7 +269,7 @@ export function TiptapSlashCommandMenu({ editor }: { editor: Editor }) {
             data-selected={String(index === selectedIndex)}
             onMouseDown={(event) => event.preventDefault()}
             onMouseEnter={() => setSelectedIndex(index)}
-            onClick={() => command.run(editor, match)}
+            onClick={() => command.run(editor, match, { requestImage, requestTable })}
           >
             <span><Icon strokeWidth={1.8} /></span>
             <span><b>{command.label}</b><small>{command.description}</small></span>

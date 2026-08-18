@@ -2,7 +2,11 @@ import type {
   PiAgentRuntimeTool,
   PiAgentRuntimeToolResult,
 } from "@nxcore/agent-runtime-pi";
-import type { DocumentMcpHost, DocumentMcpToolResult } from "./mcp-host.js";
+import {
+  documentToolErrorPayload,
+  type DocumentMcpHost,
+  type DocumentMcpToolResult,
+} from "./mcp-host.js";
 
 function toPiResult(result: DocumentMcpToolResult): PiAgentRuntimeToolResult {
   return {
@@ -20,15 +24,22 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
     promptSnippet: definition.title,
     promptGuidelines: [definition.description],
     executionMode: "sequential",
-    execute: async (input, params) => toPiResult(await host.callTool(
-      definition.name,
-      params,
-      {
-        agentSessionId: input.sessionId,
-        runId: input.runId,
-        roomId: input.roomId,
-        availableRooms: input.availableRooms ?? [],
-      },
-    )),
+    execute: async (input, params) => {
+      try {
+        return toPiResult(await host.callTool(
+          definition.name,
+          params,
+          {
+            agentSessionId: input.sessionId,
+            runId: input.runId,
+            roomId: input.roomId,
+            availableRooms: input.availableRooms ?? [],
+            ...(input.activeDocument ? { activeDocument: input.activeDocument } : {}),
+          },
+        ));
+      } catch (error) {
+        throw new Error(JSON.stringify(documentToolErrorPayload(error)), { cause: error });
+      }
+    },
   }));
 }

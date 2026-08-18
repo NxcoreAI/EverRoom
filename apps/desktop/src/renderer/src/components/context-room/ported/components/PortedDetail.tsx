@@ -1,4 +1,4 @@
-import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
@@ -22,8 +22,9 @@ export function PortedDetail({
   rooms,
   backendDocuments,
   trashedDocuments,
-  documentEvents,
   focusedDocumentId,
+  focusedBlockId,
+  documentFocusRequestId,
   initialActivePane,
   initialObject,
   onActivePaneChange,
@@ -41,8 +42,9 @@ export function PortedDetail({
   rooms: ContextRoomRecord[]
   backendDocuments: RoomDocument[]
   trashedDocuments: RoomDocument[]
-  documentEvents: Record<string, DocumentEvent[]>
   focusedDocumentId: string | null
+  focusedBlockId: string | null
+  documentFocusRequestId: number | null
   initialActivePane: DetailPane
   initialObject?: { kind: 'file' | 'mail' | 'meeting'; id: string } | null
   onActivePaneChange: (pane: DetailPane) => void
@@ -135,10 +137,11 @@ export function PortedDetail({
       room.id,
       focusedDocumentId,
       Boolean(resource),
+      documentFocusRequestId,
     )
     handledDocumentFocusKey.current = decision.handledKey
     if (decision.shouldOpen && resource && resource.id !== selectedResourceId) openResource(resource)
-  }, [focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
+  }, [documentFocusRequestId, focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
 
   useEffect(() => {
     if (selectedResourceId && getRoomResource(library, room.id, selectedResourceId)) return
@@ -203,7 +206,9 @@ export function PortedDetail({
           selectedResource={selectedResource}
           backendDocuments={backendDocuments}
           trashedDocuments={trashedDocuments}
-          documentEvents={documentEvents}
+          focusedDocumentId={focusedDocumentId}
+          focusedBlockId={focusedBlockId}
+          documentFocusRequestId={documentFocusRequestId}
           onBackendDocumentChange={onBackendDocumentChange}
           onCreateDocument={createDocument}
           onDeleteDocument={onDeleteDocument}

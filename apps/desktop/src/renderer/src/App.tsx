@@ -16,6 +16,8 @@ import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
+import { onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
+import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
 const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nxcore'])
@@ -60,7 +62,13 @@ export function App() {
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
-  const [agentDocumentFocus, setAgentDocumentFocus] = useState<{ roomId: string; documentId: string } | null>(null)
+  const [agentDocumentFocus, setAgentDocumentFocus] = useState<{
+    roomId: string
+    documentId: string
+    blockId?: string | null
+    requestId: number
+  } | null>(null)
+  const documentFocusRequestIdRef = useRef(0)
   const agentNavigationTimerRef = useRef<number | null>(null)
   const [navCollapsed, setNavCollapsed] = useState(() => window.matchMedia('(max-width: 1200px)').matches)
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
@@ -119,6 +127,28 @@ export function App() {
     setActivePage('rooms')
     setActiveContextRoomId(room.id)
   }, [])
+
+  const openDocumentTarget = useCallback((target: {
+    roomId: string
+    documentId: string
+    blockId?: string | null
+  }) => {
+    const room = availableContextRooms.find((item) => item.id === target.roomId)
+    if (room) openContextRoomTab(room)
+    else {
+      setActivePage('rooms')
+      setActiveContextRoomId(target.roomId)
+    }
+    setAgentDocumentFocus({
+      roomId: target.roomId,
+      documentId: target.documentId,
+      blockId: target.blockId ?? null,
+      requestId: ++documentFocusRequestIdRef.current,
+    })
+  }, [availableContextRooms, openContextRoomTab])
+
+  useEffect(() => onDocumentBlockNavigation(openDocumentTarget), [openDocumentTarget])
+  useEffect(() => onDocumentOperationNavigation(openDocumentTarget), [openDocumentTarget])
 
   const activateContextRoomTab = useCallback((roomId: string) => {
     setActivePage('rooms')
@@ -190,7 +220,12 @@ export function App() {
           setActiveContextRoomId(target.roomId)
         }
         setAgentDocumentFocus(target.objectType === 'document' && target.objectId
-          ? { roomId: target.roomId, documentId: target.objectId }
+          ? {
+              roomId: target.roomId,
+              documentId: target.objectId,
+              blockId: target.blockId ?? null,
+              requestId: ++documentFocusRequestIdRef.current,
+            }
           : null)
         return
       }
@@ -209,7 +244,12 @@ export function App() {
     setAgentNavigationRequest(null)
     setAgentSessionRouteRequest(route)
     setAgentDocumentFocus(route.pageId === 'rooms' && route.roomId && route.documentId
-      ? { roomId: route.roomId, documentId: route.documentId }
+      ? {
+          roomId: route.roomId,
+          documentId: route.documentId,
+          blockId: route.blockId ?? null,
+          requestId: ++documentFocusRequestIdRef.current,
+        }
       : null)
     if (route.pageId === 'rooms' && route.roomId) {
       const room = availableContextRooms.find((item) => item.id === route.roomId)
@@ -291,6 +331,7 @@ export function App() {
           onNavigate={navigateFromAgent}
           onNavigationConsumed={(key) => setAgentNavigationRequest((current) => current?.key === key ? null : current)}
           onOpenSessionLink={openAgentSessionLink}
+          onOpenDocument={openDocumentTarget}
           onSessionRouteConsumed={(key) => setAgentSessionRouteRequest((current) => current?.key === key ? null : current)}
           focusRequest={agentFocusRequest}
         />

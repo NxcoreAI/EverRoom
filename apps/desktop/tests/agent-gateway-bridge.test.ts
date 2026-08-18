@@ -1,11 +1,27 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../src/main/monitoring/sentry', () => ({ captureSentryLog: vi.fn() }))
 
 import { AgentGatewayBridge } from '../src/main/gateway/agent-gateway-bridge'
 import type { GatewaySupervisor } from '../src/main/gateway/gateway-supervisor'
 
 const servers: Array<ReturnType<typeof createServer>> = []
+
+async function listen(server: ReturnType<typeof createServer>): Promise<number> {
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  servers.push(server)
+  return (server.address() as AddressInfo).port
+}
+
+async function close(server: ReturnType<typeof createServer>): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve())
+  })
+  const index = servers.indexOf(server)
+  if (index >= 0) servers.splice(index, 1)
+}
 
 async function body(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = []
@@ -43,9 +59,7 @@ describe('AgentGatewayBridge requests', () => {
       if (request.url?.includes('/events?')) return json(response, 200, [])
       return json(response, 200, {})
     })
-    servers.push(server)
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-    const { port } = server.address() as AddressInfo
+    const port = await listen(server)
     const supervisor = {
       getConnection: () => ({
         pid: 1,
@@ -75,5 +89,65 @@ describe('AgentGatewayBridge requests', () => {
       expect(requests[index]).toMatchObject({ body: '' })
       expect(requests[index]).not.toHaveProperty('contentType')
     }
+  })
+
+  it('refreshes a stale gateway connection and retries the request once', async () => {
+    const staleServer = createServer((_request, response) => json(response, 200, {}))
+    const stalePort = await listen(staleServer)
+    const recoveredRequests: string[] = []
+    const recoveredServer = createServer((request, response) => {
+      recoveredRequests.push(request.url ?? '')
+      json(response, 200, { id: 'recovered-session' })
+    })
+    const recoveredPort = await listen(recoveredServer)
+    const staleConnection = {
+      pid: 1,
+      baseUrl: `http://127.0.0.1:${String(stalePort)}`,
+      token: 'test-token',
+      version: 'old',
+    }
+    const recoveredConnection = {
+      pid: 2,
+      baseUrl: `http://127.0.0.1:${String(recoveredPort)}`,
+      token: 'test-token',
+      version: 'new',
+    }
+    const recoverConnection = vi.fn(async () => recoveredConnection)
+    const supervisor = {
+      getConnection: () => staleConnection,
+      recoverConnection,
+    } as unknown as GatewaySupervisor
+    const bridge = new AgentGatewayBridge(supervisor)
+    await close(staleServer)
+
+    const session = await bridge.createSession({ pageLabel: '续写', roomId: 'room-1' })
+
+    expect(session.id).toBe('recovered-session')
+    expect(recoverConnection).toHaveBeenCalledOnce()
+    expect(recoverConnection).toHaveBeenCalledWith(staleConnection)
+    expect(recoveredRequests).toEqual(['/v1/agent/sessions'])
+  })
+
+  it('does not retry repeatedly when the recovered connection also refuses', async () => {
+    const unavailableServer = createServer()
+    const unavailablePort = await listen(unavailableServer)
+    const connection = {
+      pid: 1,
+      baseUrl: `http://127.0.0.1:${String(unavailablePort)}`,
+      token: 'test-token',
+      version: 'test',
+    }
+    const recoverConnection = vi.fn(async () => connection)
+    const supervisor = {
+      getConnection: () => connection,
+      recoverConnection,
+    } as unknown as GatewaySupervisor
+    const bridge = new AgentGatewayBridge(supervisor)
+    await close(unavailableServer)
+
+    await expect(bridge.createSession({ pageLabel: '续写', roomId: 'room-1' })).rejects.toMatchObject({
+      code: 'ECONNREFUSED',
+    })
+    expect(recoverConnection).toHaveBeenCalledOnce()
   })
 })
