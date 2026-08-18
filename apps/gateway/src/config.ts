@@ -93,6 +93,8 @@ const RawConfigSchema = Type.Object(
     knowledgeLlmApiKey: Type.String(),
     knowledgeLlmModel: Type.String(),
     knowledgeEmbeddingModel: Type.String(),
+    knowledgeEmbeddingBaseUrl: Type.String(),
+    knowledgeEmbeddingApiKey: Type.String(),
   },
   { additionalProperties: false },
 );
@@ -424,6 +426,8 @@ export function loadConfig(
     knowledgeLlmApiKey: env.NXCORE_KNOWLEDGE_LLM_API_KEY?.trim() ?? "",
     knowledgeLlmModel: env.NXCORE_KNOWLEDGE_LLM_MODEL?.trim() ?? "",
     knowledgeEmbeddingModel: env.NXCORE_KNOWLEDGE_EMBEDDING_MODEL?.trim() ?? "",
+    knowledgeEmbeddingBaseUrl: env.NXCORE_KNOWLEDGE_EMBEDDING_BASE_URL?.trim() ?? "",
+    knowledgeEmbeddingApiKey: env.NXCORE_KNOWLEDGE_EMBEDDING_API_KEY?.trim() ?? "",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -503,6 +507,10 @@ export function loadConfig(
   const knowledgeLlmBaseUrl = rawConfig.knowledgeLlmBaseUrl || rawConfig.aiBaseUrl;
   const knowledgeLlmApiKey = rawConfig.knowledgeLlmApiKey || rawConfig.aiApiKey;
   const knowledgeLlmModel = rawConfig.knowledgeLlmModel || rawConfig.aiModel;
+  // 消歧 embedding 可指向别家（如 LLM 用 GLM、embedding 用 DashScope）；
+  // 未独立配置时沿用抽取 LLM 的端点（历史行为）。
+  const knowledgeEmbeddingBaseUrl = rawConfig.knowledgeEmbeddingBaseUrl || knowledgeLlmBaseUrl;
+  const knowledgeEmbeddingApiKey = rawConfig.knowledgeEmbeddingApiKey || knowledgeLlmApiKey;
   const knowledgeGateway: KnowledgeGatewayConfig | null = rawConfig.knowledgeEnabled
     ? {
         baseUrl: rawConfig.knowledgeBaseUrl,
@@ -522,11 +530,13 @@ export function loadConfig(
               model: knowledgeLlmModel,
             }
           : null,
-        // 消歧只需要 base/key（模型名单列）；与抽取 LLM 共用同一套回退。
-        embeddingLlm: knowledgeLlmBaseUrl && knowledgeLlmApiKey
+        // 消歧只需要 base/key（模型名单列）；缺省与抽取 LLM 同端点，但 embedding
+        // 模型常在不同家（如 LLM 用 GLM、embedding 用 DashScope），故留独立
+        // NXCORE_KNOWLEDGE_EMBEDDING_BASE_URL/API_KEY 覆盖位。
+        embeddingLlm: knowledgeEmbeddingBaseUrl && knowledgeEmbeddingApiKey
           ? {
-              baseUrl: knowledgeLlmBaseUrl,
-              apiKey: knowledgeLlmApiKey,
+              baseUrl: knowledgeEmbeddingBaseUrl,
+              apiKey: knowledgeEmbeddingApiKey,
               model: knowledgeLlmModel,
             }
           : null,
