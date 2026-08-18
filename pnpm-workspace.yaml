@@ -9,7 +9,7 @@ allowBuilds:
   '@google/genai': true
   '@parcel/watcher': false
   '@sentry/cli': true
-  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#91c967a8aee65346bbc89d64681a14cf2b085f8e&path:MemoryCore': false
+  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#1d6922225d1ef855371b87ad2c97f1e6dc27ac2d&path:MemoryCore': false
   better-sqlite3: true
   electron: true
   electron-winstaller: true
