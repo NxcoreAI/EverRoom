@@ -5,6 +5,7 @@ import type { ContextRoomWorkspaceTab } from './context-room/contextRoomTabs'
 import { ContextRoomHomeSkeleton } from './context-room/ContextRoomHomeSkeleton'
 import { DiaryPageSkeleton } from './diary/DiaryPageSkeleton'
 import { DocsPage } from './pages/DocsPage'
+import { FilesPage } from './pages/FilesPage'
 import { HomePage } from './pages/HomePage'
 import { MemoryPage } from './pages/MemoryPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -61,6 +62,7 @@ export function PageCanvas({
   }
   if (page === 'docs') content = <DocsPage />
   if (page === 'sources') content = <SourcesPage />
+  if (page === 'files') content = <FilesPage />
   if (page === 'memory') content = <MemoryPage />
   if (page === 'wiki') content = <WikiPage />
   if (page === 'tasks') content = <TasksPage />

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import type { DocumentEvent, RoomDocument } from "@nxcore/agent-contract";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { KnowledgeLlmConfig } from "../../config.js";
@@ -8,8 +7,8 @@ import {
   documents,
   entities as entitiesTable,
   gatewayMetadata,
+  ingestEvents,
   jobs,
-  parsedContents,
   roomDocumentLinks,
   roomWikis,
   routeDecisions,
@@ -17,6 +16,8 @@ import {
   rooms,
   uploadedFiles,
 } from "../../infrastructure/database/schema.js";
+import { FilesService } from "../files/service.js";
+import { fileIdOf } from "../files/storage.js";
 import { EmbeddingClient } from "./embedding.js";
 import {
   EntityRegistry,
@@ -27,14 +28,8 @@ import {
 } from "./entity-registry.js";
 import { bestMatch } from "./entity-index.js";
 import { buildDocumentEnvelope, envelopeFilename, type DocEnvelope } from "./envelope.js";
+import { truncateUtf8 } from "../ingest/normalizers.js";
 import { convertUploadedFile } from "./file-convert.js";
-import {
-  contentHashOf,
-  fileIdOf,
-  MARKDOWN_PARSER_VERSION,
-  storageRelPath,
-  storeFileBlob,
-} from "./file-storage.js";
 import { KnowledgeLlm, type RegisterResult } from "./llm.js";
 import { KsAdminClient, KsBusyError, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
@@ -87,6 +82,9 @@ const MAX_TRANSIENT_ATTEMPTS = 5;
 const LIST_PAGE_SIZE = 100;
 /** 晋升 backlog 的收敛轮次上限（防止持续新链接把晋升 job 变成长驻循环）。 */
 const BACKLOG_MAX_PASSES = 3;
+
+/** wiki 消费端 markdown 上限（unified-ingest-plan §7：截断在消费端，不在引擎）。 */
+const WIKI_MAX_MARKDOWN_BYTES = 512 * 1024;
 
 interface IngestJobPayload {
   sourceKind: SourceKind;
@@ -152,6 +150,48 @@ export function mergeIngestLedger(
   if (index >= 0) rooms[index] = entry;
   else rooms.push(entry);
   return { ...base, filename, knowledgeId, rooms };
+}
+
+/**
+ * 仅链接计分标记（unified-ingest-plan §6.3）：引擎台账快照 wiki=false 的
+ * 源，路由/晋升照常建链接，但不沉淀正文。linkOnlyRooms 与 rooms 账本
+ * 平行记录——不影响 ingestLedgerOf 的落点枚举（没有落盘就没有可清页面）。
+ */
+export function markLinkOnlyRoom(evidence: unknown, roomId: string): Record<string, unknown> {
+  const base = (evidence ?? {}) as Record<string, unknown>;
+  const list = Array.isArray(base.linkOnlyRooms)
+    ? base.linkOnlyRooms.filter((item): item is string => typeof item === "string")
+    : [];
+  return { ...base, linkOnlyRooms: list.includes(roomId) ? list : [...list, roomId] };
+}
+
+/** 决策标记为仅链接计分的 Room 列表（markLinkOnlyRoom 的读取侧）。 */
+export function linkOnlyRoomsOf(decision: { evidence: unknown }): string[] {
+  const evidence = (decision.evidence ?? {}) as { linkOnlyRooms?: unknown };
+  return Array.isArray(evidence.linkOnlyRooms)
+    ? evidence.linkOnlyRooms.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+/**
+ * 台账快照判定（导出供单测）：源最近一次 ingest_events 的 wiki 开关。
+ * 无台账行（旧入口）一律 false——既有沉淀行为不变。
+ */
+export function wikiDisabledForSource(
+  db: GatewayDatabase,
+  sourceKind: string,
+  sourceId: string,
+): boolean {
+  const row = db.select({ pipelines: ingestEvents.pipelines })
+    .from(ingestEvents)
+    .where(and(
+      eq(ingestEvents.sourceKind, sourceKind as typeof ingestEvents.sourceKind.enumValues[number]),
+      eq(ingestEvents.sourceId, sourceId),
+    ))
+    .orderBy(desc(ingestEvents.createdAt), desc(ingestEvents.id))
+    .limit(1)
+    .get();
+  return row?.pipelines?.wiki === false;
 }
 
 /** 决策历史上落过盘的全部 wiki 位点（账本优先，旧数据回退单点记录）。 */
@@ -275,6 +315,8 @@ export class KnowledgeService {
   private readonly entityRegistry: EntityRegistry;
   private readonly router: KnowledgeRouter;
   private readonly llm: KnowledgeLlm | null;
+  /** 字节与登记表的唯一所有者是 modules/files（U9）；此处仅编排路由/ingest。 */
+  private readonly files: FilesService;
   private readonly pendingSchedules = new Map<string, PendingSchedule>();
   private readonly busyRoomKeys = new Set<string>();
   private readonly retryAfter = new Map<string, number>();
@@ -287,6 +329,7 @@ export class KnowledgeService {
     private readonly config: KnowledgeServiceConfig,
     private readonly logger: KnowledgeServiceLogger,
   ) {
+    this.files = new FilesService(db, config.dataDir);
     this.ks = new KsAdminClient({
       baseUrl: config.baseUrl,
       serviceId: config.serviceId,
@@ -367,6 +410,15 @@ export class KnowledgeService {
   /** 路由开关透出（REST 层据此决定外部信封入口是否可用）。 */
   get routerEnabled(): boolean {
     return this.config.routerEnabled;
+  }
+
+  /**
+   * 台账快照读取（unified-ingest-plan §6.3）：源经 /v1/ingest 进入时，
+   * 取其最近一次 ingest_events 的策略快照——wiki=false 则路由/晋升只计
+   * 链接分不沉淀正文。旧入口（无台账行）不受影响：维持既有沉淀行为。
+   */
+  private wikiDisabledForSource(sourceKind: string, sourceId: string): boolean {
+    return wikiDisabledForSource(this.db, sourceKind, sourceId);
   }
 
   listRoomWikis(): Array<{ roomId: string; knowledgeId: string; status: string; createdAt: Date }> {
@@ -508,17 +560,12 @@ export class KnowledgeService {
 
   /** 文件当前解析产物的 markdown（预览用）；无文件或未解析返回 null。 */
   readFileMarkdown(fileId: string): string | null {
-    const file = this.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get();
-    if (!file?.currentParsedId) return null;
-    const parsed = this.db.select().from(parsedContents)
-      .where(eq(parsedContents.id, file.currentParsedId)).get();
-    return parsed?.markdown ?? null;
+    return this.files.markdownOf(fileId);
   }
 
   /** 文件本体的绝对路径（主进程 reveal 用）；无文件返回 null。 */
   fileStoragePath(fileId: string): string | null {
-    const file = this.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get();
-    return file ? join(this.config.dataDir, file.storagePath) : null;
+    return this.files.storagePathOf(fileId);
   }
 
   // ───────────────────────── 文档事件入口（① 层） ─────────────────────────
@@ -659,7 +706,7 @@ export class KnowledgeService {
     entrySignals?: DocEnvelope["entrySignals"];
     sourceId?: string;
     sourceVersion?: number;
-  }): { queued: boolean } {
+  }): { queued: boolean; jobId: string } {
     const payload: RouteJobPayload = {
       sourceKind: input.sourceKind,
       sourceId: input.sourceId ?? `ext-${randomUUID().slice(0, 12)}`,
@@ -671,9 +718,9 @@ export class KnowledgeService {
         ...(input.entrySignals ? { entrySignals: input.entrySignals } : {}),
       },
     };
-    this.insertJob(ROUTE_JOB_TYPE, payload);
+    const jobId = this.insertJob(ROUTE_JOB_TYPE, payload);
     this.wake();
-    return { queued: true };
+    return { queued: true, jobId };
   }
 
   /**
@@ -690,41 +737,20 @@ export class KnowledgeService {
   }): Promise<{ queued: boolean; sourceId: string; title: string; deduped: boolean }> {
     const converted = convertUploadedFile(input.filename, input.buffer);
     const sourceId = fileIdOf(input.filename);
-    const contentHash = contentHashOf(input.buffer);
 
-    const existing = this.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, sourceId)).get();
-    if (existing?.contentHash === contentHash) {
+    // 资产段经 modules/files（U9）：闸1 同名同内容 → 全跳过；同名新内容 →
+    // 版本更新（身份不变）。存储完成后这里只做解析回填与路由入队。
+    const uploaded = await this.files.upload({ filename: input.filename, buffer: input.buffer });
+    if (uploaded.deduped) {
       // 闸1：同名且内容未变——不存、不解析、不入队（链接与归属必然没变）
       this.logger.info(
         { event: "knowledge.file.deduped", sourceId, filename: input.filename },
         "file re-upload with unchanged content skipped",
       );
-      return { queued: false, sourceId, title: existing.originalName, deduped: true };
+      return { queued: false, sourceId, title: uploaded.originalName, deduped: true };
     }
-
-    await storeFileBlob(this.config.dataDir, contentHash, input.buffer);
-    const parsedId = this.ensureParsed(contentHash, converted.markdown);
-
-    if (existing) {
-      // 版本更新：身份不变，指针前移；路由重新抽取（链接随实体漂移）
-      this.db.update(uploadedFiles).set({
-        contentHash,
-        storagePath: storageRelPath(contentHash),
-        originalName: input.filename,
-        bytes: input.buffer.byteLength,
-        currentParsedId: parsedId,
-        updatedAt: new Date(),
-      }).where(eq(uploadedFiles.id, sourceId)).run();
-    } else {
-      this.db.insert(uploadedFiles).values({
-        id: sourceId,
-        contentHash,
-        storagePath: storageRelPath(contentHash),
-        originalName: input.filename,
-        bytes: input.buffer.byteLength,
-        currentParsedId: parsedId,
-      }).onConflictDoNothing().run();
-    }
+    const parsedId = this.files.ensureParsed(uploaded.contentHash, converted.markdown);
+    this.files.touchParsed(sourceId, parsedId);
 
     const sourceVersion = this.nextFileVersion(sourceId);
     this.submitEnvelope({
@@ -742,32 +768,13 @@ export class KnowledgeService {
     });
     this.logger.info(
       { event: "knowledge.file.uploaded", sourceId, filename: input.filename, bytes: input.buffer.byteLength, version: sourceVersion },
-      existing ? "file version updated for routing" : "file uploaded for routing",
+      uploaded.versionUpdated ? "file version updated for routing" : "file uploaded for routing",
     );
     return { queued: true, sourceId, title: converted.title, deduped: false };
   }
 
-  /** 闸2：解析产物幂等入库，(hash, parser_version) 已有则直接复用。 */
-  private ensureParsed(contentHash: string, markdown: string): string {
-    const existing = this.db.select().from(parsedContents)
-      .where(and(
-        eq(parsedContents.contentHash, contentHash),
-        eq(parsedContents.parserVersion, MARKDOWN_PARSER_VERSION),
-      ))
-      .get();
-    if (existing) return existing.id;
-    const id = `parsed-${randomUUID().slice(0, 12)}`;
-    this.db.insert(parsedContents).values({
-      id,
-      contentHash,
-      parserVersion: MARKDOWN_PARSER_VERSION,
-      markdown,
-    }).run();
-    return id;
-  }
-
   /** file 的下一个版本号：取该源已有决策的最大 source_version + 1。 */
-  private nextFileVersion(sourceId: string): number {
+  nextFileVersion(sourceId: string): number {
     const rows = this.db.select({ sourceVersion: routeDecisions.sourceVersion })
       .from(routeDecisions)
       .where(and(eq(routeDecisions.sourceKind, "file"), eq(routeDecisions.sourceId, sourceId)))
@@ -807,29 +814,19 @@ export class KnowledgeService {
     let migrated = 0;
     for (const [legacyId, snapshot] of latestByLegacyId) {
       const originalName = /\.md$/i.test(snapshot.title) ? snapshot.title : `${snapshot.title}.md`;
-      const fileId = fileIdOf(originalName);
-      const buffer = Buffer.from(snapshot.markdown, "utf8");
-      const contentHash = contentHashOf(buffer);
-      try {
-        await storeFileBlob(this.config.dataDir, contentHash, buffer);
-      } catch (error) {
+      const registered = await this.files.registerBackfillFile({
+        originalName,
+        markdown: snapshot.markdown,
+      });
+      if (!registered) {
         this.logger.warn(
-          { event: "knowledge.files.backfill_blob_failed", legacyId, error: error instanceof Error ? error.message : String(error) },
+          { event: "knowledge.files.backfill_blob_failed", legacyId },
           "backfill blob write failed, row skipped",
         );
         continue;
       }
-      const parsedId = this.ensureParsed(contentHash, snapshot.markdown);
-      this.db.insert(uploadedFiles).values({
-        id: fileId,
-        contentHash,
-        storagePath: storageRelPath(contentHash),
-        originalName,
-        bytes: buffer.byteLength,
-        currentParsedId: parsedId,
-      }).onConflictDoNothing().run();
       this.db.update(routeDecisions)
-        .set({ sourceId: fileId, updatedAt: new Date() })
+        .set({ sourceId: registered.fileId, updatedAt: new Date() })
         .where(and(eq(routeDecisions.sourceKind, "file"), eq(routeDecisions.sourceId, legacyId)))
         .run();
       migrated += 1;
@@ -845,6 +842,14 @@ export class KnowledgeService {
         "legacy file decisions migrated to deterministic ids",
       );
     }
+  }
+
+  /**
+   * 文件删除级联入口（modules/files 调用）：Room/wiki 侧清理——按落盘
+   * 账本逐房 raw/rm + 决策回退（与 document.deleted 同款异步 job）。
+   */
+  requestFileCleanup(sourceId: string): void {
+    this.enqueueCleanup("file", sourceId);
   }
 
   private enqueueCleanup(sourceKind: SourceKind, sourceId: string): void {
@@ -1022,6 +1027,21 @@ export class KnowledgeService {
 
     const envelope = await this.buildExecutionEnvelope(payload, decision);
     if (!envelope) return;
+
+    // 台账快照过滤（§6.3）：经引擎进入且 wiki=false 的源只计链接分，
+    // 不沉淀正文（快照而非实时 policy——事后改策略不漂移已进入的资料）
+    if (this.wikiDisabledForSource(payload.sourceKind, payload.sourceId)) {
+      this.db.update(routeDecisions).set({
+        status: "confirmed",
+        evidence: markLinkOnlyRoom(decision.evidence, payload.roomId),
+        updatedAt: new Date(),
+      }).where(eq(routeDecisions.id, payload.decisionId)).run();
+      this.logger.info(
+        { event: "knowledge.ingest.link_only", sourceId: payload.sourceId, roomId: payload.roomId },
+        "source wiki-disabled at ingest: link-only, no deposition",
+      );
+      return;
+    }
 
     const knowledgeId = await this.registry.ensureWikiForRoom(payload.roomId);
     const filename = envelopeFilename(envelope);
@@ -1262,7 +1282,8 @@ export class KnowledgeService {
     const entity = this.entityRegistry.getEntity(entityId);
     if (!entity?.roomId) return;
     const roomId = entity.roomId;
-    const knowledgeId = await this.registry.ensureWikiForRoom(roomId);
+    // 懒 ensure：全部链接源都被台账快照判为仅链接计分时不建空 wiki
+    let knowledgeId: string | null = null;
 
     for (let pass = 0; pass < BACKLOG_MAX_PASSES; pass += 1) {
       const links = this.entityRegistry.linksOfEntity(entityId);
@@ -1284,6 +1305,18 @@ export class KnowledgeService {
           .get();
         if (!decision) continue; // 无决策行（信封已丢）：跳过，链接仍在
 
+        // 台账快照过滤（§6.3）：wiki=false 的源晋升补账也只计链接分
+        if (this.wikiDisabledForSource(link.sourceKind, link.sourceId)) {
+          if (!ingestLedgerOf(decision).some((entry) => entry.roomId === roomId)
+            && !linkOnlyRoomsOf(decision).includes(roomId)) {
+            this.db.update(routeDecisions).set({
+              evidence: markLinkOnlyRoom(decision.evidence, roomId),
+              updatedAt: new Date(),
+            }).where(eq(routeDecisions.id, decision.id)).run();
+          }
+          continue;
+        }
+
         const envelope = await this.buildExecutionEnvelope(
           {
             sourceKind: link.sourceKind,
@@ -1300,6 +1333,7 @@ export class KnowledgeService {
         // 确认（primaryRoomId 指向别房）不是跳过理由
         if (ingestLedgerOf(decision).some((entry) => entry.roomId === roomId && entry.filename === filename)) continue;
 
+        knowledgeId ??= await this.registry.ensureWikiForRoom(roomId);
         await this.ks.rawWrite(knowledgeId, [{ filename, content: envelope.markdown }]);
         await this.ks.ingest(knowledgeId);
         await this.waitUntilSettled(knowledgeId);
@@ -1349,7 +1383,13 @@ export class KnowledgeService {
     return {
       ref: { kind: payload.sourceKind, id: payload.sourceId, version: payload.sourceVersion },
       title: decision.sourceTitle ?? payload.sourceId,
-      markdown: decision.sourceMarkdown,
+      // 消费端截断（§7）：全文住 parsed_contents/决策快照，送 KS 前按 512KB 截
+      // （everroom-doc 路径已在 buildDocumentEnvelope 内截）
+      markdown: truncateUtf8(
+        decision.sourceMarkdown,
+        WIKI_MAX_MARKDOWN_BYTES,
+        "<!-- 截断：原文超 wiki 512KB 上限，全文见文件中心 -->",
+      ),
     };
   }
 

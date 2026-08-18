@@ -14,12 +14,15 @@ import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
+import type { IngestPipelines } from '../shared/ingest'
 import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
 } from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
+import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
+import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
@@ -155,6 +158,20 @@ const KNOWLEDGE_CHANNELS = {
   listRoomFiles: 'knowledge:files:list',
   readFileMarkdown: 'knowledge:files:markdown',
   revealFile: 'knowledge:files:reveal',
+} as const
+
+const FILES_CHANNELS = {
+  list: 'files:list',
+  get: 'files:get',
+  readMarkdown: 'files:read-markdown',
+  rename: 'files:rename',
+  delete: 'files:delete',
+  reveal: 'files:reveal',
+  pickAndImport: 'files:pick-and-import',
+} as const
+
+const INGEST_CHANNELS = {
+  listEvents: 'ingest:events:list',
 } as const
 
 let localDataService: LocalDataService | null = null
@@ -351,6 +368,28 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   ipcMain.handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
   ipcMain.handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
   ipcMain.handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
+}
+
+function registerFilesHandlers(bridge: FilesGatewayBridge): void {
+  ipcMain.handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
+  ipcMain.handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
+  ipcMain.handle(FILES_CHANNELS.readMarkdown, (_event, fileId: string) => bridge.readMarkdown(fileId))
+  ipcMain.handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
+    bridge.rename(fileId, displayName))
+  ipcMain.handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
+  ipcMain.handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
+  ipcMain.handle(
+    FILES_CHANNELS.pickAndImport,
+    (_event, options?: { pipelines?: IngestPipelines }) => bridge.pickAndImport(options),
+  )
+}
+
+function registerIngestHandlers(bridge: IngestGatewayBridge): void {
+  ipcMain.handle(
+    INGEST_CHANNELS.listEvents,
+    (_event, query: { limit?: number; offset?: number; sourceKind?: string; sourceId?: string }) =>
+      bridge.listEvents(query),
+  )
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
@@ -582,6 +621,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge)
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
+    registerFilesHandlers(new FilesGatewayBridge(gatewaySupervisor))
+    registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')

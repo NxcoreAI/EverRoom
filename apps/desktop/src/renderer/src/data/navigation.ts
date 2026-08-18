@@ -4,6 +4,7 @@ import {
   BookOpenText,
   Brain,
   FileText,
+  FolderOpen,
   FolderSync,
   Home,
   ListChecks,
@@ -12,7 +13,7 @@ import {
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'memory' | 'wiki' | 'tasks' | 'diary' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'tasks' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -43,6 +44,7 @@ export const navigationSections: NavigationSection[] = [
     label: '上下文',
     items: [
       { id: 'sources', label: '数据源', icon: FolderSync, tone: 'cyan' },
+      { id: 'files', label: '文件', icon: FolderOpen, tone: 'green' },
       { id: 'memory', label: '记忆', icon: Brain, tone: 'orange' },
       { id: 'wiki', label: 'Wiki', icon: BookOpenText, tone: 'indigo' },
     ],

@@ -354,6 +354,33 @@ export interface NxcoreDesktopApi {
     /** 系统文件选择框（仅 .md）→ 上传 gateway 走自动归类路由。 */
     pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]>
   }
+  files: {
+    list(limit?: number, offset?: number): Promise<{ items: FileDto[]; total: number }>
+    get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
+    /** 解析产物 markdown（未进过链路的裸上传 404）。 */
+    readMarkdown(fileId: string): Promise<{ markdown: string }>
+    rename(fileId: string, displayName: string): Promise<FileDto>
+    /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
+    delete(fileId: string): Promise<{
+      deleted: boolean
+      knowledgeCleanup: boolean
+      deletedMemoryDocuments: string[]
+      blobCollected: boolean
+    }>
+    /** 在系统文件管理器中定位文件本体。 */
+    reveal(fileId: string): Promise<void>
+    /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。 */
+    pickAndImport(options?: { pipelines?: IngestPipelines }): Promise<FileImportOutcome[]>
+  }
+  ingest: {
+    /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
+    listEvents(query: {
+      limit?: number
+      offset?: number
+      sourceKind?: string
+      sourceId?: string
+    }): Promise<{ items: IngestEventDto[]; total: number }>
+  }
 }
 import type {
   MemoryAtomicItemDto,
@@ -371,6 +398,12 @@ import type {
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from './memory'
+import type {
+  FileDto,
+  FileImportOutcome,
+  IngestEventDto,
+  IngestPipelines,
+} from './ingest'
 export type {
   CreateRealityEventInput,
   FinishRealityCaptureInput,

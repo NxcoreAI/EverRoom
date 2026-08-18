@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import {
   MemoryCoreClient,
@@ -8,16 +7,8 @@ import {
   type MemoryPipelineStatus,
   type MemoryRuntimeConfig,
 } from "@nxcore/agent-runtime-pi";
-import { and, eq } from "drizzle-orm";
+import { FilesService } from "../files/service.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { parsedContents, uploadedFiles } from "../../infrastructure/database/schema.js";
-import {
-  contentHashOf,
-  fileIdOf,
-  MARKDOWN_PARSER_VERSION,
-  storageRelPath,
-  storeFileBlob,
-} from "../knowledge/file-storage.js";
 import { MemoryGatewayError } from "./errors.js";
 
 /** UI 浏览场景的超时：比 agent 注入流程（3s）宽松，但仍在交互可接受范围。 */
@@ -175,20 +166,34 @@ export interface MemoryImportMarkdownResult {
   acceptedChunks: number;
 }
 
+/** MemoryCore 直导结果（引擎扇出用，无资产段；importMarkdown 的下半段）。 */
+export interface MemoryImportDocumentResult {
+  document: MemoryDocumentDto;
+  version: string;
+  sessionId: string;
+  chunkCount: number;
+  deduplicated: boolean;
+  replacedVersions: number;
+  acceptedChunks: number;
+}
+
 /**
  * MemoryCore 的 gateway 侧门面：注入隔离三元组，把 snake_case 的 v3 响应
  * 映射为稳定的 camelCase DTO；未配置记忆时所有方法抛 memory_disabled。
  */
 export class MemoryService {
   private readonly client: MemoryCoreClient | null;
+  /** md 导入的资产化通道（modules/files，U9 唯一字节入口）；未配置记忆时为 null。 */
+  private readonly files: FilesService | null;
 
   constructor(
     config: MemoryRuntimeConfig | null,
     private readonly logger: FastifyBaseLogger,
     /** md 导入的资产化落点：gateway 数据库（uploaded_files/parsed_contents）与对象库根。 */
-    private readonly assets: { db: GatewayDatabase; dataDir: string } | null,
+    assets: { db: GatewayDatabase; dataDir: string } | null,
   ) {
     this.client = config ? new MemoryClientWithTimeout(config) : null;
+    this.files = assets ? new FilesService(assets.db, assets.dataDir) : null;
   }
 
   get enabled(): boolean {
@@ -411,38 +416,19 @@ export class MemoryService {
     filename?: string | undefined;
   }): Promise<MemoryImportMarkdownResult> {
     const client = this.require();
-    const assets = this.requireAssets();
+    const files = this.requireAssets();
 
     const filename = input.filename?.trim() || `${input.title.trim()}.md`;
     const buffer = Buffer.from(input.markdown, "utf8");
-    const fileId = fileIdOf(filename);
-    const contentHash = contentHashOf(buffer);
 
-    const existing = assets.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get();
-    if (existing?.contentHash !== contentHash) {
-      await storeFileBlob(assets.dataDir, contentHash, buffer);
-      const parsedId = this.ensureParsed(contentHash, input.markdown);
-      if (existing) {
-        // 同名新内容：资产身份不变，指针前移（与知识上传同语义）
-        assets.db.update(uploadedFiles).set({
-          contentHash,
-          storagePath: storageRelPath(contentHash),
-          originalName: filename,
-          bytes: buffer.byteLength,
-          currentParsedId: parsedId,
-          updatedAt: new Date(),
-        }).where(eq(uploadedFiles.id, fileId)).run();
-      } else {
-        assets.db.insert(uploadedFiles).values({
-          id: fileId,
-          contentHash,
-          storagePath: storageRelPath(contentHash),
-          originalName: filename,
-          bytes: buffer.byteLength,
-          currentParsedId: parsedId,
-        }).onConflictDoNothing().run();
-      }
+    // 资产段经 modules/files（U9）：闸1 同名同内容 deduped 跳过；同名新内容
+    // 版本更新。此处与知识上传共用同一套确定性身份与对象库。
+    const uploaded = await files.upload({ filename, buffer });
+    if (!uploaded.deduped) {
+      const parsedId = files.ensureParsed(uploaded.contentHash, input.markdown);
+      files.touchParsed(uploaded.fileId, parsedId);
     }
+    const fileId = uploaded.fileId;
 
     const result = await this.call(() => client.importDocument({
       title: input.title.trim(),
@@ -548,6 +534,55 @@ export class MemoryService {
     };
   }
 
+  /**
+   * 记忆导入下半段（unified-ingest-plan §7）：不经资产化直调 MemoryCore
+   * ——理解引擎扇出用（原文归 files 模块管，引擎只传 callerRef + 内容）。
+   * markdown 由调用方（引擎）按 2MB 消费端上限截断后再传入。
+   */
+  async importToMemoryCore(input: {
+    title: string;
+    markdown: string;
+    callerRef: string;
+  }): Promise<MemoryImportDocumentResult> {
+    const client = this.require();
+    const result = await this.call(() => client.importDocument({
+      title: input.title.trim(),
+      markdown: input.markdown,
+      callerRef: input.callerRef,
+    }));
+    return {
+      document: this.toDocumentDto(result.document),
+      version: result.version,
+      sessionId: result.session_id,
+      chunkCount: result.chunk_count,
+      deduplicated: result.deduplicated,
+      replacedVersions: result.replaced_versions,
+      acceptedChunks: result.accepted_chunks,
+    };
+  }
+
+  /**
+   * 文件删除级联（modules/files 调用）：按 caller_ref 反查并删除 MemoryCore
+   * 文档（级联清 L0 会话/分块/派生 L1）。MemoryCore 未启用返回空列表。
+   */
+  async deleteDocumentsByCallerRef(callerRef: string): Promise<string[]> {
+    if (!this.client || !this.enabled) return [];
+    const client = this.client;
+    const deleted: string[] = [];
+    // listDocuments 按身份键取最新版本：分页扫全量，caller_ref 命中即删
+    for (let offset = 0; ; offset += 100) {
+      const page = await this.call(() => client.listDocuments({ limit: 100, offset }));
+      for (const item of page.documents) {
+        if (item.caller_ref !== callerRef) continue;
+        await this.call(() => client.deleteDocument(item.document_id));
+        deleted.push(item.document_id);
+      }
+      if (offset + 100 >= page.total) break;
+    }
+    return deleted;
+  }
+
+  /** 解析产物幂等入库（闸2）已移交 modules/files——资产原语不再本地实现。 */
   private toDocumentDto(item: {
     document_id: string;
     title: string;
@@ -572,35 +607,17 @@ export class MemoryService {
     };
   }
 
-  /** 解析产物幂等入库（与 KnowledgeService.ensureParsed 同判重，导入侧本地实现）。 */
-  private ensureParsed(contentHash: string, markdown: string): string {
-    const assets = this.requireAssets();
-    const existing = assets.db.select().from(parsedContents)
-      .where(and(
-        eq(parsedContents.contentHash, contentHash),
-        eq(parsedContents.parserVersion, MARKDOWN_PARSER_VERSION),
-      ))
-      .get();
-    if (existing) return existing.id;
-    const id = `parsed-${randomUUID().slice(0, 12)}`;
-    assets.db.insert(parsedContents).values({
-      id,
-      contentHash,
-      parserVersion: MARKDOWN_PARSER_VERSION,
-      markdown,
-    }).run();
-    return id;
-  }
+  /** 解析产物幂等入库（闸2）已移交 modules/files（U9）——资产原语不再本地实现。 */
 
-  private requireAssets(): { db: GatewayDatabase; dataDir: string } {
-    if (!this.assets) {
+  private requireAssets(): FilesService {
+    if (!this.files) {
       throw new MemoryGatewayError(
         "memory_disabled",
         "memory document assets are not available on this gateway",
         503,
       );
     }
-    return this.assets;
+    return this.files;
   }
 
   private require(): MemoryCoreClient {

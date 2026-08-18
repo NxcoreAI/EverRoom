@@ -503,3 +503,65 @@ export const realityEvents = sqliteTable(
   },
   (table) => [uniqueIndex("reality_events_asr_job_idx").on(table.asrJobId)],
 );
+
+// ═══════════════════ 统一理解引擎（docs/unified-ingest-plan.md）═══════════════════
+
+/** 三链路开关（Room / wiki / 记忆）。wiki 依赖 Room（U2：无 Room 不设全局 wiki）。 */
+export interface IngestPipelines {
+  room: boolean;
+  wiki: boolean;
+  memory: boolean;
+}
+
+/** 记忆链路扇出结果：成功摘要或错误（失败不阻塞 Room 链路）。 */
+export interface IngestMemoryOk {
+  documentId: string;
+  chunkCount: number;
+  deduplicated: boolean;
+}
+
+/**
+ * 统一进入台账（§6.1/U3）：每次经 /v1/ingest 进入的资料一行，
+ * 含类型识别结果与策略快照——晋升/增量 ingest 的 wiki 判定读快照而非
+ * 实时 policy（策略事后变化不应让已进入的资料行为漂移）。
+ * 引擎只记自己做的；Room/wiki 下游状态继续查 knowledge 既有表（§6.3）。
+ */
+export const ingestEvents = sqliteTable(
+  "ingest_events",
+  {
+    /** ing-<uuid12> */
+    id: text("id").primaryKey(),
+    sourceKind: text("source_kind", {
+      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+    }).notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceVersion: integer("source_version").notNull(),
+    dataType: text("data_type").notNull(),
+    /** 识别依据（U1 全确定性）：explicit | json-type | extension | source-kind | sniff */
+    detectedBy: text("detected_by").notNull(),
+    title: text("title").notNull(),
+    /** 源内容指纹（原始字节 / 表引用的规范化序列化）。 */
+    contentHash: text("content_hash").notNull(),
+    /** 归一化产物（parsed_contents 行；全文，消费端各自截断）。 */
+    parsedId: text("parsed_id").notNull(),
+    /** 策略快照（U3）json {room, wiki, memory}。 */
+    pipelines: text("pipelines", { mode: "json" }).$type<IngestPipelines>().notNull(),
+    /** 记忆链路即时结果 json {documentId, chunkCount, deduplicated} | {error} | null */
+    memoryResult: text("memory_result", { mode: "json" })
+      .$type<IngestMemoryOk | { error: string }>(),
+    /** Room 链路 route job 引用（knowledge.route）。 */
+    routeJobId: text("route_job_id"),
+    /** file | paste-file | connector | reality | everroom-doc | upload */
+    originChannel: text("origin_channel").notNull().default("upload"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("ingest_events_source_idx").on(table.sourceKind, table.sourceId),
+    index("ingest_events_source_hash_idx").on(table.sourceId, table.contentHash),
+  ],
+);

@@ -5,6 +5,7 @@ import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
 } from '../shared/memory'
+import type { IngestPipelines } from '../shared/ingest'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
@@ -191,6 +192,24 @@ const api: NxcoreDesktopApi = {
     listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
     readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
     revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
+  },
+  files: {
+    list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
+    get: (fileId: string) => invoke('files:get', fileId),
+    readMarkdown: (fileId: string) => invoke('files:read-markdown', fileId),
+    rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
+    delete: (fileId: string) => invoke('files:delete', fileId),
+    reveal: (fileId: string) => invoke('files:reveal', fileId),
+    pickAndImport: (options?: { pipelines?: IngestPipelines }) =>
+      invoke('files:pick-and-import', options),
+  },
+  ingest: {
+    listEvents: (query: {
+      limit?: number
+      offset?: number
+      sourceKind?: string
+      sourceId?: string
+    }) => invoke('ingest:events:list', query),
   },
 }
 

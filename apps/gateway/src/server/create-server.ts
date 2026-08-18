@@ -27,6 +27,11 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { filesRoutes } from "../modules/files/routes.js";
+import { FilesService } from "../modules/files/service.js";
+import { ingestRoutes } from "../modules/ingest/routes.js";
+import { IngestService } from "../modules/ingest/service.js";
+import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { RealityError } from "../modules/reality/errors.js";
@@ -158,6 +163,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
   const memoryService = new MemoryService(config.pi?.memory ?? null, app.log, { db, dataDir: config.dataDir });
+  // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
+  // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
+  const filesService = new FilesService(db, config.dataDir);
   const realityService = new RealityService(db, config.asrInputDir, app.log);
   const recoveredCaptures = realityService.recoverInterruptedCaptures();
   if (recoveredCaptures > 0) {
@@ -190,6 +198,29 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(documentRoutes(documentService));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(filesRoutes(filesService, {
+    // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档
+    requestKnowledgeCleanup: (fileId) => {
+      if (config.knowledge?.roomWikisEnabled) knowledgeService.requestFileCleanup(fileId);
+    },
+    deleteMemoryDocuments: (fileId) => memoryService.deleteDocumentsByCallerRef(fileId),
+  }));
+  // 统一理解引擎（U1）：接入面唯一，台账 + 三链路扇出（§7）。
+  // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
+  // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
+  const policyWarn = (message: string) => app.log.warn({ module: "ingest.policy" }, message);
+  const ingestService = new IngestService(
+    db,
+    filesService,
+    knowledgeService,
+    memoryService,
+    app.log,
+    {
+      project: await loadProjectDefaults(policyWarn),
+      deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
+    },
+  );
+  await app.register(ingestRoutes(ingestService));
   await app.register(realityRoutes(realityService));
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
 
