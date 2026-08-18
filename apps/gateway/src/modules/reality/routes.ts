@@ -41,6 +41,7 @@ const AsrBody = Type.Object({
       source: Type.Optional(Type.Union([Type.Literal("mock"), Type.Literal("generated")])),
       eventType: Type.Optional(Type.Union([
         Type.Literal("MEETING"), Type.Literal("MEAL"), Type.Literal("WORK"),
+        Type.Literal("SOCIAL"), Type.Literal("LEARNING"), Type.Literal("CHITCHAT"),
         Type.Literal("REST"), Type.Literal("EXERCISE"), Type.Literal("OTHER"),
       ])),
       currentTopic: Type.Union([Type.String(), Type.Null()]),
@@ -75,6 +76,7 @@ const InsightsSchema = Type.Object({
   source: Type.Optional(Type.Union([Type.Literal("mock"), Type.Literal("generated")])),
   eventType: Type.Optional(Type.Union([
     Type.Literal("MEETING"), Type.Literal("MEAL"), Type.Literal("WORK"),
+    Type.Literal("SOCIAL"), Type.Literal("LEARNING"), Type.Literal("CHITCHAT"),
     Type.Literal("REST"), Type.Literal("EXERCISE"), Type.Literal("OTHER"),
   ])),
   currentTopic: Type.Union([Type.String(), Type.Null()]),

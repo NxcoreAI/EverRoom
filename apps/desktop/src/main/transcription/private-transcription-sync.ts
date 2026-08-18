@@ -7,6 +7,7 @@ import type { AccountKeyringStatus, AsrResult, AsrSegment, PrivateTranscriptionR
 import type { PairingSessionResponse, PrivateRecordEnvelope, PutPrivateRecordInput, SaasClient } from '../cloud/saas-client'
 import type { RealityGatewayBridge } from '../gateway/reality-gateway-bridge'
 import { AccountKeyringService } from '../security/account-keyring-service'
+import { summaryDetailMinimum } from './summary-quality'
 
 interface PendingSourcePublication {
   recordId: string
@@ -82,7 +83,12 @@ function importedInsights(record: PrivateTranscriptionRecord | undefined, transc
   const overview = typeof summary.overview === 'string' ? summary.overview.trim() : ''
   const keyPoints = stringArray(summary.keyPoints)
   const decisions = stringArray(summary.decisions)
+  const unresolvedQuestions = stringArray(summary.unresolvedQuestions)
   const topics = stringArray(summary.topics)
+  const eventTypes: NonNullable<RealityInsights['eventType']>[] = ['MEETING', 'WORK', 'MEAL', 'SOCIAL', 'LEARNING', 'CHITCHAT', 'OTHER']
+  const eventType = eventTypes.includes(summary.eventType as NonNullable<RealityInsights['eventType']>)
+    ? summary.eventType as NonNullable<RealityInsights['eventType']>
+    : 'OTHER'
   const tags = representativeTags(summary.representativeTags)
   const actionItems = Array.isArray(summary.actionItems) ? summary.actionItems.flatMap((item): string[] => {
     if (typeof item === 'string') return item.trim() ? [item.trim()] : []
@@ -99,6 +105,7 @@ function importedInsights(record: PrivateTranscriptionRecord | undefined, transc
   const firstSentence = transcript.split(/(?<=[。！？!?])|\n+/).map((item) => item.trim()).find(Boolean) ?? ''
   return {
     source: 'generated',
+    eventType,
     currentTopic: topics[0] || title || firstSentence.replace(/[。！？!?]$/, '').slice(0, 50) || null,
     summary: overview || null,
     keyPoints,
@@ -106,22 +113,31 @@ function importedInsights(record: PrivateTranscriptionRecord | undefined, transc
     actionItems,
     people: tags.filter((tag) => tag.kind === 'entity' && tag.entityType === 'person').map((tag) => tag.label),
     projects: tags.filter((tag) => tag.kind === 'entity' && tag.entityType === 'project').map((tag) => tag.label),
-    unresolvedQuestions: [],
+    unresolvedQuestions,
     representativeTags: tags,
     summaryRecordId: record?.recordId,
   }
 }
 
-export function hasMeaningfulSummary(record: PrivateTranscriptionRecord | undefined): boolean {
+export function hasMeaningfulSummary(
+  record: PrivateTranscriptionRecord | undefined,
+  source?: PrivateTranscriptionRecord,
+): boolean {
   const value = record ? metadata(record).summary : null
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const summary = value as Record<string, unknown>
   const title = typeof summary.title === 'string' ? summary.title.trim() : ''
-  return Boolean(
+  const structurallyValid = Boolean(
     title && title !== '后台转写总结'
     && typeof summary.overview === 'string' && summary.overview.trim()
     && stringArray(summary.keyPoints).length
   )
+  if (!structurallyValid || !source) return structurallyValid
+  const transcriptLength = source.transcript.trim().length
+  const overviewLength = (summary.overview as string).trim().length
+  const keyPointCount = stringArray(summary.keyPoints).length
+  const minimum = summaryDetailMinimum(transcriptLength)
+  return !minimum || (overviewLength >= minimum.overview && keyPointCount >= minimum.keyPoints)
 }
 
 function speakerId(value: unknown): number | null {
@@ -503,7 +519,7 @@ export class PrivateTranscriptionSyncService {
     for (const source of Object.values(current.records)) {
       if (metadataString(source, 'kind') === 'everroom.transcription-summary') continue
       const candidateSummary = summaries.get(source.recordId)
-      const summary = hasMeaningfulSummary(candidateSummary) ? candidateSummary : undefined
+      const summary = hasMeaningfulSummary(candidateSummary, source) ? candidateSummary : undefined
       if (candidateSummary && !summary && !invalidSummaryReports[candidateSummary.recordId]) {
         const sourceContentHash = metadataString(candidateSummary, 'sourceContentHash')
         const sourceRevision = metadata(candidateSummary).sourceRevision

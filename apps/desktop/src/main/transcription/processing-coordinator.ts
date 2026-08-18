@@ -11,6 +11,7 @@ import type {
 import type { AgentGatewayBridge } from '../gateway/agent-gateway-bridge'
 import { AccountKeyringService } from '../security/account-keyring-service'
 import type { PrivateTranscriptionSyncService } from './private-transcription-sync'
+import { summaryDetailMinimum } from './summary-quality'
 
 const POLL_INTERVAL_MS = 30_000
 const LEASE_RENEW_INTERVAL_MS = 45_000
@@ -38,11 +39,13 @@ interface SourceRecord {
 }
 
 interface SummaryValue {
+  eventType: 'MEETING' | 'WORK' | 'MEAL' | 'SOCIAL' | 'LEARNING' | 'CHITCHAT' | 'OTHER'
   title: string
   overview: string
   keyPoints: string[]
   decisions: string[]
   actionItems: Array<{ text: string; owner: string | null; dueDate: string | null }>
+  unresolvedQuestions: string[]
   topics: string[]
   representativeTags: SummaryTagValue[]
 }
@@ -163,7 +166,7 @@ export class TranscriptionProcessingCoordinator {
             transcript,
             language: 'zh-CN',
           })
-          const summary = parseSummary(response.content)
+          const summary = parseSummary(response.content, transcript)
           const result = createSummary(job, summary)
           this.state.jobs[job.id]!.result = result
           this.state.jobs[job.id]!.updatedAt = new Date().toISOString()
@@ -229,7 +232,7 @@ function transcriptText(source: SourceRecord): string {
   return limited === text ? text : `${limited}\n\n[转写过长，已截断]`
 }
 
-function parseSummary(raw: string): SummaryValue {
+function parseSummary(raw: string, transcript: string): SummaryValue {
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   let value: unknown
   try {
@@ -239,6 +242,10 @@ function parseSummary(raw: string): SummaryValue {
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_agent_summary')
   const object = value as Record<string, unknown>
+  const eventTypes: SummaryValue['eventType'][] = ['MEETING', 'WORK', 'MEAL', 'SOCIAL', 'LEARNING', 'CHITCHAT', 'OTHER']
+  const eventType = eventTypes.includes(object.eventType as SummaryValue['eventType'])
+    ? object.eventType as SummaryValue['eventType']
+    : 'OTHER'
   const string = (key: string, max: number) => {
     if (typeof object[key] !== 'string') throw new Error(`invalid_agent_${key}`)
     return (object[key] as string).trim().slice(0, max)
@@ -264,16 +271,23 @@ function parseSummary(raw: string): SummaryValue {
     ? []
     : parseRepresentativeTags(object.representativeTags)
   const summary = {
+    eventType,
     title: string('title', 200),
     overview: string('overview', 5_000),
     keyPoints: strings('keyPoints', 50),
     decisions: strings('decisions', 50),
     actionItems,
+    unresolvedQuestions: object.unresolvedQuestions === undefined ? [] : strings('unresolvedQuestions', 50),
     topics: strings('topics', 30),
     representativeTags,
   }
   if (!summary.title || summary.title === '后台转写总结' || !summary.overview || !summary.keyPoints.length) {
     throw new Error('empty_agent_summary')
+  }
+  const transcriptLength = transcript.trim().length
+  const minimum = summaryDetailMinimum(transcriptLength)
+  if (minimum && (summary.overview.length < minimum.overview || summary.keyPoints.length < minimum.keyPoints)) {
+    throw new Error('incomplete_agent_summary')
   }
   return summary
 }
@@ -294,10 +308,12 @@ function parseRepresentativeTags(value: unknown): SummaryTagValue[] {
       evidence: tag.evidence.trim().slice(0, 1_000),
     }
     if (tag.kind === 'entity') {
-      if (!['person', 'organization', 'project', 'product', 'place', 'other'].includes(String(tag.entityType))) {
-        throw new Error('invalid_agent_representativeTag_entityType')
-      }
-      return { ...common, kind: 'entity', entityType: tag.entityType as SummaryTagValue['entityType'] }
+      const entityTypes: SummaryTagValue['entityType'][] = ['person', 'organization', 'project', 'product', 'place', 'other']
+      const normalizedType = typeof tag.entityType === 'string' ? tag.entityType.trim().toLowerCase() : ''
+      const entityType = entityTypes.includes(normalizedType as SummaryTagValue['entityType'])
+        ? normalizedType as SummaryTagValue['entityType']
+        : 'other'
+      return { ...common, kind: 'entity', entityType }
     }
     if (typeof tag.subject !== 'string' || typeof tag.predicate !== 'string' || typeof tag.object !== 'string') {
       throw new Error('invalid_agent_representativeTag_fact')

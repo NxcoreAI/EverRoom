@@ -135,7 +135,21 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     contextRoomService,
   );
   await agentService.initialize();
-  const transcriptionSummaryService = new TranscriptionSummaryService(createBackgroundAgentRuntime(config));
+  const backgroundAgentRuntime = createBackgroundAgentRuntime(config);
+  app.log.info(
+    {
+      runtimeId: backgroundAgentRuntime.id,
+      ...(config.backgroundPi
+        ? {
+            provider: config.backgroundPi.provider,
+            model: config.backgroundPi.model,
+            maxTokens: config.backgroundPi.maxTokens,
+          }
+        : {}),
+    },
+    "background transcription runtime configured",
+  );
+  const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime);
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);

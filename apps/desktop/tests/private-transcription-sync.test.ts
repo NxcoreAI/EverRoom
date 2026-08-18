@@ -43,11 +43,13 @@ function summary(): PrivateTranscriptionRecord {
       kind: 'everroom.transcription-summary',
       sourceRecordId: sourceId,
       summary: {
+        eventType: 'MEETING',
         title: '同步测试',
         overview: '确认跨设备同步可用。',
         keyPoints: ['设备数据已合并'],
         decisions: ['继续验证'],
         actionItems: [{ text: '检查时间线', owner: '小王', dueDate: null }],
+        unresolvedQuestions: ['需要继续确认移动端表现'],
         topics: ['跨设备同步'],
       },
     },
@@ -66,11 +68,13 @@ describe('private transcription reality import', () => {
       transcript: '你好，你能听到吗？\n可以听到。',
       insights: {
         source: 'generated',
+        eventType: 'MEETING',
         currentTopic: '跨设备同步',
         summary: '确认跨设备同步可用。',
         keyPoints: ['设备数据已合并'],
         decisions: ['继续验证'],
         actionItems: ['检查时间线（负责人：小王）'],
+        unresolvedQuestions: ['需要继续确认移动端表现'],
       },
       startedAt: '2026-08-16T16:47:25.000Z',
       endedAt: '2026-08-16T16:47:37.000Z',
@@ -97,6 +101,15 @@ describe('private transcription reality import', () => {
 
     expect(hasMeaningfulSummary(empty)).toBe(false)
     expect(hasMeaningfulSummary(summary())).toBe(true)
+  })
+
+  it('rejects an under-detailed summary when the source contains substantial content', () => {
+    const substantialSource = source()
+    substantialSource.transcript = '这段转写包含背景、多个议题、讨论过程、理由、限制条件、结论和后续安排。'.repeat(15)
+    const briefSummary = summary()
+
+    expect(hasMeaningfulSummary(briefSummary, substantialSource)).toBe(false)
+    expect(hasMeaningfulSummary(briefSummary)).toBe(true)
   })
 
   it('syncs a transcription whose record and Reality event use different IDs', async () => {

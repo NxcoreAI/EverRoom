@@ -70,11 +70,13 @@ function dependencies(complete = vi.fn(async () => undefined)) {
   const keyring = {}
   const agent = {
     summarizeTranscription: vi.fn(async () => ({ content: JSON.stringify({
+      eventType: 'MEETING',
       title: '周会',
       overview: '讨论了发布计划。',
       keyPoints: ['确认范围'],
       decisions: [],
       actionItems: [{ text: '准备发布', owner: null, dueDate: null }],
+      unresolvedQuestions: ['发布日期仍待确认'],
       topics: ['发布'],
       representativeTags: [
         { kind: 'entity', label: 'EverRoom', entityType: 'product', confidence: 0.98, evidence: '讨论了 EverRoom 发布计划' },
@@ -106,7 +108,11 @@ describe('TranscriptionProcessingCoordinator', () => {
     expect(client.completeProcessingJob).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       payload: expect.objectContaining({
         kind: 'everroom.transcription-summary',
-        summary: expect.objectContaining({ representativeTags: expect.arrayContaining([expect.objectContaining({ kind: 'fact', subject: 'EverRoom' })]) }),
+        summary: expect.objectContaining({
+          eventType: 'MEETING',
+          unresolvedQuestions: ['发布日期仍待确认'],
+          representativeTags: expect.arrayContaining([expect.objectContaining({ kind: 'fact', subject: 'EverRoom' })]),
+        }),
       }),
       leaseToken: 'x'.repeat(43),
     }))
@@ -136,7 +142,71 @@ describe('TranscriptionProcessingCoordinator', () => {
     await processOne(coordinator)
 
     expect(client.completeProcessingJob).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      payload: expect.objectContaining({ summary: expect.objectContaining({ representativeTags: [] }) }),
+      payload: expect.objectContaining({ summary: expect.objectContaining({
+        eventType: 'OTHER',
+        unresolvedQuestions: [],
+        representativeTags: [],
+      }) }),
+    }))
+  })
+
+  it('keeps a valid summary when an entity type is outside the preferred enum', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
+    const { client, keyring, agent } = dependencies()
+    agent.summarizeTranscription.mockResolvedValueOnce({ content: JSON.stringify({
+      eventType: 'WORK',
+      title: '客户交付准备',
+      overview: '团队正在准备客户交付。',
+      keyPoints: ['确认交付材料'],
+      decisions: [],
+      actionItems: [],
+      unresolvedQuestions: [],
+      topics: ['客户交付'],
+      representativeTags: [
+        { kind: 'entity', label: '客户团队', entityType: 'company', confidence: 0.8, evidence: '客户团队' },
+      ],
+    }) })
+    const coordinator = new TranscriptionProcessingCoordinator(join(directory, 'state.json'), client as unknown as SaasClient, keyring as unknown as AccountKeyringService, agent as unknown as AgentGatewayBridge)
+
+    await processOne(coordinator)
+
+    expect(client.completeProcessingJob).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      payload: expect.objectContaining({
+        summary: expect.objectContaining({
+          representativeTags: [expect.objectContaining({ entityType: 'other' })],
+        }),
+      }),
+    }))
+  })
+
+  it('retries a medium transcript when the Agent returns an under-detailed summary', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
+    const { client, keyring, agent } = dependencies()
+    const envelope = sourceEnvelope()
+    envelope.payload = {
+      ...(envelope.payload as Record<string, unknown>),
+      transcriptLines: [{ speaker: '张三', startOffsetMillis: 0, text: '这是一段包含多个议题、讨论过程、理由、限制条件和后续安排的有效转写。'.repeat(15) }],
+    }
+    client.getPrivateRecord.mockResolvedValueOnce(envelope)
+    agent.summarizeTranscription.mockResolvedValueOnce({ content: JSON.stringify({
+      eventType: 'MEETING',
+      title: '过于简略的会议总结',
+      overview: '讨论了多个议题。',
+      keyPoints: ['进行了讨论'],
+      decisions: [],
+      actionItems: [],
+      unresolvedQuestions: [],
+      topics: ['测试议题'],
+      representativeTags: [],
+    }) })
+    const coordinator = new TranscriptionProcessingCoordinator(join(directory, 'state.json'), client as unknown as SaasClient, keyring as unknown as AccountKeyringService, agent as unknown as AgentGatewayBridge)
+
+    await expect(processOne(coordinator)).rejects.toThrow('incomplete_agent_summary')
+
+    expect(client.completeProcessingJob).not.toHaveBeenCalled()
+    expect(client.failProcessingJob).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      errorCode: 'incomplete_agent_summary',
+      errorClass: 'retryable',
     }))
   })
 

@@ -20,12 +20,12 @@ export function createAgentRuntime(config: GatewayConfig, mcpHost: DocumentMcpHo
 
 export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntime {
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  if (!config.pi) throw new Error("Pi runtime configuration is missing");
-  const { memory: _memory, ...pi } = config.pi;
+  if (!config.backgroundPi) throw new Error("Background Pi runtime configuration is missing");
+  const { memory: _memory, ...pi } = config.backgroundPi;
   return new PiAgentRuntime({
     ...pi,
-    sessionsDir: join(config.pi.sessionsDir, "background"),
-    workingDirectory: join(config.pi.workingDirectory, "background"),
-    agentDirectory: join(config.pi.agentDirectory, "background"),
+    sessionsDir: join(config.backgroundPi.sessionsDir, "background"),
+    workingDirectory: join(config.backgroundPi.workingDirectory, "background"),
+    agentDirectory: join(config.backgroundPi.agentDirectory, "background"),
   });
 }

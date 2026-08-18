@@ -360,8 +360,8 @@ export function SettingsPage() {
               <div className="cloud-keyring-heading">
                 <span><ShieldCheck aria-hidden="true" /></span>
                 <div>
-                  <strong>云端明文同步</strong>
-                  <small>音频存储在 OSS，转写和总结存储在 SaaS 数据库</small>
+                  <strong>云端同步</strong>
+                  <small>在已登录设备间同步录音、转写和总结</small>
                 </div>
               </div>
               <button

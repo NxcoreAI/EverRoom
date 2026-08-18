@@ -42,7 +42,16 @@ export interface RealityMarker {
   createdAt: string;
 }
 
-export type RealityEventType = "MEETING" | "MEAL" | "WORK" | "REST" | "EXERCISE" | "OTHER";
+export type RealityEventType =
+  | "MEETING"
+  | "WORK"
+  | "MEAL"
+  | "SOCIAL"
+  | "LEARNING"
+  | "CHITCHAT"
+  | "REST"
+  | "EXERCISE"
+  | "OTHER";
 
 export type RealityTagKind = "entity" | "fact";
 export type RealityEntityType = "person" | "organization" | "project" | "product" | "place" | "other";
