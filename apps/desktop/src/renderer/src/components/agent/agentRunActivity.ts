@@ -381,7 +381,7 @@ export function reduceAgentRunActivity(
     }
   }
 
-  const pendingAnswer = completed ? '' : pendingText.trim()
+  const pendingAnswer = completed ? '' : (pendingText || completedContent || savedAnswer).trim()
   const finalAnswer = completed
     ? documentSummaryFallback((pendingText || completedContent || savedAnswer).trim(), tools)
     : ''
