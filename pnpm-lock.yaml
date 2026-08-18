@@ -44,8 +44,8 @@ importers:
         specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#91c967a&path:MemoryKnowledge
         version: git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#91c967a8aee65346bbc89d64681a14cf2b085f8e&path:MemoryKnowledge(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.219.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@types/better-sqlite3@9.6.0)(graphology-types@0.24.8)(supports-color@8.1.1)
       '@tencentdb-agent-memory/memory-tencentdb-v2':
-        specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#1d69222&path:MemoryCore
-        version: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/1d6922225d1ef855371b87ad2c97f1e6dc27ac2d#path:MemoryCore(socks@2.8.9)(supports-color@8.1.1)
+        specifier: https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#0813db9&path:MemoryCore
+        version: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/0813db9bcb98b0fd2a8d4e80d53bc18ed3193989#path:MemoryCore(socks@2.8.9)(supports-color@8.1.1)
       '@tiptap/extension-document':
         specifier: ^3.30.1
         version: 3.30.1(@tiptap/core@3.30.1(@tiptap/pm@3.30.1))
@@ -2902,8 +2902,8 @@ packages:
     resolution: {integrity: sha512-f4a8fHxEB1V+gN7b04ttygPZX3GX5r2rDluJW47w5IBqbbEZMRdxx8Eo+owsaaukbi1uhHIuiE9qbclUbR6GFg==}
     engines: {node: '>=18.0.0'}
 
-  '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/1d6922225d1ef855371b87ad2c97f1e6dc27ac2d#path:MemoryCore':
-    resolution: {gitHosted: true, integrity: sha512-uqL10PfA5yNphqlCzDTpd/X+rqhA1fnY0+lo9t2qTtfEy8Ik+kwvPBRJcy64yAJMMVweEIJ/PkZNJse9YqkFNA==, path: MemoryCore, tarball: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/1d6922225d1ef855371b87ad2c97f1e6dc27ac2d}
+  '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/0813db9bcb98b0fd2a8d4e80d53bc18ed3193989#path:MemoryCore':
+    resolution: {gitHosted: true, integrity: sha512-7BMVJ0fGKRLEmPFkCwEPC07whx0sIGvJEFu6pKkmIhS8oORZs3QlHGe+5+TbhdvrKHRsnKMhkqZJ84aq1BhdGQ==, path: MemoryCore, tarball: https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/0813db9bcb98b0fd2a8d4e80d53bc18ed3193989}
     version: 2.0.0-beta.1-everroom.8
     engines: {node: '>=22.16.0'}
     hasBin: true
@@ -10163,7 +10163,7 @@ snapshots:
     dependencies:
       undici: 6.28.0
 
-  '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/1d6922225d1ef855371b87ad2c97f1e6dc27ac2d#path:MemoryCore(socks@2.8.9)(supports-color@8.1.1)':
+  '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/0813db9bcb98b0fd2a8d4e80d53bc18ed3193989#path:MemoryCore(socks@2.8.9)(supports-color@8.1.1)':
     dependencies:
       '@ai-sdk/openai': 3.0.96(zod@4.4.3)
       '@node-rs/jieba': 2.0.2

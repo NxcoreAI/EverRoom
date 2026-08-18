@@ -160,7 +160,11 @@ export class MemoryCoreSupervisor {
     this.lastError = null
   }
 
-  /** 把桌面的 NXCORE_AI_* 映射为 MemoryCore 提炼管道使用的 TDAI_LLM_*。 */
+  /**
+   * 把桌面的 NXCORE_AI_* 映射为 MemoryCore 提炼管道使用的 TDAI_LLM_*。
+   * embedding 不在此映射:TDAI_EMBEDDING_* 由 spawn 的 ...process.env 原样透传
+   * （fork 侧 env > tdai-gateway.yaml > 默认），在根目录 .env 配即可生效。
+   */
   private llmEnvironment(): Record<string, string> {
     const environment: Record<string, string> = {}
     const baseUrl = process.env.NXCORE_AI_BASE_URL?.trim()
