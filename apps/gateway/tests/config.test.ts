@@ -165,4 +165,61 @@ describe("loadConfig", () => {
     expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"https://nango.example.com"})).toThrow("requires both");
     expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"http://nango.example.com",NXCORE_NANGO_SECRET:"secret"})).toThrow("must use HTTPS");
   });
+
+  it("falls back to NXCORE_AI_* for the knowledge arbitration LLM", () => {
+    // 只配 NXCORE_AI_*（未配任何 NXCORE_KNOWLEDGE_LLM_*）→ ⑤ 仲裁可用
+    const fromAi = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_KNOWLEDGE_ENABLED: "true",
+      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
+      NXCORE_AI_BASE_URL: "https://api.deepseek.com",
+      NXCORE_AI_API_KEY: "test-key",
+      NXCORE_AI_MODEL: "deepseek-chat",
+    });
+    expect(fromAi.knowledge?.llm).toEqual({
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "test-key",
+      model: "deepseek-chat",
+    });
+
+    // 部分独立配置（仅 model）→ 其余项回退 NXCORE_AI_*
+    const merged = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_KNOWLEDGE_ENABLED: "true",
+      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
+      NXCORE_KNOWLEDGE_LLM_MODEL: "qwen-plus",
+      NXCORE_AI_BASE_URL: "https://api.deepseek.com",
+      NXCORE_AI_API_KEY: "test-key",
+    });
+    expect(merged.knowledge?.llm).toEqual({
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "test-key",
+      model: "qwen-plus",
+    });
+
+    // 完全独立配置（不依赖 NXCORE_AI_*）→ ⑤ 也可用
+    const standalone = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_KNOWLEDGE_ENABLED: "true",
+      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
+      NXCORE_KNOWLEDGE_LLM_BASE_URL: "https://llm.example.test/v1",
+      NXCORE_KNOWLEDGE_LLM_API_KEY: "test-key",
+      NXCORE_KNOWLEDGE_LLM_MODEL: "qwen-plus",
+    });
+    expect(standalone.knowledge?.llm).toEqual({
+      baseUrl: "https://llm.example.test/v1",
+      apiKey: "test-key",
+      model: "qwen-plus",
+    });
+
+    // 缺 model（两边都没有）→ ⑤ 不可用，但 ④ 仍可借 base/key 开启
+    const incomplete = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_KNOWLEDGE_ENABLED: "true",
+      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
+      NXCORE_AI_BASE_URL: "https://api.deepseek.com",
+      NXCORE_AI_API_KEY: "test-key",
+    });
+    expect(incomplete.knowledge?.llm).toBeNull();
+    expect(incomplete.knowledge?.embeddingLlm).toMatchObject({
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "test-key",
+    });
+  });
 });

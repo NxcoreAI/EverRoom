@@ -191,7 +191,17 @@ export interface ContextRoomOfficeResource extends ContextRoomResourceBase {
   };
 }
 
-export type ContextRoomResource = ContextRoomCloudDocResource | ContextRoomOfficeResource;
+/** Room wiki 页面（room-wiki 方案 M3c）：由 WikiPane 构造，编辑栏只读展示。 */
+export interface ContextRoomWikiPageResource extends ContextRoomResourceBase {
+  kind: 'wiki-page';
+  /** KS 页面路径（readWikiPage 的 ref）。 */
+  wikiPath: string;
+}
+
+export type ContextRoomResource =
+  | ContextRoomCloudDocResource
+  | ContextRoomOfficeResource
+  | ContextRoomWikiPageResource;
 
 export interface ContextRoomRecord {
   id: string;
@@ -203,6 +213,8 @@ export interface ContextRoomRecord {
   starred: boolean;
   lastViewed: string;
   roomCode: string;
+  /** gateway 注册表来源（room-wiki 方案）：auto = 路由层自动创建（打开即认领翻转为 user）。 */
+  origin?: 'user' | 'auto';
   brief: ContextRoomBrief;
   stats: ContextRoomStats;
   riskCount: number;

@@ -8810,3 +8810,857 @@
 .context-room-dashboard-empty {
   min-height: 112px;
 }
+
+/* ── Room×Wiki M3：知识库面板 / 待归类队列 / 自动创建角标 ── */
+
+.context-room-wiki-pane {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.context-room-wiki-pane > header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 4px 12px;
+}
+
+.context-room-wiki-pane > header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cr-text);
+}
+
+.context-room-wiki-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-wiki-upload {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-wiki-upload:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-wiki-upload:disabled {
+  color: var(--cr-muted);
+  cursor: not-allowed;
+}
+
+.context-room-wiki-upload svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-wiki-refresh {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-tertiary);
+}
+
+.context-room-wiki-refresh:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-wiki-refresh svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-wiki-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0 4px 12px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.context-room-wiki-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  text-align: left;
+}
+
+.context-room-wiki-item:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-wiki-item-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--cr-icon-data, var(--cr-blue-soft));
+  color: var(--cr-text);
+}
+
+.context-room-wiki-item-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-wiki-item-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-wiki-item-body strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cr-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-wiki-item-body span {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--cr-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-wiki-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+}
+
+.context-room-wiki-back:hover {
+  color: var(--cr-text);
+}
+
+.context-room-wiki-back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-wiki-reader {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px 16px 2px;
+}
+
+.context-room-wiki-markdown {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--cr-text);
+}
+
+.context-room-wiki-markdown h3,
+.context-room-wiki-markdown h4,
+.context-room-wiki-markdown h5 {
+  margin: 18px 0 8px;
+  font-weight: 600;
+}
+
+.context-room-wiki-markdown h3 {
+  font-size: 16px;
+}
+
+.context-room-wiki-markdown h4 {
+  font-size: 14px;
+}
+
+.context-room-wiki-markdown h5 {
+  font-size: 13px;
+}
+
+.context-room-wiki-markdown p {
+  margin: 0 0 10px;
+}
+
+.context-room-wiki-markdown li {
+  margin: 0 0 6px 18px;
+  list-style: disc;
+}
+
+/* wiki 目录树（M3c：页面按 path 分层） */
+.context-room-wiki-tree-wrap {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 0 4px 12px 0;
+  overflow-y: auto;
+}
+
+.context-room-wiki-tree,
+.context-room-wiki-tree-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.context-room-wiki-tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-room-wiki-tree-node {
+  display: flex;
+  width: 100%;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cr-text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.context-room-wiki-tree-node:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-wiki-tree-node[data-selected='true'] {
+  background: var(--cr-blue-soft, #eef3ff);
+  font-weight: 600;
+}
+
+.context-room-wiki-tree-node[data-directory='true'] {
+  color: var(--cr-muted);
+  font-weight: 500;
+}
+
+.context-room-wiki-tree-node svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.context-room-wiki-tree-caret {
+  width: 13px !important;
+  height: 13px !important;
+  color: var(--cr-tertiary);
+}
+
+.context-room-wiki-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 目录/图谱视图切换 */
+.context-room-wiki-toggle {
+  display: inline-flex;
+  height: 28px;
+  align-items: stretch;
+  padding: 2px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+  gap: 2px;
+}
+
+.context-room-wiki-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-wiki-toggle button:hover {
+  color: var(--cr-text);
+}
+
+.context-room-wiki-toggle button.is-active {
+  background: var(--cr-blue-soft, #eef3ff);
+  color: var(--cr-text);
+  font-weight: 600;
+}
+
+.context-room-wiki-toggle button svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 图谱视图 */
+.context-room-wiki-graph-wrap {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 0 12px;
+}
+
+.context-room-wiki-graph-wrap .context-room-g6-graph-shell {
+  min-height: 220px;
+  flex: 1;
+}
+
+.context-room-wiki-graph-hint {
+  margin: 0;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 编辑栏 wiki 页阅读器 */
+.context-room-wiki-reader-pane {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.context-room-wiki-reader-pane > header {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px 12px;
+  border-bottom: 1px solid var(--cr-border);
+  margin-bottom: 12px;
+}
+
+.context-room-wiki-reader-pane > header strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cr-text);
+}
+
+.context-room-wiki-reader-pane > header span {
+  color: var(--cr-tertiary);
+  font-size: 12px;
+}
+
+.context-room-wiki-reader-body {
+  min-height: 0;
+  flex: 1;
+  padding: 0 16px 24px 4px;
+  overflow-y: auto;
+}
+
+.context-room-home-card-origin {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 999px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+
+.context-room-knowledge-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.context-room-knowledge-panel .context-room-my-title {
+  margin-bottom: 0;
+}
+
+.context-room-knowledge-empty {
+  display: grid;
+  min-height: 120px;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 20px;
+  border: 1px dashed var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  text-align: center;
+}
+
+.context-room-knowledge-empty svg {
+  width: 20px;
+  height: 20px;
+}
+
+.context-room-knowledge-empty p {
+  margin: 0;
+  max-width: 420px;
+  font-size: 12px;
+}
+
+.context-room-knowledge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.context-room-knowledge-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface);
+}
+
+.context-room-knowledge-card > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-room-knowledge-card > header strong {
+  flex: 1;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cr-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-tag {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-text);
+  font-size: 11px;
+}
+
+.context-room-knowledge-reason {
+  margin: 0;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+}
+
+.context-room-knowledge-summary {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.context-room-knowledge-group {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cr-tertiary);
+}
+
+.context-room-knowledge-expand {
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.context-room-knowledge-expand svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--cr-muted);
+  transition: transform 0.15s ease;
+}
+
+.context-room-knowledge-expand[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.context-room-knowledge-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--cr-muted);
+}
+
+.context-room-knowledge-progress-bar {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-knowledge-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--cr-blue);
+  transition: width 0.3s ease;
+}
+
+.context-room-knowledge-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-knowledge-links {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.context-room-knowledge-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.context-room-knowledge-link-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cr-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-link em {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-merge,
+.context-room-knowledge-attach {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-room-knowledge-merge svg,
+.context-room-knowledge-attach svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--cr-muted);
+}
+
+.context-room-knowledge-select {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-knowledge-newentity {
+  display: flex;
+  gap: 8px;
+}
+
+.context-room-knowledge-newentity input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-knowledge-newentity input::placeholder {
+  color: var(--cr-muted);
+}
+
+.context-room-knowledge-card > footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-room-knowledge-confirm {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--cr-blue);
+  color: #fff;
+  font-size: 12px;
+}
+
+.context-room-knowledge-confirm:hover:not(:disabled) {
+  background: var(--cr-blue-hover);
+}
+
+.context-room-knowledge-confirm:disabled {
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  cursor: not-allowed;
+}
+
+.context-room-knowledge-create {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-knowledge-create:hover:not(:disabled) {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-knowledge-create:disabled {
+  color: var(--cr-muted);
+  cursor: not-allowed;
+}
+
+.context-room-knowledge-create svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-knowledge-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-knowledge-recent h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cr-tertiary);
+}
+
+.context-room-knowledge-recent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.context-room-knowledge-recent-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cr-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-recent-room {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--cr-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-knowledge-revert {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+}
+
+.context-room-knowledge-revert:hover:not(:disabled) {
+  color: var(--cr-danger);
+}
+
+.context-room-knowledge-revert:disabled {
+  color: var(--cr-muted);
+  cursor: not-allowed;
+}
+
+.context-room-knowledge-revert svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ── 来源文件（WikiPane 底部分区：uploaded_files ⨝ 归属决策） ── */
+
+.context-room-wiki-files {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  margin-top: 8px;
+  padding-top: 10px;
+  overflow-y: auto;
+  border-top: 1px solid var(--cr-border);
+}
+
+.context-room-wiki-files h3 {
+  margin: 0;
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cr-muted);
+}
+
+.context-room-wiki-files ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0 4px 6px 0;
+  list-style: none;
+}
+
+.context-room-wiki-files li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-file-item {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 8px;
+  background: var(--cr-surface);
+  text-align: left;
+}
+
+.context-room-file-item:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-file-reveal {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-tertiary);
+}
+
+.context-room-file-reveal:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-file-reveal svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 阅读态顶栏的"显示原件"（文件预览时出现） */
+.context-room-wiki-reveal {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+}
+
+.context-room-wiki-reveal:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-wiki-reveal svg {
+  width: 14px;
+  height: 14px;
+}

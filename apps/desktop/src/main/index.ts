@@ -21,13 +21,19 @@ import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
+import type { KnowledgeAttachInput } from '../shared/knowledge'
+import type { IngestPipelines } from '../shared/ingest'
 import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
   MemoryDocumentRewriteInput,
 } from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
+import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
+import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
+import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
@@ -232,7 +238,49 @@ const MEMORY_CHANNELS = {
   listConversations: 'memory:list-conversations',
   searchConversations: 'memory:search-conversations',
   deleteConversations: 'memory:delete-conversations',
+  importMarkdown: 'memory:import-markdown',
+  pickMarkdownFiles: 'memory:pick-markdown-files',
+  listDocuments: 'memory:documents:list',
+  getDocument: 'memory:documents:get',
+  deleteDocument: 'memory:documents:delete',
+  atomicProvenance: 'memory:atomic-provenance',
   captureDocumentRewrite: 'memory:capture-document-rewrite',
+} as const
+
+const KNOWLEDGE_CHANNELS = {
+  listRooms: 'knowledge:rooms:list',
+  upsertRoom: 'knowledge:rooms:upsert',
+  deleteRoom: 'knowledge:rooms:delete',
+  listWikiPages: 'knowledge:wiki:pages',
+  readWikiPage: 'knowledge:wiki:page-read',
+  listWikis: 'knowledge:wikis:list',
+  getWikiGraph: 'knowledge:wiki:graph',
+  listEntities: 'knowledge:entities:list',
+  getEntity: 'knowledge:entities:get',
+  promoteEntity: 'knowledge:entities:promote',
+  mergeEntity: 'knowledge:entities:merge',
+  listUnmatched: 'knowledge:unmatched:list',
+  attachDoc: 'knowledge:docs:attach',
+  listRecentDecisions: 'knowledge:decisions:list',
+  revertDecision: 'knowledge:route:revert',
+  pickAndUploadFiles: 'knowledge:files:pick-and-upload',
+  listRoomFiles: 'knowledge:files:list',
+  readFileMarkdown: 'knowledge:files:markdown',
+  revealFile: 'knowledge:files:reveal',
+} as const
+
+const FILES_CHANNELS = {
+  list: 'files:list',
+  get: 'files:get',
+  readMarkdown: 'files:read-markdown',
+  rename: 'files:rename',
+  delete: 'files:delete',
+  reveal: 'files:reveal',
+  pickAndImport: 'files:pick-and-import',
+} as const
+
+const INGEST_CHANNELS = {
+  listEvents: 'ingest:events:list',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -288,6 +336,9 @@ function installIpcRouters(): void {
     ACCOUNT_CHANNELS,
     TRANSCRIPTION_CHANNELS,
     MEMORY_CHANNELS,
+    KNOWLEDGE_CHANNELS,
+    FILES_CHANNELS,
+    INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
   ]
   for (const group of channelGroups) {
@@ -310,6 +361,7 @@ let gatewaySupervisor: GatewaySupervisor | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let nangoSupervisor: NangoSupervisor | null = null
+let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
@@ -604,6 +656,54 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: Documen
   })
 }
 
+function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
+  handle(KNOWLEDGE_CHANNELS.listRooms, (_event, origin?: 'user' | 'auto') => bridge.listRooms(origin))
+  handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
+  handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
+  handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
+  handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
+  handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
+  handle(KNOWLEDGE_CHANNELS.getWikiGraph, (_event, roomId: string) => bridge.getWikiGraph(roomId))
+  handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived') =>
+    bridge.listEntities(status))
+  handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
+    bridge.mergeEntity(fromId, targetId))
+  handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())
+  handle(KNOWLEDGE_CHANNELS.attachDoc, (_event, sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
+    bridge.attachDoc(sourceKind, sourceId, input))
+  handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
+    bridge.listRecentDecisions(limit))
+  handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
+  handle(KNOWLEDGE_CHANNELS.pickAndUploadFiles, () => bridge.pickAndUploadFiles())
+  handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
+  handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
+  handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
+}
+
+function registerFilesHandlers(bridge: FilesGatewayBridge): void {
+  handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
+  handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
+  handle(FILES_CHANNELS.readMarkdown, (_event, fileId: string) => bridge.readMarkdown(fileId))
+  handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
+    bridge.rename(fileId, displayName))
+  handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
+  handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
+  handle(
+    FILES_CHANNELS.pickAndImport,
+    (_event, options?: { pipelines?: IngestPipelines }) => bridge.pickAndImport(options),
+  )
+}
+
+function registerIngestHandlers(bridge: IngestGatewayBridge): void {
+  handle(
+    INGEST_CHANNELS.listEvents,
+    (_event, query: { limit?: number; offset?: number; sourceKind?: string; sourceId?: string }) =>
+      bridge.listEvents(query),
+  )
+}
+
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
   handle(ASR_CHANNELS.requestMicrophoneAccess, async () => {
     if (process.platform !== 'darwin') return true
@@ -669,6 +769,19 @@ function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
     (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
       bridge.deleteConversations(target),
   )
+  handle(
+    MEMORY_CHANNELS.importMarkdown,
+    (_event, input: { title: string; markdown: string; filename?: string }) =>
+      bridge.importMarkdown(input),
+  )
+  handle(MEMORY_CHANNELS.pickMarkdownFiles, () => bridge.pickMarkdownFiles())
+  handle(
+    MEMORY_CHANNELS.listDocuments,
+    (_event, limit?: number, offset?: number) => bridge.listDocuments(limit, offset),
+  )
+  handle(MEMORY_CHANNELS.getDocument, (_event, id: string) => bridge.getDocument(id))
+  handle(MEMORY_CHANNELS.deleteDocument, (_event, id: string) => bridge.deleteDocument(id))
+  handle(MEMORY_CHANNELS.atomicProvenance, (_event, id: string) => bridge.atomicProvenance(id))
   handle(
     MEMORY_CHANNELS.captureDocumentRewrite,
     (_event, input: MemoryDocumentRewriteInput) => bridge.captureDocumentRewrite(input),
@@ -894,6 +1007,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed Nango failed to start; connectors stay disabled.', error)
       return null
     })
+    // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
+    knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
+    const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
+      console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
+      return null
+    })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
@@ -907,6 +1026,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_SECRET。
         ...((nango && process.env.NXCORE_NANGO_SECRET?.trim())
           ? { NXCORE_NANGO_URL: nango.baseUrl }
+          : {}),
+        ...(knowledge
+          ? {
+            NXCORE_KNOWLEDGE_ENABLED: 'true',
+            NXCORE_KNOWLEDGE_BASE_URL: knowledge.baseUrl,
+            NXCORE_KNOWLEDGE_SERVICE_ID: knowledge.serviceId,
+            NXCORE_KNOWLEDGE_TEAM_ID: knowledge.teamId,
+            // Room 级 wiki 模式（docs/room-wiki-plan.md）：wiki 由 gateway 按
+            // Room 懒创建并随会话解析，桌面端不再注入全局 wiki_id。
+            NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: 'true',
+          }
           : {}),
       },
     )
@@ -940,6 +1070,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge, documentAssets)
     registerDocumentPdfExportHandler()
+    registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
+    registerFilesHandlers(new FilesGatewayBridge(gatewaySupervisor))
+    registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')
@@ -1011,6 +1144,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     cursorCompletionSupervisor = null
     await memoryCoreSupervisor?.shutdown()
     memoryCoreSupervisor = null
+    await knowledgeServiceSupervisor?.shutdown()
+    knowledgeServiceSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
     app.quit()
     return
@@ -1030,6 +1165,7 @@ app.on('before-quit', (event) => {
   const cursorCompletion = cursorCompletionSupervisor
   const memoryCore = memoryCoreSupervisor
   const nango = nangoSupervisor
+  const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
   const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
@@ -1041,6 +1177,7 @@ app.on('before-quit', (event) => {
   cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
   nangoSupervisor = null
+  knowledgeServiceSupervisor = null
   agentGatewayBridge = null
   cursorCompletionAgentBridge = null
   documentGatewayBridge = null
@@ -1061,6 +1198,7 @@ app.on('before-quit', (event) => {
     cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
     nango?.shutdown(),
+    knowledgeService?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

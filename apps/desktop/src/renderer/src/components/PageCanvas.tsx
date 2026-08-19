@@ -5,11 +5,13 @@ import type { ContextRoomWorkspaceTab } from './context-room/contextRoomTabs'
 import { ContextRoomHomeSkeleton } from './context-room/ContextRoomHomeSkeleton'
 import { DiaryPageSkeleton } from './diary/DiaryPageSkeleton'
 import { DocsPage } from './pages/DocsPage'
+import { FilesPage } from './pages/FilesPage'
 import { HomePage } from './pages/HomePage'
 import { MemoryPage } from './pages/MemoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SourcesPage } from './pages/SourcesPage'
 import { TasksPage } from './pages/TasksPage'
+import { WikiPage } from './pages/WikiPage'
 
 const ContextRoomPage = lazy(() =>
   import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
@@ -79,7 +81,9 @@ export function PageCanvas({
   }
   if (page === 'docs') content = <DocsPage />
   if (page === 'sources') content = <SourcesPage />
+  if (page === 'files') content = <FilesPage />
   if (page === 'memory') content = <MemoryPage />
+  if (page === 'wiki') content = <WikiPage />
   if (page === 'tasks') content = <TasksPage />
   if (page === 'diary') {
     content = (

@@ -63,6 +63,20 @@ import type {
   WikiDocumentPreview,
   WikiDocumentSummary,
 } from '@nxcore/connector-contract'
+import type {
+  KnowledgeAttachInput,
+  KnowledgeDecisionDto,
+  KnowledgeEntityDetailDto,
+  KnowledgeEntityDto,
+  KnowledgeEntityStatus,
+  KnowledgeFileDto,
+  KnowledgeFileUploadResult,
+  KnowledgeRoomDto,
+  KnowledgeUnmatchedItemDto,
+  KnowledgeWikiDto,
+  KnowledgeWikiGraphDto,
+  KnowledgeWikiPageDto,
+} from './knowledge'
 
 export interface EvidenceBlock {
   id: string
@@ -438,6 +452,17 @@ export interface NxcoreDesktopApi {
     listConversations(options: MemoryConversationListOptions): Promise<MemoryConversationPageDto>
     searchConversations(query: string, limit?: number, sessionId?: string): Promise<{ messages: MemoryConversationMessageDto[] }>
     deleteConversations(target: { sessionIds?: string[]; messageIds?: string[] }): Promise<{ deletedCount: number }>
+    /** md 文档导入（gateway 资产化 + MemoryCore 登记，title 必填）。 */
+    importMarkdown(input: { title: string; markdown: string; filename?: string }): Promise<MemoryImportMarkdownResultDto>
+    /** 系统文件选择框（仅 .md，≤2MB）→ 文本（取消返回空数组；失败项带 error）。 */
+    pickMarkdownFiles(): Promise<Array<{ filename: string; markdown: string } | { filename: string; error: string }>>
+    /** 导入文档登记清单（每身份键最新版本）。 */
+    listDocuments(limit?: number, offset?: number): Promise<{ documents: MemoryDocumentDto[]; total: number }>
+    /** 文档详情：登记行 + 分块（含正文与行区间）+ 派生 L1。 */
+    getDocument(id: string): Promise<MemoryDocumentDetailDto>
+    deleteDocument(id: string): Promise<{ documentId: string; deleted: boolean }>
+    /** 原子记忆一站式溯源（文档锚点/会话原话）。 */
+    atomicProvenance(id: string): Promise<MemoryAtomicProvenanceDto>
     captureDocumentRewrite(input: MemoryDocumentRewriteInput): Promise<{ captured: boolean }>
   }
   reality: {
@@ -528,20 +553,88 @@ export interface NxcoreDesktopApi {
     setPaused(id: string, paused: boolean): Promise<DataSourceSummary>
     disconnect(id: string, deleteLocalData: boolean): Promise<void>
   }
+  knowledge: {
+    listRooms(origin?: 'user' | 'auto'): Promise<{ items: KnowledgeRoomDto[] }>
+    upsertRoom(input: { id: string; title: string; kind?: string }): Promise<KnowledgeRoomDto>
+    deleteRoom(roomId: string): Promise<void>
+    listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
+    readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }>
+    /** 全部 Room 的 wiki 映射（Wiki 应用清单）。 */
+    listWikis(): Promise<{ items: KnowledgeWikiDto[] }>
+    /** Room wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */
+    getWikiGraph(roomId: string): Promise<KnowledgeWikiGraphDto>
+    /** Room 的上传文件清单（含路由状态徽标数据）。 */
+    listRoomFiles(roomId: string): Promise<{ items: KnowledgeFileDto[] }>
+    /** 文件解析产物 markdown（预览）。 */
+    readFileMarkdown(fileId: string): Promise<{ markdown: string }>
+    /** 在系统文件管理器中定位文件本体。 */
+    revealFile(fileId: string): Promise<void>
+    /** 候选实体列表（ready = 首页推荐池；挂载下拉用 weak）。 */
+    listEntities(status: KnowledgeEntityStatus): Promise<{ items: KnowledgeEntityDto[] }>
+    getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
+    /** 用户确认创建（推荐态实体走完整晋升流程）。 */
+    promoteEntity(entityId: string): Promise<{ queued: boolean }>
+    /** 手动合并：from 并入 target。 */
+    mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
+    listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>
+    /** 未识别资料手动挂实体（role=manual）。 */
+    attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<{ entityId: string }>
+    listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
+    revertDecision(decisionId: string): Promise<{ ok: boolean }>
+    /** 系统文件选择框（仅 .md）→ 上传 gateway 走自动归类路由。 */
+    pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]>
+  }
+  files: {
+    list(limit?: number, offset?: number): Promise<{ items: FileDto[]; total: number }>
+    get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
+    /** 解析产物 markdown（未进过链路的裸上传 404）。 */
+    readMarkdown(fileId: string): Promise<{ markdown: string }>
+    rename(fileId: string, displayName: string): Promise<FileDto>
+    /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
+    delete(fileId: string): Promise<{
+      deleted: boolean
+      knowledgeCleanup: boolean
+      deletedMemoryDocuments: string[]
+      blobCollected: boolean
+    }>
+    /** 在系统文件管理器中定位文件本体。 */
+    reveal(fileId: string): Promise<void>
+    /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。 */
+    pickAndImport(options?: { pipelines?: IngestPipelines }): Promise<FileImportOutcome[]>
+  }
+  ingest: {
+    /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
+    listEvents(query: {
+      limit?: number
+      offset?: number
+      sourceKind?: string
+      sourceId?: string
+    }): Promise<{ items: IngestEventDto[]; total: number }>
+  }
 }
 import type {
   MemoryAtomicItemDto,
   MemoryAtomicListOptions,
   MemoryAtomicPageDto,
+  MemoryAtomicProvenanceDto,
   MemoryConversationListOptions,
   MemoryConversationMessageDto,
   MemoryConversationPageDto,
   MemoryCoreDto,
+  MemoryDocumentDetailDto,
+  MemoryDocumentDto,
+  MemoryImportMarkdownResultDto,
   MemoryDocumentRewriteInput,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from './memory'
+import type {
+  FileDto,
+  FileImportOutcome,
+  IngestEventDto,
+  IngestPipelines,
+} from './ingest'
 export type {
   CreateRealityEventInput,
   FinishRealityCaptureInput,

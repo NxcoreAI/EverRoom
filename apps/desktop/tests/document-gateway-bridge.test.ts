@@ -30,6 +30,29 @@ afterEach(async () => {
 })
 
 describe('DocumentGatewayBridge CRUD', () => {
+  it('preserves gateway error codes for renderer recovery', async () => {
+    const server = createServer((_request, response) => {
+      json(response, 409, {
+        error: 'DOCUMENT_CONFLICT',
+        message: 'Document version has changed',
+      })
+    })
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const bridge = new DocumentGatewayBridge({
+      getConnection: () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as GatewaySupervisor)
+
+    await expect(bridge.get('doc-conflict'))
+      .rejects.toThrow('DOCUMENT_CONFLICT: Document version has changed')
+  })
+
   it('sends JSON headers only for requests with bodies and supports a full CRUD cycle', async () => {
     const requests: Array<{ method: string; path: string; contentType?: string; body: string }> = []
     let version = 1

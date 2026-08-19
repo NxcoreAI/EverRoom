@@ -2,6 +2,7 @@ import '@sentry/electron/preload'
 
 import { contextBridge, ipcRenderer } from 'electron'
 
+import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
   SaveContextRoomSnapshotInput,
 } from '@nxcore/agent-contract'
@@ -10,6 +11,7 @@ import type {
   MemoryConversationListOptions,
   MemoryDocumentRewriteInput,
 } from '../shared/memory'
+import type { IngestPipelines } from '../shared/ingest'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
@@ -174,6 +176,14 @@ const api: NxcoreDesktopApi = {
       invoke('memory:search-conversations', query, limit, sessionId),
     deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
       invoke('memory:delete-conversations', target),
+    importMarkdown: (input: { title: string; markdown: string; filename?: string }) =>
+      invoke('memory:import-markdown', input),
+    pickMarkdownFiles: () => invoke('memory:pick-markdown-files'),
+    listDocuments: (limit?: number, offset?: number) =>
+      invoke('memory:documents:list', limit, offset),
+    getDocument: (id: string) => invoke('memory:documents:get', id),
+    deleteDocument: (id: string) => invoke('memory:documents:delete', id),
+    atomicProvenance: (id: string) => invoke('memory:atomic-provenance', id),
     captureDocumentRewrite: (input: MemoryDocumentRewriteInput) =>
       invoke('memory:capture-document-rewrite', input),
   },
@@ -241,11 +251,11 @@ const api: NxcoreDesktopApi = {
     restoreVersion: (documentId, version, baseVersion) =>
       invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),
-    listOperations: (filters) => invoke('documents:list-operations', filters),
-    startOperation: (input) => invoke('documents:start-operation', input),
-    getOperation: (operationId) => invoke('documents:get-operation', operationId),
+    listOperations: (filters) => invokeQuietly('documents:list-operations', filters),
+    startOperation: (input) => invokeQuietly('documents:start-operation', input),
+    getOperation: (operationId) => invokeQuietly('documents:get-operation', operationId),
     executeOperationCommand: (operationId, input) =>
-      invoke('documents:execute-operation-command', operationId, input),
+      invokeQuietly('documents:execute-operation-command', operationId, input),
     storeImage: (documentId, input) => invoke('documents:store-image', documentId, input),
     import: (input) => invoke('documents:import', input),
     save: (documentId, input) => invoke('documents:save', documentId, input),
@@ -293,6 +303,46 @@ const api: NxcoreDesktopApi = {
     setPaused: (id, paused) => invoke('sources:set-paused', id, paused),
     disconnect: (id, deleteLocalData) =>
       invoke('sources:disconnect', id, deleteLocalData),
+  },
+  knowledge: {
+    listRooms: (origin) => invoke('knowledge:rooms:list', origin),
+    upsertRoom: (input) => invoke('knowledge:rooms:upsert', input),
+    deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
+    listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
+    readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
+    listWikis: () => invoke('knowledge:wikis:list'),
+    getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),
+    listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
+    getEntity: (entityId: string) => invoke('knowledge:entities:get', entityId),
+    promoteEntity: (entityId: string) => invoke('knowledge:entities:promote', entityId),
+    mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
+    listUnmatched: () => invoke('knowledge:unmatched:list'),
+    attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
+      invoke('knowledge:docs:attach', sourceKind, sourceId, input),
+    listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
+    revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
+    pickAndUploadFiles: () => invoke('knowledge:files:pick-and-upload'),
+    listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
+    readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
+    revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
+  },
+  files: {
+    list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
+    get: (fileId: string) => invoke('files:get', fileId),
+    readMarkdown: (fileId: string) => invoke('files:read-markdown', fileId),
+    rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
+    delete: (fileId: string) => invoke('files:delete', fileId),
+    reveal: (fileId: string) => invoke('files:reveal', fileId),
+    pickAndImport: (options?: { pipelines?: IngestPipelines }) =>
+      invoke('files:pick-and-import', options),
+  },
+  ingest: {
+    listEvents: (query: {
+      limit?: number
+      offset?: number
+      sourceKind?: string
+      sourceId?: string
+    }) => invoke('ingest:events:list', query),
   },
 }
 

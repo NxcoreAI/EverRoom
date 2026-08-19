@@ -1,15 +1,25 @@
+import { dialog } from 'electron'
+import { readFile } from 'node:fs/promises'
+
 import type {
   MemoryAtomicListOptions,
   MemoryAtomicPageDto,
+  MemoryAtomicProvenanceDto,
   MemoryConversationListOptions,
   MemoryConversationPageDto,
   MemoryCoreDto,
+  MemoryDocumentDetailDto,
+  MemoryDocumentDto,
+  MemoryImportMarkdownResultDto,
   MemoryDocumentRewriteInput,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from '../../shared/memory'
 import type { GatewaySupervisor } from './gateway-supervisor'
+
+/** 与 MemoryCore / gateway 的导入上限一致（2MB）。 */
+const MAX_IMPORT_BYTES = 2 * 1024 * 1024
 
 /**
  * 记忆功能的 gateway 错误码。IPC 只能可靠传回 message 字符串，
@@ -100,6 +110,19 @@ export class MemoryGatewayBridge {
     return this.request('/v1/memory/conversation', { method: 'DELETE', body: JSON.stringify(target) })
   }
 
+  // ── md 文档一等来源（资产化 + /v3/document/* 代理） ──
+
+  importMarkdown(input: {
+    title: string
+    markdown: string
+    filename?: string
+  }): Promise<MemoryImportMarkdownResultDto> {
+    return this.request('/v1/memory/import/markdown', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
   captureDocumentRewrite(input: MemoryDocumentRewriteInput): Promise<{ captured: boolean }> {
     return this.request('/v1/memory/document-rewrite', {
       method: 'POST',
@@ -122,12 +145,58 @@ export class MemoryGatewayBridge {
     })
   }
 
+  listDocuments(limit = 50, offset = 0): Promise<{ documents: MemoryDocumentDto[]; total: number }> {
+    return this.request(`/v1/memory/documents?limit=${limit}&offset=${offset}`)
+  }
+
+  getDocument(id: string): Promise<MemoryDocumentDetailDto> {
+    return this.request(`/v1/memory/documents/${encodeURIComponent(id)}`)
+  }
+
+  deleteDocument(id: string): Promise<{ documentId: string; deleted: boolean }> {
+    return this.request(`/v1/memory/documents/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  }
+
+  atomicProvenance(id: string): Promise<MemoryAtomicProvenanceDto> {
+    return this.request(`/v1/memory/atomic/${encodeURIComponent(id)}/provenance`)
+  }
+
+  /**
+   * 主进程文件选择框（仅 .md）→ 读文本上行由渲染层走 importMarkdown。
+   * 超过导入上限的文件直接报错跳过（不截断，避免半篇入库）。
+   */
+  async pickMarkdownFiles(): Promise<Array<{ filename: string; markdown: string } | { filename: string; error: string }>> {
+    const picked = await dialog.showOpenDialog({
+      title: '选择要导入记忆的 Markdown 文件',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return []
+
+    const results: Array<{ filename: string; markdown: string } | { filename: string; error: string }> = []
+    for (const filePath of picked.filePaths) {
+      const filename = filePath.split(/[\\/]/).pop() ?? filePath
+      try {
+        const buffer = await readFile(filePath)
+        if (buffer.byteLength > MAX_IMPORT_BYTES) {
+          results.push({ filename, error: `文件超过 2MB 导入上限（${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB）` })
+          continue
+        }
+        results.push({ filename, markdown: buffer.toString('utf8') })
+      } catch (error) {
+        results.push({ filename, error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    return results
+  }
+
   private query(
     options: MemoryAtomicListOptions | MemoryConversationListOptions,
   ): string {
     const params = new URLSearchParams()
     if ('type' in options && options.type) params.set('type', options.type)
     if ('sessionId' in options && options.sessionId) params.set('sessionId', options.sessionId)
+    if ('sourceKind' in options && options.sourceKind) params.set('sourceKind', options.sourceKind)
     if (options.limit !== undefined) params.set('limit', String(options.limit))
     if (options.offset !== undefined) params.set('offset', String(options.offset))
     if (options.timeStart) params.set('timeStart', options.timeStart)

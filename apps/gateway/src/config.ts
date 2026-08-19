@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
+import type { KnowledgeRuntimeConfig, MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 
 const LogLevelSchema = Type.Union([
   Type.Literal("fatal"),
@@ -80,6 +80,24 @@ const RawConfigSchema = Type.Object(
     memoryUserId: Type.String({ minLength: 1 }),
     memoryRecallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
     memoryCharBudget: Type.Integer({ minimum: 200 }),
+    knowledgeEnabled: Type.Boolean(),
+    knowledgeBaseUrl: Type.String(),
+    knowledgeServiceId: Type.String({ minLength: 1 }),
+    knowledgeTeamId: Type.String({ minLength: 1 }),
+    knowledgeWikiId: Type.String(),
+    knowledgeRoomWikisEnabled: Type.Boolean(),
+    knowledgeIngestDebounceMs: Type.Integer({ minimum: 0 }),
+    knowledgeRouterEnabled: Type.Boolean(),
+    knowledgeEntityPromoteScore: Type.Number({ exclusiveMinimum: 0 }),
+    knowledgeEntityPromoteSources: Type.Integer({ minimum: 1 }),
+    knowledgeEntityMergeAutoDice: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+    knowledgeEntityMergeJudgeDice: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+    knowledgeLlmBaseUrl: Type.String(),
+    knowledgeLlmApiKey: Type.String(),
+    knowledgeLlmModel: Type.String(),
+    knowledgeEmbeddingModel: Type.String(),
+    knowledgeEmbeddingBaseUrl: Type.String(),
+    knowledgeEmbeddingApiKey: Type.String(),
   },
   { additionalProperties: false },
 );
@@ -119,6 +137,40 @@ export interface PiRuntimeConfig {
   workingDirectory: string;
   agentDirectory: string;
   memory?: MemoryRuntimeConfig;
+  knowledge?: KnowledgeRuntimeConfig;
+}
+
+/** gateway 侧 knowledge 模块配置（Room wiki 注册表 + 实体晋升制，docs/entity-room-plan.md §6）。 */
+export interface KnowledgeGatewayConfig {
+  baseUrl: string;
+  serviceId: string;
+  teamId: string;
+  /** Room 级 wiki 总开关；关闭时本模块不接管任何文档事件。 */
+  roomWikisEnabled: boolean;
+  /** 文档落定后的入队防抖窗口（毫秒）。 */
+  ingestDebounceMs: number;
+  /** 自动归类路由总开关（③′抽取→③″解析→④链接）；关闭时仅 ① 入口直连 ingest。 */
+  routerEnabled: boolean;
+  /** 晋升证据分阈值（primary +1.0 / mention +0.4 / manual +1.5 累积）。 */
+  entityPromoteScore: number;
+  /** 晋升最小资料数（防单份资料多角色刷分）。 */
+  entityPromoteSources: number;
+  /** 弱-弱确定性自动合并线（免 LLM 判定）。 */
+  mergeAutoDice: number;
+  /** LLM 同一性判定带下限（[judge, auto) 走判定）。 */
+  mergeJudgeDice: number;
+  /** 抽取/判定/登记用的 LLM；缺省回退 NXCORE_AI_*。 */
+  llm: KnowledgeLlmConfig | null;
+  /** 消歧 tie-break 的 embedding 端点（与抽取 LLM 同源配置）。 */
+  embeddingLlm: KnowledgeLlmConfig | null;
+  /** embedding 模型；空 = 关闭（消歧回退证据分高者）。 */
+  embeddingModel: string;
+}
+
+export interface KnowledgeLlmConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
 }
 
 export interface GatewayConfig {
@@ -133,6 +185,7 @@ export interface GatewayConfig {
   agentRuntime: AgentRuntimeMode;
   memory: MemoryRuntimeConfig | null;
   pi: PiRuntimeConfig | null;
+  knowledge: KnowledgeGatewayConfig | null;
   backgroundPi: PiRuntimeConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
@@ -182,12 +235,37 @@ function parsePositiveInteger(name: string, value: string): number {
   return Number(value);
 }
 
+/** 防抖窗口等 legitimately 允许 0（=立即执行）的整数配置用这个。 */
+function parseNonNegativeInteger(name: string, value: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Invalid ${name}: ${value}`);
+  }
+  return Number(value);
+}
+
 function parseTemperature(value: string): number {
   const temperature = Number(value);
   if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
     throw new Error(`Invalid NXCORE_AI_TEMPERATURE: ${value}`);
   }
   return temperature;
+}
+
+function parseFraction(name: string, value: string): number {
+  const fraction = Number(value);
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
+    throw new Error(`Invalid ${name}: expected a fraction in (0, 1]`);
+  }
+  return fraction;
+}
+
+/** 晋升证据分阈值等正实数配置用这个。 */
+function parsePositiveNumber(name: string, value: string): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    throw new Error(`Invalid ${name}: expected a positive number`);
+  }
+  return number;
 }
 
 function validateAiEndpoint(value: string): void {
@@ -332,6 +410,48 @@ export function loadConfig(
       "NXCORE_MEMORY_CHAR_BUDGET",
       env.NXCORE_MEMORY_CHAR_BUDGET ?? "2000",
     ),
+    knowledgeEnabled: env.NXCORE_KNOWLEDGE_ENABLED == null
+      ? false
+      : parseBoolean("NXCORE_KNOWLEDGE_ENABLED", env.NXCORE_KNOWLEDGE_ENABLED.trim()),
+    knowledgeBaseUrl: env.NXCORE_KNOWLEDGE_BASE_URL?.trim() ?? "http://127.0.0.1:8421",
+    knowledgeServiceId: env.NXCORE_KNOWLEDGE_SERVICE_ID?.trim() ?? "everroom",
+    knowledgeTeamId: env.NXCORE_KNOWLEDGE_TEAM_ID?.trim() ?? "everroom",
+    knowledgeWikiId: env.NXCORE_KNOWLEDGE_WIKI_ID?.trim() ?? "",
+    knowledgeRoomWikisEnabled: env.NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED == null
+      ? false
+      : parseBoolean(
+          "NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED",
+          env.NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED.trim(),
+        ),
+    knowledgeIngestDebounceMs: parseNonNegativeInteger(
+      "NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS",
+      env.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS ?? "600000",
+    ),
+    knowledgeRouterEnabled: env.NXCORE_KNOWLEDGE_ROUTER_ENABLED == null
+      ? false
+      : parseBoolean("NXCORE_KNOWLEDGE_ROUTER_ENABLED", env.NXCORE_KNOWLEDGE_ROUTER_ENABLED.trim()),
+    knowledgeEntityPromoteScore: parsePositiveNumber(
+      "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE",
+      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE ?? "2.0",
+    ),
+    knowledgeEntityPromoteSources: parsePositiveInteger(
+      "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES",
+      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES ?? "2",
+    ),
+    knowledgeEntityMergeAutoDice: parseFraction(
+      "NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE",
+      env.NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE ?? "0.75",
+    ),
+    knowledgeEntityMergeJudgeDice: parseFraction(
+      "NXCORE_KNOWLEDGE_ENTITY_MERGE_JUDGE_DICE",
+      env.NXCORE_KNOWLEDGE_ENTITY_MERGE_JUDGE_DICE ?? "0.6",
+    ),
+    knowledgeLlmBaseUrl: env.NXCORE_KNOWLEDGE_LLM_BASE_URL?.trim() ?? "",
+    knowledgeLlmApiKey: env.NXCORE_KNOWLEDGE_LLM_API_KEY?.trim() ?? "",
+    knowledgeLlmModel: env.NXCORE_KNOWLEDGE_LLM_MODEL?.trim() ?? "",
+    knowledgeEmbeddingModel: env.NXCORE_KNOWLEDGE_EMBEDDING_MODEL?.trim() ?? "",
+    knowledgeEmbeddingBaseUrl: env.NXCORE_KNOWLEDGE_EMBEDDING_BASE_URL?.trim() ?? "",
+    knowledgeEmbeddingApiKey: env.NXCORE_KNOWLEDGE_EMBEDDING_API_KEY?.trim() ?? "",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -389,6 +509,76 @@ export function loadConfig(
     validateMemoryEndpoint("NXCORE_MEMORY_BASE_URL", memory.baseUrl);
   }
 
+  const knowledge: KnowledgeRuntimeConfig | null = rawConfig.knowledgeEnabled
+    ? {
+        baseUrl: rawConfig.knowledgeBaseUrl,
+        serviceId: rawConfig.knowledgeServiceId,
+        teamId: rawConfig.knowledgeTeamId,
+        // Room 级 wiki 模式下 wiki 由会话按 roomId 解析，wikiId 仅作
+        // Room 未命中时的回退（全局 wiki 已随方案取消，仅保留旧配置兼容）。
+        ...(rawConfig.knowledgeWikiId ? { wikiId: rawConfig.knowledgeWikiId } : {}),
+        searchLimit: 5,
+      }
+    : null;
+  if (knowledge) {
+    validateMemoryEndpoint("NXCORE_KNOWLEDGE_BASE_URL", knowledge.baseUrl);
+    if (!knowledge.wikiId && !rawConfig.knowledgeRoomWikisEnabled) {
+      throw new Error(
+        "Knowledge service requires: NXCORE_KNOWLEDGE_WIKI_ID (or enable NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED)",
+      );
+    }
+  }
+
+  // ⑤ 的 LLM 独立配置优先，缺项回退 NXCORE_AI_*；base/key/model 三者齐全才算可用。
+  const knowledgeLlmBaseUrl = rawConfig.knowledgeLlmBaseUrl || rawConfig.aiBaseUrl;
+  const knowledgeLlmApiKey = rawConfig.knowledgeLlmApiKey || rawConfig.aiApiKey;
+  const knowledgeLlmModel = rawConfig.knowledgeLlmModel || rawConfig.aiModel;
+  // 消歧 embedding 可指向别家（如 LLM 用 GLM、embedding 用 DashScope）；
+  // 未独立配置时沿用抽取 LLM 的端点（历史行为）。
+  const knowledgeEmbeddingBaseUrl = rawConfig.knowledgeEmbeddingBaseUrl || knowledgeLlmBaseUrl;
+  const knowledgeEmbeddingApiKey = rawConfig.knowledgeEmbeddingApiKey || knowledgeLlmApiKey;
+  const knowledgeGateway: KnowledgeGatewayConfig | null = rawConfig.knowledgeEnabled
+    ? {
+        baseUrl: rawConfig.knowledgeBaseUrl,
+        serviceId: rawConfig.knowledgeServiceId,
+        teamId: rawConfig.knowledgeTeamId,
+        roomWikisEnabled: rawConfig.knowledgeRoomWikisEnabled,
+        ingestDebounceMs: rawConfig.knowledgeIngestDebounceMs,
+        routerEnabled: rawConfig.knowledgeRouterEnabled,
+        entityPromoteScore: rawConfig.knowledgeEntityPromoteScore,
+        entityPromoteSources: rawConfig.knowledgeEntityPromoteSources,
+        mergeAutoDice: rawConfig.knowledgeEntityMergeAutoDice,
+        mergeJudgeDice: rawConfig.knowledgeEntityMergeJudgeDice,
+        llm: knowledgeLlmBaseUrl && knowledgeLlmApiKey && knowledgeLlmModel
+          ? {
+              baseUrl: knowledgeLlmBaseUrl,
+              apiKey: knowledgeLlmApiKey,
+              model: knowledgeLlmModel,
+            }
+          : null,
+        // 消歧只需要 base/key（模型名单列）；缺省与抽取 LLM 同端点，但 embedding
+        // 模型常在不同家（如 LLM 用 GLM、embedding 用 DashScope），故留独立
+        // NXCORE_KNOWLEDGE_EMBEDDING_BASE_URL/API_KEY 覆盖位。
+        embeddingLlm: knowledgeEmbeddingBaseUrl && knowledgeEmbeddingApiKey
+          ? {
+              baseUrl: knowledgeEmbeddingBaseUrl,
+              apiKey: knowledgeEmbeddingApiKey,
+              model: knowledgeLlmModel,
+            }
+          : null,
+        embeddingModel: rawConfig.knowledgeEmbeddingModel,
+      }
+    : null;
+  if (knowledgeGateway?.routerEnabled) {
+    if (knowledgeGateway.mergeJudgeDice >= knowledgeGateway.mergeAutoDice) {
+      throw new Error(
+        "Invalid knowledge entity merge dice: MERGE_JUDGE_DICE must be lower than MERGE_AUTO_DICE",
+      );
+    }
+    // 抽取未配置 LLM 时 router 仍可运行（全部落未识别栏人工挂载）；
+    // 自动晋升依赖抽取产出的证据，没有 LLM 同样不会发生——不构成错误。
+  }
+
   const pi: PiRuntimeConfig | null = rawConfig.agentRuntime === "pi"
     ? {
         provider: rawConfig.aiProvider,
@@ -404,6 +594,7 @@ export function loadConfig(
         workingDirectory: join(dataDir, "agent", "workspace"),
         agentDirectory: join(dataDir, "agent", "pi-config"),
         ...(memory ? { memory } : {}),
+        ...(knowledge ? { knowledge } : {}),
       }
     : null;
 
@@ -466,5 +657,6 @@ export function loadConfig(
           maxTokens: rawConfig.aiBackgroundMaxTokens,
         }
       : null,
+    knowledge: knowledgeGateway,
   };
 }

@@ -378,10 +378,36 @@ describe("memory tools", () => {
     const [tool] = createMemoryTools(client, () => "sess-1");
     expect(tool!.name).toBe("memory_search");
     const result = await tool!.execute("call-1", { query: "用户在哪" }, undefined, undefined, {} as never);
-    expect(searchSpy).toHaveBeenCalledWith("用户在哪", 5);
+    expect(searchSpy).toHaveBeenCalledWith("用户在哪", 5, undefined);
     const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
     expect(text).toContain("用户在上海");
     expect(text).toContain("[2026-08-10]");
+  });
+
+  it("memory_search forwards time range and renders scene_name", async () => {
+    const client = new MemoryCoreClient(config);
+    const searchSpy = vi.spyOn(client, "searchAtomic").mockResolvedValue([
+      {
+        id: "a1",
+        type: "fact",
+        content: "镜像来自内部仓库",
+        scene_name: "EverRoom 部署手册",
+        background: "EverRoom 部署手册",
+        created_at: "",
+        updated_at: "2026-08-12T00:00:00Z",
+      },
+    ]);
+    const [tool] = createMemoryTools(client, () => "sess-1");
+    const result = await tool!.execute(
+      "call-scene",
+      { query: "镜像仓库", time_start: "2026-08-01T00:00:00Z" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(searchSpy).toHaveBeenCalledWith("镜像仓库", 5, { start: "2026-08-01T00:00:00Z", end: undefined });
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    expect(text).toContain("（场景：EverRoom 部署手册）");
   });
 
   it("conversation_search passes session id only when scoped to current session", async () => {

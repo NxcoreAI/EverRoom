@@ -20,17 +20,31 @@ import {
   type RuntimeRun,
   type StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
+import { KnowledgeServiceClient } from "./knowledge/client.js";
+import { createKnowledgeTools, KNOWLEDGE_TOOL_NAMES } from "./knowledge/tools.js";
+import type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
+import { resolveDefaultWikiIds } from "./knowledge/types.js";
 import { MemoryCoreClient } from "./memory/client.js";
 import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
 import { createMemoryTools, MEMORY_TOOL_NAMES } from "./memory/tools.js";
 import type { MemoryRuntimeConfig } from "./memory/types.js";
 
+export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
+export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
+export type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
+export { resolveDefaultWikiIds } from "./knowledge/types.js";
+export type {
+  KnowledgePageEntry,
+  KnowledgePageReadItem,
+  KnowledgeSearchResult,
+} from "./knowledge/types.js";
+export type { KnowledgeToolScope } from "./knowledge/tools.js";
 export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
 export type { MemoryCoreErrorKind } from "./memory/client.js";
-export type { MemoryRuntimeConfig } from "./memory/types.js";
 export type {
   MemoryAtomicItem,
   MemoryAtomicPage,
+  MemoryAtomicProvenance,
   MemoryAtomicQuery,
   MemoryCaptureMessage,
   MemoryConversationHit,
@@ -38,8 +52,15 @@ export type {
   MemoryConversationPage,
   MemoryConversationQuery,
   MemoryCoreFile,
+  MemoryDocumentChunk,
+  MemoryDocumentDetail,
+  MemoryDocumentImportResult,
+  MemoryDocumentItem,
+  MemoryDocumentMemory,
   MemoryPipelineStage,
   MemoryPipelineStatus,
+  MemoryProvenanceAnchor,
+  MemoryRuntimeConfig,
   MemoryScenarioEntry,
   MemoryScenarioFile,
 } from "./memory/types.js";
@@ -67,6 +88,8 @@ export interface PiAgentRuntimeConfig {
   agentDirectory: string;
   /** MemoryCore 记忆服务配置；缺省时记忆能力完全不启用。 */
   memory?: MemoryRuntimeConfig;
+  /** Knowledge Service（wiki）配置；缺省时知识库工具不启用。 */
+  knowledge?: KnowledgeRuntimeConfig;
   retry?: {
     enabled?: boolean;
     maxRetries?: number;
@@ -96,6 +119,11 @@ export interface PiAgentRuntimeTool {
 
 export interface PiAgentRuntimeIntegration {
   tools?: readonly PiAgentRuntimeTool[];
+  /**
+   * 会话级 wiki 作用域解析（Room 级 wiki 模式）：run 启动前按
+   * roomId 解析本 Room 的 wiki 集合；未提供或解析失败时回退配置默认集。
+   */
+  resolveKnowledgeWikiIds?: (input: StartRuntimeRunInput) => Promise<string[]>;
   promptGuidelines?: readonly string[];
   onRunFinished?: (
     input: StartRuntimeRunInput,
@@ -113,6 +141,8 @@ interface PiSessionHandle {
   toolNames: string[];
   setMemoryRunContext: (context: MemoryRunContext | null) => void;
   cancelMemoryRun: () => void;
+  /** 会话级 wiki 作用域（Room wiki 优先，缺省为配置默认集）。 */
+  setKnowledgeWikiIds: (wikiIds: string[]) => void;
   context: PiRunContextRef;
   activeRunId: string | null;
   ownerSessionId: string | null;
@@ -210,12 +240,14 @@ export class PiAgentRuntime implements AgentRuntime {
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
   private readonly memoryClient: MemoryCoreClient | null;
+  private readonly knowledgeClient: KnowledgeServiceClient | null;
 
   constructor(
     private readonly config: PiAgentRuntimeConfig,
     private readonly integration: PiAgentRuntimeIntegration = {},
   ) {
     this.memoryClient = config.memory ? new MemoryCoreClient(config.memory) : null;
+    this.knowledgeClient = config.knowledge ? new KnowledgeServiceClient(config.knowledge) : null;
   }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
@@ -236,6 +268,14 @@ export class PiAgentRuntime implements AgentRuntime {
       throw new Error("Pi session belongs to a different Agent session");
     }
     handle.ownerSessionId = input.sessionId;
+    if (this.knowledgeClient && this.integration.resolveKnowledgeWikiIds) {
+      try {
+        const wikiIds = await this.integration.resolveKnowledgeWikiIds(input);
+        handle.setKnowledgeWikiIds(wikiIds);
+      } catch {
+        handle.setKnowledgeWikiIds(this.knowledgeClient.defaultWikiIds);
+      }
+    }
     compactHistoricalToolState(handle.session);
     handle.context.current = input;
     handle.session.setActiveToolsByName(input.toolsEnabled === false ? [] : handle.toolNames);
@@ -388,6 +428,9 @@ export class PiAgentRuntime implements AgentRuntime {
     let memoryRunContext: MemoryRunContext | null = null;
     const memory = this.config.memory;
     const memoryClient = this.memoryClient;
+    const knowledge = this.config.knowledge;
+    const knowledgeClient = this.knowledgeClient;
+    let knowledgeWikiIds: string[] = knowledgeClient ? knowledgeClient.defaultWikiIds : [];
     const resourceLoader = new DefaultResourceLoader({
       cwd: this.config.workingDirectory,
       agentDir: this.config.agentDirectory,
@@ -416,10 +459,16 @@ export class PiAgentRuntime implements AgentRuntime {
           "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
           "使用工具时，过程说明只补充工具行本身无法表达的信息，例如调用原因、关键发现、判断或对用户的影响；不要复述工具名称、执行状态、参数或下一项工具。没有新增信息时直接继续调用工具，不要强制输出过渡句。过程说明必须基于真实结果，不能臆测成功或输出冗长执行日志。",
           "最后一项工具完成后，必须给出独立、完整的最终答复，简洁总结完成了什么、关键结果以及仍需用户处理的事项；不要把过程说明直接拼接成最终答复。",
+          "新文档提交成功后，最终答复必须用 2 至 4 句总结文档目标、核心内容和完成结果；中文约 180 字以内，英文约 80 词以内，不得复述标题目录、正文段落或长列表。",
         ];
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
           lines.push(
             "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入。",
+          );
+        }
+        if (knowledge && knowledgeClient && context.current?.toolsEnabled !== false) {
+          lines.push(
+            "你可以使用 wiki_search 和 wiki_read 两个工具按需查询当前 Room 的知识库（wiki，Room 内文档沉淀的结构化知识）。问题涉及知识库沉淀的领域知识时先检索再回答；知识库没有相关内容时如实说明，不要编造。",
           );
         }
         if (context.current?.toolsEnabled !== false) {
@@ -440,10 +489,18 @@ export class PiAgentRuntime implements AgentRuntime {
       modelRuntime,
       model,
       thinkingLevel: this.config.reasoning,
-      tools: ["bash", ...toolNames, ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : [])],
+      tools: [
+        "bash",
+        ...toolNames,
+        ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
+        ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
+      ],
       customTools: [
         ...customTools,
         ...(memory && memoryClient ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId) : []),
+        ...(knowledge && knowledgeClient
+          ? createKnowledgeTools(knowledgeClient, () => ({ wikiIds: knowledgeWikiIds }))
+          : []),
       ],
       resourceLoader,
       sessionManager,
@@ -457,12 +514,20 @@ export class PiAgentRuntime implements AgentRuntime {
     const handle: PiSessionHandle = {
       ref,
       session,
-      toolNames: ["bash", ...toolNames, ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : [])],
+      toolNames: [
+        "bash",
+        ...toolNames,
+        ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
+        ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
+      ],
       setMemoryRunContext: (value) => {
         memoryRunContext = value;
       },
       cancelMemoryRun: () => {
         if (memoryRunContext) memoryRunContext.cancelled = true;
+      },
+      setKnowledgeWikiIds: (wikiIds) => {
+        knowledgeWikiIds = wikiIds;
       },
       context,
       activeRunId: null,
