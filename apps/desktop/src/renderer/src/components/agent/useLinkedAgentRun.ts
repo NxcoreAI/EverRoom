@@ -124,7 +124,7 @@ function errorMessage(error: unknown): string {
 export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRunState {
   const api = window.nxcore?.agent
   const { documentsByRoom } = useRoomDocumentsState()
-  const { operations } = useDocumentOperations()
+  const { operations, presentingOperationIds } = useDocumentOperations()
   const sourceSessionId = link?.sourceSessionId ?? null
   const sourceRunId = link?.sourceRunId ?? null
   const documentId = link?.target.objectType === 'document' ? link.target.objectId : undefined
@@ -137,7 +137,10 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
     return operation.interactionMode === 'streaming_commit'
       && operation.runId === sourceRunId
       && (operation.documentId === documentId || draftDocumentId === documentId)
-      && (operation.status === 'created' || operation.status === 'running' || operation.status === 'applying')
+      && (operation.status === 'created'
+        || operation.status === 'running'
+        || operation.status === 'applying'
+        || presentingOperationIds.has(entry.id))
   })))
   const [state, setState] = useState<LinkedAgentRunState>(EMPTY_STATE)
   const stateRunKeyRef = useRef<string | null>(null)

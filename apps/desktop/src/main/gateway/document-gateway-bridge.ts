@@ -263,8 +263,9 @@ export class DocumentGatewayBridge {
       }
     }
     if (!response.ok) {
-      const body = await response.json().catch(() => null) as { message?: unknown } | null
-      throw new Error(typeof body?.message === 'string' ? body.message : `文档请求失败（${response.status}）`)
+      const body = await response.json().catch(() => null) as { error?: unknown; message?: unknown } | null
+      const message = typeof body?.message === 'string' ? body.message : `文档请求失败（${response.status}）`
+      throw new Error(typeof body?.error === 'string' ? `${body.error}: ${message}` : message)
     }
     if (response.status === 204) return undefined as T
     return response.json() as Promise<T>

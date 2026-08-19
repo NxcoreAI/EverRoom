@@ -43,6 +43,7 @@ const RECOVERABLE_STATUSES = [
 export interface DocumentOperationContextValue {
   entriesById: DocumentOperationStoreState
   operations: DocumentOperationEntry[]
+  presentingOperationIds: ReadonlySet<string>
   bridge: OperationBridge
   refresh(filters?: DocumentOperationListFilters): Promise<DocumentOperationSummary[]>
   start(input: StartDocumentOperationInput): Promise<DocumentOperation | null>
@@ -54,6 +55,7 @@ export interface DocumentOperationContextValue {
     type: string,
     payload?: Record<string, unknown>,
   ): Promise<DocumentOperationCommandResult | null>
+  setOperationPresentationPending(operationId: string, pending: boolean): void
 }
 
 const DocumentOperationContext = createContext<DocumentOperationContextValue | null>(null)
@@ -69,6 +71,7 @@ export function DocumentOperationProvider({
 }) {
   const bridge = operationBridge
   const [entriesById, setEntriesById] = useState<DocumentOperationStoreState>({})
+  const [presentingOperationIds, setPresentingOperationIds] = useState<ReadonlySet<string>>(() => new Set())
   const entriesRef = useRef(entriesById)
   entriesRef.current = entriesById
   const loadRequests = useRef(new Map<string, Promise<DocumentOperation | null>>())
@@ -215,6 +218,16 @@ export function DocumentOperationProvider({
     return result?.operation ?? null
   }, [executeResult])
 
+  const setOperationPresentationPending = useCallback((operationId: string, pending: boolean) => {
+    setPresentingOperationIds((current) => {
+      if (current.has(operationId) === pending) return current
+      const next = new Set(current)
+      if (pending) next.add(operationId)
+      else next.delete(operationId)
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     void refresh({ statuses: [...RECOVERABLE_STATUSES] }).then((operations) => {
       for (const operation of operations) void load(operation.id)
@@ -225,6 +238,7 @@ export function DocumentOperationProvider({
   const value = useMemo<DocumentOperationContextValue>(() => ({
     entriesById,
     operations: Object.values(entriesById).sort((left, right) => right.summary.updatedAt.localeCompare(left.summary.updatedAt)),
+    presentingOperationIds,
     bridge,
     refresh,
     start,
@@ -232,7 +246,19 @@ export function DocumentOperationProvider({
     setDecision,
     execute,
     executeResult,
-  }), [bridge, entriesById, execute, executeResult, load, refresh, setDecision, start])
+    setOperationPresentationPending,
+  }), [
+    bridge,
+    entriesById,
+    execute,
+    executeResult,
+    load,
+    presentingOperationIds,
+    refresh,
+    setDecision,
+    setOperationPresentationPending,
+    start,
+  ])
 
   return <DocumentOperationContext.Provider value={value}>{children}</DocumentOperationContext.Provider>
 }

@@ -28,7 +28,7 @@ import {
   useDocumentCursorCompletion,
 } from './DocumentCursorCompletion'
 import { ensureStableBlockIds, StableBlockIds } from './StableBlockIds'
-import { useDocumentEditorOperations } from '../../../operations'
+import { useDocumentEditorOperations, useDocumentOperations } from '../../../operations'
 import {
   clearDocumentOperationReview,
   DocumentOperationReviewExtension,
@@ -279,6 +279,7 @@ export function TiptapDocumentEditor({
   )
   const roomDocuments = useRoomDocumentsState()
   const { activateDocument } = useActiveDocument()
+  const { setOperationPresentationPending } = useDocumentOperations()
   const documentOperations = useDocumentEditorOperations(documentId)
   const streamingDocument = documentOperations.streamingDocument
   const [settledStreamingOperationId, setSettledStreamingOperationId] = useState<string | null>(null)
@@ -306,6 +307,13 @@ export function TiptapDocumentEditor({
   presentingStreamRef.current = presentingStream
   const writing = Boolean(backendDocument?.activeTransactionId) || presentingStream
 
+  useEffect(() => {
+    const operationId = streamingDocument?.operationId
+    if (!operationId) return
+    setOperationPresentationPending(operationId, operationStreamPending)
+    return () => setOperationPresentationPending(operationId, false)
+  }, [operationStreamPending, setOperationPresentationPending, streamingDocument?.operationId])
+
   if (!backendDocument) {
     backendRef.current = null
   } else if (!backendRef.current || backendDocument.version >= backendRef.current.version) {
@@ -325,7 +333,7 @@ export function TiptapDocumentEditor({
     setDocumentName(streamingDocument.title)
   }, [streamingDocument?.title])
 
-  const persistPendingSave = async (): Promise<void> => {
+  const persistPendingSave = useCallback(async (): Promise<void> => {
     if (saveInFlight.current) return
     saveInFlight.current = true
     try {
@@ -382,7 +390,19 @@ export function TiptapDocumentEditor({
     } finally {
       saveInFlight.current = false
     }
-  }
+  }, [documentId])
+
+  const flushDocumentVersion = useCallback(async (): Promise<number> => {
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    while (saveInFlight.current) await wait(10)
+    if (pendingSave.current) await persistPendingSave()
+    while (saveInFlight.current) await wait(10)
+    if (pendingSave.current) throw new Error('文档尚未保存，请稍后重试。')
+    return versionRef.current
+  }, [persistPendingSave])
 
   const queueDocumentSave = (
     contentJson: TiptapJsonContent,
@@ -497,7 +517,7 @@ export function TiptapDocumentEditor({
     roomId: room.id,
     documentId,
     documentName,
-    baseVersion: backendDocument?.version ?? versionRef.current,
+    prepareDocument: flushDocumentVersion,
     onDocumentApplied: (document) => {
       applyingRemote.current = true
       try {
@@ -620,19 +640,12 @@ export function TiptapDocumentEditor({
       version: backendDocument.version,
       getCursorAnchorCandidate: () => cursorAnchorCandidateFromEditorState(editor.state),
       flush: async () => {
-        if (saveTimer.current !== null) {
-          window.clearTimeout(saveTimer.current)
-          saveTimer.current = null
-        }
-        while (saveInFlight.current) await wait(10)
-        if (pendingSave.current) await persistPendingSave()
-        while (saveInFlight.current) await wait(10)
-        if (pendingSave.current) throw new Error('文档尚未保存，请稍后重试。')
-        return { title: backendRef.current?.title ?? documentName, version: versionRef.current }
+        const version = await flushDocumentVersion()
+        return { title: backendRef.current?.title ?? documentName, version }
       },
     })
     return handle.deactivate
-  }, [activateDocument, backendDocument, documentId, documentName, editor, room.id])
+  }, [activateDocument, backendDocument, documentId, documentName, editor, flushDocumentVersion, room.id])
 
   const listDocumentBlocks = useCallback(async (targetDocumentId: string) => {
     const documents = window.nxcore?.documents

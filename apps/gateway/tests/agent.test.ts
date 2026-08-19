@@ -191,7 +191,11 @@ describe("agent gateway", () => {
       method: "POST" as const,
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
-      payload: { prompt: "总结当前页面", idempotencyKey: "same-request-key" },
+      payload: {
+        prompt: "总结当前页面",
+        idempotencyKey: "same-request-key",
+        context: { selectedText: "发布计划中的关键风险" },
+      },
     };
     const started = await app.inject(runRequest);
     const duplicated = await app.inject(runRequest);
@@ -216,6 +220,8 @@ describe("agent gateway", () => {
 
     expect(completed.session.status).toBe("idle");
     expect(completed.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(completed.messages[0]?.content).toBe("总结当前页面");
+    expect(completed.messages[1]?.content).toContain("发布计划中的关键风险");
     expect(events.at(0)?.type).toBe("run.accepted");
     expect(events.some((event) => event.type === "message.delta")).toBe(true);
     expect(events.at(-1)?.type).toBe("run.completed");
