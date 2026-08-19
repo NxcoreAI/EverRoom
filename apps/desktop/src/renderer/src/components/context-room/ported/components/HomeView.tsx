@@ -12,6 +12,7 @@ import { useMemo, useRef, useState } from 'react';
 
 import type { ContextRoomRecord } from '../types';
 import { ReferenceDialog } from './shared';
+import { KnowledgePendingPanel } from './KnowledgePendingPanel';
 import { RoomCard } from './RoomCard';
 import { RoomForm, RoomLifecycleDialogs, type DraftRoom } from './RoomDialogs';
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from './RoomGraphCanvas';
@@ -225,6 +226,8 @@ export function HomeView({
               </button>
             ) : null}
           </section>
+
+          <KnowledgePendingPanel />
 
           <RoomGraph rooms={rooms} onOpen={onOpenDetail} />
         </div>

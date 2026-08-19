@@ -1004,3 +1004,337 @@ button.mem-search-item:hover {
   font-size: 12px;
   color: var(--danger);
 }
+
+/* ── 文档来源（md 导入） ── */
+.mem-doc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mem-doc-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+.mem-doc-card:hover {
+  border-color: var(--accent);
+}
+
+.mem-doc-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mem-doc-card-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mem-doc-card small,
+.mem-doc-meta {
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.mem-doc-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  margin-bottom: 12px;
+}
+
+.mem-doc-paste input,
+.mem-doc-paste textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: inherit;
+}
+
+.mem-doc-paste textarea {
+  resize: vertical;
+  min-height: 120px;
+  font-family: var(--mono, monospace);
+  font-size: 12.5px;
+}
+
+.mem-doc-paste-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mem-doc-notice {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--accent);
+}
+
+.mem-doc-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mem-doc-detail .mem-toolbar {
+  align-items: center;
+}
+
+.mem-doc-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mem-doc-title {
+  font-weight: 650;
+  font-size: 14px;
+}
+
+.mem-doc-section h3 {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.mem-doc-preview {
+  max-height: 340px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.mem-doc-chunks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mem-doc-chunk {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.mem-doc-chunk header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 11px;
+  background: var(--surface-alt);
+  font-size: 12px;
+}
+
+.mem-doc-chunk-path {
+  font-weight: 600;
+}
+
+.mem-doc-chunk small {
+  color: var(--subtle);
+}
+
+.mem-doc-chunk pre {
+  margin: 0;
+  padding: 10px 11px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.mem-doc-memories {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mem-doc-memories li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 12.5px;
+}
+
+.mem-doc-memories .mem-time {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.mem-doc-hint {
+  color: var(--subtle);
+  font-size: 12.5px;
+}
+
+.mem-doc-badge {
+  flex-shrink: 0;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.mem-source-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* ── 原子记忆溯源 ── */
+.mem-provenance-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+.mem-provenance-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.mem-provenance {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.mem-provenance header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.mem-source-badge {
+  font-size: 11px;
+  font-weight: 650;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--muted);
+}
+
+.mem-source-badge[data-kind='document'] {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.mem-provenance-close {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--subtle);
+}
+
+.mem-provenance-close:hover {
+  color: var(--danger);
+}
+
+.mem-provenance-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 12.5px;
+}
+
+.mem-provenance-anchors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mem-provenance-anchors li {
+  border-left: 2px solid var(--border);
+  padding: 2px 10px;
+  font-size: 12.5px;
+}
+
+.mem-provenance-anchors header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 3px;
+}
+
+.mem-provenance-anchors header span {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.mem-provenance-anchors header span[data-role='user'] {
+  color: var(--accent);
+}
+
+.mem-provenance-anchors header em {
+  color: var(--subtle);
+  font-style: normal;
+  font-size: 11.5px;
+}
+
+.mem-provenance-anchors p {
+  margin: 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+}

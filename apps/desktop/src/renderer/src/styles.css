@@ -2126,3 +2126,79 @@ summary:focus-visible {
     animation-iteration-count: 1 !important;
   }
 }
+
+.files-table .table-head,
+.files-table .table-row {
+  grid-template-columns: minmax(220px, 1.5fr) minmax(70px, 0.5fr) minmax(86px, 0.6fr) minmax(96px, 0.7fr) 132px;
+}
+
+.ingest-table .table-head,
+.ingest-table .table-row {
+  grid-template-columns: minmax(200px, 1.5fr) minmax(84px, 0.6fr) minmax(130px, 0.9fr) minmax(84px, 0.6fr) minmax(88px, 0.6fr);
+}
+
+.files-outcomes .table-head,
+.files-outcomes .table-row {
+  grid-template-columns: minmax(200px, 1.4fr) minmax(84px, 0.6fr) minmax(150px, 1fr) minmax(84px, 0.6fr) minmax(0, 1fr);
+}
+
+.files-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.files-error {
+  overflow: hidden;
+  color: #b23b32;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipeline-badges {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.pipeline-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.pipeline-badge.pipeline-error {
+  background: rgba(178, 59, 50, 0.12);
+  color: #b23b32;
+}
+
+.files-preview {
+  width: min(760px, 92vw);
+}
+
+.files-preview-body pre {
+  max-height: min(58vh, 560px);
+  margin: 0;
+  overflow: auto;
+  padding: 16px 18px;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.files-preview-error {
+  padding: 20px;
+  color: var(--muted);
+  font-size: 11px;
+}

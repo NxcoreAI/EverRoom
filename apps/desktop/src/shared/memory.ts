@@ -23,6 +23,8 @@ export interface MemoryConversationMessageDto {
   content: string
   timestamp: string | null
   sessionId: string | null
+  /** 来源标记：null = 旧数据；'document' = md 导入的文档会话块。 */
+  sourceKind: string | null
   score?: number
 }
 
@@ -86,6 +88,89 @@ export interface MemoryConversationListOptions {
   offset?: number
   timeStart?: string
   timeEnd?: string
+  /** 'conversation' = 仅对话（排除文档会话块）。 */
+  sourceKind?: 'conversation' | 'document'
+}
+
+/** 导入文档登记行（gateway /v1/memory/documents）。 */
+export interface MemoryDocumentDto {
+  id: string
+  title: string
+  /** 资产引用 = 知识资产 file id（预览走 knowledge.readFileMarkdown）。 */
+  callerRef: string
+  version: number
+  sessionId: string
+  chunkCount: number
+  derivedMemoryCount: number | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MemoryDocumentChunkDto {
+  chunkIndex: number
+  messageId: string
+  headingPath: string
+  lineStart: number
+  lineEnd: number
+  content: string
+  recordedAt: string | null
+}
+
+export interface MemoryDocumentMemoryDto {
+  id: string
+  type: string
+  content: string
+  background: string | null
+  sourceMessageIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MemoryDocumentDetailDto {
+  document: MemoryDocumentDto
+  chunks: MemoryDocumentChunkDto[]
+  memories: MemoryDocumentMemoryDto[]
+}
+
+export interface MemoryImportMarkdownResultDto {
+  fileId: string
+  document: MemoryDocumentDto
+  version: string
+  sessionId: string
+  chunkCount: number
+  deduplicated: boolean
+  replacedVersions: number
+  acceptedChunks: number
+}
+
+export interface MemoryProvenanceAnchorDto {
+  messageId: string
+  role: string
+  content: string
+  recordedAt: string | null
+  sessionId: string | null
+  sourceKind: string
+  headingPath?: string
+  lineStart?: number
+  lineEnd?: number
+  chunkIndex?: number
+}
+
+export interface MemoryAtomicProvenanceDto {
+  memoryId: string
+  type: string
+  content: string
+  kind: string
+  session: { sessionId: string | null; sessionKey: string | null } | null
+  document: {
+    documentId: string
+    title: string
+    callerRef: string
+    version: number
+    sessionId: string
+  } | null
+  anchorMessageIds: string[]
+  anchors: MemoryProvenanceAnchorDto[]
 }
 
 export interface MemoryDocumentRewriteInput {

@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  BookOpen,
   Bookmark,
   CalendarDays,
   CheckSquare2,
@@ -14,6 +15,7 @@ export type DetailPane =
   | 'documents'
   | 'relations'
   | 'memories'
+  | 'wiki'
   | 'schedule'
   | 'tasks'
   | 'mails';
@@ -23,6 +25,7 @@ export const DETAIL_TABS = [
   { id: 'documents', label: '文档', icon: FileText, tone: 'document' },
   { id: 'relations', label: '关系', icon: Share2, tone: 'data' },
   { id: 'memories', label: '记忆', icon: Bookmark, tone: 'memory' },
+  { id: 'wiki', label: '知识库', icon: BookOpen, tone: 'data' },
   { id: 'schedule', label: '日程', icon: CalendarDays, tone: 'calendar' },
   { id: 'tasks', label: '任务', icon: CheckSquare2, tone: 'task' },
   { id: 'mails', label: '邮件', icon: Mail, tone: 'communication' },

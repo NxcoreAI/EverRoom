@@ -23,6 +23,10 @@ const ConversationListQuery = Type.Object({
   offset: Type.Integer({ minimum: 0, default: 0 }),
   timeStart: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
   timeEnd: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
+  sourceKind: Type.Optional(Type.Union([
+    Type.Literal("conversation"),
+    Type.Literal("document"),
+  ])),
 });
 
 const AtomicDtoSchema = Type.Object({
@@ -40,6 +44,7 @@ const ConversationMessageDtoSchema = Type.Object({
   content: Type.String(),
   timestamp: Type.Union([Type.String(), Type.Null()]),
   sessionId: Type.Union([Type.String(), Type.Null()]),
+  sourceKind: Type.Union([Type.String(), Type.Null()]),
 });
 
 const ScenarioEntryDtoSchema = Type.Object({
@@ -48,6 +53,74 @@ const ScenarioEntryDtoSchema = Type.Object({
   isDirectory: Type.Boolean(),
   createdAt: Type.String(),
   updatedAt: Type.String(),
+});
+
+const DocumentDtoSchema = Type.Object({
+  id: Type.String(),
+  title: Type.String(),
+  callerRef: Type.String(),
+  version: Type.Integer(),
+  sessionId: Type.String(),
+  chunkCount: Type.Integer(),
+  derivedMemoryCount: Type.Union([Type.Integer(), Type.Null()]),
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+});
+
+const DocumentDetailDtoSchema = Type.Object({
+  document: DocumentDtoSchema,
+  chunks: Type.Array(Type.Object({
+    chunkIndex: Type.Integer(),
+    messageId: Type.String(),
+    headingPath: Type.String(),
+    lineStart: Type.Integer(),
+    lineEnd: Type.Integer(),
+    content: Type.String(),
+    recordedAt: Type.Union([Type.String(), Type.Null()]),
+  })),
+  memories: Type.Array(Type.Object({
+    id: Type.String(),
+    type: Type.String(),
+    content: Type.String(),
+    background: Type.Union([Type.String(), Type.Null()]),
+    sourceMessageIds: Type.Array(Type.String()),
+    createdAt: Type.String(),
+    updatedAt: Type.String(),
+  })),
+});
+
+const ProvenanceDtoSchema = Type.Object({
+  memoryId: Type.String(),
+  type: Type.String(),
+  content: Type.String(),
+  kind: Type.String(),
+  session: Type.Union([
+    Type.Object({ sessionId: Type.Union([Type.String(), Type.Null()]), sessionKey: Type.Union([Type.String(), Type.Null()]) }),
+    Type.Null(),
+  ]),
+  document: Type.Union([
+    Type.Object({
+      documentId: Type.String(),
+      title: Type.String(),
+      callerRef: Type.String(),
+      version: Type.Integer(),
+      sessionId: Type.String(),
+    }),
+    Type.Null(),
+  ]),
+  anchorMessageIds: Type.Array(Type.String()),
+  anchors: Type.Array(Type.Object({
+    messageId: Type.String(),
+    role: Type.String(),
+    content: Type.String(),
+    recordedAt: Type.Union([Type.String(), Type.Null()]),
+    sessionId: Type.Union([Type.String(), Type.Null()]),
+    sourceKind: Type.String(),
+    headingPath: Type.Optional(Type.String()),
+    lineStart: Type.Optional(Type.Integer()),
+    lineEnd: Type.Optional(Type.Integer()),
+    chunkIndex: Type.Optional(Type.Integer()),
+  })),
 });
 
 export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox {
@@ -205,6 +278,7 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
         offset: request.query.offset,
         timeStart: request.query.timeStart,
         timeEnd: request.query.timeEnd,
+        sourceKind: request.query.sourceKind,
       }),
     );
 
@@ -251,6 +325,97 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
         }
         return service.deleteConversations({ sessionIds, messageIds });
       },
+    );
+
+    // ── md 文档一等来源（资产化 + MemoryCore /v3/document/* 代理）──
+
+    app.post(
+      "/v1/memory/import/markdown",
+      {
+        schema: {
+          tags: ["memory"],
+          body: Type.Object({
+            title: Type.String({ minLength: 1, maxLength: 512 }),
+            markdown: Type.String({ minLength: 1, maxLength: 2 * 1024 * 1024 }),
+            filename: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
+          }),
+          response: {
+            200: Type.Object({
+              fileId: Type.String(),
+              document: DocumentDtoSchema,
+              version: Type.String(),
+              sessionId: Type.String(),
+              chunkCount: Type.Integer(),
+              deduplicated: Type.Boolean(),
+              replacedVersions: Type.Integer(),
+              acceptedChunks: Type.Integer(),
+            }),
+          },
+        },
+      },
+      async (request) => service.importMarkdown({
+        title: request.body.title,
+        markdown: request.body.markdown,
+        filename: request.body.filename,
+      }),
+    );
+
+    app.get(
+      "/v1/memory/documents",
+      {
+        schema: {
+          tags: ["memory"],
+          querystring: Type.Object({
+            limit: Type.Integer({ minimum: 1, maximum: 200, default: 50 }),
+            offset: Type.Integer({ minimum: 0, default: 0 }),
+          }),
+          response: {
+            200: Type.Object({
+              documents: Type.Array(DocumentDtoSchema),
+              total: Type.Integer(),
+            }),
+          },
+        },
+      },
+      async (request) => service.listDocuments(request.query.limit, request.query.offset),
+    );
+
+    app.get(
+      "/v1/memory/documents/:id",
+      {
+        schema: {
+          tags: ["memory"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) }),
+          response: { 200: DocumentDetailDtoSchema },
+        },
+      },
+      async (request) => service.getDocument(request.params.id),
+    );
+
+    app.delete(
+      "/v1/memory/documents/:id",
+      {
+        schema: {
+          tags: ["memory"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) }),
+          response: {
+            200: Type.Object({ documentId: Type.String(), deleted: Type.Boolean() }),
+          },
+        },
+      },
+      async (request) => service.deleteDocument(request.params.id),
+    );
+
+    app.get(
+      "/v1/memory/atomic/:id/provenance",
+      {
+        schema: {
+          tags: ["memory"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) }),
+          response: { 200: ProvenanceDtoSchema },
+        },
+      },
+      async (request) => service.atomicProvenance(request.params.id),
     );
 
     app.post(
