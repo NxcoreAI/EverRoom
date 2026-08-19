@@ -55,6 +55,7 @@ flowchart LR
 | API 边界 | 已可用 | TypeBox 校验、OpenAPI 文档、Bearer 鉴权、健康检查和 WebSocket |
 | 本地存储 | 已可用 | SQLite WAL、Drizzle migration、内容寻址对象与 FTS5 证据检索 |
 | 数据源 | 开发中 | 本地文件夹工作流和 GitHub Connector 基础能力 |
+| OpenConnector | 已可用 | 通过 oo CLI 搜索、检查并执行 Action，提供桌面控制台与 Agent 工具 |
 | 证据管线 | 开发中 | 文件版本，以及带来源位置的 Markdown / 纯文本证据块 |
 | Agent 服务 | 开发中 | 已接入 Pi 与开发 runtime，支持持久化会话、运行、消息、事件历史、取消和流式传输 |
 | Memory、Room、Doc | 规划中 | 受治理记忆、动态 Context Room 和可由 Agent 编辑的 Context Doc |
@@ -143,6 +144,22 @@ NXCORE_AI_API=openai-responses
 ```
 
 CE Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessionId` Streamable HTTP MCP 入口，供经过认证的 MCP 客户端使用。已废弃的远端聊天传输不再属于 runtime 配置。
+
+### OpenConnector
+
+OpenConnector 已作为桌面端托管服务集成，无需安装 Docker、单独启动网关或手工填写 Token。启动 EverRoom 时会自动拉起固定版本的本地 OpenConnector，退出应用时自动回收进程；首次启动生成的加密密钥、Admin Token、Runtime Token 和端口保存在 EverRoom 用户数据目录中。
+
+默认不需要任何配置。仅当需要连接已有的外部 OpenConnector 时，才在根目录 `.env` 显式关闭托管模式：
+
+```dotenv
+NXCORE_OPEN_CONNECTOR_MANAGED=false
+NXCORE_OPEN_CONNECTOR_URL=https://connector.example.com
+NXCORE_OPEN_CONNECTOR_RUNTIME_TOKEN=<runtime-token>
+```
+
+桌面端内置固定版本的 `oo` CLI，并通过受限 IPC 为侧栏“连接器”控制台提供 Action 搜索、Schema、账号选择、参数校验、执行和实时日志。“Web 管理台”会打开隔离的本地窗口并自动完成管理认证。Pi Agent 同时获得 `connector_search`、`connector_schema`、`connector_apps`、`connector_run` 四个工具；执行前会先读取实际账号连接，不猜测连接名称。Admin Token 和 Runtime Token 都不会进入 Renderer。完整设计见 [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md)。
+
+连接器后台同步采用独立的领域 Agent：定时任务为邮箱、文档或日程 Agent 注入同步目标、允许的只读 Action、上次检查点、领域提示词和目标 Schema；Agent 通过 `oo` CLI 完成能力发现、分页获取、解析与清洗，但不能使用 Shell 或直接访问数据库。清洗后的数据只能通过受控批量写入工具进入 `connector_emails`、`connector_documents` 或 `connector_calendar_events`，由 Gateway 确定性执行 Schema 校验、幂等 upsert、事务、隔离记录和检查点提交。普通对话 Agent 在本地模式下只查询这些领域表。
 
 ### 常用命令
 

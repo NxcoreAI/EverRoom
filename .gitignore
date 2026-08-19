@@ -5,6 +5,9 @@ dist/
 out/
 release/
 screenshots/
+apps/desktop/build/oo/
+apps/desktop/build/open-connector/
+apps/desktop/build/.open-connector-*/
 *.log
 .env
 .env.*

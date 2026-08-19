@@ -10,10 +10,11 @@ import {
   ListChecks,
   AudioLines,
   NotebookPen,
+  PlugZap,
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'tasks' | 'diary' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'tasks' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -47,6 +48,7 @@ export const navigationSections: NavigationSection[] = [
       { id: 'files', label: '文件', icon: FolderOpen, tone: 'green' },
       { id: 'memory', label: '记忆', icon: Brain, tone: 'orange' },
       { id: 'wiki', label: 'Wiki', icon: BookOpenText, tone: 'indigo' },
+      { id: 'connectors', label: '连接器', icon: PlugZap, tone: 'green' },
     ],
   },
   {

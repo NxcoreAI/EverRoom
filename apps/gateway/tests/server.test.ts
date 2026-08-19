@@ -62,6 +62,38 @@ describe("gateway server", () => {
     expect(authorized.statusCode).toBe(200);
   });
 
+  it("manages connector sync jobs without accepting a client owner id", async () => {
+    const config = await testConfig();
+    config.connectorSyncOwnerId = "bound-owner";
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const payload = {
+      name: "Gmail 最近一天", service: "gmail", dataset: "emails", resourceType: "email",
+      connectionName: "default", allowedActions: ["fetch_emails", "get_message"],
+      input: { query: "newer_than:1d", maxResults: 50 }, goal: "同步最近一天邮件",
+      scheduleType: "interval", intervalMs: 900_000, timezone: "Asia/Shanghai", status: "active",
+    };
+    const created = await app.inject({
+      method: "POST", url: "/v1/connectors/sync/jobs", headers,
+      payload: { ...payload, ownerId: "other-owner" },
+    });
+    const createdJob = created.json<{ id: string; ownerId: string; configVersion: number }>();
+    const paused = await app.inject({
+      method: "POST", url: `/v1/connectors/sync/jobs/${createdJob.id}/pause`, headers,
+      payload: { configVersion: createdJob.configVersion },
+    });
+    const conflict = await app.inject({
+      method: "PATCH", url: `/v1/connectors/sync/jobs/${createdJob.id}`, headers,
+      payload: { configVersion: createdJob.configVersion, name: "过期修改" },
+    });
+    await app.close();
+
+    expect(created.statusCode).toBe(201);
+    expect(createdJob.ownerId).toBe("bound-owner");
+    expect(paused.json()).toMatchObject({ status: "paused", configVersion: 2 });
+    expect(conflict.statusCode).toBe(409);
+  });
+
   it("serves authenticated background transcription summaries", async () => {
     const config = await testConfig();
     const app = await createServer(config);

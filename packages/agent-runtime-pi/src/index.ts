@@ -86,6 +86,8 @@ export interface PiAgentRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  includeBashTool?: boolean;
+  maxToolCallsPerRun?: number;
   /** MemoryCore 记忆服务配置；缺省时记忆能力完全不启用。 */
   memory?: MemoryRuntimeConfig;
   /** Knowledge Service（wiki）配置；缺省时知识库工具不启用。 */
@@ -102,6 +104,15 @@ export interface PiAgentRuntimeToolResult {
   details?: unknown;
 }
 
+export interface PiAgentRuntimeToolFailurePolicy {
+  category: string;
+  recoverable: boolean;
+  recommendedTool?: string;
+  instruction: string;
+  retryKey?: string;
+  maxAttempts?: number;
+}
+
 export interface PiAgentRuntimeTool {
   name: string;
   label: string;
@@ -115,6 +126,11 @@ export interface PiAgentRuntimeTool {
     params: Record<string, unknown>,
     signal?: AbortSignal,
   ) => Promise<PiAgentRuntimeToolResult>;
+  classifyFailure?: (
+    error: unknown,
+    input: StartRuntimeRunInput,
+    params: Record<string, unknown>,
+  ) => PiAgentRuntimeToolFailurePolicy | null;
 }
 
 export interface PiAgentRuntimeIntegration {
@@ -155,6 +171,8 @@ interface ActivePiRun {
   unsubscribe: () => void;
   content: string;
   cancelled: boolean;
+  toolCallCount: number;
+  toolLimitExceeded: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
@@ -288,6 +306,8 @@ export class PiAgentRuntime implements AgentRuntime {
       unsubscribe: () => undefined,
       content: "",
       cancelled: false,
+      toolCallCount: 0,
+      toolLimitExceeded: false,
       terminal: false,
       finishPromise: null,
     };
@@ -407,11 +427,26 @@ export class PiAgentRuntime implements AgentRuntime {
       execute: async (_toolCallId, params, signal) => {
         const input = context.current;
         if (!input) throw new Error("Pi document tool is not bound to an active run");
-        const result = await withAbortSignal(() => tool.execute(input, params, signal), signal);
-        return {
-          content: [{ type: "text" as const, text: result.content }],
-          details: result.details ?? {},
-        };
+        const active = this.activeRuns.get(input.runId);
+        if (active?.toolLimitExceeded) throw new Error(this.toolLimitErrorMessage());
+        try {
+          const result = await withAbortSignal(() => tool.execute(input, params, signal), signal);
+          return {
+            content: [{ type: "text" as const, text: result.content }],
+            details: result.details ?? {},
+          };
+        } catch (error) {
+          const failure = tool.classifyFailure?.(error, input, params);
+          if (failure) {
+            throw new Error(JSON.stringify({
+              error: failure.category,
+              recoverable: failure.recoverable,
+              recommendedTool: failure.recommendedTool,
+              instruction: failure.instruction,
+            }), { cause: error });
+          }
+          throw error;
+        }
       },
     }));
     const toolNames = customTools.map((tool) => tool.name);
@@ -471,6 +506,13 @@ export class PiAgentRuntime implements AgentRuntime {
             "你可以使用 wiki_search 和 wiki_read 两个工具按需查询当前 Room 的知识库（wiki，Room 内文档沉淀的结构化知识）。问题涉及知识库沉淀的领域知识时先检索再回答；知识库没有相关内容时如实说明，不要编造。",
           );
         }
+        const hasDocumentTools = customTools.some((tool) => tool.name.startsWith("context_room_"));
+        const hasConnectorTools = customTools.some((tool) => tool.name.startsWith("connector_"));
+        if (hasDocumentTools && hasConnectorTools) {
+          lines.push(
+            "外部服务请求必须优先使用 connector 工具；不要把 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox 或其他第三方服务误当成 EverRoom Context Room。只有用户明确要求写入 EverRoom 工作区文档时才使用 context_room_*。",
+          );
+        }
         if (context.current?.toolsEnabled !== false) {
           lines.push(...(this.integration.promptGuidelines ?? []));
         }
@@ -490,7 +532,7 @@ export class PiAgentRuntime implements AgentRuntime {
       model,
       thinkingLevel: this.config.reasoning,
       tools: [
-        "bash",
+        ...(this.config.includeBashTool === false ? [] : ["bash"]),
         ...toolNames,
         ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
         ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
@@ -515,7 +557,7 @@ export class PiAgentRuntime implements AgentRuntime {
       ref,
       session,
       toolNames: [
-        "bash",
+        ...(this.config.includeBashTool === false ? [] : ["bash"]),
         ...toolNames,
         ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
         ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
@@ -614,6 +656,13 @@ export class PiAgentRuntime implements AgentRuntime {
     }
 
     if (event.type === "tool_execution_start") {
+      active.toolCallCount += 1;
+      const maxToolCalls = this.config.maxToolCallsPerRun;
+      if (maxToolCalls !== undefined && active.toolCallCount > maxToolCalls) {
+        active.toolLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
+      }
       active.queue.push({
         type: "tool.started",
         payload: { toolCallId: event.toolCallId, name: event.toolName, args: event.args },
@@ -632,10 +681,27 @@ export class PiAgentRuntime implements AgentRuntime {
       const sessionError = active.handle.session.state.errorMessage;
       void this.finish(
         runId,
-        active.cancelled ? "cancelled" : sessionError ? "failed" : "completed",
-        sessionError ? new Error(sessionError) : undefined,
+        active.cancelled ? "cancelled" : active.toolLimitExceeded || sessionError ? "failed" : "completed",
+        active.toolLimitExceeded
+          ? new Error(this.toolLimitErrorMessage())
+          : sessionError ? new Error(sessionError) : undefined,
       );
     }
+  }
+
+  private toolLimitErrorMessage(): string {
+    return `Pi runtime exceeded the maximum tool calls per run (${this.config.maxToolCallsPerRun})`;
+  }
+
+  private async abortForToolLimit(runId: string): Promise<void> {
+    const active = this.activeRuns.get(runId);
+    if (!active || active.terminal) return;
+    try {
+      await active.handle.session.abort();
+    } catch {
+      // The run is already being terminated; preserve the limit error below.
+    }
+    await this.finish(runId, "failed", new Error(this.toolLimitErrorMessage()));
   }
 
   private finish(
