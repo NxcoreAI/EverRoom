@@ -1,4 +1,4 @@
-CREATE TABLE `connector_accounts` (
+CREATE TABLE IF NOT EXISTS `connector_accounts` (
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`service` text NOT NULL,
@@ -8,9 +8,9 @@ CREATE TABLE `connector_accounts` (
 	`updated_at` integer NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `connector_accounts_owner_service_connection_idx` ON `connector_accounts` (`owner_id`,`service`,`connection_name`);--> statement-breakpoint
-CREATE INDEX `connector_accounts_owner_idx` ON `connector_accounts` (`owner_id`);--> statement-breakpoint
-CREATE TABLE `connector_audit_events` (
+CREATE UNIQUE INDEX IF NOT EXISTS `connector_accounts_owner_service_connection_idx` ON `connector_accounts` (`owner_id`,`service`,`connection_name`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_accounts_owner_idx` ON `connector_accounts` (`owner_id`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `connector_audit_events` (
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`request_id` text NOT NULL,
@@ -21,9 +21,9 @@ CREATE TABLE `connector_audit_events` (
 	`created_at` integer NOT NULL
 );
 --> statement-breakpoint
-CREATE INDEX `connector_audit_events_owner_created_idx` ON `connector_audit_events` (`owner_id`,`created_at`);--> statement-breakpoint
-CREATE INDEX `connector_audit_events_request_idx` ON `connector_audit_events` (`request_id`);--> statement-breakpoint
-CREATE TABLE `connector_calendar_events` (
+CREATE INDEX IF NOT EXISTS `connector_audit_events_owner_created_idx` ON `connector_audit_events` (`owner_id`,`created_at`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_audit_events_request_idx` ON `connector_audit_events` (`request_id`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `connector_calendar_events` (
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`service` text NOT NULL,
@@ -48,10 +48,10 @@ CREATE TABLE `connector_calendar_events` (
 	`location` text
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `connector_calendar_events_owner_source_idx` ON `connector_calendar_events` (`owner_id`,`service`,`connection_name`,`source_record_id`);--> statement-breakpoint
-CREATE INDEX `connector_calendar_events_owner_start_idx` ON `connector_calendar_events` (`owner_id`,`start_at`);--> statement-breakpoint
-CREATE INDEX `connector_calendar_events_owner_event_idx` ON `connector_calendar_events` (`owner_id`,`event_id`);--> statement-breakpoint
-CREATE TABLE `connector_documents` (
+CREATE UNIQUE INDEX IF NOT EXISTS `connector_calendar_events_owner_source_idx` ON `connector_calendar_events` (`owner_id`,`service`,`connection_name`,`source_record_id`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_calendar_events_owner_start_idx` ON `connector_calendar_events` (`owner_id`,`start_at`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_calendar_events_owner_event_idx` ON `connector_calendar_events` (`owner_id`,`event_id`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `connector_documents` (
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`service` text NOT NULL,
@@ -72,10 +72,10 @@ CREATE TABLE `connector_documents` (
 	`source_url` text
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `connector_documents_owner_source_idx` ON `connector_documents` (`owner_id`,`service`,`connection_name`,`source_record_id`);--> statement-breakpoint
-CREATE INDEX `connector_documents_owner_updated_idx` ON `connector_documents` (`owner_id`,`source_updated_at`);--> statement-breakpoint
-CREATE INDEX `connector_documents_owner_document_idx` ON `connector_documents` (`owner_id`,`document_id`);--> statement-breakpoint
-CREATE TABLE `connector_emails` (
+CREATE UNIQUE INDEX IF NOT EXISTS `connector_documents_owner_source_idx` ON `connector_documents` (`owner_id`,`service`,`connection_name`,`source_record_id`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_documents_owner_updated_idx` ON `connector_documents` (`owner_id`,`source_updated_at`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_documents_owner_document_idx` ON `connector_documents` (`owner_id`,`document_id`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `connector_emails` (
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`service` text NOT NULL,
@@ -100,11 +100,11 @@ CREATE TABLE `connector_emails` (
 	`has_attachments` integer DEFAULT false NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `connector_emails_owner_source_idx` ON `connector_emails` (`owner_id`,`service`,`connection_name`,`source_record_id`);--> statement-breakpoint
-CREATE INDEX `connector_emails_owner_sent_idx` ON `connector_emails` (`owner_id`,`sent_at`);--> statement-breakpoint
-CREATE INDEX `connector_emails_owner_sender_idx` ON `connector_emails` (`owner_id`,`sender_address`);--> statement-breakpoint
-CREATE INDEX `connector_emails_owner_message_idx` ON `connector_emails` (`owner_id`,`message_id`);--> statement-breakpoint
-CREATE TABLE `connector_quarantined_records` (
+CREATE UNIQUE INDEX IF NOT EXISTS `connector_emails_owner_source_idx` ON `connector_emails` (`owner_id`,`service`,`connection_name`,`source_record_id`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_emails_owner_sent_idx` ON `connector_emails` (`owner_id`,`sent_at`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_emails_owner_sender_idx` ON `connector_emails` (`owner_id`,`sender_address`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_emails_owner_message_idx` ON `connector_emails` (`owner_id`,`message_id`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `connector_quarantined_records` (
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`job_id` text NOT NULL,
@@ -117,9 +117,9 @@ CREATE TABLE `connector_quarantined_records` (
 	FOREIGN KEY (`run_id`) REFERENCES `connector_sync_runs`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `connector_quarantined_records_run_idx` ON `connector_quarantined_records` (`run_id`);--> statement-breakpoint
-CREATE INDEX `connector_quarantined_records_owner_idx` ON `connector_quarantined_records` (`owner_id`,`created_at`);--> statement-breakpoint
-CREATE TABLE `connector_records` (
+CREATE INDEX IF NOT EXISTS `connector_quarantined_records_run_idx` ON `connector_quarantined_records` (`run_id`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_quarantined_records_owner_idx` ON `connector_quarantined_records` (`owner_id`,`created_at`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `connector_records` (
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`service` text NOT NULL,
@@ -133,10 +133,10 @@ CREATE TABLE `connector_records` (
 	`deleted_at` integer
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `connector_records_owner_source_idx` ON `connector_records` (`owner_id`,`service`,`dataset`,`source_record_id`);--> statement-breakpoint
-CREATE INDEX `connector_records_owner_dataset_idx` ON `connector_records` (`owner_id`,`dataset`);--> statement-breakpoint
-CREATE INDEX `connector_records_synced_idx` ON `connector_records` (`synced_at`);--> statement-breakpoint
-CREATE TABLE `connector_sync_jobs` (
+CREATE UNIQUE INDEX IF NOT EXISTS `connector_records_owner_source_idx` ON `connector_records` (`owner_id`,`service`,`dataset`,`source_record_id`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_records_owner_dataset_idx` ON `connector_records` (`owner_id`,`dataset`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_records_synced_idx` ON `connector_records` (`synced_at`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `connector_sync_jobs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`service` text NOT NULL,
@@ -161,9 +161,9 @@ CREATE TABLE `connector_sync_jobs` (
 	`updated_at` integer NOT NULL
 );
 --> statement-breakpoint
-CREATE INDEX `connector_sync_jobs_due_idx` ON `connector_sync_jobs` (`enabled`,`next_run_at`);--> statement-breakpoint
-CREATE INDEX `connector_sync_jobs_owner_idx` ON `connector_sync_jobs` (`owner_id`);--> statement-breakpoint
-CREATE TABLE `connector_sync_runs` (
+CREATE INDEX IF NOT EXISTS `connector_sync_jobs_due_idx` ON `connector_sync_jobs` (`enabled`,`next_run_at`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `connector_sync_jobs_owner_idx` ON `connector_sync_jobs` (`owner_id`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `connector_sync_runs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`job_id` text NOT NULL,
 	`status` text NOT NULL,
@@ -182,4 +182,4 @@ CREATE TABLE `connector_sync_runs` (
 	FOREIGN KEY (`job_id`) REFERENCES `connector_sync_jobs`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `connector_sync_runs_job_started_idx` ON `connector_sync_runs` (`job_id`,`started_at`);
+CREATE INDEX IF NOT EXISTS `connector_sync_runs_job_started_idx` ON `connector_sync_runs` (`job_id`,`started_at`);

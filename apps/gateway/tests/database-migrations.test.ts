@@ -13,6 +13,53 @@ afterEach(async () => {
 });
 
 describe("database migrations", () => {
+  it("upgrades databases from the connector migration branch", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-connector-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const currentMigrationsDir = resolve("drizzle");
+    const legacyMigrationsDir = join(dataDir, "legacy-migrations");
+    await mkdir(join(legacyMigrationsDir, "meta"), { recursive: true });
+
+    const sharedEntries = JSON.parse(
+      await readFile(join(currentMigrationsDir, "meta", "_journal.json"), "utf8"),
+    ).entries.slice(0, 10) as Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+    await Promise.all(sharedEntries.map((entry) => copyFile(
+      join(currentMigrationsDir, `${entry.tag}.sql`),
+      join(legacyMigrationsDir, `${entry.tag}.sql`),
+    )));
+    await writeFile(join(legacyMigrationsDir, "meta", "_journal.json"), JSON.stringify({
+      version: "7",
+      dialect: "sqlite",
+      entries: sharedEntries,
+    }));
+
+    const legacy = createDatabase(databasePath, legacyMigrationsDir);
+    const connectorSql = await readFile(join(currentMigrationsDir, "0015_low_overlord.sql"), "utf8");
+    legacy.sqlite.exec(connectorSql.replaceAll("--> statement-breakpoint", "\n"));
+    const insertMigration = legacy.sqlite.prepare(
+      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+    );
+    insertMigration.run("legacy-connector-0010", 1787123300145);
+    insertMigration.run("legacy-connector-0011", 1787135410813);
+    insertMigration.run("legacy-connector-0012", 1787136488097);
+    legacy.sqlite.close();
+
+    const upgraded = createDatabase(databasePath, currentMigrationsDir);
+    const tables = upgraded.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    ).all() as Array<{ name: string }>;
+    upgraded.sqlite.close();
+    expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "connector_accounts",
+      "document_block_references",
+      "document_operations",
+      "pending_agent_intents",
+      "entities",
+      "room_wikis",
+    ]));
+  });
+
   it("upgrades databases that applied the legacy reality 0002 migration", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-migration-test-"));
     temporaryDirectories.push(dataDir);
