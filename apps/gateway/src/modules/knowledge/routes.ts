@@ -426,7 +426,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
       {
         schema: {
           tags: ["knowledge"],
-          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 500 }) }),
           response: {
             200: Type.Object({ markdown: Type.String() }),
             404: Type.Object({ error: Type.String() }),
@@ -445,7 +445,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
       {
         schema: {
           tags: ["knowledge"],
-          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 500 }) }),
           response: {
             200: Type.Object({ storagePath: Type.String() }),
             404: Type.Object({ error: Type.String() }),

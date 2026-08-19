@@ -12,6 +12,16 @@ export class ConnectorManager {
   private readonly active = new Map<string, Promise<void>>();
   private readonly cancelled = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
+  /** 同步文档入库记忆的扇出（create-server 注入 MemoryService）；失败不阻塞同步本身。 */
+  private documentMemorySink:
+    | ((input: { provider: string; connectionId: string; documentId: string; title: string; markdown: string }) => Promise<void>)
+    | null = null;
+
+  setDocumentMemorySink(
+    sink: (input: { provider: string; connectionId: string; documentId: string; title: string; markdown: string }) => Promise<void>,
+  ) {
+    this.documentMemorySink = sink;
+  }
   constructor(
     public readonly repository: ConnectorRepository,
     private readonly executor: ConnectorExecutor | null,
@@ -92,6 +102,14 @@ export class ConnectorManager {
         for (const document of page.documents ?? []) {
           if (!this.documentStore) throw new Error("connector_document_store_unavailable");
           await this.documentStore.write(connection.provider, connection.id, document);
+          if (this.documentMemorySink)
+            await this.documentMemorySink({
+              provider: connection.provider,
+              connectionId: connection.id,
+              documentId: document.providerDocumentId,
+              title: document.title,
+              markdown: document.markdown,
+            }).catch(() => {});
         }
         this.repository.incrementRunProcessed(run.id, page.documents?.length ?? 0);
         if (page.terminalCursor)

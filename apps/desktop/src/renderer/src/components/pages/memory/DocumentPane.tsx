@@ -36,11 +36,14 @@ function DocumentDetail({ document, onBack, onDeleted }: {
   const detail = useAsyncData(() => window.nxcore!.memory.getDocument(document.id), [document.id])
   const callerRef = detail.data?.document.callerRef
   // 原文预览经 caller_ref（= 知识资产 file id）走 knowledge 既有链路。
+  // 资产 id 格式固定（file-/parsed- + 12 hex）；其他 callerRef（如 connector:…）
+  // 不发请求，直接走分块兜底，避免 404 触发全局错误弹窗。
+  const assetFileId = callerRef && /^(file|parsed)-[0-9a-f]{12}$/.test(callerRef) ? callerRef : null
   const preview = useAsyncData(
-    () => callerRef
-      ? window.nxcore!.knowledge.readFileMarkdown(callerRef)
+    () => assetFileId
+      ? window.nxcore!.knowledge.readFileMarkdown(assetFileId)
       : Promise.resolve(null),
-    [callerRef],
+    [assetFileId],
   )
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -88,12 +91,20 @@ function DocumentDetail({ document, onBack, onDeleted }: {
 
       <section className="mem-doc-section">
         <h3>原文预览</h3>
-        {preview.failure ? (
-          <p className="mem-inline-error">原文预览不可用（{preview.failure.message}）</p>
-        ) : preview.data ? (
+        {preview.data ? (
           <div className="mem-doc-preview">
             <MarkdownBody markdown={preview.data.markdown} />
           </div>
+        ) : preview.failure ? (
+          // 无知识资产（callerRef 非文件 id，如 ingest/连接器直入 MemoryCore）时
+          // 用分块原文拼接兜底，而不是整块报错。
+          detail.data?.chunks.length ? (
+            <div className="mem-doc-preview">
+              <MarkdownBody markdown={detail.data.chunks.map((chunk) => chunk.content).join('\n\n')} />
+            </div>
+          ) : (
+            <p className="mem-inline-error">原文预览不可用（{preview.failure.message}）</p>
+          )
         ) : (
           <p className="mem-loading">加载中…</p>
         )}

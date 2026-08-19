@@ -5,6 +5,16 @@ import {
   nangoAuthorizationErrorMessage,
   type NangoAuthorizationService,
 } from "./nango-authorization.js";
+const pageParams = (query: any) => {
+  const limit = query?.limit === undefined ? 200 : Number(query.limit);
+  const offset = query?.offset === undefined ? 0 : Number(query.offset);
+  if (!Number.isInteger(limit) || !Number.isInteger(offset) || limit < 1 || limit > 500 || offset < 0)
+    throw Object.assign(new Error("invalid_page"), { statusCode: 400 });
+  const provider = query?.provider;
+  if (provider !== undefined && !isConnectorProvider(provider))
+    throw Object.assign(new Error("invalid_provider"), { statusCode: 400 });
+  return { limit, offset, ...(provider ? { provider } : {}) };
+};
 export const connectorRoutes =
   (
     manager: ConnectorManager,
@@ -121,9 +131,20 @@ export const connectorRoutes =
         return reply.code(409).send({ error: "sync_start_failed", message });
       }
     });
-    app.get("/v1/connectors/connections/:id/messages", async (req) =>
-      manager.repository.messages((req.params as any).id),
-    );
+    app.get("/v1/connectors/connections/:id/messages", async (req, reply) => {
+      try {
+        const page = pageParams(req.query);
+        return {
+          items: manager.repository.messages((req.params as any).id, page),
+          total: manager.repository.countMessages((req.params as any).id, page.provider),
+          limit: page.limit,
+          offset: page.offset,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid_request";
+        return reply.code(400).send({ error: message });
+      }
+    });
     app.get("/v1/connectors/connections/:id/documents", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       try {
@@ -148,7 +169,18 @@ export const connectorRoutes =
       const type = (req.query as any)?.type ?? "mail";
       if (type !== "mail" && type !== "calendar")
         return reply.code(400).send({ error: "invalid_record_type" });
-      return manager.repository.records((req.params as any).id, type);
+      try {
+        const page = pageParams(req.query);
+        return {
+          items: manager.repository.records((req.params as any).id, type, page),
+          total: manager.repository.countRecords((req.params as any).id, type, page.provider),
+          limit: page.limit,
+          offset: page.offset,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid_request";
+        return reply.code(400).send({ error: message });
+      }
     });
     app.get("/v1/connectors/failures", async () =>
       manager.repository.listFailures(),

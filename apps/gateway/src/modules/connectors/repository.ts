@@ -217,13 +217,44 @@ export class ConnectorRepository {
       )
       .all();
   }
-  records(connectionId: string, recordType: "mail" | "calendar" = "mail") {
+  records(
+    connectionId: string,
+    recordType: "mail" | "calendar" = "mail",
+    opts: { limit?: number; offset?: number; provider?: string } = {},
+  ) {
+    const where = ["connection_id=?", "record_type=?"],
+      args: unknown[] = [connectionId, recordType];
+    if (opts.provider) {
+      where.push("provider=?");
+      args.push(opts.provider);
+    }
+    const limit = Math.min(Math.max(1, opts.limit ?? 200), 500),
+      offset = Math.max(0, opts.offset ?? 0);
     const rows = this.sqlite
       .prepare(
-        "SELECT payload_json as payloadJson FROM connector_records WHERE connection_id=? AND record_type=? ORDER BY updated_at DESC LIMIT 200",
+        `SELECT payload_json as payloadJson FROM connector_records WHERE ${where.join(" AND ")} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
       )
-      .all(connectionId, recordType) as Array<{ payloadJson: string }>;
+      .all(...args, limit, offset) as Array<{ payloadJson: string }>;
     return rows.map((row) => JSON.parse(row.payloadJson) as ConnectorJsonRecord);
+  }
+
+  countRecords(
+    connectionId: string,
+    recordType: "mail" | "calendar" = "mail",
+    provider?: string,
+  ) {
+    const r = provider
+      ? this.sqlite
+          .prepare(
+            "SELECT count(*) n FROM connector_records WHERE connection_id=? AND record_type=? AND provider=?",
+          )
+          .get(connectionId, recordType, provider)
+      : this.sqlite
+          .prepare(
+            "SELECT count(*) n FROM connector_records WHERE connection_id=? AND record_type=?",
+          )
+          .get(connectionId, recordType);
+    return (r as any).n as number;
   }
   upsertRecord(
     connectionId: string,
@@ -451,12 +482,21 @@ export class ConnectorRepository {
       .prepare("UPDATE sync_runs SET status=?,error=?,finished_at=? WHERE id=?")
       .run(status, error ?? null, now(), id);
   }
-  messages(connectionId: string): MailMessage[] {
+  messages(
+    connectionId: string,
+    opts: { limit?: number; offset?: number; provider?: string } = {},
+  ): MailMessage[] {
+    const join = opts.provider
+      ? "JOIN connector_connections c ON c.id=connection_id AND c.provider=?"
+      : "";
+    const args = opts.provider ? [opts.provider, connectionId] : [connectionId];
+    const limit = Math.min(Math.max(1, opts.limit ?? 200), 500),
+      offset = Math.max(0, opts.offset ?? 0);
     const rows = this.sqlite
       .prepare(
-        "SELECT id,connection_id as connectionId,provider_message_id as providerMessageId,provider_thread_id as providerThreadId,subject,snippet,text_body as textBody,html_body as htmlBody,received_at as receivedAt,sent_at as sentAt,is_read as isRead,is_starred as isStarred,is_draft as isDraft,is_tombstone as isTombstone,updated_at as updatedAt FROM mail_messages WHERE connection_id=? ORDER BY updated_at DESC LIMIT 200",
+        `SELECT id,connection_id as connectionId,provider_message_id as providerMessageId,provider_thread_id as providerThreadId,subject,snippet,text_body as textBody,html_body as htmlBody,received_at as receivedAt,sent_at as sentAt,is_read as isRead,is_starred as isStarred,is_draft as isDraft,is_tombstone as isTombstone,updated_at as updatedAt FROM mail_messages ${join} WHERE connection_id=? ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
       )
-      .all(connectionId) as Array<
+      .all(...args, limit, offset) as Array<
       Omit<MailMessage, "isRead" | "isStarred" | "isDraft" | "isTombstone"> & {
         isRead: number;
         isStarred: number;
@@ -471,5 +511,18 @@ export class ConnectorRepository {
       isDraft: row.isDraft === 1,
       isTombstone: row.isTombstone === 1,
     }));
+  }
+
+  countMessages(connectionId: string, provider?: string) {
+    const r = provider
+      ? this.sqlite
+          .prepare(
+            "SELECT count(*) n FROM mail_messages m JOIN connector_connections c ON c.id=m.connection_id AND c.provider=? WHERE m.connection_id=?",
+          )
+          .get(provider, connectionId)
+      : this.sqlite
+          .prepare("SELECT count(*) n FROM mail_messages WHERE connection_id=?")
+          .get(connectionId);
+    return (r as any).n as number;
   }
 }
