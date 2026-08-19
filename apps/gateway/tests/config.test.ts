@@ -40,6 +40,28 @@ describe("loadConfig", () => {
     expect(config.pi).toBeNull();
   });
 
+  it("loads the isolated oo CLI connector target", () => {
+    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", "/tmp/everroom-test"], {
+      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
+      OO_CONNECTOR_TOKEN: "runtime-secret",
+      NXCORE_OO_CLI_PATH: "/opt/everroom/oo",
+    });
+
+    expect(config.openConnector).toEqual({
+      executable: "/opt/everroom/oo",
+      baseUrl: "http://127.0.0.1:3000",
+      runtimeToken: "runtime-secret",
+      configDirectory: "/tmp/everroom-test/open-connector/oo-config",
+      dataDirectory: "/tmp/everroom-test/open-connector/oo-data",
+    });
+  });
+
+  it("requires HTTPS for non-loopback connector runtimes", () => {
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      OO_CONNECTOR_URL: "http://connector.example.com",
+    })).toThrow("plain HTTP is only allowed for loopback")
+  });
+
   it("keeps MemoryCore available independently of the Agent runtime", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {
       NXCORE_AGENT_RUNTIME: "fake",

@@ -48,8 +48,8 @@ export class OpenConnectorAdminClient {
           ?? text(connection.accountLabel)
           ?? connectionName
           ?? service,
-        accountId: text(profile.accountId) ?? text(connection.accountId),
-        authType: text(connection.authType) ?? 'unknown',
+        accountLabel: text(connection.accountLabel) ?? text(profile.accountId) ?? connectionName ?? service,
+        authType: text(connection.authType),
         status: text(connection.status) ?? 'connected',
         scopes: profileScopes.length > 0 ? profileScopes : stringList(connection.scopes),
         isDefault: connection.isDefault === true || connectionName === null,
@@ -83,4 +83,3 @@ export class OpenConnectorAdminClient {
     return (payload?.data ?? payload) as T
   }
 }
-

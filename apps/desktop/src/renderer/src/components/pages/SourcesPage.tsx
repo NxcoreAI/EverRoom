@@ -9,7 +9,7 @@ import type {
   SourceFileSummary,
 } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
-import { ConnectSourceMenu } from './sources/ConnectSourceMenu'
+import { ConnectSourceMenu, type ConnectorProviderId } from './sources/ConnectSourceMenu'
 import { EvidenceSearch } from './sources/EvidenceSearch'
 import { EvidenceViewer } from './sources/EvidenceViewer'
 import { GitHubConnectDialog, type GitHubConnectionInput } from './sources/GitHubConnectDialog'
@@ -48,6 +48,22 @@ export function SourcesPage() {
   const [githubForm, setGithubForm] = useState(EMPTY_GITHUB_FORM)
   const [markdownSource, setMarkdownSource] = useState<'google-docs' | 'notion' | null>(null)
   const [markdownForm, setMarkdownForm] = useState({ ids: '', token: '' })
+  const [connectorsEnabled, setConnectorsEnabled] = useState(false)
+
+  useEffect(() => {
+    void window.nxcore?.connectors.status().then((status) => setConnectorsEnabled(status.enabled)).catch(() => undefined)
+  }, [])
+
+  const connectConnector = async (provider: ConnectorProviderId) => {
+    setConnectMenuOpen(false)
+    setMessage(null)
+    try {
+      await window.nxcore?.connectors.startAuthorization(provider)
+      setMessage('已打开授权页面，完成后连接会自动出现在下方「连接器」列表。')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '无法打开授权页面。')
+    }
+  }
 
   const loadSources = useCallback(async (): Promise<DataSourceSummary[] | null> => {
     if (!api) return null
@@ -221,7 +237,7 @@ export function SourcesPage() {
   return (
     <div className="page">
       <PageHeader title="数据源" description={`管理进入 ${PRODUCT_NAME} 的文件、应用和网页资料。`} action="连接数据源" actionDisabled={busyId === 'new'} onAction={() => setConnectMenuOpen((open) => !open)} />
-      {api && connectMenuOpen ? <ConnectSourceMenu busy={busyId === 'new'} onLocalFolder={() => void addLocalFolder()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} /> : null}
+      {api && connectMenuOpen ? <ConnectSourceMenu busy={busyId === 'new'} onLocalFolder={() => void addLocalFolder()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} /> : null}
       {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>请在桌面版中连接本地文件夹</strong><span>网页版不会请求或读取本机文件权限。</span></div></div> : null}
       {message ? <div className="source-feedback" role="status">{message}</div> : null}
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
@@ -230,7 +246,6 @@ export function SourcesPage() {
       {api && (loading || sources.length > 0) ? <SourceTable sources={sources} loading={loading} busyId={busyId} expandedSourceId={expandedSourceId} filesBySource={filesBySource} filesLoadingId={filesLoadingId} onToggleFiles={(id) => setExpandedSourceId((current) => current === id ? null : id)} onSync={(source) => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result)) })} onTogglePaused={(source) => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onDelete={deleteSource} onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)} onPreviewFile={(sourceId, fileId) => void previewFile(sourceId, fileId)} onShowFile={showFile} /> : null}
       <div className="sources-connector-heading">
         <h2>连接器</h2>
-        <p>邮件、日程与文档连接器的授权与同步管理，同步数据自动进入记忆。</p>
       </div>
       <ConnectorSection />
       {evidenceDocument ? <EvidenceViewer evidence={evidenceDocument} activeBlockId={activeEvidenceId} onClose={() => { setEvidenceDocument(null); setActiveEvidenceId(null) }} onShowFile={() => showFile(evidenceDocument.sourceId, evidenceDocument.fileId)} /> : null}

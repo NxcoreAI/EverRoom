@@ -22,6 +22,10 @@ const AgentRuntimeSchema = Type.Union([
   Type.Literal("fake"),
   Type.Literal("pi"),
 ]);
+const ConnectorAgentModeSchema = Type.Union([
+  Type.Literal("direct"),
+  Type.Literal("local"),
+]);
 const AsrProviderSchema = Type.Union([Type.Literal("disabled"), Type.Literal("aliyun")]);
 const AiApiSchema = Type.Union([
   Type.Literal("openai-completions"),
@@ -47,6 +51,11 @@ const RawConfigSchema = Type.Object(
     logLevel: LogLevelSchema,
     authToken: Type.String({ minLength: 16 }),
     agentRuntime: AgentRuntimeSchema,
+    connectorAgentMode: ConnectorAgentModeSchema,
+    connectorSyncEnabled: Type.Boolean(),
+    connectorSyncJobsJson: Type.String(),
+    connectorSyncIntervalMs: Type.Integer({ minimum: 5_000 }),
+    connectorSyncOwnerId: Type.String({ minLength: 1, maxLength: 128 }),
     aiProvider: Type.String(),
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
@@ -104,6 +113,7 @@ const RawConfigSchema = Type.Object(
 
 export type LogLevel = typeof LogLevelSchema.static;
 export type AgentRuntimeMode = typeof AgentRuntimeSchema.static;
+export type ConnectorAgentMode = typeof ConnectorAgentModeSchema.static;
 export type AiApi = typeof AiApiSchema.static;
 export type AiReasoning = typeof AiReasoningSchema.static;
 
@@ -173,6 +183,31 @@ export interface KnowledgeLlmConfig {
   model: string;
 }
 
+export interface OpenConnectorCliConfig {
+  executable: string;
+  baseUrl: string;
+  runtimeToken?: string;
+  configDirectory: string;
+  dataDirectory: string;
+}
+
+export interface ConnectorSyncJobConfig {
+  id: string;
+  ownerId: string;
+  service: string;
+  action?: string;
+  allowedActions: string[];
+  dataset: string;
+  resourceType: "email" | "document" | "calendar" | "generic";
+  connectionName?: string;
+  input: Record<string, unknown>;
+  goal: string;
+  prompt?: string;
+  promptVersion: number;
+  schemaVersion: number;
+  intervalMs?: number;
+}
+
 export interface GatewayConfig {
   host: string;
   port: number;
@@ -183,6 +218,11 @@ export interface GatewayConfig {
   logLevel: LogLevel;
   authToken: string;
   agentRuntime: AgentRuntimeMode;
+  connectorAgentMode?: ConnectorAgentMode;
+  connectorSyncEnabled?: boolean;
+  connectorSyncIntervalMs?: number;
+  connectorSyncJobs?: ConnectorSyncJobConfig[];
+  connectorSyncOwnerId?: string;
   memory: MemoryRuntimeConfig | null;
   pi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
@@ -207,6 +247,7 @@ export interface GatewayConfig {
     outlookClientSecret: string;
     pollingIntervalMs: number;
   };
+  openConnector?: OpenConnectorCliConfig | null;
 }
 
 function defaultDataDir(): string {
@@ -307,6 +348,22 @@ function validateMemoryEndpoint(name: string, value: string): void {
   }
 }
 
+function validateConnectorEndpoint(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('Invalid OO_CONNECTOR_URL: expected an absolute HTTP(S) URL');
+  }
+  const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
+    throw new Error('Invalid OO_CONNECTOR_URL: plain HTTP is only allowed for loopback addresses');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error('Invalid OO_CONNECTOR_URL: credentials, query, and fragment are not allowed');
+  }
+}
+
 function parseBoolean(name: string, value: string): boolean {
   if (value !== "true" && value !== "false") {
     throw new Error(`Invalid ${name}: expected "true" or "false"`);
@@ -321,6 +378,95 @@ function inferMcpWebSocketUrl(baseUrl: string): string {
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+function parseConnectorSyncJobs(value: string): ConnectorSyncJobConfig[] {
+  if (!value.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("NXCORE_CONNECTOR_SYNC_JOBS must be valid JSON");
+  }
+  if (!Array.isArray(parsed)) throw new Error("NXCORE_CONNECTOR_SYNC_JOBS must be a JSON array");
+  return parsed.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}] must be an object`);
+    }
+    const job = item as Record<string, unknown>;
+    const required = ["id", "ownerId", "service", "dataset"] as const;
+    for (const key of required) {
+      if (typeof job[key] !== "string" || !job[key].trim()) {
+        throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].${key} is required`);
+      }
+    }
+    if (job.input !== undefined && (!job.input || typeof job.input !== "object" || Array.isArray(job.input))) {
+      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].input must be an object`);
+    }
+    if (job.intervalMs !== undefined && (!Number.isInteger(job.intervalMs) || Number(job.intervalMs) < 5_000)) {
+      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].intervalMs must be at least 5000`);
+    }
+    const resourceType = typeof job.resourceType === "string"
+      ? job.resourceType.trim()
+      : inferConnectorResourceType(String(job.dataset));
+    if (resourceType !== "email" && resourceType !== "document" && resourceType !== "calendar" && resourceType !== "generic") {
+      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, or generic`);
+    }
+    const action = typeof job.action === "string" && job.action.trim() ? job.action.trim() : undefined;
+    if (job.allowedActions !== undefined && (!Array.isArray(job.allowedActions)
+      || job.allowedActions.some((item) => typeof item !== "string" || !item.trim()))) {
+      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].allowedActions must be an array of action names`);
+    }
+    const allowedActions = [...new Set([
+      ...(action ? [action] : []),
+      ...((job.allowedActions as string[] | undefined) ?? []).map((item) => item.trim()),
+    ])];
+    if (allowedActions.length === 0) {
+      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}] requires action or allowedActions`);
+    }
+    if (resourceType !== "generic") {
+      const unsafeAction = allowedActions.find(isObviouslyMutatingConnectorAction);
+      if (unsafeAction) {
+        throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}] action "${unsafeAction}" is not read-only`);
+      }
+    }
+    return {
+      id: String(job.id).trim(),
+      ownerId: String(job.ownerId).trim(),
+      service: String(job.service).trim(),
+      ...(action ? { action } : {}),
+      allowedActions,
+      dataset: String(job.dataset).trim(),
+      resourceType: resourceType ?? "generic",
+      ...(typeof job.connectionName === "string" && job.connectionName.trim()
+        ? { connectionName: job.connectionName.trim() }
+        : {}),
+      input: (job.input as Record<string, unknown> | undefined) ?? {},
+      goal: typeof job.goal === "string" && job.goal.trim()
+        ? job.goal.trim()
+        : `同步已授权 ${String(job.service).trim()} 中的 ${resourceType} 数据到 EverRoom 本地数据库。`,
+      ...(typeof job.prompt === "string" && job.prompt.trim() ? { prompt: job.prompt.trim() } : {}),
+      promptVersion: Number.isInteger(job.promptVersion) && Number(job.promptVersion) > 0
+        ? Number(job.promptVersion)
+        : 1,
+      schemaVersion: Number.isInteger(job.schemaVersion) && Number(job.schemaVersion) > 0
+        ? Number(job.schemaVersion)
+        : 1,
+      ...(job.intervalMs !== undefined ? { intervalMs: Number(job.intervalMs) } : {}),
+    };
+  });
+}
+
+function inferConnectorResourceType(dataset: string): "email" | "document" | "calendar" | "generic" {
+  const normalized = dataset.trim().toLowerCase();
+  if (/mail|email|message/.test(normalized)) return "email";
+  if (/doc|page|file/.test(normalized)) return "document";
+  if (/calendar|event|schedule/.test(normalized)) return "calendar";
+  return "generic";
+}
+
+function isObviouslyMutatingConnectorAction(action: string): boolean {
+  return /^(?:send|create|update|delete|remove|modify|mark|archive|trash|move|share|invite|reply|upload|post|put|patch|add|set)(?:_|-)/i.test(action);
 }
 
 function defaultMigrationsDir(): string {
@@ -361,6 +507,16 @@ export function loadConfig(
     logLevel: values["log-level"] ?? env.NXCORE_GATEWAY_LOG_LEVEL ?? "info",
     authToken: values.token ?? env.NXCORE_GATEWAY_TOKEN ?? randomBytes(32).toString("base64url"),
     agentRuntime: env.NXCORE_AGENT_RUNTIME ?? "fake",
+    connectorAgentMode: env.NXCORE_CONNECTOR_AGENT_MODE ?? "direct",
+    connectorSyncEnabled: env.NXCORE_CONNECTOR_SYNC_ENABLED == null
+      ? false
+      : parseBoolean("NXCORE_CONNECTOR_SYNC_ENABLED", env.NXCORE_CONNECTOR_SYNC_ENABLED.trim()),
+    connectorSyncJobsJson: env.NXCORE_CONNECTOR_SYNC_JOBS?.trim() ?? "",
+    connectorSyncIntervalMs: parsePositiveInteger(
+      "NXCORE_CONNECTOR_SYNC_INTERVAL_MS",
+      env.NXCORE_CONNECTOR_SYNC_INTERVAL_MS ?? "300000",
+    ),
+    connectorSyncOwnerId: env.NXCORE_CONNECTOR_SYNC_OWNER_ID?.trim() || "local-user",
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
@@ -597,6 +753,9 @@ export function loadConfig(
         ...(knowledge ? { knowledge } : {}),
       }
     : null;
+  const openConnectorUrl = env.OO_CONNECTOR_URL?.trim();
+  if (openConnectorUrl) validateConnectorEndpoint(openConnectorUrl);
+  const connectorSyncJobs = parseConnectorSyncJobs(rawConfig.connectorSyncJobsJson);
 
   return {
     host: rawConfig.host,
@@ -605,6 +764,11 @@ export function loadConfig(
     logLevel: rawConfig.logLevel,
     authToken: rawConfig.authToken,
     agentRuntime: rawConfig.agentRuntime,
+    connectorAgentMode: rawConfig.connectorAgentMode,
+    connectorSyncEnabled: rawConfig.connectorSyncEnabled,
+    connectorSyncIntervalMs: rawConfig.connectorSyncIntervalMs,
+    connectorSyncJobs,
+    connectorSyncOwnerId: rawConfig.connectorSyncOwnerId,
     memory,
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
@@ -649,6 +813,15 @@ export function loadConfig(
       outlookClientSecret: env.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET?.trim() ?? "",
       pollingIntervalMs: rawConfig.connectorPollMs,
     },
+    openConnector: openConnectorUrl
+      ? {
+          executable: env.NXCORE_OO_CLI_PATH?.trim() || 'oo',
+          baseUrl: openConnectorUrl.replace(/\/$/, ''),
+          ...(env.OO_CONNECTOR_TOKEN?.trim() ? { runtimeToken: env.OO_CONNECTOR_TOKEN.trim() } : {}),
+          configDirectory: env.OO_CONFIG_DIR?.trim() || join(dataDir, 'open-connector', 'oo-config'),
+          dataDirectory: env.OO_DATA_DIR?.trim() || join(dataDir, 'open-connector', 'oo-data'),
+        }
+      : null,
     pi,
     backgroundPi: pi
       ? {
