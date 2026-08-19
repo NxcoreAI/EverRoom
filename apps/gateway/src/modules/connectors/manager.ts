@@ -6,21 +6,22 @@ import type {
 } from "@nxcore/connector-contract";
 import type { ConnectorExecutor } from "./types.js";
 import { ConnectorDocumentStore } from "./document-store.js";
+import { calendarEventToMarkdown, mailToMarkdown } from "./connector-memory.js";
 import { ConnectorRepository } from "./repository.js";
 
 export class ConnectorManager {
   private readonly active = new Map<string, Promise<void>>();
   private readonly cancelled = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
-  /** 同步文档入库记忆的扇出（create-server 注入 MemoryService）；失败不阻塞同步本身。 */
-  private documentMemorySink:
-    | ((input: { provider: string; connectionId: string; documentId: string; title: string; markdown: string }) => Promise<void>)
+  /** 同步数据入库记忆的扇出（create-server 注入 MemoryService）；失败不阻塞同步本身。 */
+  private memorySink:
+    | ((input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string }) => Promise<void>)
     | null = null;
 
-  setDocumentMemorySink(
-    sink: (input: { provider: string; connectionId: string; documentId: string; title: string; markdown: string }) => Promise<void>,
+  setMemorySink(
+    sink: (input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string }) => Promise<void>,
   ) {
-    this.documentMemorySink = sink;
+    this.memorySink = sink;
   }
   constructor(
     public readonly repository: ConnectorRepository,
@@ -99,11 +100,34 @@ export class ConnectorManager {
         if (this.cancelled.has(run.id)) throw new Error("cancelled");
         this.repository.applyPage(scope.id, run.id, fence, page.changes);
         this.repository.applyCalendarPage(scope.id, run.id, fence, page.calendarChanges ?? []);
+        for (const change of page.changes) {
+          if (change.kind !== "upsert" || !this.memorySink) continue;
+          await this.memorySink({
+            kind: "mail",
+            provider: connection.provider,
+            connectionId: connection.id,
+            documentId: change.message.providerMessageId,
+            title: change.message.subject?.trim() || "（无主题）",
+            markdown: mailToMarkdown(change.message),
+          }).catch(() => {});
+        }
+        for (const change of page.calendarChanges ?? []) {
+          if (change.kind !== "upsert" || !this.memorySink) continue;
+          await this.memorySink({
+            kind: "calendar",
+            provider: connection.provider,
+            connectionId: connection.id,
+            documentId: change.event.providerEventId,
+            title: change.event.title.trim() || "（无标题）",
+            markdown: calendarEventToMarkdown(change.event),
+          }).catch(() => {});
+        }
         for (const document of page.documents ?? []) {
           if (!this.documentStore) throw new Error("connector_document_store_unavailable");
           await this.documentStore.write(connection.provider, connection.id, document);
-          if (this.documentMemorySink)
-            await this.documentMemorySink({
+          if (this.memorySink)
+            await this.memorySink({
+              kind: "document",
               provider: connection.provider,
               connectionId: connection.id,
               documentId: document.providerDocumentId,

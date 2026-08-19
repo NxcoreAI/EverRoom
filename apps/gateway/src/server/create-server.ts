@@ -74,9 +74,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const gatewayLogger = await createGatewayLogger(config.dataDir, config.logLevel);
   const app = Fastify({
     loggerInstance: gatewayLogger.logger,
-    // knowledge 文件路由的 id 可能是 caller_ref（如 connector:provider:<uuid>:<docId>），
-    // URL 编码后超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
-    maxParamLength: 500,
+    routerOptions: {
+      // knowledge 文件路由的 id 可能是 caller_ref（如 connector:provider:<uuid>:<docId>），
+      // URL 编码后超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
+      maxParamLength: 500,
+    },
   }).withTypeProvider<TypeBoxTypeProvider>();
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
@@ -160,9 +162,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
   const memoryService = new MemoryService(config.pi?.memory ?? null, app.log, { db, dataDir: config.dataDir });
-  // 连接器同步到的文档类数据（Google Docs/Notion）同步入记忆：
+  // 连接器同步到的文档/邮件/日程同步入记忆：
   // 走与统一 ingest 相同的 importToMemoryCore（2MB 截断 + callerRef 幂等去重）。
-  connectorManager.setDocumentMemorySink(async (input) => {
+  connectorManager.setMemorySink(async (input) => {
     if (!memoryService.enabled) return;
     await memoryService.importToMemoryCore({
       title: input.title,
@@ -171,7 +173,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         2 * 1024 * 1024,
         "<!-- 截断：原文超 2MB 消费端上限 -->",
       ),
-      callerRef: `connector:${input.provider}:${input.connectionId}:${input.documentId}`,
+      callerRef: `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
     });
   });
   const contextRoomService = new ContextRoomService(db);
