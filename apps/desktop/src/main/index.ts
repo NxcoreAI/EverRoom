@@ -1,8 +1,10 @@
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell, systemPreferences } from 'electron'
 
 import type { CloudAccountStatus } from '../shared/sources'
+import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
@@ -35,6 +37,11 @@ import {
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
+import { OoCliBridge } from './open-connector/oo-cli-bridge'
+import {
+  OpenConnectorSupervisor,
+  type OpenConnectorConnection,
+} from './open-connector/open-connector-supervisor'
 
 const APP_NAME = 'EverRoom'
 
@@ -80,6 +87,13 @@ const SOURCE_CHANNELS = {
 
 const GATEWAY_CHANNELS = {
   status: 'gateway:status',
+} as const
+
+const OPEN_CONNECTOR_CHANNELS = {
+  status: 'open-connector:status',
+  execute: 'open-connector:execute',
+  cancel: 'open-connector:cancel',
+  openConsole: 'open-connector:open-console',
 } as const
 
 const CONTEXT_ROOM_CHANNELS = {
@@ -228,6 +242,7 @@ function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
+    OPEN_CONNECTOR_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
     DOCUMENT_CHANNELS,
@@ -256,6 +271,9 @@ function installIpcRouters(): void {
 
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let ooCliBridge: OoCliBridge | null = null
+let openConnectorSupervisor: OpenConnectorSupervisor | null = null
+let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
@@ -404,6 +422,138 @@ function registerGatewayHandlers(): void {
     gatewaySupervisor
       ? gatewaySupervisor.getStatus()
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
+}
+
+function resolveOoCliExecutable(): string {
+  const configured = process.env.NXCORE_OO_CLI_PATH?.trim()
+  if (configured) return configured
+  const executableName = process.platform === 'win32' ? 'oo.exe' : 'oo'
+  const packagedCandidates = [
+    join(process.resourcesPath, 'oo', `${process.platform}-${process.arch}`, executableName),
+    join(process.resourcesPath, 'oo', executableName),
+    join(app.getAppPath(), 'build', 'oo', `${process.platform}-${process.arch}`, executableName),
+  ]
+  return packagedCandidates.find((candidate) => existsSync(candidate)) ?? 'oo'
+}
+
+function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
+  const root = join(dataDirectory, 'open-connector')
+  return new OoCliBridge({
+    executable: resolveOoCliExecutable(),
+    baseUrl: connection.baseUrl,
+    runtimeToken: connection.runtimeToken,
+    managed: connection.managed,
+    gatewayPid: connection.pid,
+    gatewayVersion: connection.version,
+    configDirectory: join(root, 'oo-config'),
+    dataDirectory: join(root, 'oo-data'),
+  })
+}
+
+function attachOpenConnectorBridge(bridge: OoCliBridge): void {
+  bridge.onCommand((frame) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('open-connector:event', frame)
+    }
+  })
+}
+
+function openConnectorExternalUrl(value: string): void {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return
+    void shell.openExternal(url.toString())
+  } catch {
+    // Ignore malformed or unsupported external navigation from the console.
+  }
+}
+
+function registerOpenConnectorHandlers(): void {
+  handle(OPEN_CONNECTOR_CHANNELS.status, () => {
+    if (ooCliBridge) return ooCliBridge.status()
+    const status = openConnectorSupervisor?.getStatus()
+    return {
+      baseUrl: status?.baseUrl ?? '',
+      managed: status?.managed ?? true,
+      gatewayPid: status?.pid ?? null,
+      gatewayVersion: status?.version ?? null,
+      gatewayState: status?.state === 'starting' || !status ? 'starting' : 'unreachable',
+      gatewayMessage: status?.message ?? null,
+      runtimeTokenConfigured: false,
+      cliState: 'checking',
+      cliVersion: null,
+      cliPath: resolveOoCliExecutable(),
+      cliMessage: null,
+    }
+  })
+  handle(OPEN_CONNECTOR_CHANNELS.execute, (_event, input: unknown) => {
+    const bridge = ooCliBridge
+    if (!bridge) throw new Error('OpenConnector 尚未就绪。')
+    if (!input || typeof input !== 'object') throw new Error('无效的 OpenConnector 命令。')
+    return bridge.execute(input as OpenConnectorExecutionInput)
+  })
+  handle(OPEN_CONNECTOR_CHANNELS.cancel, (_event, requestId: unknown) => {
+    const bridge = ooCliBridge
+    if (!bridge) return false
+    if (typeof requestId !== 'string') throw new Error('无效的命令请求标识。')
+    return bridge.cancel(requestId)
+  })
+  handle(OPEN_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
+}
+
+async function openConnectorManagementConsole(): Promise<void> {
+  const connection = openConnectorSupervisor?.getConnection()
+  if (!connection) throw new Error('OpenConnector 尚未就绪。')
+  if (!connection.managed || !connection.adminToken) {
+    await shell.openExternal(`${connection.baseUrl}/`)
+    return
+  }
+  if (openConnectorConsoleWindow && !openConnectorConsoleWindow.isDestroyed()) {
+    openConnectorConsoleWindow.show()
+    openConnectorConsoleWindow.focus()
+    return
+  }
+
+  const origin = new URL(connection.baseUrl).origin
+  const window = new BrowserWindow({
+    width: 1180,
+    height: 820,
+    minWidth: 900,
+    minHeight: 640,
+    show: false,
+    title: 'OpenConnector 管理台',
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      partition: 'persist:everroom-open-connector-console',
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  openConnectorConsoleWindow = window
+  window.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: [`${origin}/*`] },
+    (details, callback) => callback({
+      requestHeaders: {
+        ...details.requestHeaders,
+        Authorization: `Bearer ${connection.adminToken}`,
+      },
+    }),
+  )
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openConnectorExternalUrl(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (new URL(url).origin === origin) return
+    event.preventDefault()
+    openConnectorExternalUrl(url)
+  })
+  window.once('ready-to-show', () => window.show())
+  window.once('closed', () => {
+    if (openConnectorConsoleWindow === window) openConnectorConsoleWindow = null
+  })
+  await window.loadURL(`${connection.baseUrl}/`)
 }
 
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
@@ -729,8 +879,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   installIpcRouters()
   registerGatewayHandlers()
+  registerOpenConnectorHandlers()
   createWindow()
   try {
+    openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
+    const openConnector = await openConnectorSupervisor.start().catch((error) => {
+      console.error('Managed OpenConnector failed to start; connector tools stay disabled.', error)
+      return null
+    })
+    if (openConnector) {
+      ooCliBridge = createOoCliBridge(openConnector)
+      attachOpenConnectorBridge(ooCliBridge)
+    }
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
     memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
@@ -740,13 +900,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
-      memoryCore
-        ? {
+      {
+        ...(ooCliBridge ? ooCliBridge.environment() : {}),
+        ...(ooCliBridge ? { NXCORE_CONNECTOR_AGENT_MODE: 'local' } : {}),
+        ...(memoryCore ? {
           NXCORE_MEMORY_ENABLED: 'true',
           NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
           NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
-        }
-        : {},
+        } : {}),
+      },
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
@@ -842,6 +1004,9 @@ app.on('before-quit', (event) => {
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
+  const connectorCli = ooCliBridge
+  const connectorRuntime = openConnectorSupervisor
+  const connectorConsole = openConnectorConsoleWindow
   const memoryCore = memoryCoreSupervisor
   const agentBridge = agentGatewayBridge
   const documentBridge = documentGatewayBridge
@@ -850,6 +1015,9 @@ app.on('before-quit', (event) => {
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
+  ooCliBridge = null
+  openConnectorSupervisor = null
+  openConnectorConsoleWindow = null
   memoryCoreSupervisor = null
   agentGatewayBridge = null
   documentGatewayBridge = null
@@ -857,6 +1025,8 @@ app.on('before-quit', (event) => {
   recordingStore = null
   saasClient = null
   screenshotScheduler.stop()
+  if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
+  connectorCli?.shutdown()
   agentBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()
@@ -865,6 +1035,7 @@ app.on('before-quit', (event) => {
     service?.shutdown(),
     recordings?.dispose(),
     gateway?.shutdown(),
+    connectorRuntime?.shutdown(),
     memoryCore?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })

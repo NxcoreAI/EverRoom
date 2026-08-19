@@ -10,6 +10,7 @@ allowBuilds:
   '@parcel/watcher': false
   '@sentry/cli': true
   '@tencentdb-agent-memory/memory-tencentdb-v2@https://codeload.github.com/NxcoreAI/TencentDB-Agent-Memory/tar.gz/906dd0f0f4b6263312dabf345ebeba37e6e8d3ae': false
+  '@oomol-lab/open-connector@https://codeload.github.com/oomol-lab/open-connector/tar.gz/5719a69468c698c7cb8108e062ff64ecef8a2e65': false
   better-sqlite3: true
   electron: true
   electron-winstaller: true
@@ -24,3 +25,12 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-protocol@0.84.2'
   - '@earendil-works/pi-telemetry@0.84.2'
   - '@earendil-works/pi-tui@0.84.2'
+  - '@oomol-lab/oo-cli-darwin-arm64@1.7.5'
+  - '@oomol-lab/oo-cli-darwin-x64@1.7.5'
+  - '@oomol-lab/oo-cli-linux-arm64-gnu@1.7.5'
+  - '@oomol-lab/oo-cli-linux-arm64-musl@1.7.5'
+  - '@oomol-lab/oo-cli-linux-x64-gnu@1.7.5'
+  - '@oomol-lab/oo-cli-linux-x64-musl@1.7.5'
+  - '@oomol-lab/oo-cli-win32-arm64@1.7.5'
+  - '@oomol-lab/oo-cli-win32-x64@1.7.5'
+  - '@oomol-lab/oo-cli@1.7.5'

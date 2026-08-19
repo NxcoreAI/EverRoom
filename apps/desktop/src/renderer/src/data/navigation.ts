@@ -8,10 +8,11 @@ import {
   ListChecks,
   AudioLines,
   NotebookPen,
+  PlugZap,
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'memory' | 'tasks' | 'diary' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'memory' | 'connectors' | 'tasks' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -43,6 +44,7 @@ export const navigationSections: NavigationSection[] = [
     items: [
       { id: 'sources', label: '数据源', icon: FolderSync, tone: 'cyan' },
       { id: 'memory', label: '记忆', icon: Brain, tone: 'orange' },
+      { id: 'connectors', label: '连接器', icon: PlugZap, tone: 'green' },
     ],
   },
   {

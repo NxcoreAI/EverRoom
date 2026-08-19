@@ -16,6 +16,8 @@ export interface StartRuntimeRunInput {
   runId: string;
   sessionId: string;
   runtimeSessionRef: string | null;
+  /** Exact user-authored request before routing context is added. */
+  originalPrompt?: string;
   prompt: string;
   pageLabel: string;
   roomId: string | null;

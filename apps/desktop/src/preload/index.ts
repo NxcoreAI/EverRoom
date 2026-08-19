@@ -86,6 +86,19 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
+  openConnector: {
+    status: () => invokeQuietly('open-connector:status'),
+    execute: (input) => invokeQuietly('open-connector:execute', input),
+    cancel: (requestId) => invokeQuietly('open-connector:cancel', requestId),
+    openConsole: () => invokeQuietly('open-connector:open-console'),
+    onEvent: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
+        listener(frame)
+      }
+      ipcRenderer.on('open-connector:event', handleEvent)
+      return () => ipcRenderer.removeListener('open-connector:event', handleEvent)
+    },
+  },
   screenCapture: {
     captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
     start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),

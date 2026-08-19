@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { RuntimeCapabilities } from "@nxcore/agent-contract";
@@ -65,6 +66,8 @@ export interface PiAgentRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  includeBashTool?: boolean;
+  maxToolCallsPerRun?: number;
   /** MemoryCore 记忆服务配置；缺省时记忆能力完全不启用。 */
   memory?: MemoryRuntimeConfig;
   retry?: {
@@ -77,6 +80,15 @@ export interface PiAgentRuntimeConfig {
 export interface PiAgentRuntimeToolResult {
   content: string;
   details?: unknown;
+}
+
+export interface PiAgentRuntimeToolFailurePolicy {
+  category: string;
+  recoverable: boolean;
+  recommendedTool?: string;
+  instruction: string;
+  retryKey?: string;
+  maxAttempts?: number;
 }
 
 export interface PiAgentRuntimeTool {
@@ -92,6 +104,11 @@ export interface PiAgentRuntimeTool {
     params: Record<string, unknown>,
     signal?: AbortSignal,
   ) => Promise<PiAgentRuntimeToolResult>;
+  classifyFailure?: (
+    error: unknown,
+    input: StartRuntimeRunInput,
+    params: Record<string, unknown>,
+  ) => PiAgentRuntimeToolFailurePolicy | null;
 }
 
 export interface PiAgentRuntimeIntegration {
@@ -104,6 +121,7 @@ export interface PiAgentRuntimeIntegration {
 
 interface PiRunContextRef {
   current: StartRuntimeRunInput | null;
+  pendingFailures: Map<string, PiAgentRuntimeToolFailurePolicy>;
 }
 
 interface PiSessionHandle {
@@ -125,9 +143,43 @@ interface ActivePiRun {
   cancelled: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
+  recoveryAttempts: Map<string, number>;
+  toolCallCount: number;
+  toolCallCounts: Map<string, number>;
+  failedToolCalls: Set<string>;
+  terminalToolError: ToolExecutionGuardError | null;
 }
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const MAX_TOOL_CALLS_PER_RUN = 24;
+const MAX_IDENTICAL_TOOL_CALLS_PER_RUN = 2;
+
+class ToolExecutionGuardError extends Error {
+  constructor(
+    readonly category: "tool_budget_exhausted" | "tool_loop_blocked",
+    message: string,
+  ) {
+    super(message);
+    this.name = "ToolExecutionGuardError";
+  }
+}
+
+function canonicalToolValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalToolValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalToolValue(item)]));
+  }
+  return value;
+}
+
+function toolCallFingerprint(toolName: string, params: Record<string, unknown>): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify(canonicalToolValue(params)))
+    .digest("hex");
+  return `${toolName}:${digest}`;
+}
 
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
@@ -173,7 +225,13 @@ export class PiAgentRuntime implements AgentRuntime {
       cancelled: false,
       terminal: false,
       finishPromise: null,
+      recoveryAttempts: new Map(),
+      toolCallCount: 0,
+      toolCallCounts: new Map(),
+      failedToolCalls: new Set(),
+      terminalToolError: null,
     };
+    handle.context.pendingFailures.clear();
     active.unsubscribe = handle.session.subscribe((event) => this.handleEvent(input.runId, event));
     this.activeRuns.set(input.runId, active);
 
@@ -275,7 +333,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const model = modelRuntime.getModel(this.config.provider, this.config.model);
     if (!model) throw new Error(`Pi model is unavailable: ${this.config.provider}/${this.config.model}`);
 
-    const context: PiRunContextRef = { current: null };
+    const context: PiRunContextRef = { current: null, pendingFailures: new Map() };
     const customTools = (this.integration.tools ?? []).map((tool) => defineTool({
       name: tool.name,
       label: tool.label,
@@ -284,14 +342,59 @@ export class PiAgentRuntime implements AgentRuntime {
       ...(tool.promptGuidelines ? { promptGuidelines: tool.promptGuidelines } : {}),
       parameters: Type.Unsafe<Record<string, unknown>>(tool.parameters),
       ...(tool.executionMode ? { executionMode: tool.executionMode } : {}),
-      execute: async (_toolCallId, params, signal) => {
+      execute: async (toolCallId, params, signal) => {
         const input = context.current;
         if (!input) throw new Error("Pi document tool is not bound to an active run");
-        const result = await withAbortSignal(() => tool.execute(input, params, signal), signal);
-        return {
-          content: [{ type: "text" as const, text: result.content }],
-          details: result.details ?? {},
-        };
+        const active = this.activeRuns.get(input.runId);
+        if (!active) throw new Error("Pi tool is not bound to an active run");
+        const fingerprint = toolCallFingerprint(tool.name, params);
+        try {
+          const maxToolCalls = this.config.maxToolCallsPerRun ?? MAX_TOOL_CALLS_PER_RUN;
+          if (active.toolCallCount >= maxToolCalls) {
+            throw new ToolExecutionGuardError(
+              "tool_budget_exhausted",
+              `Tool execution budget exhausted after ${String(maxToolCalls)} calls in this run. Stop calling tools and report the task as incomplete.`,
+            );
+          }
+          if (active.failedToolCalls.has(fingerprint)) {
+            throw new ToolExecutionGuardError(
+              "tool_loop_blocked",
+              `Blocked an identical retry of failed tool "${tool.name}". The service, action, and input must not be submitted again in this run.`,
+            );
+          }
+          const identicalCalls = active.toolCallCounts.get(fingerprint) ?? 0;
+          if (identicalCalls >= MAX_IDENTICAL_TOOL_CALLS_PER_RUN) {
+            throw new ToolExecutionGuardError(
+              "tool_loop_blocked",
+              `Blocked tool "${tool.name}" after ${String(identicalCalls)} identical calls in this run. Repeating the same call cannot produce new evidence.`,
+            );
+          }
+          active.toolCallCount += 1;
+          active.toolCallCounts.set(fingerprint, identicalCalls + 1);
+          const result = await withAbortSignal(() => tool.execute(input, params, signal), signal);
+          return {
+            content: [{ type: "text" as const, text: result.content }],
+            details: result.details ?? {},
+          };
+        } catch (error) {
+          if (error instanceof ToolExecutionGuardError) {
+            active.terminalToolError = error;
+            context.pendingFailures.set(toolCallId, {
+              category: error.category,
+              recoverable: false,
+              instruction: error.message,
+              retryKey: fingerprint,
+              maxAttempts: 0,
+            });
+          } else {
+            const failure = tool.classifyFailure?.(error, input, params);
+            const allowsOneSafeIdenticalRetry = failure?.recoverable === true
+              && failure.recommendedTool === tool.name;
+            if (!allowsOneSafeIdenticalRetry) active.failedToolCalls.add(fingerprint);
+            if (failure) context.pendingFailures.set(toolCallId, failure);
+          }
+          throw error;
+        }
       },
     }));
     const toolNames = customTools.map((tool) => tool.name);
@@ -341,11 +444,17 @@ export class PiAgentRuntime implements AgentRuntime {
           );
         }
         const hasDocumentTools = customTools.some((tool) => tool.name.startsWith("context_room_"));
+        const hasConnectorTools = customTools.some((tool) => tool.name.startsWith("connector_"));
+        if (hasDocumentTools && hasConnectorTools) {
+          lines.push(
+            "工具路由优先级：用户明确命名 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox、日历、邮箱或其他第三方服务时，其中的“页面”“文档”“工作区”“创建”“保存”等词描述的是该外部服务对象，必须优先使用 connector_* 工具，不得调用 context_room_*。只有用户同时明确要求写入 EverRoom、Context Room 或某个 Room 时，才允许进入 Context Room 文档流程。不得把 Notion workspace/page 解释成 EverRoom 工作区文档。",
+          );
+        }
         if (hasDocumentTools) {
           lines.push(
             "你只能使用当前会话提供的 Context Room 文档工具以及明确列出的其他能力；不要臆造未提供的文件、Shell 或外部产品工具。",
-            "只有当用户明确表达了要在工作区中创建、保存或写入一篇文档的操作意图时，才可以调用 Context Room 文档工具，例如用户明确说“创建文档”“写入文档”“保存成文档”或“在某个 Room 里生成文档”。仅仅要求解释、分析、总结、整理、列计划、写方案、起草内容、润色、扩写或给出 Markdown，默认都应直接在聊天中回答，不能据此推断用户想创建文档；用户提到某篇文档、讨论如何写文档、当前页面位于文档区，或回答可能很长，也都不构成创建意图。意图不明确时不要调用 context_room_list 或 context_room_write_begin，先在聊天中完成请求；只有用户随后明确要求落盘为文档时，再开始文档流程。局部选区重写也不创建新文档。",
-            "只有当用户明确要求在工作区创建、保存或写入文档，且当前视口未绑定具体 Context Room 时，才进入 Room 选择流程；一旦同时满足这两个条件，必须立即调用 context_room_list，并使用工具返回的列表让用户选择。不得只用文字回复“无法创建”“请先选择 Room”，不得询问用户是否需要查看列表，也不得要求用户自行提供 Room 名称，因为选择 UI 依赖本次工具调用。普通页面的普通聊天不要主动提示 Room 选择。用户明确选择前禁止调用 context_room_write_begin，也不要替用户猜测目标 Room。",
+            "只有当用户明确表达了要在 EverRoom 工作区的 Context Room 中创建、保存或写入一篇文档的操作意图时，才可以调用 Context Room 文档工具，例如用户明确说“在 EverRoom 创建文档”“写入 Context Room”或“在某个 Room 里生成文档”。仅仅要求解释、分析、总结、整理、列计划、写方案、起草内容、润色、扩写或给出 Markdown，默认都应直接在聊天中回答，不能据此推断用户想创建文档；用户提到某篇文档、讨论如何写文档、当前页面位于文档区，或回答可能很长，也都不构成创建意图。意图不明确时不要调用 context_room_list 或 context_room_write_begin，先在聊天中完成请求；只有用户随后明确要求落盘为文档时，再开始文档流程。局部选区重写也不创建新文档。",
+            "只有当用户明确要求在 EverRoom 工作区的 Context Room 中创建、保存或写入文档，且当前视口未绑定具体 Context Room 时，才进入 Room 选择流程；一旦同时满足这两个条件，必须立即调用 context_room_list，并使用工具返回的列表让用户选择。不得只用文字回复“无法创建”“请先选择 Room”，不得询问用户是否需要查看列表，也不得要求用户自行提供 Room 名称，因为选择 UI 依赖本次工具调用。普通页面的普通聊天不要主动提示 Room 选择。用户明确选择前禁止调用 context_room_write_begin，也不要替用户猜测目标 Room。",
             "如果本轮要创建文档且记忆工具可用，调用 context_room_write_begin 之前必须先用 memory_search 和 conversation_search 检索与主题、项目或用户偏好相关的历史记忆和旧文档；将命中的内容作为客制化依据。只有明确属于全新主题，或用户明确要求不要参考历史时，才可以跳过检索。",
             "在调用 context_room_write_begin 前，先确定准备写入正文的实际核心内容、重点或结论，再据此拟定能够准确概括正文的具体、自然、有辨识度的标题。标题要随内容类型调整：教程突出学习路径或成果，分析突出对象与核心问题，方案突出目标与行动，报告突出主题与范围。除非用户明确指定必须使用的精确标题，否则不要复制用户的任务表述，也不要使用“后端学习文档”“项目介绍”“学习资料”等只描述文档形式、没有内容信息的泛标题；随后写出的正文必须与标题一致。",
             "除非用户明确要求简短版本，否则文档正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结。内容长度应与主题复杂度相称，不得空泛、重复或为了变长而凑字。",
@@ -358,7 +467,10 @@ export class PiAgentRuntime implements AgentRuntime {
           );
         }
         lines.push(
-          "你可以使用 Pi Agent 内置 bash 在本机执行命令和访问文件。只有用户明确要求操作本机文件或执行本机命令时才调用；普通分析和文档生成不要调用。",
+          "工具调用失败时，先读取失败结果中的结构化恢复信息。若 recoverable=true，必须在当前任务中立即执行 recommendedTool 指定的恢复动作，不得只解释错误或直接结束；不得重复完全相同的失败调用。若 recoverable=false，则停止自动尝试并准确说明需要用户处理的阻塞项。",
+          this.config.includeBashTool === false
+            ? "本运行未提供 bash、文件系统或任意网络工具；不得声称可以使用这些能力。"
+            : "你可以使用 Pi Agent 内置 bash 在本机执行命令和访问文件。只有用户明确要求操作本机文件或执行本机命令时才调用；普通分析和文档生成不要调用。",
         );
         return lines.join("\n");
       },
@@ -375,7 +487,11 @@ export class PiAgentRuntime implements AgentRuntime {
       modelRuntime,
       model,
       thinkingLevel: this.config.reasoning,
-      tools: ["bash", ...toolNames, ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : [])],
+      tools: [
+        ...(this.config.includeBashTool === false ? [] : ["bash"]),
+        ...toolNames,
+        ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
+      ],
       customTools: [
         ...customTools,
         ...(memory && memoryClient ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId) : []),
@@ -483,10 +599,37 @@ export class PiAgentRuntime implements AgentRuntime {
         payload: { toolCallId: event.toolCallId, name: event.toolName, partialResult: event.partialResult },
       });
     } else if (event.type === "tool_execution_end") {
+      const failure = active.handle.context.pendingFailures.get(event.toolCallId);
+      active.handle.context.pendingFailures.delete(event.toolCallId);
+      const recovery = event.isError && failure
+        ? this.scheduleRecovery(active, event.toolName, failure)
+        : null;
       active.queue.push({
         type: event.isError ? "tool.failed" : "tool.completed",
-        payload: { toolCallId: event.toolCallId, name: event.toolName, result: event.result },
+        payload: {
+          toolCallId: event.toolCallId,
+          name: event.toolName,
+          result: event.result,
+          ...(failure ? {
+            failure: {
+              category: failure.category,
+              recoverable: failure.recoverable,
+              ...(failure.recommendedTool ? { recommendedTool: failure.recommendedTool } : {}),
+              instruction: failure.instruction,
+              ...(recovery ? {
+                recoveryAttempt: recovery.attempt,
+                maxAttempts: recovery.maxAttempts,
+              } : {}),
+            },
+          } : {}),
+        },
       });
+      if (active.terminalToolError) {
+        const terminalError = active.terminalToolError;
+        active.terminalToolError = null;
+        void active.handle.session.abort().catch(() => undefined);
+        void this.finish(runId, "failed", terminalError);
+      }
     } else if (event.type === "agent_settled") {
       const sessionError = active.handle.session.state.errorMessage;
       void this.finish(
@@ -495,6 +638,31 @@ export class PiAgentRuntime implements AgentRuntime {
         sessionError ? new Error(sessionError) : undefined,
       );
     }
+  }
+
+  private scheduleRecovery(
+    active: ActivePiRun,
+    toolName: string,
+    failure: PiAgentRuntimeToolFailurePolicy,
+  ): { attempt: number; maxAttempts: number } | null {
+    if (!failure.recoverable || !failure.recommendedTool) return null;
+    const maxAttempts = Math.max(0, Math.min(failure.maxAttempts ?? 1, 3));
+    const retryKey = `${toolName}:${failure.retryKey ?? failure.category}`;
+    const previousAttempts = active.recoveryAttempts.get(retryKey) ?? 0;
+    if (previousAttempts >= maxAttempts) return null;
+    const attempt = previousAttempts + 1;
+    active.recoveryAttempts.set(retryKey, attempt);
+    const directive = [
+      "系统恢复指令：上一个工具调用失败，但该错误可以恢复。",
+      `失败工具：${toolName}`,
+      `错误类别：${failure.category}`,
+      `必须立即调用：${failure.recommendedTool}`,
+      `恢复要求：${failure.instruction}`,
+      `这是第 ${String(attempt)} 次恢复尝试，最多 ${String(maxAttempts)} 次。`,
+      "继续完成用户原始请求；不要只解释错误或宣布稍后再做。除非恢复要求明确指示有限重试，否则不要原样重复刚才的失败调用。",
+    ].join("\n");
+    void active.handle.session.steer(directive).catch(() => undefined);
+    return { attempt, maxAttempts };
   }
 
   private finish(
@@ -532,6 +700,7 @@ export class PiAgentRuntime implements AgentRuntime {
       }
 
       active.handle.context.current = null;
+      active.handle.context.pendingFailures.clear();
       active.handle.activeRunId = null;
       active.unsubscribe();
       active.queue.end();

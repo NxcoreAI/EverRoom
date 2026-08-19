@@ -53,6 +53,12 @@ import type {
   RealitySocketFrame,
   UpdateRealityTranscriptInput,
 } from '@nxcore/reality-contract'
+import type {
+  OpenConnectorCommandEvent,
+  OpenConnectorCommandResult,
+  OpenConnectorExecutionInput,
+  OpenConnectorStatus,
+} from './open-connector'
 
 export interface EvidenceBlock {
   id: string
@@ -311,6 +317,13 @@ export interface NxcoreDesktopApi {
   }
   gateway: {
     status(): Promise<GatewayStatus>
+  }
+  openConnector: {
+    status(): Promise<OpenConnectorStatus>
+    execute(input: OpenConnectorExecutionInput): Promise<OpenConnectorCommandResult>
+    cancel(requestId: string): Promise<boolean>
+    openConsole(): Promise<void>
+    onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
   }
   screenCapture: {
     captureCurrentWindow(): Promise<WindowScreenshotResult>

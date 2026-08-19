@@ -18,7 +18,7 @@ import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
 import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
-import { createAgentRuntime, createBackgroundAgentRuntime } from "../modules/agent/runtime-factory.js";
+import { createAgentRuntime, createBackgroundAgentRuntime, createConnectorSyncAgentRuntime } from "../modules/agent/runtime-factory.js";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
@@ -35,6 +35,8 @@ import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
+import { connectorRoutes } from "../modules/connectors/routes.js";
+import { ConnectorSyncService } from "../modules/connectors/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -133,7 +135,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     });
   });
   const documentMcpHost = new DocumentMcpHost(documentService, contextRoomService);
-  const agentRuntime = createAgentRuntime(config, documentMcpHost);
+  const connectorSyncService = new ConnectorSyncService(db, config, app.log);
+  const connectorSyncAgentRuntime = createConnectorSyncAgentRuntime(config, connectorSyncService);
+  if (connectorSyncAgentRuntime) connectorSyncService.attachAgentRuntime(connectorSyncAgentRuntime);
+  await connectorSyncService.initialize();
+  const agentRuntime = createAgentRuntime(config, documentMcpHost, connectorSyncService);
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -155,6 +161,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
     contextRoomService,
     documentService,
+    config.connectorAgentMode ?? "direct",
   );
   await agentService.initialize();
   const backgroundAgentRuntime = createBackgroundAgentRuntime(config);
@@ -185,6 +192,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await agentService.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
+    await connectorSyncService.dispose();
     documentService.dispose();
     await asrService.dispose();
     sqlite.close();
@@ -198,6 +206,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(memoryRoutes(memoryService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
+  await app.register(connectorRoutes(connectorSyncService));
 
   return app;
 }

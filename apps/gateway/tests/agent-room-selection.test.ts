@@ -48,13 +48,13 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
-async function createHarness() {
+async function createHarness(connectorMode: 'direct' | 'local' = 'direct') {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-agent-room-selection-'))
   temporaryDirectories.push(dataDir)
   const database = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
   const runtime = new RecordingRuntime()
   const rooms = new ContextRoomService(database.db)
-  const service = new AgentService(database.db, runtime, new AgentEventBroker(), undefined, rooms)
+  const service = new AgentService(database.db, runtime, new AgentEventBroker(), undefined, rooms, undefined, connectorMode)
   return { ...database, rooms, runtime, service }
 }
 
@@ -198,6 +198,65 @@ describe('Agent Room selection', () => {
     expect(runtime.starts).toEqual([
       expect.objectContaining({ prompt: '帮我创建一个C语言学习计划' }),
     ])
+    sqlite.close()
+  })
+
+  it('routes third-party Gmail requests to the Agent instead of Room selection', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '查看 Gmail 中最近 5 封邮件，只返回发件人、主题和时间，不要修改邮件状态。',
+      idempotencyKey: 'gmail-routing-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toHaveLength(1)
+    expect(runtime.starts[0]?.originalPrompt).toBe('查看 Gmail 中最近 5 封邮件，只返回发件人、主题和时间，不要修改邮件状态。')
+    expect(runtime.starts[0]?.prompt).toContain('必须在当前回合立即使用对应 connector 工具完成请求')
+    expect(runtime.starts[0]?.prompt).toContain('查看 Gmail 中最近 5 封邮件')
+    expect(service.listEvents(session.id, undefined, 0).some((event) => event.type === 'tool.completed')).toBe(false)
+    sqlite.close()
+  })
+
+  it('routes third-party reads to local data tools in local connector mode', async () => {
+    const { runtime, service, sqlite } = await createHarness('local')
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '查看 Gmail 中最近 5 封邮件。',
+      idempotencyKey: 'gmail-local-routing-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts[0]?.prompt).toContain('只能查询 EverRoom 已同步到本地的连接器数据')
+    expect(runtime.starts[0]?.prompt).toContain('connector_data_search')
+    expect(runtime.starts[0]?.prompt).not.toContain('必须在当前回合立即使用对应 connector 工具完成请求')
+    sqlite.close()
+  })
+
+  it('routes a Notion workspace page request to connectors instead of Context Room', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+    const prompt = '使用 Notion 帮我创建一个标题为“父页面”的私有工作区页面。'
+
+    await service.startRun(session.id, {
+      prompt,
+      idempotencyKey: 'notion-workspace-page-routing-run',
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toHaveLength(1)
+    expect(runtime.starts[0]?.originalPrompt).toBe(prompt)
+    expect(runtime.starts[0]?.prompt).toContain('Notion 的 workspace、page、页面和文档均属于 Notion')
+    expect(runtime.starts[0]?.prompt).toContain(prompt)
+    expect(service.listEvents(session.id, undefined, 0).some((event) => (
+      event.type === 'tool.completed'
+      && (event.payload as { name?: string }).name === 'context_room_list'
+    ))).toBe(false)
     sqlite.close()
   })
 
