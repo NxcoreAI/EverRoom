@@ -68,6 +68,9 @@ export const connectorAccounts = sqliteTable(
     ownerId: text("owner_id").notNull(),
     service: text("service").notNull(),
     connectionName: text("connection_name").notNull(),
+    displayName: text("display_name"),
+    accountLabel: text("account_label"),
+    credentialRef: text("credential_ref"),
     status: text("status", {
       enum: ["active", "needs_connection", "disabled"],
     }).notNull().default("active"),
@@ -85,11 +88,33 @@ export const connectorAccounts = sqliteTable(
   ],
 );
 
+export const connectorPromptProfiles = sqliteTable(
+  "connector_prompt_profiles",
+  {
+    id: text("id").primaryKey(),
+    service: text("service").notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    name: text("name").notNull(),
+    version: integer("version").notNull(),
+    template: text("template").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    contentHash: text("content_hash").notNull(),
+    status: text("status", { enum: ["draft", "published", "retired"] }).notNull().default("draft"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("connector_prompt_profiles_service_version_idx").on(table.service, table.resourceType, table.version),
+    index("connector_prompt_profiles_status_idx").on(table.status, table.service),
+  ],
+);
+
 export const connectorSyncJobs = sqliteTable(
   "connector_sync_jobs",
   {
     id: text("id").primaryKey(),
     ownerId: text("owner_id").notNull(),
+    name: text("name").notNull().default("Connector sync"),
     service: text("service").notNull(),
     action: text("action").notNull(),
     allowedActions: text("allowed_actions", { mode: "json" }).$type<string[]>().notNull().default([]),
@@ -99,10 +124,21 @@ export const connectorSyncJobs = sqliteTable(
     input: text("input", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     goal: text("goal").notNull().default(""),
     prompt: text("prompt"),
+    promptProfileId: text("prompt_profile_id").references(() => connectorPromptProfiles.id),
+    promptOverride: text("prompt_override"),
     promptVersion: integer("prompt_version").notNull().default(1),
     schemaVersion: integer("schema_version").notNull().default(1),
     checkpoint: text("checkpoint", { mode: "json" }).$type<Record<string, unknown>>(),
     intervalMs: integer("interval_ms").notNull(),
+    scheduleType: text("schedule_type", { enum: ["manual", "interval"] }).notNull().default("interval"),
+    timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    retryPolicy: text("retry_policy", { mode: "json" })
+      .$type<{ maxAttempts: number; baseDelayMs: number }>()
+      .notNull()
+      .default({ maxAttempts: 3, baseDelayMs: 30_000 }),
+    priority: integer("priority").notNull().default(0),
+    status: text("status", { enum: ["draft", "active", "paused", "archived"] }).notNull().default("active"),
+    configVersion: integer("config_version").notNull().default(1),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
     lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
@@ -121,6 +157,37 @@ export const connectorSyncJobs = sqliteTable(
   ],
 );
 
+export const connectorSyncJobStates = sqliteTable(
+  "connector_sync_job_states",
+  {
+    jobId: text("job_id").primaryKey().references(() => connectorSyncJobs.id, { onDelete: "cascade" }),
+    checkpoint: text("checkpoint", { mode: "json" }).$type<Record<string, unknown>>(),
+    nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
+    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
+    lastSuccessAt: integer("last_success_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("connector_sync_job_states_due_idx").on(table.nextRunAt, table.leaseExpiresAt)],
+);
+
+export const connectorSyncJobVersions = sqliteTable(
+  "connector_sync_job_versions",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id").notNull().references(() => connectorSyncJobs.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    configSnapshot: text("config_snapshot", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    changedBy: text("changed_by").notNull(),
+    changeReason: text("change_reason"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("connector_sync_job_versions_job_version_idx").on(table.jobId, table.version)],
+);
+
 export const connectorSyncRuns = sqliteTable(
   "connector_sync_runs",
   {
@@ -128,6 +195,7 @@ export const connectorSyncRuns = sqliteTable(
     jobId: text("job_id")
       .notNull()
       .references(() => connectorSyncJobs.id, { onDelete: "cascade" }),
+    jobVersionId: text("job_version_id").references(() => connectorSyncJobVersions.id),
     status: text("status", {
       enum: ["running", "success", "failed", "blocked_runtime", "needs_connection"],
     }).notNull(),
@@ -135,10 +203,16 @@ export const connectorSyncRuns = sqliteTable(
     discovered: integer("discovered").notNull().default(0),
     inserted: integer("inserted").notNull().default(0),
     updated: integer("updated").notNull().default(0),
+    unchanged: integer("unchanged").notNull().default(0),
+    quarantined: integer("quarantined").notNull().default(0),
     failed: integer("failed").notNull().default(0),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
     agentModel: text("agent_model"),
+    renderedPromptHash: text("rendered_prompt_hash"),
+    promptProfileVersion: integer("prompt_profile_version"),
+    inputCheckpoint: text("input_checkpoint", { mode: "json" }).$type<Record<string, unknown>>(),
+    outputCheckpoint: text("output_checkpoint", { mode: "json" }).$type<Record<string, unknown>>(),
     promptVersion: integer("prompt_version").notNull().default(1),
     schemaVersion: integer("schema_version").notNull().default(1),
     startedAt: integer("started_at", { mode: "timestamp_ms" })

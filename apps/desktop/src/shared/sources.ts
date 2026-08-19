@@ -71,6 +71,17 @@ import type {
   OpenConnectorExecutionInput,
   OpenConnectorStatus,
 } from './open-connector'
+import type {
+  ConnectorAccount,
+  ConnectorDataQuery,
+  ConnectorDataRecord,
+  ConnectorPromptProfile,
+  ConnectorQuarantinedRecord,
+  ConnectorSyncJob,
+  ConnectorSyncJobInput,
+  ConnectorSyncRun,
+  ConnectorSyncStatus,
+} from './connector-sync'
 
 export interface EvidenceBlock {
   id: string
@@ -365,6 +376,21 @@ export interface NxcoreDesktopApi {
     cancel(requestId: string): Promise<boolean>
     openConsole(): Promise<void>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
+  }
+  connectorSync: {
+    status(): Promise<ConnectorSyncStatus>
+    accounts(): Promise<ConnectorAccount[]>
+    promptProfiles(): Promise<ConnectorPromptProfile[]>
+    jobs(): Promise<ConnectorSyncJob[]>
+    createJob(input: ConnectorSyncJobInput): Promise<ConnectorSyncJob>
+    updateJob(id: string, input: Partial<ConnectorSyncJobInput> & { configVersion: number }): Promise<ConnectorSyncJob>
+    runJob(id: string): Promise<ConnectorSyncJob>
+    setJobPaused(id: string, paused: boolean, configVersion: number): Promise<ConnectorSyncJob>
+    archiveJob(id: string, configVersion: number): Promise<ConnectorSyncJob>
+    runs(jobId: string): Promise<ConnectorSyncRun[]>
+    quarantine(runId: string): Promise<ConnectorQuarantinedRecord[]>
+    data(query: ConnectorDataQuery): Promise<ConnectorDataRecord[]>
+    record(id: string): Promise<ConnectorDataRecord>
   }
   screenCapture: {
     captureCurrentWindow(): Promise<WindowScreenshotResult>

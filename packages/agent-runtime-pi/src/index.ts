@@ -171,6 +171,8 @@ interface ActivePiRun {
   unsubscribe: () => void;
   content: string;
   cancelled: boolean;
+  toolCallCount: number;
+  toolLimitExceeded: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
@@ -304,6 +306,8 @@ export class PiAgentRuntime implements AgentRuntime {
       unsubscribe: () => undefined,
       content: "",
       cancelled: false,
+      toolCallCount: 0,
+      toolLimitExceeded: false,
       terminal: false,
       finishPromise: null,
     };
@@ -423,6 +427,8 @@ export class PiAgentRuntime implements AgentRuntime {
       execute: async (_toolCallId, params, signal) => {
         const input = context.current;
         if (!input) throw new Error("Pi document tool is not bound to an active run");
+        const active = this.activeRuns.get(input.runId);
+        if (active?.toolLimitExceeded) throw new Error(this.toolLimitErrorMessage());
         try {
           const result = await withAbortSignal(() => tool.execute(input, params, signal), signal);
           return {
@@ -650,6 +656,13 @@ export class PiAgentRuntime implements AgentRuntime {
     }
 
     if (event.type === "tool_execution_start") {
+      active.toolCallCount += 1;
+      const maxToolCalls = this.config.maxToolCallsPerRun;
+      if (maxToolCalls !== undefined && active.toolCallCount > maxToolCalls) {
+        active.toolLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
+      }
       active.queue.push({
         type: "tool.started",
         payload: { toolCallId: event.toolCallId, name: event.toolName, args: event.args },
@@ -668,10 +681,27 @@ export class PiAgentRuntime implements AgentRuntime {
       const sessionError = active.handle.session.state.errorMessage;
       void this.finish(
         runId,
-        active.cancelled ? "cancelled" : sessionError ? "failed" : "completed",
-        sessionError ? new Error(sessionError) : undefined,
+        active.cancelled ? "cancelled" : active.toolLimitExceeded || sessionError ? "failed" : "completed",
+        active.toolLimitExceeded
+          ? new Error(this.toolLimitErrorMessage())
+          : sessionError ? new Error(sessionError) : undefined,
       );
     }
+  }
+
+  private toolLimitErrorMessage(): string {
+    return `Pi runtime exceeded the maximum tool calls per run (${this.config.maxToolCallsPerRun})`;
+  }
+
+  private async abortForToolLimit(runId: string): Promise<void> {
+    const active = this.activeRuns.get(runId);
+    if (!active || active.terminal) return;
+    try {
+      await active.handle.session.abort();
+    } catch {
+      // The run is already being terminated; preserve the limit error below.
+    }
+    await this.finish(runId, "failed", new Error(this.toolLimitErrorMessage()));
   }
 
   private finish(

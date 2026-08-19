@@ -229,7 +229,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
     contextRoomService,
     documentService,
-    undefined,
+    documentMcpHost,
     config.connectorAgentMode ?? "direct",
   );
   await agentService.initialize();

@@ -1,15 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, like, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, or, like } from "drizzle-orm";
 import type { AgentRuntime, StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { ConnectorSyncJobConfig, GatewayConfig, OpenConnectorCliConfig } from "../../config.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   connectorAuditEvents,
+  connectorAccounts,
   connectorCalendarEvents,
   connectorDocuments,
   connectorEmails,
+  connectorPromptProfiles,
   connectorQuarantinedRecords,
   connectorRecords,
+  connectorSyncJobStates,
+  connectorSyncJobVersions,
   connectorSyncJobs,
   connectorSyncRuns,
 } from "../../infrastructure/database/schema.js";
@@ -19,6 +23,26 @@ const MIN_INTERVAL_MS = 5_000;
 const DEFAULT_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_AGENT_BATCH_SIZE = 100;
 const MAX_AGENT_BATCH_BYTES = 512 * 1024;
+const LEASE_DURATION_MS = 5 * 60 * 1_000;
+const MAX_PROMPT_OVERRIDE_LENGTH = 2_000;
+
+const BUILTIN_PROMPT_PROFILES = [
+  {
+    id: "gmail-email-sync-v1", service: "gmail", resourceType: "email" as const,
+    name: "Gmail 邮件标准化", version: 1, schemaVersion: 1,
+    template: "完整获取邮件列表与详情；保留发件人、收件人、主题、纯文本正文、标签和附件标记。正文同时存在纯文本与 HTML 时优先纯文本。",
+  },
+  {
+    id: "notion-document-sync-v1", service: "notion", resourceType: "document" as const,
+    name: "Notion 文档标准化", version: 1, schemaVersion: 1,
+    template: "同步页面标题、正文、所有者、文档类型与来源链接；嵌套内容按阅读顺序展开为纯文本，不臆造缺失字段。",
+  },
+  {
+    id: "google-calendar-event-sync-v1", service: "google_calendar", resourceType: "calendar" as const,
+    name: "Google Calendar 日程标准化", version: 1, schemaVersion: 1,
+    template: "同步日程标题、描述、组织者、参与者、起止时间、全天标记、状态和地点；保持来源时区语义。",
+  },
+];
 
 type ConnectorResourceType = "email" | "document" | "calendar";
 
@@ -61,19 +85,64 @@ export interface ConnectorRecordQuery {
   includeExpired?: boolean;
 }
 
+export type ConnectorJobStatus = "draft" | "active" | "paused" | "archived";
+export type ConnectorScheduleType = "manual" | "interval";
+
+export interface ConnectorSyncJobInput {
+  name: string;
+  service: string;
+  dataset: string;
+  resourceType: "email" | "document" | "calendar" | "generic";
+  connectionName?: string | null;
+  allowedActions: string[];
+  input: Record<string, unknown>;
+  goal: string;
+  promptProfileId?: string | null;
+  promptOverride?: string | null;
+  schemaVersion?: number;
+  scheduleType: ConnectorScheduleType;
+  intervalMs: number;
+  timezone: string;
+  retryPolicy?: { maxAttempts: number; baseDelayMs: number };
+  priority?: number;
+  status: ConnectorJobStatus;
+}
+
+export interface ConnectorSyncJobPatch extends Partial<ConnectorSyncJobInput> {
+  configVersion: number;
+}
+
 export interface ConnectorSyncJobSummary {
   id: string;
   ownerId: string;
+  name: string;
   service: string;
   action: string;
   dataset: string;
   connectionName: string | null;
+  resourceType: string;
+  allowedActions: string[];
+  input: Record<string, unknown>;
+  goal: string;
+  promptProfileId: string | null;
+  promptOverride: string | null;
+  promptVersion: number;
+  schemaVersion: number;
+  scheduleType: ConnectorScheduleType;
+  timezone: string;
+  retryPolicy: { maxAttempts: number; baseDelayMs: number };
+  priority: number;
+  status: ConnectorJobStatus;
+  configVersion: number;
   intervalMs: number;
   enabled: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
+  checkpoint: Record<string, unknown> | null;
+  consecutiveFailures: number;
+  running: boolean;
 }
 
 export interface ConnectorSyncRunner {
@@ -154,27 +223,56 @@ function iso(value: Date | null): string | null {
   return value?.toISOString() ?? null;
 }
 
-function jobSummary(row: typeof connectorSyncJobs.$inferSelect): ConnectorSyncJobSummary {
+function jobSummary(
+  row: typeof connectorSyncJobs.$inferSelect,
+  state?: typeof connectorSyncJobStates.$inferSelect | null,
+  running = false,
+): ConnectorSyncJobSummary {
   return {
     id: row.id,
     ownerId: row.ownerId,
+    name: row.name,
     service: row.service,
     action: row.action,
     dataset: row.dataset,
     connectionName: row.connectionName,
+    resourceType: row.resourceType,
+    allowedActions: row.allowedActions,
+    input: row.input,
+    goal: row.goal,
+    promptProfileId: row.promptProfileId,
+    promptOverride: row.promptOverride,
+    promptVersion: row.promptVersion,
+    schemaVersion: row.schemaVersion,
+    scheduleType: row.scheduleType,
+    timezone: row.timezone,
+    retryPolicy: row.retryPolicy,
+    priority: row.priority,
+    status: row.status,
+    configVersion: row.configVersion,
     intervalMs: row.intervalMs,
-    enabled: row.enabled,
-    nextRunAt: iso(row.nextRunAt),
-    lastRunAt: iso(row.lastRunAt),
-    lastSuccessAt: iso(row.lastSuccessAt),
-    lastError: row.lastError,
+    enabled: row.status === "active",
+    nextRunAt: iso(state ? state.nextRunAt : row.nextRunAt),
+    lastRunAt: iso(state ? state.lastRunAt : row.lastRunAt),
+    lastSuccessAt: iso(state ? state.lastSuccessAt : row.lastSuccessAt),
+    lastError: state ? state.lastError : row.lastError,
+    checkpoint: state ? state.checkpoint : row.checkpoint,
+    consecutiveFailures: state?.consecutiveFailures ?? 0,
+    running,
   };
+}
+
+export class ConnectorConfigVersionConflictError extends Error {
+  constructor() {
+    super("Connector sync job was changed by another request");
+  }
 }
 
 export class ConnectorSyncService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly running = new Set<string>();
   private readonly activeAgentRuns = new Map<string, AgentSyncRunState>();
+  private readonly instanceId = randomUUID();
   private agentRuntime: AgentRuntime | null = null;
 
   constructor(
@@ -191,21 +289,20 @@ export class ConnectorSyncService {
 
   async initialize(): Promise<void> {
     const now = new Date();
-    const configuredJobs = this.config.connectorSyncJobs ?? [];
-    for (const job of configuredJobs) this.seedJob(job, now);
-    const configuredIds = configuredJobs.map((job) => job.id);
-    const staleJobs = configuredIds.length > 0
-      ? this.db.select({ id: connectorSyncJobs.id }).from(connectorSyncJobs)
-        .where(notInArray(connectorSyncJobs.id, configuredIds)).all()
-      : this.db.select({ id: connectorSyncJobs.id }).from(connectorSyncJobs).all();
-    if (staleJobs.length > 0) {
-      this.db.update(connectorSyncJobs).set({ enabled: false, updatedAt: now })
-        .where(inArray(connectorSyncJobs.id, staleJobs.map((job) => job.id))).run();
+    this.seedPromptProfiles(now);
+    const existingJobs = this.db.select({ id: connectorSyncJobs.id }).from(connectorSyncJobs).all();
+    if (existingJobs.length === 0) {
+      for (const job of this.config.connectorSyncJobs ?? []) this.seedJob(job, now);
     }
+    for (const job of this.db.select().from(connectorSyncJobs).all()) this.ensureJobStateAndVersion(job, now);
     if (!this.config.connectorSyncEnabled || !this.config.openConnector) return;
     this.timer = setInterval(() => void this.tick(), this.config.connectorSyncIntervalMs ?? 300_000);
     this.timer.unref?.();
     void this.tick();
+  }
+
+  currentOwnerId(): string {
+    return this.config.connectorSyncOwnerId ?? "local-user";
   }
 
   close(): void {
@@ -342,24 +439,186 @@ export class ConnectorSyncService {
     return { status: "ready_to_commit", stats: { ...state.stats } };
   }
 
-  listJobs(ownerId?: string): ConnectorSyncJobSummary[] {
+  listAccounts(ownerId = this.currentOwnerId()) {
+    return this.db.select().from(connectorAccounts)
+      .where(eq(connectorAccounts.ownerId, ownerId))
+      .orderBy(asc(connectorAccounts.createdAt)).all()
+      .map((row) => ({ ...row, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }));
+  }
+
+  listPromptProfiles(service?: string, resourceType?: string) {
+    const conditions = [eq(connectorPromptProfiles.status, "published" as const)];
+    if (service) conditions.push(eq(connectorPromptProfiles.service, service));
+    if (resourceType === "email" || resourceType === "document" || resourceType === "calendar" || resourceType === "generic") {
+      conditions.push(eq(connectorPromptProfiles.resourceType, resourceType));
+    }
+    return this.db.select().from(connectorPromptProfiles).where(and(...conditions))
+      .orderBy(asc(connectorPromptProfiles.service), desc(connectorPromptProfiles.version)).all()
+      .map((row) => ({ ...row, template: undefined, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }));
+  }
+
+  listJobs(ownerId = this.currentOwnerId()): ConnectorSyncJobSummary[] {
     const rows = this.db.select().from(connectorSyncJobs)
-      .where(ownerId ? eq(connectorSyncJobs.ownerId, ownerId) : undefined)
+      .where(eq(connectorSyncJobs.ownerId, ownerId))
       .orderBy(asc(connectorSyncJobs.createdAt))
       .all();
-    return rows.map(jobSummary);
+    return rows.map((row) => jobSummary(row, this.jobState(row.id), this.running.has(row.id)));
   }
 
-  getJob(id: string): ConnectorSyncJobSummary | null {
-    const row = this.db.select().from(connectorSyncJobs).where(eq(connectorSyncJobs.id, id)).get();
-    return row ? jobSummary(row) : null;
+  getJob(id: string, ownerId = this.currentOwnerId()): ConnectorSyncJobSummary | null {
+    const row = this.db.select().from(connectorSyncJobs)
+      .where(and(eq(connectorSyncJobs.id, id), eq(connectorSyncJobs.ownerId, ownerId))).get();
+    return row ? jobSummary(row, this.jobState(row.id), this.running.has(row.id)) : null;
   }
 
-  async triggerJob(id: string): Promise<ConnectorSyncJobSummary | null> {
-    const row = this.db.select().from(connectorSyncJobs).where(eq(connectorSyncJobs.id, id)).get();
+  createJob(input: ConnectorSyncJobInput, actor = "local-user"): ConnectorSyncJobSummary {
+    const ownerId = this.currentOwnerId();
+    const now = new Date();
+    const normalized = this.normalizeJobInput(input);
+    const profile = this.resolvePromptProfile(normalized.promptProfileId, normalized.service, normalized.resourceType);
+    const id = randomUUID();
+    this.db.transaction((tx) => {
+      if (normalized.connectionName) {
+        tx.insert(connectorAccounts).values({
+          id: randomUUID(), ownerId, service: normalized.service, connectionName: normalized.connectionName,
+          displayName: normalized.connectionName, accountLabel: normalized.connectionName,
+          credentialRef: `open-connector:${normalized.service}:${normalized.connectionName}`,
+          status: "active", createdAt: now, updatedAt: now,
+        }).onConflictDoUpdate({
+          target: [connectorAccounts.ownerId, connectorAccounts.service, connectorAccounts.connectionName],
+          set: { status: "active", updatedAt: now },
+        }).run();
+      }
+      tx.insert(connectorSyncJobs).values({
+        id, ownerId, name: normalized.name, service: normalized.service,
+        action: normalized.allowedActions[0] ?? "", allowedActions: normalized.allowedActions,
+        dataset: normalized.dataset, resourceType: normalized.resourceType,
+        connectionName: normalized.connectionName, input: normalized.input, goal: normalized.goal,
+        prompt: null, promptProfileId: profile?.id ?? null, promptOverride: normalized.promptOverride,
+        promptVersion: profile?.version ?? 1, schemaVersion: normalized.schemaVersion,
+        intervalMs: normalized.intervalMs, scheduleType: normalized.scheduleType,
+        timezone: normalized.timezone, retryPolicy: normalized.retryPolicy, priority: normalized.priority,
+        status: normalized.status, configVersion: 1, enabled: normalized.status === "active",
+        createdAt: now, updatedAt: now,
+      }).run();
+      tx.insert(connectorSyncJobStates).values({
+        jobId: id,
+        nextRunAt: normalized.status === "active" && normalized.scheduleType === "interval"
+          ? new Date(now.getTime() + normalized.intervalMs) : null,
+        updatedAt: now,
+      }).run();
+    });
+    const row = this.requireOwnedJob(id, ownerId);
+    this.persistJobVersion(row, actor, "created");
+    this.auditConfiguration(row, actor, "connector_sync_job.created");
+    return jobSummary(row, this.jobState(id));
+  }
+
+  updateJob(id: string, patch: ConnectorSyncJobPatch, actor = "local-user"): ConnectorSyncJobSummary | null {
+    const ownerId = this.currentOwnerId();
+    const current = this.db.select().from(connectorSyncJobs)
+      .where(and(eq(connectorSyncJobs.id, id), eq(connectorSyncJobs.ownerId, ownerId))).get();
+    if (!current) return null;
+    if (current.status === "archived") throw new Error("Archived connector sync jobs are read-only");
+    if (current.configVersion !== patch.configVersion) throw new ConnectorConfigVersionConflictError();
+    const normalized = this.normalizeJobInput({
+      name: patch.name ?? current.name,
+      service: patch.service ?? current.service,
+      dataset: patch.dataset ?? current.dataset,
+      resourceType: patch.resourceType ?? current.resourceType,
+      connectionName: patch.connectionName === undefined ? current.connectionName : patch.connectionName,
+      allowedActions: patch.allowedActions ?? current.allowedActions,
+      input: patch.input ?? current.input,
+      goal: patch.goal ?? current.goal,
+      promptProfileId: patch.promptProfileId === undefined ? current.promptProfileId : patch.promptProfileId,
+      promptOverride: patch.promptOverride === undefined ? current.promptOverride : patch.promptOverride,
+      schemaVersion: patch.schemaVersion ?? current.schemaVersion,
+      scheduleType: patch.scheduleType ?? current.scheduleType,
+      intervalMs: patch.intervalMs ?? current.intervalMs,
+      timezone: patch.timezone ?? current.timezone,
+      retryPolicy: patch.retryPolicy ?? current.retryPolicy,
+      priority: patch.priority ?? current.priority,
+      status: patch.status ?? current.status,
+    });
+    const profile = this.resolvePromptProfile(normalized.promptProfileId, normalized.service, normalized.resourceType);
+    const now = new Date();
+    const result = this.db.update(connectorSyncJobs).set({
+      name: normalized.name, service: normalized.service,
+      action: normalized.allowedActions[0] ?? "", allowedActions: normalized.allowedActions,
+      dataset: normalized.dataset, resourceType: normalized.resourceType,
+      connectionName: normalized.connectionName, input: normalized.input, goal: normalized.goal,
+      promptProfileId: profile?.id ?? null, promptOverride: normalized.promptOverride,
+      promptVersion: profile?.version ?? current.promptVersion, schemaVersion: normalized.schemaVersion,
+      intervalMs: normalized.intervalMs, scheduleType: normalized.scheduleType,
+      timezone: normalized.timezone, retryPolicy: normalized.retryPolicy, priority: normalized.priority,
+      status: normalized.status, enabled: normalized.status === "active",
+      configVersion: current.configVersion + 1, updatedAt: now,
+    }).where(and(
+      eq(connectorSyncJobs.id, id), eq(connectorSyncJobs.ownerId, ownerId),
+      eq(connectorSyncJobs.configVersion, patch.configVersion),
+    )).run() as { changes: number };
+    if (result.changes !== 1) throw new ConnectorConfigVersionConflictError();
+    const scheduleChanged = normalized.scheduleType !== current.scheduleType || normalized.intervalMs !== current.intervalMs;
+    const state = this.jobState(id);
+    this.db.update(connectorSyncJobStates).set({
+      nextRunAt: normalized.status === "active" && normalized.scheduleType === "interval"
+        ? (!state?.nextRunAt || scheduleChanged || current.status !== "active"
+            ? new Date(now.getTime() + normalized.intervalMs)
+            : state.nextRunAt)
+        : null,
+      leaseOwner: normalized.status === "active" ? state?.leaseOwner ?? null : null,
+      leaseExpiresAt: normalized.status === "active" ? state?.leaseExpiresAt ?? null : null,
+      updatedAt: now,
+    }).where(eq(connectorSyncJobStates.jobId, id)).run();
+    const updated = this.requireOwnedJob(id, ownerId);
+    this.persistJobVersion(updated, actor, "updated");
+    this.auditConfiguration(updated, actor, "connector_sync_job.updated");
+    return jobSummary(updated, this.jobState(id), this.running.has(id));
+  }
+
+  setJobStatus(id: string, status: Exclude<ConnectorJobStatus, "draft">, configVersion: number, actor = "local-user") {
+    return this.updateJob(id, { configVersion, status }, actor);
+  }
+
+  listJobVersions(id: string) {
+    const job = this.requireOwnedJob(id, this.currentOwnerId());
+    return this.db.select().from(connectorSyncJobVersions)
+      .where(eq(connectorSyncJobVersions.jobId, job.id))
+      .orderBy(desc(connectorSyncJobVersions.version)).all()
+      .map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
+  }
+
+  listRuns(jobId: string, limit = 50) {
+    const job = this.requireOwnedJob(jobId, this.currentOwnerId());
+    return this.db.select().from(connectorSyncRuns).where(eq(connectorSyncRuns.jobId, job.id))
+      .orderBy(desc(connectorSyncRuns.startedAt)).limit(Math.min(Math.max(limit, 1), 100)).all()
+      .map(serializeRun);
+  }
+
+  getRun(runId: string) {
+    const run = this.db.select().from(connectorSyncRuns).where(eq(connectorSyncRuns.id, runId)).get();
+    if (!run) return null;
+    this.requireOwnedJob(run.jobId, this.currentOwnerId());
+    return serializeRun(run);
+  }
+
+  listRunQuarantine(runId: string) {
+    const run = this.db.select().from(connectorSyncRuns).where(eq(connectorSyncRuns.id, runId)).get();
+    if (!run) return null;
+    this.requireOwnedJob(run.jobId, this.currentOwnerId());
+    return this.db.select().from(connectorQuarantinedRecords)
+      .where(eq(connectorQuarantinedRecords.runId, runId))
+      .orderBy(desc(connectorQuarantinedRecords.createdAt)).all()
+      .map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
+  }
+
+  async triggerJob(id: string, ownerId = this.currentOwnerId()): Promise<ConnectorSyncJobSummary | null> {
+    const row = this.db.select().from(connectorSyncJobs)
+      .where(and(eq(connectorSyncJobs.id, id), eq(connectorSyncJobs.ownerId, ownerId))).get();
     if (!row) return null;
+    if (row.status === "archived") throw new Error("Archived connector sync jobs cannot run");
     await this.runJob(row);
-    return this.getJob(id);
+    return this.getJob(id, ownerId);
   }
 
   queryRecords(query: ConnectorRecordQuery) {
@@ -506,6 +765,156 @@ export class ConnectorSyncService {
       + this.db.select({ id: connectorCalendarEvents.id }).from(connectorCalendarEvents).where(calendarCondition).all().length;
   }
 
+  private seedPromptProfiles(now: Date): void {
+    for (const profile of BUILTIN_PROMPT_PROFILES) {
+      this.db.insert(connectorPromptProfiles).values({
+        ...profile,
+        contentHash: contentHash(profile.template),
+        status: "published",
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoNothing().run();
+    }
+  }
+
+  private resolvePromptProfile(
+    profileId: string | null,
+    service: string,
+    resourceType: ConnectorSyncJobInput["resourceType"],
+  ): typeof connectorPromptProfiles.$inferSelect | null {
+    if (profileId) {
+      const profile = this.db.select().from(connectorPromptProfiles)
+        .where(and(eq(connectorPromptProfiles.id, profileId), eq(connectorPromptProfiles.status, "published"))).get();
+      if (!profile) throw new Error("Prompt Profile does not exist or is not published");
+      if (profile.service !== service || profile.resourceType !== resourceType) {
+        throw new Error("Prompt Profile is not compatible with the selected connector and data type");
+      }
+      return profile;
+    }
+    return this.db.select().from(connectorPromptProfiles).where(and(
+      eq(connectorPromptProfiles.service, service),
+      eq(connectorPromptProfiles.resourceType, resourceType),
+      eq(connectorPromptProfiles.status, "published"),
+    )).orderBy(desc(connectorPromptProfiles.version)).get() ?? null;
+  }
+
+  private normalizeJobInput(input: ConnectorSyncJobInput) {
+    const name = input.name.trim();
+    const service = input.service.trim();
+    const dataset = input.dataset.trim();
+    const goal = input.goal.trim();
+    if (!name || !service || !dataset || !goal) throw new Error("name, service, dataset, and goal are required");
+    const allowedActions = [...new Set(input.allowedActions.map((action) => action.trim()).filter(Boolean))];
+    if (allowedActions.length === 0) throw new Error("At least one connector Action is required");
+    const unsafeAction = allowedActions.find(isObviouslyMutatingConnectorAction);
+    if (unsafeAction) throw new Error(`Connector Action "${unsafeAction}" is not read-only`);
+    const promptOverride = input.promptOverride?.trim() || null;
+    if (promptOverride && promptOverride.length > MAX_PROMPT_OVERRIDE_LENGTH) {
+      throw new Error(`promptOverride must not exceed ${String(MAX_PROMPT_OVERRIDE_LENGTH)} characters`);
+    }
+    if (input.resourceType !== "email" && input.resourceType !== "document"
+      && input.resourceType !== "calendar" && input.resourceType !== "generic") {
+      throw new Error("Unsupported connector resource type");
+    }
+    const intervalMs = Math.max(Math.trunc(input.intervalMs), MIN_INTERVAL_MS);
+    const retryPolicy = input.retryPolicy ?? { maxAttempts: 3, baseDelayMs: 30_000 };
+    if (!Number.isInteger(retryPolicy.maxAttempts) || retryPolicy.maxAttempts < 1 || retryPolicy.maxAttempts > 10) {
+      throw new Error("retryPolicy.maxAttempts must be between 1 and 10");
+    }
+    if (!Number.isInteger(retryPolicy.baseDelayMs) || retryPolicy.baseDelayMs < 1_000 || retryPolicy.baseDelayMs > 3_600_000) {
+      throw new Error("retryPolicy.baseDelayMs must be between 1000 and 3600000");
+    }
+    return {
+      ...input,
+      name,
+      service,
+      dataset,
+      goal,
+      connectionName: input.connectionName?.trim() || null,
+      allowedActions,
+      input: objectValue(input.input),
+      promptProfileId: input.promptProfileId?.trim() || null,
+      promptOverride,
+      schemaVersion: Math.max(Math.trunc(input.schemaVersion ?? 1), 1),
+      intervalMs,
+      timezone: input.timezone.trim() || "Asia/Shanghai",
+      retryPolicy,
+      priority: Math.trunc(input.priority ?? 0),
+    };
+  }
+
+  private requireOwnedJob(id: string, ownerId: string): typeof connectorSyncJobs.$inferSelect {
+    const job = this.db.select().from(connectorSyncJobs)
+      .where(and(eq(connectorSyncJobs.id, id), eq(connectorSyncJobs.ownerId, ownerId))).get();
+    if (!job) throw new Error("Connector sync job not found");
+    return job;
+  }
+
+  private jobState(jobId: string): typeof connectorSyncJobStates.$inferSelect | null {
+    return this.db.select().from(connectorSyncJobStates)
+      .where(eq(connectorSyncJobStates.jobId, jobId)).get() ?? null;
+  }
+
+  private ensureJobStateAndVersion(job: typeof connectorSyncJobs.$inferSelect, now: Date): void {
+    this.db.insert(connectorSyncJobStates).values({
+      jobId: job.id,
+      checkpoint: job.checkpoint,
+      nextRunAt: job.nextRunAt,
+      lastRunAt: job.lastRunAt,
+      lastSuccessAt: job.lastSuccessAt,
+      lastError: job.lastError,
+      updatedAt: now,
+    }).onConflictDoNothing().run();
+    const version = this.db.select({ id: connectorSyncJobVersions.id }).from(connectorSyncJobVersions)
+      .where(and(eq(connectorSyncJobVersions.jobId, job.id), eq(connectorSyncJobVersions.version, job.configVersion))).get();
+    if (!version) this.persistJobVersion(job, "system:migration", "migrated");
+  }
+
+  private persistJobVersion(job: typeof connectorSyncJobs.$inferSelect, actor: string, reason: string): void {
+    this.db.insert(connectorSyncJobVersions).values({
+      id: randomUUID(),
+      jobId: job.id,
+      version: job.configVersion,
+      configSnapshot: jobConfigSnapshot(job),
+      changedBy: actor,
+      changeReason: reason,
+      createdAt: new Date(),
+    }).onConflictDoNothing().run();
+  }
+
+  private auditConfiguration(job: typeof connectorSyncJobs.$inferSelect, actor: string, operation: string): void {
+    this.db.insert(connectorAuditEvents).values({
+      id: randomUUID(), ownerId: job.ownerId, requestId: randomUUID(), actor,
+      operation, effect: "configure", result: { jobId: job.id, configVersion: job.configVersion },
+      createdAt: new Date(),
+    }).run();
+  }
+
+  private acquireLease(jobId: string, now: Date): boolean {
+    const result = this.db.update(connectorSyncJobStates).set({
+      leaseOwner: this.instanceId,
+      leaseExpiresAt: new Date(now.getTime() + LEASE_DURATION_MS),
+      updatedAt: now,
+    }).where(and(
+      eq(connectorSyncJobStates.jobId, jobId),
+      or(
+        isNull(connectorSyncJobStates.leaseOwner),
+        eq(connectorSyncJobStates.leaseOwner, this.instanceId),
+        lte(connectorSyncJobStates.leaseExpiresAt, now),
+      ),
+    )).run() as { changes: number };
+    return result.changes === 1;
+  }
+
+  private releaseLease(jobId: string): void {
+    this.db.update(connectorSyncJobStates).set({
+      leaseOwner: null, leaseExpiresAt: null, updatedAt: new Date(),
+    }).where(and(
+      eq(connectorSyncJobStates.jobId, jobId),
+      eq(connectorSyncJobStates.leaseOwner, this.instanceId),
+    )).run();
+  }
+
   private seedJob(job: ConnectorSyncJobConfig, now: Date): void {
     const intervalMs = Math.max(job.intervalMs ?? this.config.connectorSyncIntervalMs ?? 300_000, MIN_INTERVAL_MS);
     const existing = this.db.select({ id: connectorSyncJobs.id })
@@ -513,6 +922,7 @@ export class ConnectorSyncService {
     if (existing) {
       this.db.update(connectorSyncJobs).set({
         ownerId: job.ownerId,
+        name: job.id,
         service: job.service,
         action: job.action ?? "",
         allowedActions: job.allowedActions,
@@ -522,9 +932,13 @@ export class ConnectorSyncService {
         input: job.input,
         goal: job.goal,
         prompt: job.prompt ?? null,
+        promptProfileId: null,
         promptVersion: job.promptVersion,
         schemaVersion: job.schemaVersion,
         intervalMs,
+        scheduleType: "interval",
+        status: "active",
+        enabled: true,
         updatedAt: now,
       }).where(eq(connectorSyncJobs.id, job.id)).run();
       return;
@@ -532,6 +946,7 @@ export class ConnectorSyncService {
     this.db.insert(connectorSyncJobs).values({
       id: job.id,
       ownerId: job.ownerId,
+      name: job.id,
       service: job.service,
       action: job.action ?? "",
       allowedActions: job.allowedActions,
@@ -541,9 +956,12 @@ export class ConnectorSyncService {
       input: job.input,
       goal: job.goal,
       prompt: job.prompt ?? null,
+      promptProfileId: null,
       promptVersion: job.promptVersion,
       schemaVersion: job.schemaVersion,
       intervalMs,
+      scheduleType: "interval",
+      status: "active",
       enabled: true,
       nextRunAt: now,
       createdAt: now,
@@ -555,38 +973,73 @@ export class ConnectorSyncService {
     if (!this.config.connectorSyncEnabled || !this.config.openConnector) return;
     const now = new Date();
     const due = this.db.select().from(connectorSyncJobs)
-      .where(and(eq(connectorSyncJobs.enabled, true), or(isNull(connectorSyncJobs.nextRunAt), lte(connectorSyncJobs.nextRunAt, now))))
-      .orderBy(asc(connectorSyncJobs.nextRunAt))
-      .all();
+      .where(and(eq(connectorSyncJobs.status, "active"), eq(connectorSyncJobs.scheduleType, "interval")))
+      .orderBy(desc(connectorSyncJobs.priority), asc(connectorSyncJobs.createdAt)).all()
+      .filter((job) => {
+        const state = this.jobState(job.id);
+        return !state?.nextRunAt || state.nextRunAt <= now;
+      });
     await Promise.all(due.map((job) => this.runJob(job)));
   }
 
   private async runJob(job: typeof connectorSyncJobs.$inferSelect): Promise<void> {
     if (!this.config.openConnector || this.running.has(job.id)) return;
+    const startedAt = new Date();
+    if (!this.acquireLease(job.id, startedAt)) return;
     this.running.add(job.id);
     const runId = randomUUID();
-    const startedAt = new Date();
+    const state = this.jobState(job.id);
+    const profile = job.promptProfileId
+      ? this.db.select().from(connectorPromptProfiles).where(eq(connectorPromptProfiles.id, job.promptProfileId)).get()
+      : null;
+    const jobForRun = {
+      ...job,
+      checkpoint: state?.checkpoint ?? job.checkpoint,
+      prompt: [profile?.template, job.promptOverride].filter(Boolean).join("\n") || job.prompt,
+      promptVersion: profile?.version ?? job.promptVersion,
+    };
+    const jobVersion = this.db.select().from(connectorSyncJobVersions).where(and(
+      eq(connectorSyncJobVersions.jobId, job.id),
+      eq(connectorSyncJobVersions.version, job.configVersion),
+    )).get();
+    const renderedPrompt = job.resourceType === "generic" ? null : connectorSyncPrompt(jobForRun);
     this.db.insert(connectorSyncRuns).values({
       id: runId,
       jobId: job.id,
+      jobVersionId: jobVersion?.id ?? null,
       status: "running",
       agentModel: this.config.backgroundPi?.model ?? null,
-      promptVersion: job.promptVersion,
+      renderedPromptHash: renderedPrompt ? contentHash(renderedPrompt) : null,
+      promptProfileVersion: profile?.version ?? null,
+      inputCheckpoint: state?.checkpoint ?? null,
+      promptVersion: jobForRun.promptVersion,
       schemaVersion: job.schemaVersion,
       startedAt,
     }).run();
-    this.db.update(connectorSyncJobs).set({ lastRunAt: startedAt, nextRunAt: new Date(startedAt.getTime() + job.intervalMs), updatedAt: startedAt }).where(eq(connectorSyncJobs.id, job.id)).run();
+    this.db.update(connectorSyncJobStates).set({
+      lastRunAt: startedAt,
+      nextRunAt: job.status === "active" && job.scheduleType === "interval"
+        ? new Date(startedAt.getTime() + job.intervalMs) : null,
+      updatedAt: startedAt,
+    }).where(eq(connectorSyncJobStates.jobId, job.id)).run();
+    this.db.update(connectorSyncJobs).set({
+      lastRunAt: startedAt,
+      nextRunAt: job.status === "active" && job.scheduleType === "interval"
+        ? new Date(startedAt.getTime() + job.intervalMs) : null,
+      updatedAt: startedAt,
+    }).where(eq(connectorSyncJobs.id, job.id)).run();
     try {
       if (this.agentRuntime && job.resourceType !== "generic") {
-        await this.runAgentJob(job, runId);
+        await this.runAgentJob(jobForRun, runId);
         return;
       }
-      await this.runLegacyJob(job, runId);
+      await this.runLegacyJob(jobForRun, runId);
     } catch (error) {
-      this.failRun(job, runId, error);
+      this.failRun(jobForRun, runId, error);
     } finally {
       this.activeAgentRuns.delete(runId);
       this.running.delete(job.id);
+      this.releaseLease(job.id);
     }
   }
 
@@ -637,14 +1090,21 @@ export class ConnectorSyncService {
           discovered: state.discovered!,
           inserted: state.stats.inserted,
           updated: state.stats.updated,
+          unchanged: state.stats.unchanged,
+          quarantined: state.stats.quarantined,
           failed: state.stats.quarantined,
+          outputCheckpoint: state.checkpoint,
           finishedAt,
         }).where(eq(connectorSyncRuns.id, runId)).run();
-        tx.update(connectorSyncJobs).set({
+        tx.update(connectorSyncJobStates).set({
           checkpoint: state.checkpoint,
           lastSuccessAt: finishedAt,
           lastError: null,
+          consecutiveFailures: 0,
           updatedAt: finishedAt,
+        }).where(eq(connectorSyncJobStates.jobId, job.id)).run();
+        tx.update(connectorSyncJobs).set({
+          checkpoint: state.checkpoint, lastSuccessAt: finishedAt, lastError: null, updatedAt: finishedAt,
         }).where(eq(connectorSyncJobs.id, job.id)).run();
         tx.insert(connectorAuditEvents).values({
           id: randomUUID(),
@@ -722,7 +1182,12 @@ export class ConnectorSyncService {
       this.db.update(connectorSyncRuns).set({
         status: "success", discovered: items.length, inserted, updated, finishedAt: syncedAt,
       }).where(eq(connectorSyncRuns.id, runId)).run();
-      this.db.update(connectorSyncJobs).set({ lastSuccessAt: syncedAt, lastError: null, updatedAt: syncedAt }).where(eq(connectorSyncJobs.id, job.id)).run();
+      this.db.update(connectorSyncJobStates).set({
+        lastSuccessAt: syncedAt, lastError: null, consecutiveFailures: 0, updatedAt: syncedAt,
+      }).where(eq(connectorSyncJobStates.jobId, job.id)).run();
+      this.db.update(connectorSyncJobs).set({
+        lastSuccessAt: syncedAt, lastError: null, updatedAt: syncedAt,
+      }).where(eq(connectorSyncJobs.id, job.id)).run();
       this.db.insert(connectorAuditEvents).values({
         id: randomUUID(),
         ownerId: job.ownerId,
@@ -746,10 +1211,27 @@ export class ConnectorSyncService {
         errorMessage: message.slice(0, 1_000),
         finishedAt,
       }).where(eq(connectorSyncRuns.id, runId)).run();
-      this.db.update(connectorSyncJobs).set({
+      const state = this.jobState(job.id);
+      const consecutiveFailures = (state?.consecutiveFailures ?? 0) + 1;
+      const shouldPause = consecutiveFailures >= job.retryPolicy.maxAttempts;
+      const retryDelay = Math.min(
+        job.retryPolicy.baseDelayMs * 2 ** Math.max(consecutiveFailures - 1, 0),
+        24 * 60 * 60 * 1_000,
+      );
+      this.db.update(connectorSyncJobStates).set({
         lastError: message.slice(0, 1_000),
+        consecutiveFailures,
+        nextRunAt: shouldPause ? null : new Date(finishedAt.getTime() + retryDelay),
         updatedAt: finishedAt,
+      }).where(eq(connectorSyncJobStates.jobId, job.id)).run();
+      this.db.update(connectorSyncJobs).set({
+        lastError: message.slice(0, 1_000), updatedAt: finishedAt,
       }).where(eq(connectorSyncJobs.id, job.id)).run();
+      if (shouldPause) {
+        this.db.update(connectorSyncJobs).set({
+          status: "paused", enabled: false, updatedAt: finishedAt,
+        }).where(eq(connectorSyncJobs.id, job.id)).run();
+      }
       this.db.insert(connectorAuditEvents).values({
         id: randomUUID(),
         ownerId: job.ownerId,
@@ -1015,6 +1497,44 @@ function connectorSyncPrompt(job: typeof connectorSyncJobs.$inferSelect): string
     "禁止使用 shell、文件系统、数据库或网络工具；只能使用本运行提供的连接器与同步工具。调用 sync_finish 后停止调用工具。",
     ...(job.prompt ? ["领域补充说明：", job.prompt] : []),
   ].join("\n");
+}
+
+function isObviouslyMutatingConnectorAction(action: string): boolean {
+  return /^(?:send|create|update|delete|remove|modify|mark|archive|trash|move|share|invite|reply|upload|post|put|patch|add|set)(?:_|-)/i.test(action);
+}
+
+function jobConfigSnapshot(job: typeof connectorSyncJobs.$inferSelect): Record<string, unknown> {
+  return {
+    id: job.id,
+    ownerId: job.ownerId,
+    name: job.name,
+    service: job.service,
+    dataset: job.dataset,
+    resourceType: job.resourceType,
+    connectionName: job.connectionName,
+    allowedActions: job.allowedActions,
+    input: job.input,
+    goal: job.goal,
+    promptProfileId: job.promptProfileId,
+    promptOverride: job.promptOverride,
+    promptVersion: job.promptVersion,
+    schemaVersion: job.schemaVersion,
+    scheduleType: job.scheduleType,
+    intervalMs: job.intervalMs,
+    timezone: job.timezone,
+    retryPolicy: job.retryPolicy,
+    priority: job.priority,
+    status: job.status,
+    configVersion: job.configVersion,
+  };
+}
+
+function serializeRun(row: typeof connectorSyncRuns.$inferSelect) {
+  return {
+    ...row,
+    startedAt: row.startedAt.toISOString(),
+    finishedAt: iso(row.finishedAt),
+  };
 }
 
 function resourceTypeFromDataset(dataset: string): ConnectorResourceType | null {

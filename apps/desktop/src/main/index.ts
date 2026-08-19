@@ -34,6 +34,7 @@ import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
+import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
@@ -120,6 +121,22 @@ const OPEN_CONNECTOR_CHANNELS = {
   execute: 'open-connector:execute',
   cancel: 'open-connector:cancel',
   openConsole: 'open-connector:open-console',
+} as const
+
+const CONNECTOR_SYNC_CHANNELS = {
+  status: 'connector-sync:status',
+  accounts: 'connector-sync:accounts',
+  promptProfiles: 'connector-sync:prompt-profiles',
+  jobs: 'connector-sync:jobs',
+  createJob: 'connector-sync:create-job',
+  updateJob: 'connector-sync:update-job',
+  runJob: 'connector-sync:run-job',
+  setJobPaused: 'connector-sync:set-job-paused',
+  archiveJob: 'connector-sync:archive-job',
+  runs: 'connector-sync:runs',
+  quarantine: 'connector-sync:quarantine',
+  data: 'connector-sync:data',
+  record: 'connector-sync:record',
 } as const
 
 const CONTEXT_ROOM_CHANNELS = {
@@ -331,6 +348,7 @@ function installIpcRouters(): void {
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
     OPEN_CONNECTOR_CHANNELS,
+    CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
@@ -664,6 +682,23 @@ function registerOpenConnectorHandlers(): void {
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
+}
+
+function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
+  handle(CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
+  handle(CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
+  handle(CONNECTOR_SYNC_CHANNELS.promptProfiles, () => bridge.promptProfiles())
+  handle(CONNECTOR_SYNC_CHANNELS.jobs, () => bridge.jobs())
+  handle(CONNECTOR_SYNC_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
+  handle(CONNECTOR_SYNC_CHANNELS.updateJob, (_event, id, input) => bridge.updateJob(id, input))
+  handle(CONNECTOR_SYNC_CHANNELS.runJob, (_event, id) => bridge.runJob(id))
+  handle(CONNECTOR_SYNC_CHANNELS.setJobPaused, (_event, id, paused, configVersion) =>
+    bridge.setJobPaused(id, paused, configVersion))
+  handle(CONNECTOR_SYNC_CHANNELS.archiveJob, (_event, id, configVersion) => bridge.archiveJob(id, configVersion))
+  handle(CONNECTOR_SYNC_CHANNELS.runs, (_event, jobId) => bridge.runs(jobId))
+  handle(CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
+  handle(CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
+  handle(CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
@@ -1109,6 +1144,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       {
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         ...(ooCliBridge ? { NXCORE_CONNECTOR_AGENT_MODE: 'local' } : {}),
+        ...(ooCliBridge ? { NXCORE_CONNECTOR_SYNC_ENABLED: 'true' } : {}),
         ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
@@ -1147,6 +1183,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       + `(pid=${cursorCompletionGateway.pid})`,
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
+    registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)

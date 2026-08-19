@@ -104,6 +104,22 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('open-connector:event', handleEvent)
     },
   },
+  connectorSync: {
+    status: () => invokeQuietly('connector-sync:status'),
+    accounts: () => invokeQuietly('connector-sync:accounts'),
+    promptProfiles: () => invokeQuietly('connector-sync:prompt-profiles'),
+    jobs: () => invokeQuietly('connector-sync:jobs'),
+    createJob: (input) => invokeQuietly('connector-sync:create-job', input),
+    updateJob: (id, input) => invokeQuietly('connector-sync:update-job', id, input),
+    runJob: (id) => invokeQuietly('connector-sync:run-job', id),
+    setJobPaused: (id, paused, configVersion) =>
+      invokeQuietly('connector-sync:set-job-paused', id, paused, configVersion),
+    archiveJob: (id, configVersion) => invokeQuietly('connector-sync:archive-job', id, configVersion),
+    runs: (jobId) => invokeQuietly('connector-sync:runs', jobId),
+    quarantine: (runId) => invokeQuietly('connector-sync:quarantine', runId),
+    data: (query) => invokeQuietly('connector-sync:data', query),
+    record: (id) => invokeQuietly('connector-sync:record', id),
+  },
   screenCapture: {
     captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
     start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),

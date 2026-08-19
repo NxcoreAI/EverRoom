@@ -74,7 +74,7 @@ function statusText(status: OpenConnectorStatus | null): string {
   return '运行就绪'
 }
 
-export function ConnectorConsolePage() {
+export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean } = {}) {
   const [status, setStatus] = useState<OpenConnectorStatus | null>(null)
   const [query, setQuery] = useState('')
   const [actions, setActions] = useState<OpenConnectorActionSummary[]>([])
@@ -190,8 +190,8 @@ export function ConnectorConsolePage() {
   }
 
   return (
-    <div className="page connector-console-page">
-      <PageHeader
+    <div className={embedded ? 'connector-console-page connector-console-embedded' : 'page connector-console-page'}>
+      {!embedded ? <PageHeader
         title="连接器控制台"
         description="通过 oo CLI 安全衔接 Agent 与 OpenConnector 网关"
         extraAction={(
@@ -199,7 +199,7 @@ export function ConnectorConsolePage() {
             <RefreshCw aria-hidden="true" />刷新状态
           </button>
         )}
-      />
+      /> : null}
 
       <section className="connector-runtime-card" data-ready={String(ready)}>
         <div className="connector-runtime-icon"><PlugZap aria-hidden="true" /></div>

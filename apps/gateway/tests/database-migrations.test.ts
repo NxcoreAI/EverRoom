@@ -13,6 +13,57 @@ afterEach(async () => {
 });
 
 describe("database migrations", () => {
+  it("adopts the complete pre-release connector configuration migration", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-connector-config-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const currentMigrationsDir = resolve("drizzle");
+    const previousMigrationsDir = join(dataDir, "previous-migrations");
+    await mkdir(join(previousMigrationsDir, "meta"), { recursive: true });
+
+    const journal = JSON.parse(
+      await readFile(join(currentMigrationsDir, "meta", "_journal.json"), "utf8"),
+    ) as {
+      version: string;
+      dialect: string;
+      entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+    };
+    const previousEntries = journal.entries.filter((entry) => entry.idx <= 15);
+    await Promise.all(previousEntries.map((entry) => copyFile(
+      join(currentMigrationsDir, `${entry.tag}.sql`),
+      join(previousMigrationsDir, `${entry.tag}.sql`),
+    )));
+    await writeFile(join(previousMigrationsDir, "meta", "_journal.json"), JSON.stringify({
+      ...journal,
+      entries: previousEntries,
+    }));
+
+    const preRelease = createDatabase(databasePath, previousMigrationsDir);
+    const connectorConfigSql = await readFile(
+      join(currentMigrationsDir, "0016_dazzling_silver_samurai.sql"),
+      "utf8",
+    );
+    preRelease.sqlite.exec(connectorConfigSql.replaceAll("--> statement-breakpoint", "\n"));
+    preRelease.sqlite.prepare(
+      "INSERT INTO connector_prompt_profiles "
+      + "(id, service, resource_type, name, version, template, schema_version, content_hash, status, created_at, updated_at) "
+      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("gmail-email-v1", "gmail", "email", "Gmail", 1, "prompt", 1, "hash", "published", 1, 1);
+    preRelease.sqlite.prepare(
+      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+    ).run("pre-release-connector-config", 1787148973623);
+    preRelease.sqlite.close();
+
+    const upgraded = createDatabase(databasePath, currentMigrationsDir);
+    expect(upgraded.sqlite.prepare(
+      "SELECT id, template FROM connector_prompt_profiles WHERE id = ?",
+    ).get("gmail-email-v1")).toEqual({ id: "gmail-email-v1", template: "prompt" });
+    expect(upgraded.sqlite.prepare(
+      "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
+    ).get()).toEqual({ created_at: 1787150345690 });
+    upgraded.sqlite.close();
+  });
+
   it("upgrades databases from the connector migration branch", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-connector-migration-test-"));
     temporaryDirectories.push(dataDir);
