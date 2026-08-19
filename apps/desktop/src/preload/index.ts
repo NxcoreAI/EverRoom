@@ -91,9 +91,7 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
-  connectorDebug: {
-    enabled: process.env.NXCORE_CONNECTOR_DEBUG_UI === '1',
-    faultsEnabled: process.env.NXCORE_CONNECTOR_DEBUG_FAULTS === '1',
+  connectors: {
     status: () => invoke('connector:status'),
     startAuthorization: (provider) => invoke('connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('connector:authorization-status', id),
@@ -105,11 +103,9 @@ const api: NxcoreDesktopApi = {
     scopes: (connectionId) => invoke('connector:list-scopes', connectionId),
     runs: (connectionId) => invoke('connector:list-runs', connectionId),
     mail: (query) => invoke('connector:list-mail', query),
-    failures: (query) => invoke('connector:list-failures', query),
     documents: (connectionId) => invoke('connector:list-documents', connectionId),
     document: (connectionId, documentId) => invoke('connector:read-document', connectionId, documentId),
     records: (connectionId, type) => invoke('connector:list-records', connectionId, type),
-    armFault: (point) => invoke('connector:arm-fault', point),
   },
   screenCapture: {
     captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),

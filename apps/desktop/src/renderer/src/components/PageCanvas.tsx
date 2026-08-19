@@ -22,7 +22,6 @@ const DiaryPage = lazy(() =>
 const RealityPage = lazy(() =>
   import('./reality/RealityPage').then((module) => ({ default: module.RealityPage })),
 )
-const ConnectorDebugPage = lazy(() => import('./pages/ConnectorDebugPage').then((module) => ({ default: module.ConnectorDebugPage })))
 
 export function PageCanvas({
   page,
@@ -35,7 +34,6 @@ export function PageCanvas({
   onContextRoomShowHome,
   onNavigate,
   onFocusAgent,
-  onOpenConnectorDebug,
 }: {
   page: PageId
   activeContextRoomId: string | null
@@ -52,7 +50,6 @@ export function PageCanvas({
   onContextRoomShowHome: () => void
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
-  onOpenConnectorDebug?: () => void
 }) {
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
@@ -92,10 +89,7 @@ export function PageCanvas({
       </Suspense>
     )
   }
-  if (page === 'settings') content = <SettingsPage onOpenConnectorDebug={onOpenConnectorDebug} />
-  if (page === 'connector-debug') {
-    content = <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载连接器调试台...</div></div>}><ConnectorDebugPage /></Suspense>
-  }
+  if (page === 'settings') content = <SettingsPage />
   return (
     <>
       <div className="reality-page-host" hidden={page !== 'recording'}>

@@ -1,4 +1,9 @@
 .connector-debug-page { min-width: 0; padding-bottom: 92px; color: var(--text); }
+/* 数据源页内嵌时的区块样式 */
+.sources-connector-heading { margin: 28px 0 12px; }
+.sources-connector-heading h2 { margin: 0 0 4px; font-size: 15px; }
+.sources-connector-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.connector-section.connector-debug-page { padding-bottom: 0; }
 .connector-debug-page .page-header { margin-bottom: 14px; }
 .connector-toolbar { position: sticky; top: 0; z-index: 4; display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 10px; border-block: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(12px); }
 .connector-tabs { display: flex; min-width: 0; overflow-x: auto; }

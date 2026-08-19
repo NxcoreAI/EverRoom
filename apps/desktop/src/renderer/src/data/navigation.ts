@@ -25,7 +25,6 @@ export type PageId =
   | 'tasks'
   | 'diary'
   | 'settings'
-  | 'connector-debug'
 
 export interface NavigationItem {
   id: PageId
@@ -79,7 +78,6 @@ export const navigationSections: NavigationSection[] = [
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
   navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.label]))
 ) as Record<PageId, string>
-pageLabels['connector-debug'] = '连接器调试'
 
 export const pageIcons: Record<PageId, LucideIcon> = Object.fromEntries(
   navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.icon]))

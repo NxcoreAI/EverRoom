@@ -1061,7 +1061,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
-    if (process.env.NXCORE_CONNECTOR_DEBUG_UI === '1') registerConnectorHandlers(connectorGatewayBridge)
+    registerConnectorHandlers(connectorGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
     cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)

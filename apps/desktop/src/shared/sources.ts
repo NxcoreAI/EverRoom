@@ -372,9 +372,7 @@ export interface NxcoreDesktopApi {
   gateway: {
     status(): Promise<GatewayStatus>
   }
-  connectorDebug: {
-    enabled: boolean
-    faultsEnabled: boolean
+  connectors: {
     status(): Promise<ConnectorStatus>
     startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
@@ -386,11 +384,9 @@ export interface NxcoreDesktopApi {
     scopes(connectionId?: string): Promise<SyncScope[]>
     runs(connectionId?: string): Promise<SyncRun[]>
     mail(query?: { connectionId?: string; scopeId?: string; search?: string; limit?: number; cursor?: string }): Promise<MailMessage[]>
-    failures(query?: { connectionId?: string; runId?: string; limit?: number }): Promise<Array<{ id: string; scopeId: string | null; runId: string | null; category: string; message: string; itemKey: string | null; createdAt: string }>>
     documents(connectionId: string): Promise<WikiDocumentSummary[]>
     document(connectionId: string, documentId: string): Promise<WikiDocumentPreview>
     records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]>
-    armFault(point: string): Promise<void>
   }
   screenCapture: {
     captureCurrentWindow(): Promise<WindowScreenshotResult>

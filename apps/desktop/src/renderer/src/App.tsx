@@ -42,13 +42,7 @@ function readStoredTheme(): ThemeId {
 }
 
 function readInitialPage(): PageId {
-  try {
-    return window.nxcore?.connectorDebug.enabled && new URLSearchParams(window.location.search).get('page') === 'connector-debug'
-      ? 'connector-debug'
-      : 'home'
-  } catch {
-    return 'home'
-  }
+  return 'home'
 }
 
 export function App() {
@@ -58,7 +52,7 @@ export function App() {
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [closedContextRoomTabs, setClosedContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
-  const [agentOpen, setAgentOpen] = useState(() => readInitialPage() !== 'connector-debug')
+  const [agentOpen, setAgentOpen] = useState(true)
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
@@ -313,10 +307,6 @@ export function App() {
           onContextRoomShowHome={showContextRoomHome}
           onNavigate={navigate}
           onFocusAgent={focusAgent}
-          onOpenConnectorDebug={() => {
-            setAgentOpen(false)
-            setActivePage('connector-debug')
-          }}
         />
       </main>
       {agentOpen ? (
