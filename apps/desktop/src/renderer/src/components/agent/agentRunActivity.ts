@@ -183,7 +183,7 @@ export function agentToolResultSummary(result: unknown): string | undefined {
     const value = userText(record[key], 120)
     if (value) return value
   }
-  for (const key of ['navigation', 'document', 'patch']) {
+  for (const key of ['structuredContent', 'details', 'navigation', 'document', 'patch']) {
     const nested = record[key]
     if (!nested || typeof nested !== 'object' || Array.isArray(nested)) continue
     const value = agentToolResultSummary(nested)
@@ -289,6 +289,36 @@ export function agentToolStageText(
     return punctuate(tool.error?.slice(0, 120) || '工具调用失败')
   }
   if (tool.status === 'stopped') return '操作已停止。'
+
+  const root = resultRecord(tool.result ?? tool.partialResult)
+  const structured = resultRecord(root?.structuredContent) ?? resultRecord(root?.details) ?? root
+  if (tool.name === 'context_room_document_read') {
+    const title = userText(structured?.title, 80)
+    const blockCount = structured?.blockCount
+    const version = structured?.version
+    if (title && typeof blockCount === 'number' && typeof version === 'number') {
+      return `《${title}》当前有 ${blockCount} 个可编辑内容块，基于版本 ${version} 处理。`
+    }
+  }
+  if (tool.name === 'context_room_patch_begin') {
+    const summary = userText(tool.args.summary, 180)
+    if (summary) return punctuate(`修改范围已确定：${summary}`)
+  }
+  if (tool.name === 'context_room_patch_hunk') {
+    const sequence = structured?.acceptedSequence ?? tool.args.sequence
+    const operation = tool.args.operation
+    const markdown = typeof tool.args.markdown === 'string' ? tool.args.markdown.trim() : ''
+    const action = operation === 'insert'
+      ? '新增内容'
+      : operation === 'replace'
+        ? '替换内容'
+        : operation === 'delete' ? '删除内容' : '文档修改'
+    if (typeof sequence === 'number') {
+      return markdown
+        ? `第 ${sequence} 项为${action}，建议内容 ${markdown.length} 字。`
+        : `第 ${sequence} 项为${action}。`
+    }
+  }
 
   const result = agentToolResultSummary(tool.result ?? tool.partialResult)
   if (!result) return ''

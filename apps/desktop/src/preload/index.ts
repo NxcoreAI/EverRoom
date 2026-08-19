@@ -231,11 +231,11 @@ const api: NxcoreDesktopApi = {
     restoreVersion: (documentId, version, baseVersion) =>
       invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),
-    listOperations: (filters) => invoke('documents:list-operations', filters),
-    startOperation: (input) => invoke('documents:start-operation', input),
-    getOperation: (operationId) => invoke('documents:get-operation', operationId),
+    listOperations: (filters) => invokeQuietly('documents:list-operations', filters),
+    startOperation: (input) => invokeQuietly('documents:start-operation', input),
+    getOperation: (operationId) => invokeQuietly('documents:get-operation', operationId),
     executeOperationCommand: (operationId, input) =>
-      invoke('documents:execute-operation-command', operationId, input),
+      invokeQuietly('documents:execute-operation-command', operationId, input),
     storeImage: (documentId, input) => invoke('documents:store-image', documentId, input),
     import: (input) => invoke('documents:import', input),
     save: (documentId, input) => invoke('documents:save', documentId, input),

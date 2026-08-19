@@ -85,7 +85,7 @@ export function sanitizeSelectionRewriteOutput(
     output = output.replace(/(\r?\n)```[ \t]*$/, '$1')
   }
   if (preserveWhitespace) return output
-  output = output.replace(/^(?:改写|重写)(?:后的文本|结果)?\s*[:：]\s*/i, '')
+  output = output.replace(/^(?:改写|重写)(?:(?:后的)?(?:文档)?(?:选区)?(?:内容|文本|结果)(?:如下)?)?\s*[:：]\s*/i, '')
   output = output.replace(/^replacement\s*[:：]\s*/i, '')
   return output.trimEnd()
 }

@@ -199,7 +199,7 @@ export function useTiptapSelectionRewrite({
   roomId,
   documentId,
   documentName,
-  baseVersion,
+  prepareDocument,
   onDocumentApplied,
   externallyLocked,
 }: {
@@ -207,7 +207,7 @@ export function useTiptapSelectionRewrite({
   roomId: string
   documentId: string
   documentName: string
-  baseVersion: number
+  prepareDocument: () => Promise<number>
   onDocumentApplied: (document: RoomDocument) => void
   externallyLocked: boolean
 }) {
@@ -221,6 +221,15 @@ export function useTiptapSelectionRewrite({
     startingOperation: boolean
   } | null>(null)
   previewRef.current = preview
+
+  const rewriteErrorMessage = useCallback((error: unknown): string => {
+    const message = error instanceof Error ? error.message : '文档操作失败，请重试。'
+    if (/DOCUMENT_CONFLICT|VERSION(?:_MISMATCH| HAS CHANGED)/i.test(message)) {
+      return '文档内容已更新，请重新选择后重试。'
+    }
+    if (/DOCUMENT_BUSY/i.test(message)) return '文档正在处理其他修改，请完成后再试。'
+    return message
+  }, [])
 
   const restoreEditor = useCallback((wasEditable: boolean) => {
     if (!editor || editor.isDestroyed) return
@@ -253,9 +262,9 @@ export function useTiptapSelectionRewrite({
       ...value,
       revision,
       phase: value.replacementText ? 'ready' : 'error',
-      error: error instanceof Error ? error.message : '文档操作失败，请重试。',
+      error: rewriteErrorMessage(error),
     } : value)
-  }, [load])
+  }, [load, rewriteErrorMessage])
 
   const cancel = useCallback(() => {
     const current = previewRef.current
@@ -288,6 +297,13 @@ export function useTiptapSelectionRewrite({
     if (localOperation) localOperation.startingOperation = true
     let operation
     try {
+      const baseVersion = await prepareDocument()
+      if (operationRef.current?.id !== localOperation?.id) {
+        throw new DOMException('Selection rewrite cancelled', 'AbortError')
+      }
+      if (selectionText(editor, current.from, current.to) !== current.originalText) {
+        throw new Error('原选区已经变化，请重新选择。')
+      }
       operation = await start({
         capabilityId: 'document.selection-rewrite',
         context: {
@@ -316,7 +332,7 @@ export function useTiptapSelectionRewrite({
       if (activeOperation && activeOperation.id === localOperation?.id) activeOperation.startingOperation = false
     }
     return operation
-  }, [baseVersion, documentId, editor, roomId, start])
+  }, [documentId, editor, prepareDocument, roomId, start])
 
   const startOperation = useCallback(async (current: RewritePreviewState): Promise<void> => {
     const operation = await createOperation(current)
@@ -434,10 +450,10 @@ export function useTiptapSelectionRewrite({
       setPreview((current) => current ? {
         ...current,
         phase: 'error',
-        error: error instanceof Error ? error.message : 'Agent 重写失败。',
+        error: rewriteErrorMessage(error),
       } : current)
     })
-  }, [documentName, editor, restoreEditor, roomId, startOperation])
+  }, [documentName, editor, restoreEditor, rewriteErrorMessage, roomId, startOperation])
 
   const requestRewrite = useCallback((instruction: string) => {
     if (!editor || editor.isDestroyed || externallyLocked) return
@@ -468,13 +484,13 @@ export function useTiptapSelectionRewrite({
         setPreview((value) => value ? {
           ...value,
           phase: 'error',
-          error: error instanceof Error ? error.message : '无法创建文档操作。',
+          error: rewriteErrorMessage(error),
         } : value)
       })
       return
     }
     runRewrite(current, current.originalText, current.instruction, current.formatContext)
-  }, [editor, restoreEditor, runRewrite, startOperation])
+  }, [editor, restoreEditor, rewriteErrorMessage, runRewrite, startOperation])
 
   const accept = useCallback(() => {
     const current = previewRef.current
