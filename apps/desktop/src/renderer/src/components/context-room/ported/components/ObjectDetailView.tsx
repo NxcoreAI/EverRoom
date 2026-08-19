@@ -770,7 +770,7 @@ function MailDetail({
             <div className="min-w-0">
               <h2 className="context-room-mail-subject">{activeMail.title}</h2>
               <p className="context-room-page-subtitle">
-                {activeMail.sender} · demo@everroom.local · {activeMail.time}
+                {activeMail.sender} · {activeMail.time}
               </p>
             </div>
             <div className="context-room-mail-detail-actions">

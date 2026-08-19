@@ -25,7 +25,7 @@ function serviceWithCapture() {
   });
   vi.stubGlobal("fetch", fetchMock);
   const logger = { warn: vi.fn() } as unknown as FastifyBaseLogger;
-  return { service: new MemoryService(config, logger), requests, fetchMock };
+  return { service: new MemoryService(config, logger, null), requests, fetchMock };
 }
 
 afterEach(() => {
@@ -75,7 +75,7 @@ describe("document memory capture", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const logger = { warn: vi.fn() } as unknown as FastifyBaseLogger;
-    const service = new MemoryService(null, logger);
+    const service = new MemoryService(null, logger, null);
 
     await expect(service.captureSelectionRewrite({
       roomId: "room-1",

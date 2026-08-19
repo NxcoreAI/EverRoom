@@ -1,0 +1,286 @@
+import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
+import multipart from "@fastify/multipart";
+import { Type } from "@sinclair/typebox";
+import type { FileDeletionHooks, FilesService, UploadedFileRow } from "./service.js";
+
+/** 上传原件体积上限（与 knowledge file-convert 同源，唯一字节入口统一把关）。 */
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+export type FileStoreErrorCode = "empty_file" | "too_large";
+
+export class FileStoreError extends Error {
+  constructor(
+    message: string,
+    readonly code: FileStoreErrorCode,
+  ) {
+    super(message);
+    this.name = "FileStoreError";
+  }
+}
+
+const FileIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
+
+const FileDto = Type.Object({
+  id: Type.String(),
+  originalName: Type.String(),
+  bytes: Type.Integer(),
+  mime: Type.String(),
+  contentHash: Type.String(),
+  /** 是否已有归一化解析产物（未进过链路的裸上传为 false）。 */
+  parsed: Type.Boolean(),
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+});
+
+const FileDetailDto = Type.Intersect([
+  FileDto,
+  Type.Object({
+    /** 本体绝对路径（主进程 reveal 用）。 */
+    storagePath: Type.String(),
+    currentParsedId: Type.Union([Type.String(), Type.Null()]),
+  }),
+]);
+
+function iso(value: Date): string {
+  return value.toISOString();
+}
+
+function toDto(row: UploadedFileRow) {
+  return {
+    id: row.id,
+    originalName: row.originalName,
+    bytes: row.bytes,
+    mime: row.mime,
+    contentHash: row.contentHash,
+    parsed: Boolean(row.currentParsedId),
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
+  };
+}
+
+function errorOf(code: string): { error: string } {
+  return { error: code };
+}
+
+/**
+ * 文件管理中心 REST（unified-ingest-plan §8.2）：
+ * POST /v1/files 是全系统接收文件字节的唯一通道（multipart 或 JSON base64），
+ * 幂等（闸1 同名同内容 deduped）；列表/详情/预览/本体路径/改名/删除级联。
+ */
+export function filesRoutes(service: FilesService, deletionHooks?: FileDeletionHooks): FastifyPluginAsyncTypebox {
+  return async (app) => {
+    await app.register(multipart, {
+      limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+    });
+
+    app.post(
+      "/v1/files",
+      {
+        bodyLimit: 32 * 1024 * 1024,
+        schema: {
+          tags: ["files"],
+          response: {
+            201: Type.Object({
+              id: Type.String(),
+              contentHash: Type.String(),
+              deduped: Type.Boolean(),
+              bytes: Type.Integer(),
+              originalName: Type.String(),
+            }),
+            400: Type.Object({ error: Type.String() }),
+            413: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const contentType = request.headers["content-type"] ?? "";
+        let filename: string;
+        let buffer: Buffer;
+        if (contentType.startsWith("multipart/form-data")) {
+          const file = await request.file();
+          if (!file) return reply.code(400).send(errorOf("file_part_required"));
+          filename = file.filename;
+          try {
+            buffer = await file.toBuffer();
+          } catch {
+            return reply.code(413).send(errorOf("too_large"));
+          }
+        } else {
+          const body = request.body as
+            | { filename?: unknown; contentBase64?: unknown; mime?: unknown }
+            | undefined;
+          if (typeof body?.filename !== "string" || !body.filename.trim()) {
+            return reply.code(400).send(errorOf("filename_required"));
+          }
+          if (typeof body.contentBase64 !== "string" || !body.contentBase64) {
+            return reply.code(400).send(errorOf("content_base64_required"));
+          }
+          filename = body.filename;
+          buffer = Buffer.from(body.contentBase64, "base64");
+        }
+        if (buffer.byteLength === 0) return reply.code(400).send(errorOf("empty_file"));
+        if (buffer.byteLength > MAX_UPLOAD_BYTES) return reply.code(413).send(errorOf("too_large"));
+
+        const uploaded = await service.upload({ filename, buffer });
+        return reply.code(201).send({
+          id: uploaded.fileId,
+          contentHash: uploaded.contentHash,
+          deduped: uploaded.deduped,
+          bytes: uploaded.bytes,
+          originalName: uploaded.originalName,
+        });
+      },
+    );
+
+    app.get(
+      "/v1/files",
+      {
+        schema: {
+          tags: ["files"],
+          querystring: Type.Object({
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, default: 50 })),
+            offset: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
+          }),
+          response: {
+            200: Type.Object({ items: Type.Array(FileDto), total: Type.Integer() }),
+          },
+        },
+      },
+      async (request) => {
+        const limit = request.query.limit ?? 50;
+        const offset = request.query.offset ?? 0;
+        const page = service.list(limit, offset);
+        return { items: page.items.map(toDto), total: page.total };
+      },
+    );
+
+    app.get(
+      "/v1/files/:id",
+      {
+        schema: {
+          tags: ["files"],
+          params: FileIdParams,
+          response: {
+            200: FileDetailDto,
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const row = service.get(request.params.id);
+        if (!row) return reply.code(404).send(errorOf("file_not_found"));
+        return {
+          ...toDto(row),
+          storagePath: service.storagePathOf(request.params.id) ?? "",
+          currentParsedId: row.currentParsedId ?? null,
+        };
+      },
+    );
+
+    app.get(
+      "/v1/files/:id/markdown",
+      {
+        schema: {
+          tags: ["files"],
+          params: FileIdParams,
+          response: {
+            200: Type.Object({ markdown: Type.String() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const markdown = service.markdownOf(request.params.id);
+        if (markdown === null) return reply.code(404).send(errorOf("file_not_parsed"));
+        return { markdown };
+      },
+    );
+
+    app.get(
+      "/v1/files/:id/storage",
+      {
+        schema: {
+          tags: ["files"],
+          params: FileIdParams,
+          response: {
+            200: Type.Object({ storagePath: Type.String() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const storagePath = service.storagePathOf(request.params.id);
+        if (storagePath === null) return reply.code(404).send(errorOf("file_not_found"));
+        return { storagePath };
+      },
+    );
+
+    app.patch(
+      "/v1/files/:id/meta",
+      {
+        schema: {
+          tags: ["files"],
+          params: FileIdParams,
+          body: Type.Object({
+            displayName: Type.String({ minLength: 1, maxLength: 300 }),
+          }),
+          response: {
+            200: FileDto,
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const row = service.rename(request.params.id, request.body.displayName);
+        if (!row) return reply.code(404).send(errorOf("file_not_found"));
+        return toDto(row);
+      },
+    );
+
+    app.delete(
+      "/v1/files/:id",
+      {
+        schema: {
+          tags: ["files"],
+          params: FileIdParams,
+          response: {
+            200: Type.Object({
+              deleted: Type.Boolean(),
+              knowledgeCleanup: Type.Boolean(),
+              deletedMemoryDocuments: Type.Array(Type.String()),
+              blobCollected: Type.Boolean(),
+            }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = await service.deleteFile(request.params.id, deletionHooks);
+        if (!result) return reply.code(404).send(errorOf("file_not_found"));
+        return {
+          deleted: true,
+          knowledgeCleanup: result.knowledgeCleanup,
+          deletedMemoryDocuments: result.deletedMemoryDocuments,
+          blobCollected: result.blobCollected,
+        };
+      },
+    );
+
+    app.post(
+      "/v1/files/gc",
+      {
+        schema: {
+          tags: ["files"],
+          response: {
+            200: Type.Object({
+              removedParsed: Type.Integer(),
+              removedBlobs: Type.Integer(),
+              errors: Type.Integer(),
+            }),
+          },
+        },
+      },
+      async () => service.collectGarbage(),
+    );
+  };
+}

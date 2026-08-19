@@ -1,5 +1,5 @@
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
-import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import type { DetailPane } from '../RoomIconSidebar';
 import {
   MailsPane,
@@ -7,6 +7,7 @@ import {
   RelationsPane,
   SchedulePane,
   TasksPane,
+  WikiPane,
   type WorkspaceObjectPreview,
 } from '../detail-panels';
 import { ResourceTree, type LocalOfficeFile } from '../detail-panels/ResourcePanel';
@@ -18,6 +19,7 @@ export function WorkspacePaneBody({
   backendDocuments,
   trashedDocuments,
   onSelectResource,
+  onOpenWikiPage,
   onCreateDocument,
   onDeleteDocument,
   onRestoreDocument,
@@ -37,6 +39,7 @@ export function WorkspacePaneBody({
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
   onSelectResource: (resource: ContextRoomResource) => void;
+  onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
@@ -79,6 +82,15 @@ export function WorkspacePaneBody({
   if (pane === 'memories') {
     return (
       <MemoryPane room={room} onOpenMemory={onOpenMemory} onUpdateRoom={onUpdateRoom} />
+    );
+  }
+  if (pane === 'wiki') {
+    return (
+      <WikiPane
+        room={room}
+        selectedResourceId={selectedResourceId}
+        onOpenPage={onOpenWikiPage}
+      />
     );
   }
   if (pane === 'schedule') return <SchedulePane room={room} onOpen={onOpenObject} />;
