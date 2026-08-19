@@ -97,14 +97,12 @@ function statusLabel(status: DisplayAgentToolCall['status']): string {
 
 export function AgentExecutionTimeline({
   activity,
-  reasoning,
   runStartedAt,
   runCompletedAt,
   continuing = false,
   continuationLabel = '正在继续处理',
 }: {
   activity: AgentRunActivity
-  reasoning?: string
   runStartedAt?: string
   runCompletedAt?: string
   continuing?: boolean
@@ -196,12 +194,6 @@ export function AgentExecutionTimeline({
       >
         <div>
           <div className="agent-tool-list">
-            {reasoning ? (
-              <details className="agent-execution-reasoning">
-                <summary><Brain aria-hidden="true" />思考过程</summary>
-                <p>{reasoning}</p>
-              </details>
-            ) : null}
             {activity.steps.map((step) => {
               const tool = step.tool
               const summaryText = agentToolResultSummary(tool.result ?? tool.partialResult)

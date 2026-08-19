@@ -124,6 +124,7 @@ interface ActivePiRun {
   input: StartRuntimeRunInput;
   unsubscribe: () => void;
   content: string;
+  stopReason?: string;
   cancelled: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
@@ -416,6 +417,7 @@ export class PiAgentRuntime implements AgentRuntime {
           "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
           "使用工具时，过程说明只补充工具行本身无法表达的信息，例如调用原因、关键发现、判断或对用户的影响；不要复述工具名称、执行状态、参数或下一项工具。没有新增信息时直接继续调用工具，不要强制输出过渡句。过程说明必须基于真实结果，不能臆测成功或输出冗长执行日志。",
           "最后一项工具完成后，必须给出独立、完整的最终答复，简洁总结完成了什么、关键结果以及仍需用户处理的事项；不要把过程说明直接拼接成最终答复。",
+          "检索结果不足时不要反复改写同义关键词搜索；最多补充检索一次，仍无有效内容时立即停止工具调用，明确说明未找到什么、因此无法可靠完成什么，以及用户需要提供什么。不得用模板或猜测替代缺失事实。",
           "新文档提交成功后，最终答复必须用 2 至 4 句总结文档目标、核心内容和完成结果；中文约 180 字以内，英文约 80 词以内，不得复述标题目录、正文段落或长列表。",
         ];
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
@@ -538,6 +540,11 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active || active.terminal) return;
 
+    if (event.type === "turn_end" && event.message.role === "assistant") {
+      active.stopReason = event.message.stopReason;
+      return;
+    }
+
     if (event.type === "message_update") {
       const update = event.assistantMessageEvent;
       if (update.type === "text_delta") {
@@ -566,10 +573,19 @@ export class PiAgentRuntime implements AgentRuntime {
       });
     } else if (event.type === "agent_settled") {
       const sessionError = active.handle.session.state.errorMessage;
+      const lastAssistant = [...active.handle.session.state.messages]
+        .reverse()
+        .find((message) => message.role === "assistant");
+      const outputLimitReached = active.stopReason === "length"
+        || (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "length");
       void this.finish(
         runId,
-        active.cancelled ? "cancelled" : sessionError ? "failed" : "completed",
-        sessionError ? new Error(sessionError) : undefined,
+        active.cancelled ? "cancelled" : sessionError || outputLimitReached ? "failed" : "completed",
+        sessionError
+          ? new Error(sessionError)
+          : outputLimitReached
+            ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
+            : undefined,
       );
     }
   }

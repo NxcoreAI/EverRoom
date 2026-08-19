@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  PendingAgentIntent,
   AgentRun,
   AgentSession,
   AgentSessionLink,
@@ -8,6 +9,7 @@ import type {
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   StartAgentRunInput,
+  SubmitPendingAgentIntentInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
 import { isAgentSocketFrame } from '@nxcore/agent-contract'
@@ -89,6 +91,16 @@ export class AgentGatewayBridge {
 
   startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun> {
     return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/runs`, {
+      method: 'POST',
+      data: input,
+    })
+  }
+
+  submitPendingIntent(
+    intentId: string,
+    input: SubmitPendingAgentIntentInput,
+  ): Promise<{ intent: PendingAgentIntent; run: AgentRun }> {
+    return this.request(`/v1/agent/pending-intents/${encodeURIComponent(intentId)}/submit`, {
       method: 'POST',
       data: input,
     })

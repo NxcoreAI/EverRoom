@@ -119,6 +119,64 @@ describe("PiAgentRuntime", () => {
     }
   });
 
+  it("reports a token-limited response as incomplete", async () => {
+    const endpoint = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      const chunk = (content: string, finishReason: string | null = null) => JSON.stringify({
+        id: "chatcmpl-output-limit",
+        object: "chat.completion.chunk",
+        created: 1,
+        model: "nxcore-test-model",
+        choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finishReason }],
+      });
+      response.write(`data: ${chunk("正在整理检索结果。")}\n\n`);
+      response.write(`data: ${chunk("", "length")}\n\n`);
+      response.end("data: [DONE]\n\n");
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-output-limit-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 32,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-output-limit",
+        sessionId: "session-output-limit",
+        runtimeSessionRef: null,
+        prompt: "整理检索结果",
+        pageLabel: "首页",
+        roomId: null,
+      });
+      const events: RuntimeEvent[] = [];
+      for await (const event of run.events) events.push(event);
+
+      expect(events.map((event) => event.type)).toContain("message.delta");
+      expect(events.at(-1)).toMatchObject({
+        type: "run.failed",
+        payload: { message: expect.stringContaining("输出上限") },
+      });
+      expect(events.some((event) => event.type === "run.completed")).toBe(false);
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
   it("hides every tool for a disabled run and restores them by default", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const endpoint = createServer((request, response) => {

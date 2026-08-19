@@ -1,7 +1,12 @@
+import type { PendingAgentIntent } from '@nxcore/agent-contract'
+
+import { parsePendingAgentIntent } from './agentRoomSelection'
+
 export interface AgentDocumentIntentResult {
   clarificationRequired: true
   originalPrompt: string
   topic: string
+  pendingIntent?: PendingAgentIntent
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -31,7 +36,15 @@ export function parseAgentDocumentIntentResult(result: unknown): AgentDocumentIn
     const originalPrompt = typeof candidate.originalPrompt === 'string'
       ? candidate.originalPrompt.trim()
       : ''
-    if (topic && originalPrompt) return { clarificationRequired: true, originalPrompt, topic }
+    const pendingIntent = parsePendingAgentIntent(candidate.pendingIntent)
+    if (topic && originalPrompt) {
+      return {
+        clarificationRequired: true,
+        originalPrompt,
+        topic,
+        ...(pendingIntent ? { pendingIntent } : {}),
+      }
+    }
   }
   return null
 }
