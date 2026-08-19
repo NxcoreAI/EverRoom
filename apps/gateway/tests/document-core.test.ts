@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { documentVersions } from "../src/infrastructure/database/schema.js";
+import { documents, documentVersions, jobs } from "../src/infrastructure/database/schema.js";
 import {
   DocumentCommitService,
   DocumentContentEngine,
@@ -133,5 +133,50 @@ describe("document core", () => {
     expect(repository.get("doc-cas")).toMatchObject({ title: "Current", version: 1 });
     expect(db.select().from(documentVersions).where(eq(documentVersions.documentId, "doc-cas")).all())
       .toHaveLength(1);
+  });
+
+  it("registers committed versions in the document outbox but skips version-zero drafts", async () => {
+    const { db, commits } = await createCore();
+    commits.create({
+      documentId: "doc-draft",
+      roomId: "room-core",
+      title: "Draft",
+      content: { type: "doc", content: [{ type: "paragraph" }] },
+      version: 0,
+      status: "draft",
+    });
+    commits.create({
+      documentId: "doc-committed",
+      roomId: "room-core",
+      title: "Committed",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+      version: 1,
+    });
+
+    const queued = db.select().from(jobs).all();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      type: "document.ingest",
+      status: "pending",
+      payload: expect.objectContaining({ documentId: "doc-committed", roomId: "room-core", version: 1 }),
+    });
+  });
+
+  it("rolls back the document, version, projections, and outbox job together", async () => {
+    const { db, commits } = await createCore();
+
+    expect(() => commits.create({
+      documentId: "doc-rollback",
+      roomId: "room-core",
+      title: "Rollback",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+      version: 1,
+      mutate: () => { throw new Error("abort transaction"); },
+    })).toThrow("abort transaction");
+
+    expect(db.select().from(documents).where(eq(documents.id, "doc-rollback")).get()).toBeUndefined();
+    expect(db.select().from(documentVersions).where(eq(documentVersions.documentId, "doc-rollback")).all())
+      .toEqual([]);
+    expect(db.select().from(jobs).all()).toEqual([]);
   });
 });

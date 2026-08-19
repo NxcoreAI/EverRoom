@@ -1,8 +1,14 @@
 import type { DocumentMutationTarget } from '@nxcore/agent-contract'
+import Image from '@tiptap/extension-image'
+import TaskItem from '@tiptap/extension-task-item'
+import TaskList from '@tiptap/extension-task-list'
+import { TableKit } from '@tiptap/extension-table'
+import { Markdown } from '@tiptap/markdown'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { Extension, type Editor } from '@tiptap/react'
+import { Editor, Extension } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
 import { Check, CheckCheck, MessageSquareX, Send, X } from 'lucide-react'
 import { createElement, Fragment as ReactFragment, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -10,6 +16,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { DocumentContinuationCandidate } from './presenterRegistry'
 import {
   continuationRevealScrollTop,
+  groupContinuationCandidates,
   shouldHandleContinuationTab,
 } from './documentContinuationState'
 
@@ -20,14 +27,64 @@ interface DocumentContinuationDecorationState {
   markdownDrafts: Record<string, string>
   busy: boolean
   autoReveal: boolean
-  onAccept: (blockId: string) => Promise<void>
+  onAccept: (blockIds: string[]) => Promise<void>
   onAcceptAll: () => Promise<void>
-  onRevise: (blockId: string, feedback: string) => Promise<void>
+  onRevise: (blockIds: string[], feedback: string) => Promise<void>
   onDraftChange: (blockId: string, markdown: string) => void
 }
 
 const continuationKey = new PluginKey<DocumentContinuationDecorationState | null>('documentContinuation')
 const continuationActionRoots = new WeakMap<Node, Root>()
+const continuationMarkdownEditors = new WeakMap<Node, Editor[]>()
+const MAX_CONTINUATION_MARKDOWN_LENGTH = 65_536
+
+export function createContinuationMarkdownEditor({
+  element,
+  markdown,
+  editable,
+  onChange,
+}: {
+  element?: HTMLElement
+  markdown: string
+  editable: boolean
+  onChange: (markdown: string) => void
+}): Editor {
+  let lastAcceptedMarkdown = markdown
+  return new Editor({
+    element,
+    extensions: [
+      StarterKit.configure({ link: { openOnClick: false } }),
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      TableKit.configure({ table: { resizable: false } }),
+      Image.configure({ allowBase64: false }),
+      Markdown,
+    ],
+    content: markdown,
+    contentType: 'markdown',
+    editable,
+    injectCSS: false,
+    editorProps: {
+      attributes: {
+        class: 'document-continuation-markdown-editor',
+        'aria-label': '编辑 Agent 续写候选内容',
+        spellcheck: 'true',
+      },
+    },
+    onUpdate: ({ editor }) => {
+      const nextMarkdown = editor.getMarkdown()
+      if (nextMarkdown.length > MAX_CONTINUATION_MARKDOWN_LENGTH) {
+        editor.commands.setContent(lastAcceptedMarkdown, {
+          contentType: 'markdown',
+          emitUpdate: false,
+        })
+        return
+      }
+      lastAcceptedMarkdown = nextMarkdown
+      onChange(nextMarkdown)
+    },
+  })
+}
 
 function blockId(node: ProseMirrorNode): string {
   const value = node.attrs.id ?? node.attrs.blockId
@@ -163,37 +220,49 @@ function continuationDecorations(
   doc: ProseMirrorNode,
   state: DocumentContinuationDecorationState,
 ): DecorationSet {
-  const currentBlock = state.blocks.find((block) => block.blockId === state.currentBlockId)
+  const currentBlocks = groupContinuationCandidates(state.blocks, state.currentBlockId)
+  const currentBlock = currentBlocks[0]
   if (!currentBlock) return DecorationSet.empty
+  const blockIds = currentBlocks.map((block) => block.blockId)
   const position = continuationTargetPosition(doc, currentBlock.target)
   return DecorationSet.create(doc, [Decoration.widget(position, (view) => {
     const candidate = document.createElement('div')
     candidate.className = 'document-continuation-candidate'
     candidate.dataset.blockId = currentBlock.blockId
+    candidate.dataset.blockIds = blockIds.join(',')
+    candidate.dataset.grouped = String(currentBlocks.length > 1)
     candidate.dataset.busy = String(state.busy)
     candidate.dataset.documentContinuationCandidate = 'true'
     candidate.tabIndex = 0
     candidate.contentEditable = 'false'
     candidate.setAttribute('role', 'region')
     candidate.setAttribute('aria-label', 'Agent 续写候选内容')
-    const blockElement = document.createElement('section')
-    blockElement.className = 'document-continuation-block'
-    blockElement.dataset.blockId = currentBlock.blockId
-    blockElement.dataset.current = 'true'
-    const content = document.createElement('div')
-    content.className = 'document-continuation-candidate-content'
-    const editor = document.createElement('textarea')
-    editor.className = 'document-continuation-candidate-editor'
-    editor.value = state.markdownDrafts[currentBlock.blockId] ?? currentBlock.textPreview
-    editor.rows = 3
-    editor.maxLength = 65_536
-    editor.disabled = state.busy
-    editor.spellcheck = true
-    editor.setAttribute('aria-label', '编辑 Agent 续写候选内容')
-    editor.addEventListener('mousedown', (event) => event.stopPropagation())
-    editor.addEventListener('keydown', (event) => event.stopPropagation())
-    editor.addEventListener('input', () => state.onDraftChange(currentBlock.blockId, editor.value))
-    content.append(editor)
+    const blocksRoot = document.createElement('div')
+    blocksRoot.className = 'document-continuation-blocks'
+    const markdownEditors: Editor[] = []
+    for (const [index, block] of currentBlocks.entries()) {
+      const blockElement = document.createElement('section')
+      blockElement.className = 'document-continuation-block'
+      blockElement.dataset.blockId = block.blockId
+      blockElement.dataset.current = index === 0 ? 'true' : 'false'
+      const content = document.createElement('div')
+      content.className = 'document-continuation-candidate-content'
+      const editorShell = document.createElement('div')
+      editorShell.className = 'document-continuation-markdown-editor-shell'
+      editorShell.dataset.disabled = String(state.busy)
+      const editorHost = document.createElement('div')
+      editorShell.append(editorHost)
+      markdownEditors.push(createContinuationMarkdownEditor({
+        element: editorHost,
+        markdown: state.markdownDrafts[block.blockId] ?? block.textPreview,
+        editable: !state.busy,
+        onChange: (markdown) => state.onDraftChange(block.blockId, markdown),
+      }))
+      content.append(editorShell)
+      blockElement.append(content)
+      blocksRoot.append(blockElement)
+    }
+    candidate.append(blocksRoot)
     const actions = document.createElement('div')
     actions.className = 'document-continuation-candidate-actions'
     const actionsRoot = createRoot(actions)
@@ -210,7 +279,7 @@ function continuationDecorations(
       busy: state.busy,
       onAccept: async () => {
         if (!setBusy()) return
-        await state.onAccept(currentBlock.blockId)
+        await state.onAccept(blockIds)
       },
       onAcceptAll: async () => {
         if (!setBusy()) return
@@ -218,11 +287,10 @@ function continuationDecorations(
       },
       onRevise: async (feedback: string) => {
         if (!setBusy()) return
-        await state.onRevise(currentBlock.blockId, feedback)
+        await state.onRevise(blockIds, feedback)
       },
     }))
-    blockElement.append(content, actions)
-    candidate.append(blockElement)
+    candidate.append(actions)
     candidate.addEventListener('keydown', (event) => {
       if (event.target !== candidate) return
       if (!shouldHandleContinuationTab({
@@ -241,7 +309,7 @@ function continuationDecorations(
         busy: true,
         autoReveal: false,
       }))
-      void state.onAccept(state.currentBlockId)
+      void state.onAccept(blockIds)
     })
     if (state.autoReveal) {
       window.requestAnimationFrame(() => {
@@ -265,17 +333,23 @@ function continuationDecorations(
         }
       })
     }
+    continuationMarkdownEditors.set(candidate, markdownEditors)
     continuationActionRoots.set(candidate, actionsRoot)
     return candidate
   }, {
-    key: `continuation:${state.currentBlockId}:${currentBlock.textPreview}:${state.busy}`,
+    key: `continuation:${currentBlocks.map((block) => `${block.blockId}:${block.textPreview}`).join('|')}:${state.busy}`,
     side: 1,
     ignoreSelection: true,
     stopEvent: () => true,
     destroy: (node) => {
       const root = continuationActionRoots.get(node)
+      const markdownEditor = continuationMarkdownEditors.get(node)
       continuationActionRoots.delete(node)
-      window.setTimeout(() => root?.unmount())
+      continuationMarkdownEditors.delete(node)
+      window.setTimeout(() => {
+        markdownEditor?.forEach((editor) => editor.destroy())
+        root?.unmount()
+      })
     },
   })])
 }
@@ -310,9 +384,9 @@ export function showDocumentContinuation(
   markdownDrafts: Record<string, string>,
   busy: boolean,
   autoReveal: boolean,
-  onAccept: (blockId: string) => Promise<void>,
+  onAccept: (blockIds: string[]) => Promise<void>,
   onAcceptAll: () => Promise<void>,
-  onRevise: (blockId: string, feedback: string) => Promise<void>,
+  onRevise: (blockIds: string[], feedback: string) => Promise<void>,
   onDraftChange: (blockId: string, markdown: string) => void,
 ): void {
   if (editor.isDestroyed) return

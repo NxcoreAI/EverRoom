@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, FileText, Folder } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import type { MemoryScenarioEntryDto } from '../../../../../shared/memory'
+import { MemoryMarkdown } from './MemoryMarkdown'
 import { MemoryEmptyView } from './MemoryStatusViews'
 import { formatDate, useAsyncData } from './useMemoryData'
 
@@ -149,7 +150,7 @@ export function ScenarioPane() {
                 <small>更新于 {formatDate(file.data?.updatedAt || selectedEntry?.updatedAt)}</small>
               </header>
               {file.data?.content ? (
-                <pre className="mem-markdown">{stripMetaHeader(file.data.content)}</pre>
+                <MemoryMarkdown markdown={stripMetaHeader(file.data.content)} />
               ) : (
                 <MemoryEmptyView title="文件为空" />
               )}

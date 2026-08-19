@@ -31,8 +31,8 @@ export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageReso
   return (
     <div className="context-room-wiki-reader-pane">
       <header>
-        <strong>{resource.name}</strong>
-        <span>{resource.wikiPath}</span>
+        <strong title={resource.name}>{resource.name}</strong>
+        <span title={resource.wikiPath}>{resource.wikiPath}</span>
       </header>
       <div className="context-room-wiki-reader-body">
         {markdown === null ? (

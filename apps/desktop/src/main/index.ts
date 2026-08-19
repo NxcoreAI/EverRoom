@@ -54,6 +54,8 @@ import {
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
+import { registerSystemClipboardHandler } from './system-clipboard'
+import { installCrossOriginIsolation } from './cross-origin-isolation'
 import {
   assertNoEmbeddedDocumentImages,
   DocumentAssetStore,
@@ -1028,6 +1030,8 @@ function createWindow(): void {
     },
   })
 
+  installCrossOriginIsolation(window.webContents.session, process.env.ELECTRON_RENDERER_URL)
+
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
   })
@@ -1113,6 +1117,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   })
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   installIpcRouters()
+  registerSystemClipboardHandler()
   registerGatewayHandlers()
   registerOpenConnectorHandlers()
   createWindow()
@@ -1176,11 +1181,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         logLabel: 'cursor-completion',
         devPortEnvironment: 'NXCORE_CURSOR_COMPLETION_DEV_PORT',
       },
-    )
-    const cursorCompletionGateway = await cursorCompletionSupervisor.start()
-    console.info(
-      `Cursor completion service ready at ${cursorCompletionGateway.baseUrl} `
-      + `(pid=${cursorCompletionGateway.pid})`,
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
     registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))

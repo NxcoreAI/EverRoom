@@ -13,6 +13,17 @@ afterEach(async () => {
 });
 
 describe("database migrations", () => {
+  it("creates the document outbox polling index", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-outbox-index-test-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+
+    const indexes = database.sqlite.prepare("PRAGMA index_list(jobs)").all() as Array<{ name: string }>;
+    database.sqlite.close();
+
+    expect(indexes.map((index) => index.name)).toContain("jobs_type_status_created_idx");
+  });
+
   it("adopts the complete pre-release connector configuration migration", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-connector-config-migration-test-"));
     temporaryDirectories.push(dataDir);

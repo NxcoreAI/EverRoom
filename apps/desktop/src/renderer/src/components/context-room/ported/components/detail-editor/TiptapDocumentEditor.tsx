@@ -16,6 +16,7 @@ import { stripDocumentTitle } from '@nxcore/document-model'
 import { useRoomDocumentsState } from '../../../RoomDocumentsProvider'
 import { cursorAnchorCandidateFromEditorState } from '@/components/agent/activeDocumentContext'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
+import { writeTextToClipboard } from '@/lib/systemClipboard'
 import type { ContextRoomRecord, ContextRoomResource } from '../../types'
 import { TiptapBlockHandle } from './TiptapBlockHandle'
 import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
@@ -607,14 +608,14 @@ export function TiptapDocumentEditor({
       continuation.markdownDrafts,
       continuation.busy,
       reveal.autoReveal,
-      async (blockId) => {
-        documentOperations.commands.decideContinuationItem(blockId, 'accepted')
+      async (blockIds) => {
+        await documentOperations.commands.acceptContinuationItems(blockIds)
       },
       async () => {
         await documentOperations.commands.acceptAllContinuationItems()
       },
-      async (blockId, feedback) => {
-        await documentOperations.commands.requestContinuationRevision(blockId, feedback)
+      async (blockIds, feedback) => {
+        await documentOperations.commands.requestContinuationRevision(blockIds, feedback)
       },
       documentOperations.commands.updateContinuationItemDraft,
     )
@@ -662,7 +663,7 @@ export function TiptapDocumentEditor({
       fallbackPreview: textPreview,
     })
     try {
-      await navigator.clipboard.writeText(url)
+      await writeTextToClipboard(url)
       showToast({ title: '已复制块引用', message: '可粘贴到同一 Room 的文档中。' })
     } catch {
       showToast({ title: '复制失败', message: '请检查剪贴板权限。' })

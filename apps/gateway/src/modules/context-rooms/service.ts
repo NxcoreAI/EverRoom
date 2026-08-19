@@ -4,7 +4,7 @@ import type {
   ContextRoomSnapshotItem,
   SaveContextRoomSnapshotInput,
 } from "@nxcore/agent-contract";
-import { asc, eq, isNull } from "drizzle-orm";
+import { asc, eq, isNull, notInArray } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { contextRooms } from "../../infrastructure/database/schema.js";
 
@@ -88,6 +88,11 @@ export class ContextRoomService {
 
     const now = new Date();
     this.db.transaction((tx) => {
+      if (ids.length === 0) {
+        tx.delete(contextRooms).run();
+      } else {
+        tx.delete(contextRooms).where(notInArray(contextRooms.id, ids)).run();
+      }
       const upsert = (room: ContextRoomSnapshotItem, position: number, deletedAt: Date | null) => {
         tx.insert(contextRooms).values({
           id: room.id,

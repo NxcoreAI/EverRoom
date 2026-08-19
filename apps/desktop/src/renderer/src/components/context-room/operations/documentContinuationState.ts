@@ -21,6 +21,39 @@ export function pendingContinuationBlocks(
     .sort((left, right) => left.sequence - right.sequence)
 }
 
+export const CONTINUATION_GROUP_MAX_BLOCKS = 3
+export const CONTINUATION_GROUP_TARGET_CHARACTERS = 140
+
+function continuationCharacterCount(candidate: DocumentContinuationCandidate): number {
+  return Array.from(candidate.textPreview).length
+}
+
+/** Groups short, adjacent candidates into one review card while preserving item order. */
+export function groupContinuationCandidates(
+  candidates: DocumentContinuationCandidate[],
+  currentBlockId: string,
+  options: {
+    maxBlocks?: number
+    targetCharacters?: number
+  } = {},
+): DocumentContinuationCandidate[] {
+  const maxBlocks = Math.max(1, options.maxBlocks ?? CONTINUATION_GROUP_MAX_BLOCKS)
+  const targetCharacters = Math.max(1, options.targetCharacters ?? CONTINUATION_GROUP_TARGET_CHARACTERS)
+  const start = candidates.findIndex((candidate) => candidate.blockId === currentBlockId)
+  if (start < 0) return []
+  const first = candidates[start]
+  const group = [first]
+  let characters = continuationCharacterCount(first)
+  if (characters >= targetCharacters) return group
+  for (let index = start + 1; index < candidates.length && group.length < maxBlocks; index += 1) {
+    const candidate = candidates[index]
+    group.push(candidate)
+    characters += continuationCharacterCount(candidate)
+    if (characters >= targetCharacters) break
+  }
+  return group
+}
+
 export function shouldHandleContinuationTab(input: {
   key: string
   altKey?: boolean

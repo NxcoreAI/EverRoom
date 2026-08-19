@@ -39,12 +39,12 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
   app.log.info(
     {
       runtimeId: runtime.id,
-      ...(config.pi
+      ...(config.cursorCompletionPi
         ? {
-            provider: config.pi.provider,
-            model: config.pi.model,
-            baseUrl: config.pi.baseUrl,
-            api: config.pi.api,
+            provider: config.cursorCompletionPi.provider,
+            model: config.cursorCompletionPi.model,
+            baseUrl: config.cursorCompletionPi.baseUrl,
+            api: config.cursorCompletionPi.api,
           }
         : {}),
     },

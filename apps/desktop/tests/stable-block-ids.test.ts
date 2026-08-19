@@ -1,4 +1,8 @@
 import StarterKit from '@tiptap/starter-kit'
+import {
+  createEverroomBlockReferenceUrl,
+  parseEverroomBlockReferenceUrl,
+} from '@nxcore/document-model'
 import { Slice } from '@tiptap/pm/model'
 import { Editor } from '@tiptap/react'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -79,13 +83,20 @@ describe('StableBlockIds', () => {
   })
 
   it('remaps pasted block ids and inline links that target the pasted tree', () => {
+    const referenceUrl = createEverroomBlockReferenceUrl({
+      roomId: 'room-1',
+      documentId: 'doc-1',
+      blockId: 'source',
+      fallbackTitle: '来源文档',
+      fallbackPreview: '来源内容',
+    })
     const editor = createEditor({
       type: 'doc',
       content: [{
         type: 'paragraph', attrs: { id: 'source' }, content: [{
           type: 'text',
           text: 'linked',
-          marks: [{ type: 'link', attrs: { href: 'everroom://room/room-1/doc-1/source' } }],
+          marks: [{ type: 'link', attrs: { href: referenceUrl } }],
         }],
       }],
     })
@@ -94,7 +105,13 @@ describe('StableBlockIds', () => {
     const paragraph = pasted.content.firstChild!
     const nextId = String(paragraph.attrs.id)
     expect(nextId).not.toBe('source')
-    expect(paragraph.firstChild?.marks[0]?.attrs.href).toContain(`/${nextId}`)
+    expect(parseEverroomBlockReferenceUrl(paragraph.firstChild?.marks[0]?.attrs.href)).toEqual({
+      roomId: 'room-1',
+      documentId: 'doc-1',
+      blockId: nextId,
+      fallbackTitle: '来源文档',
+      fallbackPreview: '来源内容',
+    })
   })
 
   it('does not remap an external link that happens to use the same block id', () => {

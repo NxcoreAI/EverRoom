@@ -364,6 +364,58 @@ describe("document capability registry", () => {
     ]);
   });
 
+  it("persists a Markdown table accepted from an Agent edit proposal", async () => {
+    const { documents, operations, registry } = await createReviewHarness("edit-table-markdown-test");
+    const document = await documents.import({
+      id: "doc-edit-table",
+      roomId: "room-1",
+      title: "Editable table",
+      contentJson: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Replace this summary." }] },
+          { type: "paragraph", content: [{ type: "text", text: "Keep this detailed context unchanged. ".repeat(8) }] },
+        ],
+      },
+    });
+    const targetId = documents.listBlocks(document.id)[0]!.blockId;
+    const context = { agentSessionId: "session-edit-table", runId: "run-edit-table", roomId: "room-1" };
+    await registry.execute("context_room_document_read", { documentId: document.id }, context);
+    const begun = await registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "edit",
+      summary: "Replace the summary with a comparison table",
+    }, context);
+    const operationId = String(begun.structuredContent.operationId);
+    await registry.execute("context_room_patch_hunk", {
+      operationId,
+      sequence: 1,
+      operation: "replace",
+      target: { blockId: targetId },
+      markdown: "| Option | Status |\n| --- | --- |\n| Alpha | Ready |\n| Beta | Planned |",
+    }, context);
+    await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
+
+    const prepared = operations.get(operationId)!;
+    expect(prepared.items[0]?.after[0]).toMatchObject({
+      type: "table",
+      content: [
+        { type: "tableRow", content: [{ type: "tableHeader" }, { type: "tableHeader" }] },
+        { type: "tableRow", content: [{ type: "tableCell" }, { type: "tableCell" }] },
+        { type: "tableRow", content: [{ type: "tableCell" }, { type: "tableCell" }] },
+      ],
+    });
+    const accepted = await operations.execute(operationId, {
+      commandId: "accept-edit-table",
+      expectedRevision: prepared.revision,
+      type: "review.apply",
+      payload: { acceptedItemIds: [prepared.items[0]!.id] },
+    }, (operation, command) => registry.command(operation, command));
+    expect(accepted.document?.contentJson.content?.[0]).toMatchObject({ type: "table" });
+    expect(documents.get(document.id)).toMatchObject({ version: 2 });
+  });
+
   it("applies an edited continuation block without breaking the next item anchor", async () => {
     const { documents, operations, registry } = await createReviewHarness("edited-continuation-markdown-test");
     const document = await documents.import({
@@ -427,16 +479,7 @@ describe("document capability registry", () => {
     }, (operation, command) => registry.command(operation, command))).rejects.toMatchObject({
       code: "EMPTY_REPLACEMENT_MARKDOWN",
     });
-    await expect(operations.execute(created.id, {
-      commandId: "reject-multiblock-continuation-override",
-      expectedRevision: prepared.operation.revision,
-      type: "item.accept",
-      payload: { itemId: firstId, replacementMarkdown: "First block\n\nSecond block" },
-    }, (operation, command) => registry.command(operation, command))).rejects.toMatchObject({
-      code: "CONTINUATION_REPLACEMENT_BLOCK_COUNT",
-    });
-
-    const replacementMarkdown = "## User-edited first";
+    const replacementMarkdown = "## User-edited first\n\nSecond edited block";
     const firstAccepted = await operations.execute(created.id, {
       commandId: "accept-edited-continuation-first",
       expectedRevision: prepared.operation.revision,
@@ -444,11 +487,18 @@ describe("document capability registry", () => {
       payload: { itemId: firstId, replacementMarkdown },
     }, (operation, command) => registry.command(operation, command));
     expect(firstAccepted.operation).toMatchObject({ status: "awaiting_review", baseVersion: 2 });
-    expect(firstAccepted.document?.contentJson.content?.at(-1)).toMatchObject({
-      type: "heading",
-      attrs: { id: firstId, level: 2 },
-      content: [{ type: "text", text: "User-edited first" }],
-    });
+    expect(firstAccepted.document?.contentJson.content?.slice(-2)).toEqual([
+      expect.objectContaining({
+        type: "heading",
+        attrs: expect.objectContaining({ level: 2 }),
+        content: [{ type: "text", text: "User-edited first" }],
+      }),
+      expect.objectContaining({
+        type: "paragraph",
+        attrs: { id: firstId },
+        content: [{ type: "text", text: "Second edited block" }],
+      }),
+    ]);
 
     const secondAccepted = await operations.execute(created.id, {
       commandId: "accept-edited-continuation-second",
@@ -457,8 +507,9 @@ describe("document capability registry", () => {
       payload: { itemId: secondId },
     }, (operation, command) => registry.command(operation, command));
     expect(secondAccepted.operation).toMatchObject({ status: "completed", baseVersion: 3 });
-    expect(secondAccepted.document?.contentJson.content?.slice(-2)).toEqual([
-      expect.objectContaining({ type: "heading", attrs: expect.objectContaining({ id: firstId, level: 2 }) }),
+    expect(secondAccepted.document?.contentJson.content?.slice(-3)).toEqual([
+      expect.objectContaining({ type: "heading", attrs: expect.objectContaining({ level: 2 }) }),
+      expect.objectContaining({ type: "paragraph", attrs: expect.objectContaining({ id: firstId }) }),
       expect.objectContaining({ type: "paragraph", attrs: expect.objectContaining({ id: secondId }) }),
     ]);
     expect(operations.get(created.id)?.items).toEqual([
@@ -466,11 +517,57 @@ describe("document capability registry", () => {
         id: firstId,
         status: "applied",
         markdown: replacementMarkdown,
-        after: [expect.objectContaining({ attrs: expect.objectContaining({ id: firstId }) })],
+        after: [
+          expect.objectContaining({ type: "heading" }),
+          expect.objectContaining({ attrs: expect.objectContaining({ id: firstId }) }),
+        ],
         contentHash: expect.not.stringMatching("agent-first-hash"),
       }),
       expect.objectContaining({ id: secondId, status: "applied", markdown: "Agent second" }),
     ]);
+  });
+
+  it("persists a Markdown table accepted from an Agent continuation", async () => {
+    const { documents, operations, registry } = await createReviewHarness("continuation-table-markdown-test");
+    const document = await documents.import({
+      id: "doc-continuation-table",
+      roomId: "room-1",
+      title: "Continuation table",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Base text" }] }] },
+    });
+    const context = {
+      agentSessionId: "session-continuation-table",
+      runId: "run-continuation-table",
+      roomId: "room-1",
+    };
+    await registry.execute("context_room_document_read", { documentId: document.id }, context);
+    const begun = await registry.execute("context_room_patch_begin", {
+      documentId: document.id,
+      baseVersion: document.version,
+      kind: "continue",
+      summary: "Append a rollout table",
+    }, context);
+    const operationId = String(begun.structuredContent.operationId);
+    await registry.execute("context_room_patch_hunk", {
+      operationId,
+      sequence: 1,
+      operation: "insert",
+      target: { at: "end" },
+      markdown: "| Phase | Owner |\n| --- | --- |\n| Build | Team A |\n| Ship | Team B |",
+    }, context);
+    await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
+
+    const prepared = operations.get(operationId)!;
+    expect(prepared.items).toHaveLength(1);
+    expect(prepared.items[0]?.after[0]).toMatchObject({ type: "table" });
+    const accepted = await operations.execute(operationId, {
+      commandId: "accept-continuation-table",
+      expectedRevision: prepared.revision,
+      type: "item.accept",
+      payload: { itemId: prepared.items[0]!.id },
+    }, (operation, command) => registry.command(operation, command));
+    expect(accepted.document?.contentJson.content?.at(-1)).toMatchObject({ type: "table" });
+    expect(documents.get(document.id)).toMatchObject({ version: 2 });
   });
 
   it("creates documents from the operation kernel without legacy transactions and keeps commit idempotent", async () => {
@@ -554,6 +651,47 @@ describe("document capability registry", () => {
     expect(database.db.select().from(documentVersions).all()).toHaveLength(1);
   });
 
+  it("reassembles a table split across Agent document chunks before persisting it", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-create-table-operation-test-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const documents = new DocumentService(database.db, new DocumentEventBroker());
+    const operations = new DocumentOperationService(database.db, documents.broker);
+    const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
+    disposables.push(() => database.sqlite.close());
+    const context = { agentSessionId: "session-create-table", runId: "run-create-table", roomId: "room-create" };
+    const started = await registry.execute("context_room_write_begin", {
+      mode: "create",
+      title: "Table document",
+      format: "markdown",
+    }, context);
+    const operationId = String(started.structuredContent.operationId);
+    const documentId = String(started.structuredContent.docId);
+
+    await registry.execute("context_room_write_append", {
+      operationId,
+      sequence: 1,
+      text: "| Name | Value |\n| ---",
+    }, context);
+    await registry.execute("context_room_write_append", {
+      operationId,
+      sequence: 2,
+      text: " | --- |\n| Alpha | 1 |\n| Beta | 2 |",
+    }, context);
+    expect(documents.get(documentId)?.contentJson.content?.[0]).toMatchObject({
+      type: "table",
+      content: [
+        { type: "tableRow", content: [{ type: "tableHeader" }, { type: "tableHeader" }] },
+        { type: "tableRow", content: [{ type: "tableCell" }, { type: "tableCell" }] },
+        { type: "tableRow", content: [{ type: "tableCell" }, { type: "tableCell" }] },
+      ],
+    });
+
+    await registry.execute("context_room_write_commit", { operationId, finalSequence: 2 }, context);
+    expect(documents.get(documentId)).toMatchObject({ version: 1, status: "active" });
+    expect(documents.get(documentId)?.contentJson.content?.[0]).toMatchObject({ type: "table" });
+  });
+
   it("enforces the authoritative title and heading hierarchy for Agent-created bodies", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-create-body-normalization-test-"));
     temporaryDirectories.push(dataDir);
@@ -594,6 +732,65 @@ describe("document capability registry", () => {
     });
     expect(shiftedOutline.content.content?.filter((node) => node.type === "heading")
       .map((node) => node.attrs?.level)).toEqual([2, 3]);
+  });
+
+  it("parses rich GFM tables without turning ordinary pipe text into a table", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-agent-table-markdown-test-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const documents = new DocumentService(database.db, new DocumentEventBroker());
+    disposables.push(() => database.sqlite.close());
+
+    const tableDraft = documents.prepareAgentDocumentDraft({
+      documentId: "doc-rich-table",
+      roomId: "room-1",
+      title: "Rich table",
+      markdown: [
+        "| Key | Details |",
+        "| --- | --- |",
+        "| A \\| B | **Bold** and [Docs](https://example.com) |",
+      ].join("\n"),
+    });
+    expect(tableDraft.content.content?.[0]).toMatchObject({
+      type: "table",
+      content: [
+        { type: "tableRow", content: [{ type: "tableHeader" }, { type: "tableHeader" }] },
+        {
+          type: "tableRow",
+          content: [
+            {
+              type: "tableCell",
+              content: [{ type: "paragraph", content: [{ type: "text", text: "A | B" }] }],
+            },
+            {
+              type: "tableCell",
+              content: [{
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "Bold", marks: [{ type: "bold" }] },
+                  { type: "text", text: " and " },
+                  {
+                    type: "text",
+                    text: "Docs",
+                    marks: [{ type: "link", attrs: { href: "https://example.com", title: null } }],
+                  },
+                ],
+              }],
+            },
+          ],
+        },
+      ],
+    });
+
+    const pipeTextDraft = documents.prepareAgentDocumentDraft({
+      documentId: "doc-pipe-text",
+      roomId: "room-1",
+      title: "Pipe text",
+      markdown: "A | B",
+    });
+    expect(pipeTextDraft.content.content).toEqual([
+      { type: "paragraph", content: [{ type: "text", text: "A | B" }] },
+    ]);
   });
 
   it("cancels a create operation and removes its draft", async () => {

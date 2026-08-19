@@ -16,6 +16,7 @@ import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
+import { writeTextToClipboard } from '@/lib/systemClipboard'
 
 const quickPrompts = [
   ['总结当前页面的重点，并列出下一步', '总结当前页面最重要的内容，并按优先级列出下一步。'],
@@ -468,7 +469,7 @@ export function AgentChatView({
 
   const copyMessage = async (messageId: string, content: string) => {
     try {
-      await navigator.clipboard.writeText(content)
+      await writeTextToClipboard(content)
       setCopiedMessageId(messageId)
     } catch {
       setCopiedMessageId(null)

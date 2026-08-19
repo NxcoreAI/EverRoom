@@ -2,6 +2,7 @@ import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/age
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { hasEmbeddedDocumentImages, localizeDocumentImages } from '../components/detail-editor/documentImageAssets'
+import { invalidateDocumentBlockReferences } from '../components/detail-editor/documentBlockReferenceInvalidation'
 
 export function documentFromEvent(event: DocumentEvent): RoomDocument | null {
   if (!event.payload || typeof event.payload !== 'object') return null
@@ -119,9 +120,7 @@ export function useRoomDocuments(roomIds: string[]) {
       }
 
       if (document || event.type === 'document.deleted') {
-        window.dispatchEvent(new CustomEvent('everroom:document-block-references-invalidated', {
-          detail: { roomId: event.roomId, documentId: event.documentId },
-        }))
+        invalidateDocumentBlockReferences({ roomId: event.roomId, documentId: event.documentId })
       }
     })
   }, [upsertDocument])

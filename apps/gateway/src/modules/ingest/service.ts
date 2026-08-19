@@ -7,6 +7,7 @@ import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   documents,
   ingestEvents,
+  parsedContents,
   realityEvents,
   type IngestMemoryOk,
 } from "../../infrastructure/database/schema.js";
@@ -120,6 +121,43 @@ export class IngestService {
     return hasPath ? this.ingestFromPath(input) : this.ingestFromRef(input);
   }
 
+  /**
+   * Commit Core 的内部摄取入口。Everroom 文档已有确定 Room，因此即使实体
+   * router 关闭也可以走入口确定性路由；未启用的下游会从策略中裁掉。
+   */
+  async ingestCommittedDocument(
+    documentId: string,
+    expectedVersion: number,
+  ): Promise<IngestResult | null> {
+    const document = this.db.select().from(documents).where(eq(documents.id, documentId)).get();
+    if (!document
+      || document.deletedAt
+      || document.status !== "active"
+      || document.version !== expectedVersion
+      || document.version <= 0) {
+      return null;
+    }
+    if (!tiptapToMarkdown(document.contentJson as TiptapJsonContent).trim()) return null;
+
+    const configured = resolvePipelines("document", undefined, this.policyLayers);
+    const pipelines: Pipelines = {
+      room: configured.room && this.knowledge.enabled,
+      wiki: configured.wiki && this.knowledge.enabled,
+      memory: configured.memory && this.memory.enabled,
+    };
+    if (!pipelines.room && !pipelines.wiki && !pipelines.memory) return null;
+
+    const result = await this.ingest({
+      source: { ref: { sourceKind: "everroom-doc", sourceId: documentId } },
+      dataType: "document",
+      pipelines,
+      originChannel: "everroom-doc",
+    });
+    if (result.deduped) return this.resumeDocumentFanout(result, document.updatedAt.toISOString());
+    if (!result.memoryResult || !("error" in result.memoryResult)) return result;
+    throw new Error(`document memory ingest failed: ${result.memoryResult.error}`);
+  }
+
   // ───────────────────────── intake：path / ref ─────────────────────────
 
   private async ingestFromPath(input: IngestInput): Promise<IngestResult> {
@@ -175,7 +213,10 @@ export class IngestService {
         const markdown = tiptapToMarkdown(row.contentJson as TiptapJsonContent);
         if (!markdown.trim()) throw new IngestError("文档内容为空", "empty_content");
         // 表引用的规范化序列化指纹（§6.1：不读原始字节时的内容键）
-        const contentHash = contentHashOf(Buffer.from(JSON.stringify(row.contentJson), "utf8"));
+        const contentHash = contentHashOf(Buffer.from(JSON.stringify({
+          title: row.title,
+          contentJson: row.contentJson,
+        }), "utf8"));
         return this.processNormalized(input, {
           sourceKind: "everroom-doc",
           sourceId,
@@ -277,7 +318,7 @@ export class IngestService {
     const pipelines = resolvePipelines(unit.dataType, input.pipelines, this.policyLayers);
     const invalid = validatePipelines(pipelines);
     if (invalid) throw new IngestError("链路开关组合非法（wiki 依赖 Room；至少开一条链路）", invalid);
-    if (pipelines.room && !this.knowledge.routerEnabled) {
+    if (pipelines.room && !this.knowledge.routerEnabled && unit.sourceKind !== "everroom-doc") {
       throw new IngestError("Room 链路需要开启 knowledge router（roomWikisEnabled）", "router_disabled", 400);
     }
 
@@ -331,6 +372,12 @@ export class IngestService {
         }
       }
     }
+    if (memoryResult !== null) {
+      this.db.update(ingestEvents)
+        .set({ memoryResult, updatedAt: new Date() })
+        .where(eq(ingestEvents.id, eventId))
+        .run();
+    }
 
     // 扇出 ②：Room 链路（knowledge.route job；wiki 沉淀在晋升/ingest 时按快照判定）
     let routeJobId: string | null = null;
@@ -338,15 +385,23 @@ export class IngestService {
       const entrySignals = input.entrySignals ?? (unit.filename
         ? { filenamePrefix: unit.filename }
         : undefined);
-      const submitted = this.knowledge.submitEnvelope({
-        sourceKind: unit.sourceKind,
-        sourceId: unit.sourceId,
-        sourceVersion: unit.sourceVersion,
-        title: unit.title,
-        markdown: unit.markdown,
-        ...(unit.occurredAt ? { occurredAt: unit.occurredAt } : {}),
-        ...(entrySignals ? { entrySignals } : {}),
-      });
+      const submitted = unit.sourceKind === "everroom-doc"
+        ? this.knowledge.submitCommittedDocument({
+            documentId: unit.sourceId,
+            sourceVersion: unit.sourceVersion,
+            title: unit.title,
+            markdown: unit.markdown,
+            ...(unit.occurredAt ? { occurredAt: unit.occurredAt } : {}),
+          })
+        : this.knowledge.submitEnvelope({
+            sourceKind: unit.sourceKind,
+            sourceId: unit.sourceId,
+            sourceVersion: unit.sourceVersion,
+            title: unit.title,
+            markdown: unit.markdown,
+            ...(unit.occurredAt ? { occurredAt: unit.occurredAt } : {}),
+            ...(entrySignals ? { entrySignals } : {}),
+          });
       routeJobId = submitted.jobId;
     }
 
@@ -448,6 +503,51 @@ export class IngestService {
       .limit(1)
       .get();
     return (row?.sourceVersion ?? 0) + 1;
+  }
+
+  /** 命中摄取台账后恢复尚未成功的扇出，避免部分成功被内容去重吞掉。 */
+  private async resumeDocumentFanout(result: IngestResult, occurredAt: string): Promise<IngestResult> {
+    const event = this.db.select().from(ingestEvents).where(eq(ingestEvents.id, result.eventId)).get();
+    const parsed = event
+      ? this.db.select().from(parsedContents).where(eq(parsedContents.id, event.parsedId)).get()
+      : null;
+    if (!event || !parsed) return result;
+
+    let memoryResult = event.memoryResult;
+    if (event.pipelines.memory
+      && this.memory.enabled
+      && (!memoryResult || "error" in memoryResult)) {
+      const imported = await this.memory.importToMemoryCore({
+        title: event.title,
+        markdown: truncateUtf8(
+          parsed.markdown,
+          MEMORY_MAX_BYTES,
+          "<!-- 截断：原文超 2MB 消费端上限，全文见文件中心 -->",
+        ),
+        callerRef: event.sourceId,
+      });
+      memoryResult = {
+        documentId: imported.document.id,
+        chunkCount: imported.chunkCount,
+        deduplicated: imported.deduplicated,
+      } satisfies IngestMemoryOk;
+      this.db.update(ingestEvents).set({ memoryResult, updatedAt: new Date() })
+        .where(eq(ingestEvents.id, event.id)).run();
+    }
+
+    let routeJobId = event.routeJobId;
+    if (event.pipelines.room && this.knowledge.enabled && !routeJobId) {
+      routeJobId = this.knowledge.submitCommittedDocument({
+        documentId: event.sourceId,
+        sourceVersion: event.sourceVersion,
+        title: event.title,
+        markdown: parsed.markdown,
+        occurredAt,
+      }).jobId;
+      this.db.update(ingestEvents).set({ routeJobId, updatedAt: new Date() })
+        .where(eq(ingestEvents.id, event.id)).run();
+    }
+    return { ...result, memoryResult, routeJobId };
   }
 
   private toResult(row: typeof ingestEvents.$inferSelect, deduped: boolean): IngestResult {

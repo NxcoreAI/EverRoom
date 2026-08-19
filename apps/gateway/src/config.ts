@@ -67,6 +67,15 @@ const RawConfigSchema = Type.Object(
     aiContextWindow: Type.Integer({ minimum: 1 }),
     aiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
     aiReasoning: AiReasoningSchema,
+    cursorCompletionAiProvider: Type.String(),
+    cursorCompletionAiModel: Type.String(),
+    cursorCompletionAiBaseUrl: Type.String(),
+    cursorCompletionAiApiKey: Type.String(),
+    cursorCompletionAiApi: AiApiSchema,
+    cursorCompletionAiMaxTokens: Type.Integer({ minimum: 1 }),
+    cursorCompletionAiContextWindow: Type.Integer({ minimum: 1 }),
+    cursorCompletionAiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
+    cursorCompletionAiReasoning: AiReasoningSchema,
     asrProvider: AsrProviderSchema,
     asrAliyunApiKey: Type.String(),
     asrAliyunBaseUrl: Type.String(),
@@ -222,6 +231,7 @@ export interface GatewayConfig {
   connectorSyncOwnerId?: string;
   memory: MemoryRuntimeConfig | null;
   pi: PiRuntimeConfig | null;
+  cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
   backgroundPi: PiRuntimeConfig | null;
   asrInputDir: string;
@@ -263,10 +273,10 @@ function parseNonNegativeInteger(name: string, value: string): number {
   return Number(value);
 }
 
-function parseTemperature(value: string): number {
+function parseTemperature(value: string, name = "NXCORE_AI_TEMPERATURE"): number {
   const temperature = Number(value);
   if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
-    throw new Error(`Invalid NXCORE_AI_TEMPERATURE: ${value}`);
+    throw new Error(`Invalid ${name}: ${value}`);
   }
   return temperature;
 }
@@ -288,15 +298,15 @@ function parsePositiveNumber(name: string, value: string): number {
   return number;
 }
 
-function validateAiEndpoint(value: string): void {
+function validateAiEndpoint(value: string, name = "NXCORE_AI_BASE_URL"): void {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error("Invalid NXCORE_AI_BASE_URL: expected an absolute HTTP(S) URL");
+    throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("Invalid NXCORE_AI_BASE_URL: expected an absolute HTTP(S) URL");
+    throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
   }
 }
 
@@ -513,6 +523,32 @@ export function loadConfig(
     ),
     aiTemperature: parseTemperature(env.NXCORE_AI_TEMPERATURE ?? "0.3"),
     aiReasoning: env.NXCORE_AI_REASONING ?? "medium",
+    cursorCompletionAiProvider: env.NXCORE_CURSOR_COMPLETION_AI_PROVIDER?.trim()
+      || env.NXCORE_AI_PROVIDER?.trim() || "",
+    cursorCompletionAiModel: env.NXCORE_CURSOR_COMPLETION_AI_MODEL?.trim()
+      || env.NXCORE_AI_MODEL?.trim() || "",
+    cursorCompletionAiBaseUrl: env.NXCORE_CURSOR_COMPLETION_AI_BASE_URL?.trim()
+      || env.NXCORE_AI_BASE_URL?.trim() || "",
+    cursorCompletionAiApiKey: env.NXCORE_CURSOR_COMPLETION_AI_API_KEY?.trim()
+      || env.NXCORE_AI_API_KEY?.trim() || "",
+    cursorCompletionAiApi: env.NXCORE_CURSOR_COMPLETION_AI_API?.trim()
+      || env.NXCORE_AI_API?.trim() || "openai-completions",
+    cursorCompletionAiMaxTokens: parsePositiveInteger(
+      "NXCORE_CURSOR_COMPLETION_AI_MAX_TOKENS",
+      env.NXCORE_CURSOR_COMPLETION_AI_MAX_TOKENS ?? env.NXCORE_AI_MAX_TOKENS ?? "8192",
+    ),
+    cursorCompletionAiContextWindow: parsePositiveInteger(
+      "NXCORE_CURSOR_COMPLETION_AI_CONTEXT_WINDOW",
+      env.NXCORE_CURSOR_COMPLETION_AI_CONTEXT_WINDOW ?? env.NXCORE_AI_CONTEXT_WINDOW ?? "128000",
+    ),
+    cursorCompletionAiTemperature: parseTemperature(
+      env.NXCORE_CURSOR_COMPLETION_AI_TEMPERATURE ?? env.NXCORE_AI_TEMPERATURE ?? "0.3",
+      env.NXCORE_CURSOR_COMPLETION_AI_TEMPERATURE === undefined
+        ? "NXCORE_AI_TEMPERATURE"
+        : "NXCORE_CURSOR_COMPLETION_AI_TEMPERATURE",
+    ),
+    cursorCompletionAiReasoning: env.NXCORE_CURSOR_COMPLETION_AI_REASONING?.trim()
+      || env.NXCORE_AI_REASONING?.trim() || "medium",
     asrProvider: env.NXCORE_ASR_PROVIDER ?? "disabled",
     asrAliyunApiKey: env.NXCORE_ASR_ALIYUN_API_KEY?.trim() ?? "",
     asrAliyunBaseUrl: env.NXCORE_ASR_ALIYUN_BASE_URL?.trim()
@@ -727,6 +763,25 @@ export function loadConfig(
         ...(knowledge ? { knowledge } : {}),
       }
     : null;
+  const cursorCompletionPi: PiRuntimeConfig | null = rawConfig.agentRuntime === "pi"
+    ? {
+        provider: rawConfig.cursorCompletionAiProvider,
+        model: rawConfig.cursorCompletionAiModel,
+        baseUrl: rawConfig.cursorCompletionAiBaseUrl,
+        apiKey: rawConfig.cursorCompletionAiApiKey,
+        api: rawConfig.cursorCompletionAiApi,
+        maxTokens: rawConfig.cursorCompletionAiMaxTokens,
+        contextWindow: rawConfig.cursorCompletionAiContextWindow,
+        temperature: rawConfig.cursorCompletionAiTemperature,
+        reasoning: rawConfig.cursorCompletionAiReasoning,
+        sessionsDir: join(dataDir, "agent", "cursor-completion-pi-sessions"),
+        workingDirectory: join(dataDir, "agent", "cursor-completion-workspace"),
+        agentDirectory: join(dataDir, "agent", "cursor-completion-pi-config"),
+      }
+    : null;
+  if (cursorCompletionPi) {
+    validateAiEndpoint(cursorCompletionPi.baseUrl, "NXCORE_CURSOR_COMPLETION_AI_BASE_URL");
+  }
   const openConnectorUrl = env.OO_CONNECTOR_URL?.trim();
   if (openConnectorUrl) validateConnectorEndpoint(openConnectorUrl);
   const connectorSyncJobs = parseConnectorSyncJobs(rawConfig.connectorSyncJobsJson);
@@ -779,6 +834,7 @@ export function loadConfig(
         }
       : null,
     pi,
+    cursorCompletionPi,
     backgroundPi: pi
       ? {
           ...pi,

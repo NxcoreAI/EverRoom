@@ -30,24 +30,28 @@ export const gatewayMetadata = sqliteTable("gateway_metadata", {
     .$defaultFn(() => new Date()),
 });
 
-export const jobs = sqliteTable("jobs", {
-  id: text("id").primaryKey(),
-  type: text("type").notNull(),
-  status: text("status", {
-    enum: ["pending", "running", "completed", "failed", "cancelled"],
-  })
-    .notNull()
-    .default("pending"),
-  payload: text("payload", { mode: "json" }).notNull(),
-  result: text("result", { mode: "json" }),
-  error: text("error", { mode: "json" }),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .notNull()
-    .$defaultFn(() => new Date()),
-});
+export const jobs = sqliteTable(
+  "jobs",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    status: text("status", {
+      enum: ["pending", "running", "completed", "failed", "cancelled"],
+    })
+      .notNull()
+      .default("pending"),
+    payload: text("payload", { mode: "json" }).notNull(),
+    result: text("result", { mode: "json" }),
+    error: text("error", { mode: "json" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("jobs_type_status_created_idx").on(table.type, table.status, table.createdAt)],
+);
 
 export const auditLogs = sqliteTable("audit_logs", {
   id: text("id").primaryKey(),

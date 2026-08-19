@@ -89,6 +89,7 @@ export function TiptapSlashCommandMenu({
 }) {
   const [match, setMatch] = useState<SlashMatch | null>(() => getSlashMatch(editor))
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const selectedIndexRef = useRef(0)
   const [tableRequest, setTableRequest] = useState<{
     range: Pick<SlashMatch, 'from' | 'to'>
     rows: number
@@ -141,27 +142,38 @@ export function TiptapSlashCommandMenu({
     return availableCommands.filter((command) => `${command.label} ${command.keywords}`.toLocaleLowerCase().includes(query))
   }, [availableCommands, match?.query])
 
-  useEffect(() => setSelectedIndex(0), [match?.query])
+  useEffect(() => {
+    selectedIndexRef.current = 0
+    setSelectedIndex(0)
+  }, [match?.query])
 
   useEffect(() => {
     if (!match || filteredCommands.length === 0) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
+        event.stopImmediatePropagation()
         const direction = event.key === 'ArrowDown' ? 1 : -1
-        setSelectedIndex((index) => (index + direction + filteredCommands.length) % filteredCommands.length)
+        const nextIndex = (
+          selectedIndexRef.current + direction + filteredCommands.length
+        ) % filteredCommands.length
+        selectedIndexRef.current = nextIndex
+        setSelectedIndex(nextIndex)
       } else if (event.key === 'Enter') {
         event.preventDefault()
-        filteredCommands[selectedIndex]?.run(editor, match, { requestImage, requestTable })
+        event.stopImmediatePropagation()
+        const command = filteredCommands[selectedIndexRef.current] ?? filteredCommands[0]
+        command?.run(editor, match, { requestImage, requestTable })
       } else if (event.key === 'Escape') {
         event.preventDefault()
+        event.stopImmediatePropagation()
         setTableRequest(null)
         setMatch(null)
       }
     }
-    editor.view.dom.addEventListener('keydown', handleKeyDown)
-    return () => editor.view.dom.removeEventListener('keydown', handleKeyDown)
-  }, [editor, filteredCommands, match, selectedIndex])
+    editor.view.dom.addEventListener('keydown', handleKeyDown, true)
+    return () => editor.view.dom.removeEventListener('keydown', handleKeyDown, true)
+  }, [editor, filteredCommands, match])
 
   if (!match || filteredCommands.length === 0) return null
 
@@ -268,7 +280,10 @@ export function TiptapSlashCommandMenu({
             aria-selected={index === selectedIndex}
             data-selected={String(index === selectedIndex)}
             onMouseDown={(event) => event.preventDefault()}
-            onMouseEnter={() => setSelectedIndex(index)}
+            onMouseEnter={() => {
+              selectedIndexRef.current = index
+              setSelectedIndex(index)
+            }}
             onClick={() => command.run(editor, match, { requestImage, requestTable })}
           >
             <span><Icon strokeWidth={1.8} /></span>

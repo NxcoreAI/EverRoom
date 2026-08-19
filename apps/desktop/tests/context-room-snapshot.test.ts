@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest'
 import {
   createContextRoomSnapshotInput,
   isContextRoomSnapshotEmpty,
+  removeDemoContextRoomState,
   restoreContextRoomSnapshot,
 } from '../src/renderer/src/components/context-room/ported/contextRoomLocalState'
+import { DEMO_CONTEXT_ROOM_IDS } from '../src/renderer/src/components/context-room/ported/demoContextRooms'
 import { createContextRoomFixture } from './context-room-fixture'
 
 describe('Context Room backend snapshots', () => {
@@ -60,5 +62,21 @@ describe('Context Room backend snapshots', () => {
       deletedRooms: [valid],
       updatedAt: null,
     })).toBeNull()
+  })
+
+  it('removes legacy demo Rooms while preserving user Rooms', () => {
+    const userRoom = createContextRoomFixture('room-user', '用户 Room')
+    const demoRooms = DEMO_CONTEXT_ROOM_IDS.map((id) => createContextRoomFixture(id, id))
+
+    expect(removeDemoContextRoomState({
+      rooms: [demoRooms[0], userRoom],
+      deletedRooms: demoRooms.slice(1),
+    })).toEqual({ rooms: [userRoom], deletedRooms: [] })
+
+    const snapshot = createContextRoomSnapshotInput({
+      rooms: [userRoom, ...demoRooms],
+      deletedRooms: [],
+    })
+    expect(restoreContextRoomSnapshot({ ...snapshot, updatedAt: null })?.rooms).toEqual([userRoom])
   })
 })

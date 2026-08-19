@@ -1,4 +1,4 @@
-import { BookOpenText, ListTree, Network, RefreshCw } from 'lucide-react'
+import { BookOpenText, FileText, ListTree, Network, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import {
@@ -130,6 +130,20 @@ export function WikiPage() {
     setSelectedPage(page)
   }
 
+  const closePage = useCallback(() => {
+    setSelectedPage(null)
+    setMarkdown(null)
+  }, [])
+
+  useEffect(() => {
+    if (view !== 'graph' || !selectedPage) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closePage()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [closePage, selectedPage, view])
+
   const selectedWiki = wikis.find((wiki) => wiki.roomId === selectedRoomId) ?? null
   const selectedRoomTitle = selectedRoomId ? roomsById.get(selectedRoomId)?.title : undefined
 
@@ -214,23 +228,38 @@ export function WikiPage() {
               </div>
             </div>
 
-            <div className="wiki-panes">
+            <div className={`wiki-panes${view === 'graph' ? ' is-graph' : ''}`}>
               {view === 'tree' ? (
-                <div className="wiki-tree-pane">
-                  {pagesLoading ? (
-                    <div className="wiki-empty">加载中…</div>
-                  ) : pageStatus === 'error' ? (
-                    <div className="wiki-empty">知识服务不可用。</div>
-                  ) : pageStatus === 'none' ? (
-                    <div className="wiki-empty">该 Room 还没有知识沉淀。</div>
-                  ) : pageStatus === 'processing' || pageStatus === 'pending' ? (
-                    <div className="wiki-empty">知识库正在构建中，稍后刷新查看。</div>
-                  ) : pages.length === 0 ? (
-                    <div className="wiki-empty">还没有页面。</div>
-                  ) : (
-                    <WikiTree pages={pages} selectedPath={selectedPage?.path ?? null} onSelect={openPage} />
-                  )}
-                </div>
+                <>
+                  <div className="wiki-tree-pane">
+                    {pagesLoading ? (
+                      <div className="wiki-empty">加载中…</div>
+                    ) : pageStatus === 'error' ? (
+                      <div className="wiki-empty">知识服务不可用。</div>
+                    ) : pageStatus === 'none' ? (
+                      <div className="wiki-empty">该 Room 还没有知识沉淀。</div>
+                    ) : pageStatus === 'processing' || pageStatus === 'pending' ? (
+                      <div className="wiki-empty">知识库正在构建中，稍后刷新查看。</div>
+                    ) : pages.length === 0 ? (
+                      <div className="wiki-empty">还没有页面。</div>
+                    ) : (
+                      <WikiTree pages={pages} selectedPath={selectedPage?.path ?? null} onSelect={openPage} />
+                    )}
+                  </div>
+                  <div className="wiki-preview">
+                    {selectedPage ? (
+                      <>
+                        <header className="wiki-preview-header">
+                          <strong title={selectedPage.title}>{selectedPage.title}</strong>
+                          <span title={selectedPage.path}>{selectedPage.path}</span>
+                        </header>
+                        {markdown === null ? '加载中…' : <MarkdownBody markdown={markdown} />}
+                      </>
+                    ) : (
+                      <div className="wiki-empty">从目录选择一个页面阅读。</div>
+                    )}
+                  </div>
+                </>
               ) : (
                 <div className="wiki-graph-pane">
                   {graphLoading ? (
@@ -245,30 +274,50 @@ export function WikiPage() {
                           if (page) openPage(page)
                         }}
                       />
-                      <p className="wiki-graph-hint">
-                        节点 = 页面，连线 = 页面内链；点击节点在右侧阅读该页。
-                      </p>
+                      <div className="wiki-graph-stats" aria-label="图谱统计">
+                        <span>{graph.nodes.length} 个页面</span>
+                        <span>{graph.edges.length} 条内链</span>
+                      </div>
+                      {selectedPage ? (
+                        <aside className="wiki-node-drawer" aria-label="Wiki 节点详情">
+                          <header>
+                            <div className="wiki-node-drawer-title">
+                              <span className="wiki-node-drawer-icon">
+                                <FileText aria-hidden="true" />
+                              </span>
+                              <div>
+                                <strong title={selectedPage.title}>{selectedPage.title}</strong>
+                                <span title={selectedPage.path}>{selectedPage.path}</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="wiki-node-drawer-close"
+                              aria-label="关闭节点详情"
+                              title="关闭"
+                              onClick={closePage}
+                            >
+                              <X aria-hidden="true" />
+                            </button>
+                          </header>
+                          {selectedPage.description ? (
+                            <p className="wiki-node-drawer-description">{selectedPage.description}</p>
+                          ) : null}
+                          <div className="wiki-node-drawer-body">
+                            {markdown === null ? (
+                              <div className="wiki-node-drawer-loading">加载中…</div>
+                            ) : (
+                              <MarkdownBody markdown={markdown} />
+                            )}
+                          </div>
+                        </aside>
+                      ) : null}
                     </>
                   ) : (
                     <div className="wiki-empty">页面之间还没有内链，图谱为空。</div>
                   )}
                 </div>
               )}
-              <div className="wiki-preview">
-                {selectedPage ? (
-                  <>
-                    <header className="wiki-preview-header">
-                      <strong>{selectedPage.title}</strong>
-                      <span>{selectedPage.path}</span>
-                    </header>
-                    {markdown === null ? '加载中…' : <MarkdownBody markdown={markdown} />}
-                  </>
-                ) : (
-                  <div className="wiki-empty">
-                    {view === 'tree' ? '从目录选择一个页面阅读。' : '点击图谱节点阅读该页。'}
-                  </div>
-                )}
-              </div>
             </div>
           </section>
         </div>

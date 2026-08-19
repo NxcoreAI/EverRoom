@@ -11,6 +11,7 @@ import {
   documentBlockReferences,
   documentVersions,
   documents,
+  jobs,
   roomDocumentLinks,
 } from '../src/infrastructure/database/schema.js'
 import { eq } from 'drizzle-orm'
@@ -303,6 +304,9 @@ describe('document transactions', () => {
     expect(db.select().from(documents).all()).toEqual([])
     expect(db.select().from(roomDocumentLinks).all()).toEqual([])
     expect(db.select().from(documentVersions).all()).toEqual([])
+    expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toEqual([
+      expect.objectContaining({ status: 'pending', payload: expect.objectContaining({ documentId: imported.id }) }),
+    ])
     const events = frames.map((frame) => JSON.parse(frame))
     expect(events).toContainEqual(expect.objectContaining({
       event: expect.objectContaining({ type: 'document.changed' }),
@@ -340,6 +344,7 @@ describe('document transactions', () => {
     expect(db.select().from(documents).all()).toEqual([])
     expect(db.select().from(roomDocumentLinks).all()).toEqual([])
     expect(db.select().from(documentVersions).all()).toEqual([])
+    expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toHaveLength(2)
   })
 
   it('lists available Rooms and refuses to create a draft before the user selects one', async () => {
