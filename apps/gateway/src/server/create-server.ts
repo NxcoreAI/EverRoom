@@ -15,8 +15,10 @@ import { agentRoutes } from "../modules/agent/routes.js";
 import { AgentService } from "../modules/agent/service.js";
 import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
+import { DocumentOperationService } from "../modules/documents/operations/service.js";
 import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
+import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
 import { createAgentRuntime, createBackgroundAgentRuntime, createConnectorSyncAgentRuntime } from "../modules/agent/runtime-factory.js";
 import { DocumentServiceError } from "../modules/documents/errors.js";
@@ -30,13 +32,20 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { filesRoutes } from "../modules/files/routes.js";
+import { FilesService } from "../modules/files/service.js";
+import { ingestRoutes } from "../modules/ingest/routes.js";
+import { IngestService } from "../modules/ingest/service.js";
+import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
+import { knowledgeRoutes } from "../modules/knowledge/routes.js";
+import { KnowledgeService } from "../modules/knowledge/service.js";
+import { connectorRoutes } from "../modules/connectors/routes.js";
+import { ConnectorSyncService } from "../modules/connectors/service.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
-import { connectorRoutes } from "../modules/connectors/routes.js";
-import { ConnectorSyncService } from "../modules/connectors/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -116,9 +125,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(websocket);
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
-  const memoryService = new MemoryService(config.memory, app.log);
+  const memoryService = new MemoryService(config.pi?.memory ?? null, app.log, { db, dataDir: config.dataDir });
   const contextRoomService = new ContextRoomService(db);
-  const documentService = new DocumentService(db, new DocumentEventBroker(), (document) => {
+  const documentEventBroker = new DocumentEventBroker();
+  const documentOperationService = new DocumentOperationService(db, documentEventBroker);
+  const documentService = new DocumentService(db, documentEventBroker, (document) => {
     void memoryService.captureDocumentCreation(document).catch((error: unknown) => {
       app.log.warn({ err: error, documentId: document.documentId }, "document memory capture failed");
     });
@@ -131,15 +142,72 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       originalText: patch.originalText,
       replacementText: patch.replacementText,
     }).catch((error: unknown) => {
-      app.log.warn({ err: error, patchId: patch.patchId }, "document patch memory capture failed");
+      app.log.warn({ err: error, operationId: patch.operationId }, "document rewrite memory capture failed");
     });
+  }, (documentId, currentVersion) => (
+    documentOperationService.prepareExternalVersionAdvance(documentId, currentVersion)
+  ), (error, documentId, currentVersion) => {
+    app.log.warn({ err: error, documentId, currentVersion }, "document after-commit observer failed");
   });
-  const documentMcpHost = new DocumentMcpHost(documentService, contextRoomService);
+  const recoveredDocumentOperations = documentOperationService.recoverInterrupted();
+  if (recoveredDocumentOperations > 0) {
+    app.log.info({ recoveredDocumentOperations }, "interrupted document operations recovered");
+  }
+  const documentOperationExpiryTimer = setInterval(() => {
+    const expiredDocumentOperations = documentOperationService.expire();
+    if (expiredDocumentOperations > 0) {
+      app.log.info({ expiredDocumentOperations }, "document operations expired");
+    }
+  }, 30_000);
+  documentOperationExpiryTimer.unref();
+  const documentMcpHost = new DocumentMcpHost(
+    documentService,
+    contextRoomService,
+    undefined,
+    documentOperationService,
+    (diagnostic) => {
+      const { level, event, ...fields } = diagnostic;
+      app.log[level](fields, event);
+    },
+  );
+  await documentMcpHost.capabilities.recover();
+  // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
+  const knowledgeService = new KnowledgeService(
+    db,
+    {
+      baseUrl: config.knowledge?.baseUrl ?? "",
+      serviceId: config.knowledge?.serviceId ?? "everroom",
+      teamId: config.knowledge?.teamId ?? "everroom",
+      dataDir: config.dataDir,
+      roomWikisEnabled: config.knowledge?.roomWikisEnabled ?? false,
+      ingestDebounceMs: config.knowledge?.ingestDebounceMs ?? 600_000,
+      routerEnabled: config.knowledge?.routerEnabled ?? false,
+      entityPromoteScore: config.knowledge?.entityPromoteScore ?? 2.0,
+      entityPromoteSources: config.knowledge?.entityPromoteSources ?? 2,
+      mergeAutoDice: config.knowledge?.mergeAutoDice ?? 0.75,
+      mergeJudgeDice: config.knowledge?.mergeJudgeDice ?? 0.6,
+      llm: config.knowledge?.llm ?? null,
+      embeddingLlm: config.knowledge?.embeddingLlm ?? null,
+      embeddingModel: config.knowledge?.embeddingModel ?? "",
+    },
+    app.log,
+  );
   const connectorSyncService = new ConnectorSyncService(db, config, app.log);
   const connectorSyncAgentRuntime = createConnectorSyncAgentRuntime(config, connectorSyncService);
   if (connectorSyncAgentRuntime) connectorSyncService.attachAgentRuntime(connectorSyncAgentRuntime);
   await connectorSyncService.initialize();
-  const agentRuntime = createAgentRuntime(config, documentMcpHost, connectorSyncService);
+  const agentRuntime = createAgentRuntime(config, documentMcpHost, {
+    // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
+    ...(config.knowledge?.roomWikisEnabled
+      ? {
+          resolveKnowledgeWikiIds: async (input) => {
+            if (!input.roomId) return [];
+            const wikiId = knowledgeService.resolveRoomWikiId(input.roomId);
+            return wikiId ? [wikiId] : [];
+          },
+        }
+      : {}),
+  }, connectorSyncService);
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -161,6 +229,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
     contextRoomService,
     documentService,
+    undefined,
     config.connectorAgentMode ?? "direct",
   );
   await agentService.initialize();
@@ -183,17 +252,34 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
+  // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
+  // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
+  const filesService = new FilesService(db, config.dataDir);
   const realityService = new RealityService(db, config.asrInputDir, app.log);
   const recoveredCaptures = realityService.recoverInterruptedCaptures();
   if (recoveredCaptures > 0) {
     app.log.info({ recoveredCaptures }, "interrupted reality captures recovered");
   }
+  // knowledge 路由层接管 documents 事件（committed/updated → 入队 ingest，deleted → 清理）。
+  if (config.knowledge?.roomWikisEnabled) {
+    documentService.broker.listen((event) => knowledgeService.handleDocumentEvent(event));
+    knowledgeService.start();
+    app.log.info(
+      {
+        debounceMs: config.knowledge.ingestDebounceMs,
+        router: config.knowledge.routerEnabled,
+        embedding: Boolean(config.knowledge.embeddingModel),
+      },
+      "knowledge entity-room routing enabled",
+    );
+  }
   app.addHook("onClose", async () => {
+    clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await connectorSyncService.dispose();
-    documentService.dispose();
+    knowledgeService.dispose();
     await asrService.dispose();
     sqlite.close();
     await gatewayLogger.close();
@@ -202,10 +288,39 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(contextRoomRoutes(contextRoomService));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));
+  await app.register(documentOperationRoutes(
+    documentOperationService,
+    documentMcpHost.capabilities,
+    (context) => agentService.validateDocumentOperationContext(context),
+  ));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(filesRoutes(filesService, {
+    // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档
+    requestKnowledgeCleanup: (fileId) => {
+      if (config.knowledge?.roomWikisEnabled) knowledgeService.requestFileCleanup(fileId);
+    },
+    deleteMemoryDocuments: (fileId) => memoryService.deleteDocumentsByCallerRef(fileId),
+  }));
+  // 统一理解引擎（U1）：接入面唯一，台账 + 三链路扇出（§7）。
+  // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
+  // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
+  const policyWarn = (message: string) => app.log.warn({ module: "ingest.policy" }, message);
+  const ingestService = new IngestService(
+    db,
+    filesService,
+    knowledgeService,
+    memoryService,
+    app.log,
+    {
+      project: await loadProjectDefaults(policyWarn),
+      deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
+    },
+  );
+  await app.register(ingestRoutes(ingestService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
+  if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   await app.register(connectorRoutes(connectorSyncService));
 
   return app;

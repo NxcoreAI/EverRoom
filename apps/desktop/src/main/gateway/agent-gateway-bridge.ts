@@ -12,6 +12,7 @@ import type {
 } from '@nxcore/agent-contract'
 import { isAgentSocketFrame } from '@nxcore/agent-contract'
 import type { AxiosRequestConfig } from 'axios'
+import { isAxiosError } from 'axios'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import { createLoggedHttpClient } from '../network/http-client'
@@ -19,6 +20,18 @@ import type { GatewaySupervisor } from './gateway-supervisor'
 
 const AGENT_EVENT_CHANNEL = 'agent:event'
 const http = createLoggedHttpClient('gateway-agent')
+const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'ERR_SOCKET_CLOSED',
+])
+
+function isRecoverableConnectionError(error: unknown): boolean {
+  if (!isAxiosError(error)) return false
+  if (error.code && RECOVERABLE_CONNECTION_ERROR_CODES.has(error.code)) return true
+  return typeof error.message === 'string' && /socket hang up/i.test(error.message)
+}
 
 interface Subscription {
   sessionId: string
@@ -153,6 +166,20 @@ export class AgentGatewayBridge {
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
+    try {
+      return await this.requestWithConnection<T>(connection, path, config)
+    } catch (error) {
+      if (!isRecoverableConnectionError(error)) throw error
+      const recoveredConnection = await this.supervisor.recoverConnection(connection)
+      return this.requestWithConnection<T>(recoveredConnection, path, config)
+    }
+  }
+
+  private async requestWithConnection<T>(
+    connection: ReturnType<GatewaySupervisor['getConnection']>,
+    path: string,
+    config: AxiosRequestConfig,
+  ): Promise<T> {
     const hasBody = config.data !== undefined && config.data !== null
     const response = await http.request<T & { message?: unknown }>({
       url: `${connection.baseUrl}${path}`,

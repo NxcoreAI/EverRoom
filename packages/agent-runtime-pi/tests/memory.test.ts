@@ -309,6 +309,7 @@ describe("memory extension capture policy", () => {
         pageLabel: "AI 重写",
         cancelled: false,
         captureEnabled: false,
+        recallEnabled: true,
       }),
     });
     if (!("factory" in extension)) throw new Error("Expected an inline extension object");
@@ -332,6 +333,40 @@ describe("memory extension capture policy", () => {
     expect(searchConversation).toHaveBeenCalledWith("把选区改得更简洁", 5);
     expect(addConversation).not.toHaveBeenCalled();
   });
+
+  it("skips automatic recall when recall is disabled", async () => {
+    const client = new MemoryCoreClient(config);
+    const searchAtomic = vi.spyOn(client, "searchAtomic").mockResolvedValue([]);
+    const readCore = vi.spyOn(client, "readCore").mockResolvedValue(null);
+    const listScenarios = vi.spyOn(client, "listScenarios").mockResolvedValue([]);
+    const searchConversation = vi.spyOn(client, "searchConversation").mockResolvedValue([]);
+    const handlers = new Map<string, (event: unknown) => Promise<unknown>>();
+    const extension = createMemoryExtension({
+      client,
+      config,
+      getRunContext: () => ({
+        sessionId: "cursor-completion",
+        originalPrompt: "补全文档",
+        pageLabel: "AI 补全",
+        cancelled: false,
+        captureEnabled: false,
+        recallEnabled: false,
+      }),
+    });
+    if (!("factory" in extension)) throw new Error("Expected an inline extension object");
+    extension.factory({
+      on: (event: string, handler: (event: unknown) => Promise<unknown>) => {
+        handlers.set(event, handler);
+      },
+    } as never);
+
+    await handlers.get("before_agent_start")?.({});
+
+    expect(searchAtomic).not.toHaveBeenCalled();
+    expect(readCore).not.toHaveBeenCalled();
+    expect(listScenarios).not.toHaveBeenCalled();
+    expect(searchConversation).not.toHaveBeenCalled();
+  });
 });
 
 describe("memory tools", () => {
@@ -343,10 +378,36 @@ describe("memory tools", () => {
     const [tool] = createMemoryTools(client, () => "sess-1");
     expect(tool!.name).toBe("memory_search");
     const result = await tool!.execute("call-1", { query: "用户在哪" }, undefined, undefined, {} as never);
-    expect(searchSpy).toHaveBeenCalledWith("用户在哪", 5);
+    expect(searchSpy).toHaveBeenCalledWith("用户在哪", 5, undefined);
     const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
     expect(text).toContain("用户在上海");
     expect(text).toContain("[2026-08-10]");
+  });
+
+  it("memory_search forwards time range and renders scene_name", async () => {
+    const client = new MemoryCoreClient(config);
+    const searchSpy = vi.spyOn(client, "searchAtomic").mockResolvedValue([
+      {
+        id: "a1",
+        type: "fact",
+        content: "镜像来自内部仓库",
+        scene_name: "EverRoom 部署手册",
+        background: "EverRoom 部署手册",
+        created_at: "",
+        updated_at: "2026-08-12T00:00:00Z",
+      },
+    ]);
+    const [tool] = createMemoryTools(client, () => "sess-1");
+    const result = await tool!.execute(
+      "call-scene",
+      { query: "镜像仓库", time_start: "2026-08-01T00:00:00Z" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(searchSpy).toHaveBeenCalledWith("镜像仓库", 5, { start: "2026-08-01T00:00:00Z", end: undefined });
+    const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
+    expect(text).toContain("（场景：EverRoom 部署手册）");
   });
 
   it("conversation_search passes session id only when scoped to current session", async () => {

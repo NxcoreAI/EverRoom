@@ -1,9 +1,9 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
-import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import { DETAIL_TABS as TABS, type DetailPane } from '../RoomIconSidebar';
 import { OverviewDashboard, type WorkspaceObjectPreview } from '../detail-panels';
 import type { LocalOfficeFile } from '../detail-panels/ResourcePanel';
@@ -53,7 +53,9 @@ export function WorkspaceLayout({
   selectedResource,
   backendDocuments,
   trashedDocuments,
-  documentEvents,
+  focusedDocumentId,
+  focusedBlockId,
+  documentFocusRequestId,
   onBackendDocumentChange,
   onCreateDocument,
   onDeleteDocument,
@@ -61,6 +63,7 @@ export function WorkspaceLayout({
   onDeleteDocumentPermanently,
   onEmptyTrash,
   onSelectResource,
+  onOpenWikiPage,
   onAddFile,
   onOpenMemory,
   onOpenObject,
@@ -109,7 +112,9 @@ export function WorkspaceLayout({
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
-  documentEvents: Record<string, DocumentEvent[]>;
+  focusedDocumentId: string | null;
+  focusedBlockId: string | null;
+  documentFocusRequestId: number | null;
   onBackendDocumentChange: (document: RoomDocument) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
@@ -117,6 +122,7 @@ export function WorkspaceLayout({
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
   onEmptyTrash: (roomId: string) => Promise<void>;
   onSelectResource: (resource: ContextRoomResource) => void;
+  onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
   onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (memoryId: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
@@ -295,6 +301,7 @@ export function WorkspaceLayout({
                         rooms={rooms}
                         onOpenRoom={onOpenRoom}
                         onSelectResource={onSelectResource}
+                        onOpenWikiPage={onOpenWikiPage}
                         onCreateDocument={onCreateDocument}
                         onDeleteDocument={onDeleteDocument}
                         onRestoreDocument={onRestoreDocument}
@@ -341,7 +348,9 @@ export function WorkspaceLayout({
               selectedObject={selectedObject}
               selectedResource={selectedResource}
               backendDocuments={backendDocuments}
-              documentEvents={documentEvents}
+              focusedDocumentId={focusedDocumentId}
+              focusedBlockId={focusedBlockId}
+              documentFocusRequestId={documentFocusRequestId}
               onBackendDocumentChange={onBackendDocumentChange}
               onDeleteDocument={onDeleteDocument}
               onOpenRoom={onOpenRoom}

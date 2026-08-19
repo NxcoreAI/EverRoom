@@ -6,6 +6,7 @@ import { DocumentServiceError } from "../documents/errors.js";
 
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
 const SessionParams = Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 100 }) });
+const IntentParams = Type.Object({ intentId: Type.String({ minLength: 1, maxLength: 100 }) });
 const NavigationTarget = Type.Object({
   pageId: Type.String({ minLength: 1, maxLength: 40 }),
   title: Type.String({ minLength: 1, maxLength: 200 }),
@@ -168,6 +169,8 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
             prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             captureMemory: Type.Optional(Type.Boolean()),
+            recallMemory: Type.Optional(Type.Boolean()),
+            toolsEnabled: Type.Optional(Type.Boolean()),
             context: Type.Optional(Type.Object({
               selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 8_000 })),
               rooms: Type.Optional(Type.Array(Type.Object({
@@ -217,6 +220,128 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
               error: "room_not_available",
               message: "The selected Context Room is no longer available",
             });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/agent/sessions/:sessionId/pending-intents",
+      { schema: { tags: ["agent"], params: SessionParams } },
+      async (request) => service.listPendingIntents(request.params.sessionId),
+    );
+
+    app.post(
+      "/v1/agent/sessions/:sessionId/pending-intents",
+      {
+        schema: {
+          tags: ["agent"],
+          params: SessionParams,
+          body: Type.Object({
+            sourceRunId: Type.String({ minLength: 1, maxLength: 100 }),
+            targetCapability: Type.Union([
+              Type.Literal("document.create"),
+              Type.Literal("document.edit"),
+              Type.Literal("document.continue"),
+            ]),
+            allowedRoomIds: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { minItems: 1, maxItems: 200 }),
+            allowedDocumentIds: Type.Optional(Type.Array(
+              Type.String({ minLength: 1, maxLength: 128 }),
+              { maxItems: 500 },
+            )),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return reply.code(201).send(service.preparePendingIntent({
+            sessionId: request.params.sessionId,
+            ...request.body,
+          }));
+        } catch (error) {
+          if (error instanceof Error && error.message === "pending_agent_intent_source_not_found") {
+            return reply.code(404).send({ error: "not_found", message: "Source Agent run not found" });
+          }
+          if (error instanceof Error && (
+            error.message === "pending_agent_intent_resource_not_allowed"
+            || error.message === "pending_agent_intent_resource_required"
+          )) {
+            return reply.code(409).send({ error: "resource_not_allowed", message: "Pending intent resource is unavailable" });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/agent/pending-intents/:intentId/submit",
+      {
+        schema: {
+          tags: ["agent"],
+          params: IntentParams,
+          body: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 100 }),
+            documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return reply.code(202).send(await service.submitPendingIntent(request.params.intentId, request.body));
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "";
+          if (code === "pending_agent_intent_not_found") {
+            return reply.code(404).send({ error: "not_found", message: "Pending Agent intent not found" });
+          }
+          if (code === "pending_agent_intent_consumed" || code === "pending_agent_intent_expired") {
+            return reply.code(409).send({ error: code, message: "Pending Agent intent is no longer available" });
+          }
+          if (code === "pending_agent_intent_resource_not_allowed" || code === "pending_agent_intent_resource_required") {
+            return reply.code(409).send({ error: code, message: "Selected resource is not allowed" });
+          }
+          if (code === "agent_session_busy") {
+            return reply.code(409).send({ error: "session_busy", message: "Agent session already has an active run" });
+          }
+          if (code === "pending_agent_intent_idempotency_conflict") {
+            return reply.code(409).send({ error: code, message: "Idempotency key already belongs to another Agent run" });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/agent/mcp-sessions",
+      {
+        schema: {
+          tags: ["agent", "mcp"],
+          body: Type.Object({
+            agentSessionId: Type.String({ minLength: 1, maxLength: 128 }),
+            runId: Type.String({ minLength: 1, maxLength: 128 }),
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return reply.code(201).send(service.createTrustedMcpSession(
+            request.body.agentSessionId,
+            request.body.runId,
+            request.body.roomId,
+          ));
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "";
+          if (code === "mcp_agent_context_not_found") {
+            return reply.code(404).send({ error: "not_found", message: "Agent MCP context not found" });
+          }
+          if (
+            code === "mcp_agent_room_not_available"
+            || code === "mcp_agent_context_mismatch"
+            || code === "mcp_agent_context_not_active"
+          ) {
+            return reply.code(409).send({ error: code, message: "Agent MCP context is not valid" });
           }
           throw error;
         }

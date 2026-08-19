@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { RuntimeCapabilities } from "@nxcore/agent-contract";
@@ -21,17 +20,31 @@ import {
   type RuntimeRun,
   type StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
+import { KnowledgeServiceClient } from "./knowledge/client.js";
+import { createKnowledgeTools, KNOWLEDGE_TOOL_NAMES } from "./knowledge/tools.js";
+import type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
+import { resolveDefaultWikiIds } from "./knowledge/types.js";
 import { MemoryCoreClient } from "./memory/client.js";
 import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
 import { createMemoryTools, MEMORY_TOOL_NAMES } from "./memory/tools.js";
 import type { MemoryRuntimeConfig } from "./memory/types.js";
 
+export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
+export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
+export type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
+export { resolveDefaultWikiIds } from "./knowledge/types.js";
+export type {
+  KnowledgePageEntry,
+  KnowledgePageReadItem,
+  KnowledgeSearchResult,
+} from "./knowledge/types.js";
+export type { KnowledgeToolScope } from "./knowledge/tools.js";
 export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
 export type { MemoryCoreErrorKind } from "./memory/client.js";
-export type { MemoryRuntimeConfig } from "./memory/types.js";
 export type {
   MemoryAtomicItem,
   MemoryAtomicPage,
+  MemoryAtomicProvenance,
   MemoryAtomicQuery,
   MemoryCaptureMessage,
   MemoryConversationHit,
@@ -39,8 +52,15 @@ export type {
   MemoryConversationPage,
   MemoryConversationQuery,
   MemoryCoreFile,
+  MemoryDocumentChunk,
+  MemoryDocumentDetail,
+  MemoryDocumentImportResult,
+  MemoryDocumentItem,
+  MemoryDocumentMemory,
   MemoryPipelineStage,
   MemoryPipelineStatus,
+  MemoryProvenanceAnchor,
+  MemoryRuntimeConfig,
   MemoryScenarioEntry,
   MemoryScenarioFile,
 } from "./memory/types.js";
@@ -70,6 +90,8 @@ export interface PiAgentRuntimeConfig {
   maxToolCallsPerRun?: number;
   /** MemoryCore 记忆服务配置；缺省时记忆能力完全不启用。 */
   memory?: MemoryRuntimeConfig;
+  /** Knowledge Service（wiki）配置；缺省时知识库工具不启用。 */
+  knowledge?: KnowledgeRuntimeConfig;
   retry?: {
     enabled?: boolean;
     maxRetries?: number;
@@ -113,6 +135,12 @@ export interface PiAgentRuntimeTool {
 
 export interface PiAgentRuntimeIntegration {
   tools?: readonly PiAgentRuntimeTool[];
+  /**
+   * 会话级 wiki 作用域解析（Room 级 wiki 模式）：run 启动前按
+   * roomId 解析本 Room 的 wiki 集合；未提供或解析失败时回退配置默认集。
+   */
+  resolveKnowledgeWikiIds?: (input: StartRuntimeRunInput) => Promise<string[]>;
+  promptGuidelines?: readonly string[];
   onRunFinished?: (
     input: StartRuntimeRunInput,
     outcome: "completed" | "failed" | "cancelled",
@@ -121,14 +149,16 @@ export interface PiAgentRuntimeIntegration {
 
 interface PiRunContextRef {
   current: StartRuntimeRunInput | null;
-  pendingFailures: Map<string, PiAgentRuntimeToolFailurePolicy>;
 }
 
 interface PiSessionHandle {
   ref: string;
   session: AgentSession;
+  toolNames: string[];
   setMemoryRunContext: (context: MemoryRunContext | null) => void;
   cancelMemoryRun: () => void;
+  /** 会话级 wiki 作用域（Room wiki 优先，缺省为配置默认集）。 */
+  setKnowledgeWikiIds: (wikiIds: string[]) => void;
   context: PiRunContextRef;
   activeRunId: string | null;
   ownerSessionId: string | null;
@@ -143,42 +173,81 @@ interface ActivePiRun {
   cancelled: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
-  recoveryAttempts: Map<string, number>;
-  toolCallCount: number;
-  toolCallCounts: Map<string, number>;
-  failedToolCalls: Set<string>;
-  terminalToolError: ToolExecutionGuardError | null;
 }
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-const MAX_TOOL_CALLS_PER_RUN = 24;
-const MAX_IDENTICAL_TOOL_CALLS_PER_RUN = 2;
+const TOOL_HISTORY_SUMMARY_MAX_CHARS = 8_000;
 
-class ToolExecutionGuardError extends Error {
-  constructor(
-    readonly category: "tool_budget_exhausted" | "tool_loop_blocked",
-    message: string,
-  ) {
-    super(message);
-    this.name = "ToolExecutionGuardError";
-  }
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    return record.type === "text" && typeof record.text === "string" ? [record.text] : [];
+  }).join("");
 }
 
-function canonicalToolValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalToolValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, canonicalToolValue(item)]));
-  }
-  return value;
+function stripRunEnvelope(text: string): string {
+  const marker = "\n用户请求：";
+  const index = text.lastIndexOf(marker);
+  return (index >= 0 ? text.slice(index + marker.length) : text).trim();
 }
 
-function toolCallFingerprint(toolName: string, params: Record<string, unknown>): string {
-  const digest = createHash("sha256")
-    .update(JSON.stringify(canonicalToolValue(params)))
-    .digest("hex");
-  return `${toolName}:${digest}`;
+function sanitizeConversationText(text: string): string {
+  return text
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[internal-id]")
+    .replace(/<\/?think>/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeLeakedToolProtocol(text: string): boolean {
+  return /\{\s*["']name["']\s*:\s*["']context_room_/i.test(text)
+    || /context_room_\w+["']?\s*,\s*["']arguments/i.test(text);
+}
+
+/** Keep conversation continuity while removing run-scoped tool payloads from the next run. */
+function compactHistoricalToolState(session: AgentSession): boolean {
+  const messages = session.messages;
+  const hasRunScopedPayload = messages.some((message) => message.role === "toolResult"
+    || (message.role === "custom" && message.customType === "memory-recall"));
+  if (!hasRunScopedPayload) return false;
+
+  const transcript: string[] = [];
+  for (const message of messages) {
+    if (message.role === "compactionSummary") {
+      const summary = sanitizeConversationText(message.summary);
+      if (summary) transcript.push(summary);
+      continue;
+    }
+    if (message.role === "user") {
+      const text = sanitizeConversationText(stripRunEnvelope(messageText(message.content)));
+      if (text) transcript.push(`用户：${text.slice(0, 1_500)}`);
+      continue;
+    }
+    if (message.role !== "assistant" || message.stopReason !== "stop") continue;
+    const text = sanitizeConversationText(messageText(message.content));
+    if (text && !looksLikeLeakedToolProtocol(text)) transcript.push(`助手：${text.slice(0, 1_500)}`);
+  }
+
+  const summaryBody = transcript.join("\n").slice(-TOOL_HISTORY_SUMMARY_MAX_CHARS);
+  const summary = [
+    "以下是同一对话此前轮次的简要上下文。工具调用、文档全文、块标识、读取凭证、Operation 标识和工具错误均已移除，不得据此判断本轮工具执行结果。",
+    summaryBody || "此前轮次没有需要保留的对话内容。",
+  ].join("\n");
+  const markerId = session.sessionManager.appendCustomEntry("nxcore-run-tool-boundary", {
+    removedToolPayloads: true,
+  });
+  session.sessionManager.appendCompaction(
+    summary,
+    markerId,
+    Math.ceil(JSON.stringify(messages).length / 4),
+    { reason: "nxcore-run-tool-boundary" },
+    true,
+  );
+  session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
+  return true;
 }
 
 export class PiAgentRuntime implements AgentRuntime {
@@ -187,12 +256,14 @@ export class PiAgentRuntime implements AgentRuntime {
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
   private readonly memoryClient: MemoryCoreClient | null;
+  private readonly knowledgeClient: KnowledgeServiceClient | null;
 
   constructor(
     private readonly config: PiAgentRuntimeConfig,
     private readonly integration: PiAgentRuntimeIntegration = {},
   ) {
     this.memoryClient = config.memory ? new MemoryCoreClient(config.memory) : null;
+    this.knowledgeClient = config.knowledge ? new KnowledgeServiceClient(config.knowledge) : null;
   }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
@@ -207,13 +278,23 @@ export class PiAgentRuntime implements AgentRuntime {
 
   async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
     if (this.activeRuns.has(input.runId)) throw new Error(`Pi run is already active: ${input.runId}`);
-    const handle = await this.getSession(input.runtimeSessionRef);
+    const handle = await this.getSession(input.runtimeSessionRef, input);
     if (handle.activeRunId) throw new Error(`Pi session is already active: ${handle.activeRunId}`);
     if (handle.ownerSessionId && handle.ownerSessionId !== input.sessionId) {
       throw new Error("Pi session belongs to a different Agent session");
     }
     handle.ownerSessionId = input.sessionId;
+    if (this.knowledgeClient && this.integration.resolveKnowledgeWikiIds) {
+      try {
+        const wikiIds = await this.integration.resolveKnowledgeWikiIds(input);
+        handle.setKnowledgeWikiIds(wikiIds);
+      } catch {
+        handle.setKnowledgeWikiIds(this.knowledgeClient.defaultWikiIds);
+      }
+    }
+    compactHistoricalToolState(handle.session);
     handle.context.current = input;
+    handle.session.setActiveToolsByName(input.toolsEnabled === false ? [] : handle.toolNames);
     handle.activeRunId = input.runId;
     const queue = new AsyncEventQueue<RuntimeEvent>();
     const active: ActivePiRun = {
@@ -225,13 +306,7 @@ export class PiAgentRuntime implements AgentRuntime {
       cancelled: false,
       terminal: false,
       finishPromise: null,
-      recoveryAttempts: new Map(),
-      toolCallCount: 0,
-      toolCallCounts: new Map(),
-      failedToolCalls: new Set(),
-      terminalToolError: null,
     };
-    handle.context.pendingFailures.clear();
     active.unsubscribe = handle.session.subscribe((event) => this.handleEvent(input.runId, event));
     this.activeRuns.set(input.runId, active);
 
@@ -322,7 +397,10 @@ export class PiAgentRuntime implements AgentRuntime {
     return this.modelRuntimePromise;
   }
 
-  private async getSession(runtimeSessionRef: string | null): Promise<PiSessionHandle> {
+  private async getSession(
+    runtimeSessionRef: string | null,
+    initialInput: StartRuntimeRunInput,
+  ): Promise<PiSessionHandle> {
     if (runtimeSessionRef) {
       const cached = this.sessions.get(runtimeSessionRef);
       if (cached) return cached;
@@ -333,7 +411,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const model = modelRuntime.getModel(this.config.provider, this.config.model);
     if (!model) throw new Error(`Pi model is unavailable: ${this.config.provider}/${this.config.model}`);
 
-    const context: PiRunContextRef = { current: null, pendingFailures: new Map() };
+    const context: PiRunContextRef = { current: initialInput };
     const customTools = (this.integration.tools ?? []).map((tool) => defineTool({
       name: tool.name,
       label: tool.label,
@@ -342,56 +420,24 @@ export class PiAgentRuntime implements AgentRuntime {
       ...(tool.promptGuidelines ? { promptGuidelines: tool.promptGuidelines } : {}),
       parameters: Type.Unsafe<Record<string, unknown>>(tool.parameters),
       ...(tool.executionMode ? { executionMode: tool.executionMode } : {}),
-      execute: async (toolCallId, params, signal) => {
+      execute: async (_toolCallId, params, signal) => {
         const input = context.current;
         if (!input) throw new Error("Pi document tool is not bound to an active run");
-        const active = this.activeRuns.get(input.runId);
-        if (!active) throw new Error("Pi tool is not bound to an active run");
-        const fingerprint = toolCallFingerprint(tool.name, params);
         try {
-          const maxToolCalls = this.config.maxToolCallsPerRun ?? MAX_TOOL_CALLS_PER_RUN;
-          if (active.toolCallCount >= maxToolCalls) {
-            throw new ToolExecutionGuardError(
-              "tool_budget_exhausted",
-              `Tool execution budget exhausted after ${String(maxToolCalls)} calls in this run. Stop calling tools and report the task as incomplete.`,
-            );
-          }
-          if (active.failedToolCalls.has(fingerprint)) {
-            throw new ToolExecutionGuardError(
-              "tool_loop_blocked",
-              `Blocked an identical retry of failed tool "${tool.name}". The service, action, and input must not be submitted again in this run.`,
-            );
-          }
-          const identicalCalls = active.toolCallCounts.get(fingerprint) ?? 0;
-          if (identicalCalls >= MAX_IDENTICAL_TOOL_CALLS_PER_RUN) {
-            throw new ToolExecutionGuardError(
-              "tool_loop_blocked",
-              `Blocked tool "${tool.name}" after ${String(identicalCalls)} identical calls in this run. Repeating the same call cannot produce new evidence.`,
-            );
-          }
-          active.toolCallCount += 1;
-          active.toolCallCounts.set(fingerprint, identicalCalls + 1);
           const result = await withAbortSignal(() => tool.execute(input, params, signal), signal);
           return {
             content: [{ type: "text" as const, text: result.content }],
             details: result.details ?? {},
           };
         } catch (error) {
-          if (error instanceof ToolExecutionGuardError) {
-            active.terminalToolError = error;
-            context.pendingFailures.set(toolCallId, {
-              category: error.category,
-              recoverable: false,
-              instruction: error.message,
-              retryKey: fingerprint,
-              maxAttempts: 0,
-            });
-          } else {
-            const failure = tool.classifyFailure?.(error, input, params);
-            const allowsOneSafeIdenticalRetry = failure?.recoverable === true
-              && failure.recommendedTool === tool.name;
-            if (!allowsOneSafeIdenticalRetry) active.failedToolCalls.add(fingerprint);
-            if (failure) context.pendingFailures.set(toolCallId, failure);
+          const failure = tool.classifyFailure?.(error, input, params);
+          if (failure) {
+            throw new Error(JSON.stringify({
+              error: failure.category,
+              recoverable: failure.recoverable,
+              recommendedTool: failure.recommendedTool,
+              instruction: failure.instruction,
+            }), { cause: error });
           }
           throw error;
         }
@@ -411,6 +457,9 @@ export class PiAgentRuntime implements AgentRuntime {
     let memoryRunContext: MemoryRunContext | null = null;
     const memory = this.config.memory;
     const memoryClient = this.memoryClient;
+    const knowledge = this.config.knowledge;
+    const knowledgeClient = this.knowledgeClient;
+    let knowledgeWikiIds: string[] = knowledgeClient ? knowledgeClient.defaultWikiIds : [];
     const resourceLoader = new DefaultResourceLoader({
       cwd: this.config.workingDirectory,
       agentDir: this.config.agentDirectory,
@@ -437,41 +486,30 @@ export class PiAgentRuntime implements AgentRuntime {
           "回答应准确、简洁，并使用与用户相同的语言。",
           "聊天回复使用自然、简洁的纯文本格式；不要使用 Markdown 标题符、粗体或斜体标记、反引号、代码围栏、表格或不常用装饰符号。需要列举时只使用普通数字列表或短句。文档正文仍按文档工具要求使用 Markdown。",
           "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
+          "使用工具时，过程说明只补充工具行本身无法表达的信息，例如调用原因、关键发现、判断或对用户的影响；不要复述工具名称、执行状态、参数或下一项工具。没有新增信息时直接继续调用工具，不要强制输出过渡句。过程说明必须基于真实结果，不能臆测成功或输出冗长执行日志。",
+          "最后一项工具完成后，必须给出独立、完整的最终答复，简洁总结完成了什么、关键结果以及仍需用户处理的事项；不要把过程说明直接拼接成最终答复。",
+          "新文档提交成功后，最终答复必须用 2 至 4 句总结文档目标、核心内容和完成结果；中文约 180 字以内，英文约 80 词以内，不得复述标题目录、正文段落或长列表。",
         ];
-        if (memory && memoryClient) {
+        if (memory && memoryClient && context.current?.toolsEnabled !== false) {
           lines.push(
             "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入。",
+          );
+        }
+        if (knowledge && knowledgeClient && context.current?.toolsEnabled !== false) {
+          lines.push(
+            "你可以使用 wiki_search 和 wiki_read 两个工具按需查询当前 Room 的知识库（wiki，Room 内文档沉淀的结构化知识）。问题涉及知识库沉淀的领域知识时先检索再回答；知识库没有相关内容时如实说明，不要编造。",
           );
         }
         const hasDocumentTools = customTools.some((tool) => tool.name.startsWith("context_room_"));
         const hasConnectorTools = customTools.some((tool) => tool.name.startsWith("connector_"));
         if (hasDocumentTools && hasConnectorTools) {
           lines.push(
-            "工具路由优先级：用户明确命名 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox、日历、邮箱或其他第三方服务时，其中的“页面”“文档”“工作区”“创建”“保存”等词描述的是该外部服务对象，必须优先使用 connector_* 工具，不得调用 context_room_*。只有用户同时明确要求写入 EverRoom、Context Room 或某个 Room 时，才允许进入 Context Room 文档流程。不得把 Notion workspace/page 解释成 EverRoom 工作区文档。",
+            "外部服务请求必须优先使用 connector 工具；不要把 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox 或其他第三方服务误当成 EverRoom Context Room。只有用户明确要求写入 EverRoom 工作区文档时才使用 context_room_*。",
           );
         }
-        if (hasDocumentTools) {
-          lines.push(
-            "你只能使用当前会话提供的 Context Room 文档工具以及明确列出的其他能力；不要臆造未提供的文件、Shell 或外部产品工具。",
-            "只有当用户明确表达了要在 EverRoom 工作区的 Context Room 中创建、保存或写入一篇文档的操作意图时，才可以调用 Context Room 文档工具，例如用户明确说“在 EverRoom 创建文档”“写入 Context Room”或“在某个 Room 里生成文档”。仅仅要求解释、分析、总结、整理、列计划、写方案、起草内容、润色、扩写或给出 Markdown，默认都应直接在聊天中回答，不能据此推断用户想创建文档；用户提到某篇文档、讨论如何写文档、当前页面位于文档区，或回答可能很长，也都不构成创建意图。意图不明确时不要调用 context_room_list 或 context_room_write_begin，先在聊天中完成请求；只有用户随后明确要求落盘为文档时，再开始文档流程。局部选区重写也不创建新文档。",
-            "只有当用户明确要求在 EverRoom 工作区的 Context Room 中创建、保存或写入文档，且当前视口未绑定具体 Context Room 时，才进入 Room 选择流程；一旦同时满足这两个条件，必须立即调用 context_room_list，并使用工具返回的列表让用户选择。不得只用文字回复“无法创建”“请先选择 Room”，不得询问用户是否需要查看列表，也不得要求用户自行提供 Room 名称，因为选择 UI 依赖本次工具调用。普通页面的普通聊天不要主动提示 Room 选择。用户明确选择前禁止调用 context_room_write_begin，也不要替用户猜测目标 Room。",
-            "如果本轮要创建文档且记忆工具可用，调用 context_room_write_begin 之前必须先用 memory_search 和 conversation_search 检索与主题、项目或用户偏好相关的历史记忆和旧文档；将命中的内容作为客制化依据。只有明确属于全新主题，或用户明确要求不要参考历史时，才可以跳过检索。",
-            "在调用 context_room_write_begin 前，先确定准备写入正文的实际核心内容、重点或结论，再据此拟定能够准确概括正文的具体、自然、有辨识度的标题。标题要随内容类型调整：教程突出学习路径或成果，分析突出对象与核心问题，方案突出目标与行动，报告突出主题与范围。除非用户明确指定必须使用的精确标题，否则不要复制用户的任务表述，也不要使用“后端学习文档”“项目介绍”“学习资料”等只描述文档形式、没有内容信息的泛标题；随后写出的正文必须与标题一致。",
-            "除非用户明确要求简短版本，否则文档正文必须是充实、完整的长篇内容：充分展开主题，按需包含背景、核心概念、步骤、例子、注意事项和总结。内容长度应与主题复杂度相称，不得空泛、重复或为了变长而凑字。",
-            "正文的 Markdown 标题层级应服务于内容结构：默认让同一层级的章节使用一致的标题级别，避免只为强调某一段临时放大标题；通常可用 ## 表示主章节、### 表示子章节，普通强调使用加粗或段落。不要机械套用这一默认规则：如果用户明确要求一级标题、特定标题层级或特定排版，必须尊重用户要求，并保持其指定结构前后一致。",
-            "正文必须使用 Markdown；append 的 sequence 从 1 开始并严格连续。每次 append 只能发送新增片段，严禁用新的 sequence 重发此前内容或累计全文。工具调用失败时不要声称文档已经创建。",
-            "只有用户明确要求续写、补充、改写、替换或删除已有工作区文档内容时，才进入已有文档修改流程。普通讨论、评价、总结某篇文档，或仅把文档当作参考资料，不构成修改意图。目标 Room 未确认时先调用 context_room_list；Room 已确认但目标文档未确认时调用 context_room_document_list，让用户选择，不得猜测。",
-            "修改已有文档前必须调用 context_room_document_read 读取权威版本，再通过 context_room_patch_begin、context_room_patch_hunk、context_room_patch_commit 生成 Patch。Agent 没有直接应用正文的权限，不得声称未被用户接受的内容已经写入。kind=edit 的修改等待用户审阅；kind=continue 的候选会直接出现在文档编辑区，由用户连续接受，不要要求用户回到智能区点击确认。",
-            "用户只说“续写”或“继续写”时，Patch 必须插入文档末尾。只有用户明确说“当前位置”“光标处”“这里继续”，或由明确的“在此续写”入口发起时，才可采用当前文档上下文提供的 cursorAnchorCandidate。不得因为编辑器中恰好存在光标就改变默认位置。除非用户明确要求简短续写，续写内容必须充分展开并形成多个连贯、有信息量的 Markdown 块，通常包含若干段落、必要的小标题、示例或后续论述；不得只生成一小段就结束。一个 continue Patch 只调用一次 patch_hunk，把完整的多块 Markdown 作为该 hunk 发送，编辑器会按顶层块让用户连续接受。",
-            "已有文档修改若与用户历史偏好、项目背景或旧文档明显相关，可先检索记忆以增强客制化；用户要求不要参考历史时不检索。只有用户最终接受并应用的 Patch 才视为实际文档改动。",
-          );
+        if (context.current?.toolsEnabled !== false) {
+          lines.push(...(this.integration.promptGuidelines ?? []));
         }
-        lines.push(
-          "工具调用失败时，先读取失败结果中的结构化恢复信息。若 recoverable=true，必须在当前任务中立即执行 recommendedTool 指定的恢复动作，不得只解释错误或直接结束；不得重复完全相同的失败调用。若 recoverable=false，则停止自动尝试并准确说明需要用户处理的阻塞项。",
-          this.config.includeBashTool === false
-            ? "本运行未提供 bash、文件系统或任意网络工具；不得声称可以使用这些能力。"
-            : "你可以使用 Pi Agent 内置 bash 在本机执行命令和访问文件。只有用户明确要求操作本机文件或执行本机命令时才调用；普通分析和文档生成不要调用。",
-        );
         return lines.join("\n");
       },
       appendSystemPromptOverride: () => [],
@@ -491,10 +529,14 @@ export class PiAgentRuntime implements AgentRuntime {
         ...(this.config.includeBashTool === false ? [] : ["bash"]),
         ...toolNames,
         ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
+        ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
       ],
       customTools: [
         ...customTools,
         ...(memory && memoryClient ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId) : []),
+        ...(knowledge && knowledgeClient
+          ? createKnowledgeTools(knowledgeClient, () => ({ wikiIds: knowledgeWikiIds }))
+          : []),
       ],
       resourceLoader,
       sessionManager,
@@ -508,11 +550,20 @@ export class PiAgentRuntime implements AgentRuntime {
     const handle: PiSessionHandle = {
       ref,
       session,
+      toolNames: [
+        ...(this.config.includeBashTool === false ? [] : ["bash"]),
+        ...toolNames,
+        ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
+        ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
+      ],
       setMemoryRunContext: (value) => {
         memoryRunContext = value;
       },
       cancelMemoryRun: () => {
         if (memoryRunContext) memoryRunContext.cancelled = true;
+      },
+      setKnowledgeWikiIds: (wikiIds) => {
+        knowledgeWikiIds = wikiIds;
       },
       context,
       activeRunId: null,
@@ -537,6 +588,7 @@ export class PiAgentRuntime implements AgentRuntime {
         pageLabel: input.pageLabel,
         cancelled: false,
         captureEnabled: input.captureMemory !== false,
+        recallEnabled: input.recallMemory !== false,
       });
       const selectedRoom = input.roomId
         ? input.availableRooms?.find((room) => room.id === input.roomId)
@@ -555,10 +607,19 @@ export class PiAgentRuntime implements AgentRuntime {
               : "本轮没有可靠的光标候选锚点。",
           ].join("\n")
         : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 context_room_document_list 触发选择。";
+      const runBoundary = input.toolsEnabled === false
+        ? null
+        : [
+            `本轮执行 ID：${input.runId}。这是同一对话中的一次全新工具执行。`,
+            "历史对话只用于理解用户意图；历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效，不得复用，也不得把历史错误当成本轮结果直接回复用户。",
+            "如果用户本轮明确要求创建、续写或修改文档，必须在本轮重新完成所需工具链。修改已有文档时，document_read 成功只是第一步，必须继续 patch_begin、patch_hunk 和 patch_commit，除非本轮工具返回不可恢复错误。",
+            "不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown；这些都是 Agent 应通过工具获取和组织的内部参数。",
+          ].join("\n");
       const prompt = [
         `当前工作区：${input.pageLabel}`,
         roomContext,
         documentContext,
+        ...(runBoundary ? [runBoundary] : []),
         "",
         `用户请求：${input.prompt}`,
       ].join("\n");
@@ -599,37 +660,10 @@ export class PiAgentRuntime implements AgentRuntime {
         payload: { toolCallId: event.toolCallId, name: event.toolName, partialResult: event.partialResult },
       });
     } else if (event.type === "tool_execution_end") {
-      const failure = active.handle.context.pendingFailures.get(event.toolCallId);
-      active.handle.context.pendingFailures.delete(event.toolCallId);
-      const recovery = event.isError && failure
-        ? this.scheduleRecovery(active, event.toolName, failure)
-        : null;
       active.queue.push({
         type: event.isError ? "tool.failed" : "tool.completed",
-        payload: {
-          toolCallId: event.toolCallId,
-          name: event.toolName,
-          result: event.result,
-          ...(failure ? {
-            failure: {
-              category: failure.category,
-              recoverable: failure.recoverable,
-              ...(failure.recommendedTool ? { recommendedTool: failure.recommendedTool } : {}),
-              instruction: failure.instruction,
-              ...(recovery ? {
-                recoveryAttempt: recovery.attempt,
-                maxAttempts: recovery.maxAttempts,
-              } : {}),
-            },
-          } : {}),
-        },
+        payload: { toolCallId: event.toolCallId, name: event.toolName, result: event.result },
       });
-      if (active.terminalToolError) {
-        const terminalError = active.terminalToolError;
-        active.terminalToolError = null;
-        void active.handle.session.abort().catch(() => undefined);
-        void this.finish(runId, "failed", terminalError);
-      }
     } else if (event.type === "agent_settled") {
       const sessionError = active.handle.session.state.errorMessage;
       void this.finish(
@@ -638,31 +672,6 @@ export class PiAgentRuntime implements AgentRuntime {
         sessionError ? new Error(sessionError) : undefined,
       );
     }
-  }
-
-  private scheduleRecovery(
-    active: ActivePiRun,
-    toolName: string,
-    failure: PiAgentRuntimeToolFailurePolicy,
-  ): { attempt: number; maxAttempts: number } | null {
-    if (!failure.recoverable || !failure.recommendedTool) return null;
-    const maxAttempts = Math.max(0, Math.min(failure.maxAttempts ?? 1, 3));
-    const retryKey = `${toolName}:${failure.retryKey ?? failure.category}`;
-    const previousAttempts = active.recoveryAttempts.get(retryKey) ?? 0;
-    if (previousAttempts >= maxAttempts) return null;
-    const attempt = previousAttempts + 1;
-    active.recoveryAttempts.set(retryKey, attempt);
-    const directive = [
-      "系统恢复指令：上一个工具调用失败，但该错误可以恢复。",
-      `失败工具：${toolName}`,
-      `错误类别：${failure.category}`,
-      `必须立即调用：${failure.recommendedTool}`,
-      `恢复要求：${failure.instruction}`,
-      `这是第 ${String(attempt)} 次恢复尝试，最多 ${String(maxAttempts)} 次。`,
-      "继续完成用户原始请求；不要只解释错误或宣布稍后再做。除非恢复要求明确指示有限重试，否则不要原样重复刚才的失败调用。",
-    ].join("\n");
-    void active.handle.session.steer(directive).catch(() => undefined);
-    return { attempt, maxAttempts };
   }
 
   private finish(
@@ -700,7 +709,6 @@ export class PiAgentRuntime implements AgentRuntime {
       }
 
       active.handle.context.current = null;
-      active.handle.context.pendingFailures.clear();
       active.handle.activeRunId = null;
       active.unsubscribe();
       active.queue.end();

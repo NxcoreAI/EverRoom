@@ -29,7 +29,14 @@ export function RoomCard({
           <Icon aria-hidden="true" strokeWidth={1.8} />
         </span>
         <span className="context-room-home-card-body">
-          <strong>{room.title}</strong>
+          <strong>
+            {room.title}
+            {room.origin === 'auto' ? (
+              <span className="context-room-home-card-origin" title="资料归类时自动创建，打开即认领">
+                自动创建
+              </span>
+            ) : null}
+          </strong>
           <span className="context-room-home-card-brief">{room.brief.background}</span>
           <span className="context-room-home-card-time">
             <Clock3 aria-hidden="true" />

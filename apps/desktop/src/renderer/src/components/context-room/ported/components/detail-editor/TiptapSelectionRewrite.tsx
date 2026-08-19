@@ -1,4 +1,6 @@
-import { Extension, type Editor } from '@tiptap/react'
+import type { DocumentOperation, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import { Fragment, Slice } from '@tiptap/pm/model'
+import { Extension, type Editor, type JSONContent } from '@tiptap/react'
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Check, LoaderCircle, RotateCcw, Sparkles, X } from 'lucide-react'
@@ -6,6 +8,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { streamSelectionRewrite } from './selectionRewriteAgent'
 import type { SelectionRewriteFormatContext } from './selectionRewriteAgent'
+import { useDocumentOperations } from '../../../operations'
+import { stripDocumentTitle } from '@nxcore/document-model'
 
 interface RewriteAnchor {
   from: number
@@ -19,10 +23,15 @@ interface RewriteDecoration extends RewriteAnchor {
 interface RewritePreviewState extends RewriteAnchor {
   originalText: string
   replacementText: string
+  registeredReplacementText: string | null
   instruction: string
   formatContext: SelectionRewriteFormatContext
-  phase: 'requesting' | 'ready' | 'error'
+  phase: 'requesting' | 'ready' | 'submitting' | 'error'
   error: string | null
+  sessionId: string | null
+  runId: string | null
+  operationId: string | null
+  revision: number | null
   left: number
   top: number
 }
@@ -139,6 +148,36 @@ function replaceSelectionText(editor: Editor, from: number, to: number, replacem
   return transaction
 }
 
+function replaceSelectionMarkdown(
+  editor: Editor,
+  from: number,
+  to: number,
+  replacementMarkdown: string,
+) {
+  const parsed = editor.storage.markdown.manager.parse(replacementMarkdown) as JSONContent
+  const parsedDocument = editor.schema.nodeFromJSON(parsed)
+  const content = parsedDocument.content
+  if (content.childCount === 1 && content.firstChild?.type.name === 'paragraph') {
+    return editor.state.tr.replaceWith(from, to, content.firstChild.content)
+  }
+  return editor.state.tr.replaceRange(from, to, new Slice(Fragment.from(content), 0, 0))
+}
+
+export function proposedSelectionRewriteContent(
+  editor: Editor,
+  from: number,
+  to: number,
+  replacementText: string,
+  formatContext?: SelectionRewriteFormatContext,
+): TiptapJsonContent {
+  const insideCodeBlock = formatContext?.blockType === 'codeBlock'
+    || formatContext?.ancestorTypes.includes('codeBlock') === true
+  const transaction = insideCodeBlock
+    ? replaceSelectionText(editor, from, to, replacementText)
+    : replaceSelectionMarkdown(editor, from, to, replacementText)
+  return transaction.doc.toJSON() as TiptapJsonContent
+}
+
 function selectionFormatContext(editor: Editor, from: number): SelectionRewriteFormatContext {
   const resolved = editor.state.doc.resolve(from)
   const ancestorTypes: string[] = []
@@ -160,18 +199,37 @@ export function useTiptapSelectionRewrite({
   roomId,
   documentId,
   documentName,
+  prepareDocument,
+  onDocumentApplied,
   externallyLocked,
 }: {
   editor: Editor | null
   roomId: string
   documentId: string
   documentName: string
+  prepareDocument: () => Promise<number>
+  onDocumentApplied: (document: RoomDocument) => void
   externallyLocked: boolean
 }) {
+  const { executeResult, load, start } = useDocumentOperations()
   const [preview, setPreview] = useState<RewritePreviewState | null>(null)
   const previewRef = useRef(preview)
-  const operationRef = useRef<{ id: string; controller: AbortController; wasEditable: boolean } | null>(null)
+  const operationRef = useRef<{
+    id: string
+    controller: AbortController
+    wasEditable: boolean
+    startingOperation: boolean
+  } | null>(null)
   previewRef.current = preview
+
+  const rewriteErrorMessage = useCallback((error: unknown): string => {
+    const message = error instanceof Error ? error.message : '文档操作失败，请重试。'
+    if (/DOCUMENT_CONFLICT|VERSION(?:_MISMATCH| HAS CHANGED)/i.test(message)) {
+      return '文档内容已更新，请重新选择后重试。'
+    }
+    if (/DOCUMENT_BUSY/i.test(message)) return '文档正在处理其他修改，请完成后再试。'
+    return message
+  }, [])
 
   const restoreEditor = useCallback((wasEditable: boolean) => {
     if (!editor || editor.isDestroyed) return
@@ -179,13 +237,119 @@ export function useTiptapSelectionRewrite({
     if (wasEditable && !externallyLocked) editor.setEditable(true)
   }, [editor, externallyLocked])
 
-  const cancel = useCallback(() => {
-    const operation = operationRef.current
+  const finish = useCallback((wasEditable: boolean, sessionId?: string | null) => {
     operationRef.current = null
-    operation?.controller.abort()
-    if (editor) restoreEditor(operation?.wasEditable ?? true)
+    previewRef.current = null
+    restoreEditor(wasEditable)
     setPreview(null)
-  }, [editor, restoreEditor])
+    if (sessionId) void window.nxcore?.agent.deleteSession(sessionId).catch(() => undefined)
+  }, [restoreEditor])
+
+  const preservePreviewError = useCallback(async (
+    current: RewritePreviewState,
+    error: unknown,
+  ): Promise<void> => {
+    let revision = current.revision
+    if (current.operationId) {
+      try {
+        const refreshed = await load(current.operationId)
+        if (refreshed) revision = refreshed.revision
+      } catch {
+        // The original command error is more useful than a secondary refresh failure.
+      }
+    }
+    setPreview((value) => value ? {
+      ...value,
+      revision,
+      phase: value.replacementText ? 'ready' : 'error',
+      error: rewriteErrorMessage(error),
+    } : value)
+  }, [load, rewriteErrorMessage])
+
+  const cancel = useCallback(() => {
+    const current = previewRef.current
+    const operation = operationRef.current
+    operation?.controller.abort()
+    if (current?.operationId && current.revision !== null) {
+      setPreview({ ...current, phase: 'submitting', error: null })
+      void executeResult(
+        current.operationId,
+        current.phase === 'requesting' ? 'operation.cancel' : 'review.reject',
+      ).then((result) => {
+        if (!result) throw new Error('文档操作正在处理中。')
+        finish(operation?.wasEditable ?? true, current.sessionId)
+      }).catch((error: unknown) => {
+        void preservePreviewError(current, error)
+      })
+      return
+    }
+    finish(operation?.wasEditable ?? true, current?.sessionId)
+  }, [executeResult, finish, preservePreviewError])
+
+  const createOperation = useCallback(async (current: RewritePreviewState): Promise<DocumentOperation> => {
+    if (!editor || editor.isDestroyed || !current.sessionId || !current.runId) {
+      throw new Error('文档操作服务不可用。')
+    }
+    if (selectionText(editor, current.from, current.to) !== current.originalText) {
+      throw new Error('原选区已经变化，请重新选择。')
+    }
+    const localOperation = operationRef.current
+    if (localOperation) localOperation.startingOperation = true
+    let operation
+    try {
+      const baseVersion = await prepareDocument()
+      if (operationRef.current?.id !== localOperation?.id) {
+        throw new DOMException('Selection rewrite cancelled', 'AbortError')
+      }
+      if (selectionText(editor, current.from, current.to) !== current.originalText) {
+        throw new Error('原选区已经变化，请重新选择。')
+      }
+      operation = await start({
+        capabilityId: 'document.selection-rewrite',
+        context: {
+          roomId,
+          documentId,
+          sessionId: current.sessionId,
+          runId: current.runId,
+        },
+        input: {
+          baseVersion,
+          proposedContentJson: proposedSelectionRewriteContent(
+            editor,
+            current.from,
+            current.to,
+            current.replacementText,
+            current.formatContext,
+          ),
+          originalText: current.originalText,
+          replacementText: current.replacementText,
+          instruction: current.instruction.trim() || '保持原意，重写得更清晰、自然。',
+        },
+      })
+      if (!operation) throw new Error('文档操作服务不可用。')
+    } finally {
+      const activeOperation = operationRef.current
+      if (activeOperation && activeOperation.id === localOperation?.id) activeOperation.startingOperation = false
+    }
+    return operation
+  }, [documentId, editor, prepareDocument, roomId, start])
+
+  const startOperation = useCallback(async (current: RewritePreviewState): Promise<void> => {
+    const operation = await createOperation(current)
+    const active = previewRef.current
+    if (!active || active.sessionId !== current.sessionId || active.runId !== current.runId) {
+      await executeResult(operation.id, 'operation.cancel')
+      return
+    }
+    setPreview((value) => value ? {
+      ...value,
+      operationId: operation.id,
+      revision: operation.revision,
+      registeredReplacementText: current.replacementText,
+      phase: 'ready',
+      error: null,
+    } : value)
+  }, [createOperation, executeResult])
 
   const runRewrite = useCallback((
     anchor: RewriteAnchor,
@@ -202,10 +366,15 @@ export function useTiptapSelectionRewrite({
         ...anchor,
         originalText,
         replacementText: '',
+        registeredReplacementText: null,
         instruction,
         formatContext,
         phase: 'error',
         error: 'Agent 服务仅在桌面应用中可用。',
+        sessionId: null,
+        runId: null,
+        operationId: null,
+        revision: null,
         ...position,
       })
       return
@@ -217,6 +386,7 @@ export function useTiptapSelectionRewrite({
       id: crypto.randomUUID(),
       controller: new AbortController(),
       wasEditable: previous?.wasEditable ?? editor.isEditable,
+      startingOperation: false,
     }
     operationRef.current = operation
     editor.setEditable(false)
@@ -224,10 +394,15 @@ export function useTiptapSelectionRewrite({
       ...anchor,
       originalText,
       replacementText: '',
+      registeredReplacementText: null,
       instruction,
       formatContext,
       phase: 'requesting',
       error: null,
+      sessionId: null,
+      runId: null,
+      operationId: null,
+      revision: null,
       ...position,
     })
 
@@ -251,13 +426,23 @@ export function useTiptapSelectionRewrite({
         if (operationRef.current?.id !== operation.id) return
         setPreview((current) => current ? { ...current, replacementText } : current)
       },
-    }).then((replacementText) => {
-      if (operationRef.current?.id !== operation.id) return
-      setPreview((current) => current ? {
+    }).then(async ({ replacementText, sessionId, runId }) => {
+      if (operationRef.current?.id !== operation.id) {
+        void api.deleteSession(sessionId).catch(() => undefined)
+        return
+      }
+      const current = previewRef.current
+      if (!current) return
+      const generated: RewritePreviewState = {
         ...current,
         replacementText,
-        phase: 'ready',
-      } : current)
+        sessionId,
+        runId,
+        phase: 'requesting',
+        error: null,
+      }
+      setPreview(generated)
+      await startOperation(generated)
     }).catch((error: unknown) => {
       if (operationRef.current?.id !== operation.id) return
       if (error instanceof DOMException && error.name === 'AbortError') return
@@ -265,10 +450,10 @@ export function useTiptapSelectionRewrite({
       setPreview((current) => current ? {
         ...current,
         phase: 'error',
-        error: error instanceof Error ? error.message : 'Agent 重写失败。',
+        error: rewriteErrorMessage(error),
       } : current)
     })
-  }, [documentName, editor, restoreEditor, roomId])
+  }, [documentName, editor, restoreEditor, rewriteErrorMessage, roomId, startOperation])
 
   const requestRewrite = useCallback((instruction: string) => {
     if (!editor || editor.isDestroyed || externallyLocked) return
@@ -291,34 +476,78 @@ export function useTiptapSelectionRewrite({
       setPreview({ ...current, phase: 'error', error: '原选区已经变化，请重新选择。' })
       return
     }
+    if (current.replacementText && current.sessionId && current.runId && !current.operationId) {
+      editor.setEditable(false)
+      setPreview({ ...current, phase: 'requesting', error: null })
+      void startOperation(current).catch((error: unknown) => {
+        restoreEditor(operationRef.current?.wasEditable ?? true)
+        setPreview((value) => value ? {
+          ...value,
+          phase: 'error',
+          error: rewriteErrorMessage(error),
+        } : value)
+      })
+      return
+    }
     runRewrite(current, current.originalText, current.instruction, current.formatContext)
-  }, [editor, runRewrite])
+  }, [editor, restoreEditor, rewriteErrorMessage, runRewrite, startOperation])
 
   const accept = useCallback(() => {
     const current = previewRef.current
     const operation = operationRef.current
-    if (!current || current.phase !== 'ready' || !current.replacementText || !editor || editor.isDestroyed) return
+    if (!current || current.phase !== 'ready' || !current.operationId || current.revision === null
+      || !current.replacementText || !editor || editor.isDestroyed) return
     if (selectionText(editor, current.from, current.to) !== current.originalText) {
       restoreEditor(operation?.wasEditable ?? true)
       setPreview({ ...current, phase: 'error', error: '原选区已经变化，请重新选择。' })
       return
     }
-    const transaction = replaceSelectionText(editor, current.from, current.to, current.replacementText)
-      .setMeta(rewriteDecorationKey, null)
-    editor.view.dispatch(transaction)
-    void window.nxcore?.memory.captureDocumentRewrite({
-      roomId,
-      documentId,
-      documentTitle: documentName,
-      instruction: current.instruction.trim() || '保持原意，重写得更清晰、自然。',
-      originalText: current.originalText,
-      replacementText: current.replacementText,
-    }).catch(() => undefined)
-    operationRef.current = null
-    restoreEditor(operation?.wasEditable ?? true)
-    setPreview(null)
-    editor.commands.focus(Math.min(current.from + current.replacementText.length, editor.state.doc.content.size))
-  }, [documentId, documentName, editor, restoreEditor, roomId])
+    setPreview({ ...current, phase: 'submitting', error: null })
+    void (async () => {
+      let operationId = current.operationId!
+      if (current.registeredReplacementText !== current.replacementText) {
+        const replacementOperation = await createOperation(current)
+        const rejected = await executeResult(operationId, 'review.reject')
+        if (!rejected) {
+          await executeResult(replacementOperation.id, 'operation.cancel')
+          throw new Error('无法替换旧的重写候选。')
+        }
+        operationId = replacementOperation.id
+        setPreview((value) => value ? {
+          ...value,
+          operationId,
+          revision: replacementOperation.revision,
+          registeredReplacementText: current.replacementText,
+          phase: 'submitting',
+          error: null,
+        } : value)
+      }
+      return executeResult(operationId, 'review.apply')
+    })().then((result) => {
+      if (!result?.document) throw new Error('文档操作未返回权威文档。')
+      const scrollElement = editor.view.dom.closest<HTMLElement>('.context-room-tiptap-scroll')
+      const scrollPosition = scrollElement
+        ? { top: scrollElement.scrollTop, left: scrollElement.scrollLeft }
+        : null
+      editor.commands.setContent(stripDocumentTitle(result.document.contentJson).content, { emitUpdate: false })
+      onDocumentApplied(result.document)
+      finish(operation?.wasEditable ?? true, current.sessionId)
+      if (scrollElement && scrollPosition) {
+        scrollElement.scrollTo({ ...scrollPosition, behavior: 'auto' })
+        window.requestAnimationFrame(() => {
+          scrollElement.scrollTo({ ...scrollPosition, behavior: 'auto' })
+        })
+      }
+    }).catch((error: unknown) => {
+      void preservePreviewError(current, error)
+    })
+  }, [createOperation, editor, executeResult, finish, onDocumentApplied, preservePreviewError, restoreEditor])
+
+  const updateReplacementText = useCallback((replacementText: string) => {
+    setPreview((current) => current?.phase === 'ready'
+      ? { ...current, replacementText, error: null }
+      : current)
+  }, [])
 
   useEffect(() => {
     if (!preview || !editor) return
@@ -367,18 +596,20 @@ export function useTiptapSelectionRewrite({
     }
   }, [editor, externallyLocked])
 
-  return { accept, cancel, preview, requestRewrite, retry }
+  return { accept, cancel, preview, requestRewrite, retry, updateReplacementText }
 }
 
 export function TiptapSelectionRewritePreview({
   preview,
   onAccept,
   onCancel,
+  onChange,
   onRetry,
 }: {
   preview: RewritePreviewState | null
   onAccept: () => void
   onCancel: () => void
+  onChange: (replacementText: string) => void
   onRetry: () => void
 }) {
   if (!preview) return null
@@ -392,23 +623,44 @@ export function TiptapSelectionRewritePreview({
       aria-live="polite"
     >
       <header>
-        {preview.phase === 'requesting' ? <LoaderCircle className="is-spinning" /> : <Sparkles />}
-        <span>{preview.phase === 'requesting' ? '正在重写' : preview.phase === 'ready' ? '建议修改' : '重写失败'}</span>
+        {preview.phase === 'requesting' || preview.phase === 'submitting' ? <LoaderCircle className="is-spinning" /> : <Sparkles />}
+        <span>{preview.phase === 'requesting'
+          ? '正在重写'
+          : preview.phase === 'submitting' ? '正在提交' : preview.phase === 'ready' ? '建议修改' : '重写失败'}</span>
         <div>
-          {preview.phase !== 'requesting' ? (
+          {preview.phase === 'error' ? (
             <button type="button" aria-label="重新重写" title="重新重写" onClick={onRetry}><RotateCcw /></button>
           ) : null}
-          <button type="button" aria-label="取消重写" title="取消重写" onClick={onCancel}><X /></button>
+          <button type="button" disabled={preview.phase === 'submitting'} aria-label="取消重写" title="取消重写" onClick={onCancel}><X /></button>
         </div>
       </header>
-      <div className="context-room-tiptap-rewrite-text" data-empty={!preview.replacementText}>
-        {preview.phase === 'error'
-          ? preview.error
-          : preview.replacementText || <span className="context-room-tiptap-rewrite-caret" />}
-      </div>
+      {preview.phase === 'ready' || preview.phase === 'submitting' || preview.replacementText ? (
+        <textarea
+          className="context-room-tiptap-rewrite-text"
+          aria-label="编辑重写内容"
+          value={preview.replacementText}
+          maxLength={65_536}
+          disabled={preview.phase !== 'ready'}
+          spellCheck
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : (
+        <div className="context-room-tiptap-rewrite-text" data-empty>
+          {preview.phase === 'error'
+            ? preview.error
+            : <span className="context-room-tiptap-rewrite-caret" />}
+        </div>
+      )}
+      {preview.error && preview.replacementText ? <p role="alert">{preview.error}</p> : null}
       {preview.phase === 'ready' ? (
         <footer>
-          <button type="button" aria-label="应用重写" title="应用重写" onClick={onAccept}><Check /></button>
+          <button
+            type="button"
+            aria-label="应用重写"
+            title="应用重写"
+            disabled={!preview.replacementText.trim()}
+            onClick={onAccept}
+          ><Check /></button>
         </footer>
       ) : null}
     </section>

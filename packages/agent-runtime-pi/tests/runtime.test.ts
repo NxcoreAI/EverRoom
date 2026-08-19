@@ -119,6 +119,91 @@ describe("PiAgentRuntime", () => {
     }
   });
 
+  it("hides every tool for a disabled run and restores them by default", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        requestBodies.push(JSON.parse(raw) as Record<string, unknown>);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-tools-toggle",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: { content: "完成" }, finish_reason: null }],
+        })}\n\n`);
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-tools-toggle",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-tools-toggle-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+    }, {
+      promptGuidelines: ["document tool guidance"],
+      tools: [{
+        name: "context_room_document_read",
+        label: "读取文档",
+        description: "读取文档",
+        parameters: { type: "object", properties: {} },
+        execute: async () => ({ content: "{}" }),
+      }],
+    });
+
+    try {
+      const disabled = await runtime.start({
+        runId: "run-tools-disabled",
+        sessionId: "agent-session",
+        runtimeSessionRef: null,
+        prompt: "补全",
+        pageLabel: "文档",
+        roomId: "room-a",
+        toolsEnabled: false,
+      });
+      for await (const _event of disabled.events) { /* consume */ }
+      const enabled = await runtime.start({
+        runId: "run-tools-default",
+        sessionId: "agent-session",
+        runtimeSessionRef: disabled.runtimeSessionRef,
+        prompt: "正常聊天",
+        pageLabel: "文档",
+        roomId: "room-a",
+      });
+      for await (const _event of enabled.events) { /* consume */ }
+
+      expect(requestBodies[0]?.tools).toBeUndefined();
+      expect(JSON.stringify(requestBodies[0])).not.toContain("document tool guidance");
+      expect(JSON.stringify(requestBodies[1]?.tools)).toContain("context_room_document_read");
+      expect(JSON.stringify(requestBodies[1]?.tools)).toContain('"name":"bash"');
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
   it("executes custom tools with the latest run context on a persistent Pi session", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     let requestIndex = 0;
@@ -182,6 +267,7 @@ describe("PiAgentRuntime", () => {
       workingDirectory: join(dataDir, "workspace"),
       agentDirectory: join(dataDir, "config"),
     }, {
+      promptGuidelines: ["动态文档能力规范：只使用当前注册表提供的能力说明。"],
       tools: [{
         name: "context_room_write_begin",
         label: "开始创建 Room 文档",
@@ -201,12 +287,6 @@ describe("PiAgentRuntime", () => {
           toolContexts.push({ sessionId: input.sessionId, runId: input.runId, roomId: input.roomId });
           return { content: JSON.stringify({ roomId: input.roomId, state: "open" }) };
         },
-      }, {
-        name: "connector_search",
-        label: "Search connectors",
-        description: "Search connected service actions",
-        parameters: { type: "object", properties: {}, additionalProperties: false },
-        execute: async () => ({ content: "[]" }),
       }],
       onRunFinished: async (input, outcome) => {
         finished.push({ runId: input.runId, outcome });
@@ -248,29 +328,22 @@ describe("PiAgentRuntime", () => {
       expect(firstEvents.map((event) => event.type)).toContain("tool.started");
       expect(firstEvents.map((event) => event.type)).toContain("tool.completed");
       expect(secondEvents.map((event) => event.type)).toContain("tool.completed");
+      const reusedRunRequest = JSON.stringify(requestBodies[2]);
+      expect(reusedRunRequest).toContain("本轮执行 ID：run-room-b");
+      expect(reusedRunRequest).toContain("历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效");
+      expect(reusedRunRequest).toContain("document_read 成功只是第一步");
+      expect(reusedRunRequest).toContain("不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown");
+      expect(reusedRunRequest).toContain("工具调用、文档全文、块标识、读取凭证、Operation 标识和工具错误均已移除");
+      expect(reusedRunRequest).toContain("用户：创建文档");
+      expect(reusedRunRequest).not.toContain('{\\"roomId\\":\\"room-a\\",\\"state\\":\\"open\\"}');
       expect(requestBodies).toHaveLength(4);
       expect(JSON.stringify(requestBodies[0]?.tools)).toContain("context_room_write_begin");
       expect(JSON.stringify(requestBodies[0]?.tools)).toContain('"name":"bash"');
       expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("v2_desktop_user_pc_bash");
       const firstRequest = JSON.stringify(requestBodies[0]);
       expect(firstRequest).toContain("必须使用简体中文");
-      expect(firstRequest).toContain("准备写入正文的实际核心内容、重点或结论");
-      expect(firstRequest).toContain("标题要随内容类型调整");
-      expect(firstRequest).toContain("随后写出的正文必须与标题一致");
-      expect(firstRequest).toContain("充实、完整的长篇内容");
-      expect(firstRequest).toContain("标题层级应服务于内容结构");
-      expect(firstRequest).toContain("默认让同一层级的章节使用一致的标题级别");
-      expect(firstRequest).toContain("如果用户明确要求一级标题");
-      expect(firstRequest).toContain("明确表达了要在 EverRoom 工作区的 Context Room 中创建、保存或写入一篇文档");
-      expect(firstRequest).toContain("解释、分析、总结、整理、列计划、写方案、起草内容、润色、扩写");
-      expect(firstRequest).toContain("意图不明确时不要调用 context_room_list 或 context_room_write_begin");
-      expect(firstRequest).toContain("只有当用户明确要求在 EverRoom 工作区的 Context Room 中创建、保存或写入文档");
-      expect(firstRequest).toContain("必须立即调用 context_room_list");
-      expect(firstRequest).toContain("不得询问用户是否需要查看列表");
-      expect(firstRequest).toContain("普通页面的普通聊天不要主动提示 Room 选择");
-      expect(firstRequest).toContain("也不要替用户猜测目标 Room");
-      expect(firstRequest).toContain("调用 context_room_write_begin 之前必须先用 memory_search 和 conversation_search");
-      expect(firstRequest).toContain("不得把 Notion workspace/page 解释成 EverRoom 工作区文档");
+      expect(firstRequest).toContain("动态文档能力规范：只使用当前注册表提供的能力说明。");
+      expect(firstRequest).not.toContain("准备写入正文的实际核心内容、重点或结论");
       expect(requestBodies[1]?.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: "tool", content: '{"roomId":"room-a","state":"open"}' }),
       ]));
@@ -286,330 +359,6 @@ describe("PiAgentRuntime", () => {
         pageLabel: "Room C",
         roomId: "room-c",
       })).rejects.toThrow("different Agent session");
-    } finally {
-      await runtime.dispose();
-      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
-    }
-  });
-
-  it("forces one bounded recovery step after a recoverable tool failure", async () => {
-    const requestBodies: Array<Record<string, unknown>> = [];
-    let requestIndex = 0;
-    const endpoint = createServer((request, response) => {
-      let raw = "";
-      request.on("data", (chunk) => { raw += chunk.toString(); });
-      request.on("end", () => {
-        requestBodies.push(JSON.parse(raw) as Record<string, unknown>);
-        response.writeHead(200, {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
-        const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) => JSON.stringify({
-          id: `chatcmpl-recovery-${String(requestIndex)}`,
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "nxcore-test-model",
-          choices: [{ index: 0, delta, finish_reason: finishReason }],
-        });
-        if (requestIndex === 0) {
-          response.write(`data: ${chunk({
-            tool_calls: [{
-              index: 0,
-              id: "call-failing",
-              type: "function",
-              function: { name: "connector_run", arguments: "{}" },
-            }],
-          })}\n\n`);
-          response.write(`data: ${chunk({}, "tool_calls")}\n\n`);
-        } else if (requestIndex === 1) {
-          response.write(`data: ${chunk({
-            tool_calls: [{
-              index: 0,
-              id: "call-recovery",
-              type: "function",
-              function: { name: "connector_search", arguments: "{}" },
-            }],
-          })}\n\n`);
-          response.write(`data: ${chunk({}, "tool_calls")}\n\n`);
-        } else {
-          response.write(`data: ${chunk({ content: "已通过搜索恢复并完成请求" })}\n\n`);
-          response.write(`data: ${chunk({}, "stop")}\n\n`);
-        }
-        requestIndex += 1;
-        response.end("data: [DONE]\n\n");
-      });
-    });
-    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
-    const address = endpoint.address();
-    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
-
-    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-recovery-test-"));
-    temporaryDirectories.push(dataDir);
-    const toolCalls: string[] = [];
-    const runtime = new PiAgentRuntime({
-      provider: "nxcore-test-provider",
-      model: "nxcore-test-model",
-      baseUrl: `http://127.0.0.1:${address.port}/v1`,
-      apiKey: "nxcore-test-key",
-      api: "openai-completions",
-      maxTokens: 1024,
-      contextWindow: 8192,
-      temperature: 0.3,
-      reasoning: "off",
-      sessionsDir: join(dataDir, "sessions"),
-      workingDirectory: join(dataDir, "workspace"),
-      agentDirectory: join(dataDir, "config"),
-    }, {
-      tools: [
-        {
-          name: "connector_run",
-          label: "Run connector",
-          description: "Run a connector action",
-          parameters: { type: "object", properties: {}, additionalProperties: false },
-          execute: async () => {
-            toolCalls.push("connector_run");
-            throw new Error("HTTP 404 action metadata not found");
-          },
-          classifyFailure: () => ({
-            category: "action_not_found",
-            recoverable: true,
-            recommendedTool: "connector_search",
-            instruction: "Search for the exact action and continue.",
-            retryKey: "gmail.list_messages",
-            maxAttempts: 1,
-          }),
-        },
-        {
-          name: "connector_search",
-          label: "Search connectors",
-          description: "Search connector actions",
-          parameters: { type: "object", properties: {}, additionalProperties: false },
-          execute: async () => {
-            toolCalls.push("connector_search");
-            return { content: JSON.stringify([{ service: "gmail", name: "fetch_emails" }]) };
-          },
-        },
-      ],
-    });
-
-    try {
-      const run = await runtime.start({
-        runId: "run-recovery",
-        sessionId: "session-recovery",
-        runtimeSessionRef: null,
-        prompt: "查看最近邮件",
-        pageLabel: "首页",
-        roomId: null,
-      });
-      const events: RuntimeEvent[] = [];
-      for await (const event of run.events) events.push(event);
-
-      expect(toolCalls).toEqual(["connector_run", "connector_search"]);
-      expect(events.find((event) => event.type === "tool.failed")?.payload).toMatchObject({
-        name: "connector_run",
-        failure: {
-          category: "action_not_found",
-          recoverable: true,
-          recommendedTool: "connector_search",
-          recoveryAttempt: 1,
-          maxAttempts: 1,
-        },
-      });
-      expect(events.map((event) => event.type)).toContain("tool.completed");
-      expect(events.find((event) => event.type === "message.completed")?.payload).toEqual({
-        role: "assistant",
-        content: "已通过搜索恢复并完成请求",
-      });
-      expect(requestBodies).toHaveLength(3);
-      expect(JSON.stringify(requestBodies[1]?.messages)).toContain("系统恢复指令");
-      expect(JSON.stringify(requestBodies[1]?.messages)).toContain("connector_search");
-    } finally {
-      await runtime.dispose();
-      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
-    }
-  });
-
-  it("terminates a run before an identical failed tool call can execute twice", async () => {
-    let requestIndex = 0;
-    const endpoint = createServer((request, response) => {
-      request.resume();
-      request.on("end", () => {
-        response.writeHead(200, {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
-        const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) => JSON.stringify({
-          id: `chatcmpl-loop-guard-${String(requestIndex)}`,
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "nxcore-test-model",
-          choices: [{ index: 0, delta, finish_reason: finishReason }],
-        });
-        response.write(`data: ${chunk({
-          tool_calls: [{
-            index: 0,
-            id: `call-loop-${String(requestIndex)}`,
-            type: "function",
-            function: {
-              name: "connector_run",
-              arguments: '{"service":"notion","name":"create_page","input":{"title":"父页面"}}',
-            },
-          }],
-        })}\n\n`);
-        response.write(`data: ${chunk({}, "tool_calls")}\n\n`);
-        requestIndex += 1;
-        response.end("data: [DONE]\n\n");
-      });
-    });
-    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
-    const address = endpoint.address();
-    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
-
-    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-loop-guard-test-"));
-    temporaryDirectories.push(dataDir);
-    let executions = 0;
-    const runtime = new PiAgentRuntime({
-      provider: "nxcore-test-provider",
-      model: "nxcore-test-model",
-      baseUrl: `http://127.0.0.1:${address.port}/v1`,
-      apiKey: "nxcore-test-key",
-      api: "openai-completions",
-      maxTokens: 1024,
-      contextWindow: 8192,
-      temperature: 0.3,
-      reasoning: "off",
-      sessionsDir: join(dataDir, "sessions"),
-      workingDirectory: join(dataDir, "workspace"),
-      agentDirectory: join(dataDir, "config"),
-    }, {
-      tools: [{
-        name: "connector_run",
-        label: "Run connector",
-        description: "Run a connector action",
-        parameters: { type: "object", additionalProperties: true },
-        execute: async () => {
-          executions += 1;
-          throw new Error("HTTP 400 invalid_input");
-        },
-        classifyFailure: () => ({
-          category: "invalid_input",
-          recoverable: true,
-          recommendedTool: "connector_schema",
-          instruction: "Inspect the schema once.",
-          retryKey: "notion.create_page",
-          maxAttempts: 1,
-        }),
-      }],
-    });
-
-    try {
-      const run = await runtime.start({
-        runId: "run-loop-guard",
-        sessionId: "session-loop-guard",
-        runtimeSessionRef: null,
-        prompt: "创建页面",
-        pageLabel: "首页",
-        roomId: null,
-      });
-      const events: RuntimeEvent[] = [];
-      for await (const event of run.events) events.push(event);
-
-      expect(executions).toBe(1);
-      expect(requestIndex).toBe(2);
-      expect(events.filter((event) => event.type === "tool.failed")).toHaveLength(2);
-      expect(events.find((event) => event.type === "tool.failed"
-        && (event.payload as { failure?: { category?: string } }).failure?.category === "tool_loop_blocked")?.payload).toMatchObject({
-        failure: { recoverable: false },
-      });
-      expect(events.at(-1)?.type).toBe("run.failed");
-    } finally {
-      await runtime.dispose();
-      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
-    }
-  });
-
-  it("terminates a run after the total tool execution budget is exhausted", async () => {
-    let requestIndex = 0;
-    const endpoint = createServer((request, response) => {
-      request.resume();
-      request.on("end", () => {
-        response.writeHead(200, {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
-        const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) => JSON.stringify({
-          id: `chatcmpl-tool-budget-${String(requestIndex)}`,
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "nxcore-test-model",
-          choices: [{ index: 0, delta, finish_reason: finishReason }],
-        });
-        response.write(`data: ${chunk({
-          tool_calls: [{
-            index: 0,
-            id: `call-budget-${String(requestIndex)}`,
-            type: "function",
-            function: { name: "lookup", arguments: JSON.stringify({ index: requestIndex }) },
-          }],
-        })}\n\n`);
-        response.write(`data: ${chunk({}, "tool_calls")}\n\n`);
-        requestIndex += 1;
-        response.end("data: [DONE]\n\n");
-      });
-    });
-    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
-    const address = endpoint.address();
-    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
-
-    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-tool-budget-test-"));
-    temporaryDirectories.push(dataDir);
-    let executions = 0;
-    const runtime = new PiAgentRuntime({
-      provider: "nxcore-test-provider",
-      model: "nxcore-test-model",
-      baseUrl: `http://127.0.0.1:${address.port}/v1`,
-      apiKey: "nxcore-test-key",
-      api: "openai-completions",
-      maxTokens: 1024,
-      contextWindow: 8192,
-      temperature: 0.3,
-      reasoning: "off",
-      sessionsDir: join(dataDir, "sessions"),
-      workingDirectory: join(dataDir, "workspace"),
-      agentDirectory: join(dataDir, "config"),
-    }, {
-      tools: [{
-        name: "lookup",
-        label: "Lookup",
-        description: "Return one lookup result",
-        parameters: { type: "object", additionalProperties: true },
-        execute: async () => {
-          executions += 1;
-          return { content: '{"ok":true}' };
-        },
-      }],
-    });
-
-    try {
-      const run = await runtime.start({
-        runId: "run-tool-budget",
-        sessionId: "session-tool-budget",
-        runtimeSessionRef: null,
-        prompt: "执行大量查询",
-        pageLabel: "首页",
-        roomId: null,
-      });
-      const events: RuntimeEvent[] = [];
-      for await (const event of run.events) events.push(event);
-
-      expect(executions).toBe(24);
-      expect(requestIndex).toBe(25);
-      expect(events.find((event) => event.type === "tool.failed"
-        && (event.payload as { failure?: { category?: string } }).failure?.category === "tool_budget_exhausted")).toBeDefined();
-      expect(events.at(-1)?.type).toBe("run.failed");
     } finally {
       await runtime.dispose();
       await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));

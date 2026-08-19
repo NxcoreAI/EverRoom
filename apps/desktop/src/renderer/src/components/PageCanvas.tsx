@@ -5,11 +5,13 @@ import type { ContextRoomWorkspaceTab } from './context-room/contextRoomTabs'
 import { ContextRoomHomeSkeleton } from './context-room/ContextRoomHomeSkeleton'
 import { DiaryPageSkeleton } from './diary/DiaryPageSkeleton'
 import { DocsPage } from './pages/DocsPage'
+import { FilesPage } from './pages/FilesPage'
 import { HomePage } from './pages/HomePage'
 import { MemoryPage } from './pages/MemoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SourcesPage } from './pages/SourcesPage'
 import { TasksPage } from './pages/TasksPage'
+import { WikiPage } from './pages/WikiPage'
 import { ConnectorConsolePage } from './pages/ConnectorConsolePage'
 
 const ContextRoomPage = lazy(() =>
@@ -36,7 +38,12 @@ export function PageCanvas({
 }: {
   page: PageId
   activeContextRoomId: string | null
-  agentDocumentFocus: { roomId: string; documentId: string; blockId?: string | null } | null
+  agentDocumentFocus: {
+    roomId: string
+    documentId: string
+    blockId?: string | null
+    requestId: number
+  } | null
   contextRoomHomeRequest: number
   onContextRoomDetailFocusChange: (focused: boolean) => void
   onContextRoomOpenTab: (room: ContextRoomWorkspaceTab) => void
@@ -58,6 +65,9 @@ export function PageCanvas({
           focusedBlockId={agentDocumentFocus?.roomId === activeContextRoomId
             ? agentDocumentFocus.blockId ?? null
             : null}
+          documentFocusRequestId={agentDocumentFocus?.roomId === activeContextRoomId
+            ? agentDocumentFocus.requestId
+            : null}
           homeRequest={contextRoomHomeRequest}
           onDetailFocusChange={onContextRoomDetailFocusChange}
           onOpenRoomTab={onContextRoomOpenTab}
@@ -69,7 +79,9 @@ export function PageCanvas({
   }
   if (page === 'docs') content = <DocsPage />
   if (page === 'sources') content = <SourcesPage />
+  if (page === 'files') content = <FilesPage />
   if (page === 'memory') content = <MemoryPage />
+  if (page === 'wiki') content = <WikiPage />
   if (page === 'connectors') content = <ConnectorConsolePage />
   if (page === 'tasks') content = <TasksPage />
   if (page === 'diary') {

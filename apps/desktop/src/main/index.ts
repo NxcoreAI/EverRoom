@@ -1,7 +1,12 @@
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
+import type {
+  ImportRoomDocumentInput,
+  SaveRoomDocumentInput,
+  StartDocumentOperationInput,
+} from '@nxcore/agent-contract'
 
 import type { CloudAccountStatus } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
@@ -15,19 +20,30 @@ import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
+import type { KnowledgeAttachInput } from '../shared/knowledge'
+import type { IngestPipelines } from '../shared/ingest'
 import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
   MemoryDocumentRewriteInput,
 } from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
+import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
+import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
+import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
-import { configureDesktopLogger, flushDesktopLogs, logDesktop } from './logging/desktop-logger'
+import {
+  configureDesktopLogger,
+  flushDesktopLogs,
+  logDesktop,
+  logDocumentCursorCompletion,
+} from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
 import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
@@ -37,6 +53,11 @@ import {
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
+import {
+  assertNoEmbeddedDocumentImages,
+  DocumentAssetStore,
+  DOCUMENT_ASSET_SCHEME,
+} from './document-asset-store'
 import { OoCliBridge } from './open-connector/oo-cli-bridge'
 import {
   OpenConnectorSupervisor,
@@ -67,6 +88,11 @@ app.setName(APP_NAME)
 configureDesktopLogger(dataDirectory)
 configureSentry(app.getVersion(), app.isPackaged)
 if (process.platform === 'darwin') process.title = APP_NAME
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: DOCUMENT_ASSET_SCHEME,
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+}])
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
@@ -117,26 +143,34 @@ const AGENT_CHANNELS = {
   unsubscribe: 'agent:unsubscribe',
 } as const
 
+const CURSOR_COMPLETION_AGENT_CHANNELS = {
+  createSession: 'cursor-completion-agent:create-session',
+  deleteSession: 'cursor-completion-agent:delete-session',
+  getEvents: 'cursor-completion-agent:get-events',
+  startRun: 'cursor-completion-agent:start-run',
+  cancelRun: 'cursor-completion-agent:cancel-run',
+} as const
+
 const DOCUMENT_CHANNELS = {
   list: 'documents:list',
   listTrash: 'documents:list-trash',
   get: 'documents:get',
   listBlocks: 'documents:list-blocks',
+  listBlockBacklinks: 'documents:list-block-backlinks',
+  listVersions: 'documents:list-versions',
+  restoreVersion: 'documents:restore-version',
   resolveBlockReferences: 'documents:resolve-block-references',
-  listPatches: 'documents:list-patches',
-  getPatch: 'documents:get-patch',
-  applyPatch: 'documents:apply-patch',
-  rejectPatch: 'documents:reject-patch',
-  acceptContinuationBlock: 'documents:accept-continuation-block',
-  rejectContinuationBlock: 'documents:reject-continuation-block',
-  closeContinuation: 'documents:close-continuation',
+  listOperations: 'documents:list-operations',
+  startOperation: 'documents:start-operation',
+  getOperation: 'documents:get-operation',
+  executeOperationCommand: 'documents:execute-operation-command',
+  storeImage: 'documents:store-image',
   import: 'documents:import',
   save: 'documents:save',
   delete: 'documents:delete',
   restore: 'documents:restore',
   deletePermanently: 'documents:delete-permanently',
   emptyTrash: 'documents:empty-trash',
-  acknowledge: 'documents:acknowledge',
   subscribe: 'documents:subscribe',
   unsubscribe: 'documents:unsubscribe',
 } as const
@@ -208,7 +242,49 @@ const MEMORY_CHANNELS = {
   listConversations: 'memory:list-conversations',
   searchConversations: 'memory:search-conversations',
   deleteConversations: 'memory:delete-conversations',
+  importMarkdown: 'memory:import-markdown',
+  pickMarkdownFiles: 'memory:pick-markdown-files',
+  listDocuments: 'memory:documents:list',
+  getDocument: 'memory:documents:get',
+  deleteDocument: 'memory:documents:delete',
+  atomicProvenance: 'memory:atomic-provenance',
   captureDocumentRewrite: 'memory:capture-document-rewrite',
+} as const
+
+const KNOWLEDGE_CHANNELS = {
+  listRooms: 'knowledge:rooms:list',
+  upsertRoom: 'knowledge:rooms:upsert',
+  deleteRoom: 'knowledge:rooms:delete',
+  listWikiPages: 'knowledge:wiki:pages',
+  readWikiPage: 'knowledge:wiki:page-read',
+  listWikis: 'knowledge:wikis:list',
+  getWikiGraph: 'knowledge:wiki:graph',
+  listEntities: 'knowledge:entities:list',
+  getEntity: 'knowledge:entities:get',
+  promoteEntity: 'knowledge:entities:promote',
+  mergeEntity: 'knowledge:entities:merge',
+  listUnmatched: 'knowledge:unmatched:list',
+  attachDoc: 'knowledge:docs:attach',
+  listRecentDecisions: 'knowledge:decisions:list',
+  revertDecision: 'knowledge:route:revert',
+  pickAndUploadFiles: 'knowledge:files:pick-and-upload',
+  listRoomFiles: 'knowledge:files:list',
+  readFileMarkdown: 'knowledge:files:markdown',
+  revealFile: 'knowledge:files:reveal',
+} as const
+
+const FILES_CHANNELS = {
+  list: 'files:list',
+  get: 'files:get',
+  readMarkdown: 'files:read-markdown',
+  rename: 'files:rename',
+  delete: 'files:delete',
+  reveal: 'files:reveal',
+  pickAndImport: 'files:pick-and-import',
+} as const
+
+const INGEST_CHANNELS = {
+  listEvents: 'ingest:events:list',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -223,6 +299,9 @@ const SCREEN_CAPTURE_CHANNELS = {
 // IpcHandler 的 never 参数让任意签名的处理器都可直接注册。
 type IpcHandler = (event: Electron.IpcMainInvokeEvent, ...args: never[]) => unknown
 type StoredHandler = (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown
+type IpcHandlerGroup<TChannels extends Record<string, string>> = {
+  [TKey in keyof TChannels]: IpcHandler
+}
 const handlerRegistry = new Map<string, StoredHandler>()
 let resolveServicesReady: (() => void) | null = null
 let rejectServicesReady: ((error: Error) => void) | null = null
@@ -238,6 +317,15 @@ function handle(channel: string, handler: IpcHandler): void {
   handlerRegistry.set(channel, handler as StoredHandler)
 }
 
+function handleGroup<TChannels extends Record<string, string>>(
+  channels: TChannels,
+  handlers: IpcHandlerGroup<TChannels>,
+): void {
+  for (const key of Object.keys(channels) as Array<keyof TChannels>) {
+    handle(channels[key], handlers[key])
+  }
+}
+
 function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
@@ -245,6 +333,7 @@ function installIpcRouters(): void {
     OPEN_CONNECTOR_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
+    CURSOR_COMPLETION_AGENT_CHANNELS,
     DOCUMENT_CHANNELS,
     ASR_CHANNELS,
     PRIVATE_AUDIO_CHANNELS,
@@ -252,6 +341,9 @@ function installIpcRouters(): void {
     ACCOUNT_CHANNELS,
     TRANSCRIPTION_CHANNELS,
     MEMORY_CHANNELS,
+    KNOWLEDGE_CHANNELS,
+    FILES_CHANNELS,
+    INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
   ]
   for (const group of channelGroups) {
@@ -271,11 +363,14 @@ function installIpcRouters(): void {
 
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
+let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
+let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
@@ -298,6 +393,23 @@ function logRendererRequestError(input: unknown): void {
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
+
+function logRendererDiagnostic(input: unknown): void {
+  if (!input || typeof input !== 'object') return
+  const value = input as { module?: unknown; level?: unknown; event?: unknown }
+  if (value.module !== 'document-cursor-completion') return
+  if (value.level !== 'info' && value.level !== 'warn' && value.level !== 'error') return
+  if (!value.event || typeof value.event !== 'object' || Array.isArray(value.event)) return
+  try {
+    const serialized = JSON.stringify(value.event)
+    if (serialized.length > 16_000) return
+    logDocumentCursorCompletion(value.level, JSON.parse(serialized) as Record<string, unknown>)
+  } catch {
+    // Ignore malformed renderer diagnostics rather than affecting the editor.
+  }
+}
+
+ipcMain.on('app:diagnostic-log', (_event, input: unknown) => logRendererDiagnostic(input))
 
 function focusMainWindow(): void {
   const window = BrowserWindow.getAllWindows()[0]
@@ -461,11 +573,61 @@ function attachOpenConnectorBridge(bridge: OoCliBridge): void {
 function openConnectorExternalUrl(value: string): void {
   try {
     const url = new URL(value)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return
-    void shell.openExternal(url.toString())
+    if (url.protocol === 'http:' || url.protocol === 'https:') void shell.openExternal(url.toString())
   } catch {
     // Ignore malformed or unsupported external navigation from the console.
   }
+}
+
+async function openConnectorManagementConsole(): Promise<void> {
+  const connection = openConnectorSupervisor?.getConnection()
+  if (!connection) throw new Error('OpenConnector 尚未就绪。')
+  if (!connection.managed || !connection.adminToken) {
+    await shell.openExternal(`${connection.baseUrl}/`)
+    return
+  }
+  if (openConnectorConsoleWindow && !openConnectorConsoleWindow.isDestroyed()) {
+    openConnectorConsoleWindow.show()
+    openConnectorConsoleWindow.focus()
+    return
+  }
+  const origin = new URL(connection.baseUrl).origin
+  const window = new BrowserWindow({
+    width: 1180,
+    height: 820,
+    minWidth: 900,
+    minHeight: 640,
+    show: false,
+    title: 'OpenConnector 管理台',
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      partition: 'persist:everroom-open-connector-console',
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  openConnectorConsoleWindow = window
+  window.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: [`${origin}/*`] },
+    (details, callback) => callback({
+      requestHeaders: { ...details.requestHeaders, Authorization: `Bearer ${connection.adminToken}` },
+    }),
+  )
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openConnectorExternalUrl(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (new URL(url).origin === origin) return
+    event.preventDefault()
+    openConnectorExternalUrl(url)
+  })
+  window.once('ready-to-show', () => window.show())
+  window.once('closed', () => {
+    if (openConnectorConsoleWindow === window) openConnectorConsoleWindow = null
+  })
+  await window.loadURL(`${connection.baseUrl}/`)
 }
 
 function registerOpenConnectorHandlers(): void {
@@ -487,73 +649,16 @@ function registerOpenConnectorHandlers(): void {
     }
   })
   handle(OPEN_CONNECTOR_CHANNELS.execute, (_event, input: unknown) => {
-    const bridge = ooCliBridge
-    if (!bridge) throw new Error('OpenConnector 尚未就绪。')
+    if (!ooCliBridge) throw new Error('OpenConnector 尚未就绪。')
     if (!input || typeof input !== 'object') throw new Error('无效的 OpenConnector 命令。')
-    return bridge.execute(input as OpenConnectorExecutionInput)
+    return ooCliBridge.execute(input as OpenConnectorExecutionInput)
   })
   handle(OPEN_CONNECTOR_CHANNELS.cancel, (_event, requestId: unknown) => {
-    const bridge = ooCliBridge
-    if (!bridge) return false
+    if (!ooCliBridge) return false
     if (typeof requestId !== 'string') throw new Error('无效的命令请求标识。')
-    return bridge.cancel(requestId)
+    return ooCliBridge.cancel(requestId)
   })
   handle(OPEN_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
-}
-
-async function openConnectorManagementConsole(): Promise<void> {
-  const connection = openConnectorSupervisor?.getConnection()
-  if (!connection) throw new Error('OpenConnector 尚未就绪。')
-  if (!connection.managed || !connection.adminToken) {
-    await shell.openExternal(`${connection.baseUrl}/`)
-    return
-  }
-  if (openConnectorConsoleWindow && !openConnectorConsoleWindow.isDestroyed()) {
-    openConnectorConsoleWindow.show()
-    openConnectorConsoleWindow.focus()
-    return
-  }
-
-  const origin = new URL(connection.baseUrl).origin
-  const window = new BrowserWindow({
-    width: 1180,
-    height: 820,
-    minWidth: 900,
-    minHeight: 640,
-    show: false,
-    title: 'OpenConnector 管理台',
-    backgroundColor: '#ffffff',
-    webPreferences: {
-      partition: 'persist:everroom-open-connector-console',
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-  openConnectorConsoleWindow = window
-  window.webContents.session.webRequest.onBeforeSendHeaders(
-    { urls: [`${origin}/*`] },
-    (details, callback) => callback({
-      requestHeaders: {
-        ...details.requestHeaders,
-        Authorization: `Bearer ${connection.adminToken}`,
-      },
-    }),
-  )
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    openConnectorExternalUrl(url)
-    return { action: 'deny' }
-  })
-  window.webContents.on('will-navigate', (event, url) => {
-    if (new URL(url).origin === origin) return
-    event.preventDefault()
-    openConnectorExternalUrl(url)
-  })
-  window.once('ready-to-show', () => window.show())
-  window.once('closed', () => {
-    if (openConnectorConsoleWindow === window) openConnectorConsoleWindow = null
-  })
-  await window.loadURL(`${connection.baseUrl}/`)
 }
 
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
@@ -578,35 +683,112 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
-function registerDocumentHandlers(bridge: DocumentGatewayBridge): void {
-  handle(DOCUMENT_CHANNELS.list, (_event, roomId) => bridge.list(roomId))
-  handle(DOCUMENT_CHANNELS.listTrash, (_event, roomId) => bridge.listTrash(roomId))
-  handle(DOCUMENT_CHANNELS.get, (_event, documentId) => bridge.get(documentId))
-  handle(DOCUMENT_CHANNELS.listBlocks, (_event, documentId) => bridge.listBlocks(documentId))
-  handle(DOCUMENT_CHANNELS.resolveBlockReferences, (_event, input) =>
-    bridge.resolveBlockReferences(input))
-  handle(DOCUMENT_CHANNELS.listPatches, (_event, documentId, status) =>
-    bridge.listPatches(documentId, status))
-  handle(DOCUMENT_CHANNELS.getPatch, (_event, patchId) => bridge.getPatch(patchId))
-  handle(DOCUMENT_CHANNELS.applyPatch, (_event, patchId, input) => bridge.applyPatch(patchId, input))
-  handle(DOCUMENT_CHANNELS.rejectPatch, (_event, patchId) => bridge.rejectPatch(patchId))
-  handle(DOCUMENT_CHANNELS.acceptContinuationBlock, (_event, patchId, input) =>
-    bridge.acceptContinuationBlock(patchId, input))
-  handle(DOCUMENT_CHANNELS.rejectContinuationBlock, (_event, patchId, input) =>
-    bridge.rejectContinuationBlock(patchId, input))
-  handle(DOCUMENT_CHANNELS.closeContinuation, (_event, patchId) =>
-    bridge.closeContinuation(patchId))
-  handle(DOCUMENT_CHANNELS.import, (_event, input) => bridge.import(input))
-  handle(DOCUMENT_CHANNELS.save, (_event, documentId, input) => bridge.save(documentId, input))
-  handle(DOCUMENT_CHANNELS.delete, (_event, documentId) => bridge.delete(documentId))
-  handle(DOCUMENT_CHANNELS.restore, (_event, documentId) => bridge.restore(documentId))
-  handle(DOCUMENT_CHANNELS.deletePermanently, (_event, documentId) =>
-    bridge.deletePermanently(documentId))
-  handle(DOCUMENT_CHANNELS.emptyTrash, (_event, roomId) => bridge.emptyTrash(roomId))
-  handle(DOCUMENT_CHANNELS.acknowledge, (_event, transactionId, input) =>
-    bridge.acknowledge(transactionId, input))
-  handle(DOCUMENT_CHANNELS.subscribe, (event, roomId) => bridge.subscribe(event.sender, roomId))
-  handle(DOCUMENT_CHANNELS.unsubscribe, (event, roomId) => bridge.unsubscribe(event.sender.id, roomId))
+function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void {
+  handleGroup(CURSOR_COMPLETION_AGENT_CHANNELS, {
+    createSession: (_event, input) => bridge.createSession(input),
+    deleteSession: (_event, sessionId) => bridge.deleteSession(sessionId),
+    getEvents: (_event, sessionId, runId, afterSeq) =>
+      bridge.getEvents(sessionId, runId, afterSeq),
+    startRun: (_event, sessionId, input) => bridge.startRun(sessionId, input),
+    cancelRun: (_event, runId) => bridge.cancelRun(runId),
+  })
+}
+
+function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: DocumentAssetStore): void {
+  handleGroup(DOCUMENT_CHANNELS, {
+    list: (_event, roomId) => bridge.list(roomId),
+    listTrash: (_event, roomId) => bridge.listTrash(roomId),
+    get: (_event, documentId) => bridge.get(documentId),
+    listBlocks: (_event, documentId) => bridge.listBlocks(documentId),
+    listBlockBacklinks: (_event, documentId, blockId) =>
+      bridge.listBlockBacklinks(documentId, blockId),
+    listVersions: (_event, documentId) => bridge.listVersions(documentId),
+    restoreVersion: (_event, documentId, version, baseVersion) =>
+      bridge.restoreVersion(documentId, version, baseVersion),
+    resolveBlockReferences: (_event, input) => bridge.resolveBlockReferences(input),
+    listOperations: (_event, filters) => bridge.listOperations(filters),
+    startOperation: (_event, input: StartDocumentOperationInput) => {
+      assertNoEmbeddedDocumentImages(input)
+      return bridge.startOperation(input)
+    },
+    getOperation: (_event, operationId) => bridge.getOperation(operationId),
+    executeOperationCommand: (_event, operationId, input) =>
+      bridge.executeOperationCommand(operationId, input),
+    storeImage: (_event, documentId, input) => assets.storeImage(documentId, input),
+    import: (_event, input: ImportRoomDocumentInput) => {
+      assertNoEmbeddedDocumentImages(input?.contentJson)
+      return bridge.import(input)
+    },
+    save: (_event, documentId, input: SaveRoomDocumentInput) => {
+      assertNoEmbeddedDocumentImages(input?.contentJson)
+      return bridge.save(documentId, input)
+    },
+    delete: (_event, documentId) => bridge.delete(documentId),
+    restore: (_event, documentId) => bridge.restore(documentId),
+    deletePermanently: async (_event, documentId) => {
+      await bridge.deletePermanently(documentId)
+      await assets.deleteDocument(documentId).catch((error) => {
+        console.error('Failed to delete local document assets', { documentId, error })
+      })
+    },
+    emptyTrash: async (_event, roomId) => {
+      const trashed = await bridge.listTrash(roomId)
+      await bridge.emptyTrash(roomId)
+      await Promise.all(trashed.map((document) => assets.deleteDocument(document.id).catch((error) => {
+        console.error('Failed to delete local document assets', { documentId: document.id, error })
+      })))
+    },
+    subscribe: (event, roomId) => bridge.subscribe(event.sender, roomId),
+    unsubscribe: (event, roomId) => bridge.unsubscribe(event.sender.id, roomId),
+  })
+}
+
+function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
+  handle(KNOWLEDGE_CHANNELS.listRooms, (_event, origin?: 'user' | 'auto') => bridge.listRooms(origin))
+  handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
+  handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
+  handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
+  handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
+  handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
+  handle(KNOWLEDGE_CHANNELS.getWikiGraph, (_event, roomId: string) => bridge.getWikiGraph(roomId))
+  handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived') =>
+    bridge.listEntities(status))
+  handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
+    bridge.mergeEntity(fromId, targetId))
+  handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())
+  handle(KNOWLEDGE_CHANNELS.attachDoc, (_event, sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
+    bridge.attachDoc(sourceKind, sourceId, input))
+  handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
+    bridge.listRecentDecisions(limit))
+  handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
+  handle(KNOWLEDGE_CHANNELS.pickAndUploadFiles, () => bridge.pickAndUploadFiles())
+  handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
+  handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
+  handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
+}
+
+function registerFilesHandlers(bridge: FilesGatewayBridge): void {
+  handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
+  handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
+  handle(FILES_CHANNELS.readMarkdown, (_event, fileId: string) => bridge.readMarkdown(fileId))
+  handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
+    bridge.rename(fileId, displayName))
+  handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
+  handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
+  handle(
+    FILES_CHANNELS.pickAndImport,
+    (_event, options?: { pipelines?: IngestPipelines }) => bridge.pickAndImport(options),
+  )
+}
+
+function registerIngestHandlers(bridge: IngestGatewayBridge): void {
+  handle(
+    INGEST_CHANNELS.listEvents,
+    (_event, query: { limit?: number; offset?: number; sourceKind?: string; sourceId?: string }) =>
+      bridge.listEvents(query),
+  )
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
@@ -674,6 +856,19 @@ function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
     (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
       bridge.deleteConversations(target),
   )
+  handle(
+    MEMORY_CHANNELS.importMarkdown,
+    (_event, input: { title: string; markdown: string; filename?: string }) =>
+      bridge.importMarkdown(input),
+  )
+  handle(MEMORY_CHANNELS.pickMarkdownFiles, () => bridge.pickMarkdownFiles())
+  handle(
+    MEMORY_CHANNELS.listDocuments,
+    (_event, limit?: number, offset?: number) => bridge.listDocuments(limit, offset),
+  )
+  handle(MEMORY_CHANNELS.getDocument, (_event, id: string) => bridge.getDocument(id))
+  handle(MEMORY_CHANNELS.deleteDocument, (_event, id: string) => bridge.deleteDocument(id))
+  handle(MEMORY_CHANNELS.atomicProvenance, (_event, id: string) => bridge.atomicProvenance(id))
   handle(
     MEMORY_CHANNELS.captureDocumentRewrite,
     (_event, input: MemoryDocumentRewriteInput) => bridge.captureDocumentRewrite(input),
@@ -877,6 +1072,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
+  const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
+  await documentAssets.initialize().catch((error) => {
+    console.error('Failed to initialize local document assets', error)
+  })
+  protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   installIpcRouters()
   registerGatewayHandlers()
   registerOpenConnectorHandlers()
@@ -898,29 +1098,68 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
       return null
     })
+    // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
+    knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
+    const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
+      console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
+      return null
+    })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         ...(ooCliBridge ? { NXCORE_CONNECTOR_AGENT_MODE: 'local' } : {}),
-        ...(memoryCore ? {
-          NXCORE_MEMORY_ENABLED: 'true',
-          NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
-          NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
-        } : {}),
+        ...(memoryCore
+          ? {
+            NXCORE_MEMORY_ENABLED: 'true',
+            NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
+            NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
+          }
+          : {}),
+        ...(knowledge
+          ? {
+            NXCORE_KNOWLEDGE_ENABLED: 'true',
+            NXCORE_KNOWLEDGE_BASE_URL: knowledge.baseUrl,
+            NXCORE_KNOWLEDGE_SERVICE_ID: knowledge.serviceId,
+            NXCORE_KNOWLEDGE_TEAM_ID: knowledge.teamId,
+            // Room 级 wiki 模式（docs/room-wiki-plan.md）：wiki 由 gateway 按
+            // Room 懒创建并随会话解析，桌面端不再注入全局 wiki_id。
+            NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: 'true',
+          }
+          : {}),
       },
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
+    cursorCompletionSupervisor = new GatewaySupervisor(
+      join(dataDirectory, 'cursor-completion-service'),
+      { NXCORE_MEMORY_ENABLED: 'false' },
+      {
+        devScript: 'dev:cursor-completion',
+        packagedEntry: 'cursor-completion-serve.js',
+        logLabel: 'cursor-completion',
+        devPortEnvironment: 'NXCORE_CURSOR_COMPLETION_DEV_PORT',
+      },
+    )
+    const cursorCompletionGateway = await cursorCompletionSupervisor.start()
+    console.info(
+      `Cursor completion service ready at ${cursorCompletionGateway.baseUrl} `
+      + `(pid=${cursorCompletionGateway.pid})`,
+    )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
+    cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
+    registerCursorCompletionAgentHandlers(cursorCompletionAgentBridge)
     registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
-    registerDocumentHandlers(documentGatewayBridge)
+    registerDocumentHandlers(documentGatewayBridge, documentAssets)
     registerDocumentPdfExportHandler()
+    registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
+    registerFilesHandlers(new FilesGatewayBridge(gatewaySupervisor))
+    registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
     const recordingsDirectory=join(dataDirectory,'recordings')
@@ -978,6 +1217,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    cursorCompletionAgentBridge?.dispose()
+    cursorCompletionAgentBridge = null
     documentGatewayBridge?.dispose()
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
@@ -986,8 +1227,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
+    await cursorCompletionSupervisor?.shutdown()
+    cursorCompletionSupervisor = null
     await memoryCoreSupervisor?.shutdown()
     memoryCoreSupervisor = null
+    await knowledgeServiceSupervisor?.shutdown()
+    knowledgeServiceSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
     app.quit()
     return
@@ -1007,8 +1252,11 @@ app.on('before-quit', (event) => {
   const connectorCli = ooCliBridge
   const connectorRuntime = openConnectorSupervisor
   const connectorConsole = openConnectorConsoleWindow
+  const cursorCompletion = cursorCompletionSupervisor
   const memoryCore = memoryCoreSupervisor
+  const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
+  const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
   const recordings = recordingStore
@@ -1018,8 +1266,11 @@ app.on('before-quit', (event) => {
   ooCliBridge = null
   openConnectorSupervisor = null
   openConnectorConsoleWindow = null
+  cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
+  knowledgeServiceSupervisor = null
   agentGatewayBridge = null
+  cursorCompletionAgentBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
   recordingStore = null
@@ -1028,6 +1279,7 @@ app.on('before-quit', (event) => {
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
   agentBridge?.dispose()
+  cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
@@ -1036,7 +1288,9 @@ app.on('before-quit', (event) => {
     recordings?.dispose(),
     gateway?.shutdown(),
     connectorRuntime?.shutdown(),
+    cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
+    knowledgeService?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

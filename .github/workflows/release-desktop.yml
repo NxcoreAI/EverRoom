@@ -231,9 +231,18 @@ jobs:
           try {
             $electron = (Resolve-Path 'apps/desktop/node_modules/electron/dist/electron.exe').Path
             $sqliteEntry = (Resolve-Path "$sqliteRoot/lib/win32-x64.js").Path
-            & $electron -e "const Database=require(process.argv[1]);const db=new Database(':memory:');if(db.prepare('select 1 value').get().value!==1)process.exit(1);db.close()" $sqliteEntry
-            if ($LASTEXITCODE -ne 0) {
-              throw 'Electron failed the packaged SQLite smoke test'
+            $stdoutPath = Join-Path $env:RUNNER_TEMP 'sqlite-smoke.stdout.log'
+            $stderrPath = Join-Path $env:RUNNER_TEMP 'sqlite-smoke.stderr.log'
+            $script = "const Database=require(process.argv[1]);const db=new Database(':memory:');if(db.prepare('select 1 value').get().value!==1)process.exit(1);db.close();console.log('SQLite smoke test passed')"
+            $arguments = @('-e', ('"' + $script + '"'), ('"' + $sqliteEntry + '"'))
+            $process = Start-Process -FilePath $electron -ArgumentList $arguments -NoNewWindow -Wait -PassThru `
+              -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+            $standardOutput = [string](Get-Content $stdoutPath -Raw -ErrorAction SilentlyContinue)
+            $standardError = [string](Get-Content $stderrPath -Raw -ErrorAction SilentlyContinue)
+            if ($standardOutput) { Write-Host $standardOutput.TrimEnd() }
+            if ($standardError) { Write-Host $standardError.TrimEnd() }
+            if ($process.ExitCode -ne 0) {
+              throw "Electron failed the packaged SQLite smoke test (exit code $($process.ExitCode)): $standardError"
             }
           } finally {
             Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
@@ -264,6 +273,12 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Download macOS artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

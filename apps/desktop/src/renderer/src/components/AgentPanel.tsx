@@ -3,12 +3,12 @@ import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink } from
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
-import { AgentPanelSkeleton } from '@/components/agent/AgentPanelSkeleton'
 import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
 import { AgentToolbar } from '@/components/agent/AgentToolbar'
 import {
   agentSessionLinkDestination,
   navigationKey,
+  navigationRequiresSessionHandoff,
   parseAgentNavigationTarget,
   type AgentNavigationRequest,
   type AgentSessionRouteRequest,
@@ -70,8 +70,6 @@ export function AgentPanel({
     : `${pageLabel} · 未选择文本`
   const session = useAgentSession(pageLabel, roomId, rooms)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
-  // Gateway 启动期间会话接口挂起、无任何数据,整块面板先用骨架屏占位。
-  const panelBooting = session.loading && session.messages.length === 0 && session.sessions.length === 0
 
   const focusComposer = () => {
     window.requestAnimationFrame(() => composerRef.current?.focus())
@@ -151,8 +149,13 @@ export function AgentPanel({
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
     if ((navigationRequest.target.roomId ?? null) !== roomId) return
-    if (!roomBackendReady || !session.scopeReady || session.loading || session.activeRunId || submitting) return
     if (handledRequestKeysRef.current.has(navigationRequest.key)) return
+    if (!navigationRequiresSessionHandoff(navigationRequest)) {
+      handledRequestKeysRef.current.add(navigationRequest.key)
+      onNavigationConsumed(navigationRequest.key)
+      return
+    }
+    if (!roomBackendReady || !session.scopeReady || session.loading || session.activeRunId || submitting) return
     handledRequestKeysRef.current.add(navigationRequest.key)
     setSubmitting(true)
     void (async () => {
@@ -290,8 +293,6 @@ export function AgentPanel({
     />
   )
 
-  if (panelBooting) return <AgentPanelSkeleton />
-
   return (
     <aside className="agent-panel">
       <AgentToolbar>
@@ -321,6 +322,7 @@ export function AgentPanel({
       <AgentChatView
         activeDocument={activeDocument}
         activeRunId={session.activeRunId}
+        activityByRun={session.activityByRun}
         availableRooms={rooms}
         composer={composer}
         currentSessionId={session.sessionId}
@@ -333,7 +335,6 @@ export function AgentPanel({
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt) => void sendPrompt(prompt)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
-        onOpenPatchDocument={({ roomId, documentId }) => onOpenDocument({ roomId, documentId })}
         onSelectRoom={(room) => void selectDocumentRoom(room)}
         onSelectDocument={(selection) => void selectDocument(selection)}
         onSelectPrompt={(prompt) => {

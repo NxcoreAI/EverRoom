@@ -186,28 +186,27 @@ export class AppliedSequenceTracker {
   }
 }
 
-export function eventsAfterLastDocumentTerminal<T extends { type: string }>(events: T[]): T[] {
-  let terminalIndex = -1
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const type = events[index]?.type
-    if (type === 'document.committed' || type === 'document.aborted') {
-      terminalIndex = index
-      break
-    }
+export function operationStreamChunksToApply<T extends { sequence: number }>(
+  chunks: readonly T[],
+  sequences: AppliedSequenceTracker,
+  baselineFromAuthoritativeDraft: boolean,
+): T[] {
+  if (baselineFromAuthoritativeDraft) {
+    for (const chunk of chunks) sequences.record(chunk.sequence)
   }
-  return terminalIndex >= 0 ? events.slice(terminalIndex) : events
+  return chunks.filter((chunk) => !sequences.has(chunk.sequence))
 }
 
 export function assignStableBlockIds(
   nodes: TiptapJsonContent[],
-  transactionId: string,
+  operationId: string,
   startOrdinal: number,
 ): { nodes: TiptapJsonContent[]; nextOrdinal: number } {
   let ordinal = startOrdinal
   return {
     nodes: nodes.map((node) => ({
       ...node,
-      attrs: { ...node.attrs, id: `${transactionId}:${String(ordinal++)}` },
+      attrs: { ...node.attrs, id: `${operationId}:${String(ordinal++)}` },
     })),
     nextOrdinal: ordinal,
   }

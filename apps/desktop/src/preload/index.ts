@@ -2,6 +2,7 @@ import '@sentry/electron/preload'
 
 import { contextBridge, ipcRenderer } from 'electron'
 
+import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
   SaveContextRoomSnapshotInput,
 } from '@nxcore/agent-contract'
@@ -10,6 +11,7 @@ import type {
   MemoryConversationListOptions,
   MemoryDocumentRewriteInput,
 } from '../shared/memory'
+import type { IngestPipelines } from '../shared/ingest'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
@@ -82,6 +84,9 @@ const api: NxcoreDesktopApi = {
       return () => requestErrorListeners.delete(listener)
     },
     report: reportRequestError,
+  },
+  diagnostics: {
+    log: (input) => ipcRenderer.send('app:diagnostic-log', input),
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
@@ -164,6 +169,14 @@ const api: NxcoreDesktopApi = {
       invoke('memory:search-conversations', query, limit, sessionId),
     deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
       invoke('memory:delete-conversations', target),
+    importMarkdown: (input: { title: string; markdown: string; filename?: string }) =>
+      invoke('memory:import-markdown', input),
+    pickMarkdownFiles: () => invoke('memory:pick-markdown-files'),
+    listDocuments: (limit?: number, offset?: number) =>
+      invoke('memory:documents:list', limit, offset),
+    getDocument: (id: string) => invoke('memory:documents:get', id),
+    deleteDocument: (id: string) => invoke('memory:documents:delete', id),
+    atomicProvenance: (id: string) => invoke('memory:atomic-provenance', id),
     captureDocumentRewrite: (input: MemoryDocumentRewriteInput) =>
       invoke('memory:capture-document-rewrite', input),
   },
@@ -211,26 +224,38 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('agent:event', handleEvent)
     },
   },
+  cursorCompletionAgent: {
+    createSession: (input) => invokeQuietly('cursor-completion-agent:create-session', input),
+    deleteSession: (sessionId) =>
+      invokeQuietly('cursor-completion-agent:delete-session', sessionId),
+    getEvents: (sessionId, runId, afterSeq) =>
+      invokeQuietly('cursor-completion-agent:get-events', sessionId, runId, afterSeq),
+    startRun: (sessionId, input) =>
+      invokeQuietly('cursor-completion-agent:start-run', sessionId, input),
+    cancelRun: (runId) => invokeQuietly('cursor-completion-agent:cancel-run', runId),
+  },
   documents: {
     list: (roomId) => invoke('documents:list', roomId),
     listTrash: (roomId) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
+    listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
+    listVersions: (documentId) => invoke('documents:list-versions', documentId),
+    restoreVersion: (documentId, version, baseVersion) =>
+      invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),
-    listPatches: (documentId, status) => invoke('documents:list-patches', documentId, status),
-    getPatch: (patchId) => invoke('documents:get-patch', patchId),
-    applyPatch: (patchId, input) => invoke('documents:apply-patch', patchId, input),
-    rejectPatch: (patchId) => invoke('documents:reject-patch', patchId),
-    acceptContinuationBlock: (patchId, input) => invoke('documents:accept-continuation-block', patchId, input),
-    rejectContinuationBlock: (patchId, input) => invoke('documents:reject-continuation-block', patchId, input),
-    closeContinuation: (patchId) => invoke('documents:close-continuation', patchId),
+    listOperations: (filters) => invokeQuietly('documents:list-operations', filters),
+    startOperation: (input) => invokeQuietly('documents:start-operation', input),
+    getOperation: (operationId) => invokeQuietly('documents:get-operation', operationId),
+    executeOperationCommand: (operationId, input) =>
+      invokeQuietly('documents:execute-operation-command', operationId, input),
+    storeImage: (documentId, input) => invoke('documents:store-image', documentId, input),
     import: (input) => invoke('documents:import', input),
     save: (documentId, input) => invoke('documents:save', documentId, input),
     delete: (documentId) => invoke('documents:delete', documentId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
     emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
-    acknowledge: (transactionId, input) => invoke('documents:acknowledge', transactionId, input),
     exportPdf: (input) => invoke('documents:export-pdf', input),
     subscribe: (roomId) => invoke('documents:subscribe', roomId),
     unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),
@@ -240,6 +265,13 @@ const api: NxcoreDesktopApi = {
       }
       ipcRenderer.on('documents:event', handleEvent)
       return () => ipcRenderer.removeListener('documents:event', handleEvent)
+    },
+    onOperationChanged: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, operationId: string) => {
+        listener(operationId)
+      }
+      ipcRenderer.on('documents:operation-changed', handleEvent)
+      return () => ipcRenderer.removeListener('documents:operation-changed', handleEvent)
     },
   },
   sources: {
@@ -261,6 +293,46 @@ const api: NxcoreDesktopApi = {
     setPaused: (id, paused) => invoke('sources:set-paused', id, paused),
     disconnect: (id, deleteLocalData) =>
       invoke('sources:disconnect', id, deleteLocalData),
+  },
+  knowledge: {
+    listRooms: (origin) => invoke('knowledge:rooms:list', origin),
+    upsertRoom: (input) => invoke('knowledge:rooms:upsert', input),
+    deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
+    listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
+    readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
+    listWikis: () => invoke('knowledge:wikis:list'),
+    getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),
+    listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
+    getEntity: (entityId: string) => invoke('knowledge:entities:get', entityId),
+    promoteEntity: (entityId: string) => invoke('knowledge:entities:promote', entityId),
+    mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
+    listUnmatched: () => invoke('knowledge:unmatched:list'),
+    attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
+      invoke('knowledge:docs:attach', sourceKind, sourceId, input),
+    listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
+    revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
+    pickAndUploadFiles: () => invoke('knowledge:files:pick-and-upload'),
+    listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
+    readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
+    revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
+  },
+  files: {
+    list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
+    get: (fileId: string) => invoke('files:get', fileId),
+    readMarkdown: (fileId: string) => invoke('files:read-markdown', fileId),
+    rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
+    delete: (fileId: string) => invoke('files:delete', fileId),
+    reveal: (fileId: string) => invoke('files:reveal', fileId),
+    pickAndImport: (options?: { pipelines?: IngestPipelines }) =>
+      invoke('files:pick-and-import', options),
+  },
+  ingest: {
+    listEvents: (query: {
+      limit?: number
+      offset?: number
+      sourceKind?: string
+      sourceId?: string
+    }) => invoke('ingest:events:list', query),
   },
 }
 

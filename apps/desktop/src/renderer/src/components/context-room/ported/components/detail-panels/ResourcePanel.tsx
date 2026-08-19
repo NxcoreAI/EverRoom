@@ -102,15 +102,12 @@ export interface LocalOfficeFile {
   size: number;
 }
 
-const LOCAL_OFFICE_FILES: LocalOfficeFile[] = [
-  { name: 'V1 发布检查清单.xlsx', path: '/演示文件/V1 发布检查清单.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', modifiedAt: new Date(2026, 6, 9), size: 42_160 },
-  { name: '客户沟通纪要.docx', path: '/演示文件/客户沟通纪要.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', modifiedAt: new Date(2026, 6, 8), size: 28_640 },
-  { name: '阶段汇报.pptx', path: '/演示文件/阶段汇报.pptx', mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', modifiedAt: new Date(2026, 6, 7), size: 184_320 },
-];
+// 演示文件已移除：待接入真实文件系统索引（fileItems hostfsPath 为设备态，见 room-wiki 方案 §12）。
+const LOCAL_OFFICE_FILES: LocalOfficeFile[] = [];
 
 function HostFSOfficePicker({ onAdd, onClose }: { onAdd: (file: LocalOfficeFile) => void; onClose: () => void }) {
   const [path, setPath] = useState('/');
-  const folders = path === '/' ? [{ name: '演示文件', path: '/演示文件' }] : [];
+  const folders: { name: string; path: string }[] = [];
   const officeFiles = path === '/演示文件'
     ? LOCAL_OFFICE_FILES.filter((entry) => HOSTFS_OFFICE_EXTENSIONS.has(entry.name.split('.').pop()?.toLowerCase() ?? ''))
     : [];
@@ -455,7 +452,7 @@ export function ResourceTree({
                         className={`context-room-resource-item${selectedId === resource.id ? ' is-selected' : ''}`}
                         onClick={() => onSelect(resource)}
                       >
-                        {resource.kind === 'cloud-doc' ? <FileText aria-hidden="true" /> : resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : <FileText aria-hidden="true" />}
+                        {resource.kind === 'office-file' && resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : <FileText aria-hidden="true" />}
                         <span><b>{resource.name}</b><small>{resource.updatedAt}</small></span>
                       </button>
                     )}

@@ -1,6 +1,5 @@
-import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { showToast } from '@/state/toast'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
 import {
@@ -8,7 +7,7 @@ import {
   createContextRoomResourceLibrary,
   getRoomResource,
 } from '../resources'
-import type { ContextRoomRecord, ContextRoomResource } from '../types'
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../types'
 import { useContextRoomLayout } from '../hooks/useContextRoomLayout'
 import { ObjectDetailView } from './ObjectDetailView'
 import type { DetailObject } from './ObjectDetailView'
@@ -23,9 +22,9 @@ export function PortedDetail({
   rooms,
   backendDocuments,
   trashedDocuments,
-  documentEvents,
   focusedDocumentId,
   focusedBlockId,
+  documentFocusRequestId,
   initialActivePane,
   initialObject,
   onActivePaneChange,
@@ -43,9 +42,9 @@ export function PortedDetail({
   rooms: ContextRoomRecord[]
   backendDocuments: RoomDocument[]
   trashedDocuments: RoomDocument[]
-  documentEvents: Record<string, DocumentEvent[]>
   focusedDocumentId: string | null
   focusedBlockId: string | null
+  documentFocusRequestId: number | null
   initialActivePane: DetailPane
   initialObject?: { kind: 'file' | 'mail' | 'meeting'; id: string } | null
   onActivePaneChange: (pane: DetailPane) => void
@@ -62,6 +61,8 @@ export function PortedDetail({
   const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
+  /** WikiPane 打开过的 wiki 页资源（静态 library 不含它们，编辑栏解析时并入）。 */
+  const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
   const [selectedMailId, setSelectedMailId] = useState<string | null>(null)
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
   const handledDocumentFocusKey = useRef<string | null>(null)
@@ -88,8 +89,15 @@ export function PortedDetail({
     onEnterDocuments: () => undefined,
   })
 
+  const findWikiPageResource = useCallback(
+    (roomId: string, resourceId: string) =>
+      wikiPageResources.find((resource) => resource.id === resourceId && resource.roomId === roomId),
+    [wikiPageResources],
+  )
   const selectedResource = selectedResourceId
-    ? (getRoomResource(library, room.id, selectedResourceId) ?? null)
+    ? (getRoomResource(library, room.id, selectedResourceId)
+      ?? findWikiPageResource(room.id, selectedResourceId)
+      ?? null)
     : null
   const selectedMemory = selectedMemoryId
     ? room.memoryItems.find((item) => item.id === selectedMemoryId) ?? null
@@ -100,6 +108,17 @@ export function PortedDetail({
     setSelectedObject(null)
     setSelectedResourceId(resource.id)
     if (!layout.panels.includes('documents')) layout.switchPane('documents')
+    layout.setMobileContent(true)
+  }, [layout, room.id])
+
+  const openWikiPage = useCallback((resource: ContextRoomWikiPageResource) => {
+    if (resource.roomId !== room.id) return
+    setWikiPageResources((current) =>
+      current.some((item) => item.id === resource.id) ? current : [...current, resource])
+    setSelectedObject(null)
+    setSelectedResourceId(resource.id)
+    // 不切走 documents：编辑栏对 wiki-page 资源单独放宽面板门槛（见 WorkspaceContent），左侧目录树保持在场
+    if (!layout.panels.includes('wiki')) layout.switchPane('wiki')
     layout.setMobileContent(true)
   }, [layout, room.id])
 
@@ -138,45 +157,19 @@ export function PortedDetail({
       room.id,
       focusedDocumentId,
       Boolean(resource),
+      documentFocusRequestId,
     )
     handledDocumentFocusKey.current = decision.handledKey
     if (decision.shouldOpen && resource && resource.id !== selectedResourceId) openResource(resource)
-  }, [focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
+  }, [documentFocusRequestId, focusedDocumentId, library.resources, openResource, room.id, selectedResourceId])
 
   useEffect(() => {
-    if (!focusedBlockId || !focusedDocumentId) return
-    let cancelled = false
-    let frame = 0
-    let attempts = 0
-    const focusBlock = () => {
-      if (cancelled) return
-      const selector = `[data-block-id="${CSS.escape(focusedBlockId)}"]`
-      const block = document.querySelector<HTMLElement>(selector)
-      if (!block && attempts < 60) {
-        attempts += 1
-        frame = window.requestAnimationFrame(focusBlock)
-        return
-      }
-      if (!block) {
-        showToast({ title: '引用块已失效', message: '已打开文档，但原引用块不存在。' })
-        return
-      }
-      block.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      block.dataset.referenceFocus = 'true'
-      window.setTimeout(() => delete block.dataset.referenceFocus, 1800)
-    }
-    frame = window.requestAnimationFrame(focusBlock)
-    return () => {
-      cancelled = true
-      window.cancelAnimationFrame(frame)
-    }
-  }, [focusedBlockId, focusedDocumentId, selectedResourceId])
-
-  useEffect(() => {
-    if (selectedResourceId && getRoomResource(library, room.id, selectedResourceId)) return
+    if (selectedResourceId
+      && (getRoomResource(library, room.id, selectedResourceId)
+        || findWikiPageResource(room.id, selectedResourceId))) return
     const nextDocument = library.resources.find((resource) => resource.kind === 'cloud-doc')
     setSelectedResourceId(nextDocument?.id ?? null)
-  }, [library, room.id, selectedResourceId])
+  }, [library, room.id, selectedResourceId, findWikiPageResource])
 
   const openObject = useCallback((target: WorkspaceObjectPreview) => {
     if (target.kind === 'mail') {
@@ -235,7 +228,9 @@ export function PortedDetail({
           selectedResource={selectedResource}
           backendDocuments={backendDocuments}
           trashedDocuments={trashedDocuments}
-          documentEvents={documentEvents}
+          focusedDocumentId={focusedDocumentId}
+          focusedBlockId={focusedBlockId}
+          documentFocusRequestId={documentFocusRequestId}
           onBackendDocumentChange={onBackendDocumentChange}
           onCreateDocument={createDocument}
           onDeleteDocument={onDeleteDocument}
@@ -243,6 +238,7 @@ export function PortedDetail({
           onDeleteDocumentPermanently={onDeleteDocumentPermanently}
           onEmptyTrash={onEmptyTrash}
           onSelectResource={openResource}
+          onOpenWikiPage={openWikiPage}
           onAddFile={addLocalFile}
           onOpenMemory={setSelectedMemoryId}
           onOpenObject={openObject}

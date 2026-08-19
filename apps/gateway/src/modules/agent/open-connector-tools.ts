@@ -3,6 +3,7 @@ import type {
   PiAgentRuntimeTool,
   PiAgentRuntimeToolFailurePolicy,
 } from '@nxcore/agent-runtime-pi';
+import type { StartRuntimeRunInput } from '@nxcore/agent-runtime';
 import type { OpenConnectorCliConfig } from '../../config.js';
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
@@ -548,7 +549,7 @@ export function createOpenConnectorPiTools(
         );
         return textResult(connectorSearchResults(result, service, exactAction));
       },
-      classifyFailure: (error, _input, params) => connectorFailurePolicy('search', error, params),
+      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => connectorFailurePolicy('search', error, params),
     },
     {
       name: 'connector_schema',
@@ -588,7 +589,7 @@ export function createOpenConnectorPiTools(
         exposedSchemas.set(runKey, exposed);
         return textResult(schema);
       },
-      classifyFailure: (error, _input, params) => connectorFailurePolicy('schema', error, params),
+      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => connectorFailurePolicy('schema', error, params),
     },
     {
       name: 'connector_apps',
@@ -612,7 +613,7 @@ export function createOpenConnectorPiTools(
         ['connector', 'apps', String(params.service), '--json'],
         signal,
       )),
-      classifyFailure: (error, _input, params) => connectorFailurePolicy('apps', error, params),
+      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => connectorFailurePolicy('apps', error, params),
     },
     {
       name: 'connector_run',
@@ -699,7 +700,7 @@ export function createOpenConnectorPiTools(
         if (service === 'notion') rememberNotionIds(input.runId, result);
         return textResult(result);
       },
-      classifyFailure: (error, _input, params) => connectorFailurePolicy('run', error, params),
+      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => connectorFailurePolicy('run', error, params),
     },
   ];
 }

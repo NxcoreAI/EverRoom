@@ -28,6 +28,14 @@ export function documentBlockNavigationKey(target: DocumentBlockReferenceInput):
   return `${target.roomId}\u0000${target.documentId}\u0000${target.blockId}`
 }
 
+export function documentBlockFocusRequestKey(
+  documentId: string,
+  blockId: string,
+  requestId: number | null | undefined,
+): string {
+  return `${documentId}\u0000${blockId}\u0000${requestId ?? 'legacy'}`
+}
+
 export function planDocumentBlockNavigation(
   handledKey: string | null,
   target: DocumentBlockReferenceInput,

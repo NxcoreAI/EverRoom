@@ -1,4 +1,4 @@
-import type { DocumentEvent, RoomDocument } from '@nxcore/agent-contract';
+import type { RoomDocument } from '@nxcore/agent-contract';
 import { BrainCircuit, CalendarDays, CheckSquare2, ChevronLeft, FileText, Mail, Network } from 'lucide-react';
 
 import { createContextRoomResourceLibrary } from '../../resources';
@@ -9,6 +9,7 @@ import { ObjectPreview, type WorkspaceObjectPreview } from '../detail-panels';
 import { FakeDocumentContent } from '../detail-panels/FakeDocumentPane';
 import { PanelEmptyState } from '../detail-panels/PanelEmptyState';
 import { OfficePreview } from '../detail-panels/ResourcePanel';
+import { WikiPageReader } from '../detail-panels/WikiPageReader';
 
 export function WorkspaceContent({
   room,
@@ -17,7 +18,9 @@ export function WorkspaceContent({
   selectedObject,
   selectedResource,
   backendDocuments,
-  documentEvents,
+  focusedDocumentId,
+  focusedBlockId,
+  documentFocusRequestId,
   onBackendDocumentChange,
   onDeleteDocument,
   onOpenRoom,
@@ -31,7 +34,9 @@ export function WorkspaceContent({
   selectedObject: WorkspaceObjectPreview | null;
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
-  documentEvents: Record<string, DocumentEvent[]>;
+  focusedDocumentId: string | null;
+  focusedBlockId: string | null;
+  documentFocusRequestId: number | null;
   onBackendDocumentChange: (document: RoomDocument) => void;
   onDeleteDocument: (document: RoomDocument) => Promise<void>;
   onOpenRoom: (roomId: string) => void;
@@ -49,7 +54,11 @@ export function WorkspaceContent({
   const visibleObject = selectedObjectOwner && panels.includes(selectedObjectOwner)
     ? selectedObject
     : null;
-  const visibleResource = panels.includes('documents') ? selectedResource : null;
+  // wiki 页面资源例外：知识库面板在场即可显示（从 wiki 目录树/图谱点开的页不切走左栏）
+  const resourcePaneVisible = selectedResource?.kind === 'wiki-page'
+    ? panels.includes('wiki') || panels.includes('documents')
+    : panels.includes('documents');
+  const visibleResource = resourcePaneVisible ? selectedResource : null;
   const showCloudDocs = !visibleObject && visibleResource?.kind === 'cloud-doc';
   const selectedTask = visibleObject?.kind === 'task'
     ? room.actionItems.find((item) => item.id === visibleObject.id)
@@ -109,12 +118,17 @@ export function WorkspaceContent({
           room={room}
           resource={visibleResource}
           backendDocuments={backendDocuments}
-          documentEvents={documentEvents}
+          focusedBlockId={focusedDocumentId === visibleResource.binding.docId ? focusedBlockId : null}
+          documentFocusRequestId={focusedDocumentId === visibleResource.binding.docId
+            ? documentFocusRequestId
+            : null}
           onBackendDocumentChange={onBackendDocumentChange}
           onDeleteDocument={onDeleteDocument}
         />
       ) : visibleResource?.kind === 'office-file' ? (
         <OfficePreview resource={visibleResource} />
+      ) : visibleResource?.kind === 'wiki-page' ? (
+        <WikiPageReader resource={visibleResource} />
       ) : (
         <PanelEmptyState
           className="context-room-content-empty"

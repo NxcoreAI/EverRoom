@@ -1,6 +1,7 @@
 import type {
   MemoryAtomicItem,
   MemoryAtomicPage,
+  MemoryAtomicProvenance,
   MemoryAtomicQuery,
   MemoryCaptureMessage,
   MemoryConversationHit,
@@ -8,6 +9,9 @@ import type {
   MemoryConversationPage,
   MemoryConversationQuery,
   MemoryCoreFile,
+  MemoryDocumentDetail,
+  MemoryDocumentImportResult,
+  MemoryDocumentItem,
   MemoryPipelineStatus,
   MemoryRuntimeConfig,
   MemoryScenarioEntry,
@@ -15,6 +19,8 @@ import type {
 } from "./types.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
+/** 文档导入：切块 + 逐块 embedding + L0 落库，大文档远超普通查询超时。 */
+const DOCUMENT_IMPORT_TIMEOUT_MS = 120_000;
 
 interface ApiResponseEnvelope<T> {
   code: number;
@@ -78,12 +84,18 @@ export class MemoryCoreClient {
     });
   }
 
-  /** L1：原子记忆混合检索（不限定 session，跨会话聚合）。 */
-  async searchAtomic(query: string, limit: number): Promise<MemoryAtomicItem[]> {
+  /** L1：原子记忆混合检索（不限定 session，跨会话聚合）；timeRange 按命中项 updated_at 过滤（含端点）。 */
+  async searchAtomic(
+    query: string,
+    limit: number,
+    timeRange?: { start?: string | undefined; end?: string | undefined },
+  ): Promise<MemoryAtomicItem[]> {
     const data = await this.post<{ items?: MemoryAtomicItem[] }>("/v3/atomic/search", {
       ...this.isolationBody,
       query,
       limit,
+      ...(timeRange?.start ? { time_start: timeRange.start } : {}),
+      ...(timeRange?.end ? { time_end: timeRange.end } : {}),
     });
     return data?.items ?? [];
   }
@@ -177,6 +189,7 @@ export class MemoryCoreClient {
       offset: query.offset,
       ...(query.timeStart ? { time_start: query.timeStart } : {}),
       ...(query.timeEnd ? { time_end: query.timeEnd } : {}),
+      ...(query.sourceKind ? { source_kind: query.sourceKind } : {}),
     });
     return { messages: data?.messages ?? [], total: data?.total ?? 0 };
   }
@@ -252,9 +265,71 @@ export class MemoryCoreClient {
       .then((data) => data as MemoryPipelineStatus);
   }
 
-  private async post<T>(path: string, body: Record<string, unknown>): Promise<T | undefined> {
+  // ---- 文档记忆子系统（md 一等来源，fork /v3/document/*）----
+
+  /** 导入 md 文档：callerRef 传调用方资产 id（EverRoom 为知识资产 file id）。 */
+  async importDocument(input: {
+    title: string;
+    markdown: string;
+    callerRef: string;
+    taskId?: string;
+  }): Promise<MemoryDocumentImportResult> {
+    return this.post<MemoryDocumentImportResult>("/v3/document/import", {
+      ...this.isolationBody,
+      title: input.title,
+      markdown: input.markdown,
+      caller_ref: input.callerRef,
+      ...(input.taskId ? { task_id: input.taskId } : {}),
+    }, DOCUMENT_IMPORT_TIMEOUT_MS) as Promise<MemoryDocumentImportResult>;
+  }
+
+  /** 文档详情：登记行 + 分块（含正文）+ 派生 L1（双向溯源数据源）。 */
+  async getDocument(documentId: string): Promise<MemoryDocumentDetail> {
+    return this.post<MemoryDocumentDetail>("/v3/document/get", {
+      ...this.isolationBody,
+      document_id: documentId,
+    }) as Promise<MemoryDocumentDetail>;
+  }
+
+  /** 文档登记清单（当前身份下每身份键最新版本）。 */
+  async listDocuments(query?: {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ documents: MemoryDocumentItem[]; total: number }> {
+    const data = await this.post<{ documents?: MemoryDocumentItem[]; total?: number }>(
+      "/v3/document/list",
+      {
+        ...this.isolationBody,
+        limit: query?.limit ?? 50,
+        offset: query?.offset ?? 0,
+      },
+    );
+    return { documents: data?.documents ?? [], total: data?.total ?? 0 };
+  }
+
+  /** 删除文档（级联清 L0 会话、分块锚点、派生 L1 由 MemoryCore 负责）。 */
+  async deleteDocument(documentId: string): Promise<{ document_id: string; deleted: boolean }> {
+    return this.post("/v3/document/delete", {
+      ...this.isolationBody,
+      document_id: documentId,
+    }) as Promise<{ document_id: string; deleted: boolean }>;
+  }
+
+  /** 原子记忆一站式溯源：来源会话/文档 + 锚点消息（含文档行区间）。 */
+  async atomicProvenance(memoryId: string): Promise<MemoryAtomicProvenance> {
+    return this.post<MemoryAtomicProvenance>("/v3/atomic/provenance", {
+      ...this.isolationBody,
+      memory_id: memoryId,
+    }) as Promise<MemoryAtomicProvenance>;
+  }
+
+  private async post<T>(
+    path: string,
+    body: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<T | undefined> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs ?? this.timeoutMs);
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {

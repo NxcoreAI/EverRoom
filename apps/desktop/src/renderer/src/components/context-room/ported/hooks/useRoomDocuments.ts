@@ -1,6 +1,8 @@
 import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { hasEmbeddedDocumentImages, localizeDocumentImages } from '../components/detail-editor/documentImageAssets'
+
 export function documentFromEvent(event: DocumentEvent): RoomDocument | null {
   if (!event.payload || typeof event.payload !== 'object') return null
   const document = (event.payload as { document?: unknown }).document
@@ -9,33 +11,36 @@ export function documentFromEvent(event: DocumentEvent): RoomDocument | null {
   return typeof value.id === 'string' && value.roomId === event.roomId ? value as RoomDocument : null
 }
 
-function mergeDocuments(current: RoomDocument[], incoming: RoomDocument[]): RoomDocument[] {
+function newerDocument(current: RoomDocument | undefined, incoming: RoomDocument): RoomDocument {
+  if (!current) return incoming
+  if (incoming.version !== current.version) return incoming.version > current.version ? incoming : current
+  return incoming.updatedAt >= current.updatedAt ? incoming : current
+}
+
+export function mergeRoomDocuments(current: RoomDocument[], incoming: RoomDocument[]): RoomDocument[] {
   const byId = new Map(current.map((document) => [document.id, document]))
-  for (const document of incoming) byId.set(document.id, document)
+  for (const document of incoming) byId.set(document.id, newerDocument(byId.get(document.id), document))
   return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 }
 
-export function isDocumentStreamPresentationEvent(event: Pick<DocumentEvent, 'type'>): boolean {
-  return event.type === 'document.appended' || event.type === 'document.commit-requested'
+export function replaceRoomDocuments(current: RoomDocument[], incoming: RoomDocument[]): RoomDocument[] {
+  const currentById = new Map(current.map((document) => [document.id, document]))
+  return incoming
+    .map((document) => newerDocument(currentById.get(document.id), document))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 }
 
-export function shouldRetainDocumentEvent(
-  event: Pick<DocumentEvent, 'type'>,
-  presentationReady: boolean,
-): boolean {
-  return !isDocumentStreamPresentationEvent(event) || presentationReady
-}
+const DOCUMENT_STATE_EVENT_TYPES = new Set<DocumentEvent['type']>([
+  'document.changed',
+  'document.operation.changed',
+  'document.deleted',
+])
 
 export function useRoomDocuments(roomIds: string[]) {
   const [documentsByRoom, setDocumentsByRoom] = useState<Record<string, RoomDocument[]>>({})
   const [trashedDocumentsByRoom, setTrashedDocumentsByRoom] = useState<Record<string, RoomDocument[]>>({})
-  const [eventsByDocument, setEventsByDocument] = useState<Record<string, DocumentEvent[]>>({})
   const [focusedDocumentByRoom, setFocusedDocumentByRoom] = useState<Record<string, string | null>>({})
   const subscribedRooms = useRef(new Set<string>())
-  const visibleDocumentCounts = useRef(new Map<string, number>())
-  const presentationReadyDocuments = useRef(new Set<string>())
-  const visibilityEpochs = useRef(new Map<string, number>())
-  const refreshQueues = useRef(new Map<string, Promise<void>>())
   const roomKey = useMemo(() => [...roomIds].sort().join('\u0000'), [roomIds])
 
   const upsertDocument = useCallback((document: RoomDocument) => {
@@ -46,7 +51,7 @@ export function useRoomDocuments(roomIds: string[]) {
       }))
       setTrashedDocumentsByRoom((current) => ({
         ...current,
-        [document.roomId]: mergeDocuments(current[document.roomId] ?? [], [document]),
+        [document.roomId]: mergeRoomDocuments(current[document.roomId] ?? [], [document]),
       }))
       return
     }
@@ -56,40 +61,9 @@ export function useRoomDocuments(roomIds: string[]) {
     }))
     setDocumentsByRoom((current) => ({
       ...current,
-      [document.roomId]: mergeDocuments(current[document.roomId] ?? [], [document]),
+      [document.roomId]: mergeRoomDocuments(current[document.roomId] ?? [], [document]),
     }))
   }, [])
-
-  const refreshDocument = useCallback((documentId: string): Promise<void> => {
-    const documents = window.nxcore?.documents
-    if (!documents) return Promise.resolve()
-    const previous = refreshQueues.current.get(documentId) ?? Promise.resolve()
-    const refresh = previous
-      .catch(() => undefined)
-      .then(async () => {
-        upsertDocument(await documents.get(documentId))
-      })
-      .catch(() => undefined)
-    refreshQueues.current.set(documentId, refresh)
-    void refresh.finally(() => {
-      if (refreshQueues.current.get(documentId) === refresh) refreshQueues.current.delete(documentId)
-    })
-    return refresh
-  }, [upsertDocument])
-
-  const refreshPresentationBaseline = useCallback((documentId: string) => {
-    presentationReadyDocuments.current.delete(documentId)
-    const epoch = (visibilityEpochs.current.get(documentId) ?? 0) + 1
-    visibilityEpochs.current.set(documentId, epoch)
-    void refreshDocument(documentId).finally(() => {
-      if (
-        visibilityEpochs.current.get(documentId) === epoch
-        && (visibleDocumentCounts.current.get(documentId) ?? 0) > 0
-      ) {
-        presentationReadyDocuments.current.add(documentId)
-      }
-    })
-  }, [refreshDocument])
 
   const refreshRoom = useCallback(async (roomId: string): Promise<void> => {
     const documents = window.nxcore?.documents
@@ -98,8 +72,14 @@ export function useRoomDocuments(roomIds: string[]) {
       documents.list(roomId),
       documents.listTrash(roomId),
     ])
-    setDocumentsByRoom((current) => ({ ...current, [roomId]: mergeDocuments([], listed) }))
-    setTrashedDocumentsByRoom((current) => ({ ...current, [roomId]: mergeDocuments([], trashed) }))
+    setDocumentsByRoom((current) => ({
+      ...current,
+      [roomId]: replaceRoomDocuments(current[roomId] ?? [], listed),
+    }))
+    setTrashedDocumentsByRoom((current) => ({
+      ...current,
+      [roomId]: replaceRoomDocuments(current[roomId] ?? [], trashed),
+    }))
     const activeDraft = listed.find((document) => document.status === 'draft' && document.activeTransactionId)
     if (activeDraft) {
       setFocusedDocumentByRoom((current) => ({ ...current, [roomId]: activeDraft.id }))
@@ -110,41 +90,21 @@ export function useRoomDocuments(roomIds: string[]) {
     const documents = window.nxcore?.documents
     if (!documents) return
     return documents.onEvent(({ event }) => {
-      const retainEvent = shouldRetainDocumentEvent(
-        event,
-        presentationReadyDocuments.current.has(event.documentId),
-      )
-      if (retainEvent) {
-        setEventsByDocument((current) => {
-          const events = current[event.documentId] ?? []
-          if (events.some((candidate) => candidate.id === event.id)) return current
-          return { ...current, [event.documentId]: [...events, event] }
-        })
-      } else {
-        refreshPresentationBaseline(event.documentId)
-      }
+      if (!DOCUMENT_STATE_EVENT_TYPES.has(event.type)) return
 
       const document = documentFromEvent(event)
-      if (document) upsertDocument(document)
-      if (event.type === 'document.opened') {
-        setFocusedDocumentByRoom((current) => ({ ...current, [event.roomId]: event.documentId }))
-      } else if (event.type === 'document.committed') {
-        if (!presentationReadyDocuments.current.has(event.documentId)) {
-          setEventsByDocument((current) => ({ ...current, [event.documentId]: [event] }))
+      if (document) {
+        upsertDocument(document)
+        if (document.status === 'draft' && document.activeTransactionId) {
+          setFocusedDocumentByRoom((current) => ({ ...current, [event.roomId]: document.id }))
+        } else {
+          setFocusedDocumentByRoom((current) => current[event.roomId] === document.id
+            ? { ...current, [event.roomId]: null }
+            : current)
         }
-        setFocusedDocumentByRoom((current) => current[event.roomId] === event.documentId
-          ? { ...current, [event.roomId]: null }
-          : current)
-      } else if (event.type === 'document.trashed') {
-        setEventsByDocument((current) => {
-          const next = { ...current }
-          delete next[event.documentId]
-          return next
-        })
-        setFocusedDocumentByRoom((current) => current[event.roomId] === event.documentId
-          ? { ...current, [event.roomId]: null }
-          : current)
-      } else if (event.type === 'document.aborted' || event.type === 'document.deleted') {
+      }
+
+      if (event.type === 'document.deleted') {
         setDocumentsByRoom((current) => ({
           ...current,
           [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
@@ -153,17 +113,18 @@ export function useRoomDocuments(roomIds: string[]) {
           ...current,
           [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
         }))
-        setEventsByDocument((current) => {
-          const next = { ...current }
-          delete next[event.documentId]
-          return next
-        })
         setFocusedDocumentByRoom((current) => current[event.roomId] === event.documentId
           ? { ...current, [event.roomId]: null }
           : current)
       }
+
+      if (document || event.type === 'document.deleted') {
+        window.dispatchEvent(new CustomEvent('everroom:document-block-references-invalidated', {
+          detail: { roomId: event.roomId, documentId: event.documentId },
+        }))
+      }
     })
-  }, [refreshPresentationBaseline, upsertDocument])
+  }, [upsertDocument])
 
   useEffect(() => {
     const documents = window.nxcore?.documents
@@ -200,68 +161,13 @@ export function useRoomDocuments(roomIds: string[]) {
     if (!documents) return
     for (const roomId of subscribedRooms.current) void documents.unsubscribe(roomId)
     subscribedRooms.current.clear()
-    visibleDocumentCounts.current.clear()
-    presentationReadyDocuments.current.clear()
-    visibilityEpochs.current.clear()
-    refreshQueues.current.clear()
   }, [])
-
-  const registerVisibleDocument = useCallback((documentId: string): (() => void) => {
-    const currentCount = visibleDocumentCounts.current.get(documentId) ?? 0
-    visibleDocumentCounts.current.set(documentId, currentCount + 1)
-    if (currentCount === 0) {
-      setEventsByDocument((current) => {
-        if (!current[documentId]) return current
-        const next = { ...current }
-        delete next[documentId]
-        return next
-      })
-      refreshPresentationBaseline(documentId)
-    }
-
-    let released = false
-    return () => {
-      if (released) return
-      released = true
-      const count = visibleDocumentCounts.current.get(documentId) ?? 0
-      if (count > 1) {
-        visibleDocumentCounts.current.set(documentId, count - 1)
-        return
-      }
-      visibleDocumentCounts.current.delete(documentId)
-      presentationReadyDocuments.current.delete(documentId)
-      visibilityEpochs.current.set(documentId, (visibilityEpochs.current.get(documentId) ?? 0) + 1)
-      setEventsByDocument((current) => {
-        if (!current[documentId]) return current
-        const next = { ...current }
-        delete next[documentId]
-        return next
-      })
-      void refreshDocument(documentId)
-    }
-  }, [refreshDocument, refreshPresentationBaseline])
-
-  const dismissDocumentPresentation = useCallback((documentId: string, transactionId: string) => {
-    setEventsByDocument((current) => {
-      const events = current[documentId]
-      if (!events?.some((event) => event.transactionId === transactionId)) return current
-      const next = { ...current }
-      delete next[documentId]
-      return next
-    })
-    void refreshDocument(documentId)
-  }, [refreshDocument])
 
   const deleteDocument = useCallback(async (document: RoomDocument) => {
     const documents = window.nxcore?.documents
     if (!documents) throw new Error('文档服务不可用')
     await documents.delete(document.id)
     upsertDocument({ ...document, deletedAt: new Date().toISOString() })
-    setEventsByDocument((current) => {
-      const next = { ...current }
-      delete next[document.id]
-      return next
-    })
     setFocusedDocumentByRoom((current) => current[document.roomId] === document.id
       ? { ...current, [document.roomId]: null }
       : current)
@@ -274,11 +180,15 @@ export function useRoomDocuments(roomIds: string[]) {
   ) => {
     const documents = window.nxcore?.documents
     if (!documents) throw new Error('文档服务不可用')
+    const documentId = crypto.randomUUID()
+    const localizedContent = hasEmbeddedDocumentImages(contentJson)
+      ? (await localizeDocumentImages(contentJson, documentId, documents.storeImage)).content
+      : contentJson
     const document = await documents.import({
-      id: crypto.randomUUID(),
+      id: documentId,
       roomId,
       title,
-      contentJson,
+      contentJson: localizedContent,
     })
     upsertDocument(document)
     return document
@@ -298,31 +208,18 @@ export function useRoomDocuments(roomIds: string[]) {
       ...current,
       [document.roomId]: (current[document.roomId] ?? []).filter((candidate) => candidate.id !== document.id),
     }))
-    setEventsByDocument((current) => {
-      const next = { ...current }
-      delete next[document.id]
-      return next
-    })
   }, [])
 
   const emptyTrash = useCallback(async (roomId: string) => {
     const documents = window.nxcore?.documents
     if (!documents) throw new Error('文档服务不可用')
-    const trashedIds = new Set((trashedDocumentsByRoom[roomId] ?? []).map((document) => document.id))
     await documents.emptyTrash(roomId)
     setTrashedDocumentsByRoom((current) => ({ ...current, [roomId]: [] }))
-    setEventsByDocument((current) => {
-      if (trashedIds.size === 0) return current
-      const next = { ...current }
-      for (const documentId of trashedIds) delete next[documentId]
-      return next
-    })
-  }, [trashedDocumentsByRoom])
+  }, [])
 
   return {
     documentsByRoom,
     trashedDocumentsByRoom,
-    eventsByDocument,
     focusedDocumentByRoom,
     upsertDocument,
     createDocument,
@@ -330,8 +227,6 @@ export function useRoomDocuments(roomIds: string[]) {
     restoreDocument,
     deleteDocumentPermanently,
     emptyTrash,
-    registerVisibleDocument,
-    dismissDocumentPresentation,
     refreshRoom,
   }
 }

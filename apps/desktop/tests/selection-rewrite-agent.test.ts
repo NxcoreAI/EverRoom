@@ -65,9 +65,13 @@ describe('selection rewrite Agent stream', () => {
 
     expect(prompt).toContain('"selectedText":"原文"')
     expect(prompt).toContain('不要调用任何工具')
-    expect(prompt).toContain('代码块只输出原始代码并保留缩进、空格和换行')
+    expect(prompt).toContain('最终 Markdown 片段')
+    expect(prompt).toContain('如果选区位于代码块内，只输出原始代码并保留缩进、空格和换行')
     expect(prompt).toContain('"blockType":"codeBlock"')
     expect(sanitizeSelectionRewriteOutput('```text\n改写后的文本：新文本\n```')).toBe('新文本')
+    expect(sanitizeSelectionRewriteOutput('重写后的文档选区内容如下：\n新文本')).toBe('新文本')
+    expect(sanitizeSelectionRewriteOutput('```ts\nconst value = 1\n```'))
+      .toBe('```ts\nconst value = 1\n```')
     expect(sanitizeSelectionRewriteOutput('  if (ok) {\n    return value\n  }\n', { preserveWhitespace: true }))
       .toBe('  if (ok) {\n    return value\n  }\n')
     expect(sanitizeSelectionRewriteOutput('```ts\n  return value\n```', { preserveWhitespace: true }))
@@ -105,10 +109,14 @@ describe('selection rewrite Agent stream', () => {
       pollIntervalMs: 0,
     })
 
-    expect(result).toBe('改写后的内容')
+    expect(result).toEqual({
+      replacementText: '改写后的内容',
+      sessionId: 'rewrite-session',
+      runId: 'rewrite-run',
+    })
     expect(received).toEqual(['改写后的', '改写后的内容', '改写后的内容'])
     expect(api.startRun).toHaveBeenCalledWith('rewrite-session', expect.objectContaining({ captureMemory: false }))
-    expect(api.deleteSession).toHaveBeenCalledWith('rewrite-session')
+    expect(api.deleteSession).not.toHaveBeenCalled()
     expect(api.cancelRun).not.toHaveBeenCalled()
   })
 
@@ -137,7 +145,11 @@ describe('selection rewrite Agent stream', () => {
       signal: new AbortController().signal,
       onText: () => undefined,
       pollIntervalMs: 0,
-    })).resolves.toBe('  if (ok) {\n    return value\n  }\n')
+    })).resolves.toEqual({
+      replacementText: '  if (ok) {\n    return value\n  }\n',
+      sessionId: 'rewrite-session',
+      runId: 'rewrite-run',
+    })
   })
 
   it('cancels the active run and removes its session when aborted', async () => {

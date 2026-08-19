@@ -1,0 +1,27 @@
+{
+  "$comment": "链路策略·工程默认层（unified-ingest-plan §6）。工程师改默认策略在这里，改完重启 gateway 生效；运行环境不动仓库可用 <dataDir>/ingest-policies.json 覆盖。组合约束：room=false 时 wiki 必须 false；三条链路不能全关。只写要改的类型即可，未列出的类型走 types.ts 注册表兜底 defaults。",
+  "document": {
+    "$comment": "文档（md / markdown / txt）。纯正文阅读型资料：实体与沉淀有价值，L1 记忆提炼也可靠——三链路全开。",
+    "room": true, "wiki": true, "memory": true
+  },
+  "meeting-minutes": {
+    "$comment": "会议纪要（jsonType=meeting-minutes，智能感知 ASR 评审产出）。决议与待办是高价值事实，必须进记忆。",
+    "room": true, "wiki": true, "memory": true
+  },
+  "office-doc": {
+    "$comment": "Office 文档（docx，Word 转归一化 md）。正文类，与 document 同等待遇。",
+    "room": true, "wiki": true, "memory": true
+  },
+  "spreadsheet": {
+    "$comment": "表格（xlsx / csv，转 md 表格）。结构化数据整表提炼 L1 噪音大、易断章取义——只做实体计分与晋升后沉淀，memory 关。",
+    "room": true, "wiki": true, "memory": false
+  },
+  "slides": {
+    "$comment": "幻灯片（pptx，逐页提纲）。要点式短句缺上下文，L1 提炼几乎全是碎片——memory 关。",
+    "room": true, "wiki": true, "memory": false
+  },
+  "html": {
+    "$comment": "网页（html / htm，正文抽取）。导航/广告/模板文字噪音多，L1 提炼不可靠——memory 关。",
+    "room": true, "wiki": true, "memory": false
+  }
+}

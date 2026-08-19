@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, describe, expect, it } from "vitest";
+import type { AgentRun, AgentSession, TrustedMcpSession } from "@nxcore/agent-contract";
 import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
 
@@ -24,6 +25,7 @@ async function testConfig(): Promise<GatewayConfig> {
     agentRuntime: "fake",
     memory: null,
     pi: null,
+    knowledge: null,
     backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
     asr: null,
@@ -267,9 +269,35 @@ describe("gateway server", () => {
   it("serves the document MCP protocol over authenticated HTTP", async () => {
     const config = await testConfig();
     const app = await createServer(config);
-    const url = "/v1/mcp/documents/mcp-test"
-      + "?agentSessionId=agent-test&runId=run-test&roomId=room-test";
     const headers = { authorization: `Bearer ${config.authToken}` };
+    await app.inject({
+      method: "PUT",
+      url: "/v1/context-rooms/snapshot",
+      headers,
+      payload: {
+        rooms: [{ id: "room-test", title: "MCP Room", data: {} }],
+        deletedRooms: [],
+      },
+    });
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "Context Room", roomId: "room-test" },
+    })).json<AgentSession>();
+    const run = (await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: { prompt: "列出当前文档", idempotencyKey: "mcp-http-run" },
+    })).json<AgentRun>();
+    const trusted = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/mcp-sessions",
+      headers,
+      payload: { agentSessionId: session.id, runId: run.id, roomId: "room-test" },
+    })).json<TrustedMcpSession>();
+    const url = `/v1/mcp/documents/${trusted.sessionId}`;
 
     const initialize = await app.inject({
       method: "POST",
@@ -322,10 +350,35 @@ describe("gateway server", () => {
     const config = await testConfig();
     const app = await createServer(config);
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
-    const endpoint = new URL("/v1/mcp/documents/mcp-client-test", address);
-    endpoint.searchParams.set("agentSessionId", "agent-client-test");
-    endpoint.searchParams.set("runId", "run-client-test");
-    endpoint.searchParams.set("roomId", "room-client-test");
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    await app.inject({
+      method: "PUT",
+      url: "/v1/context-rooms/snapshot",
+      headers,
+      payload: {
+        rooms: [{ id: "room-client-test", title: "Client Room", data: {} }],
+        deletedRooms: [],
+      },
+    });
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "Context Room", roomId: "room-client-test" },
+    })).json<AgentSession>();
+    const run = (await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: { prompt: "列出当前文档", idempotencyKey: "mcp-client-run" },
+    })).json<AgentRun>();
+    const trusted = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/mcp-sessions",
+      headers,
+      payload: { agentSessionId: session.id, runId: run.id, roomId: "room-client-test" },
+    })).json<TrustedMcpSession>();
+    const endpoint = new URL(`/v1/mcp/documents/${trusted.sessionId}`, address);
     const client = new Client({ name: "gateway-test", version: "1.0.0" });
     const transport = new StreamableHTTPClientTransport(endpoint, {
       requestInit: { headers: { authorization: `Bearer ${config.authToken}` } },

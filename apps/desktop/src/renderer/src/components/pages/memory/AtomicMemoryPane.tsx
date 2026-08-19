@@ -1,7 +1,7 @@
-import { ChevronLeft, ChevronRight, Pencil, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Link2, Pencil, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 
-import type { MemoryAtomicItemDto, MemoryAtomicType } from '../../../../../shared/memory'
+import type { MemoryAtomicItemDto, MemoryAtomicProvenanceDto, MemoryAtomicType } from '../../../../../shared/memory'
 import { MemoryEmptyView } from './MemoryStatusViews'
 import { formatDate, useAsyncData } from './useMemoryData'
 
@@ -24,10 +24,99 @@ function typeLabel(type: string): string {
   return TYPE_LABELS[type] ?? type
 }
 
-function AtomicDetail({ item, onSaved, onDeleted }: {
+/** 溯源区：kind=conversation → 会话原话；document → 文档名 + 标题路径 + 行区间。 */
+function ProvenanceSection({ memoryId, onOpenDocument, onOpenConversation }: {
+  memoryId: string
+  onOpenDocument?: (documentId: string) => void
+  onOpenConversation?: (sessionId: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [provenance, setProvenance] = useState<MemoryAtomicProvenanceDto | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setProvenance(await window.nxcore!.memory.atomicProvenance(memoryId))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '溯源查询失败。')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className="mem-provenance-toggle" onClick={() => { setOpen(true); void load() }}>
+        <Link2 aria-hidden="true" strokeWidth={1.7} />溯源
+      </button>
+    )
+  }
+
+  const isDocument = provenance?.kind === 'document'
+  return (
+    <div className="mem-provenance" data-open={open}>
+      <header>
+        <span className="mem-source-badge" data-kind={provenance?.kind ?? ''}>
+          {isDocument ? '文档来源' : '会话来源'}
+        </span>
+        <button type="button" className="mem-provenance-close" onClick={() => setOpen(false)}>
+          <X aria-hidden="true" strokeWidth={1.7} size={14} />
+        </button>
+      </header>
+      {loading ? <p className="mem-loading">溯源中…</p> : null}
+      {error ? <p className="mem-inline-error">{error}</p> : null}
+      {provenance ? (
+        <>
+          {isDocument && provenance.document ? (
+            <p className="mem-provenance-source">
+              文档「{provenance.document.title}」（v{provenance.document.version}）
+              {onOpenDocument ? (
+                <button type="button" onClick={() => onOpenDocument(provenance.document!.documentId)}>查看文档</button>
+              ) : null}
+            </p>
+          ) : null}
+          {!isDocument && provenance.session?.sessionId ? (
+            <p className="mem-provenance-source">
+              会话 {provenance.session.sessionId}
+              {onOpenConversation ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenConversation(provenance.anchors[0]?.sessionId ?? provenance.session!.sessionId!)}
+                >
+                  查看会话
+                </button>
+              ) : null}
+            </p>
+          ) : null}
+          <ul className="mem-provenance-anchors">
+            {provenance.anchors.map((anchor) => (
+              <li key={anchor.messageId}>
+                <header>
+                  <span data-role={anchor.role}>{anchor.role === 'assistant' ? 'AI' : anchor.role === 'user' ? '用户' : anchor.role}</span>
+                  {anchor.headingPath ? <em>{anchor.headingPath} · 第 {anchor.lineStart}–{anchor.lineEnd} 行</em> : null}
+                </header>
+                <p>{anchor.content}</p>
+              </li>
+            ))}
+            {provenance.anchors.length === 0 ? (
+              <li className="mem-doc-hint">锚点消息已清理（记忆保留，原文不可回溯）。</li>
+            ) : null}
+          </ul>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversation }: {
   item: MemoryAtomicItemDto
   onSaved: () => void
   onDeleted: () => void
+  onOpenDocument?: (documentId: string) => void
+  onOpenConversation?: (sessionId: string) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(item.content)
@@ -100,12 +189,20 @@ function AtomicDetail({ item, onSaved, onDeleted }: {
       ) : (
         <p className="mem-atomic-content">{item.content}</p>
       )}
+      <ProvenanceSection
+        memoryId={item.id}
+        onOpenDocument={onOpenDocument}
+        onOpenConversation={onOpenConversation}
+      />
       {error ? <p className="mem-inline-error">{error}</p> : null}
     </div>
   )
 }
 
-export function AtomicMemoryPane() {
+export function AtomicMemoryPane({ onOpenDocument, onOpenConversation }: {
+  onOpenDocument?: (documentId: string) => void
+  onOpenConversation?: (sessionId: string) => void
+} = {}) {
   const [type, setType] = useState<MemoryAtomicType | 'all'>('all')
   const [offset, setOffset] = useState(0)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -180,6 +277,8 @@ export function AtomicMemoryPane() {
                   item={item}
                   onSaved={() => setReloadTick((tick) => tick + 1)}
                   onDeleted={() => { setExpandedId(null); setReloadTick((tick) => tick + 1) }}
+                  onOpenDocument={onOpenDocument}
+                  onOpenConversation={onOpenConversation}
                 />
               ) : null}
             </li>
