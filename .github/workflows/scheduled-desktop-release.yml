@@ -1,0 +1,131 @@
+name: Daily desktop release check
+
+on:
+  schedule:
+    # 00:00 Asia/Shanghai (UTC+8). GitHub schedules use UTC.
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: daily-desktop-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Inspect release candidate
+        id: candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Desktop version $version must match X.Y.Z" >&2
+            exit 1
+          }
+          git fetch origin 'refs/tags/desktop-v*:refs/tags/desktop-v*'
+          tag="$(git tag --points-at HEAD --list "desktop-v$version*" --sort=-version:refname | head -n 1)"
+          if [[ -n "$tag" ]]; then
+            echo "tag-exists=true" >> "$GITHUB_OUTPUT"
+          else
+            tag="desktop-v$version-nightly.$(TZ=Asia/Shanghai date +%Y%m%d).$GITHUB_RUN_NUMBER"
+            echo "tag-exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+            echo "Commit $(git rev-parse --short HEAD) is already published as $tag."
+            exit 0
+          fi
+
+          echo "pending=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        if: steps.candidate.outputs.pending == 'true'
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Set up Node.js
+        if: steps.candidate.outputs.pending == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.candidate.outputs.pending == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Check types
+        if: steps.candidate.outputs.pending == 'true'
+        run: pnpm typecheck
+
+      - name: Run tests
+        if: steps.candidate.outputs.pending == 'true'
+        run: pnpm test
+
+      - name: Build gateway and desktop
+        if: steps.candidate.outputs.pending == 'true'
+        run: pnpm build
+
+      - name: Create release tag
+        if: steps.candidate.outputs.pending == 'true' && steps.candidate.outputs.tag-exists == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.candidate.outputs.sha }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" \
+            -f sha="$RELEASE_SHA" >/dev/null
+
+      - name: Trigger desktop release
+        if: steps.candidate.outputs.pending == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+        run: |
+          for attempt in 1 2 3; do
+            if gh workflow run release-desktop.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG"; then
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          exit 1
+
+      - name: Notify Feishu when preflight fails
+        if: failure()
+        shell: bash
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+        run: |
+          if [[ -z "$FEISHU_WEBHOOK_URL" ]]; then
+            echo "::warning::FEISHU_RELEASE_WEBHOOK is not configured; skipping notification."
+            exit 0
+          fi
+          message="EverRoom 每日发布检查失败
+          分支：main
+          提交：$(git log -1 --pretty='%h %s (%an)')
+          日志：https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
+          curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$FEISHU_WEBHOOK_URL" >/dev/null

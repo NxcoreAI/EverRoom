@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "desktop-v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,7 +39,11 @@ jobs:
         shell: bash
         run: |
           version="$(node -p "require('./apps/desktop/package.json').version")"
-          test "$GITHUB_REF_NAME" = "desktop-v$version" || {
+          [[ "$GITHUB_REF_NAME" =~ ^desktop-v([0-9]+\.[0-9]+\.[0-9]+)(-nightly\.[0-9]{8}\.[0-9]+)?$ ]] || {
+            echo "Tag $GITHUB_REF_NAME is not a desktop release tag" >&2
+            exit 1
+          }
+          test "${BASH_REMATCH[1]}" = "$version" || {
             echo "Tag $GITHUB_REF_NAME does not match desktop version $version" >&2
             exit 1
           }
@@ -133,8 +138,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:GITHUB_REF_NAME -notmatch '^desktop-v(\d+\.\d+\.\d+)$') {
-            throw "Tag $env:GITHUB_REF_NAME must match desktop-vX.Y.Z"
+          if ($env:GITHUB_REF_NAME -notmatch '^desktop-v(\d+\.\d+\.\d+)(-nightly\.\d{8}\.\d+)?$') {
+            throw "Tag $env:GITHUB_REF_NAME is not a desktop release tag"
           }
           $tagVersion = $Matches[1]
           $appVersion = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
@@ -296,7 +301,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${GITHUB_REF_NAME#desktop-v}"
+          version="$(node -p "require('./apps/desktop/package.json').version")"
           expected=(
             "release-assets/EverRoom-$version-arm64.dmg"
             "release-assets/EverRoom-$version-arm64.zip"
@@ -316,3 +321,60 @@ jobs:
             --prerelease \
             --generate-notes \
             --notes "Unsigned Apple Silicon and Windows x64 development builds. macOS Gatekeeper or Windows SmartScreen may require manual approval before first launch."
+
+  notify:
+    needs: [macos, windows, publish]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Notify Feishu
+        shell: bash
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: |
+          if [[ -z "$FEISHU_WEBHOOK_URL" ]]; then
+            echo "::warning::FEISHU_RELEASE_WEBHOOK is not configured; skipping notification."
+            exit 0
+          fi
+
+          previous_tag="$(git describe --tags --match 'desktop-v*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
+          if [[ -n "$previous_tag" ]]; then
+            commits="$(git log --no-merges --pretty='- %h %s (%an)' "$previous_tag..$GITHUB_SHA" -n 20)"
+          else
+            commits="$(git log --no-merges --pretty='- %h %s (%an)' "$GITHUB_SHA" -n 20)"
+          fi
+          [[ -n "$commits" ]] || commits="- 本版本仅包含合并提交"
+
+          if [[ "$PUBLISH_RESULT" == "success" ]]; then
+            status="成功"
+            target="https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
+          else
+            status="失败"
+            target="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi
+
+          message="EverRoom 桌面端发布$status
+          版本：$GITHUB_REF_NAME
+          提交：
+          $commits
+          地址：$target"
+          payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
+          response="$(curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$FEISHU_WEBHOOK_URL")"
+          code="$(jq -r '.code // .StatusCode // -1' <<< "$response")"
+          test "$code" = "0" || {
+            echo "Feishu rejected the notification with code $code" >&2
+            exit 1
+          }
