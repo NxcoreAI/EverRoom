@@ -4,7 +4,7 @@
   --diary-line: color-mix(in srgb, var(--border) 82%, transparent);
   overflow-y: auto;
   padding: 0 0 96px;
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
 }
 

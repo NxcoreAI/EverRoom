@@ -1,7 +1,6 @@
 import { lazy, Suspense } from 'react'
 
 import type { PageId } from '@/data/navigation'
-import { useLocale } from '@/i18n/LocaleContext'
 import type { ContextRoomWorkspaceTab } from './context-room/contextRoomTabs'
 import { ContextRoomHomeSkeleton } from './context-room/ContextRoomHomeSkeleton'
 import { DiaryPageSkeleton } from './diary/DiaryPageSkeleton'
@@ -56,7 +55,6 @@ export function PageCanvas({
   onFocusAgent: () => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
 }) {
-  const { t } = useLocale()
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
   if (page === 'rooms') {
@@ -78,6 +76,7 @@ export function PageCanvas({
           onOpenRoomTab={onContextRoomOpenTab}
           onRoomsChange={onContextRoomRoomsChange}
           onShowHome={onContextRoomShowHome}
+          onFocusAgent={onFocusAgent}
         />
       </Suspense>
     )
@@ -100,12 +99,20 @@ export function PageCanvas({
   if (page === 'settings') content = <SettingsPage />
   return (
     <>
-      <div className="reality-page-host" hidden={page !== 'recording'}>
-        <Suspense fallback={<div className="page"><div className="evidence-viewer-state">{t('正在加载现实感知...')}</div></div>}>
+      <div
+        className="reality-page-host workspace-page-transition"
+        data-page="recording"
+        hidden={page !== 'recording'}
+      >
+        <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载现实感知...</div></div>}>
           <RealityPage onOpenSettings={() => onNavigate('settings')} />
         </Suspense>
       </div>
-      {page === 'recording' ? null : content}
+      {page === 'recording' ? null : (
+        <div key={page} className="workspace-page-transition" data-page={page}>
+          {content}
+        </div>
+      )}
     </>
   )
 }

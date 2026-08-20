@@ -114,7 +114,7 @@
 .execution-desk svg { position: absolute; top: -35px; left: 36px; width: 38px; height: 28px; padding: 5px; border: 3px solid #39443f; background: #bed8d2; color: #62736d; }
 .execution-desk i { position: absolute; bottom: -10px; left: 8px; width: 3px; height: 10px; background: #7e8783; } .execution-desk i + i { left: auto; right: 8px; }
 
-.horse-agent { --horse-x: 48%; --horse-y: 58%; position: absolute; z-index: 20; left: var(--horse-x); top: var(--horse-y); width: 104px; transform: translate(-50%, -50%); transition: left .9s cubic-bezier(.22,1,.36,1), top .9s cubic-bezier(.22,1,.36,1); pointer-events: none; filter: drop-shadow(0 6px 5px rgba(26,37,33,.15)); }
+.horse-agent { --horse-cycle: 1.25s; --horse-x: 48%; --horse-y: 58%; position: absolute; z-index: 20; left: var(--horse-x); top: var(--horse-y); width: 104px; transform: translate(-50%, -50%); transition: left .9s cubic-bezier(.22,1,.36,1), top .9s cubic-bezier(.22,1,.36,1); pointer-events: none; filter: drop-shadow(0 6px 5px rgba(26,37,33,.15)); }
 .office-scene[data-horse-zone='desk'] .horse-agent { --horse-x: 43%; --horse-y: 77%; }
 .office-scene[data-horse-zone='coffee'] .horse-agent { --horse-x: 82%; --horse-y: 31%; }
 .office-scene[data-horse-zone='kitchen'] .horse-agent { --horse-x: 22%; --horse-y: 31%; }
@@ -122,20 +122,22 @@
 .office-scene[data-horse-zone='restroom'] .horse-agent { --horse-x: 19%; --horse-y: 76%; }
 .horse-agent > span { position: absolute; bottom: calc(100% + 3px); left: 50%; padding: 4px 7px; border: 1px solid #d6dcda; border-radius: 5px; background: rgba(255,255,255,.94); color: #405048; font-size: 7px; font-weight: 700; white-space: nowrap; transform: translateX(-50%); }
 .horse-agent svg { width: 104px; height: 88px; overflow: visible; }
-.horse-body { transform-origin: 65px 91px; animation: horse-hop 1.25s cubic-bezier(.34,.01,.38,1) infinite; }
-.horse-shadow { fill: rgba(33,43,38,.16); animation: horse-shadow 1.25s ease-in-out infinite; }
+.horse-body { transform-box: view-box; transform-origin: 65px 91px; animation: horse-hop var(--horse-cycle) cubic-bezier(.34,.01,.38,1) infinite; }
+.horse-shadow { fill: rgba(33,43,38,.16); animation: horse-shadow var(--horse-cycle) ease-in-out infinite; }
 .horse-fill, .horse-neck, .horse-head { fill: #202a27; stroke: #111816; stroke-width: 2; }
 .horse-tail, .horse-ear, .horse-mane, .horse-muzzle { fill: none; stroke: #17201d; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
 .horse-eye { fill: #fff; }
-.horse-leg { fill: none; stroke: #18211e; stroke-width: 8; stroke-linecap: round; transform-origin: top; }
+.horse-leg { fill: none; stroke: #18211e; stroke-width: 8; stroke-linecap: round; transform-box: view-box; }
 .horse-saddle { fill: #318f73; stroke: #176a52; stroke-width: 2; }
 .horse-badge { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; }
-.horse-leg-a, .horse-leg-c { animation: horse-leg-a 1.25s ease-in-out infinite; }
-.horse-leg-b, .horse-leg-d { animation: horse-leg-b 1.25s ease-in-out infinite; }
+.horse-leg-a { transform-origin: 38px 72px; animation: horse-leg-a var(--horse-cycle) ease-in-out infinite; }
+.horse-leg-b { transform-origin: 51px 77px; animation: horse-leg-b var(--horse-cycle) ease-in-out infinite; }
+.horse-leg-c { transform-origin: 75px 77px; animation: horse-leg-a var(--horse-cycle) ease-in-out infinite; }
+.horse-leg-d { transform-origin: 86px 71px; animation: horse-leg-b var(--horse-cycle) ease-in-out infinite; }
 @keyframes horse-hop { 0%,100% { transform: translateY(0) rotate(-1deg); } 45% { transform: translateY(-18px) rotate(3deg); } 65% { transform: translateY(-13px) rotate(1deg); } }
 @keyframes horse-shadow { 0%,100% { transform: scaleX(1); opacity: .18; } 45% { transform: scaleX(.68); opacity: .08; } }
 @keyframes horse-leg-a { 50% { transform: rotate(17deg); } } @keyframes horse-leg-b { 50% { transform: rotate(-17deg); } }
-.office-scene[data-running='true'] .horse-body { animation-duration: .72s; }
+.office-scene[data-running='true'] .horse-agent { --horse-cycle: .72s; }
 .office-path { position: absolute; z-index: 1; inset: 0; pointer-events: none; }
 .office-path i { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: #c9cfcb; box-shadow: 12px 3px #c9cfcb, 24px 0 #c9cfcb; opacity: .65; }
 .office-path i:nth-child(1) { top: 46%; left: 20%; } .office-path i:nth-child(2) { top: 47%; right: 18%; transform: rotate(20deg); } .office-path i:nth-child(3) { bottom: 19%; left: 24%; transform: rotate(70deg); } .office-path i:nth-child(4) { bottom: 18%; right: 22%; transform: rotate(-70deg); } .office-path i:nth-child(5) { top: 48%; left: 48%; transform: rotate(90deg); }

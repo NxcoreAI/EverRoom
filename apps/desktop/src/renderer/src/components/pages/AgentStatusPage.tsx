@@ -59,6 +59,10 @@ function HorseMascot() {
     <svg viewBox="0 0 132 112" role="img" aria-label={t('执行 Agent 马形角色')}>
       <ellipse className="horse-shadow" cx="67" cy="102" rx="39" ry="7" />
       <g className="horse-body">
+        <path className="horse-leg horse-leg-a" d="M38 72c-2 10-4 18-3 27" />
+        <path className="horse-leg horse-leg-b" d="M51 77c4 8 7 16 9 23" />
+        <path className="horse-leg horse-leg-c" d="M75 77c0 9 0 17-1 24" />
+        <path className="horse-leg horse-leg-d" d="M86 71c5 8 9 17 12 25" />
         <path className="horse-tail" d="M32 52C16 48 18 34 7 29c17-2 25 8 31 18" />
         <ellipse className="horse-fill" cx="60" cy="57" rx="34" ry="23" />
         <path className="horse-neck" d="M77 49c5-14 5-30 17-39 10 3 18 13 17 25L91 61Z" />
@@ -67,10 +71,6 @@ function HorseMascot() {
         <path className="horse-ear" d="m94 12-2-10 8 8m8 1 6-8v12" />
         <path className="horse-mane" d="M91 16c-7 8-8 19-8 29" />
         <circle className="horse-eye" cx="109" cy="16" r="2.5" />
-        <path className="horse-leg horse-leg-a" d="M38 72l-5 27" />
-        <path className="horse-leg horse-leg-b" d="M51 77l9 23" />
-        <path className="horse-leg horse-leg-c" d="M75 77l-1 24" />
-        <path className="horse-leg horse-leg-d" d="M86 71l12 25" />
         <path className="horse-saddle" d="M42 36h35l8 21H39Z" />
         <path className="horse-badge" d="M59 41v12m-6-6h12" />
       </g>

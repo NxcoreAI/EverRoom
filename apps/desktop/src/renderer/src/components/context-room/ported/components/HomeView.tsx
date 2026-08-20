@@ -129,6 +129,7 @@ export function HomeView({
   onOpenRecommendationSource,
   onOpenDetail,
   onShowAll,
+  onFocusAgent,
 }: {
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
@@ -139,6 +140,7 @@ export function HomeView({
   onOpenRecommendationSource: (source: RoomRecommendationSource) => void;
   onOpenDetail: (roomId: string) => void;
   onShowAll: () => void;
+  onFocusAgent: () => void;
 }) {
   const { t } = useLocale();
   const [query, setQuery] = useState('');
@@ -230,7 +232,7 @@ export function HomeView({
             ) : null}
           </section>
 
-          <KnowledgePendingPanel />
+          <KnowledgePendingPanel onFocusAgent={onFocusAgent} />
 
           <RoomGraph rooms={rooms} onOpen={onOpenDetail} />
         </div>

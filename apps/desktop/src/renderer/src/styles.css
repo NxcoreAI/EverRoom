@@ -64,6 +64,10 @@ summary:focus-visible {
   grid-template-columns: var(--nav-width) minmax(0, 1fr) 0;
 }
 
+.app-shell[data-agent-open='true']:has(.agent-office-page) {
+  transition: none;
+}
+
 .app-shell[data-nav-collapsed='true'] {
   grid-template-columns: 0 minmax(0, 1fr) var(--agent-width);
 }
@@ -765,6 +769,49 @@ summary:focus-visible {
 .reality-page-host {
   width: 100%;
   height: 100%;
+}
+
+.workspace-page-transition {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  animation: workspace-page-enter var(--shell-motion-duration) var(--shell-motion-easing) backwards;
+}
+
+.workspace-page-transition:not([data-page='diary']) > .page > *,
+.workspace-page-transition .workspace-home-inner > *,
+.reality-page-host:not([hidden]) .reality-page > * {
+  animation: workspace-content-enter 340ms var(--shell-motion-easing) backwards;
+}
+
+.workspace-page-transition:not([data-page='diary']) > .page > :nth-child(2),
+.workspace-page-transition .workspace-home-inner > :nth-child(2),
+.reality-page-host:not([hidden]) .reality-page > :nth-child(2) {
+  animation-delay: 45ms;
+}
+
+.workspace-page-transition:not([data-page='diary']) > .page > :nth-child(3),
+.workspace-page-transition .workspace-home-inner > :nth-child(3),
+.reality-page-host:not([hidden]) .reality-page > :nth-child(3) {
+  animation-delay: 90ms;
+}
+
+.workspace-page-transition:not([data-page='diary']) > .page > :nth-child(n + 4),
+.workspace-page-transition .workspace-home-inner > :nth-child(n + 4),
+.reality-page-host:not([hidden]) .reality-page > :nth-child(n + 4) {
+  animation-delay: 135ms;
+}
+
+@keyframes workspace-page-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes workspace-content-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .page {
@@ -2342,6 +2389,7 @@ summary:focus-visible {
   .app-shell,
   .app-shell[data-agent-open='false'] {
     grid-template-columns: 0 minmax(0, 1fr) 0;
+    transition: none;
   }
 
   .agent-panel {
@@ -2349,6 +2397,7 @@ summary:focus-visible {
     z-index: 70;
     inset: var(--topbar-height) 0 0 auto;
     width: min(var(--agent-width), 92vw);
+    background: #fff;
     box-shadow: -12px 0 32px rgba(25, 25, 20, 0.12);
   }
 }

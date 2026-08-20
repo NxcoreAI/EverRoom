@@ -13,6 +13,7 @@ export function ContextRoomPage({
   onOpenRoomTab,
   onRoomsChange,
   onShowHome,
+  onFocusAgent,
 }: {
   activeRoomId: string | null
   focusedDocumentId: string | null
@@ -23,6 +24,7 @@ export function ContextRoomPage({
   onOpenRoomTab: (room: ContextRoomWorkspaceTab) => void
   onRoomsChange: (rooms: ContextRoomWorkspaceTab[]) => void
   onShowHome: () => void
+  onFocusAgent: () => void
 }) {
   return (
     <div className="context-room-operation-shell">
@@ -36,6 +38,7 @@ export function ContextRoomPage({
         onOpenRoomTab={onOpenRoomTab}
         onRoomsChange={onRoomsChange}
         onShowHome={onShowHome}
+        onFocusAgent={onFocusAgent}
       />
     </div>
   )

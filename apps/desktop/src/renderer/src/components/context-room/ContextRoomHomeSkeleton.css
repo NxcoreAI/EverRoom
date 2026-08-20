@@ -3,7 +3,7 @@
   height: 100%;
   min-height: 0;
   overflow: auto;
-  background: #fafafa;
+  background: var(--bg);
   scrollbar-width: none;
 }
 
@@ -15,7 +15,7 @@
   container: context-room-all-skeleton / inline-size;
   height: 100%;
   overflow: hidden;
-  background: #fafafa;
+  background: var(--bg);
 }
 
 .context-room-all-skeleton-layout {
