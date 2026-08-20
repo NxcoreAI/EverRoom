@@ -2393,12 +2393,7 @@ summary:focus-visible {
   }
 
   .agent-panel {
-    position: fixed;
-    z-index: 70;
-    inset: var(--topbar-height) 0 0 auto;
     width: min(var(--agent-width), 92vw);
-    background: #fff;
-    box-shadow: -12px 0 32px rgba(25, 25, 20, 0.12);
   }
 }
 
