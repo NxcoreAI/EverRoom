@@ -696,13 +696,13 @@ export class PiAgentRuntime implements AgentRuntime {
         active.cancelled
           ? "cancelled"
           : active.toolLimitExceeded || sessionError || outputLimitReached ? "failed" : "completed",
-        sessionError
-          ? new Error(sessionError)
-          : active.toolLimitExceeded
-            ? new Error(this.toolLimitErrorMessage())
-          : outputLimitReached
-            ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
-            : undefined,
+        active.toolLimitExceeded
+          ? new Error(this.toolLimitErrorMessage())
+          : sessionError
+            ? new Error(sessionError)
+            : outputLimitReached
+              ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
+              : undefined,
       );
     }
   }

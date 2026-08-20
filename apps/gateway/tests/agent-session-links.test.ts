@@ -23,7 +23,6 @@ async function testConfig(): Promise<GatewayConfig> {
     authToken: 'test-token-0123456789',
     agentRuntime: 'fake',
     memory: null,
-    knowledge: null,
     pi: null,
     knowledge: null,
     backgroundPi: null,
