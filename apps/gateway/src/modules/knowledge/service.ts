@@ -415,6 +415,13 @@ export class KnowledgeService {
         "stuck running knowledge jobs moved back to pending",
       );
     }
+    const deduplicatedJobs = this.deduplicatePendingJobs();
+    if (deduplicatedJobs > 0) {
+      this.logger.warn(
+        { event: "knowledge.jobs.deduplicated", count: deduplicatedJobs },
+        "duplicate pending knowledge jobs cancelled",
+      );
+    }
     // 旧版本允许重复点击产生多条晋升任务。恢复时每个实体只保留最早一条，
     // 其余任务作为同一意图的重复提交取消，避免重启后重复执行 backlog。
     const deduplicatedPromotions = this.deduplicatePendingPromotions();
@@ -963,6 +970,21 @@ export class KnowledgeService {
     payload: IngestJobPayload | RouteJobPayload | CleanupJobPayload | PromoteJobPayload,
     result?: Record<string, unknown>,
   ): string {
+    if (type !== PROMOTE_JOB_TYPE) {
+      const serializedPayload = JSON.stringify(payload);
+      const existing = this.db.select({ id: jobs.id, payload: jobs.payload }).from(jobs)
+        .where(and(eq(jobs.type, type), inArray(jobs.status, ["pending", "running"])))
+        .orderBy(asc(jobs.createdAt))
+        .all()
+        .find((job) => JSON.stringify(job.payload) === serializedPayload);
+      if (existing) {
+        this.logger.info(
+          { event: "knowledge.job.reused", jobId: existing.id, type },
+          `knowledge job already active: ${type}`,
+        );
+        return existing.id;
+      }
+    }
     const id = randomUUID();
     this.db.insert(jobs).values({ id, type, status: "pending", payload, ...(result ? { result } : {}) }).run();
     this.logger.info({ event: "knowledge.job.enqueued", jobId: id, type }, `knowledge job enqueued: ${type}`);
@@ -1875,6 +1897,31 @@ export class KnowledgeService {
           message: "重复请求已合并到已有创建任务",
           supersededBy: canonicalJobId,
         },
+        updatedAt: new Date(),
+      }).where(and(eq(jobs.id, job.id), eq(jobs.status, "pending"))).run() as { changes: number | bigint };
+      cancelled += Number(result.changes);
+    }
+    return cancelled;
+  }
+
+  /** 热重载或重复补账可能留下完全相同的活动任务；保留最早一条即可。 */
+  private deduplicatePendingJobs(): number {
+    const pending = this.db.select().from(jobs)
+      .where(and(eq(jobs.status, "pending"), inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE])))
+      .orderBy(asc(jobs.createdAt))
+      .all();
+    const canonicalByPayload = new Map<string, string>();
+    let cancelled = 0;
+    for (const job of pending) {
+      const key = `${job.type}:${JSON.stringify(job.payload)}`;
+      const canonicalJobId = canonicalByPayload.get(key);
+      if (!canonicalJobId) {
+        canonicalByPayload.set(key, job.id);
+        continue;
+      }
+      const result = this.db.update(jobs).set({
+        status: "cancelled",
+        result: { message: "重复任务已合并到已有任务", supersededBy: canonicalJobId },
         updatedAt: new Date(),
       }).where(and(eq(jobs.id, job.id), eq(jobs.status, "pending"))).run() as { changes: number | bigint };
       cancelled += Number(result.changes);

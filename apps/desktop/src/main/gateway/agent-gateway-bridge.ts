@@ -19,6 +19,7 @@ import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
+import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 const AGENT_EVENT_CHANNEL = 'agent:event'
 const http = createLoggedHttpClient('gateway-agent')
@@ -44,6 +45,7 @@ interface Subscription {
 
 export class AgentGatewayBridge {
   private readonly subscriptions = new Map<number, Subscription>()
+  private readonly contentsLifecycle = new WebContentsLifecycle()
 
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
@@ -133,7 +135,7 @@ export class AgentGatewayBridge {
       reconnectTimer: null,
     }
     this.subscriptions.set(contents.id, subscription)
-    contents.once('destroyed', () => this.unsubscribe(contents.id))
+    this.contentsLifecycle.observe(contents, () => this.unsubscribe(contents.id))
   }
 
   unsubscribe(contentsId: number): void {

@@ -19,6 +19,7 @@ import type {
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import type { GatewaySupervisor } from './gateway-supervisor'
+import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 export const DOCUMENT_EVENT_CHANNEL = 'documents:event'
 export const DOCUMENT_OPERATION_EVENT_CHANNEL = 'documents:operation-changed'
@@ -70,6 +71,7 @@ export function documentOperationListResult(
 
 export class DocumentGatewayBridge {
   private readonly subscriptions = new Map<number, Map<string, Subscription>>()
+  private readonly contentsLifecycle = new WebContentsLifecycle()
 
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
@@ -181,7 +183,7 @@ export class DocumentGatewayBridge {
     if (!subscriptions) {
       subscriptions = new Map()
       this.subscriptions.set(contents.id, subscriptions)
-      contents.once('destroyed', () => this.unsubscribe(contents.id))
+      this.contentsLifecycle.observe(contents, () => this.unsubscribe(contents.id))
     }
     if (subscriptions.has(roomId)) return
     const subscription: Subscription = {

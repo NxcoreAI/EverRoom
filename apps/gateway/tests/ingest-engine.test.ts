@@ -892,6 +892,42 @@ describe("wiki 快照过滤：台账 wiki=false 的源只计链接分", () => {
     test.sqlite.close();
   });
 
+  it("活动任务入队幂等，启动时合并历史重复任务", async () => {
+    const test = await knowledgeForTest();
+    const internal = test.service as unknown as {
+      insertJob(type: string, payload: Record<string, unknown>): string;
+    };
+    const payload = {
+      sourceKind: "mail",
+      sourceId: "mail-duplicate",
+      sourceVersion: 1,
+      roomId: "room-1",
+      decisionId: "decision-1",
+    };
+
+    const firstId = internal.insertJob("knowledge.ingest", payload);
+    expect(internal.insertJob("knowledge.ingest", payload)).toBe(firstId);
+    test.db.insert(jobs).values({
+      id: "ingest-running-copy",
+      type: "knowledge.ingest",
+      status: "running",
+      payload,
+      createdAt: new Date(Date.now() + 1_000),
+    }).run();
+
+    test.service.start();
+
+    const ingestJobs = test.db.select().from(jobs).all()
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    expect(ingestJobs.map((job) => [job.id, job.status])).toEqual([
+      [firstId, "pending"],
+      ["ingest-running-copy", "cancelled"],
+    ]);
+    expect(ingestJobs[1]!.result).toMatchObject({ supersededBy: firstId });
+    test.service.dispose();
+    test.sqlite.close();
+  });
+
   it("Room 晋升使用独立 worker，不等待正在执行的慢知识任务", async () => {
     const test = await knowledgeForTest();
     test.db.insert(jobs).values({

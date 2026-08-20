@@ -316,8 +316,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         },
       },
       async (request, reply) => {
-        const deleted = service.deleteRoom(request.params.id);
-        if (!deleted) return reply.code(404).send(errorOf("room_not_found"));
+        service.deleteRoom(request.params.id);
         return reply.code(204).send();
       },
     );
