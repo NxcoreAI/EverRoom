@@ -7,6 +7,7 @@ import {
   ChevronsRight,
   FilePenLine,
   Image as ImageIcon,
+  LoaderCircle,
   Mic2,
   Monitor,
   Pause,
@@ -28,11 +29,9 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
-
-import diaryOfficeHallway from '@/assets/diary-office-hallway.png'
-import diaryOfficeMeeting from '@/assets/diary-office-meeting.png'
-import diaryOfficeWindow from '@/assets/diary-office-window.png'
-import diarySunset from '@/assets/diary-sunset.png'
+import { showToast } from '@/state/toast'
+import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
+import type { DiaryDayDetails } from '../../../../shared/sources'
 
 import './DiaryPage.css'
 
@@ -56,6 +55,7 @@ type DiaryImageSet =
 
 interface DiaryEvent {
   time: string
+  endTime?: string
   kind: DiaryEventKind
   label: string
   title: string
@@ -87,13 +87,20 @@ interface DiaryImagePreview {
   index: number
 }
 
-const officeHallwayImage: DiaryImage = { src: diaryOfficeHallway, alt: '安静的办公室走廊' }
-const officeMeetingImage: DiaryImage = { src: diaryOfficeMeeting, alt: '围桌讨论中的团队' }
-const officeWindowImage: DiaryImage = { src: diaryOfficeWindow, alt: '窗边明亮的工作空间' }
-const sunsetImage: DiaryImage = { src: diarySunset, alt: '傍晚阳光照亮山野' }
+interface ActiveDiaryRun {
+  id: string
+  date: string
+  startedAt: string
+  attempt: number
+}
 
-const REFERENCE_TODAY = new Date(2026, 7, 13)
-const STRIP_START = new Date(2026, 6, 30)
+const REFERENCE_TODAY = new Date()
+REFERENCE_TODAY.setHours(0, 0, 0, 0)
+const STRIP_START = new Date(
+  REFERENCE_TODAY.getFullYear(),
+  REFERENCE_TODAY.getMonth(),
+  REFERENCE_TODAY.getDate() - 28,
+)
 const STRIP_DAY_COUNT = 29
 
 const EVENT_ICONS: Record<DiaryEventKind, LucideIcon> = {
@@ -103,166 +110,6 @@ const EVENT_ICONS: Record<DiaryEventKind, LucideIcon> = {
   image: ImageIcon,
   audio: Mic2,
   schedule: CalendarCheck2,
-}
-
-const diaryDays: Record<string, DiaryDay> = {
-  '2026-08-13': {
-    headline: '把复杂的想法，整理成了可以被看见的样子',
-    summary: '今天的重心很清楚：你沿着 AI 日记的体验一路收束，从信息很多的工作台，慢慢确认它更应该是一页轻松读完的个人回顾。下午的讨论和几次修改，让这个方向变得具体了。',
-    reflection: '从今天的记录看，你似乎在主动减少不必要的复杂度。几次停下来重新确认目标，没有拖慢进度，反而让后面的决定更连贯。',
-    processingNote: '已在 01:07 完成',
-    range: '09:18 - 20:24',
-    events: [
-      {
-        time: '09:18',
-        kind: 'note',
-        label: '文字记录',
-        title: '先把体验目标写成一句话',
-        description: 'AI 日记首先是信息反馈和情绪回应，不应该要求用户在这里完成复杂操作。你把“30-60 秒读完”写在了草稿最上方。',
-        detail: '让用户看见自己的一天，然后自然离开。',
-      },
-      {
-        time: '10:42',
-        kind: 'focus',
-        label: '设备活动',
-        title: '连续专注 1 小时 26 分钟',
-        description: '主要停留在需求文档、原型画布和浏览器；窗口切换比昨天少，上午的工作节奏较集中。',
-        metrics: [
-          { value: '1h 26m', label: '连续专注' },
-          { value: '3', label: '主要应用' },
-          { value: '11:08', label: '结束时间' },
-        ],
-      },
-      {
-        time: '13:35',
-        kind: 'meeting',
-        label: '会议',
-        title: '产品体验快速评审',
-        description: '讨论从“如何让用户修改 AI”转向“如何让用户快速感受到一天被理解”。最终保留日期回看、图片查看和语音播放三个必要动作。',
-        detail: '42 分钟，4 人参与',
-      },
-      {
-        time: '14:48',
-        kind: 'image',
-        label: '图片 · 单图',
-        title: '一张图，保留完整画面',
-        description: '单张图片沿用舒展的横向比例，让一个瞬间成为这段记录的视觉重点。',
-        images: [sunsetImage],
-      },
-      {
-        time: '15:06',
-        kind: 'image',
-        label: '图片 · 两张',
-        title: '两张图，平行记录同一段经历',
-        description: '两张图片左右等分，适合同一时刻的两个视角。',
-        images: [officeHallwayImage, officeMeetingImage],
-      },
-      {
-        time: '15:28',
-        kind: 'image',
-        label: '图片 · 三张',
-        title: '三张图，用主次关系讲清现场',
-        description: '左侧主图承担叙事，右侧两张补充人物和空间细节。',
-        images: [officeHallwayImage, officeMeetingImage, officeWindowImage],
-      },
-      {
-        time: '15:52',
-        kind: 'image',
-        label: '图片 · 四张',
-        title: '四张图，收进一组完整回顾',
-        description: '四宫格保持每张图片同等权重，适合连续发生的片段。',
-        images: [officeHallwayImage, officeMeetingImage, officeWindowImage, sunsetImage],
-      },
-      {
-        time: '18:06',
-        kind: 'audio',
-        label: '语音片段',
-        title: '回家路上记下的一个判断',
-        description: '一段 38 秒的随手记录，后来成为今天方案的收尾。',
-        audio: {
-          duration: 38,
-          transcript: '我觉得日记不是另一个需要维护的系统。它应该像有人替我把散落的一天轻轻收好，我看一眼，就知道今天大概是怎么走过来的。',
-        },
-      },
-      {
-        time: '20:24',
-        kind: 'schedule',
-        label: '日程',
-        title: '给明天留出一段安静的时间',
-        description: '明早 09:30-10:30 已预留，用来单独检查日期导航与多媒体内容的阅读节奏。',
-        detail: '明天 09:30 · 个人日程',
-      },
-    ],
-    closing: {
-      thought: '今天留下的不只是一个页面，而是一个更清楚的判断：有些好的体验，来自少做一点。',
-      meta: '2026 年 8 月 13 日 · 这一天已经轻轻收好',
-    },
-  },
-  '2026-08-05': {
-    headline: '在工作之外，也留住了一点具体的生活',
-    summary: '今天完成了计划中的两项工作，也在午后和傍晚留下了几段轻松的片刻。',
-    reflection: '从当天记录看，节奏似乎比前几天舒展一些。这里不对没有记录的时段作推断。',
-    processingNote: '当天记录已整理完成',
-    range: '09:24 - 19:40',
-    events: [
-      {
-        time: '09:24',
-        kind: 'focus',
-        label: '设备活动',
-        title: '上午完成一段连续专注',
-        description: '主要在文档和浏览器之间工作，连续停留约 54 分钟。',
-      },
-      {
-        time: '11:16',
-        kind: 'meeting',
-        label: '会议',
-        title: '一次简短而有效的同步',
-        description: '对齐了当前重点，也明确了下一步需要独立完成的部分。',
-        detail: '26 分钟，3 人参与',
-      },
-      {
-        time: '15:32',
-        kind: 'image',
-        label: '图片',
-        title: '下午留下的一张照片',
-        description: '光线落在桌面上，成为这一天里一个安静的停顿。',
-        images: [sunsetImage],
-      },
-      {
-        time: '19:40',
-        kind: 'note',
-        label: '文字记录',
-        title: '下班后的慢节奏',
-        description: '没有继续处理新的任务，只简单整理了明天需要开始的事情。',
-      },
-    ],
-  },
-}
-
-const intensityByDate: Record<string, number> = {
-  '2026-07-22': 1,
-  '2026-07-23': 2,
-  '2026-07-24': 2,
-  '2026-07-25': 3,
-  '2026-07-26': 4,
-  '2026-07-27': 2,
-  '2026-07-28': 2,
-  '2026-07-29': 3,
-  '2026-07-30': 1,
-  '2026-07-31': 2,
-  '2026-08-01': 3,
-  '2026-08-02': 2,
-  '2026-08-03': 4,
-  '2026-08-04': 2,
-  '2026-08-05': 3,
-  '2026-08-06': 3,
-  '2026-08-07': 1,
-  '2026-08-08': 2,
-  '2026-08-09': 1,
-  '2026-08-10': 2,
-  '2026-08-11': 4,
-  '2026-08-12': 2,
-  '2026-08-13': 4,
 }
 
 function toDateKey(date: Date): string {
@@ -284,32 +131,158 @@ function buildDateRange(start: Date, count: number): Date[] {
   return Array.from({ length: count }, (_, index) => shiftDate(start, index))
 }
 
-function formatDayHeading(date: Date): string {
-  if (sameDay(date, REFERENCE_TODAY)) return '今天 · 星期四'
-  const weekday = new Intl.DateTimeFormat('zh-CN', { weekday: 'long' }).format(date)
-  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日 · ${weekday}`
+function formatClock(value: string, locale: AppLocale): string {
+  return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false })
+    .format(new Date(value))
 }
 
-function formatMonth(date: Date): string {
-  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月`
+function formatElapsed(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-function createCalendarDays(year: number, month: number): Date[] {
+function eventPresentation(sourceRef: string | undefined, t: Translate): Pick<DiaryEvent, 'kind' | 'label'> {
+  const kind = sourceRef?.split(':', 1)[0]
+  if (kind === 'visual_node') return { kind: 'image', label: t('diaryReality:diary.visualPerception') }
+  if (kind === 'recording') return { kind: 'audio', label: t('diaryReality:diary.audioPerception') }
+  if (kind === 'connector_calendar') return { kind: 'schedule', label: t('diaryReality:diary.calendar') }
+  if (kind === 'connector_email') return { kind: 'meeting', label: t('diaryReality:diary.email') }
+  if (kind === 'file' || kind === 'document_version' || kind === 'connector_document') {
+    return { kind: 'note', label: t('diaryReality:diary.documentActivity') }
+  }
+  return { kind: 'focus', label: t('diaryReality:diary.memory') }
+}
+
+function representativeMediaSources(
+  sourceRefs: string[],
+  sources: DiaryDayDetails['sources'],
+): DiaryDayDetails['sources'] {
+  const referenced = new Set(sourceRefs)
+  const unique = new Map<string, DiaryDayDetails['sources'][number]>()
+  for (const source of sources) {
+    if (!referenced.has(source.sourceId) || !source.assetFileId) continue
+    if (source.assetKind !== 'screenshot' && source.assetKind !== 'photo') continue
+    if (!unique.has(source.assetFileId)) unique.set(source.assetFileId, source)
+  }
+  const media = [...unique.values()]
+  if (media.length <= 4) return media
+  return [0, 1, 2, 3].map((index) => media[Math.round(index * (media.length - 1) / 3)]!)
+}
+
+function toImageSet(images: DiaryImage[]): DiaryImageSet | undefined {
+  if (images.length === 1) return [images[0]!]
+  if (images.length === 2) return [images[0]!, images[1]!]
+  if (images.length === 3) return [images[0]!, images[1]!, images[2]!]
+  if (images.length >= 4) return [images[0]!, images[1]!, images[2]!, images[3]!]
+  return undefined
+}
+
+function toDiaryDay(
+  details: DiaryDayDetails,
+  locale: AppLocale,
+  t: Translate,
+  mediaByFileId: ReadonlyMap<string, string> = new Map(),
+): DiaryDay | null {
+  const version = details.currentVersion
+  if (!version) return null
+  const content = version.content
+  return {
+    headline: content.headline,
+    summary: content.summary,
+    reflection: content.reflection,
+    processingNote: details.day.status === 'stale'
+      ? t('diaryReality:diary.versionVersionNewActivityToInclude', { version: version.version })
+      : t('diaryReality:diary.versionVersionTime', { version: version.version, time: formatClock(version.createdAt, locale) }),
+    range: `${formatClock(content.range.start, locale)} - ${formatClock(content.range.end, locale)}`,
+    events: content.events.map((event) => {
+      const mediaSources = representativeMediaSources(event.sourceRefs, details.sources)
+      const images = toImageSet(mediaSources.flatMap((source, index) => {
+        const src = source.assetFileId ? mediaByFileId.get(source.assetFileId) : undefined
+        return src ? [{ src, alt: t('diaryReality:diary.titleImageIndex', { title: event.title, index: index + 1 }) }] : []
+      }))
+      const presentation = images
+        ? {
+            kind: 'image' as const,
+            label: t('diaryReality:diary.kindCount', {
+              kind: t(mediaSources.every((source) => source.assetKind === 'screenshot') ? 'diaryReality:diary.screenshots' : 'diaryReality:diary.photo'),
+              count: images.length,
+            }),
+          }
+        : eventPresentation(event.sourceRefs[0], t)
+      return {
+        time: formatClock(event.time, locale),
+        ...(event.endTime && formatClock(event.endTime, locale) !== formatClock(event.time, locale)
+          ? { endTime: formatClock(event.endTime, locale) }
+          : {}),
+        ...presentation,
+        title: event.title,
+        description: event.summary,
+        ...(images ? { images } : {}),
+      }
+    }),
+    ...(content.closing ? {
+      closing: {
+        thought: content.closing,
+        meta: t('diaryReality:diary.dateOrganizedByAgent', {
+          date: new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric' })
+            .format(new Date(`${version.date}T00:00:00`)),
+        }),
+      },
+    } : {}),
+  }
+}
+
+async function loadDiaryMedia(details: DiaryDayDetails, locale: AppLocale, t: Translate): Promise<DiaryDay | null> {
+  const version = details.currentVersion
+  if (!version || !window.nxcore) return toDiaryDay(details, locale, t)
+  const selected = new Map<string, DiaryDayDetails['sources'][number]>()
+  for (const event of version.content.events) {
+    for (const source of representativeMediaSources(event.sourceRefs, details.sources)) {
+      if (source.assetFileId) selected.set(source.assetFileId, source)
+    }
+  }
+  const loaded = await Promise.all([...selected.keys()].map(async (fileId) => {
+    try {
+      const { dataUrl } = await window.nxcore!.files.readDataUrl(fileId)
+      return [fileId, dataUrl] as const
+    } catch {
+      return null
+    }
+  }))
+  return toDiaryDay(details, locale, t, new Map(loaded.filter((entry): entry is readonly [string, string] => entry !== null)))
+}
+
+function formatDayHeading(date: Date, locale: AppLocale, t: Translate): string {
+  const weekday = new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(date)
+  if (sameDay(date, REFERENCE_TODAY)) return t('diaryReality:diary.todayWeekday', { weekday })
+  const formattedDate = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric' }).format(date)
+  return t('diaryReality:diary.dateWeekday', { date: formattedDate, weekday })
+}
+
+function formatMonth(date: Date, locale: AppLocale): string {
+  return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long' }).format(date)
+}
+
+function createCalendarDays(year: number, month: number, locale: AppLocale): Date[] {
   const first = new Date(year, month, 1)
-  const mondayOffset = (first.getDay() + 6) % 7
-  const start = shiftDate(first, -mondayOffset)
+  const weekStart = locale === 'en-US' ? 0 : 1
+  const offset = (first.getDay() - weekStart + 7) % 7
+  const start = shiftDate(first, -offset)
   return buildDateRange(start, 42)
 }
 
 function CalendarDialog({
   selectedDate,
+  intensityByDate,
   onSelect,
   onClose,
 }: {
   selectedDate: Date
+  intensityByDate: Record<string, number>
   onSelect: (date: Date) => void
   onClose: () => void
 }) {
+  const { locale, t } = useLocale()
   const backdropRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -318,8 +291,8 @@ function CalendarDialog({
     () => new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1),
   )
   const calendarDays = useMemo(
-    () => createCalendarDays(viewDate.getFullYear(), viewDate.getMonth()),
-    [viewDate],
+    () => createCalendarDays(viewDate.getFullYear(), viewDate.getMonth(), locale),
+    [locale, viewDate],
   )
 
   const closeDialog = useCallback(() => {
@@ -393,47 +366,51 @@ function CalendarDialog({
       <section ref={dialogRef} className="diary-calendar-dialog" role="dialog" aria-modal="true" aria-labelledby="diary-calendar-title">
         <header className="diary-calendar-heading">
           <div>
-            <span>日期回顾</span>
-            <h2 id="diary-calendar-title">{formatMonth(viewDate)}</h2>
+            <span>{t('diaryReality:diary.dateReview')}</span>
+            <h2 id="diary-calendar-title">{formatMonth(viewDate, locale)}</h2>
           </div>
-          <button type="button" className="diary-icon-button" title="关闭" aria-label="关闭日历" onClick={closeDialog}>
+          <button type="button" className="diary-icon-button" title={t('diaryReality:diary.close')} aria-label={t('diaryReality:diary.closeCalendar')} onClick={closeDialog}>
             <X aria-hidden="true" />
           </button>
         </header>
 
         <div className="diary-calendar-controls">
           <span>
-            <button type="button" title="上一年" aria-label="上一年" onClick={() => moveYear(-1)}><ChevronsLeft aria-hidden="true" /></button>
-            <button type="button" title="上个月" aria-label="上个月" onClick={() => moveMonth(-1)}><ChevronLeft aria-hidden="true" /></button>
+            <button type="button" title={t('diaryReality:diary.previousYear')} aria-label={t('diaryReality:diary.previousYear')} onClick={() => moveYear(-1)}><ChevronsLeft aria-hidden="true" /></button>
+            <button type="button" title={t('diaryReality:diary.previousMonth')} aria-label={t('diaryReality:diary.previousMonth')} onClick={() => moveMonth(-1)}><ChevronLeft aria-hidden="true" /></button>
           </span>
           <span>
             <label>
-              <span className="sr-only">年份</span>
+              <span className="sr-only">{t('diaryReality:diary.year')}</span>
               <select
                 value={viewDate.getFullYear()}
                 onChange={(event) => setViewDate(new Date(Number(event.target.value), viewDate.getMonth(), 1))}
               >
-                {[2025, 2026, 2027].map((year) => <option key={year} value={year}>{year}</option>)}
+                {[REFERENCE_TODAY.getFullYear() - 1, REFERENCE_TODAY.getFullYear(), REFERENCE_TODAY.getFullYear() + 1]
+                  .map((year) => <option key={year} value={year}>{new Intl.DateTimeFormat(locale, { year: 'numeric' }).format(new Date(year, 0, 1))}</option>)}
               </select>
             </label>
             <label>
-              <span className="sr-only">月份</span>
+              <span className="sr-only">{t('diaryReality:diary.month')}</span>
               <select
                 value={viewDate.getMonth()}
                 onChange={(event) => setViewDate(new Date(viewDate.getFullYear(), Number(event.target.value), 1))}
               >
-                {Array.from({ length: 12 }, (_, month) => <option key={month} value={month}>{month + 1} 月</option>)}
+                {Array.from({ length: 12 }, (_, month) => <option key={month} value={month}>{new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2020, month, 1))}</option>)}
               </select>
             </label>
           </span>
           <span>
-            <button type="button" title="下个月" aria-label="下个月" onClick={() => moveMonth(1)}><ChevronRight aria-hidden="true" /></button>
-            <button type="button" title="下一年" aria-label="下一年" onClick={() => moveYear(1)}><ChevronsRight aria-hidden="true" /></button>
+            <button type="button" title={t('diaryReality:diary.nextMonth')} aria-label={t('diaryReality:diary.nextMonth')} onClick={() => moveMonth(1)}><ChevronRight aria-hidden="true" /></button>
+            <button type="button" title={t('diaryReality:diary.nextYear')} aria-label={t('diaryReality:diary.nextYear')} onClick={() => moveYear(1)}><ChevronsRight aria-hidden="true" /></button>
           </span>
         </div>
 
         <div className="diary-calendar-weekdays" aria-hidden="true">
-          {['周一', '周二', '周三', '周四', '周五', '周六', '周日'].map((day) => <span key={day}>{day}</span>)}
+          {Array.from({ length: 7 }, (_, index) => {
+            const date = new Date(2026, 0, (locale === 'en-US' ? 4 : 5) + index)
+            return <span key={index}>{new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(date)}</span>
+          })}
         </div>
         <div ref={gridRef} className="diary-calendar-grid">
           {calendarDays.map((date) => {
@@ -449,8 +426,10 @@ function CalendarDialog({
                 data-outside={String(isOutside)}
                 data-selected={String(sameDay(date, selectedDate))}
                 data-today={String(sameDay(date, REFERENCE_TODAY))}
+                data-today-label={sameDay(date, REFERENCE_TODAY) ? t('diaryReality:diary.todayShort') : undefined}
                 disabled={isFuture}
                 aria-pressed={sameDay(date, selectedDate)}
+                aria-label={new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(date)}
                 onClick={() => {
                   onSelect(date)
                   closeDialog()
@@ -464,15 +443,15 @@ function CalendarDialog({
         </div>
 
         <footer className="diary-calendar-footer">
-          <span>记录较少</span>
+          <span>{t('diaryReality:diary.lessActivity')}</span>
           <span className="diary-calendar-legend" aria-hidden="true">
             {[1, 2, 3, 4].map((level) => <i key={level} data-level={level} />)}
           </span>
-          <span>记录丰富</span>
+          <span>{t('diaryReality:diary.moreActivity')}</span>
           <button type="button" onClick={() => {
             onSelect(REFERENCE_TODAY)
             closeDialog()
-          }}>回到今天</button>
+          }}>{t('diaryReality:diary.backToToday')}</button>
         </footer>
       </section>
     </div>
@@ -485,6 +464,7 @@ function formatAudioTime(seconds: number): string {
 }
 
 function DiaryAudioPlayer({ duration, transcript }: { duration: number; transcript: string }) {
+  const { t } = useLocale()
   const playButtonRef = useRef<HTMLButtonElement>(null)
   const [playing, setPlaying] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -524,8 +504,8 @@ function DiaryAudioPlayer({ duration, transcript }: { duration: number; transcri
         ref={playButtonRef}
         type="button"
         className="diary-audio-play"
-        aria-label={playing ? '暂停语音' : '播放语音'}
-        title={playing ? '暂停' : '播放'}
+        aria-label={t(playing ? 'diaryReality:diary.pauseAudio' : 'diaryReality:diary.playAudio')}
+        title={t(playing ? 'diaryReality:diary.pause' : 'diaryReality:diary.play')}
         onClick={togglePlayback}
       >
         {playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
@@ -537,7 +517,7 @@ function DiaryAudioPlayer({ duration, transcript }: { duration: number; transcri
             min={0}
             max={duration}
             value={elapsed}
-            aria-label="语音播放进度"
+            aria-label={t('diaryReality:diary.audioPlaybackProgress')}
             onChange={(event) => setElapsed(Number(event.target.value))}
             style={{ '--diary-audio-progress': `${(elapsed / duration) * 100}%` } as CSSProperties}
           />
@@ -559,6 +539,7 @@ function DiaryImageLightbox({
   onClose: () => void
   onNavigate: (index: number) => void
 }) {
+  const { t } = useLocale()
   const lightboxRef = useRef<HTMLDivElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
@@ -625,7 +606,7 @@ function DiaryImageLightbox({
       className="diary-image-lightbox"
       role="dialog"
       aria-modal="true"
-      aria-label="图片预览"
+      aria-label={t('diaryReality:diary.imagePreview')}
       onMouseDown={(event) => {
         if (event.currentTarget === event.target) closeLightbox()
       }}
@@ -634,8 +615,8 @@ function DiaryImageLightbox({
         ref={closeButtonRef}
         type="button"
         className="diary-image-lightbox-close"
-        aria-label="关闭图片预览"
-        title="关闭"
+        aria-label={t('diaryReality:diary.closeImagePreview')}
+        title={t('diaryReality:diary.close')}
         autoFocus
         onClick={closeLightbox}
       >
@@ -646,8 +627,8 @@ function DiaryImageLightbox({
           <button
             type="button"
             className="diary-image-lightbox-arrow diary-image-lightbox-arrow-previous"
-            aria-label="查看上一张图片"
-            title="上一张"
+            aria-label={t('diaryReality:diary.viewPreviousImage')}
+            title={t('diaryReality:diary.previousImage')}
             onClick={() => navigate(-1)}
           >
             <ChevronLeft aria-hidden="true" />
@@ -655,8 +636,8 @@ function DiaryImageLightbox({
           <button
             type="button"
             className="diary-image-lightbox-arrow diary-image-lightbox-arrow-next"
-            aria-label="查看下一张图片"
-            title="下一张"
+            aria-label={t('diaryReality:diary.viewNextImage')}
+            title={t('diaryReality:diary.nextImage')}
             onClick={() => navigate(1)}
           >
             <ChevronRight aria-hidden="true" />
@@ -672,14 +653,15 @@ function DiaryImageLightbox({
 }
 
 function DiaryTimeline({ events }: { events: DiaryEvent[] }) {
+  const { t } = useLocale()
   const [previewImage, setPreviewImage] = useState<DiaryImagePreview | null>(null)
 
   if (events.length === 0) {
     return (
       <div className="diary-empty-state">
         <CalendarDays aria-hidden="true" />
-        <strong>这一天还没有留下日记</strong>
-        <span>日期仍然保留在时间轴中。</span>
+        <strong>{t('diaryReality:diary.noDiaryEntryForThisDayYet')}</strong>
+        <span>{t('diaryReality:diary.thisDateIsStillKeptOnYourTimeline')}</span>
       </div>
     )
   }
@@ -690,8 +672,8 @@ function DiaryTimeline({ events }: { events: DiaryEvent[] }) {
         const EventIcon = EVENT_ICONS[event.kind]
         const images = event.images
         return (
-          <article key={`${event.time}-${event.title}`} className="diary-timeline-event" data-kind={event.kind}>
-            <time>{event.time}</time>
+          <article key={`${event.time}-${event.endTime ?? ''}-${event.title}`} className="diary-timeline-event" data-kind={event.kind}>
+            <time>{event.time}{event.endTime ? <small>{t('diaryReality:diary.toTime', { time: event.endTime })}</small> : null}</time>
             <div className="diary-event-content">
               <span className="diary-event-icon"><EventIcon aria-hidden="true" /></span>
               <div className="diary-event-label"><EventIcon aria-hidden="true" />{event.label}</div>
@@ -712,8 +694,8 @@ function DiaryTimeline({ events }: { events: DiaryEvent[] }) {
                       key={`${image.src}-${index}`}
                       type="button"
                       className="diary-event-image-button"
-                      aria-label={`放大查看第 ${index + 1} 张图片：${image.alt}`}
-                      title="点击放大"
+                      aria-label={t('diaryReality:diary.enlargeImageIndexAlt', { index: index + 1, alt: image.alt })}
+                      title={t('diaryReality:diary.clickToEnlarge')}
                       onClick={() => setPreviewImage({ images, index })}
                     >
                       <img className="diary-event-image" src={image.src} alt={image.alt} />
@@ -738,26 +720,180 @@ function DiaryTimeline({ events }: { events: DiaryEvent[] }) {
 }
 
 function DiaryClosing({ thought, meta }: { thought: string; meta: string }) {
+  const { t } = useLocale()
   return (
     <footer className="diary-closing">
       <div className="diary-closing-divider" aria-hidden="true"><span><Sparkles /></span></div>
       <blockquote>{thought}</blockquote>
       <small>{meta}</small>
-      <div className="diary-closing-brand">NexOS · 个人信息仅用于你的日记回顾</div>
+      <div className="diary-closing-brand">{t('diaryReality:diary.nexosYourPersonalInformationIsUsedOnlyFor')}</div>
     </footer>
   )
 }
 
 export function DiaryPage() {
+  const { locale, t } = useLocale()
   const pageRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLElement>(null)
   const transitionDirectionRef = useRef(1)
   const isFirstRenderRef = useRef(true)
   const [selectedDate, setSelectedDate] = useState(REFERENCE_TODAY)
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const [activeRun, setActiveRun] = useState<ActiveDiaryRun | null>(null)
+  const [generatedDays, setGeneratedDays] = useState<Record<string, DiaryDay>>({})
+  const [intensityByDate, setIntensityByDate] = useState<Record<string, number>>({})
+  const [loadingDate, setLoadingDate] = useState<string | null>(null)
+  const [runElapsedSeconds, setRunElapsedSeconds] = useState(0)
   const stripDays = useMemo(() => buildDateRange(STRIP_START, STRIP_DAY_COUNT), [])
   const selectedKey = toDateKey(selectedDate)
-  const diary = diaryDays[selectedKey]
+  const diary = generatedDays[selectedKey]
+  const diaryLoading = loadingDate === selectedKey
+
+  useEffect(() => {
+    if (!window.nxcore) return
+    let cancelled = false
+    void window.nxcore.diary.activeRun().then((run) => {
+      if (cancelled || !run) return
+      setActiveRun({
+        id: run.id,
+        date: run.date,
+        startedAt: run.startedAt ?? run.createdAt,
+        attempt: run.attempt,
+      })
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!window.nxcore) return
+    let cancelled = false
+    void window.nxcore.diary.days(toDateKey(STRIP_START), toDateKey(REFERENCE_TODAY)).then((days) => {
+      if (cancelled) return
+      setIntensityByDate(Object.fromEntries(days.map((day) => [
+        day.date,
+        Math.min(4, Math.max(1, Math.ceil(day.eventCount / 2))),
+      ])))
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!window.nxcore) return
+    let cancelled = false
+    setLoadingDate(selectedKey)
+    void window.nxcore.diary.day(selectedKey).then((details) => {
+      if (cancelled) return
+      const loaded = details ? toDiaryDay(details, locale, t) : null
+      setGeneratedDays((current) => {
+        if (loaded) return { ...current, [selectedKey]: loaded }
+        const next = { ...current }
+        delete next[selectedKey]
+        return next
+      })
+      if (details) {
+        setIntensityByDate((current) => ({
+          ...current,
+          [selectedKey]: Math.min(4, Math.max(1, Math.ceil(details.day.eventCount / 2))),
+        }))
+        void loadDiaryMedia(details, locale, t).then((withMedia) => {
+          if (!cancelled && withMedia) {
+            setGeneratedDays((current) => ({ ...current, [selectedKey]: withMedia }))
+          }
+        })
+      }
+    }).catch(() => undefined).finally(() => {
+      if (!cancelled) setLoadingDate((current) => current === selectedKey ? null : current)
+    })
+    return () => { cancelled = true }
+  }, [locale, selectedKey, t])
+
+  const generateDiary = useCallback(async () => {
+    if (!window.nxcore || activeRun) return
+    try {
+      const { runId } = await window.nxcore.diary.generate(selectedKey)
+      setActiveRun({ id: runId, date: selectedKey, startedAt: new Date().toISOString(), attempt: 0 })
+      showToast({
+        title: t('diaryReality:diary.diaryGenerationStarted'),
+        message: t('diaryReality:diary.dateIsBeingOrganizedInTheBackground', { date: formatDayHeading(selectedDate, locale, t) }),
+      })
+    } catch (error) {
+      setActiveRun(null)
+      showToast({
+        title: t('diaryReality:diary.diaryGenerationFailed'),
+        message: error instanceof Error ? error.message : t('diaryReality:diary.theBackgroundTaskCouldNotBeCompleted'),
+      })
+    }
+  }, [activeRun, locale, selectedDate, selectedKey, t])
+
+  useEffect(() => {
+    if (!activeRun || !window.nxcore) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const poll = async () => {
+      try {
+        const run = await window.nxcore!.diary.run(activeRun.id)
+        if (cancelled) return
+        setActiveRun((current) => {
+          if (!current || current.id !== run.id) return current
+          const startedAt = run.startedAt ?? current.startedAt
+          return current.startedAt === startedAt && current.attempt === run.attempt
+            ? current
+            : { ...current, startedAt, attempt: run.attempt }
+        })
+        if (run.status === 'completed') {
+          const details = await window.nxcore!.diary.day(activeRun.date)
+          if (cancelled) return
+          const generated = details ? toDiaryDay(details, locale, t) : null
+          if (generated) setGeneratedDays((current) => ({ ...current, [activeRun.date]: generated }))
+          if (details) {
+            void loadDiaryMedia(details, locale, t).then((withMedia) => {
+              if (!cancelled && withMedia) {
+                setGeneratedDays((current) => ({ ...current, [activeRun.date]: withMedia }))
+              }
+            })
+          }
+          setActiveRun(null)
+          showToast({
+            title: t('diaryReality:diary.diaryGenerationComplete'),
+            message: t('diaryReality:diary.aNewDiaryVersionWasGeneratedForDate', {
+              date: new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric' })
+                .format(new Date(`${activeRun.date}T00:00:00`)),
+            }),
+          })
+          return
+        }
+        if (run.status === 'failed') {
+          setActiveRun(null)
+          showToast({ title: t('diaryReality:diary.diaryGenerationFailed'), message: run.error ?? t('diaryReality:diary.theBackgroundTaskCouldNotBeCompleted') })
+          return
+        }
+        timer = setTimeout(() => void poll(), 1_000)
+      } catch {
+        if (!cancelled) timer = setTimeout(() => void poll(), 2_000)
+      }
+    }
+
+    void poll()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [activeRun?.date, activeRun?.id, locale, t])
+
+  useEffect(() => {
+    if (!activeRun) {
+      setRunElapsedSeconds(0)
+      return
+    }
+    const update = () => setRunElapsedSeconds(Math.max(
+      0,
+      Math.floor((Date.now() - new Date(activeRun.startedAt).getTime()) / 1_000),
+    ))
+    update()
+    const timer = setInterval(update, 1_000)
+    return () => clearInterval(timer)
+  }, [activeRun?.id, activeRun?.startedAt])
 
   const selectDate = useCallback((nextDate: Date) => {
     if (sameDay(nextDate, selectedDate)) return
@@ -856,8 +992,8 @@ export function DiaryPage() {
       <header className="diary-date-strip">
         <div className="diary-date-strip-inner">
           <div className="diary-date-meta">
-            <strong>{formatMonth(selectedDate)}</strong>
-            <span>滑动查看前后日期</span>
+            <strong>{formatMonth(selectedDate, locale)}</strong>
+            <span>{t('diaryReality:diary.scrollToBrowseNearbyDates')}</span>
           </div>
           <div className="diary-strip-days">
             {stripDays.map((date) => {
@@ -870,11 +1006,11 @@ export function DiaryPage() {
                   data-level={intensityByDate[key] ?? 0}
                   data-selected={String(sameDay(date, selectedDate))}
                   disabled={isFuture}
-                  aria-label={`${date.getMonth() + 1} 月 ${date.getDate()} 日`}
+                  aria-label={new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(date)}
                   aria-pressed={sameDay(date, selectedDate)}
                   onClick={() => selectDate(date)}
                 >
-                  <small>{['日', '一', '二', '三', '四', '五', '六'][date.getDay()]}</small>
+                  <small>{new Intl.DateTimeFormat(locale, { weekday: 'narrow' }).format(date)}</small>
                   <i aria-hidden="true" />
                   <span>{date.getDate()}</span>
                 </button>
@@ -884,14 +1020,25 @@ export function DiaryPage() {
           <span className="diary-strip-actions">
             {!sameDay(selectedDate, REFERENCE_TODAY) ? (
               <button type="button" className="diary-today-button" onClick={() => selectDate(REFERENCE_TODAY)}>
-                <RotateCcw aria-hidden="true" />回到今天
+                <RotateCcw aria-hidden="true" />{t('diaryReality:diary.backToToday')}
               </button>
             ) : null}
             <button
               type="button"
+              className="diary-generate-button"
+              title={t('diaryReality:diary.generateADiaryForTheSelectedDate')}
+              disabled={activeRun !== null}
+              aria-busy={activeRun !== null}
+              onClick={() => void generateDiary()}
+            >
+              {activeRun ? <LoaderCircle aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+              {activeRun ? `${t('diaryReality:diary.generating')} · ${formatElapsed(runElapsedSeconds)}` : t(diary ? 'diaryReality:diary.regenerate' : 'diaryReality:diary.generateDiary')}
+            </button>
+            <button
+              type="button"
               className="diary-icon-button"
-              title="打开日历"
-              aria-label="打开完整日历"
+              title={t('diaryReality:diary.openCalendar')}
+              aria-label={t('diaryReality:diary.openFullCalendar')}
               aria-expanded={calendarOpen}
               onClick={() => setCalendarOpen(true)}
             >
@@ -900,46 +1047,46 @@ export function DiaryPage() {
           </span>
         </div>
         <div className="diary-strip-selection">
-          {sameDay(selectedDate, REFERENCE_TODAY) ? '今天' : new Intl.DateTimeFormat('zh-CN', { weekday: 'long' }).format(selectedDate)}
-          <strong>{selectedDate.getMonth() + 1} 月 {selectedDate.getDate()} 日</strong>
+          {sameDay(selectedDate, REFERENCE_TODAY) ? t('diaryReality:diary.today') : new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(selectedDate)}
+          <strong>{new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(selectedDate)}</strong>
         </div>
       </header>
 
-      <main ref={contentRef} className="diary-content">
+      <main ref={contentRef} className="diary-content" aria-busy={diaryLoading}>
         <button
           type="button"
           className="diary-day-arrow diary-day-arrow-previous"
-          title="前一天"
-          aria-label="查看前一天"
+          title={t('diaryReality:diary.previousDay')}
+          aria-label={t('diaryReality:diary.viewPreviousDay')}
           onClick={() => selectDate(shiftDate(selectedDate, -1))}
         ><ChevronLeft aria-hidden="true" /></button>
         <button
           type="button"
           className="diary-day-arrow diary-day-arrow-next"
-          title="后一天"
-          aria-label="查看后一天"
+          title={t('diaryReality:diary.nextDay')}
+          aria-label={t('diaryReality:diary.viewNextDay')}
           disabled={selectedDate >= REFERENCE_TODAY}
           onClick={() => selectDate(shiftDate(selectedDate, 1))}
         ><ChevronRight aria-hidden="true" /></button>
 
         <section className="diary-day-intro">
-          <span>{formatDayHeading(selectedDate)}</span>
-          <h1>{diary?.headline ?? '这一天还没有留下日记'}</h1>
-          <p>{diary?.summary ?? '没有可供整理的记录，但这一天仍然在你的时间线上。'}</p>
-          <small><Sparkles aria-hidden="true" />内容已整理 <i /> {diary?.processingNote ?? '暂无内容'}</small>
+          <span>{formatDayHeading(selectedDate, locale, t)}</span>
+          <h1>{diary?.headline ?? t(diaryLoading ? 'diaryReality:diary.loadingThisDaySDiary' : 'diaryReality:diary.noDiaryEntryForThisDayYet')}</h1>
+          <p>{diary?.summary ?? t(diaryLoading ? 'diaryReality:diary.loadingTheOrganizedTimeline' : 'diaryReality:diary.thereAreNoRecordsToOrganizeButThis')}</p>
+          {diary ? <small><Sparkles aria-hidden="true" />{t('diaryReality:diary.contentOrganized')} <i /> {diary.processingNote}</small> : null}
         </section>
 
         {diary ? (
           <aside className="diary-reflection">
-            <strong><Sparkles aria-hidden="true" />今天的状态观察</strong>
+            <strong><Sparkles aria-hidden="true" />{t('diaryReality:diary.todaySReflection')}</strong>
             <p>{diary.reflection}</p>
           </aside>
         ) : null}
 
         <section className="diary-trace">
           <header>
-            <div><span>DAY TRACE</span><h2>今天值得记住的 {diary?.events.length ?? 0} 个时刻</h2></div>
-            <time>{diary?.range ?? '暂无记录'}</time>
+            <div><span>{t('diaryReality:diary.dayTrace')}</span><h2>{t('diaryReality:diary.countMomentsWorthRememberingFromThisDay', { count: diary?.events.length ?? 0 })}</h2></div>
+            <time>{diary?.range ?? t('diaryReality:diary.noActivity')}</time>
           </header>
           <DiaryTimeline events={diary?.events ?? []} />
           {diary?.closing ? <DiaryClosing thought={diary.closing.thought} meta={diary.closing.meta} /> : null}
@@ -947,7 +1094,12 @@ export function DiaryPage() {
       </main>
 
       {calendarOpen ? (
-        <CalendarDialog selectedDate={selectedDate} onSelect={selectDate} onClose={() => setCalendarOpen(false)} />
+        <CalendarDialog
+          selectedDate={selectedDate}
+          intensityByDate={intensityByDate}
+          onSelect={selectDate}
+          onClose={() => setCalendarOpen(false)}
+        />
       ) : null}
     </div>
   )

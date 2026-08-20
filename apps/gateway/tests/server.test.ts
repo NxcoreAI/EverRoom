@@ -66,6 +66,50 @@ describe("gateway server", () => {
     expect(authorized.statusCode).toBe(200);
   });
 
+  it("serves persisted perception and diary settings with local visual nodes", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const perceptionSettings = await app.inject({ method: "GET", url: "/v1/perception/settings", headers });
+    const initialPerception = perceptionSettings.json<{ configVersion: number }>();
+    const updatedPerception = await app.inject({
+      method: "PATCH", url: "/v1/perception/settings", headers,
+      payload: { configVersion: initialPerception.configVersion, captureEnabled: true, captureIntervalSeconds: 60 },
+    });
+    const capturedAt = new Date().toISOString();
+    const uploaded = await app.inject({
+      method: "POST", url: "/v1/files", headers,
+      payload: {
+        filename: "api-photo.jpg", contentBase64: Buffer.from("local photo").toString("base64"),
+        mime: "image/jpeg", assetKind: "photo", capturedAt,
+      },
+    });
+    const fileId = uploaded.json<{ id: string }>().id;
+    const observed = await app.inject({
+      method: "POST", url: "/v1/perception/visual-observations", headers,
+      payload: { fileId, kind: "photo", capturedAt, width: 100, height: 80 },
+    });
+    const nodes = await app.inject({ method: "GET", url: "/v1/perception/nodes?kind=photo", headers });
+    const diarySettings = await app.inject({ method: "GET", url: "/v1/diary/settings", headers });
+    const initialDiary = diarySettings.json<{ configVersion: number }>();
+    const updatedDiary = await app.inject({
+      method: "PATCH", url: "/v1/diary/settings", headers,
+      payload: { configVersion: initialDiary.configVersion, enabled: true, localTime: "23:30", timezone: "UTC" },
+    });
+    const diaryConflict = await app.inject({
+      method: "PATCH", url: "/v1/diary/settings", headers,
+      payload: { configVersion: initialDiary.configVersion, localTime: "22:00" },
+    });
+    await app.close();
+
+    expect(updatedPerception.json()).toMatchObject({ captureEnabled: true, captureIntervalSeconds: 60 });
+    expect(uploaded.statusCode).toBe(201);
+    expect(observed.statusCode).toBe(200);
+    expect(nodes.json<{ items: unknown[] }>().items).toHaveLength(1);
+    expect(updatedDiary.json()).toMatchObject({ enabled: true, localTime: "23:30", timezone: "UTC" });
+    expect(diaryConflict.statusCode).toBe(409);
+  });
+
   it("manages connector sync jobs without accepting a client owner id", async () => {
     const config = await testConfig();
     config.connectorSyncOwnerId = "bound-owner";
@@ -325,7 +369,11 @@ describe("gateway server", () => {
       method: "POST",
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
-      payload: { prompt: "列出当前文档", idempotencyKey: "mcp-http-run" },
+      payload: {
+        prompt: "列出当前文档",
+        idempotencyKey: "mcp-http-run",
+        context: { selectedRoomId: "room-test" },
+      },
     })).json<AgentRun>();
     const trusted = (await app.inject({
       method: "POST",
@@ -369,6 +417,7 @@ describe("gateway server", () => {
     expect(initialized.statusCode).toBe(202);
     expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "context_room_list",
+      "context_room_create",
       "context_room_document_list",
       "context_room_document_read",
       "context_room_patch_begin",
@@ -406,7 +455,11 @@ describe("gateway server", () => {
       method: "POST",
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
-      payload: { prompt: "列出当前文档", idempotencyKey: "mcp-client-run" },
+      payload: {
+        prompt: "列出当前文档",
+        idempotencyKey: "mcp-client-run",
+        context: { selectedRoomId: "room-client-test" },
+      },
     })).json<AgentRun>();
     const trusted = (await app.inject({
       method: "POST",
@@ -425,6 +478,7 @@ describe("gateway server", () => {
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name)).toEqual([
         "context_room_list",
+        "context_room_create",
         "context_room_document_list",
         "context_room_document_read",
         "context_room_patch_begin",

@@ -1,6 +1,7 @@
 import { ChevronRight, FileText, X } from 'lucide-react'
 
 import type { AgentDocumentSelectionItem } from './agentDocumentSelection'
+import { useLocale } from '@/i18n/LocaleContext'
 
 export function AgentDocumentPicker({
   busy,
@@ -13,11 +14,12 @@ export function AgentDocumentPicker({
   onCancel: () => void
   onSelect: (document: AgentDocumentSelectionItem) => void
 }) {
+  const { t } = useLocale()
   return (
-    <section className="agent-room-selection agent-document-selection" aria-label="选择要编辑的文档">
+    <section className="agent-room-selection agent-document-selection" aria-label={t('surface:agentDocumentPicker.chooseADocumentToEdit')}>
       <header>
-        <span><FileText aria-hidden="true" /><strong>选择要编辑的文档</strong></span>
-        <button type="button" aria-label="取消选择文档" title="取消" disabled={busy} onClick={onCancel}>
+        <span><FileText aria-hidden="true" /><strong>{t('surface:agentDocumentPicker.chooseADocumentToEdit')}</strong></span>
+        <button type="button" aria-label={t('surface:agentDocumentPicker.cancelDocumentSelection')} title={t('surface:agentDocumentPicker.cancel')} disabled={busy} onClick={onCancel}>
           <X aria-hidden="true" />
         </button>
       </header>
@@ -33,11 +35,11 @@ export function AgentDocumentPicker({
             <FileText aria-hidden="true" />
             <span>
               <strong>{document.title}</strong>
-              <small>{document.status === 'draft' ? '草稿' : '文档'}</small>
+              <small>{t(document.status === 'draft' ? 'surface:agentDocumentPicker.draft' : 'surface:agentDocumentPicker.documents')}</small>
             </span>
             <ChevronRight aria-hidden="true" />
           </button>
-        )) : <p>暂无可用文档</p>}
+        )) : <p>{t('surface:agentDocumentPicker.noDocumentsAvailable')}</p>}
       </div>
     </section>
   )

@@ -13,6 +13,7 @@ import {
 
 import { loadRealitySettings } from '@/state/realitySettings'
 import { showToast } from '@/state/toast'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.json,.pdf,.docx,.xlsx,.pptx'
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
@@ -48,8 +49,8 @@ function formatFileSize(size: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '录音转写失败，请重试。'
+function errorMessage(error: unknown, t: Translate): string {
+  return error instanceof Error ? error.message : t('surface:agentComposer.transcriptionFailedTryAgain')
 }
 
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
@@ -77,6 +78,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onStop,
   onSubmit,
 }, ref) {
+  const { t } = useLocale()
   const [attachments, setAttachments] = useState<LocalAttachment[]>([])
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [elapsed, setElapsed] = useState(0)
@@ -208,10 +210,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     const rejected = files.length - accepted.length
     setAttachments((current) => [...current, ...accepted])
     showToast({
-      title: rejected ? '部分附件未添加' : '附件已添加到输入区',
+      title: t(rejected ? 'surface:agentComposer.someAttachmentsWereNotAdded' : 'surface:agentComposer.attachmentsAddedToTheComposer'),
       message: rejected
-        ? '仅支持指定文档格式且单个文件不超过 10 MB。当前 Agent 链路不会上传附件。'
-        : '当前 Agent 链路不会上传附件，文件仅保留在本次输入区。',
+        ? t('surface:agentComposer.onlySupportedDocumentFormatsUpTo10Mb')
+        : t('surface:agentComposer.theCurrentAgentWorkflowDoesNotUploadAttachments'),
     })
     event.target.value = ''
   }
@@ -236,7 +238,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   const startRecording = async () => {
     if (!window.nxcore?.asr) {
-      showToast({ title: '录音不可用', message: '录音转写仅在 EverRoom 桌面版中可用。' })
+      showToast({ title: t('surface:agentComposer.recordingUnavailable'), message: t('surface:agentComposer.voiceTranscriptionIsAvailableOnlyInTheEverroom') })
       return
     }
     setVoiceState('requesting')
@@ -275,7 +277,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       if (voiceOperationRef.current !== operation || !mountedRef.current) return
       cancelRecording()
       setVoiceState('idle')
-      showToast({ title: '无法开始录音', message: errorMessage(error) })
+      showToast({ title: t('surface:agentComposer.couldNotStartRecording'), message: errorMessage(error, t) })
     }
   }
 
@@ -290,7 +292,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       if (recorder.state !== 'inactive') {
         await new Promise<void>((resolve, reject) => {
           recorder.addEventListener('stop', () => resolve(), { once: true })
-          recorder.addEventListener('error', () => reject(new Error('录音设备发生错误。')), { once: true })
+          recorder.addEventListener('error', () => reject(new Error(t('surface:agentComposer.recordingDeviceError'))), { once: true })
           recorder.stop()
         })
       }
@@ -306,7 +308,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         await window.nxcore.asr.cancelRecording(id)
         setVoiceState('idle')
         setElapsed(0)
-        showToast({ title: '录音时间太短', message: '录音至少需要 10 秒才能转写。' })
+        showToast({ title: t('surface:agentComposer.recordingTooShort'), message: t('surface:agentComposer.aRecordingMustBeAtLeast10Seconds') })
         return
       }
 
@@ -324,13 +326,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       })
       const deadline = Date.now() + ASR_TIMEOUT_MS
       while (job.status === 'pending' || job.status === 'running') {
-        if (Date.now() >= deadline) throw new Error('转写等待超时，请稍后重试。')
+        if (Date.now() >= deadline) throw new Error(t('surface:agentComposer.transcriptionTimedOut'))
         await new Promise((resolve) => window.setTimeout(resolve, ASR_POLL_MS))
         if (voiceOperationRef.current !== operation || !mountedRef.current) return
         job = await window.nxcore.asr.getJob(job.id)
       }
       if (voiceOperationRef.current !== operation || !mountedRef.current) return
-      if (job.status !== 'completed' || !job.result) throw new Error(job.error ?? '转写任务未完成。')
+      if (job.status !== 'completed' || !job.result) throw new Error(job.error ?? t('surface:agentComposer.transcriptionIncomplete'))
       insertTranscript(job.result.transcript)
       setElapsed(0)
       setVoiceState('idle')
@@ -338,7 +340,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       if (voiceOperationRef.current !== operation || !mountedRef.current) return
       cancelRecording()
       setVoiceState('idle')
-      showToast({ title: '录音转写失败', message: errorMessage(error) })
+      showToast({ title: t('surface:agentComposer.voiceTranscriptionFailed'), message: errorMessage(error, t) })
     }
   }
 
@@ -346,13 +348,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   // 会话快照加载时保留本地附件和录音状态。
   const controlsDisabled = active || !available
   const voiceLabel = voiceState === 'recording'
-    ? `录音 ${formatDuration(elapsed)}`
+    ? t('surface:agentComposer.recordingDuration', { duration: formatDuration(elapsed) })
     : voiceState === 'requesting'
-      ? '请求麦克风'
+      ? t('surface:agentComposer.requestingMicrophone')
       : voiceState === 'saving'
-        ? '保存录音'
+        ? t('surface:agentComposer.savingRecording')
         : voiceState === 'transcribing'
-          ? '正在转写'
+          ? t('surface:agentComposer.transcribing')
           : ''
 
   return (
@@ -360,12 +362,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         <textarea
           ref={textareaRef}
-          aria-label="桌面 AI 工作台输入框"
+          aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
           placeholder={active
-            ? 'Agent 正在处理...'
+            ? t('surface:agentComposer.agentIsWorking')
             : available
-              ? '基于当前页面提问，或描述需要执行的操作'
-              : '正在同步 Room 数据...'}
+              ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
+              : t('surface:agentComposer.syncingRoomData')}
           rows={2}
           value={value}
           disabled={!available || active || voiceState === 'saving' || voiceState === 'transcribing'}
@@ -375,7 +377,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           onKeyDown={handleKeyDown}
         />
         {attachments.length > 0 ? (
-          <div className="agent-attachments" aria-label="本地附件">
+          <div className="agent-attachments" aria-label={t('surface:agentComposer.localAttachments')}>
             {attachments.map((file) => (
               <span key={file.id} className="agent-attachment">
                 <FileText aria-hidden="true" />
@@ -383,8 +385,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                 <small>{formatFileSize(file.size)}</small>
                 <button
                   type="button"
-                  aria-label={`移除 ${file.name}`}
-                  title="移除附件"
+                  aria-label={t('surface:agentComposer.removeName', { name: file.name })}
+                  title={t('surface:agentComposer.removeAttachment')}
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))}
                 >
                   <X aria-hidden="true" />
@@ -406,8 +408,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           <button
             type="button"
             className="agent-prompt-tool"
-            title="添加附件"
-            aria-label="添加附件"
+            title={t('surface:agentComposer.addAttachment')}
+            aria-label={t('surface:agentComposer.addAttachment')}
             disabled={controlsDisabled || voiceBusy}
             onClick={() => fileInputRef.current?.click()}
           >
@@ -417,8 +419,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             type="button"
             className="agent-prompt-tool agent-prompt-voice"
             data-recording={String(voiceState === 'recording')}
-            title={voiceState === 'recording' ? '停止录音' : '语音输入'}
-            aria-label={voiceState === 'recording' ? '停止录音' : '语音输入'}
+            title={t(voiceState === 'recording' ? 'surface:agentComposer.stopRecording' : 'surface:agentComposer.voiceInput')}
+            aria-label={t(voiceState === 'recording' ? 'surface:agentComposer.stopRecording' : 'surface:agentComposer.voiceInput')}
             disabled={controlsDisabled || (voiceBusy && voiceState !== 'recording')}
             onClick={voiceState === 'recording' ? stopRecording : startRecording}
           >
@@ -432,17 +434,17 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           <span className="agent-composer-context" title={contextSummary}>
             <span>{contextSummary}</span>
             {hasSelectedText ? (
-              <button type="button" aria-label="移除选中文字" title="移除选中文字" onClick={onClearContext}>
+              <button type="button" aria-label={t('surface:agentComposer.removeSelectedText')} title={t('surface:agentComposer.removeSelectedText')} onClick={onClearContext}>
                 <X aria-hidden="true" />
               </button>
             ) : null}
           </span>
           {active ? (
-            <button type="button" className="agent-prompt-submit is-stop" title="停止" aria-label="停止" onClick={onStop}>
+            <button type="button" className="agent-prompt-submit is-stop" title={t('surface:agentComposer.stop')} aria-label={t('surface:agentComposer.stop')} onClick={onStop}>
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title="发送" aria-label="发送" disabled={!available || !value.trim() || loading || voiceBusy}>
+            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || !value.trim() || loading || voiceBusy}>
               <ArrowUp aria-hidden="true" />
             </button>
           )}

@@ -57,6 +57,14 @@ const SourceDocumentInput = Type.Object({
   contentHash: Type.Optional(Type.String({ maxLength: 128 })),
 });
 
+const OnboardingInput = Type.Object({
+  requestId: Type.String({ minLength: 1, maxLength: 80, pattern: "^[A-Za-z0-9._:-]+$" }),
+  locale: Type.Union([Type.Literal("zh-CN"), Type.Literal("en-US")]),
+  workContext: Type.String({ minLength: 1, maxLength: 500 }),
+  currentFocus: Type.String({ minLength: 1, maxLength: 500 }),
+  collaborationPreference: Type.Optional(Type.String({ maxLength: 500 })),
+});
+
 const ScenarioEntryDtoSchema = Type.Object({
   path: Type.String(),
   summary: Type.Union([Type.String(), Type.Null()]),
@@ -139,6 +147,24 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
       "/v1/memory/overview",
       { schema: { tags: ["memory"] } },
       async () => service.overview(),
+    );
+
+    app.post(
+      "/v1/memory/onboarding",
+      {
+        schema: {
+          tags: ["memory"],
+          body: OnboardingInput,
+          response: {
+            200: Type.Object({
+              sessionId: Type.String(),
+              capturedAt: Type.String(),
+              accepted: Type.Literal(true),
+            }),
+          },
+        },
+      },
+      async (request) => service.captureOnboarding(request.body),
     );
 
     app.get(

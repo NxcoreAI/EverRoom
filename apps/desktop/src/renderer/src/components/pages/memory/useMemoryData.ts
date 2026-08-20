@@ -1,26 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { Translate } from '@/i18n/LocaleContext'
 
 import type { MemoryOverviewDto } from '../../../../../shared/memory'
 
 /** 记忆功能的失败分类，决定降级 UI。 */
 export interface MemoryFailure {
   kind: 'disabled' | 'unreachable' | 'error'
-  message: string
+  messageKey: string
+  detail?: string
 }
 
 /** IPC 错误 message 中带有 gateway 的 `[memory_*]` 前缀；据此分类。 */
 export function toMemoryFailure(error: unknown): MemoryFailure {
   const message = error instanceof Error ? error.message : String(error)
   if (message.includes('[memory_disabled]')) {
-    return { kind: 'disabled', message: '记忆服务未启用。' }
+    return { kind: 'disabled', messageKey: 'memory:failure.disabled' }
   }
   if (message.includes('[memory_unreachable]')) {
-    return { kind: 'unreachable', message: 'MemoryCore 记忆服务暂时不可达。' }
+    return { kind: 'unreachable', messageKey: 'memory:failure.unreachable' }
   }
   if (message.includes('[memory_error]')) {
-    return { kind: 'error', message: message.replace(/\[memory_error\]\s*/, '') || '记忆服务请求失败。' }
+    const detail = message.replace(/\[memory_error\]\s*/, '').trim()
+    return {
+      kind: 'error',
+      messageKey: 'memory:failure.requestFailed',
+      ...(detail ? { detail } : {}),
+    }
   }
-  return { kind: 'unreachable', message: '记忆数据请求失败，请确认网关与 MemoryCore 正在运行。' }
+  return { kind: 'unreachable', messageKey: 'memory:failure.gatewayUnavailable' }
+}
+
+export function memoryFailureText(failure: MemoryFailure, t: Translate): string {
+  return failure.detail || t(failure.messageKey)
 }
 
 interface AsyncState<T> {
@@ -66,9 +77,9 @@ export function useMemoryOverview() {
   )
 }
 
-export function formatDate(value: string | null | undefined): string {
+export function formatDate(value: string | null | undefined, locale: string): string {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleString(locale, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }

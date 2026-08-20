@@ -7,9 +7,9 @@ import type {
   AgentSessionLink,
   AgentSessionSnapshot,
   CreateAgentSessionLinkInput,
-  StartAgentRunInput,
 } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import {
   mergeAgentToolEvent,
@@ -20,6 +20,7 @@ import {
   type DisplayAgentToolStatus,
   type ReducedAgentRunEvents,
 } from './agentRunActivity'
+import { buildAgentRunContext } from './agentRunContext'
 
 export { mergeAgentToolEvent, reduceAgentRunEvents } from './agentRunActivity'
 export type {
@@ -38,38 +39,47 @@ export function mergePendingAgentMessages(
   pendingMessages: DisplayAgentMessage[],
 ): DisplayAgentMessage[] {
   if (pendingMessages.length === 0) return messages
-  const messageIds = new Set(messages.map((message) => message.id))
-  return [...messages, ...pendingMessages.filter((message) => !messageIds.has(message.id))]
+  return [...messages, ...pendingMessages.filter((message) => !messages.some((existing) => (
+    existing.id === message.id
+    || (existing.runId === message.runId && existing.role === message.role && existing.content === message.content)
+  )))]
 }
 
-const SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
+const SESSION_STORAGE_KEY = 'nxcore-ce:agent-session:v2'
+const LEGACY_SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
 const defaultSessionCreations = new Map<string, Promise<AgentSession>>()
 
-function sessionScope(pageLabel: string, roomId: string | null): string {
-  return `${pageLabel}:${roomId ?? 'global'}`
+function isUserSession(session: AgentSession): boolean {
+  return session.pageLabel !== 'Remote Agent'
+    && !session.pageLabel.startsWith('AI ')
 }
 
-function readStoredSession(pageLabel: string, roomId: string | null): string | null {
+function sessionScope(_pageLabel?: string, _roomId?: string | null): string {
+  return 'global'
+}
+
+function readStoredSession(): string | null {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}')
+    const stored = localStorage.getItem(SESSION_STORAGE_KEY)
+      ?? localStorage.getItem(LEGACY_SESSION_STORAGE_KEY)
+      ?? '{}'
+    const value: unknown = JSON.parse(stored)
+    if (typeof value === 'string') return value
     if (!value || typeof value !== 'object') return null
-    const sessionId = (value as Record<string, unknown>)[sessionScope(pageLabel, roomId)]
-    return typeof sessionId === 'string' ? sessionId : null
+    const record = value as Record<string, unknown>
+    if (typeof record.global === 'string') return record.global
+    // Migrate the old per-page/per-Room map by keeping one last selection.
+    const legacy = Object.values(record).find((sessionId): sessionId is string => typeof sessionId === 'string')
+    return legacy ?? null
   } catch {
     return null
   }
 }
 
-function storeSession(pageLabel: string, roomId: string | null, sessionId: string | null): void {
+function storeSession(sessionId: string | null): void {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}')
-    const sessions = value && typeof value === 'object'
-      ? { ...(value as Record<string, unknown>) }
-      : {}
-    const scope = sessionScope(pageLabel, roomId)
-    if (sessionId) sessions[scope] = sessionId
-    else delete sessions[scope]
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions))
+    if (sessionId) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionId))
+    else localStorage.removeItem(SESSION_STORAGE_KEY)
   } catch {
     // Session persistence is optional when browser storage is unavailable.
   }
@@ -79,29 +89,12 @@ function requestErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
-export function buildAgentRunContext(
-  rooms: AgentRoomReference[],
-  selectedText?: string,
-  selectedRoomId?: string,
-  activeDocument?: AgentActiveDocumentContext | null,
-): NonNullable<StartAgentRunInput['context']> {
-  return {
-    rooms: rooms.map(({ id, title, kind }) => ({
-      id,
-      title,
-      ...(kind ? { kind } : {}),
-    })),
-    ...(selectedText?.trim() ? { selectedText: selectedText.trim().slice(0, 8_000) } : {}),
-    ...(selectedRoomId?.trim() ? { selectedRoomId: selectedRoomId.trim() } : {}),
-    ...(activeDocument ? { activeDocument } : {}),
-  }
-}
-
 export function useAgentSession(
   pageLabel: string,
   roomId: string | null,
   rooms: AgentRoomReference[],
 ) {
+  const { locale, t } = useLocale()
   const api = window.nxcore?.agent
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
@@ -146,6 +139,43 @@ export function useAgentSession(
     }))
 
     if (event.type === 'run.accepted' || event.type === 'run.started') {
+      if (event.type === 'run.accepted') {
+        const prompt = (event.payload as { prompt?: unknown }).prompt
+        if (typeof prompt === 'string' && prompt.trim()) {
+          setMessages((current) => {
+            const existing = current.find((message) =>
+              message.role === 'user'
+              && (
+                message.runId === event.runId
+                || (message.runId === 'pending' && message.content === prompt)
+              )
+            )
+
+            if (existing) {
+              return current
+                .filter((message) => message.id === existing.id || !(
+                  message.id !== existing.id
+                  && message.role === 'user'
+                  && message.content === prompt
+                  && (message.runId === 'pending' || message.runId === event.runId)
+                ))
+                .map((message) => message.id === existing.id
+                  ? { ...message, sessionId: event.sessionId, runId: event.runId }
+                  : message
+                )
+            }
+
+            return [...current, {
+              id: `user-${event.runId}`,
+              sessionId: event.sessionId,
+              runId: event.runId,
+              role: 'user',
+              content: prompt,
+              createdAt: event.occurredAt,
+            }]
+          })
+        }
+      }
       setActiveRunId(event.runId)
       setRunStartedAtByRun((current) => current[event.runId]
         ? current
@@ -267,7 +297,7 @@ export function useAgentSession(
         : current)
       if (event.type === 'run.failed') {
         const message = (event.payload as { message?: unknown }).message
-        setError(typeof message === 'string' ? message : 'Agent 运行失败。')
+        setError(typeof message === 'string' ? message : t('surface:useAgentSession.runFailed'))
       }
     }
   }, [updateToolCall])
@@ -345,16 +375,16 @@ export function useAgentSession(
     setActiveRunId(snapshot.activeRun?.id ?? null)
     setSessionId(snapshot.session.id)
     setCurrentSession(snapshot.session)
-    const title = snapshot.session.title?.trim() || '新对话'
+    const title = snapshot.session.title?.trim() || t('surface:useAgentSession.newConversation')
     setDisplayTitle(title)
     setScopeReady(true)
     setSessions((current) => current.some((session) => session.id === snapshot.session.id)
       ? current.map((session) => session.id === snapshot.session.id ? snapshot.session : session)
       : [snapshot.session, ...current])
     sessionIdRef.current = snapshot.session.id
-    storeSession(pageLabel, roomId, snapshot.session.id)
+    storeSession(snapshot.session.id)
     return true
-  }, [api, pageLabel, roomId])
+  }, [api])
 
   const selectSession = useCallback(async (
     session: AgentSession,
@@ -367,25 +397,25 @@ export function useAgentSession(
     setError(null)
     setSessionId(session.id)
     setCurrentSession(session)
-    setDisplayTitle(session.title?.trim() || '新对话')
+    setDisplayTitle(session.title?.trim() || t('surface:useAgentSession.newConversation'))
     sessionIdRef.current = session.id
     try {
       await api.unsubscribe()
       const snapshot = await api.getSession(session.id)
       const hydrated = await hydrateSnapshot(snapshot, pendingMessages, expectedScope)
       if (!hydrated || expectedScope !== activeScopeRef.current) return
-      storeSession(pageLabel, roomId, session.id)
+      storeSession(session.id)
       await api.subscribe(session.id)
     } catch (requestError) {
       if (expectedScope === activeScopeRef.current && session.id === sessionIdRef.current) {
         setConnected(false)
         setScopeReady(true)
-        setError(requestErrorMessage(requestError, '切换会话失败。'))
+        setError(requestErrorMessage(requestError, t('surface:useAgentSession.switchFailed')))
       }
     } finally {
       if (expectedScope === activeScopeRef.current && session.id === sessionIdRef.current) setLoading(false)
     }
-  }, [api, hydrateSnapshot, pageLabel, roomId])
+  }, [api, hydrateSnapshot])
 
   useLayoutEffect(() => {
     let alive = true
@@ -408,20 +438,21 @@ export function useAgentSession(
 
     if (api) {
       setLoading(true)
-      void api.listSessions(pageLabel, roomId)
+      void api.listSessions()
         .then(async (listedSessions) => {
           if (!alive) return
-          setSessions(listedSessions)
-          const storedSessionId = readStoredSession(pageLabel, roomId)
-          const selected = listedSessions.find((session) => session.id === storedSessionId)
-            ?? listedSessions[0]
+          const userSessions = listedSessions.filter(isUserSession)
+          setSessions(userSessions)
+          const storedSessionId = readStoredSession()
+          const selected = userSessions.find((session) => session.id === storedSessionId)
+            ?? userSessions[0]
           if (selected) await selectSession(selected)
           else if (alive) {
-            const scope = sessionScope(pageLabel, roomId)
-            setDisplayTitle('新对话')
+            const scope = sessionScope()
+            setDisplayTitle(t('surface:useAgentSession.newConversation'))
             let creation = defaultSessionCreations.get(scope)
             if (!creation) {
-              creation = api.createSession({ pageLabel, roomId })
+              creation = api.createSession({ pageLabel: 'Agent', roomId: null })
               defaultSessionCreations.set(scope, creation)
               const clear = () => {
                 if (defaultSessionCreations.get(scope) === creation) {
@@ -441,7 +472,7 @@ export function useAgentSession(
             setConnected(false)
             setScopeReady(true)
           }
-          if (alive) setError(requestError instanceof Error ? requestError.message : '会话加载失败。')
+          if (alive) setError(requestError instanceof Error ? requestError.message : t('surface:useAgentSession.loadFailed'))
         })
         .finally(() => {
           if (alive) setLoading(false)
@@ -457,7 +488,7 @@ export function useAgentSession(
         setConnected(true)
         if (frame.lastEventSeq > 0) {
           void api.getSession(frame.sessionId).then(hydrateSnapshot).catch((requestError) => {
-            setError(requestError instanceof Error ? requestError.message : '会话恢复失败。')
+            setError(requestError instanceof Error ? requestError.message : t('surface:useAgentSession.restoreFailed'))
           })
         }
       } else {
@@ -470,20 +501,20 @@ export function useAgentSession(
       removeListener?.()
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, pageLabel, roomId, selectSession])
+  }, [api, applyEvent, hydrateSnapshot, selectSession])
 
   const createSession = async (
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<AgentSession> => {
-    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
-    if (activeRunId) throw new Error('请先停止当前运行，再新建会话。')
+    if (!api) throw new Error(t('surface:useAgentSession.desktopOnly'))
+    if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
-      const session = await api.createSession({ pageLabel, roomId })
+      const session = await api.createSession({ pageLabel: 'Agent', roomId: null })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
       return session
     } catch (createError) {
-      setError(requestErrorMessage(createError, '新建会话失败。'))
+      setError(requestErrorMessage(createError, t('surface:useAgentSession.createFailed')))
       throw createError
     }
   }
@@ -503,7 +534,7 @@ export function useAgentSession(
         setDisplayTitle(updated.title?.trim() ?? '')
       }
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '重命名会话失败。'))
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.renameFailed')))
       throw requestError
     }
   }
@@ -522,7 +553,7 @@ export function useAgentSession(
           sessionIdRef.current = null
           setSessionId(null)
           setCurrentSession(null)
-          setDisplayTitle('新对话')
+          setDisplayTitle(t('surface:useAgentSession.newConversation'))
           setScopeReady(false)
           setSessionLinks([])
           setMessages([])
@@ -534,7 +565,7 @@ export function useAgentSession(
           eventsByRun.current.clear()
           sequenceByRun.current.clear()
           setConnected(false)
-          storeSession(pageLabel, roomId, null)
+          storeSession(null)
           try {
             await createSession()
           } catch {
@@ -543,7 +574,7 @@ export function useAgentSession(
         }
       }
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '删除会话失败。'))
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.deleteFailed')))
       throw requestError
     }
   }
@@ -560,7 +591,7 @@ export function useAgentSession(
   }
 
   const createSessionLink = async (input: CreateAgentSessionLinkInput): Promise<AgentSessionLink> => {
-    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
+    if (!api) throw new Error(t('surface:useAgentSession.desktopOnly'))
     try {
       const link = await api.createSessionLink(input)
       if (link.sourceSessionId === sessionIdRef.current || link.targetSessionId === sessionIdRef.current) {
@@ -568,19 +599,19 @@ export function useAgentSession(
       }
       return link
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '创建会话引用失败。'))
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.createReferenceFailed')))
       throw requestError
     }
   }
 
   const markSessionLinkReturned = async (linkId: string): Promise<AgentSessionLink> => {
-    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
+    if (!api) throw new Error(t('surface:useAgentSession.desktopOnly'))
     try {
       const link = await api.markSessionLinkReturned(linkId)
       setSessionLinks((current) => current.map((item) => item.id === link.id ? link : item))
       return link
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '返回原会话失败。'))
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.returnFailed')))
       throw requestError
     }
   }
@@ -614,7 +645,8 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument),
+        responseLanguage: locale,
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel),
       })
       const updatedAt = new Date().toISOString()
       const runCompleted = terminalRunIdsRef.current.has(run.id)
@@ -650,7 +682,7 @@ export function useAgentSession(
       if (optimisticId) {
         setMessages((current) => current.filter((message) => message.id !== optimisticId))
       }
-      setError(requestErrorMessage(requestError, '发送消息失败。'))
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.sendFailed')))
       throw requestError
     } finally {
       setSending(false)
@@ -670,6 +702,7 @@ export function useAgentSession(
         roomId: selectedRoomId,
         ...(documentId ? { documentId } : {}),
         idempotencyKey: crypto.randomUUID(),
+        responseLanguage: locale,
       })
       const runCompleted = terminalRunIdsRef.current.has(run.id)
       const updatedAt = new Date().toISOString()
@@ -685,12 +718,12 @@ export function useAgentSession(
       }
       return run.id
     } catch (requestError) {
-      const message = requestErrorMessage(requestError, '继续处理失败。')
+      const message = requestErrorMessage(requestError, t('surface:useAgentSession.continueFailed'))
       setError(/no longer available/i.test(message)
-        ? '当前选择已失效，请重新发起请求。'
+        ? t('surface:useAgentSession.selectionExpired')
         : /not allowed/i.test(message)
-          ? '所选 Room 已不可用，请选择其他 Room。'
-          : /active run/i.test(message) ? 'Agent 正在处理其他请求，请稍后再试。' : message)
+          ? t('surface:useAgentSession.roomUnavailable')
+          : /active run/i.test(message) ? t('surface:useAgentSession.agentBusy') : message)
       throw requestError
     } finally {
       setSending(false)
@@ -702,7 +735,7 @@ export function useAgentSession(
     try {
       await api.cancelRun(activeRunId)
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '停止 Agent 失败。'))
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.stopFailed')))
     }
   }
 

@@ -123,6 +123,9 @@ class FakeContainer implements PixiContainer {
 }
 
 class FakeText extends FakeSprite implements PixiText {
+  resolution = 1
+  roundPixels = false
+
   constructor(public text = '') {
     super(new FakeTexture())
   }
@@ -198,6 +201,18 @@ class FakeViewport extends FakeContainer implements PixiViewport {
     return this.visibleBounds
   }
 
+  moveCenter(x: number, y: number) {
+    this.calls.push(`moveCenter:${String(x)},${String(y)}`)
+    return this
+  }
+
+  setZoom(scale: number) {
+    this.scale.x = scale
+    this.scale.y = scale
+    this.calls.push(`setZoom:${String(scale)}`)
+    return this
+  }
+
   toWorld(x: number, y: number) {
     return { x, y }
   }
@@ -238,7 +253,7 @@ function createFakes() {
   const appDestroy = vi.fn()
   const renderer = {
     events: {},
-    generateTexture: vi.fn((source: FakeGraphics) => {
+    generateTexture: vi.fn((source: FakeGraphics, _options?: { resolution?: number }) => {
       source.generated = true
       const texture = new FakeTexture()
       textures.push(texture)
@@ -341,6 +356,10 @@ describe('PixiForceGraphRenderer', () => {
     expect(fakes.viewports[0]?.options.events).toBe(fakes.renderer.events)
     expect(fakes.viewports[0]?.calls).toEqual(['drag', 'wheel', 'pinch'])
     expect(fakes.graphics.filter((item) => item.generated)).toHaveLength(1)
+    expect(fakes.graphics.find((item) => item.generated)?.operations).toContain('drawCircle:20,20,20')
+    expect(fakes.renderer.generateTexture).toHaveBeenCalledWith(expect.any(FakeGraphics), { resolution: 2 })
+    expect((renderer.sprites[0] as FakeSprite).scale.set).toHaveBeenCalledWith(0.6)
+    expect((renderer.sprites[1] as FakeSprite).scale.set).toHaveBeenCalledWith(1)
     expect(renderer.sprites.every((sprite) => !('interactive' in sprite))).toBe(true)
   })
 
@@ -371,8 +390,32 @@ describe('PixiForceGraphRenderer', () => {
     expect(hover).toHaveBeenCalledWith(0)
     expect(renderer.activeLabelCount()).toBe(1)
     expect(renderer.createdLabelCount()).toBe(3)
+    expect(fakes.texts.every((label) => label.resolution === 1)).toBe(true)
+    expect(fakes.texts.every((label) => label.roundPixels)).toBe(true)
     expect(fakes.graphics.find((graphics) => !graphics.generated)?.operations)
       .toContain('lineStyle:2.04,4026358,1')
+  })
+
+  it('raises label texture resolution in stable steps while zooming in', async () => {
+    const fakes = createFakes()
+    await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{ label: 'Readable label' }],
+      positions: new Float32Array([10, 20]),
+    })
+    const viewport = fakes.viewports[0]!
+    fakes.ticker.tick()
+    expect(fakes.texts[0]?.resolution).toBe(1)
+
+    viewport.scale.x = 1.6
+    fakes.ticker.tick()
+    expect(fakes.texts[0]?.resolution).toBe(2)
+
+    viewport.scale.x = 8
+    fakes.ticker.tick()
+    expect(fakes.texts[0]?.resolution).toBe(4)
   })
 
   it('culls labels to visible nodes and never grows the reusable text pool past its cap', async () => {
@@ -447,6 +490,28 @@ describe('PixiForceGraphRenderer', () => {
 
     expect(select).toHaveBeenCalledOnce()
     expect(select).toHaveBeenCalledWith(0)
+  })
+
+  it('opens a node when the same node is clicked twice', async () => {
+    const fakes = createFakes()
+    const open = vi.fn()
+    await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{ label: 'A' }],
+      positions: new Float32Array([10, 20]),
+      onNodeOpen: open,
+    })
+    const viewport = fakes.viewports[0]!
+
+    for (let click = 0; click < 2; click += 1) {
+      viewport.emitEvent('pointerdown', { button: 0, global: { x: 10, y: 20 } })
+      viewport.emitEvent('pointerup', { global: { x: 10, y: 20 } })
+    }
+
+    expect(open).toHaveBeenCalledOnce()
+    expect(open).toHaveBeenCalledWith(0)
   })
 
   it('keeps viewport panning enabled when pressing outside a node', async () => {
@@ -592,6 +657,10 @@ describe('PixiForceGraphRenderer', () => {
     renderer.resize(800, 600)
     expect(fakes.renderer.resize).toHaveBeenCalledWith(800, 600)
     expect(fakes.viewports[0]?.calls).toContain('resize:800,600')
+
+    renderer.fitView()
+    expect(fakes.viewports[0]?.calls).toContain('setZoom:4')
+    expect(fakes.viewports[0]?.calls).toContain('moveCenter:20,42')
 
     renderer.destroy()
     renderer.destroy()

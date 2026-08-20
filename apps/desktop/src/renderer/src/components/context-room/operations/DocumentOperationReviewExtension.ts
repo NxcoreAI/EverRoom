@@ -6,6 +6,7 @@ import { Check, X } from 'lucide-react'
 import { createElement, Fragment as ReactFragment, type MouseEvent as ReactMouseEvent } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import i18n from '@/i18n/i18next'
 import type { DocumentOperationReviewView, DocumentReviewItem } from './presenterRegistry'
 import type { DocumentReviewDecisionMap } from './documentReviewState'
 
@@ -117,11 +118,11 @@ function reviewDecorations(doc: ProseMirrorNode, state: OperationReviewDecoratio
         preview.tabIndex = 0
         preview.contentEditable = 'false'
         preview.setAttribute('role', 'region')
-        preview.setAttribute('aria-label', `文档改动 ${item.sequence}`)
+        preview.setAttribute('aria-label', i18n.t('contextRoom:documentOperationReview.documentChange', { sequence: item.sequence }))
         const content = document.createElement('div')
         content.className = 'document-patch-review-proposed-content'
         if (item.operation === 'delete') {
-          content.textContent = '删除此处内容'
+          content.textContent = i18n.t('contextRoom:documentOperationReview.deleteContentHere')
         } else {
           const editor = document.createElement('textarea')
           editor.className = 'document-patch-review-proposed-editor'
@@ -130,7 +131,7 @@ function reviewDecorations(doc: ProseMirrorNode, state: OperationReviewDecoratio
           editor.maxLength = 65_536
           editor.disabled = state.busy
           editor.spellcheck = true
-          editor.setAttribute('aria-label', `编辑文档改动 ${item.sequence}`)
+          editor.setAttribute('aria-label', i18n.t('contextRoom:documentOperationReview.editDocumentChange', { sequence: item.sequence }))
           editor.addEventListener('mousedown', (event) => event.stopPropagation())
           editor.addEventListener('keydown', (event) => event.stopPropagation())
           editor.addEventListener('input', () => state.onDraftChange(item.id, editor.value))
@@ -143,8 +144,8 @@ function reviewDecorations(doc: ProseMirrorNode, state: OperationReviewDecoratio
           createElement('button', {
             type: 'button',
             className: 'is-accept',
-            title: '接受此处改动',
-            'aria-label': '接受此处改动',
+            title: i18n.t('contextRoom:documentOperationReview.acceptChange'),
+            'aria-label': i18n.t('contextRoom:documentOperationReview.acceptChange'),
             disabled: state.busy,
             onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
             onClick: (event: ReactMouseEvent) => { event.stopPropagation(); void state.onDecision(item.id, 'accepted') },
@@ -152,8 +153,8 @@ function reviewDecorations(doc: ProseMirrorNode, state: OperationReviewDecoratio
           createElement('button', {
             type: 'button',
             className: 'is-reject',
-            title: '拒绝此处改动',
-            'aria-label': '拒绝此处改动',
+            title: i18n.t('contextRoom:documentOperationReview.rejectChange'),
+            'aria-label': i18n.t('contextRoom:documentOperationReview.rejectChange'),
             disabled: state.busy,
             onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
             onClick: (event: ReactMouseEvent) => { event.stopPropagation(); void state.onDecision(item.id, 'rejected') },
@@ -161,11 +162,11 @@ function reviewDecorations(doc: ProseMirrorNode, state: OperationReviewDecoratio
           createElement('button', {
             type: 'button',
             className: 'is-accept-all',
-            title: '全部接受',
+            title: i18n.t('contextRoom:documentOperationReview.acceptAll'),
             disabled: state.busy,
             onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
             onClick: (event: ReactMouseEvent) => { event.stopPropagation(); void state.onAcceptAll() },
-          }, '全部接受'),
+          }, i18n.t('contextRoom:documentOperationReview.acceptAll')),
         ))
         preview.append(content, actions)
         preview.addEventListener('keydown', (event) => {

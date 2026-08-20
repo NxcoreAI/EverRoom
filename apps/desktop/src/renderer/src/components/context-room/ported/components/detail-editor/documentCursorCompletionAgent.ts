@@ -138,6 +138,7 @@ export function validatedDocumentCursorReplacement(
 interface StreamDocumentCursorCompletionOptions {
   signal: AbortSignal
   onSuggestion: (suggestion: DocumentCursorCompletionSuggestion) => void
+  responseLanguage?: StartAgentRunInput['responseLanguage']
   pollIntervalMs?: number
   timeoutMs?: number
 }
@@ -416,6 +417,7 @@ export async function streamDocumentCursorCompletion(
     const run = await api.startRun(session.id, {
       prompt: buildDocumentCursorCompletionPrompt(input),
       idempotencyKey: crypto.randomUUID(),
+      responseLanguage: options.responseLanguage,
       captureMemory: false,
       recallMemory: false,
       toolsEnabled: false,

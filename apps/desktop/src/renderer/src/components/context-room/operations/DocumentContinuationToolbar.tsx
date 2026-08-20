@@ -1,4 +1,5 @@
 import { LoaderCircle, X } from 'lucide-react'
+import { useLocale } from '../../../i18n/LocaleContext'
 
 import './DocumentOperationReview.css'
 
@@ -11,13 +12,14 @@ export function DocumentContinuationToolbar({
   error?: string | null
   onClose: () => void
 }) {
+  const { t } = useLocale()
   return (
-    <aside className="document-continuation-toolbar" aria-label="Agent 续写">
-      <span>Agent 续写</span>
+    <aside className="document-continuation-toolbar" aria-label={t('contextRoom:documentContinuationToolbar.agentContinuation')}>
+      <span>{t('contextRoom:documentContinuationToolbar.agentContinuation')}</span>
       {error ? <small role="alert">{error}</small> : null}
       <button type="button" disabled={busy} onClick={onClose}>
         {busy ? <LoaderCircle className="document-patch-review-spinner" aria-hidden="true" /> : <X aria-hidden="true" />}
-        关闭此次续写
+        {t('contextRoom:documentContinuationToolbar.closeThisContinuation')}
       </button>
     </aside>
   )

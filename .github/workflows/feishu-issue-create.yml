@@ -27,18 +27,22 @@ jobs:
             const requestId = String(input.request_id ?? '');
             const title = String(input.title ?? '').trim();
             const body = String(input.body ?? '');
-            const assignees = Array.isArray(input.assignees) ? [...new Set(input.assignees)] : null;
-            const attachments = Array.isArray(input.attachments) ? [...new Set(input.attachments)] : null;
+            const assignees = input.assignees == null
+              ? []
+              : (Array.isArray(input.assignees) ? [...new Set(input.assignees)] : [input.assignees]);
+            const attachments = input.attachments == null
+              ? []
+              : (Array.isArray(input.attachments) ? [...new Set(input.attachments)] : [input.attachments]);
+            const assetPattern = /^!\[[^\]]*\]\(https:\/\/raw\.githubusercontent\.com\/NxcoreAI\/EverRoom\/issue-assets\/(?:\.github\/issue-assets\/)?[A-Za-z0-9._-]+\)$/;
 
             if (!/^[0-9a-f]{32}$/.test(requestId)
                 || !title || title.length > 256
                 || !body.trim() || body.length > 60000
-                || !assignees || !attachments
                 || assignees.length > 10
                 || assignees.some((login) => typeof login !== 'string'
                   || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(login))
                 || attachments.some((line) => typeof line !== 'string'
-                  || !line.startsWith('![群内截图](https://raw.githubusercontent.com/NxcoreAI/EverRoom/issue-assets/.github/issue-assets/'))) {
+                  || !assetPattern.test(line))) {
               core.setFailed('Invalid Feishu Issue payload.');
               return;
             }

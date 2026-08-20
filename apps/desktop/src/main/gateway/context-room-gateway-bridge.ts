@@ -1,5 +1,7 @@
 import type {
   ContextRoomSnapshot,
+  CreateContextRoomInput,
+  CreateContextRoomResult,
   SaveContextRoomSnapshotInput,
 } from '@nxcore/agent-contract'
 
@@ -10,6 +12,13 @@ export class ContextRoomGatewayBridge {
 
   list(): Promise<ContextRoomSnapshot> {
     return this.request('/v1/context-rooms')
+  }
+
+  create(input: CreateContextRoomInput): Promise<CreateContextRoomResult> {
+    return this.request('/v1/context-rooms', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
   }
 
   syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot> {

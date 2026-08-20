@@ -39,6 +39,29 @@ export interface ExtractionResult {
   entities: ExtractedEntity[];
 }
 
+export interface RoomContextResult {
+  overview: string;
+  status: string;
+  nextSteps: string[];
+  entities: Array<{
+    name: string;
+    kind: EntityKind;
+    description: string;
+  }>;
+  actionItems: Array<{
+    title: string;
+    owner: string | null;
+    dueDate: string | null;
+    sourceTitle: string;
+  }>;
+  meetings: Array<{
+    title: string;
+    when: string;
+    participants: string[];
+    sourceTitle: string;
+  }>;
+}
+
 /** judgeEntityIdentity 输入：双方的身份材料（name + aliases + kind + 依据句样本）。 */
 export interface EntityIdentityInput {
   name: string;
@@ -82,6 +105,25 @@ export class KnowledgeLlm {
       "请给出抽取 JSON。",
     ].join("\n");
     return this.chatJson(EXTRACT_SYSTEM_PROMPT, prompt, parseExtractionResponse);
+  }
+
+  /** Room 当前文档集合 → 只读的详情投影，不参与资料归属判决。 */
+  async summarizeRoom(
+    roomTitle: string,
+    sourceDocuments: Array<{ title: string; markdown: string }>,
+  ): Promise<RoomContextResult> {
+    const prompt = [
+      `Room：${roomTitle}`,
+      `今天日期：${new Date().toISOString().slice(0, 10)}`,
+      "",
+      ...sourceDocuments.slice(0, 12).flatMap((document, index) => [
+        `--- 资料 ${index + 1}：《${document.title}》 ---`,
+        document.markdown.slice(0, 6_000),
+        "",
+      ]),
+      "请给出 Room 上下文 JSON。",
+    ].join("\n").slice(0, 36_000);
+    return this.chatJson(ROOM_CONTEXT_SYSTEM_PROMPT, prompt, parseRoomContextResponse);
   }
 
   /** 模糊带同一性判定（4.2/4.5）：双方是否同一实体。 */
@@ -230,6 +272,20 @@ const EXTRACT_SYSTEM_PROMPT = [
   '{"summary":"不超过300字的资料概括","entities":[{"name":"...","kind":"人物|项目|主题|长期目标|议题|事件","salience":0.9,"evidence":"..."}]}',
 ].join("\n");
 
+const ROOM_CONTEXT_SYSTEM_PROMPT = [
+  "你是 Context Room 的资料汇总器。仅根据给定资料更新 Room 的总览、当前状态、建议、实体、待办和会议。",
+  "规则：",
+  "1. overview 用不超过 400 字综合说明这些资料共同涉及什么、Room 当前聚焦什么，不要逐份罗列资料。",
+  "2. status 用不超过 300 字概括当前已知进展；不能把建议写成已经发生的事实。",
+  "3. nextSteps 是基于资料的建议，可以为空，最多 4 条。",
+  "4. entities 只收资料中明确出现的人物/项目/主题/长期目标/议题/事件；description 说明它与 Room 的关系。",
+  "5. actionItems 只收原文明示需要执行、承诺或 TODO 的事项。owner/dueDate 原文没有就填 null，禁止猜测。",
+  "6. meetings 只收原文明示的会议、预约或日程，when 保留原文日期时间；没有明确时间则不要输出，禁止猜测。",
+  "7. sourceTitle 必须是给定资料标题之一。所有数组去重并限制 10 条。",
+  "只输出一个 JSON 对象，不要 markdown 代码块、不要解释。格式：",
+  '{"overview":"...","status":"...","nextSteps":["..."],"entities":[{"name":"...","kind":"人物|项目|主题|长期目标|议题|事件","description":"..."}],"actionItems":[{"title":"...","owner":null,"dueDate":null,"sourceTitle":"..."}],"meetings":[{"title":"...","when":"...","participants":["..."],"sourceTitle":"..."}]}',
+].join("\n");
+
 const JUDGE_SYSTEM_PROMPT = [
   "你是实体同一性判定员。判断两个实体描述是否指向同一个现实实体。",
   "规则：",
@@ -298,6 +354,69 @@ export function parseExtractionResponse(content: string): ExtractionResult {
   }
 
   return { summary, entities: [...byName.values()].slice(0, 10) };
+}
+
+function optionalString(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
+/** 严格解析 Room 详情投影；缺失或畸形数组按空数组降级。 */
+export function parseRoomContextResponse(content: string): RoomContextResult {
+  const raw = parseJsonObject(content);
+  const overview = optionalString(raw.overview, 500) ?? "";
+  const status = optionalString(raw.status, 500) ?? "";
+  const nextSteps = Array.isArray(raw.nextSteps)
+    ? [...new Set(raw.nextSteps.flatMap((item) => {
+        const text = optionalString(item, 300);
+        return text ? [text] : [];
+      }))].slice(0, 4)
+    : [];
+  const entities = Array.isArray(raw.entities) ? raw.entities.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const value = item as Record<string, unknown>;
+    const name = optionalString(value.name, 120);
+    if (!name) return [];
+    const rawKind = optionalString(value.kind, 24) ?? "主题";
+    const kind = (ENTITY_KINDS as readonly string[]).includes(rawKind)
+      ? rawKind as EntityKind
+      : "主题";
+    return [{
+      name,
+      kind,
+      description: optionalString(value.description, 300) ?? "",
+    }];
+  }).slice(0, 10) : [];
+  const actionItems = Array.isArray(raw.actionItems) ? raw.actionItems.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const value = item as Record<string, unknown>;
+    const title = optionalString(value.title, 300);
+    const sourceTitle = optionalString(value.sourceTitle, 300);
+    if (!title || !sourceTitle) return [];
+    return [{
+      title,
+      owner: optionalString(value.owner, 120),
+      dueDate: optionalString(value.dueDate, 120),
+      sourceTitle,
+    }];
+  }).slice(0, 10) : [];
+  const meetings = Array.isArray(raw.meetings) ? raw.meetings.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const value = item as Record<string, unknown>;
+    const title = optionalString(value.title, 300);
+    const when = optionalString(value.when, 120);
+    const sourceTitle = optionalString(value.sourceTitle, 300);
+    if (!title || !when || !sourceTitle) return [];
+    const participants = Array.isArray(value.participants)
+      ? value.participants.flatMap((participant) => {
+          const name = optionalString(participant, 120);
+          return name ? [name] : [];
+        }).slice(0, 20)
+      : [];
+    return [{ title, when, participants, sourceTitle }];
+  }).slice(0, 10) : [];
+  return { overview, status, nextSteps, entities, actionItems, meetings };
 }
 
 /** 严格解析同一性判定输出（导出供单测）。 */

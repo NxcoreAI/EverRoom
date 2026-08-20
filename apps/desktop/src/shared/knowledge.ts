@@ -11,6 +11,45 @@ export interface KnowledgeRoomDto {
   updatedAt: string
 }
 
+export interface KnowledgeRoomContextDto {
+  roomId: string
+  generatedAt: string
+  sourceDocuments: Array<{ documentId: string; title: string; version: number; updatedAt: string }>
+  overview: string
+  status: string
+  nextSteps: string[]
+  entities: Array<{ name: string; kind: string; description: string }>
+  actionItems: Array<{ title: string; owner: string | null; dueDate: string | null; sourceTitle: string }>
+  meetings: Array<{ title: string; when: string; participants: string[]; sourceTitle: string }>
+}
+
+export interface KnowledgeRoomContextDto {
+  roomId: string
+  generatedAt: string
+  sourceDocuments: Array<{
+    documentId: string
+    title: string
+    version: number
+    updatedAt: string
+  }>
+  overview: string
+  status: string
+  nextSteps: string[]
+  entities: Array<{ name: string; kind: string; description: string }>
+  actionItems: Array<{
+    title: string
+    owner: string | null
+    dueDate: string | null
+    sourceTitle: string
+  }>
+  meetings: Array<{
+    title: string
+    when: string
+    participants: string[]
+    sourceTitle: string
+  }>
+}
+
 export interface KnowledgeWikiPageDto {
   id: string
   title: string
@@ -105,6 +144,14 @@ export interface KnowledgeUnmatchedItemDto {
 export interface KnowledgeAttachInput {
   entityId?: string
   createEntity?: { name: string; kind: string }
+}
+
+export interface KnowledgeFileUploadResult {
+  filename: string
+  title: string
+  sourceId?: string
+  deduped?: boolean
+  error?: string
 }
 
 /** Room 的上传文件清单项（uploaded_files ⨝ 最新归属决策）。 */

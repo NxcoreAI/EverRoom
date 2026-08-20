@@ -21,12 +21,13 @@ function createSolidCircleTexture(
   renderer: PixiRenderer,
   radius: number,
   color: number | string,
+  resolution: number,
 ): PixiTexture {
   const graphics = new dependencies.Graphics()
   graphics.beginFill(color)
   graphics.drawCircle(radius, radius, radius)
   graphics.endFill()
-  const texture = renderer.generateTexture(graphics)
+  const texture = renderer.generateTexture(graphics, { resolution })
   graphics.destroy()
   return texture
 }
@@ -51,15 +52,20 @@ export function createPixiForceGraphRenderer(
     positions,
   } = options
   const nodeRadius = positiveDimension(options.nodeRadius ?? 18, 18)
+  const textureRadius = nodes.reduce(
+    (largest, node) => Math.max(largest, positiveDimension(node.radius ?? nodeRadius, nodeRadius)),
+    nodeRadius,
+  )
   const width = positiveDimension(host.clientWidth, 640)
   const height = positiveDimension(host.clientHeight, 420)
+  const renderResolution = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1
   const app = new dependencies.Application({
     antialias: true,
     autoDensity: true,
     autoStart: true,
     backgroundAlpha: 0,
     height,
-    resolution: typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
+    resolution: renderResolution,
     sharedTicker: true,
     width,
   })
@@ -85,6 +91,7 @@ export function createPixiForceGraphRenderer(
   viewport.addChild(edgeGraphics)
   viewport.addChild(particleContainer)
   const labelManager = createPixiForceGraphLabelManager({
+    baseResolution: renderResolution,
     dependencies,
     maxLabels: Math.max(1, Math.floor(options.maxVisibleLabels ?? 250)),
     nodes,
@@ -99,8 +106,9 @@ export function createPixiForceGraphRenderer(
   const texture = createSolidCircleTexture(
     dependencies,
     app.renderer,
-    nodeRadius,
+    textureRadius,
     0xffffff,
+    Math.min(4, renderResolution * 2),
   )
   const normalColors = nodes.map((node) => node.color ?? options.nodeColor ?? 0x3d6ff6)
   const selectedColor = options.selectedColor ?? 0x244dcc
@@ -114,7 +122,7 @@ export function createPixiForceGraphRenderer(
     sprite.anchor?.set(0.5)
     sprite.tint = index === selectedIndex ? selectedColor : normalColors[index]
     const radius = positiveDimension(node.radius ?? nodeRadius, nodeRadius)
-    sprite.scale?.set(radius / nodeRadius)
+    sprite.scale?.set(radius / textureRadius)
     setSpritePosition(sprite, positions[index * 2] ?? 0, positions[index * 2 + 1] ?? 0)
     particleContainer.addChild(sprite)
     return sprite
@@ -128,7 +136,11 @@ export function createPixiForceGraphRenderer(
   let dragIndex: number | null = null
   let dragStart: { x: number; y: number } | null = null
   let dragMoved = false
+  let lastSelectedAt = 0
+  let lastSelectedIndex: number | null = null
   let destroyed = false
+  let screenWidth = width
+  let screenHeight = height
   const nodeAlphaTargets = new Float32Array(sprites.length)
   nodeAlphaTargets.fill(1)
   const focusAlpha = 0.16
@@ -209,7 +221,18 @@ export function createPixiForceGraphRenderer(
     viewport.plugins?.resume('drag')
     viewport.cursor = hoveredIndex === null ? 'grab' : 'pointer'
     options.onNodeRelease?.(releasedIndex)
-    if (!dragMoved) options.onNodeSelect?.(releasedIndex)
+    if (!dragMoved) {
+      const selectedAt = Date.now()
+      options.onNodeSelect?.(releasedIndex)
+      if (releasedIndex === lastSelectedIndex && selectedAt - lastSelectedAt <= 350) {
+        options.onNodeOpen?.(releasedIndex)
+        lastSelectedAt = 0
+        lastSelectedIndex = null
+      } else {
+        lastSelectedAt = selectedAt
+        lastSelectedIndex = releasedIndex
+      }
+    }
     dragMoved = false
   }
   const onPointerLeave = () => {
@@ -257,6 +280,31 @@ export function createPixiForceGraphRenderer(
   dependencies.Ticker.shared.add(drawFrame)
   drawFrame()
 
+  const fitView = () => {
+    if (destroyed || nodes.length === 0) return
+    let minX = Number.POSITIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    nodes.forEach((node, index) => {
+      const x = positions[index * 2]
+      const y = positions[index * 2 + 1]
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return
+      const radius = positiveDimension(node.radius ?? nodeRadius, nodeRadius)
+      minX = Math.min(minX, x! - radius)
+      minY = Math.min(minY, y! - radius)
+      maxX = Math.max(maxX, x! + radius)
+      maxY = Math.max(maxY, y! + radius + 24)
+    })
+    if (!Number.isFinite(minX)) return
+    const scale = Math.min(4, Math.max(0.2, Math.min(
+      Math.max(1, screenWidth - 48) / Math.max(1, maxX - minX),
+      Math.max(1, screenHeight - 48) / Math.max(1, maxY - minY),
+    )))
+    viewport.setZoom?.(scale, false)
+    viewport.moveCenter?.((minX + maxX) / 2, (minY + maxY) / 2)
+  }
+
   return {
     app,
     edgeGraphics,
@@ -266,11 +314,14 @@ export function createPixiForceGraphRenderer(
     sprites,
     activeLabelCount: () => labelManager.activeCount(),
     createdLabelCount: () => labelManager.createdCount(),
+    fitView,
     hitTest,
     resize(nextWidth, nextHeight) {
       if (destroyed) return
       const safeWidth = positiveDimension(nextWidth, width)
       const safeHeight = positiveDimension(nextHeight, height)
+      screenWidth = safeWidth
+      screenHeight = safeHeight
       app.renderer.resize?.(safeWidth, safeHeight)
       viewport.resize?.(safeWidth, safeHeight, safeWidth, safeHeight)
     },

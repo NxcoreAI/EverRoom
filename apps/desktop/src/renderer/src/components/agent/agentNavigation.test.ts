@@ -43,6 +43,24 @@ describe('agent navigation target', () => {
       },
     })).toMatchObject({ pageId: 'rooms', roomId: 'room-1', objectId: 'document-1' })
 
+    expect(parseAgentNavigationTarget({
+      details: {
+        navigation: {
+          pageId: 'rooms',
+          title: 'Campus Life',
+          action: 'created',
+          roomId: 'room-campus-life',
+          objectId: 'room-campus-life',
+          objectType: 'room',
+        },
+      },
+    })).toMatchObject({
+      pageId: 'rooms',
+      title: 'Campus Life',
+      roomId: 'room-campus-life',
+      objectType: 'room',
+    })
+
     expect(parseAgentNavigationTarget({ details: { navigation: { pageId: 'rooms', title: 'Missing room', action: 'created' } } })).toBeNull()
     expect(parseAgentNavigationTarget({ details: { navigation: { pageId: 'settings', title: 'Unsupported', action: 'opened' } } })).toBeNull()
     expect(parseAgentNavigationTarget({ content: 'created room-1' })).toBeNull()

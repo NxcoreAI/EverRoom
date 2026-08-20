@@ -2,7 +2,8 @@ import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, type NativeImage } from 'electron'
+import { desktopText } from '../desktop-locale'
 
 export const SCREENSHOT_DEFAULT_INTERVAL_MS = 300_000
 export const SCREENSHOT_MIN_INTERVAL_MS = 30_000
@@ -16,6 +17,7 @@ export interface WindowScreenshotResult {
   height: number
   bytes: number
   capturedAt: string
+  perceptualHash?: string
 }
 
 export interface WindowScreenshotFailure {
@@ -57,33 +59,50 @@ function sanitizeFileTimestamp(date: Date): string {
   return date.toISOString().replace(/[:.]/g, '-')
 }
 
+export function calculateDHash(image: NativeImage): string {
+  const sample = image.resize({ width: 9, height: 8, quality: 'best' })
+  const pixels = sample.toBitmap()
+  let hash = 0n
+  for (let y = 0; y < 8; y += 1) {
+    for (let x = 0; x < 8; x += 1) {
+      const left = (y * 9 + x) * 4
+      const right = left + 4
+      const leftBrightness = pixels[left]! + pixels[left + 1]! + pixels[left + 2]!
+      const rightBrightness = pixels[right]! + pixels[right + 1]! + pixels[right + 2]!
+      hash = (hash << 1n) | (leftBrightness > rightBrightness ? 1n : 0n)
+    }
+  }
+  return hash.toString(16).padStart(16, '0')
+}
+
 export async function captureCurrentWindow(
   window: BrowserWindow | null = BrowserWindow.getAllWindows()[0] ?? null,
 ): Promise<WindowScreenshotCaptureResult> {
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
-    return { ok: false, code: 'window-unavailable', message: '当前应用窗口不可用。' }
+    return { ok: false, code: 'window-unavailable', message: desktopText('error.screenshot.windowUnavailable') }
   }
 
   let image
   try {
     image = await window.webContents.capturePage()
   } catch {
-    return { ok: false, code: 'capture-failed', message: '应用窗口截图失败，请稍后重试。' }
+    return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.captureFailed') }
   }
 
   if (image.isEmpty()) {
-    return { ok: false, code: 'capture-failed', message: '应用窗口截图为空，请稍后重试。' }
+    return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.empty') }
   }
 
   const size = image.getSize()
+  const perceptualHash = calculateDHash(image)
   let jpeg: Buffer
   try {
     jpeg = image.toJPEG(82)
   } catch {
-    return { ok: false, code: 'capture-failed', message: '应用窗口截图编码失败，请稍后重试。' }
+    return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.encodingFailed') }
   }
   if (!jpeg.byteLength) {
-    return { ok: false, code: 'capture-failed', message: '应用窗口截图为空，请稍后重试。' }
+    return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.empty') }
   }
 
   const capturedAt = new Date()
@@ -98,7 +117,7 @@ export async function captureCurrentWindow(
     await rename(temporaryPath, filePath)
   } catch {
     await unlink(temporaryPath).catch(() => undefined)
-    return { ok: false, code: 'save-failed', message: '截图无法保存，请检查目录权限和磁盘空间。' }
+    return { ok: false, code: 'save-failed', message: desktopText('error.screenshot.saveFailed') }
   }
 
   return {
@@ -109,12 +128,14 @@ export async function captureCurrentWindow(
     height: size.height,
     bytes: jpeg.byteLength,
     capturedAt: capturedAt.toISOString(),
+    perceptualHash,
   }
 }
 
 export function createWindowScreenshotScheduler(
   capture: () => Promise<WindowScreenshotCaptureResult> = () => captureCurrentWindow(),
   timerApi: Pick<typeof globalThis, 'setTimeout' | 'clearTimeout'> = globalThis,
+  onCaptured?: (result: WindowScreenshotResult) => Promise<void> | void,
 ): WindowScreenshotScheduler {
   let enabled = false
   let intervalMs = SCREENSHOT_DEFAULT_INTERVAL_MS
@@ -139,10 +160,11 @@ export function createWindowScreenshotScheduler(
 
   const runCapture = async () => {
     if (!enabled || inFlight) return
-    const current = capture().then((result) => {
+    const current = capture().then(async (result) => {
       lastResult = result
+      if (result.ok) await Promise.resolve(onCaptured?.(result)).catch(() => undefined)
     }).catch(() => {
-      lastResult = { ok: false, code: 'capture-failed', message: '应用窗口截图失败，请稍后重试。' }
+      lastResult = { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.captureFailed') }
     })
     inFlight = current
     try {

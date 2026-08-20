@@ -16,6 +16,7 @@ import { FilesService } from "../files/service.js";
 import { contentHashOf, fileIdOf } from "../files/storage.js";
 import type { KnowledgeService } from "../knowledge/service.js";
 import type { MemoryService } from "../memory/service.js";
+import { normalizeInsightTags } from "../reality/insight-tags.js";
 import { tiptapToMarkdown } from "../knowledge/tiptap-markdown.js";
 import { titleOfFilename } from "../knowledge/file-convert.js";
 import type { TiptapJsonContent } from "@nxcore/agent-contract";
@@ -53,7 +54,7 @@ import { IngestFilterService, type FilterItem } from "./filter-agent.js";
 const MEMORY_MAX_BYTES = 2 * 1024 * 1024;
 
 /** 台账 sourceKind（与既有 knowledge SourceKind 对齐；mail/cloud-doc 为连接器预留位）。 */
-export type LedgerSourceKind = "everroom-doc" | "reality-event" | "file" | "mail" | "cloud-doc";
+export type LedgerSourceKind = "everroom-doc" | "reality-event" | "visual-event" | "file" | "mail" | "cloud-doc";
 
 export interface IngestResult {
   eventId: string;
@@ -176,6 +177,31 @@ export class IngestService {
         occurredAt: unit.occurredAt,
         contentHash,
         origin: "connector",
+      },
+    );
+  }
+
+  async ingestVisualEvent(unit: {
+    sourceId: string;
+    sourceVersion: number;
+    title: string;
+    markdown: string;
+    occurredAt: string;
+    pipelines: Pipelines;
+  }): Promise<IngestResult> {
+    return this.processNormalized(
+      { pipelines: unit.pipelines },
+      {
+        sourceKind: "visual-event",
+        sourceId: unit.sourceId,
+        sourceVersion: unit.sourceVersion,
+        dataType: "perception-event",
+        detectedBy: "source-kind",
+        title: unit.title,
+        markdown: unit.markdown,
+        occurredAt: unit.occurredAt,
+        contentHash: contentHashOf(Buffer.from(unit.markdown, "utf8")),
+        origin: "reality",
       },
     );
   }
@@ -978,6 +1004,13 @@ function realityEventToMarkdown(row: typeof realityEvents.$inferSelect): string 
     ? insights.keyPoints.filter((point) => typeof point === "string" && point.trim())
     : [];
   if (keyPoints.length > 0) parts.push(`## 要点\n\n${keyPoints.map((point) => `- ${point}`).join("\n")}`);
+  const tags = normalizeInsightTags(insights.representativeTags);
+  if (tags.length > 0) parts.push(`## 实体与事实\n\n${tags.map((tag) => {
+    const value = tag.kind === "fact"
+      ? `${tag.subject} ${tag.predicate} ${tag.object}`
+      : `${tag.label}（${tag.entityType ?? "other"}）`;
+    return `- [${tag.kind}] ${value}${tag.evidence ? `；证据：${tag.evidence}` : ""}`;
+  }).join("\n")}`);
   const decisions = Array.isArray(insights.decisions)
     ? insights.decisions.filter((item) => typeof item === "string" && item.trim())
     : [];

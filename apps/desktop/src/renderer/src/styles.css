@@ -121,14 +121,13 @@ summary:focus-visible {
 }
 
 .app-shell[data-mac-desktop='true'][data-nav-collapsed='true'] .brand-area {
-  width: 112px;
+  width: 144px;
 }
 
 .product-brand {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
 }
 
 .topbar-brand {
@@ -138,34 +137,31 @@ summary:focus-visible {
     visibility 0s linear 0s;
 }
 
-.product-brand-name {
-  display: inline-flex;
-  height: 20px;
-  align-items: center;
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 20px;
-  white-space: nowrap;
-  transition: opacity 120ms ease, transform var(--shell-motion-duration) var(--shell-motion-easing);
-}
-
-.app-shell[data-nav-collapsed='true'] .topbar-brand {
-  opacity: 0;
-  visibility: hidden;
-  transform: translateX(-6px);
-  transition:
-    opacity 120ms ease,
-    transform var(--shell-motion-duration) var(--shell-motion-easing),
-    visibility 0s linear 120ms;
-}
-
 .product-brand-logo {
+  display: block;
+  object-fit: contain;
+}
+
+.product-brand-logo-full {
+  width: 132px;
+  height: auto;
+  flex: 0 0 132px;
+}
+
+.product-brand-logo-icon {
+  display: none;
   width: 20px;
   height: 20px;
   flex: 0 0 20px;
   border-radius: 5px;
-  object-fit: contain;
+}
+
+.app-shell[data-nav-collapsed='true'] .product-brand-logo-full {
+  display: none;
+}
+
+.app-shell[data-nav-collapsed='true'] .product-brand-logo-icon {
+  display: block;
 }
 
 .nav-collapse {

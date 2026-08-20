@@ -54,9 +54,17 @@ export interface MemoryCoreDto {
   updatedAt: string
 }
 
+export interface MemoryPipelineSessionDto {
+  sessionId: string
+  title: string | null
+  latestUserMessage: string | null
+}
+
 export interface MemoryPipelineStageDto {
   queued: number
   running: number
+  queuedSessions: MemoryPipelineSessionDto[]
+  runningSessions: MemoryPipelineSessionDto[]
   idle: boolean
 }
 
@@ -72,6 +80,20 @@ export interface MemoryOverviewDto {
   l2: { total: number } | null
   l3: { exists: boolean; updatedAt: string | null } | null
   pipeline: MemoryPipelineDto | null
+}
+
+export interface MemoryOnboardingInput {
+  requestId: string
+  locale: 'zh-CN' | 'en-US'
+  workContext: string
+  currentFocus: string
+  collaborationPreference?: string
+}
+
+export interface MemoryOnboardingResultDto {
+  sessionId: string
+  capturedAt: string
+  accepted: true
 }
 
 export interface MemoryAtomicListOptions {

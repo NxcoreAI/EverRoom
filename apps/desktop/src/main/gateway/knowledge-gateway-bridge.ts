@@ -1,10 +1,14 @@
-import { shell } from 'electron'
+import { dialog, shell } from 'electron'
+import { desktopText } from '../desktop-locale'
+import { readFile } from 'node:fs/promises'
 import type {
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
   KnowledgeEntityDto,
   KnowledgeFileDto,
+  KnowledgeFileUploadResult,
+  KnowledgeRoomContextDto,
   KnowledgeRoomDto,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
@@ -34,6 +38,10 @@ export class KnowledgeGatewayBridge {
 
   deleteRoom(roomId: string): Promise<void> {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}`, { method: 'DELETE' })
+  }
+
+  getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto> {
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/context`)
   }
 
   listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }> {
@@ -102,6 +110,14 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/route/${encodeURIComponent(decisionId)}/revert`, { method: 'POST' })
   }
 
+  uploadFile(input: {
+    filename: string
+    contentBase64: string
+    occurredAt?: string
+  }): Promise<{ queued: boolean; sourceId: string; title: string; deduped: boolean }> {
+    return this.request('/v1/knowledge/files', { method: 'POST', body: JSON.stringify(input) })
+  }
+
   /** Room 的上传文件清单（uploaded_files ⨝ 最新归属决策）。 */
   listRoomFiles(roomId: string): Promise<{ items: KnowledgeFileDto[] }> {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/files`)
@@ -120,6 +136,37 @@ export class KnowledgeGatewayBridge {
       `/v1/knowledge/files/${encodeURIComponent(fileId)}/storage`,
     )
     shell.showItemInFolder(storagePath)
+  }
+
+  /**
+   * 系统文件选择框 → 读文件 → 上传路由（用户主路径的入口）。
+   * 首期仅接受 .md / .markdown；每份文件独立上传，失败互不影响。
+   */
+  async pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]> {
+    const picked = await dialog.showOpenDialog({
+      title: desktopText('dialog.knowledgeMarkdown.title'),
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+    })
+    if (picked.canceled || picked.filePaths.length === 0) return []
+
+    const results: KnowledgeFileUploadResult[] = []
+    for (const filePath of picked.filePaths) {
+      const filename = filePath.split(/[\\/]/).pop() ?? filePath
+      try {
+        const contentBase64 = (await readFile(filePath)).toString('base64')
+        const uploaded = await this.uploadFile({ filename, contentBase64 })
+        results.push({
+          filename,
+          title: uploaded.title,
+          sourceId: uploaded.sourceId,
+          deduped: uploaded.deduped,
+        })
+      } catch (error) {
+        results.push({ filename, title: filename, error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    return results
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -35,7 +35,10 @@ function toEvent(row: typeof realityEvents.$inferSelect): RealityEvent {
   return {
     id: row.id,
     title: row.title,
-    status: row.status,
+    // 兼容旧库遗留的 pending_confirmation（状态已废弃，语义等同完成）。
+    status: row.status === ("pending_confirmation" as typeof row.status)
+      ? ("completed" as const)
+      : row.status,
     processingState: row.processingState,
     captureDevice: row.captureDevice,
     processingDevice: row.processingDevice,
@@ -89,12 +92,17 @@ function deriveInsights(transcript: string, contextPrompt: string | null): Reali
 
 export class RealityService {
   readonly broker = new RealityEventBroker();
+  private readySink: ((event: RealityEvent) => Promise<void>) | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
     private readonly recordingsDirectory: string,
     private readonly logger?: Logger,
   ) {}
+
+  setReadySink(sink: ((event: RealityEvent) => Promise<void>) | null): void {
+    this.readySink = sink;
+  }
 
   listEvents(filters: { status?: string; search?: string }): RealityEvent[] {
     const search = filters.search?.trim().toLocaleLowerCase();
@@ -213,22 +221,28 @@ export class RealityService {
       updatedAt: new Date(),
     };
 
-    if (current) return this.update(current, imported, "synced reality event imported");
-    const now = new Date();
-    this.db.insert(realityEvents).values({
-      id: input.id,
-      ...imported,
-      audioFileName: null,
-      audioMimeType: null,
-      transcriptEditedAt: null,
-      markers: [],
-      important: false,
-      asrJobId: null,
-      version: 1,
-      createdAt: now,
-      updatedAt: now,
-    }).run();
-    return this.publish(input.id, "synced reality event imported");
+    let event: RealityEvent;
+    if (current) {
+      event = this.update(current, imported, "synced reality event imported");
+    } else {
+      const now = new Date();
+      this.db.insert(realityEvents).values({
+        id: input.id,
+        ...imported,
+        audioFileName: null,
+        audioMimeType: null,
+        transcriptEditedAt: null,
+        markers: [],
+        important: false,
+        asrJobId: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      }).run();
+      event = this.publish(input.id, "synced reality event imported");
+    }
+    this.notifyReady(event);
+    return event;
   }
 
   applyAsr(id: string, input: ApplyRealityAsrInput): RealityEvent {
@@ -266,7 +280,7 @@ export class RealityService {
     const insights = input.source === "saas" && input.result.insights
       ? input.result.insights
       : deriveInsights(transcript, row.currentTopic);
-    return this.update(row, {
+    const event = this.update(row, {
       status: "completed",
       processingState: "ready",
       transcript,
@@ -278,6 +292,8 @@ export class RealityService {
       resultVersion,
       error: null,
     }, "reality ASR completed");
+    this.notifyReady(event);
+    return event;
   }
 
   applyAsrByJob(jobId: string, input: ApplyRealityAsrInput): RealityEvent {
@@ -294,12 +310,14 @@ export class RealityService {
     }
     const transcript = input.transcript.trim();
     const insights = deriveInsights(transcript, row.currentTopic);
-    return this.update(row, {
+    const event = this.update(row, {
       transcript,
       transcriptEditedAt: new Date(),
       insights,
       currentTopic: insights.currentTopic,
     }, "reality transcript edited");
+    this.notifyReady(event);
+    return event;
   }
 
   addMarker(id: string, input: MarkRealityEventInput): RealityEvent {
@@ -345,7 +363,7 @@ export class RealityService {
     return this.update(this.requireRow(id), {
       status: "failed",
       processingState: "failed",
-      error: error.trim().slice(0, 2_000) || "智能感知处理失败",
+      error: error.trim().slice(0, 2_000) || "现实感知处理失败",
       endedAt: new Date(),
     }, "reality event failed");
   }
@@ -406,5 +424,16 @@ export class RealityService {
     this.logger?.info({ realityEventId: id, version: event.version, status: event.status }, message);
     this.broker.publish(event);
     return event;
+  }
+
+  private notifyReady(event: RealityEvent): void {
+    if (!this.readySink || event.processingState !== "ready") return;
+    void this.readySink(event).catch((error: unknown) => {
+      this.logger?.warn({
+        realityEventId: event.id,
+        version: event.version,
+        err: error instanceof Error ? error.message : String(error),
+      }, "ready reality event downstream ingest failed");
+    });
   }
 }

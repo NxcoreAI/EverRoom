@@ -1,6 +1,8 @@
 import type {
   AgentActiveDocumentContext,
   AgentRoomReference,
+  CreateContextRoomInput,
+  CreateContextRoomResult,
   DocumentCapabilityManifest,
   DocumentOperation,
   DocumentOperationCommandInput,
@@ -22,6 +24,7 @@ export interface DocumentExecutionContext {
 
 export interface DocumentRoomRegistry {
   listReferences(): AgentRoomReference[];
+  createRoom(input: CreateContextRoomInput): Promise<CreateContextRoomResult>;
 }
 
 export interface DocumentToolDefinition {

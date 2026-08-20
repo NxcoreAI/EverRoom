@@ -89,13 +89,14 @@ export async function ensureIntegration(
   clientSecret: string,
   scopes?: string,
 ): Promise<void> {
+  const effectiveScopes = scopes ?? PROVIDER_SCOPES[provider];
   try {
     const existing = await dashboard.get(`/api/v1/integrations/${encodeURIComponent(providerConfigKey)}`, { params: { env: "dev" }, validateStatus: () => true });
     if (existing.status === 200) {
-      if (scopes && existing.data?.data?.integration?.oauth_scopes !== scopes) {
+      if (effectiveScopes && existing.data?.data?.integration?.oauth_scopes !== effectiveScopes) {
         await dashboard.patch(
           `/api/v1/integrations/${encodeURIComponent(providerConfigKey)}`,
-          { authType: "OAUTH2", scopes },
+          { authType: "OAUTH2", scopes: effectiveScopes },
           { params: { env: "dev" } },
         );
         console.info(`[nango-bootstrap] Updated scopes for integration ${providerConfigKey}`);

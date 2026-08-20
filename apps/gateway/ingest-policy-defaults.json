@@ -5,7 +5,11 @@
     "room": true, "wiki": true, "memory": true
   },
   "meeting-minutes": {
-    "$comment": "会议纪要（jsonType=meeting-minutes，智能感知 ASR 评审产出）。决议与待办是高价值事实，必须进记忆。",
+    "$comment": "会议纪要（jsonType=meeting-minutes，现实感知 ASR 评审产出）。决议与待办是高价值事实，必须进记忆。",
+    "room": true, "wiki": true, "memory": true
+  },
+  "perception-event": {
+    "$comment": "视觉理解完成后的结构化感知事件；保留截图来源证据并进入实体归并与记忆。",
     "room": true, "wiki": true, "memory": true
   },
   "office-doc": {

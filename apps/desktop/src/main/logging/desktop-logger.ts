@@ -3,10 +3,14 @@ import { join } from 'node:path'
 
 import { captureSentryLog } from '../monitoring/sentry'
 
-type LogLevel = 'info' | 'warn' | 'error'
+type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 type ConsoleLevel = LogLevel | 'log'
 
+/** debug 级默认丢弃（轮询类日志防刷屏），设 NXCORE_DESKTOP_DEBUG=1 打开。 */
+const DEBUG_ENABLED = process.env.NXCORE_DESKTOP_DEBUG === '1'
+
 const LEVEL_LABEL: Record<LogLevel, string> = {
+  debug: 'DEBUG',
   info: 'INFO',
   warn: 'WARN',
   error: 'ERROR',
@@ -18,6 +22,7 @@ const ANSI = {
   infoBadge: '\u001b[30;42m',
   warnBadge: '\u001b[30;43m',
   errorBadge: '\u001b[97;41m',
+  debugBadge: '\u001b[30;46m',
 }
 const SENSITIVE_KEY = /authorization|cookie|credential|password|secret|signature|token|transcript|detailmarkdown/i
 const MAX_VALUE_LENGTH = 500
@@ -69,14 +74,23 @@ function formatConsoleLine(now: Date, module: string, level: LogLevel, event: Re
     .filter(([key, value]) => key !== 'event' && value !== undefined)
     .map(([key, value]) => `${key}=${formatValue(value, key)}`)
   const suffix = fields.length > 0 ? ` | ${fields.join(' ')}` : ''
-  const levelColor = level === 'error' ? ANSI.errorBadge : level === 'warn' ? ANSI.warnBadge : ANSI.infoBadge
+  const levelColor = level === 'error' ? ANSI.errorBadge
+    : level === 'warn' ? ANSI.warnBadge
+    : level === 'debug' ? ANSI.debugBadge
+    : ANSI.infoBadge
   const plainTimestamp = timestamp(now)
   const plainLevel = LEVEL_LABEL[level].padEnd(5)
   const scope = `[desktop/${module}]`
   return `${ANSI.dim}${plainTimestamp}${ANSI.reset} ${levelColor} ${plainLevel} ${ANSI.reset} ${ANSI.magenta}${scope}${ANSI.reset} ${eventName}${suffix}`
 }
 
-function appendLogFile(now: Date, module: string, level: LogLevel, event: Record<string, unknown>): void {
+function appendLogFile(
+  now: Date,
+  module: string,
+  level: LogLevel,
+  event: Record<string, unknown>,
+  filePrefix = 'desktop',
+): void {
   const directory = logsDirectory
   if (!directory) return
   const entry = {
@@ -87,7 +101,7 @@ function appendLogFile(now: Date, module: string, level: LogLevel, event: Record
     ...event,
   }
   enqueue(() => appendFile(
-    join(directory, `desktop-${localDate(now)}.log`),
+    join(directory, `${filePrefix}-${localDate(now)}.log`),
     `${JSON.stringify(entry)}\n`,
     'utf8',
   ))
@@ -154,6 +168,14 @@ export function logDesktop(
   writeDesktopLog(module, level, event, true)
 }
 
+export function logLocalDesktop(
+  module: string,
+  level: LogLevel,
+  event: Record<string, unknown>,
+): void {
+  writeDesktopLog(module, level, event, false)
+}
+
 export function logDocumentCursorCompletion(
   level: LogLevel,
   event: Record<string, unknown>,
@@ -169,9 +191,10 @@ function writeDesktopLog(
   filePrefix = 'desktop',
 ): void {
   const now = new Date()
+  if (level === 'debug' && !DEBUG_ENABLED) return
   writeToOriginalConsole(level, formatConsoleLine(now, module, level, event))
-  captureSentryLog(module, level, event)
-  appendLogFile(now, module, level, event)
+  if (captureRemote) captureSentryLog(module, level, event)
+  appendLogFile(now, module, level, event, filePrefix)
 }
 
 export function flushDesktopLogs(): Promise<void> {

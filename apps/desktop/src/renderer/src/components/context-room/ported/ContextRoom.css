@@ -467,12 +467,14 @@
 
 .context-room-card-open {
   display: flex;
+  width: 100%;
   min-width: 0;
   flex: 1;
   align-items: center;
   gap: 12px;
   align-self: stretch;
-  padding: 12px 4px 12px 12px;
+  padding: 12px 52px 12px 12px;
+  background: transparent;
   text-align: left;
 }
 
@@ -491,11 +493,12 @@
 }
 
 .context-room-card-menu-button {
-  width: 52px;
-  height: auto;
-  align-self: stretch;
-  margin-right: 0;
-  border-radius: 0 9px 9px 0;
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: 12px;
+  margin: 0;
+  transform: translateY(-50%);
 }
 
 .context-room-card-menu-button:hover,
@@ -1184,6 +1187,17 @@
 .context-room-room-form textarea {
   padding: 9px 10px;
   resize: vertical;
+}
+
+.context-room-form-error {
+  margin: 0;
+  color: var(--cr-red);
+  font-size: 12px;
+}
+
+.context-room-room-form button:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .context-room-room-form input:focus,
@@ -2673,7 +2687,7 @@
   place-items: center;
   background: #ececeb;
   color: var(--cr-tertiary);
-  content: '正在读取文档…';
+  content: attr(data-loading-label);
   font-size: 12px;
 }
 
@@ -9101,7 +9115,8 @@
 
 .context-room-wiki-markdown h3,
 .context-room-wiki-markdown h4,
-.context-room-wiki-markdown h5 {
+.context-room-wiki-markdown h5,
+.context-room-wiki-markdown h6 {
   color: var(--cr-text);
   line-height: 1.35;
   text-wrap: balance;
@@ -9109,7 +9124,8 @@
 
 .context-room-wiki-markdown h3,
 .context-room-wiki-markdown h4,
-.context-room-wiki-markdown h5 {
+.context-room-wiki-markdown h5,
+.context-room-wiki-markdown h6 {
   margin: 24px 0 10px;
   font-weight: 600;
 }
@@ -9122,7 +9138,8 @@
   font-size: 17px;
 }
 
-.context-room-wiki-markdown h5 {
+.context-room-wiki-markdown h5,
+.context-room-wiki-markdown h6 {
   font-size: 15px;
 }
 
@@ -9130,10 +9147,97 @@
   margin: 0 0 14px;
 }
 
+.context-room-wiki-markdown ul,
+.context-room-wiki-markdown ol {
+  padding-left: 24px;
+  margin: 0 0 14px;
+}
+
 .context-room-wiki-markdown li {
-  margin: 0 0 7px 20px;
+  margin: 0 0 7px;
   padding-left: 2px;
+}
+
+.context-room-wiki-markdown ul > li {
   list-style: disc;
+}
+
+.context-room-wiki-markdown ul.contains-task-list {
+  padding-left: 2px;
+}
+
+.context-room-wiki-markdown li.task-list-item {
+  padding-left: 0;
+  list-style: none;
+}
+
+.context-room-wiki-markdown ol > li {
+  list-style: decimal;
+}
+
+.context-room-wiki-markdown li > p {
+  margin-bottom: 7px;
+}
+
+.context-room-wiki-markdown a {
+  color: var(--cr-blue, var(--accent));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.context-room-wiki-markdown blockquote {
+  padding-left: 14px;
+  margin: 0 0 14px;
+  border-left: 3px solid var(--cr-border-strong);
+  color: var(--cr-muted, var(--muted));
+}
+
+.context-room-wiki-markdown code {
+  padding: 2px 5px;
+  border: 1px solid var(--cr-border);
+  border-radius: 4px;
+  background: var(--cr-surface-secondary, var(--surface-alt));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.context-room-wiki-markdown pre {
+  padding: 14px;
+  margin: 0 0 14px;
+  overflow-x: auto;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface-secondary, var(--surface-alt));
+}
+
+.context-room-wiki-markdown pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.context-room-wiki-markdown table {
+  width: 100%;
+  margin: 0 0 14px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.context-room-wiki-markdown th,
+.context-room-wiki-markdown td {
+  padding: 8px 10px;
+  border: 1px solid var(--cr-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.context-room-wiki-markdown th {
+  background: var(--cr-surface-secondary, var(--surface-alt));
+  font-weight: 600;
+}
+
+.context-room-wiki-markdown input[type='checkbox'] {
+  margin-right: 7px;
 }
 
 /* wiki 目录树（M3c：页面按 path 分层） */
@@ -9299,9 +9403,12 @@
 /* 编辑栏 wiki 页阅读器 */
 .context-room-wiki-reader-pane {
   display: flex;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   flex: 1;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .context-room-wiki-reader-pane > header {

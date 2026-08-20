@@ -376,6 +376,31 @@ describe('document transactions', () => {
       selectionRequired: true,
       selectedRoomId: null,
     })
+    const created = await host.callTool('context_room_create', {
+      title: 'Campus Life',
+      description: 'Campus activities and study notes',
+    }, globalContext)
+    const createdRoom = created.structuredContent.room as { id: string; title: string; kind: string }
+    expect(created.structuredContent).toMatchObject({
+      created: true,
+      room: { title: 'Campus Life', kind: '主题' },
+      navigation: {
+        pageId: 'rooms',
+        title: 'Campus Life',
+        action: 'created',
+        objectType: 'room',
+      },
+    })
+    expect(createdRoom.id).toMatch(/^room-/)
+    expect(created.structuredContent.room).not.toHaveProperty('data')
+    expect((await host.callTool('context_room_create', {
+      title: 'campus life',
+      description: 'Campus activities and study notes',
+    }, globalContext)).structuredContent).toMatchObject({
+      created: false,
+      room: { id: createdRoom.id, title: 'Campus Life' },
+      navigation: { action: 'opened', roomId: createdRoom.id },
+    })
     await expect(host.callTool('context_room_write_begin', {
       mode: 'create', title: '服务端学习路径', format: 'markdown',
     }, globalContext)).rejects.toThrow('ROOM_SELECTION_REQUIRED')
@@ -1176,6 +1201,7 @@ describe('document transactions', () => {
     const result = messages[0]?.result as { tools?: Array<{ name: string; description: string }> }
     expect(result.tools?.map((tool) => tool.name)).toEqual([
       'context_room_list',
+      'context_room_create',
       'context_room_document_list',
       'context_room_document_read',
       'context_room_patch_begin',
@@ -1203,6 +1229,8 @@ describe('document transactions', () => {
       .toContain('必须立即调用此只读工具')
     expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
       .toContain('不得询问用户是否需要列表')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_create')?.description)
+      .toContain('用户明确要求创建')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
       .toContain('充实、完整的长篇内容')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
@@ -1227,6 +1255,6 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(11)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(12)
   })
 })

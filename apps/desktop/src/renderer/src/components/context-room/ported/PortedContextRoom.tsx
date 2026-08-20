@@ -1,11 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 
 import { AllRoomsViewSkeleton } from '../AllRoomsViewSkeleton'
-import type { ContextRoomKind, ContextRoomRecord } from './types'
-import { createEmptyContextRoom } from './contextRoomFactory'
+import type { ContextRoomRecord } from './types'
 import type { ContextRoomWorkspaceTab } from '../contextRoomTabs'
 import { useContextRoomState } from '../ContextRoomStateProvider'
 import { useRoomDocumentsState } from '../RoomDocumentsProvider'
+import { useLocale } from '../../../i18n/LocaleContext'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { DetailPane } from './components/RoomIconSidebar'
@@ -14,28 +14,11 @@ import {
   shouldDeleteRoomFromKnowledge,
   shouldSyncRoomToKnowledge,
 } from './knowledgeRoomSync'
+import { applyGeneratedRoomContext } from './generatedRoomContext'
 
 const AllRoomsView = lazy(() =>
   import('./components/AllRoomsView').then((module) => ({ default: module.AllRoomsView })),
 )
-
-interface DraftRoom {
-  kind: ContextRoomKind
-  name: string
-  summary: string
-}
-
-function createRoom(draft: DraftRoom): ContextRoomRecord {
-  const id = `room-${Date.now()}`
-  return createEmptyContextRoom({
-    id,
-    title: draft.name,
-    kind: draft.kind,
-    background: draft.summary || '待补充 Room 的背景和资料范围。',
-    goal: '明确目标并聚合相关资料。',
-    briefStatus: 'Room 已创建，等待补充资料。',
-  })
-}
 
 export function PortedContextRoom({
   activeRoomId,
@@ -60,7 +43,8 @@ export function PortedContextRoom({
   onShowHome: () => void
   onFocusAgent: () => void
 }) {
-  const { state, setState } = useContextRoomState()
+  const { t } = useLocale()
+  const { state, setState, refreshFromBackend } = useContextRoomState()
   const handledHomeRequest = useRef(homeRequest)
   const detailPaneByRoomIdRef = useRef<Record<string, DetailPane>>({})
   const [homeView, setHomeView] = useState<'home' | 'all'>('home')
@@ -73,6 +57,14 @@ export function PortedContextRoom({
   const roomDocuments = useRoomDocumentsState()
   const reportedRoomsRef = useRef(new Map<string, string>())
   const deletedKnowledgeRoomsRef = useRef(new Set<string>())
+  const roomContextRequestRef = useRef(0)
+  const activeDocuments = activeRoomId
+    ? roomDocuments.documentsByRoom[activeRoomId] ?? []
+    : []
+  const activeDocumentKey = activeDocuments
+    .map((document) => `${document.id}:${document.version}:${document.status}`)
+    .sort()
+    .join('\u0000')
 
   const syncKnowledgeRooms = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge
@@ -129,7 +121,25 @@ export function PortedContextRoom({
   }, [syncKnowledgeRooms])
 
   useEffect(() => {
-    onRoomsChange(state.rooms.map(({ id, title, kind }) => ({ id, title, kind })))
+    onRoomsChange(state.rooms.map(({ id, title, kind, brief, generatedContext }) => ({
+      id,
+      title,
+      kind,
+      background: brief.background,
+      goal: brief.goal,
+      status: generatedContext?.status || brief.status,
+      ...(generatedContext ? {
+        contextSummary: {
+          generatedAt: generatedContext.generatedAt,
+          overview: generatedContext.overview ?? '',
+          nextSteps: generatedContext.nextSteps,
+          entities: generatedContext.entities,
+          actionItems: generatedContext.actionItems,
+          meetings: generatedContext.meetings,
+          sourceDocuments: generatedContext.sourceDocuments,
+        },
+      } : {}),
+    })))
   }, [onRoomsChange, state.rooms])
 
   useEffect(() => {
@@ -142,6 +152,24 @@ export function PortedContextRoom({
     if (!activeRoomId) return
     void roomDocuments.refreshRoom(activeRoomId).catch(() => undefined)
   }, [activeRoomId, roomDocuments.refreshRoom])
+
+  useEffect(() => {
+    if (!activeRoomId || !window.nxcore?.knowledge?.getRoomContext) return
+    const requestId = roomContextRequestRef.current + 1
+    roomContextRequestRef.current = requestId
+    const timer = window.setTimeout(() => {
+      void window.nxcore!.knowledge.getRoomContext(activeRoomId).then((context) => {
+        if (roomContextRequestRef.current !== requestId || context.roomId !== activeRoomId) return
+        setState((current) => ({
+          ...current,
+          rooms: current.rooms.map((room) => room.id === activeRoomId
+            ? applyGeneratedRoomContext(room, context)
+            : room),
+        }))
+      }).catch(() => undefined)
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [activeDocumentKey, activeRoomId, setState])
 
   useEffect(() => {
     if (homeRequest === handledHomeRequest.current) return
@@ -158,10 +186,17 @@ export function PortedContextRoom({
 
   const updateRoom = (updater: (room: ContextRoomRecord) => ContextRoomRecord) => {
     if (!activeRoomId) return
-    setState((current) => ({
-      ...current,
-      rooms: current.rooms.map((room) => room.id === activeRoomId ? updater(room) : room),
-    }))
+    setState((current) => {
+      const updatedAt = new Date().toISOString()
+      return {
+        ...current,
+        rooms: current.rooms.map((room) => {
+          if (room.id !== activeRoomId) return room
+          const updated = updater(room)
+          return updated === room ? room : { ...updated, updatedAt }
+        }),
+      }
+    })
   }
 
   const openRoom = (roomId: string) => {
@@ -171,7 +206,9 @@ export function PortedContextRoom({
     if (room.origin === 'auto') {
       setState((current) => ({
         ...current,
-        rooms: current.rooms.map((item) => item.id === roomId ? { ...item, origin: 'user' } : item),
+        rooms: current.rooms.map((item) => item.id === roomId
+          ? { ...item, origin: 'user', updatedAt: new Date().toISOString() }
+          : item),
       }))
     }
     onOpenRoomTab({ id: room.id, title: room.title })
@@ -180,7 +217,12 @@ export function PortedContextRoom({
   const renameRoom = (roomId: string, name: string) => setState((current) => ({
     ...current,
     rooms: current.rooms.map((room) => room.id === roomId
-      ? { ...room, title: name, ...(room.origin === 'auto' ? { origin: 'user' as const } : {}) }
+      ? {
+          ...room,
+          title: name,
+          updatedAt: new Date().toISOString(),
+          ...(room.origin === 'auto' ? { origin: 'user' as const } : {}),
+        }
       : room),
   }))
 
@@ -195,7 +237,7 @@ export function PortedContextRoom({
     const room = current.deletedRooms.find((item) => item.id === roomId)
     return room
       ? {
-          rooms: [{ ...room, origin: 'user' }, ...current.rooms],
+          rooms: [{ ...room, origin: 'user', updatedAt: new Date().toISOString() }, ...current.rooms],
           deletedRooms: current.deletedRooms.filter((item) => item.id !== roomId),
         }
       : current
@@ -252,9 +294,13 @@ export function PortedContextRoom({
     <HomeView
       rooms={state.rooms}
       deletedRooms={state.deletedRooms}
-      onCreateRoom={(draft) => {
-        const room = createRoom(draft)
-        setState((current) => ({ ...current, rooms: [room, ...current.rooms] }))
+      onCreateRoom={async (draft) => {
+        const api = window.nxcore?.contextRooms
+        if (!api?.create) throw new Error(t('contextRoom:roomDialogs.serviceUnavailable'))
+        const result = await api.create({ title: draft.name, description: draft.description })
+        const refreshed = await refreshFromBackend()
+        const room = refreshed?.rooms.find((item) => item.id === result.room.id)
+        if (!room) throw new Error(t('contextRoom:roomDialogs.createFailed'))
         onOpenRoomTab({ id: room.id, title: room.title })
       }}
       onRenameRoom={renameRoom}

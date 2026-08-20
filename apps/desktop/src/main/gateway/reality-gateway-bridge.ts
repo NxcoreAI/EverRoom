@@ -18,7 +18,7 @@ import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
 const REALITY_EVENT_CHANNEL = 'reality:event'
-const http = createLoggedHttpClient('gateway-reality')
+const http = createLoggedHttpClient('gateway-reality', {}, { quiet: true })
 const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
   'ECONNREFUSED',
   'ECONNRESET',
@@ -222,14 +222,14 @@ export class RealityGatewayBridge {
       throw new Error(
         typeof response.data?.message === 'string'
           ? response.data.message
-          : `智能感知请求失败（${response.status}）`,
+          : `现实感知请求失败（${response.status}）`,
       )
     }
     return response.data
   }
 
   private id(value: string): string {
-    if (!/^[a-f0-9-]{36}$/i.test(value)) throw new Error('无效的智能感知事件标识。')
+    if (!/^[a-f0-9-]{36}$/i.test(value)) throw new Error('无效的现实感知事件标识。')
     return encodeURIComponent(value)
   }
 }

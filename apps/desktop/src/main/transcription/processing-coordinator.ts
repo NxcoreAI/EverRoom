@@ -10,6 +10,7 @@ import type {
 } from '../cloud/saas-client'
 import type { AgentGatewayBridge } from '../gateway/agent-gateway-bridge'
 import { AccountKeyringService } from '../security/account-keyring-service'
+import { getDesktopLocale } from '../desktop-locale'
 import type { PrivateTranscriptionSyncService } from './private-transcription-sync'
 import { summaryDetailMinimum } from './summary-quality'
 
@@ -164,7 +165,7 @@ export class TranscriptionProcessingCoordinator {
             jobId: job.id,
             sourceRecordId: job.sourceRecordId,
             transcript,
-            language: 'zh-CN',
+            language: getDesktopLocale(),
           })
           const summary = parseSummary(response.content, transcript)
           const result = createSummary(job, summary)

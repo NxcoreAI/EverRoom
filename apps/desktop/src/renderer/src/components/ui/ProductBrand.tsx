@@ -6,8 +6,8 @@ export function ProductBrand({ className }: { className?: string }) {
 
   return (
     <div className={classes} aria-label={PRODUCT_NAME}>
-      <ProductLogo className="product-brand-logo" />
-      <strong className="product-brand-name">{PRODUCT_NAME}</strong>
+      <ProductLogo className="product-brand-logo product-brand-logo-full" variant="full" />
+      <ProductLogo className="product-brand-logo product-brand-logo-icon" />
     </div>
   )
 }

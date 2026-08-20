@@ -3,6 +3,7 @@ import { Check, ChevronDown, History, Pencil, Plus, Trash2, X } from 'lucide-rea
 import { useEffect, useRef, useState } from 'react'
 
 import { showToast } from '@/state/toast'
+import { useLocale } from '@/i18n/LocaleContext'
 
 export function AgentSessionSwitcher({
   activeRunId,
@@ -25,6 +26,7 @@ export function AgentSessionSwitcher({
   onRename: (sessionId: string, title: string) => Promise<void>
   onSelect: (session: AgentSession) => Promise<void>
 }) {
+  const { locale, t } = useLocale()
   const [menuOpen, setMenuOpen] = useState(false)
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -32,7 +34,7 @@ export function AgentSessionSwitcher({
 
   const reportError = (title: string, error: unknown) => showToast({
     title,
-    message: error instanceof Error ? error.message : '请稍后重试。',
+    message: error instanceof Error ? error.message : t('surface:agentSessionSwitcher.tryAgainLater'),
   })
 
   useEffect(() => {
@@ -52,14 +54,14 @@ export function AgentSessionSwitcher({
   }, [menuOpen])
 
   const create = () => {
-    void onCreate().then(() => setMenuOpen(false)).catch((error) => reportError('新建会话失败', error))
+    void onCreate().then(() => setMenuOpen(false)).catch((error) => reportError(t('surface:agentSessionSwitcher.couldNotCreateConversation'), error))
   }
 
   const saveTitle = (id: string) => {
     if (!editingTitle.trim()) return
     void onRename(id, editingTitle)
       .then(() => setEditingSessionId(null))
-      .catch((error) => reportError('重命名会话失败', error))
+      .catch((error) => reportError(t('surface:agentSessionSwitcher.couldNotRenameConversation'), error))
   }
 
   return (
@@ -67,13 +69,13 @@ export function AgentSessionSwitcher({
       <button
         type="button"
         className="agent-session-trigger"
-        aria-label="选择会话"
+        aria-label={t('surface:agentSessionSwitcher.chooseConversation')}
         aria-expanded={menuOpen}
         onClick={() => setMenuOpen((open) => !open)}
       >
         <History aria-hidden="true" />
         <span>
-          <small>{connected ? '已连接' : '本地会话'}</small>
+          <small>{t(connected ? 'surface:agentSessionSwitcher.connected' : 'surface:agentSessionSwitcher.localConversation')}</small>
           <strong>{displayTitle || '\u00a0'}</strong>
         </span>
         <ChevronDown aria-hidden="true" />
@@ -86,13 +88,13 @@ export function AgentSessionSwitcher({
         {...(!menuOpen ? { inert: '' } : {})}
       >
           <div className="agent-session-menu-header">
-            <strong>会话</strong>
-            <button type="button" title="新建会话" aria-label="新建会话" disabled={Boolean(activeRunId)} onClick={create}>
+            <strong>{t('surface:agentSessionSwitcher.conversations')}</strong>
+            <button type="button" title={t('surface:agentSessionSwitcher.newConversation')} aria-label={t('surface:agentSessionSwitcher.newConversation')} disabled={Boolean(activeRunId)} onClick={create}>
               <Plus aria-hidden="true" />
             </button>
           </div>
           <div className="agent-session-list">
-            {sessions.length === 0 ? <span className="agent-session-empty">暂无会话</span> : null}
+            {sessions.length === 0 ? <span className="agent-session-empty">{t('surface:agentSessionSwitcher.noConversations')}</span> : null}
             {sessions.map((session) => {
               const isRunning = session.status === 'running' || (session.id === sessionId && Boolean(activeRunId))
               return (
@@ -100,7 +102,7 @@ export function AgentSessionSwitcher({
                   {editingSessionId === session.id ? (
                     <input
                       autoFocus
-                      aria-label="会话名称"
+                      aria-label={t('surface:agentSessionSwitcher.conversationName')}
                       value={editingTitle}
                       maxLength={120}
                       onChange={(event) => setEditingTitle(event.target.value)}
@@ -116,13 +118,13 @@ export function AgentSessionSwitcher({
                       disabled={Boolean(activeRunId) && session.id !== sessionId}
                       onClick={() => {
                         if (session.id !== sessionId) {
-                          void onSelect(session).catch((error) => reportError('切换会话失败', error))
+                          void onSelect(session).catch((error) => reportError(t('surface:agentSessionSwitcher.couldNotSwitchConversations'), error))
                         }
                         setMenuOpen(false)
                       }}
                     >
-                      <strong>{session.title || '新对话'}</strong>
-                      <small>{new Date(session.updatedAt).toLocaleString('zh-CN', {
+                      <strong>{session.title || t('surface:agentSessionSwitcher.newConversationTitle')}</strong>
+                      <small>{new Date(session.updatedAt).toLocaleString(locale, {
                         month: 'numeric',
                         day: 'numeric',
                         hour: '2-digit',
@@ -133,23 +135,23 @@ export function AgentSessionSwitcher({
                   <div className="agent-session-row-actions">
                     {editingSessionId === session.id ? (
                       <>
-                        <button type="button" title="保存" aria-label="保存" disabled={!editingTitle.trim()} onClick={() => saveTitle(session.id)}><Check /></button>
-                        <button type="button" title="取消" aria-label="取消" onClick={() => setEditingSessionId(null)}><X /></button>
+                        <button type="button" title={t('surface:agentSessionSwitcher.save')} aria-label={t('surface:agentSessionSwitcher.save')} disabled={!editingTitle.trim()} onClick={() => saveTitle(session.id)}><Check /></button>
+                        <button type="button" title={t('surface:agentSessionSwitcher.cancel')} aria-label={t('surface:agentSessionSwitcher.cancel')} onClick={() => setEditingSessionId(null)}><X /></button>
                       </>
                     ) : (
                       <>
-                        <button type="button" title="重命名" aria-label="重命名" onClick={() => {
+                        <button type="button" title={t('surface:agentSessionSwitcher.rename')} aria-label={t('surface:agentSessionSwitcher.rename')} onClick={() => {
                           setEditingSessionId(session.id)
-                          setEditingTitle(session.title || '新对话')
+                          setEditingTitle(session.title || t('surface:agentSessionSwitcher.newConversationTitle'))
                         }}><Pencil /></button>
                         <button
                           type="button"
-                          title={isRunning ? '运行中的会话不能删除' : '删除'}
-                          aria-label="删除"
+                          title={t(isRunning ? 'surface:agentSessionSwitcher.aRunningConversationCannotBeDeleted' : 'surface:agentSessionSwitcher.delete')}
+                          aria-label={t('surface:agentSessionSwitcher.delete')}
                           disabled={isRunning}
                           onClick={() => void onDelete(session)
                             .then(() => setMenuOpen(false))
-                            .catch((error) => reportError('删除会话失败', error))}
+                            .catch((error) => reportError(t('surface:agentSessionSwitcher.couldNotDeleteConversation'), error))}
                         ><Trash2 /></button>
                       </>
                     )}

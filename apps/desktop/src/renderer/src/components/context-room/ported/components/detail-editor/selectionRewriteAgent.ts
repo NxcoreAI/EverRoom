@@ -33,6 +33,7 @@ export interface SelectionRewriteFormatContext {
 interface StreamSelectionRewriteOptions {
   signal: AbortSignal
   onText: (text: string) => void
+  responseLanguage?: StartAgentRunInput['responseLanguage']
   pollIntervalMs?: number
   timeoutMs?: number
 }
@@ -166,7 +167,10 @@ export async function streamSelectionRewrite(
     const run = await api.startRun(session.id, {
       prompt: buildSelectionRewritePrompt(input),
       idempotencyKey: crypto.randomUUID(),
+      responseLanguage: options.responseLanguage,
       captureMemory: false,
+      recallMemory: false,
+      toolsEnabled: false,
     })
     runId = run.id
     if (options.signal.aborted) {
