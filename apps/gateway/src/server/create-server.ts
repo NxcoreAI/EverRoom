@@ -77,7 +77,7 @@ import { ConnectorRepository } from "../modules/connectors/repository.js";
 import { ConnectorManager } from "../modules/connectors/manager.js";
 import { NangoExecutor } from "../modules/connectors/nango-executor.js";
 import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
-import { bootstrapNango } from "../modules/connectors/nango-bootstrap.js";
+import { bootstrapNangoWhenReady } from "../modules/connectors/nango-bootstrap.js";
 import { ConnectorDocumentStore } from "../modules/connectors/document-store.js";
 import {
   bootstrapKnowledgeSpaceDemo,
@@ -112,18 +112,29 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
   const connectorConfig = config.connectors ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
-  // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
-  const nangoSecret = connectorConfig.enabled ? await bootstrapNango(connectorConfig) : connectorConfig.nangoSecret;
+  // Nango 是可选后台依赖。Gateway 先监听，Nango 就绪后再自举 API key 与 integrations。
+  let nangoSecret = connectorConfig.nangoSecret;
+  const currentNangoSecret = () => nangoSecret;
+  const nangoBootstrapController = new AbortController();
+  app.addHook("onClose", async () => { nangoBootstrapController.abort(); });
+  if (connectorConfig.enabled) {
+    void bootstrapNangoWhenReady(connectorConfig, nangoBootstrapController.signal)
+      .then((secret) => { nangoSecret = secret; })
+      .catch((error) => {
+        if (nangoBootstrapController.signal.aborted) return;
+        console.warn("[nango-bootstrap] 后台初始化未完成:", error instanceof Error ? error.message : error);
+      });
+  }
   const connectorDb = createConnectorDatabase(connectorConfig.enabled ? connectorConfig.databasePath : ":memory:");
   const connectorManager = new ConnectorManager(
     new ConnectorRepository(connectorDb.sqlite),
-    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, nangoSecret) : null,
+    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, currentNangoSecret) : null,
     connectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
   );
   const connectorAuthorization = connectorConfig.enabled && "gmailConfigKey" in connectorConfig
     ? new NangoAuthorizationService(
         connectorConfig.nangoUrl,
-        nangoSecret,
+        currentNangoSecret,
         {
           gmail: connectorConfig.gmailConfigKey,
           outlook: connectorConfig.outlookConfigKey,

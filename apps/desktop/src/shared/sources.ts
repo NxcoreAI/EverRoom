@@ -514,6 +514,11 @@ export interface DesktopDiagnosticLogInput {
   event: Record<string, unknown>
 }
 
+export interface NangoRuntimeStatus {
+  state: 'starting' | 'ready' | 'error' | 'disabled'
+  message: string | null
+}
+
 export interface NxcoreDesktopApi {
   platform: string
   locale: {
@@ -533,6 +538,7 @@ export interface NxcoreDesktopApi {
     status(): Promise<GatewayStatus>
   }
   connectors: {
+    runtimeStatus(): Promise<NangoRuntimeStatus>
     status(): Promise<ConnectorStatus>
     startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>

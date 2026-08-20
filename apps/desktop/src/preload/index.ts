@@ -126,6 +126,7 @@ const api: NxcoreDesktopApi = {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
   connectors: {
+    runtimeStatus: () => invokeQuietly('connector:runtime-status'),
     status: () => invoke('connector:status'),
     startAuthorization: (provider) => invoke('connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('connector:authorization-status', id),

@@ -53,7 +53,22 @@ export function SourcesPage() {
   const [connectorsEnabled, setConnectorsEnabled] = useState(false)
 
   useEffect(() => {
-    void window.nxcore?.connectors.status().then((status) => setConnectorsEnabled(status.enabled)).catch(() => undefined)
+    const connectors = window.nxcore?.connectors
+    if (!connectors) return
+    const refresh = async () => {
+      try {
+        const [status, runtime] = await Promise.all([
+          connectors.status(),
+          connectors.runtimeStatus(),
+        ])
+        setConnectorsEnabled(status.enabled && runtime.state === 'ready')
+      } catch {
+        setConnectorsEnabled(false)
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 2_000)
+    return () => window.clearInterval(timer)
   }, [])
 
   // 授权确认由 gateway 在 status 轮询中完成（Nango 确认后自动注册连接），

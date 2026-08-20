@@ -2,6 +2,41 @@ import axios, { type AxiosInstance } from "axios";
 
 import type { ConnectorConfig } from "./types.js";
 
+const READY_TIMEOUT_MS = 180_000;
+
+function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, milliseconds);
+    function finish() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
+
+export async function waitForNango(
+  baseUrl: string,
+  timeoutMs = READY_TIMEOUT_MS,
+  signal?: AbortSignal,
+): Promise<void> {
+  const healthUrl = `${baseUrl.replace(/\/$/, "")}/health`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && !signal?.aborted) {
+    try {
+      const response = await axios.get(healthUrl, { timeout: 1_000, validateStatus: () => true });
+      if (response.status >= 200 && response.status < 400) return;
+    } catch {
+      // Nango is an optional background dependency; keep the Gateway startup path clear.
+    }
+    await delay(500, signal);
+  }
+  if (signal?.aborted) throw new Error("Nango bootstrap cancelled");
+  throw new Error(`Nango did not become ready within ${timeoutMs}ms`);
+}
+
 /**
  * 启动时对 Nango 实例做自举:
  * 1. 校验/获取可用的 API key(NXCORE_NANGO_SECRET 缺失或失效时,通过无鉴权
@@ -155,4 +190,12 @@ export async function bootstrapNango(config: ConnectorConfig): Promise<string> {
     await ensureIntegration(dashboard, config.outlookConfigKey, "microsoft", config.outlookClientId, config.outlookClientSecret);
   }
   return secret;
+}
+
+export async function bootstrapNangoWhenReady(
+  config: ConnectorConfig,
+  signal?: AbortSignal,
+): Promise<string> {
+  await waitForNango(config.nangoUrl, READY_TIMEOUT_MS, signal);
+  return bootstrapNango(config);
 }

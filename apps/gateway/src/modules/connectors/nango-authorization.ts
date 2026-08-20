@@ -48,21 +48,26 @@ export interface ConnectorAuthorizationStart extends ConnectorAuthorizationAttem
 export class NangoAuthorizationService {
   private readonly http: AxiosInstance;
   private readonly apiURL: string;
+  private readonly secret: () => string;
   private readonly attempts = new Map<string, StoredAttempt>();
 
   constructor(
     baseURL: string,
-    secret: string,
+    secret: string | (() => string),
     private readonly configKeys: Partial<Record<ConnectorProvider, string>>,
     private readonly manager: ConnectorManager,
     http?: AxiosInstance,
   ) {
     this.apiURL = baseURL.replace(/\/$/, "");
+    this.secret = typeof secret === "function" ? secret : () => secret;
     this.http = http ?? axios.create({
       baseURL: this.apiURL,
       timeout: 30_000,
-      headers: { Authorization: `Bearer ${secret}` },
     });
+  }
+
+  private authorizationHeaders(): { Authorization: string } {
+    return { Authorization: `Bearer ${this.secret()}` };
   }
 
   async start(provider: ConnectorProvider): Promise<ConnectorAuthorizationStart> {
@@ -76,7 +81,7 @@ export class NangoAuthorizationService {
         auth_attempt_id: id,
       },
       allowed_integrations: [configKey],
-    });
+    }, { headers: this.authorizationHeaders() });
     const data = response.data?.data;
     if (
       typeof data?.connect_link !== "string" ||
@@ -115,6 +120,7 @@ export class NangoAuthorizationService {
     if (attempt.status !== "pending") return this.snapshot(attempt);
 
     const response = await this.http.get("/connections", {
+      headers: this.authorizationHeaders(),
       params: {
         "tags[auth_attempt_id]": attempt.id,
         limit: 10,

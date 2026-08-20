@@ -139,7 +139,7 @@ const GATEWAY_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', listDocuments: 'connector:list-documents', readDocument: 'connector:read-document', listRecords: 'connector:list-records', armFault: 'connector:arm-fault',
+  runtimeStatus: 'connector:runtime-status', status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', listDocuments: 'connector:list-documents', readDocument: 'connector:read-document', listRecords: 'connector:list-records', armFault: 'connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -647,6 +647,8 @@ function registerGatewayHandlers(): void {
     gatewaySupervisor
       ? gatewaySupervisor.getStatus()
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
+  ipcMain.handle(CONNECTOR_CHANNELS.runtimeStatus, () =>
+    nangoSupervisor?.getStatus() ?? { state: 'starting', message: null })
 }
 
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
@@ -1381,33 +1383,38 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   createWindow()
   try {
     openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
-    const openConnector = await openConnectorSupervisor.start().catch((error) => {
+    memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
+    knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
+    nangoSupervisor = new NangoSupervisor()
+
+    const openConnectorPromise = openConnectorSupervisor.start().catch((error) => {
       console.error('Managed OpenConnector failed to start; connector tools stay disabled.', error)
       return null
     })
+    const memoryCorePromise = memoryCoreSupervisor.start().catch((error) => {
+      console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
+      return null
+    })
+    const knowledgePromise = knowledgeServiceSupervisor.start().catch((error) => {
+      console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
+      return null
+    })
+    // Nango 是连接器专用的可选依赖。它与其他服务并行启动，但不阻塞 Gateway。
+    void nangoSupervisor.start().catch((error) => {
+      console.error('Managed Nango failed to start; connectors stay disabled.', error)
+      return null
+    })
+
+    const [openConnector, memoryCore, knowledge] = await Promise.all([
+      openConnectorPromise,
+      memoryCorePromise,
+      knowledgePromise,
+    ])
     if (openConnector) {
       ooCliBridge = createOoCliBridge(openConnector)
       attachOpenConnectorBridge(ooCliBridge)
     }
-    // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
-    // 让队友拉代码后无需手工部署即可使用记忆功能。
-    memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
-    const memoryCore = await memoryCoreSupervisor.start().catch((error) => {
-      console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
-      return null
-    })
-    // 数据同步用的 Nango 实例与 gateway 一并拉起(外部配置了 URL 时自动跳过)。
-    nangoSupervisor = new NangoSupervisor()
-    const nango = await nangoSupervisor.start().catch((error) => {
-      console.error('Managed Nango failed to start; connectors stay disabled.', error)
-      return null
-    })
-    // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
-    knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
-    const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
-      console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
-      return null
-    })
+    const nangoBaseUrl = nangoSupervisor.gatewayBaseUrl()
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
@@ -1422,8 +1429,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           : {}),
         // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_SECRET。
-        ...((nango && process.env.NXCORE_NANGO_SECRET?.trim())
-          ? { NXCORE_NANGO_URL: nango.baseUrl }
+        ...((nangoBaseUrl && process.env.NXCORE_NANGO_SECRET?.trim())
+          ? { NXCORE_NANGO_URL: nangoBaseUrl }
           : {}),
         ...(knowledge
           ? {

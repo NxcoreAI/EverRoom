@@ -3,7 +3,7 @@
 .sources-connector-heading { margin: 28px 0 12px; }
 .sources-connector-heading h2 { margin: 0 0 4px; font-size: 15px; }
 .sources-connector-heading p { margin: 0; color: var(--muted); font-size: 12px; }
-.connector-section.connector-debug-page { padding-bottom: 0; }
+.connector-section.connector-debug-page { position: relative; min-height: 240px; padding-bottom: 0; }
 .connector-debug-page .page-header { margin-bottom: 14px; }
 .connector-toolbar { position: sticky; top: 0; z-index: 4; display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 10px; border-block: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(12px); }
 .connector-tabs { display: flex; min-width: 0; overflow-x: auto; }
@@ -19,6 +19,14 @@
 .connector-error, .connector-callout { display: flex; align-items: center; gap: 9px; min-height: 42px; margin: 12px 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); border-radius: 5px; background: color-mix(in srgb, var(--danger) 6%, var(--surface)); color: var(--danger); font-size: 12px; }
 .connector-loading { display: flex; min-height: 160px; align-items: center; justify-content: center; gap: 8px; color: var(--subtle); font-size: 11px; }
 .connector-loading svg { width: 17px; height: 17px; }
+.connector-runtime-backdrop { position: absolute; z-index: 12; inset: 0; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--surface) 76%, transparent); backdrop-filter: blur(4px); animation: connector-runtime-enter 180ms ease-out both; }
+.connector-runtime-dialog { display: grid; width: min(320px, 100%); min-height: 154px; place-items: center; align-content: center; gap: 9px; padding: 22px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface); box-shadow: var(--shadow); text-align: center; }
+.connector-runtime-dialog strong { color: var(--text); font-size: 13px; }
+.connector-runtime-dialog small { max-width: 260px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.connector-runtime-spinner { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-alt); color: var(--accent); }
+.connector-runtime-spinner svg { width: 18px; height: 18px; animation: connector-runtime-spin 900ms linear infinite; }
+@keyframes connector-runtime-spin { to { transform: rotate(360deg); } }
+@keyframes connector-runtime-enter { from { opacity: 0; } to { opacity: 1; } }
 .connector-error > svg, .connector-callout > svg { width: 17px; height: 17px; flex: 0 0 auto; }
 .connector-error .icon-button { margin-left: auto; }
 .connector-authorization { display: flex; min-height: 48px; align-items: center; gap: 10px; margin: 12px 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, #397fd3 38%, var(--border)); border-radius: 5px; background: color-mix(in srgb, #397fd3 6%, var(--surface)); }
@@ -123,4 +131,7 @@
   .connector-register { grid-template-columns: 1fr; }
   .connector-mail-layout[data-inspector-open='true'] { display: block; }
   .connector-inspector { position: fixed; inset: 56px 10px 10px; z-index: 65; margin: 0; background: var(--surface); box-shadow: var(--shadow); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connector-runtime-backdrop, .connector-runtime-spinner svg { animation: none; }
 }

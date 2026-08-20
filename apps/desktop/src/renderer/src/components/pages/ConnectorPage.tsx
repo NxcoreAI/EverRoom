@@ -1,6 +1,7 @@
 import { AlertTriangle, CalendarDays, ChevronDown, ChevronRight, CirclePause, Database, Eye, FileText, LoaderCircle, Mail, MapPin, Play, RefreshCw, Trash2, Users, Wrench, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ConnectorConnection, ConnectorJsonRecord, ConnectorStatus, MailMessage, NormalizedCalendarEvent, SyncMode, SyncRun, SyncScope, WikiDocumentPreview, WikiDocumentSummary } from '@nxcore/connector-contract'
+import type { NangoRuntimeStatus } from '../../../../shared/sources'
 import { useLocale, type AppLocale } from '@/i18n/LocaleContext'
 import { MarkdownPreviewDialog } from './sources/MarkdownPreviewDialog'
 import './ConnectorPage.css'
@@ -12,6 +13,7 @@ const VIEWS: Array<{ id: View; label: string; icon: typeof Database }> = [
   { id: 'wiki', label: 'surface:connector.documentsTab', icon: FileText },
 ]
 const INITIAL: ConnectorStatus = { enabled: false, connections: [], scopes: [], runs: [] }
+const INITIAL_RUNTIME_STATUS: NangoRuntimeStatus = { state: 'starting', message: null }
 
 const CONNECTOR_STATUS_KEYS: Record<string, string> = {
   active: 'surface:connector.active',
@@ -48,13 +50,18 @@ export function ConnectorSection() {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [runtimeStatus, setRuntimeStatus] = useState<NangoRuntimeStatus>(INITIAL_RUNTIME_STATUS)
   const connectors = api()
 
   const refresh = useCallback(async () => {
     if (!connectors) return
     try {
       setError(null)
-      const next = await connectors.status()
+      const [runtime, next] = await Promise.all([
+        connectors.runtimeStatus(),
+        connectors.status(),
+      ])
+      setRuntimeStatus(runtime)
       setStatus(next)
       if (view === 'mail') setMail(await connectors.mail({ connectionId: selectedConnection ?? undefined, limit: 100 }))
       if (view === 'calendar') {
@@ -95,6 +102,7 @@ export function ConnectorSection() {
   return <section className="connector-debug-page connector-section">
     <div className="connector-toolbar"><div className="connector-tabs" role="tablist">{VIEWS.map(({ id, label, icon: Icon }) => <button key={id} role="tab" aria-selected={view === id} data-active={String(view === id)} onClick={() => setView(id)}><Icon aria-hidden="true" />{t(label)}<span>{id === 'connections' ? connections.length : id === 'runs' ? status.runs.length : id === 'scopes' ? status.scopes.length : id === 'wiki' ? wikiConnections.length : id === 'calendar' ? calendarRecords.length : mail.length}</span></button>)}</div><button className="icon-button" onClick={() => void refresh()} disabled={busy !== null} title={t('surface:connector.refresh')} aria-label={t('surface:connector.refresh')}><RefreshCw className={busy === 'refresh' ? 'spin' : undefined} /></button></div>
     {error ? <div className="connector-error" role="alert"><AlertTriangle />{error}<button className="icon-button" onClick={() => setError(null)} title={t('surface:connector.close')} aria-label={t('surface:connector.close')}><X /></button></div> : null}
+    {runtimeStatus.state === 'error' ? <div className="connector-callout" role="alert"><AlertTriangle />{runtimeStatus.message ?? t('surface:connector.connectorServiceFailed')}</div> : null}
     {loading ? <div className="connector-loading" role="status"><LoaderCircle className="spin" />{t('surface:connector.loadingConnectorStatus')}</div> : null}
     {!loading && !status.enabled ? <div className="connector-callout"><AlertTriangle />{t('surface:connector.connectorsAreNotConfiguredConfigureNangoNxcoreNango')}</div> : null}
     {view === 'connections' ? <ConnectionsView connections={connections} scopes={status.scopes} selectedId={selectedConnection} onSelect={setSelectedConnection} busy={busy} onSync={triggerConnection} onDisable={(id) => { if (window.confirm(t('surface:connector.disablingThisConnectionStopsAutomaticSyncContinue'))) void run(`disable:${id}`, () => connectors.disableConnection(id)) }} onPurge={(id) => { if (window.confirm(t('surface:connector.clearThisConnectorSLocalDataThisCannot'))) void run(`purge:${id}`, () => connectors.purgeConnection(id)) }} /> : null}
@@ -104,6 +112,15 @@ export function ConnectorSection() {
     {view === 'calendar' ? <CalendarView records={calendarRecords} connections={connections} scopes={status.scopes} /> : null}
     {view === 'wiki' ? <WikiSourcesView connections={wikiConnections} scopes={status.scopes} runs={status.runs} busy={busy} onSync={(connection) => triggerConnection(connection, 'full')} /> : null}
     {selected ? <div className="connector-selection"><strong>{t('surface:connector.selectedConnection')}</strong><span>{selected.provider} · {selected.nangoConnectionId}</span><button className="icon-button" onClick={() => setSelectedConnection(null)} title={t('surface:connector.clearSelection')} aria-label={t('surface:connector.clearSelection')}><X /></button></div> : null}
+    {runtimeStatus.state === 'starting' ? (
+      <div className="connector-runtime-backdrop" role="presentation">
+        <section className="connector-runtime-dialog" role="dialog" aria-modal="true" aria-labelledby="connector-runtime-title" aria-describedby="connector-runtime-description" aria-live="polite">
+          <span className="connector-runtime-spinner" aria-hidden="true"><LoaderCircle /></span>
+          <strong id="connector-runtime-title">{t('surface:connector.startingConnectorService')}</strong>
+          <small id="connector-runtime-description">{t('surface:connector.startingConnectorServiceBody')}</small>
+        </section>
+      </div>
+    ) : null}
   </section>
 }
 

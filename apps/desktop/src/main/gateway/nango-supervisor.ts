@@ -5,6 +5,8 @@ import { join } from 'node:path'
 
 import { app, session } from 'electron'
 
+import type { NangoRuntimeStatus } from '../../shared/sources'
+
 /**
  * 托管 Nango(gateway/src/modules/connector 子模块)server 的子进程管理器。
  *
@@ -134,13 +136,31 @@ export class NangoSupervisor {
   private connection: NangoConnection | null = null
   private stopping = false
   private lastError: string | null = null
+  private runtimeState: NangoRuntimeStatus['state'] = 'starting'
 
   async start(): Promise<NangoConnection | null> {
     if (this.connection) return this.connection
+    this.runtimeState = 'starting'
+    this.lastError = null
+    try {
+      return await this.startInternal()
+    } catch (error) {
+      this.runtimeState = 'error'
+      this.lastError = error instanceof Error ? error.message : 'Nango 启动失败'
+      throw error
+    }
+  }
 
-    if (process.env.NXCORE_NANGO_MANAGED === 'false') return null
+  private async startInternal(): Promise<NangoConnection | null> {
+    if (process.env.NXCORE_NANGO_MANAGED === 'false') {
+      this.runtimeState = 'disabled'
+      return null
+    }
     const externalBaseUrl = process.env.NXCORE_NANGO_URL?.trim()
-    if (externalBaseUrl && !isLoopbackNangoUrl(externalBaseUrl)) return null
+    if (externalBaseUrl && !isLoopbackNangoUrl(externalBaseUrl)) {
+      this.runtimeState = 'ready'
+      return null
+    }
 
     // ponytail: 打包形态尚未把 nango 子模块打进 extraResources,先只支持 dev 托管。
     if (app.isPackaged) throw new Error('Nango 托管目前仅支持开发模式')
@@ -149,8 +169,9 @@ export class NangoSupervisor {
     // 复用已在运行的实例(用户手动启动的 Nango 等)。
     if (await probe()) {
       this.connection = { baseUrl: BASE_URL, managed: false }
+      this.runtimeState = 'ready'
       console.info(`[nango] reusing existing instance at ${BASE_URL}`)
-      await this.startConnectUi(nangoDirectory)
+      void this.startConnectUi(nangoDirectory)
       return this.connection
     }
 
@@ -161,9 +182,33 @@ export class NangoSupervisor {
     if (!existsSync(tsxCli)) {
       throw new Error('Nango 依赖未安装:请在 apps/gateway/src/modules/connector 下执行 npm install')
     }
-    // 同仓包(shared/utils/...)以 dist 解析,先做一次性全量构建再拉起 server。
-    // ponytail: 每次启动都全量 ts-build 较慢,增量缓存(tsc -b)会兜底;需要快时可换 esbuild。
-    const build = await this.run(nangoDirectory, ['run', 'ts-build'], 300_000)
+    // @embedded-postgres 的 macOS 二进制使用 major-only ICU 名称,而 npm 包只带完整版本名。
+    // 依赖安装可能跳过 workspace postinstall,启动前补一次软链接避免 dyld 直接退出。
+    const embeddedPostgresFixScript = join(
+      nangoDirectory,
+      'packages',
+      'database',
+      'scripts',
+      'fix-embedded-pg-icu.mjs',
+    )
+    if (existsSync(embeddedPostgresFixScript)) {
+      const fix = await this.run(
+        process.execPath,
+        nangoDirectory,
+        [embeddedPostgresFixScript],
+        30_000,
+        { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      )
+      if (fix !== 0) throw new Error(`embedded-postgres 动态库准备失败（exit=${String(fix)}）`)
+    }
+    // 同仓包(shared/utils/...)以 dist 解析，只构建 server 及其工程引用。
+    // 根 tsconfig 还包含 noEmit 的 Web 工程，会在每次启动时被判定为缺少输出并重复检查。
+    const build = await this.run(
+      'npm',
+      nangoDirectory,
+      ['exec', '--', 'tsc', '-b', 'packages/server/tsconfig.json'],
+      300_000,
+    )
     if (build !== 0) throw new Error(`Nango 构建失败（exit=${build}）`)
 
     // logo 等静态资源由 server 从 webapp/dist 托管(NANGO_PUBLIC_SERVER_URL 指向 3003);
@@ -221,6 +266,7 @@ export class NangoSupervisor {
       this.child = null
       if (!this.stopping) {
         this.lastError = `Nango 进程已退出（code=${String(code)}, signal=${String(signal)}）`
+        this.runtimeState = 'error'
         console.error(this.lastError)
       }
     })
@@ -228,6 +274,7 @@ export class NangoSupervisor {
     try {
       await this.waitUntilReady(child)
       this.connection = { baseUrl: BASE_URL, managed: true }
+      this.runtimeState = 'ready'
       console.info(`[nango] managed instance ready at ${BASE_URL} (pid=${child.pid})`)
     } catch (error) {
       this.killChild(child, 'SIGTERM')
@@ -236,8 +283,19 @@ export class NangoSupervisor {
       throw error
     }
 
-    await this.startConnectUi(nangoDirectory)
+    void this.startConnectUi(nangoDirectory)
     return this.connection
+  }
+
+  getStatus(): NangoRuntimeStatus {
+    return { state: this.runtimeState, message: this.lastError }
+  }
+
+  gatewayBaseUrl(): string | null {
+    const configured = process.env.NXCORE_NANGO_URL?.trim()
+    if (process.env.NXCORE_NANGO_MANAGED === 'false') return configured || null
+    if (configured && !isLoopbackNangoUrl(configured)) return configured
+    return app.isPackaged ? null : BASE_URL
   }
 
   /** 授权页所需的 Connect UI(静态站,默认 3009)。失败不阻断,授权链接会打不开但 server 正常。 */
@@ -249,7 +307,7 @@ export class NangoSupervisor {
     const connectUiDirectory = join(nangoDirectory, 'packages', 'connect-ui')
     try {
       if (!existsSync(join(connectUiDirectory, 'dist', 'index.html'))) {
-        const build = await this.run(nangoDirectory, ['run', 'build', '-w', '@nangohq/connect-ui'], 300_000)
+        const build = await this.run('npm', nangoDirectory, ['run', 'build', '-w', '@nangohq/connect-ui'], 300_000)
         if (build !== 0) throw new Error(`Connect UI 构建失败（exit=${build}）`)
       }
       const child = spawn(
@@ -298,6 +356,7 @@ export class NangoSupervisor {
     const connectUi = this.connectUiChild
     this.connection = null
     this.stopping = true
+    this.runtimeState = 'disabled'
     connectUi?.kill('SIGTERM')
     this.connectUiChild = null
     if (!child) return
@@ -328,18 +387,24 @@ export class NangoSupervisor {
     throw new Error(`Nango server did not become ready within ${STARTUP_TIMEOUT_MS}ms`)
   }
 
-  private run(cwd: string, args: string[], timeoutMs: number): Promise<number | null> {
+  private run(
+    command: string,
+    cwd: string,
+    args: string[],
+    timeoutMs: number,
+    env: NodeJS.ProcessEnv = process.env,
+  ): Promise<number | null> {
     return new Promise((resolve, reject) => {
-      const child = spawn('npm', args, {
+      const child = spawn(command, args, {
         cwd,
-        env: process.env,
+        env,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
         shell: process.platform === 'win32',
       })
       const timeout = setTimeout(() => {
         child.kill('SIGKILL')
-        reject(new Error(`命令超时: npm ${args.join(' ')}`))
+        reject(new Error(`命令超时: ${command} ${args.join(' ')}`))
       }, timeoutMs)
       child.stdout.on('data', (chunk: string) => process.stdout.write(`[nango-build] ${chunk}`))
       child.stderr.on('data', (chunk: string) => process.stderr.write(`[nango-build] ${chunk}`))

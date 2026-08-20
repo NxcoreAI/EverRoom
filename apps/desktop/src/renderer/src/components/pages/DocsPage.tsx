@@ -39,8 +39,8 @@ export function DocsPage({
   onOpenDocument: (target: { roomId: string; documentId: string }) => void
 }) {
   const { locale, t } = useLocale()
-  const { state, backendReady } = useContextRoomState()
-  const { documentsByRoom } = useRoomDocumentsState()
+  const { state } = useContextRoomState()
+  const { documentsByRoom, documentsLoading } = useRoomDocumentsState()
   const [search, setSearch] = useState('')
   const [roomFilter, setRoomFilter] = useState<string>('all')
 
@@ -134,7 +134,7 @@ export function DocsPage({
         </div>
       </div>
 
-      {!backendReady ? (
+      {documentsLoading ? (
         <div className="doc-list" aria-busy="true" aria-label={t('surface:docs.loadingDocuments')}>
           {Array.from({ length: 5 }, (_, index) => (
             <div key={index} className="doc-row doc-row-skeleton" aria-hidden="true">

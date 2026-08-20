@@ -41,6 +41,7 @@ export function useRoomDocuments(roomIds: string[]) {
   const [documentsByRoom, setDocumentsByRoom] = useState<Record<string, RoomDocument[]>>({})
   const [trashedDocumentsByRoom, setTrashedDocumentsByRoom] = useState<Record<string, RoomDocument[]>>({})
   const [focusedDocumentByRoom, setFocusedDocumentByRoom] = useState<Record<string, string | null>>({})
+  const [loadingRooms, setLoadingRooms] = useState<Record<string, boolean>>({})
   const subscribedRooms = useRef(new Set<string>())
   const roomKey = useMemo(() => [...roomIds].sort().join('\u0000'), [roomIds])
 
@@ -69,21 +70,31 @@ export function useRoomDocuments(roomIds: string[]) {
   const refreshRoom = useCallback(async (roomId: string): Promise<void> => {
     const documents = window.nxcore?.documents
     if (!documents) return
-    const [listed, trashed] = await Promise.all([
-      documents.list(roomId),
-      documents.listTrash(roomId),
-    ])
-    setDocumentsByRoom((current) => ({
-      ...current,
-      [roomId]: replaceRoomDocuments(current[roomId] ?? [], listed),
-    }))
-    setTrashedDocumentsByRoom((current) => ({
-      ...current,
-      [roomId]: replaceRoomDocuments(current[roomId] ?? [], trashed),
-    }))
-    const activeDraft = listed.find((document) => document.status === 'draft' && document.activeTransactionId)
-    if (activeDraft) {
-      setFocusedDocumentByRoom((current) => ({ ...current, [roomId]: activeDraft.id }))
+    setLoadingRooms((current) => ({ ...current, [roomId]: true }))
+    try {
+      const [listed, trashed] = await Promise.all([
+        documents.list(roomId),
+        documents.listTrash(roomId),
+      ])
+      setDocumentsByRoom((current) => ({
+        ...current,
+        [roomId]: replaceRoomDocuments(current[roomId] ?? [], listed),
+      }))
+      setTrashedDocumentsByRoom((current) => ({
+        ...current,
+        [roomId]: replaceRoomDocuments(current[roomId] ?? [], trashed),
+      }))
+      const activeDraft = listed.find((document) => document.status === 'draft' && document.activeTransactionId)
+      if (activeDraft) {
+        setFocusedDocumentByRoom((current) => ({ ...current, [roomId]: activeDraft.id }))
+      }
+    } finally {
+      setLoadingRooms((current) => {
+        if (!current[roomId]) return current
+        const next = { ...current }
+        delete next[roomId]
+        return next
+      })
     }
   }, [])
 
@@ -148,6 +159,12 @@ export function useRoomDocuments(roomIds: string[]) {
         return next
       })
       setTrashedDocumentsByRoom((current) => {
+        const next = { ...current }
+        delete next[roomId]
+        return next
+      })
+      setLoadingRooms((current) => {
+        if (!current[roomId]) return current
         const next = { ...current }
         delete next[roomId]
         return next
@@ -219,6 +236,7 @@ export function useRoomDocuments(roomIds: string[]) {
   return {
     documentsByRoom,
     trashedDocumentsByRoom,
+    documentsLoading: Object.keys(loadingRooms).length > 0,
     focusedDocumentByRoom,
     upsertDocument,
     createDocument,

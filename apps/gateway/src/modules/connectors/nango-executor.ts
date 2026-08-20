@@ -35,11 +35,13 @@ export function nangoProxyRequest(
 
 export class NangoExecutor implements ConnectorExecutor {
   private readonly http: AxiosInstance;
+  private readonly secret: () => string;
   constructor(
     baseURL: string,
-    private readonly secret: string,
+    secret: string | (() => string),
     http?: AxiosInstance,
   ) {
+    this.secret = typeof secret === "function" ? secret : () => secret;
     this.http =
       http ??
       axios.create({ baseURL: baseURL.replace(/\/$/, ""), timeout: 30_000 });
@@ -51,7 +53,7 @@ export class NangoExecutor implements ConnectorExecutor {
     headers?: Record<string, string>,
   ) {
     const request = nangoProxyRequest(
-      this.secret,
+      this.secret(),
       connectionId,
       configKey,
       url,
@@ -70,7 +72,7 @@ export class NangoExecutor implements ConnectorExecutor {
     }
   }
   private async proxyPost(connectionId: string, configKey: string, url: string, body: unknown) {
-    const request = nangoProxyRequest(this.secret, connectionId, configKey, url);
+    const request = nangoProxyRequest(this.secret(), connectionId, configKey, url);
     try {
       return (await this.http.post(request.path, body, { headers: request.headers })).data;
     } catch (error) {
