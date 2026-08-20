@@ -328,7 +328,7 @@ export class IngestService {
   }
 
   private async processNormalized(
-    input: Pick<IngestInput, "pipelines" | "entrySignals">,
+    input: Pick<IngestInput, "pipelines" | "entrySignals" | "roomId">,
     unit: {
       sourceKind: LedgerSourceKind;
       sourceId: string;
@@ -434,6 +434,7 @@ export class IngestService {
             title: unit.title,
             markdown: unit.markdown,
             ...(unit.occurredAt ? { occurredAt: unit.occurredAt } : {}),
+            ...(input.roomId ? { entryRoomId: input.roomId } : {}),
             ...(entrySignals ? { entrySignals } : {}),
           });
       routeJobId = submitted.jobId;

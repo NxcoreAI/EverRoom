@@ -57,8 +57,12 @@ export class FilesGatewayBridge {
   /**
    * 统一导入（用户主路径）：系统选择框 → 逐文件 multipart 上传（唯一字节
    * 入口）→ ref 形态进引擎。失败互不影响，逐行回报。
+   * roomId（Room 内上传）→ /v1/ingest 的显式归属：入口直达该 Room。
    */
-  async pickAndImport(options?: { pipelines?: IngestPipelines }): Promise<FileImportOutcome[]> {
+  async pickAndImport(options?: {
+    pipelines?: IngestPipelines
+    roomId?: string
+  }): Promise<FileImportOutcome[]> {
     const picked = await dialog.showOpenDialog({
       title: '选择要导入的文件',
       properties: ['openFile', 'multiSelections'],
@@ -77,7 +81,7 @@ export class FilesGatewayBridge {
       try {
         const buffer = await readFile(filePath)
         const uploaded = await this.uploadBytes(filename, buffer)
-        const ingested = await this.ingestRef(uploaded.id, options?.pipelines)
+        const ingested = await this.ingestRef(uploaded.id, options?.pipelines, options?.roomId)
         outcomes.push({
           filename,
           fileId: uploaded.id,
@@ -122,12 +126,13 @@ export class FilesGatewayBridge {
     return response.json() as Promise<{ id: string; contentHash: string; deduped: boolean; bytes: number }>
   }
 
-  private async ingestRef(fileId: string, pipelines?: IngestPipelines) {
+  private async ingestRef(fileId: string, pipelines?: IngestPipelines, roomId?: string) {
     return this.request<IngestResultDto>('/v1/ingest', {
       method: 'POST',
       body: JSON.stringify({
         source: { ref: { sourceKind: 'file', sourceId: fileId } },
         ...(pipelines ? { pipelines } : {}),
+        ...(roomId ? { roomId } : {}),
       }),
     })
   }

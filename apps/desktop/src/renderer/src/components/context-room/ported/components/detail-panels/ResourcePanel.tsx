@@ -8,6 +8,7 @@ import {
   Folder,
   FolderOpen,
   LoaderCircle,
+  Paperclip,
   Plus,
   RotateCcw,
   Search,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
+import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import {
   createContextRoomResourceLibrary,
   getContextRoomOfficeFormat,
@@ -129,6 +131,7 @@ export function ResourceTree({
   room,
   backendDocuments,
   trashedDocuments,
+  knowledgeFiles,
   selectedId,
   onSelect,
   onCreateDocument,
@@ -141,6 +144,7 @@ export function ResourceTree({
   room: ContextRoomRecord;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
+  knowledgeFiles: KnowledgeFileDto[];
   selectedId: string | null;
   onSelect: (resource: ContextRoomResource) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
@@ -151,8 +155,8 @@ export function ResourceTree({
   onAddFile: (file: LocalOfficeFile) => void;
 }) {
   const library = useMemo(
-    () => createContextRoomResourceLibrary(room, backendDocuments, trashedDocuments),
-    [backendDocuments, room, trashedDocuments],
+    () => createContextRoomResourceLibrary(room, backendDocuments, trashedDocuments, knowledgeFiles),
+    [backendDocuments, knowledgeFiles, room, trashedDocuments],
   );
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(() => new Set(
@@ -452,8 +456,14 @@ export function ResourceTree({
                         className={`context-room-resource-item${selectedId === resource.id ? ' is-selected' : ''}`}
                         onClick={() => onSelect(resource)}
                       >
-                        {resource.kind === 'office-file' && resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : <FileText aria-hidden="true" />}
-                        <span><b>{resource.name}</b><small>{resource.updatedAt}</small></span>
+                        {resource.kind === 'office-file' && resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : null}
+                        {resource.kind === 'knowledge-file' ? <Paperclip aria-hidden="true" /> : null}
+                        {resource.kind !== 'office-file' && resource.kind !== 'knowledge-file' ? <FileText aria-hidden="true" /> : null}
+                        {resource.kind === 'knowledge-file' ? (
+                          <span><b>{resource.name}</b><small title={resource.updatedAt}>{`${resource.statusLabel} · ${resource.sizeLabel}`}</small></span>
+                        ) : (
+                          <span><b>{resource.name}</b><small>{resource.updatedAt}</small></span>
+                        )}
                       </button>
                     )}
                     {backendDocument && !trashed ? (

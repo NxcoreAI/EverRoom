@@ -1,4 +1,5 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
+import type { KnowledgeFileDto } from '../../../../../shared/knowledge';
 import type {
   ContextRoomFileItem,
   ContextRoomOfficeFormat,
@@ -48,6 +49,24 @@ function officeMimeType(format: ContextRoomOfficeFormat) {
 
 export function getContextRoomOfficeFormat(fileName: string): ContextRoomOfficeFormat {
   return officeFormat(fileName.split('.').pop() ?? '');
+}
+
+/** knowledge 文件的归属状态文案（决策 status/decidedBy 派生）。 */
+export function knowledgeFileStatusLabel(file: {
+  status: string;
+  decidedBy: string | null;
+}): string {
+  if (file.status === 'confirmed') return '已沉淀';
+  if (file.status === 'auto') return file.decidedBy === 'user' ? '用户确认·入库中' : '归类中';
+  if (file.status === 'reverted') return '已撤销';
+  return '处理中';
+}
+
+/** 体积文案（B/KB/MB 一位小数）。 */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export function createContextRoomFileItem(file: FileItem): ContextRoomFileItem {
@@ -125,6 +144,7 @@ export function createContextRoomResourceLibrary(
   room: ContextRoomRecord,
   backendDocuments: RoomDocument[] = [],
   trashedDocuments: RoomDocument[] = [],
+  knowledgeFiles: KnowledgeFileDto[] = [],
 ): ContextRoomResourceLibrary {
   const documentsFolderId = `${room.id}:folder:documents`;
   const officeFolderId = `${room.id}:folder:office`;
@@ -191,9 +211,23 @@ export function createContextRoomResourceLibrary(
     saveState: '回收站',
     trashed: true,
   }));
+  const knowledgeFileResources: ContextRoomResource[] = knowledgeFiles.map((file) => ({
+    id: `${room.id}:kfile:${file.id}`,
+    roomId: room.id,
+    folderId: documentsFolderId,
+    name: file.originalName,
+    updatedAt: new Date(file.uploadedAt).toLocaleString('zh-CN'),
+    kind: 'knowledge-file' as const,
+    fileId: file.id,
+    originalName: file.originalName,
+    bytes: file.bytes,
+    uploadedAt: file.uploadedAt,
+    statusLabel: knowledgeFileStatusLabel(file),
+    sizeLabel: formatBytes(file.bytes),
+  }));
   return {
     folders,
-    resources: [...backendResources, ...fileResources, ...trashResources],
+    resources: [...backendResources, ...knowledgeFileResources, ...fileResources, ...trashResources],
   };
 }
 

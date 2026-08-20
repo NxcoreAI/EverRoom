@@ -107,15 +107,6 @@ export interface KnowledgeAttachInput {
   createEntity?: { name: string; kind: string }
 }
 
-export interface KnowledgeFileUploadResult {
-  filename: string
-  title: string
-  sourceId?: string
-  /** true = 判重闸 1 命中：同名同内容已入库，全链路跳过（零成本）。 */
-  deduped?: boolean
-  error?: string
-}
-
 /** Room 的上传文件清单项（uploaded_files ⨝ 最新归属决策）。 */
 export interface KnowledgeFileDto {
   id: string

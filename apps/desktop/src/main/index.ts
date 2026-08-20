@@ -307,7 +307,6 @@ const KNOWLEDGE_CHANNELS = {
   attachDoc: 'knowledge:docs:attach',
   listRecentDecisions: 'knowledge:decisions:list',
   revertDecision: 'knowledge:route:revert',
-  pickAndUploadFiles: 'knowledge:files:pick-and-upload',
   listRoomFiles: 'knowledge:files:list',
   readFileMarkdown: 'knowledge:files:markdown',
   revealFile: 'knowledge:files:reveal',
@@ -875,7 +874,6 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
     bridge.listRecentDecisions(limit))
   handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
-  handle(KNOWLEDGE_CHANNELS.pickAndUploadFiles, () => bridge.pickAndUploadFiles())
   handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
   handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
   handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))

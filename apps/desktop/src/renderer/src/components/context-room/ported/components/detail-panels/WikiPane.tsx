@@ -16,6 +16,7 @@ import type {
   KnowledgeWikiPageDto,
 } from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord, ContextRoomWikiPageResource } from '../../types';
+import { formatBytes, knowledgeFileStatusLabel } from '../../resources';
 import { WikiGraphCanvas } from '../WikiGraphCanvas';
 import { MarkdownBody } from './MarkdownBody';
 import { WikiTree } from './WikiTree';
@@ -30,20 +31,6 @@ const SOURCE_KIND_LABELS: Record<string, string> = {
 
 function sourceKindLabel(kind: string): string {
   return SOURCE_KIND_LABELS[kind] ?? kind;
-}
-
-/** 上传文件的沉淀状态徽标文案（route_decisions.status → 展示）。 */
-function fileStatusLabel(file: KnowledgeFileDto): string {
-  if (file.status === 'confirmed') return '已沉淀';
-  if (file.status === 'auto') return file.decidedBy === 'user' ? '用户确认·入库中' : '归类中';
-  if (file.status === 'reverted') return '已撤销';
-  return '处理中';
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 type WikiView = 'tree' | 'graph';
@@ -157,11 +144,12 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
   };
 
   const uploadFiles = async () => {
-    const knowledge = window.nxcore?.knowledge;
-    if (!knowledge) return;
+    const filesApi = window.nxcore?.files;
+    if (!filesApi) return;
     setUploading(true);
     try {
-      const results = await knowledge.pickAndUploadFiles();
+      // Room 内上传：带 roomId 显式归属（入口直达本 Room，不走全局自动归类）
+      const results = await filesApi.pickAndImport({ roomId: room.id });
       if (results.length === 0) return;
       const failed = results.filter((result) => result.error);
       const deduped = results.filter((result) => result.deduped).length;
@@ -175,11 +163,11 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
       if (succeeded > 0) {
         showToast({
           title: `已提交 ${succeeded} 份文件`,
-          message: '自动归类中：高置信直接入 Room，其余进入待归类队列',
+          message: '已归入本 Room，正在沉淀知识页面',
         });
       }
       for (const failure of failed) {
-        showToast({ title: `${failure.filename} 上传失败`, message: failure.error });
+        showToast({ title: `${failure.filename} 上传失败`, message: failure.error ?? undefined });
       }
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
     } catch (cause) {
@@ -327,7 +315,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
                   <span className="context-room-wiki-item-body">
                     <strong>{file.originalName}</strong>
                     <span>
-                      {fileStatusLabel(file)} · {formatBytes(file.bytes)}
+                      {knowledgeFileStatusLabel(file)} · {formatBytes(file.bytes)}
                     </span>
                   </span>
                 </button>

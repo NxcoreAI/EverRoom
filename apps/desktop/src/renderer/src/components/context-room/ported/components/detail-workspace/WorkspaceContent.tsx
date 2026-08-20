@@ -1,12 +1,14 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
 import { BookOpen, BrainCircuit, CalendarDays, CheckSquare2, ChevronLeft, FileText, Mail, Network } from 'lucide-react';
 
+import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { ObjectDetailView } from '../ObjectDetailView';
 import type { DetailPane } from '../RoomIconSidebar';
 import { ObjectPreview, type WorkspaceObjectPreview } from '../detail-panels';
 import { DocumentContent } from '../detail-panels/DocumentPane';
+import { KnowledgeFileReader } from '../detail-panels/KnowledgeFileReader';
 import { PanelEmptyState } from '../detail-panels/PanelEmptyState';
 import { OfficePreview } from '../detail-panels/ResourcePanel';
 import { WikiPageReader } from '../detail-panels/WikiPageReader';
@@ -18,6 +20,7 @@ export function WorkspaceContent({
   selectedObject,
   selectedResource,
   backendDocuments,
+  knowledgeFiles,
   focusedDocumentId,
   focusedBlockId,
   documentFocusRequestId,
@@ -34,6 +37,7 @@ export function WorkspaceContent({
   selectedObject: WorkspaceObjectPreview | null;
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
+  knowledgeFiles: KnowledgeFileDto[];
   focusedDocumentId: string | null;
   focusedBlockId: string | null;
   documentFocusRequestId: number | null;
@@ -66,7 +70,7 @@ export function WorkspaceContent({
   const selectedMeeting = visibleObject?.kind === 'meeting'
     ? room.materials.find((item) => item.id === visibleObject.id && item.type === '会议')
     : null;
-  const hasAvailableResources = createContextRoomResourceLibrary(room, backendDocuments).resources
+  const hasAvailableResources = createContextRoomResourceLibrary(room, backendDocuments, [], knowledgeFiles).resources
     .some((resource) => !('trashed' in resource) || !resource.trashed);
   const emptySelection = panels.includes('documents')
     ? hasAvailableResources
@@ -129,6 +133,8 @@ export function WorkspaceContent({
         />
       ) : visibleResource?.kind === 'office-file' ? (
         <OfficePreview resource={visibleResource} />
+      ) : visibleResource?.kind === 'knowledge-file' ? (
+        <KnowledgeFileReader resource={visibleResource} />
       ) : visibleResource?.kind === 'wiki-page' ? (
         <WikiPageReader resource={visibleResource} />
       ) : (

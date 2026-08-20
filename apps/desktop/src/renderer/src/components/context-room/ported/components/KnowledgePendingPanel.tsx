@@ -169,19 +169,20 @@ export function KnowledgePendingPanel() {
     });
 
   const uploadFiles = async () => {
-    const knowledge = window.nxcore?.knowledge;
-    if (!knowledge) return;
+    const filesApi = window.nxcore?.files;
+    if (!filesApi) return;
     setUploading(true);
     try {
-      const results = await knowledge.pickAndUploadFiles();
+      const results = await filesApi.pickAndImport();
       if (results.length === 0) return;
       const failed = results.filter((result) => result.error);
-      const succeeded = results.length - failed.length;
+      const deduped = results.filter((result) => result.deduped).length;
+      const succeeded = results.length - failed.length - deduped;
       if (succeeded > 0) {
         showToast({ title: `已提交 ${succeeded} 份文件`, message: '正在抽取实体并累积证据，达到阈值即进入推荐' });
       }
       for (const failure of failed) {
-        showToast({ title: `${failure.filename} 上传失败`, message: failure.error });
+        showToast({ title: `${failure.filename} 上传失败`, message: failure.error ?? undefined });
       }
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
     } catch (cause) {

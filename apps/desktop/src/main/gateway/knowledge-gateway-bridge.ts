@@ -1,12 +1,10 @@
-import { dialog, shell } from 'electron'
-import { readFile } from 'node:fs/promises'
+import { shell } from 'electron'
 import type {
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
   KnowledgeEntityDetailDto,
   KnowledgeEntityDto,
   KnowledgeFileDto,
-  KnowledgeFileUploadResult,
   KnowledgeRoomDto,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
@@ -15,11 +13,12 @@ import type {
 } from '../../shared/knowledge'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
-/** Room 注册表 / Wiki 页面 / 待归类队列 / 文件上传（docs/room-wiki-plan.md §7.2）。 */
+/** Room 注册表 / Wiki 页面 / 待归类队列 / Room 文件清单（docs/room-wiki-plan.md §7.2）。 */
 
 /**
  * 渲染器 → gateway knowledge 模块的 IPC 桥。
  * 与 DocumentGatewayBridge 同构（Bearer token 只在主进程，渲染器零感知）。
+ * 文件上传统一走 FilesGatewayBridge.pickAndImport（/v1/files + /v1/ingest）。
  */
 export class KnowledgeGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
@@ -103,14 +102,6 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/route/${encodeURIComponent(decisionId)}/revert`, { method: 'POST' })
   }
 
-  uploadFile(input: {
-    filename: string
-    contentBase64: string
-    occurredAt?: string
-  }): Promise<{ queued: boolean; sourceId: string; title: string; deduped: boolean }> {
-    return this.request('/v1/knowledge/files', { method: 'POST', body: JSON.stringify(input) })
-  }
-
   /** Room 的上传文件清单（uploaded_files ⨝ 最新归属决策）。 */
   listRoomFiles(roomId: string): Promise<{ items: KnowledgeFileDto[] }> {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/files`)
@@ -121,43 +112,14 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/files/${encodeURIComponent(fileId)}/markdown`)
   }
 
-  /** 在系统文件管理器中定位文件本体（对象库 files/sha256/…）。 */
+  /**
+   * 在系统文件管理器中定位文件本体（对象库 files/sha256/…）。
+   */
   async revealFile(fileId: string): Promise<void> {
     const { storagePath } = await this.request<{ storagePath: string }>(
       `/v1/knowledge/files/${encodeURIComponent(fileId)}/storage`,
     )
     shell.showItemInFolder(storagePath)
-  }
-
-  /**
-   * 系统文件选择框 → 读文件 → 上传路由（用户主路径的入口）。
-   * 首期仅接受 .md / .markdown；每份文件独立上传，失败互不影响。
-   */
-  async pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]> {
-    const picked = await dialog.showOpenDialog({
-      title: '选择要归类的 Markdown 文件',
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
-    })
-    if (picked.canceled || picked.filePaths.length === 0) return []
-
-    const results: KnowledgeFileUploadResult[] = []
-    for (const filePath of picked.filePaths) {
-      const filename = filePath.split(/[\\/]/).pop() ?? filePath
-      try {
-        const contentBase64 = (await readFile(filePath)).toString('base64')
-        const uploaded = await this.uploadFile({ filename, contentBase64 })
-        results.push({
-          filename,
-          title: uploaded.title,
-          sourceId: uploaded.sourceId,
-          deduped: uploaded.deduped,
-        })
-      } catch (error) {
-        results.push({ filename, title: filename, error: error instanceof Error ? error.message : String(error) })
-      }
-    }
-    return results
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

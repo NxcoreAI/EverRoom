@@ -1,6 +1,5 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import { FileConvertError } from "./file-convert.js";
 import type { KnowledgeService } from "./service.js";
 
 const RoomOriginQuery = Type.Object({
@@ -181,14 +180,6 @@ const UnmatchedItemDto = Type.Object({
   createdAt: Type.String(),
 });
 
-const FileUploadBody = Type.Object({
-  filename: Type.String({ minLength: 1, maxLength: 300 }),
-  /** base64 编码的文件内容（20MB 上限在转换层校验）。 */
-  contentBase64: Type.String({ minLength: 1, maxLength: 27 * 1024 * 1024 }),
-  occurredAt: Type.Optional(Type.String({ maxLength: 40 })),
-  entrySignals: Type.Optional(EntrySignalsSchema),
-});
-
 /** wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */
 const WikiGraphResponse = Type.Object({
   nodes: Type.Array(Type.Object({
@@ -355,50 +346,6 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         const markdown = await service.readRoomWikiPage(request.params.id, ref);
         if (markdown === null) return reply.code(404).send(errorOf("page_not_found"));
         return { ref, markdown };
-      },
-    );
-
-    app.post(
-      "/v1/knowledge/files",
-      {
-        bodyLimit: 32 * 1024 * 1024,
-        schema: {
-          tags: ["knowledge"],
-          body: FileUploadBody,
-          response: {
-            202: Type.Object({
-              queued: Type.Boolean(),
-              sourceId: Type.String(),
-              title: Type.String(),
-              /** true = 判重闸 1 命中：同名同内容，全链路跳过 */
-              deduped: Type.Boolean(),
-            }),
-            400: Type.Object({ error: Type.String() }),
-            413: Type.Object({ error: Type.String() }),
-          },
-        },
-      },
-      async (request, reply) => {
-        // 与 route/manual 同语义：router 关闭时无人消费该信封
-        if (!service.routerEnabled) {
-          return reply.code(400).send(errorOf("router_disabled"));
-        }
-        const buffer = Buffer.from(request.body.contentBase64, "base64");
-        if (buffer.byteLength === 0) return reply.code(400).send(errorOf("empty_file"));
-        try {
-          const result = await service.submitFileUpload({
-            filename: request.body.filename,
-            buffer,
-            ...(request.body.occurredAt ? { occurredAt: request.body.occurredAt } : {}),
-            ...(request.body.entrySignals ? { entrySignals: request.body.entrySignals } : {}),
-          });
-          return reply.code(202).send(result);
-        } catch (error) {
-          if (error instanceof FileConvertError) {
-            return reply.code(error.code === "too_large" ? 413 : 400).send(errorOf(error.code));
-          }
-          throw error;
-        }
       },
     );
 

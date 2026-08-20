@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
+import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { DETAIL_TABS as TABS, type DetailPane } from '../RoomIconSidebar';
 import { OverviewDashboard, type WorkspaceObjectPreview } from '../detail-panels';
 import type { LocalOfficeFile } from '../detail-panels/ResourcePanel';
@@ -53,6 +54,7 @@ export function WorkspaceLayout({
   selectedResource,
   backendDocuments,
   trashedDocuments,
+  knowledgeFiles,
   focusedDocumentId,
   focusedBlockId,
   documentFocusRequestId,
@@ -112,6 +114,7 @@ export function WorkspaceLayout({
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
+  knowledgeFiles: KnowledgeFileDto[];
   focusedDocumentId: string | null;
   focusedBlockId: string | null;
   documentFocusRequestId: number | null;
@@ -298,6 +301,7 @@ export function WorkspaceLayout({
                         selectedResourceId={selectedResourceId}
                         backendDocuments={backendDocuments}
                         trashedDocuments={trashedDocuments}
+                        knowledgeFiles={knowledgeFiles}
                         rooms={rooms}
                         onOpenRoom={onOpenRoom}
                         onSelectResource={onSelectResource}
@@ -348,6 +352,7 @@ export function WorkspaceLayout({
               selectedObject={selectedObject}
               selectedResource={selectedResource}
               backendDocuments={backendDocuments}
+              knowledgeFiles={knowledgeFiles}
               focusedDocumentId={focusedDocumentId}
               focusedBlockId={focusedBlockId}
               documentFocusRequestId={documentFocusRequestId}

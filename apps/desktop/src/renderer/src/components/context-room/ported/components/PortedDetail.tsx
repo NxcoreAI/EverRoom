@@ -9,6 +9,7 @@ import {
 } from '../resources'
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../types'
 import { useContextRoomLayout } from '../hooks/useContextRoomLayout'
+import { useRoomKnowledgeFiles } from '../hooks/useRoomKnowledgeFiles'
 import { ObjectDetailView } from './ObjectDetailView'
 import type { DetailObject } from './ObjectDetailView'
 import type { DetailPane } from './RoomIconSidebar'
@@ -75,9 +76,10 @@ export function PortedDetail({
     const value = room.materials.find((item) => item.id === initialObject.id)
     return value ? { kind: initialObject.kind, value } : null
   })
+  const { files: knowledgeFiles } = useRoomKnowledgeFiles(room.id)
   const library = useMemo(
-    () => createContextRoomResourceLibrary(room, backendDocuments),
-    [backendDocuments, room],
+    () => createContextRoomResourceLibrary(room, backendDocuments, [], knowledgeFiles),
+    [backendDocuments, knowledgeFiles, room],
   )
   const setActivePane = useCallback((pane: DetailPane) => {
     setActivePaneState(pane)
@@ -228,6 +230,7 @@ export function PortedDetail({
           selectedResource={selectedResource}
           backendDocuments={backendDocuments}
           trashedDocuments={trashedDocuments}
+          knowledgeFiles={knowledgeFiles}
           focusedDocumentId={focusedDocumentId}
           focusedBlockId={focusedBlockId}
           documentFocusRequestId={documentFocusRequestId}

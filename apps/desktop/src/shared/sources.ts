@@ -72,7 +72,6 @@ import type {
   KnowledgeEntityDto,
   KnowledgeEntityStatus,
   KnowledgeFileDto,
-  KnowledgeFileUploadResult,
   KnowledgeRoomDto,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
@@ -633,8 +632,6 @@ export interface NxcoreDesktopApi {
     attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<{ entityId: string }>
     listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
-    /** 系统文件选择框（仅 .md）→ 上传 gateway 走自动归类路由。 */
-    pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]>
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileDto[]; total: number }>
@@ -651,8 +648,8 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
-    /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。 */
-    pickAndImport(options?: { pipelines?: IngestPipelines }): Promise<FileImportOutcome[]>
+    /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
+    pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
   }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */

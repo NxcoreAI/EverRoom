@@ -358,7 +358,6 @@ const api: NxcoreDesktopApi = {
       invoke('knowledge:docs:attach', sourceKind, sourceId, input),
     listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
     revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
-    pickAndUploadFiles: () => invoke('knowledge:files:pick-and-upload'),
     listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
     readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
     revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
@@ -370,7 +369,7 @@ const api: NxcoreDesktopApi = {
     rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
-    pickAndImport: (options?: { pipelines?: IngestPipelines }) =>
+    pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),
   },
   ingest: {

@@ -433,7 +433,7 @@ export class MemoryService {
   /**
    * md 一等来源导入（docs/memory-md-source-plan.md §6）：
    * ① 资产化——file-storage 原语落对象库 + uploaded_files/parsed_contents
-   *   （与知识上传同一套确定性身份，但**不走** submitFileUpload 的 wiki 路由）；
+   *   （与文件上传同一套确定性身份，但不触发 knowledge 的 wiki 路由）；
    * ② 代理 MemoryCore /v3/document/import，caller_ref = file id。
    * 原文字节只落资产层；MemoryCore 仅存 caller_ref 与内容指纹。
    */

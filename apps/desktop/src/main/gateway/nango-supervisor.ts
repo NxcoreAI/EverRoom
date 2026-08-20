@@ -1,8 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { cpSync, existsSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 
-import { app } from 'electron'
+import { app, session } from 'electron'
 
 /**
  * 托管 Nango(gateway/src/modules/connector 子模块)server 的子进程管理器。
@@ -54,6 +55,77 @@ async function probeUrl(url: string): Promise<boolean> {
 
 function probe(): Promise<boolean> {
   return probeUrl(`${BASE_URL}/health`)
+}
+
+/**
+ * Nango 的 keystore 加密 key(connect session 等 private key 的加密前置)。
+ * 这个版本的 Nango 从环境变量取 DEK,缺失时创建 connect session 直接 500。
+ * 生成后持久化复用 —— key 换了历史加密数据(OAuth token 等)就解不开了。
+ * key 与 embedded DB 同放 userData/nango:清应用数据时两者一起消亡,
+ * 避免旧库配新 key 的 "Rotation of NANGO_ENCRYPTION_KEY is not supported" 崩溃。
+ */
+function nangoDataDirectory(): string {
+  return join(app.getPath('userData'), 'nango')
+}
+
+function nangoEncryptionKey(): string {
+  const keyPath = join(nangoDataDirectory(), 'encryption-key')
+  if (existsSync(keyPath)) {
+    const existing = readFileSync(keyPath, 'utf8').trim()
+    if (existing) return existing
+  }
+  mkdirSync(nangoDataDirectory(), { recursive: true })
+  const generated = randomBytes(32).toString('base64')
+  writeFileSync(keyPath, generated + '\n', { mode: 0o600 })
+  return generated
+}
+
+/** 从 Chromium 代理规则("PROXY 127.0.0.1:7897; DIRECT" 形式)提取首个 http(s) 代理 URL。 */
+function proxyUrlFromRules(rules: string): string | null {
+  for (const rule of rules.split(';')) {
+    const match = /^\s*(PROXY|HTTP|HTTPS)\s+([^\s]+)\s*$/i.exec(rule)
+    if (!match) continue
+    const protocol = match[1]?.toUpperCase() === 'HTTPS' ? 'https' : 'http'
+    try {
+      const url = new URL(`${protocol}://${match[2]}`)
+      if (!url.hostname || !url.port) continue
+      return url.toString().replace(/\/$/, '')
+    } catch {
+      // Try the next proxy rule.
+    }
+  }
+  return null
+}
+
+/**
+ * OAuth token 换取等出站请求走的代理(与 open-connector-supervisor 同款策略):
+ * 显式 HTTPS_PROXY/HTTP_PROXY 优先,否则用 Electron 会话探测系统代理。
+ * Nango(中国网络补丁)经 NANGO_OUTBOUND_PROXY/HTTPS_PROXY 认这个代理;
+ * 本机地址进 NO_PROXY,embedded postgres/自身 API 不绕代理。
+ */
+async function nangoProxyEnvironment(): Promise<Record<string, string>> {
+  const explicitHttps = process.env.HTTPS_PROXY?.trim() || process.env.https_proxy?.trim()
+  const explicitHttp = process.env.HTTP_PROXY?.trim() || process.env.http_proxy?.trim()
+  let proxyUrl = explicitHttps || explicitHttp || ''
+  if (!proxyUrl) {
+    try {
+      proxyUrl = proxyUrlFromRules(await session.defaultSession.resolveProxy('https://oauth2.googleapis.com')) ?? ''
+    } catch {
+      return {}
+    }
+  }
+  if (!proxyUrl) return {}
+  console.info(`[nango] outbound proxy for provider OAuth: ${proxyUrl}`)
+  const noProxyEntries = new Set(
+    (process.env.NO_PROXY ?? process.env.no_proxy ?? '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+  )
+  for (const loopback of ['127.0.0.1', 'localhost', '::1']) noProxyEntries.add(loopback)
+  return {
+    HTTP_PROXY: proxyUrl,
+    HTTPS_PROXY: proxyUrl,
+    NANGO_OUTBOUND_PROXY: proxyUrl,
+    NO_PROXY: [...noProxyEntries].join(','),
+  }
 }
 
 export class NangoSupervisor {
@@ -112,6 +184,25 @@ export class NangoSupervisor {
           ...process.env,
           DOTENV_CONFIG_PATH: join(nangoDirectory, '.env'),
           NANGO_EMBEDDED_DB: 'true',
+          // ponytail: embedded postgres 固定 5433,但 utils 包的 zod env 默认 5432 且不感知
+          // NANGO_EMBEDDED_DB(records 等包用它拼连接串),必须显式指定端口避免分叉。
+          NANGO_DB_PORT: '5433',
+          // ponytail: embedded DB 收进 userData/nango(默认落在仓库 server 目录里,
+          // 清应用数据/换仓库都会让 DB 与加密 key 失配)。
+          NANGO_EMBEDDED_DB_DIR: join(nangoDataDirectory(), 'embedded-postgres'),
+          // ponytail: OAuth 回调直连本机(默认会用 redirectmeto.com 跳板包一层,
+          // Google 侧需登记跳板 URI;直连时登记 http://localhost:3003/oauth/callback 即可)。
+          NANGO_SERVER_URL: `http://localhost:${NANGO_PORT}`,
+          // ponytail: 关闭 dashboard 的 session 鉴权(自托管无鉴权模式),gateway 的
+          // nango-bootstrap 依赖此模式经 /api/v1/environment/api-keys 自举 API key。
+          // 公开 API 仍走 secretKeyAuth,实例只监听回环,风险可控。
+          FLAG_AUTH_ENABLED: 'false',
+          // ponytail: keystore 的 DEK 缺失时创建 connect session(/connect/sessions)
+          // 会因无法加密 private key 而 500;key 持久化在 userData,重启不变。
+          NANGO_ENCRYPTION_KEY: nangoEncryptionKey(),
+          // ponytail: OAuth token 交换等出站请求走系统代理(Node 不读 macOS 系统代理,
+          // 直连 Google 在无代理网络下会 ETIMEDOUT 卡死授权回调)。
+          ...(await nangoProxyEnvironment()),
           SERVER_PORT: String(NANGO_PORT),
         },
         stdio: ['pipe', 'pipe', 'pipe'],

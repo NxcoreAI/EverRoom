@@ -198,10 +198,25 @@ export interface ContextRoomWikiPageResource extends ContextRoomResourceBase {
   wikiPath: string;
 }
 
+/** Knowledge 上传文件（markdown 只读原件）：并入"云文档"文件夹展示，
+ *  只读预览（readFileMarkdown），不进 Tiptap 编辑器。 */
+export interface ContextRoomKnowledgeFileResource extends ContextRoomResourceBase {
+  kind: 'knowledge-file';
+  /** uploaded_files.id（确定性 file-<hash>），readFileMarkdown/revealFile 的键。 */
+  fileId: string;
+  originalName: string;
+  bytes: number;
+  uploadedAt: string;
+  /** 预格式化副文本（状态如"已沉淀/归类中" + 体积如"12.3 KB"）。 */
+  statusLabel: string;
+  sizeLabel: string;
+}
+
 export type ContextRoomResource =
   | ContextRoomCloudDocResource
   | ContextRoomOfficeResource
-  | ContextRoomWikiPageResource;
+  | ContextRoomWikiPageResource
+  | ContextRoomKnowledgeFileResource;
 
 export interface ContextRoomRecord {
   id: string;

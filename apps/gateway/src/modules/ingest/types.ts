@@ -120,6 +120,8 @@ export interface IngestInput {
   occurredAt?: string | undefined;
   /** 请求级覆盖 > 配置文件（ingest-policies.json）> 类型 defaults。 */
   pipelines?: Pipelines | undefined;
+  /** Room 内上传的显式归属：入口直达该 Room（知识路由 ① 层），不进全局路由。 */
+  roomId?: string | undefined;
   entrySignals?: DocEnvelope["entrySignals"] | undefined;
   originChannel?: OriginChannel | undefined;
 }
