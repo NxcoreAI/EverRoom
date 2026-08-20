@@ -65,6 +65,24 @@ describe("gateway server", () => {
     expect(authorized.statusCode).toBe(200);
   });
 
+  it("loads the bundled project Agent directory used by Desktop", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/subagents",
+      headers: { authorization: `Bearer ${config.authToken}` },
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toContainEqual(expect.objectContaining({
+      id: "content-analyst",
+      name: "Content Analyst",
+      enabled: true,
+    }));
+  });
+
   it("keeps Nango and CLI connector routes in disjoint namespaces", async () => {
     const config = await testConfig();
     const app = await createServer(config);

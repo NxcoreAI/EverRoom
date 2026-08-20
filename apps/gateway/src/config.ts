@@ -173,7 +173,9 @@ export interface PiRuntimeConfig {
   workingDirectory: string;
   agentDirectory: string;
   systemPrompt?: string;
+  runtimeRole?: "user-facing" | "internal";
   skillsEnabled?: boolean;
+  additionalSkillPaths?: string[];
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
   /** Pi 内置工具白名单；缺省启用全部，NXCORE_PI_TOOLS（逗号分隔）收窄。 */
@@ -547,6 +549,17 @@ function defaultMigrationsDir(): string {
     resolve("drizzle"),
   ];
 
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
+/** Agent definitions are project assets copied beside the packaged Gateway. */
+export function bundledAgentDefinitionsDir(): string {
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(moduleDirectory, "agents"),
+    resolve(moduleDirectory, "..", "..", "..", "agents"),
+    resolve("agents"),
+  ];
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
@@ -981,7 +994,7 @@ export function loadConfig(
       : null,
     subagents: {
       enabled: rawConfig.subagentsEnabled,
-      definitionsDir: resolve(rawConfig.subagentsDir || join(dataDir, "agents")),
+      definitionsDir: resolve(rawConfig.subagentsDir || bundledAgentDefinitionsDir()),
       runtimeDir: join(dataDir, "agent", "subagents"),
       defaultTimeoutMs: rawConfig.subagentTimeoutMs,
       maxConcurrent: rawConfig.subagentMaxConcurrent,

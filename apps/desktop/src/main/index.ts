@@ -1370,6 +1370,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
     resolveServicesReady?.()
+    if (process.platform === 'darwin') {
+      const defaultFolderNames: Array<'desktop' | 'documents' | 'downloads'> = [
+        'desktop',
+        'documents',
+        'downloads',
+      ]
+      const defaultLocalFolders = defaultFolderNames.map((name) => app.getPath(name))
+      void localDataService.bootstrapDefaultLocalFolders(defaultLocalFolders).catch((error) => {
+        console.warn('Unable to initialize default local folders.', error)
+      })
+    }
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
     const service = localDataService

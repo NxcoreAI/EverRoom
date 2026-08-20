@@ -71,9 +71,8 @@ function request(
 describe('document cursor completion Agent stream', () => {
   it('builds a local output-only prompt and sanitizes prose and code independently', () => {
     const prompt = buildDocumentCursorCompletionPrompt(request())
-    expect(prompt).toContain('第一行只能是 KEEP 或 REPLACE:n')
-    expect(prompt).toContain('不要调用工具')
-    expect(prompt).toContain('REPLACE:n')
+    expect(prompt).toContain('使用 document-cursor-completion Skill')
+    expect(prompt).toContain('<CURSOR />')
     expect(prompt).toContain('<PREFIX>\n前文最后一句\n</PREFIX>')
     expect(prompt).toContain('<CURSOR />')
     expect(prompt).toContain('<SUFFIX>\n后文第一句\n</SUFFIX>')

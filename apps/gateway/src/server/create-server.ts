@@ -7,7 +7,7 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import websocket from "@fastify/websocket";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
-import type { GatewayConfig } from "../config.js";
+import { bundledAgentDefinitionsDir, type GatewayConfig } from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
@@ -21,7 +21,13 @@ import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
-import { createAgentRuntime, createBackgroundAgentRuntime, createConnectorSyncAgentRuntime } from "../modules/agent/runtime-factory.js";
+import {
+  createAgentResolver,
+  registerConnectorSyncAgent,
+  registerPrimaryAgent,
+  registerTranscriptionSummaryAgent,
+} from "../modules/agent/runtime-factory.js";
+import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
@@ -215,6 +221,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
   );
   await documentMcpHost.capabilities.recover();
+  const agentResolver = createAgentResolver(config);
   // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
   const knowledgeService = new KnowledgeService(
     db,
@@ -235,15 +242,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       embeddingModel: config.knowledge?.embeddingModel ?? "",
     },
     app.log,
+    agentResolver,
   );
   const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
   let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
-  const cliConnectorSyncAgentRuntime = createConnectorSyncAgentRuntime(config, cliConnectorSyncService);
-  if (cliConnectorSyncAgentRuntime) cliConnectorSyncService.attachAgentRuntime(cliConnectorSyncAgentRuntime);
+  registerConnectorSyncAgent(agentResolver, config, cliConnectorSyncService);
+  if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
+    cliConnectorSyncService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorSync), {
+      disposeRuntime: false,
+    });
+  }
   await cliConnectorSyncService.initialize();
   const subagentConfig = config.subagents ?? {
     enabled: true,
-    definitionsDir: resolve(config.dataDir, "agents"),
+    definitionsDir: bundledAgentDefinitionsDir(),
     runtimeDir: resolve(config.dataDir, "agent", "subagents"),
     defaultTimeoutMs: 300_000,
     maxConcurrent: 4,
@@ -256,6 +268,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   await subagentRegistry.initialize();
   const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig);
+  for (const developerAgent of subagentRegistry.listAvailable()) {
+    agentResolver.register({
+      id: developerAgent.id,
+      name: developerAgent.name,
+      description: developerAgent.description,
+      configDirectory: developerAgent.revision.agentDirectory,
+      kind: "developer",
+    }, () => subagentRuntimeManager.acquire(developerAgent.revision), { disposeRuntime: false });
+  }
   const subagentOrchestrator = new SubagentOrchestrator(
     db,
     subagentConfig,
@@ -267,7 +288,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (recoveredSubagentInvocations > 0) {
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
   }
-  const agentRuntime = createAgentRuntime(config, documentMcpHost, {
+  registerPrimaryAgent(agentResolver, config, documentMcpHost, {
     ...(subagentConfig.enabled
       ? { tools: createSubagentPiTools(subagentRegistry, subagentOrchestrator) }
       : {}),
@@ -282,6 +303,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         }
       : {}),
   }, cliConnectorSyncService);
+  const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -305,9 +327,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentService,
     documentMcpHost,
     config.cliConnectorAgentMode ?? "direct",
+    false,
   );
   await agentService.initialize();
-  const backgroundAgentRuntime = createBackgroundAgentRuntime(config);
+  registerTranscriptionSummaryAgent(agentResolver, config);
+  const backgroundAgentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.transcriptionSummary);
   app.log.info(
     {
       runtimeId: backgroundAgentRuntime.id,
@@ -321,7 +345,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
     "background transcription runtime configured",
   );
-  const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime);
+  const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime, false);
   const asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
@@ -360,6 +384,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await cliConnectorMarkdownService?.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
+    await agentResolver.dispose();
     sqlite.close();
     await gatewayLogger.close();
   });

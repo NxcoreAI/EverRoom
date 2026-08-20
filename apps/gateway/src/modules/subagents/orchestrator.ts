@@ -6,9 +6,8 @@ import type {
   SubagentInvocationStatus,
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
-import type { TSchema } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { Ajv, type ValidateFunction } from "ajv";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   subagentInvocationEvents,
@@ -27,6 +26,7 @@ export interface DispatchSubagentInput {
   source: SubagentInvocationSource;
   parentSessionId?: string | null;
   parentRunId?: string | null;
+  signal?: AbortSignal;
 }
 
 interface ActiveInvocation {
@@ -66,22 +66,14 @@ function toInvocation(row: typeof subagentInvocations.$inferSelect): SubagentInv
   };
 }
 
-function timeoutAfter(milliseconds: number, onTimeout: () => void): Promise<never> {
-  return new Promise((_, reject) => {
-    const timer = setTimeout(() => {
-      onTimeout();
-      reject(new InvocationTimeoutError("subagent invocation timed out"));
-    }, milliseconds);
-    timer.unref();
-  });
-}
-
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 }
 
 export class SubagentOrchestrator {
   private readonly active = new Map<string, ActiveInvocation>();
+  private readonly schemaValidators = new WeakMap<Record<string, unknown>, ValidateFunction>();
+  private readonly ajv = new Ajv({ strict: false, allErrors: true });
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -126,7 +118,7 @@ export class SubagentOrchestrator {
       eq(subagentInvocations.source, input.source),
       input.parentRunId
         ? eq(subagentInvocations.parentRunId, input.parentRunId)
-        : eq(subagentInvocations.parentRunId, ""),
+        : isNull(subagentInvocations.parentRunId),
       eq(subagentInvocations.idempotencyKey, input.idempotencyKey),
     )).get();
     if (existing) {
@@ -145,7 +137,7 @@ export class SubagentOrchestrator {
       agentRevisionId: definition.revision.id,
       source: input.source,
       parentSessionId: input.parentSessionId ?? null,
-      parentRunId: input.parentRunId ?? "",
+      parentRunId: input.parentRunId ?? null,
       idempotencyKey: input.idempotencyKey,
       task: normalizedTask,
       input: input.input ?? null,
@@ -156,9 +148,15 @@ export class SubagentOrchestrator {
     const runtime = this.runtimeManager.acquire(definition.revision);
     const promise = this.executeInvocation(invocationId, definition, runtime);
     this.active.set(invocationId, { runtime, promise });
+    const cancelFromParent = () => {
+      void runtime.cancel(invocationId).catch(() => undefined);
+    };
+    input.signal?.addEventListener("abort", cancelFromParent, { once: true });
+    if (input.signal?.aborted) cancelFromParent();
     try {
       return await promise;
     } finally {
+      input.signal?.removeEventListener("abort", cancelFromParent);
       this.active.delete(invocationId);
     }
   }
@@ -192,7 +190,7 @@ export class SubagentOrchestrator {
       throw new Error("subagent_concurrency_limit");
     }
     const schema = definition.revision.inputSchema;
-    if (schema && !Value.Check(schema as TSchema, input.input ?? null)) {
+    if (schema && !this.validateSchema(schema, input.input ?? null)) {
       throw new Error("subagent_input_schema_invalid");
     }
   }
@@ -212,7 +210,6 @@ export class SubagentOrchestrator {
       "<everroom-subagent-task>",
       `任务：${row.task}`,
       `结构化输入：${JSON.stringify(row.input)}`,
-      "只返回任务结果，不要向最终用户提问，也不要描述未实际执行的操作。",
       "</everroom-subagent-task>",
     ].join("\n");
 
@@ -248,18 +245,23 @@ export class SubagentOrchestrator {
           terminalError = String((event.payload as { message?: unknown }).message ?? "Runtime failed");
         }
       });
+      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          void runtime.cancel(invocationId).catch(() => undefined);
+          reject(new InvocationTimeoutError("subagent invocation timed out"));
+        }, definition.revision.policy.timeoutMs);
+        timeoutHandle.unref();
+      });
       try {
-        await Promise.race([
-          consume,
-          timeoutAfter(definition.revision.policy.timeoutMs, () => {
-            void runtime.cancel(invocationId).catch(() => undefined);
-          }),
-        ]);
+        await Promise.race([consume, timeout]);
       } catch (error) {
         if (!(error instanceof InvocationTimeoutError)) throw error;
+        await Promise.race([consume.catch(() => undefined), wait(2_000)]);
         terminal = "timed_out";
         terminalError = error.message;
-        await Promise.race([consume.catch(() => undefined), wait(2_000)]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
       }
     } catch (error) {
       terminal = "failed";
@@ -269,10 +271,15 @@ export class SubagentOrchestrator {
     let result: SubagentInvocationResult | null = null;
     if (isCompletedStatus(terminal)) {
       result = { text: finalText };
-      if (definition.revision.outputSchema) {
+      if (Buffer.byteLength(finalText, "utf8") > 512 * 1024) {
+        terminal = "failed";
+        terminalError = "subagent_output_too_large";
+        result = null;
+      }
+      if (result && definition.revision.outputSchema) {
         try {
           const structuredOutput: unknown = JSON.parse(finalText);
-          if (!Value.Check(definition.revision.outputSchema as TSchema, structuredOutput)) {
+          if (!this.validateSchema(definition.revision.outputSchema, structuredOutput)) {
             throw new Error("output does not match schema");
           }
           result.structuredOutput = structuredOutput;
@@ -323,5 +330,15 @@ export class SubagentOrchestrator {
           .where(eq(subagentInvocations.id, invocationId)).run();
       });
     }
+  }
+
+  private validateSchema(schema: Record<string, unknown>, value: unknown): boolean {
+    let validator = this.schemaValidators.get(schema);
+    if (!validator) {
+      const compiled = this.ajv.compile(schema);
+      this.schemaValidators.set(schema, compiled);
+      validator = compiled;
+    }
+    return validator(value) === true;
   }
 }

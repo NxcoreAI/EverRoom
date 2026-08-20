@@ -242,6 +242,9 @@ importers:
       '@tiptap/starter-kit':
         specifier: ^3.30.1
         version: 3.30.1
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       ali-oss:
         specifier: ^6.23.0
         version: 6.23.0(proxy-agent@8.0.2(supports-color@8.1.1))(supports-color@8.1.1)

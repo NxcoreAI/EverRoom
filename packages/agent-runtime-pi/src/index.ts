@@ -104,8 +104,12 @@ export interface PiAgentRuntimeConfig {
   agentDirectory: string;
   /** Developer-authored prompt appended after EverRoom's non-overridable runtime policy. */
   systemPrompt?: string;
+  /** Selects the minimal platform identity fallback when no bundle prompt is supplied. */
+  runtimeRole?: "user-facing" | "internal";
   /** Enables Pi skill discovery inside the isolated agentDirectory. */
   skillsEnabled?: boolean;
+  /** Additional read-only Skill directories shipped with an Agent bundle. */
+  additionalSkillPaths?: string[];
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
   /** Pi 内置工具白名单；缺省启用全部（read/bash/edit/write/grep/find/ls），可经 NXCORE_PI_TOOLS 收窄。 */
@@ -499,6 +503,7 @@ export class PiAgentRuntime implements AgentRuntime {
     let knowledgeWikiIds: string[] = knowledgeClient ? knowledgeClient.defaultWikiIds : [];
     // 扩展工厂：memory + MCP 适配器（pi-mcp-adapter，注入式隔离配置）。
     const mcpServers = this.config.mcp?.mcpServers;
+    const mcpToolNames = mcpServers && Object.keys(mcpServers).length > 0 ? ["mcp"] : [];
     const extensionFactories = [
       ...(memory && memoryClient
         ? [
@@ -525,6 +530,9 @@ export class PiAgentRuntime implements AgentRuntime {
       settingsManager,
       noExtensions: true,
       noSkills: this.config.skillsEnabled !== true,
+      ...(this.config.additionalSkillPaths?.length
+        ? { additionalSkillPaths: this.config.additionalSkillPaths }
+        : {}),
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
@@ -532,18 +540,10 @@ export class PiAgentRuntime implements AgentRuntime {
       systemPromptOverride: () => {
         const lines = [
           ...(this.config.systemPrompt
-            ? [
-                "你是 EverRoom 内部被调度执行任务的子 Agent，不能直接与最终用户建立对话，也不能声称自己获得了未显式提供的权限。",
-                "只处理本次调度信封中的任务和输入。需要额外信息或权限时，在结果中明确返回缺少的内容，不得假装已经询问用户。",
-              ]
-            : ["你是 NxCore 桌面工作区中的 AI 助手。"]),
-          "回答应准确、简洁，并使用与用户相同的语言。",
-          "聊天回复使用自然、简洁的纯文本格式；不要使用 Markdown 标题符、粗体或斜体标记、反引号、代码围栏、表格或不常用装饰符号。需要列举时只使用普通数字列表或短句。文档正文仍按文档工具要求使用 Markdown。",
-          "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
-          "使用工具时，过程说明只补充工具行本身无法表达的信息，例如调用原因、关键发现、判断或对用户的影响；不要复述工具名称、执行状态、参数或下一项工具。没有新增信息时直接继续调用工具，不要强制输出过渡句。过程说明必须基于真实结果，不能臆测成功或输出冗长执行日志。",
-          "最后一项工具完成后，必须给出独立、完整的最终答复，简洁总结完成了什么、关键结果以及仍需用户处理的事项；不要把过程说明直接拼接成最终答复。",
-          "检索结果不足时不要反复改写同义关键词搜索；最多补充检索一次，仍无有效内容时立即停止工具调用，明确说明未找到什么、因此无法可靠完成什么，以及用户需要提供什么。不得用模板或猜测替代缺失事实。",
-          "新文档提交成功后，最终答复必须用 2 至 4 句总结文档目标、核心内容和完成结果；中文约 180 字以内，英文约 80 词以内，不得复述标题目录、正文段落或长列表。",
+            ? []
+            : [this.config.runtimeRole === "internal"
+              ? "你是 EverRoom 内部被调度执行任务的 Agent，不能直接与最终用户建立对话，只处理调用方显式提供的任务和输入。"
+              : "你是 NxCore 桌面工作区中的 AI 助手。"]),
         ];
         if (this.config.systemPrompt) lines.push(this.config.systemPrompt);
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
@@ -587,6 +587,7 @@ export class PiAgentRuntime implements AgentRuntime {
         ...toolNames,
         ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
         ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
+        ...mcpToolNames,
       ],
       customTools: [
         ...customTools,
@@ -613,6 +614,7 @@ export class PiAgentRuntime implements AgentRuntime {
         ...toolNames,
         ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
         ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
+        ...mcpToolNames,
       ],
       setMemoryRunContext: (value) => {
         memoryRunContext = value;

@@ -54,12 +54,7 @@ export function buildSelectionRewritePrompt(input: SelectionRewriteRequest): str
     ...(input.formatContext ? { formatContext: input.formatContext } : {}),
   }
   return [
-    '重写文档中的指定选区。',
-    '严格遵守 instruction，只输出可直接替换 selectedText 的最终 Markdown 片段。',
-    '不要调用任何工具，不要解释，不要添加引号、无关的标题或前后缀。',
-    '当 instruction 要求列表、标题、引用、强调或代码块等结构时，使用对应 Markdown；否则保持 selectedText 原有的文档结构。',
-    '如果选区位于代码块内，只输出原始代码并保留缩进、空格和换行，不得添加或删除代码围栏、语言标记或解释文字；如果只重写现有标题文字，不要添加 #；如果只重写现有列表项、引用或任务项的内容，不要重复添加结构标记。',
-    'contextBefore 和 contextAfter 只用于保持语气与衔接，不得复述到输出中。',
+    '使用 selection-rewrite Skill 重写文档中的指定选区。',
     '',
     JSON.stringify(payload),
   ].join('\n')

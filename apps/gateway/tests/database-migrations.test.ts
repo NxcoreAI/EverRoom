@@ -130,9 +130,10 @@ describe("database migrations", () => {
     const jobIndexes = upgraded.sqlite.prepare("PRAGMA index_list(jobs)").all() as Array<{ name: string }>;
     expect(jobIndexes.map(({ name }) => name)).toContain("jobs_type_status_created_idx");
     const canonicalEntries = journal.entries.filter((entry) => entry.idx >= 17);
+    const placeholders = canonicalEntries.map(() => "?").join(", ");
     const adopted = upgraded.sqlite.prepare(
-      "SELECT created_at FROM __drizzle_migrations WHERE created_at IN (?, ?) ORDER BY created_at",
-    ).all(canonicalEntries[0]!.when, canonicalEntries[1]!.when);
+      `SELECT created_at FROM __drizzle_migrations WHERE created_at IN (${placeholders}) ORDER BY created_at`,
+    ).all(...canonicalEntries.map(({ when }) => when));
     expect(adopted).toEqual(canonicalEntries.map(({ when }) => ({ created_at: when })));
     upgraded.sqlite.close();
   });

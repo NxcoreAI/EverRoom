@@ -134,6 +134,8 @@ pnpm dev
 
 Gateway 会读取仓库根目录的 `.env`，也兼容 `apps/gateway/.env` 和通过 `NXCORE_ENV_FILE` 指定的文件。默认使用隔离的 `fake` runtime，确保没有模型密钥时桌面应用仍可启动。需要真实 Agent 时，配置内置 Pi runtime；Context Room 文档工具会直接注入 Agent：
 
+Gateway 中的生成式模型调用统一通过 `AgentResolver` 按稳定 ID 选择 Agent。主对话、Connector 同步、转写总结、Cursor Completion、Knowledge 抽取/判定/登记和 Web Search 都拥有独立的 Runtime 与 `config/sessions/workspace` 目录；业务模块不直接调用 LLM API。向量 Embedding 是非生成式基础设施能力，不经过 Agent Resolver。
+
 ```dotenv
 NXCORE_AGENT_RUNTIME=pi
 NXCORE_AI_PROVIDER=openai
@@ -144,6 +146,52 @@ NXCORE_AI_API=openai-responses
 ```
 
 CE Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessionId` Streamable HTTP MCP 入口，供经过认证的 MCP 客户端使用。已废弃的远端聊天传输不再属于 runtime 配置。
+
+#### 文件驱动的子 Agent
+
+子 Agent 只能被主 Agent 或 Gateway 内部工作流调度，不提供独立聊天入口，也不需要管理页面。Gateway 默认扫描仓库根目录的 `agents`。该目录在 Gateway 构建时复制到 `dist/agents`，并随 Desktop 一起打包；开发或测试时可以通过环境变量临时覆盖：
+
+```dotenv
+NXCORE_SUBAGENTS_ENABLED=true
+NXCORE_SUBAGENTS_DIR=/absolute/path/to/everroom-agents
+```
+
+每个一级子目录代表一个 Agent：
+
+```text
+everroom-agents/
+└── mail-researcher/
+    ├── agent.yaml
+    ├── SYSTEM.md
+    └── skills/
+        └── summarize/
+            └── SKILL.md
+```
+
+最小 `agent.yaml`：
+
+```yaml
+schemaVersion: 1
+id: mail-researcher
+name: 邮件研究员
+description: 检索邮件并返回带来源的摘要
+mode: dispatch_only
+systemPrompt: ./SYSTEM.md
+skills:
+  - ./skills/summarize
+mcp:
+  - server: gmail
+    includeTools: [search_messages, get_message]
+policy:
+  allowedCallers: [primary-agent]
+  timeoutMs: 300000
+  maxConcurrency: 1
+  maxToolCalls: 40
+```
+
+`mcp.server` 引用设置中已有的全局 MCP 服务器名称，子 Agent 只会看到自己绑定并通过 `includeTools` 筛选后的服务器。修改目录内容后重启 Gateway 会自动生成新的不可变 Revision；已有 Invocation 继续使用原 Revision。完整约束见 [`docs/subagent-framework-design.zh-CN.md`](./docs/subagent-framework-design.zh-CN.md)。
+
+每个 `SKILL.md` 必须包含 `name` 和 `description` YAML frontmatter。子 Agent 通过受限 `read` 工具读取自己的 Skill 快照，不能借此读取工作区或设备上的其他文件。MCP 的 `includeTools` 必须显式填写；需要开放服务器全部工具时使用 `["*"]`。
 
 ### OpenConnector
 

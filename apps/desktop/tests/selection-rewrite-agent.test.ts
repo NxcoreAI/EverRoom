@@ -64,9 +64,7 @@ describe('selection rewrite Agent stream', () => {
     })
 
     expect(prompt).toContain('"selectedText":"原文"')
-    expect(prompt).toContain('不要调用任何工具')
-    expect(prompt).toContain('最终 Markdown 片段')
-    expect(prompt).toContain('如果选区位于代码块内，只输出原始代码并保留缩进、空格和换行')
+    expect(prompt).toContain('使用 selection-rewrite Skill')
     expect(prompt).toContain('"blockType":"codeBlock"')
     expect(sanitizeSelectionRewriteOutput('```text\n改写后的文本：新文本\n```')).toBe('新文本')
     expect(sanitizeSelectionRewriteOutput('重写后的文档选区内容如下：\n新文本')).toBe('新文本')

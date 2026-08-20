@@ -1,6 +1,6 @@
 # EverRoom 桌面端子 Agent 框架架构与设计方案
 
-> 状态：Proposal
+> 状态：Implemented（统一 Agent Resolver + 文件驱动子 Agent）
 > 日期：2026-08-20
 > 范围：EverRoom Desktop、NxCore Gateway、`agent-contract`、`agent-runtime`、Pi Runtime、MCP 与 Skill 管理
 
@@ -8,7 +8,41 @@
 
 EverRoom 当前已经具备一条完整的主 Agent 链路：Renderer 通过 Electron IPC 调用 Gateway，Gateway 的 `AgentService` 持久化会话、Run、消息和事件，再通过 `AgentRuntime` 接口驱动 Pi Runtime。Pi Runtime 已支持自定义工具、Memory、Knowledge 和 `pi-mcp-adapter`。
 
-当前实现仍是“单一主 Agent 配置”：
+本文件前半部分保留了最初用于指导子 Agent 框架落地的设计约束。当前实现已经进一步把 Gateway 内所有生成式模型场景收口到统一 Agent Resolver，不再是“单一主 Agent 配置”。
+
+## 1.1 当前统一运行架构
+
+Gateway 业务模块不能自行选择模型端点或调用生成式模型 API，而是使用稳定 Agent ID 从 `AgentResolver` 获取 `AgentRuntime`：
+
+```text
+业务场景 -> AgentResolver.resolve(agentId) -> AgentRuntime -> Model Provider
+```
+
+当前内建 Agent：
+
+| Agent ID | 场景 |
+| --- | --- |
+| `main` | 用户主对话与子 Agent 调度 |
+| `connector-sync` | Connector 后台同步 |
+| `transcription-summary` | 转写结构化总结 |
+| `cursor-completion` | 编辑器光标补全 |
+| `knowledge` | Knowledge 实体抽取、同一性判定与转正登记（按 Skill 分工） |
+| `web-search` | 搜索 Provider 推理与结果归纳 |
+
+每个内建 Agent 强制使用独立运行目录：
+
+```text
+<dataDir>/agent/runtimes/<agent-id>/
+├── config/
+├── sessions/
+└── workspace/
+```
+
+所有 Agent 定义都随仓库根目录 `agents/<agent-id>/agent.yaml` 打包。`kind: builtin` 定义由 Gateway 的内置运行时注册并提供系统提示词、能力声明和工具清单；`dispatch_only` 定义经校验后固化为不可变 Revision，并注册到同一 Resolver。构建会把该目录复制到 Gateway 的 `dist/agents`，Desktop 打包后位于 `resources/gateway/agents`。`NXCORE_SUBAGENTS_DIR` 只用于开发和测试覆盖 dispatch-only 子 Agent。内建 ID 是保留名，不能被开发者 Bundle 覆盖。对话接口只绑定 `main`；dispatch-only Agent 仍然只能通过 `SubagentOrchestrator` 调度。
+
+`OpenAiCompletionAgentRuntime` 是搜索和 Knowledge 所需 OpenAI-compatible 扩展字段的底层 Provider Adapter。`/chat/completions` 只允许出现在 Runtime Provider 实现中，Knowledge 和 Web Search 等业务模块不再持有模型密钥或直接发起模型请求。Embedding 属于向量基础设施调用，不生成语言结果，继续由 `EmbeddingClient` 管理，不参与 Agent 调度。
+
+最初识别的问题包括：
 
 - `PiAgentRuntime` 的系统提示词在 Runtime 内硬编码。
 - Gateway 启动时创建一个主 Pi Runtime，所有普通会话共享同一套 Runtime 配置。
@@ -21,7 +55,7 @@ EverRoom 当前已经具备一条完整的主 Agent 链路：Renderer 通过 Ele
 
 ## 2. 目标
 
-1. 开发者可以创建、校验、启用、停用和版本化子 Agent。
+1. 开发者可以通过新增目录和修改配置文件创建、启用、停用和版本化子 Agent。
 2. 每个子 Agent 可以拥有独立的系统提示词、Skill 集合、MCP 集合和工具权限。
 3. 子 Agent 不能直接接收用户消息，只能由主 Agent、后台工作流或受信任的内部服务调度。
 4. 每次调度都绑定不可变的 Agent Revision，运行中修改定义不影响已开始的任务。
@@ -87,10 +121,11 @@ EverRoom 不可覆盖策略
 ```mermaid
 flowchart TB
   subgraph Desktop["EverRoom Desktop"]
-    Studio["Agent Studio"]
     Chat["主 Agent UI"]
     Monitor["执行监控"]
   end
+
+  Files["Developer Agent Bundles"]
 
   subgraph Control["Gateway 控制面"]
     Registry["Agent Registry"]
@@ -114,7 +149,7 @@ flowchart TB
     Mcp["Scoped MCP Adapters"]
   end
 
-  Studio --> Registry --> Compiler --> RevisionStore
+  Files --> Registry --> Compiler --> RevisionStore
   Chat --> DispatchTool --> Orchestrator
   Orchestrator --> RevisionStore
   Orchestrator --> Policy
@@ -131,7 +166,7 @@ flowchart TB
 
 ## 6. Agent 定义格式
 
-建议以目录 Bundle 作为开发者编辑格式，以数据库 Revision 作为运行时权威状态。这样既适合 Git 管理，也能在桌面端 Agent Studio 中编辑。
+以目录 Bundle 作为唯一开发者编辑格式，以数据库 Revision 作为运行时权威状态。开发者新增目录或修改文件后重启 Gateway 即可加载；开发模式下 Gateway watch 重启会自动完成加载。不提供桌面编辑页面。
 
 ```text
 agents/
@@ -157,12 +192,7 @@ name: 邮件研究员
 description: 检索指定邮箱范围，并返回带来源的归纳结果
 mode: dispatch_only
 
-prompt: ./SYSTEM.md
-
-runtime:
-  adapter: pi
-  modelProfile: inherit-background
-  reasoning: medium
+systemPrompt: ./SYSTEM.md
 
 skills:
   - ./skills/search-mail
@@ -174,12 +204,6 @@ mcp:
       - search_messages
       - get_message
 
-tools:
-  builtin: []
-  gateway:
-    - connector_prepare
-    - connector_execute
-
 inputSchema: ./schemas/input.schema.json
 outputSchema: ./schemas/output.schema.json
 
@@ -188,8 +212,6 @@ policy:
   maxConcurrency: 2
   timeoutSeconds: 300
   maxToolCalls: 40
-  maxDepth: 1
-  contextScopes: [room.read, document.read]
 ```
 
 编译发布时执行以下处理：
@@ -319,17 +341,13 @@ agent_dispatch
   "input": {
     "days": 7,
     "topic": "预算评审"
-  },
-  "context": {
-    "roomIds": ["room-id"]
-  },
-  "wait": true
+  }
 }
 ```
 
-`agentId` 必须来自 Registry；`input` 必须通过目标 Revision 的 Input Schema；上下文必须是当前父 Run 已获授权范围的子集。
+`agentId` 必须来自 Registry；`input` 必须通过目标 Revision 的 Input Schema。
 
-默认 `wait: true`，工具等待终态并把结构化结果返回主 Agent。长任务可使用 `wait: false`，返回 `invocationId`，由后台任务中心继续观察。后续可增加只读的 `agent_invocation_get`，但不能增加向子 Agent 发送自由文本的接口。
+第一版工具同步等待终态并把结构化结果返回主 Agent。异步调度在阶段 3 增加，届时返回 `invocationId`，由后台任务中心继续观察，但不增加向子 Agent 发送自由文本的接口。
 
 ### 8.2 执行序列
 
@@ -362,7 +380,7 @@ sequenceDiagram
 ### 8.3 输入、输出和补充信息
 
 - Input Schema 可选；配置后必须在启动前校验。
-- Output Schema 可选；配置后对最终输出做校验，最多允许一次受控修复，仍失败则以 `invalid_output` 失败。
+- Output Schema 可选；配置后对最终输出做校验，不匹配时以 `invalid_output` 失败。
 - 无 Output Schema 时统一返回 `{ summary, text, artifacts, citations }`。
 - 子 Agent 需要信息时发出 `input.requested` 领域事件，Invocation 进入 `waiting_input`。
 - 主 Agent 可以把问题转述给用户；用户回复后应创建新的 continuation command，而不是伪装成用户直接进入子 Agent 会话。
@@ -426,6 +444,8 @@ Skill 分为两层：
 - 单文件、单 Skill 和 Revision 总体积上限。
 - 拒绝符号链接逃逸和绝对路径引用。
 - 记录每个文件 hash。
+- 每个 `SKILL.md` 必须包含 Agent Skills 格式的 `name` 和 `description` YAML frontmatter。
+- Runtime 只提供限制在 Revision Skill 快照目录内的 `read` 工具，不开放任意文件读取。
 - Skill 引用的脚本不会自动获得执行权；只有授权 Bash 或受控工具才能执行。
 - 已开始 Invocation 不读取开发目录中的后续变化。
 
@@ -501,21 +521,9 @@ Runtime Event 转换和终态处理应抽成共享的 `ExecutionEventConsumer`�
 
 ## 11. API 与桌面端边界
 
-### 11.1 开发者控制面 API
+### 11.1 开发者配置边界
 
-```text
-GET    /v1/developer/agents
-POST   /v1/developer/agents
-GET    /v1/developer/agents/:agentId
-PUT    /v1/developer/agents/:agentId/draft
-POST   /v1/developer/agents/:agentId/validate
-POST   /v1/developer/agents/:agentId/publish
-POST   /v1/developer/agents/:agentId/enable
-POST   /v1/developer/agents/:agentId/disable
-GET    /v1/developer/agents/:agentId/revisions
-```
-
-Agent Studio 只使用这些控制面接口。Publish 是生成不可变 Revision 的唯一入口。
+不提供创建、编辑、发布或删除 Agent 的 HTTP/IPC 接口。Gateway 启动时扫描随应用发布的 `agents` 目录（开发/测试可用 `NXCORE_SUBAGENTS_DIR` 覆盖）；一个通过校验的新内容摘要自动形成不可变 Revision，`enabled: false` 使该 Agent 不进入 Catalog。校验失败只记录结构化日志并跳过对应 Bundle，不阻塞其他 Agent 和 Gateway 启动。
 
 ### 11.2 执行面 API
 
@@ -604,7 +612,6 @@ Desktop 任务中心展示：状态、调用来源、运行时间、当前阶段
 | `apps/gateway/modules/agent/runtime-factory.ts` | 拆出可按 Revision 创建 Runtime 的 Factory |
 | `apps/gateway/modules/agent/mcp-routes.ts` | 从单一配置文件管理演进为 MCP Server Registry；保留兼容导入 |
 | Gateway 新 `modules/subagents` | Registry、Compiler、Orchestrator、Policy、Runtime Manager、Repository、Routes |
-| Desktop 新 Agent Studio | 编辑定义、选择 Skill/MCP、校验、发布、启停和查看版本 |
 | Desktop Office/任务中心 | 只读展示 Invocation，不提供聊天 Composer |
 
 ## 16. 分阶段实施
@@ -626,13 +633,12 @@ Desktop 任务中心展示：状态、调用来源、运行时间、当前阶段
 
 验收：两个 Agent 使用不同 Prompt、Skill 和 MCP，同一任务不会串用能力；修改 Agent 后旧 Invocation 仍绑定旧 Revision。
 
-### 阶段 2：Agent Studio 与任务中心
+### 阶段 2：文件工作流与任务观测
 
-- 增加创建、编辑、校验、发布、启停和权限摘要 UI。
 - 增加只读 Invocation 时间线、取消和错误诊断。
-- 增加 Bundle 导入/导出和文件变更检测；变更只生成 Draft，不自动发布。
+- 增加独立的 Bundle 校验命令和可选文件变更检测，不增加桌面编辑页面。
 
-验收：开发者不改 Gateway 代码即可新增一个可被主 Agent 发现并调度的 Agent。
+验收：开发者只新增目录和修改配置即可创建一个可被主 Agent 发现并调度的 Agent。
 
 ### 阶段 3：异步调度和审批
 
@@ -668,7 +674,7 @@ Desktop 任务中心展示：状态、调用来源、运行时间、当前阶段
 
 ### 端到端测试
 
-- Agent Studio 创建并发布 Agent，主 Agent 可通过 Catalog 发现。
+- 新增合法 Agent Bundle 并重启 Gateway 后，主 Agent 可通过 Catalog 发现。
 - 用户无法从 UI、IPC 或普通 Agent Session API 直接向子 Agent 发消息。
 - 子 Agent 请求补充信息时，只有主 Agent 或任务中心能承接交互。
 - Agent 被停用后新 Invocation 被拒绝，历史结果仍可查看。
@@ -688,7 +694,7 @@ Desktop 任务中心展示：状态、调用来源、运行时间、当前阶段
 
 ## 19. 待确认问题
 
-以下问题不阻碍阶段 0 和阶段 1，但在 Agent Studio 实现前需要产品决策：
+以下问题不阻碍阶段 0 和阶段 1，但在扩展分发能力前需要产品决策：
 
 1. “开发者”是否仅指本机高级用户，还是未来包含团队分发和签名市场；后者需要 Publisher、签名和信任等级。
 2. Agent Bundle 是否允许携带可执行脚本；建议首版允许资源文件但默认不授予执行能力。

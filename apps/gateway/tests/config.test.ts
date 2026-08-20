@@ -10,6 +10,29 @@ describe("loadConfig", () => {
     expect(config.pi).toBeNull();
     expect(config.cursorCompletionPi).toBeNull();
     expect(config.backgroundPi).toBeNull();
+    expect(config.subagents).toMatchObject({
+      enabled: true,
+      definitionsDir: resolve("../..", "agents"),
+      defaultTimeoutMs: 300_000,
+      maxConcurrent: 4,
+    });
+  });
+
+  it("loads the filesystem subagent directory and execution limits", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_SUBAGENTS_DIR: "./fixtures/agents",
+      NXCORE_SUBAGENTS_ENABLED: "false",
+      NXCORE_SUBAGENT_TIMEOUT_MS: "45000",
+      NXCORE_SUBAGENT_MAX_CONCURRENT: "7",
+    });
+
+    expect(config.subagents).toEqual({
+      enabled: false,
+      definitionsDir: resolve("./fixtures/agents"),
+      runtimeDir: join(config.dataDir, "agent", "subagents"),
+      defaultTimeoutMs: 45_000,
+      maxConcurrent: 7,
+    });
   });
 
   it("prefers command line arguments over environment variables", () => {

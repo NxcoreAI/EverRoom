@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import type { DocumentEvent, RoomDocument } from "@nxcore/agent-contract";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { KnowledgeLlmConfig } from "../../config.js";
@@ -30,7 +31,14 @@ import { bestMatch } from "./entity-index.js";
 import { buildDocumentEnvelope, envelopeFilename, type DocEnvelope } from "./envelope.js";
 import { truncateUtf8 } from "../ingest/normalizers.js";
 import { convertUploadedFile } from "./file-convert.js";
-import { KnowledgeLlm, type RegisterResult } from "./llm.js";
+import {
+  KnowledgeLlm,
+  type RegisterResult,
+} from "./llm.js";
+import { OpenAiCompletionAgentRuntime } from "../agent/openai-completion-runtime.js";
+import { AgentResolver, BUILTIN_AGENT_IDS } from "../agent/resolver.js";
+import { loadBuiltinAgentBundle } from "../agent/builtin-bundles.js";
+import { bundledAgentDefinitionsDir } from "../../config.js";
 import { KsAdminClient, KsBusyError, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
 import { KnowledgeRouter } from "./router.js";
@@ -66,6 +74,29 @@ export interface KnowledgeServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
   warn(bindings: Record<string, unknown>, message: string): void;
   error(bindings: Record<string, unknown>, message: string): void;
+}
+
+function createKnowledgeAgentResolver(dataDir: string, llm: KnowledgeLlmConfig): AgentResolver {
+  const resolver = new AgentResolver();
+  const id = BUILTIN_AGENT_IDS.knowledge;
+  const bundle = loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), id);
+  const root = join(dataDir, "agent", "runtimes", id);
+  const configDirectory = join(root, "config");
+  resolver.register({ id, name: bundle.name, description: bundle.description, configDirectory, kind: "builtin" }, () => (
+    new OpenAiCompletionAgentRuntime({
+      runtimeId: id,
+      ...llm,
+      systemPrompt: bundle.systemPrompt,
+      skillPrompts: bundle.skillPrompts,
+      temperature: 0.1,
+      maxTokens: 4_096,
+      timeoutMs: 60_000,
+      sessionsDir: join(root, "sessions"),
+      workingDirectory: join(root, "workspace"),
+      agentDirectory: configDirectory,
+    })
+  ));
+  return resolver;
 }
 
 const INGEST_JOB_TYPE = "knowledge.ingest";
@@ -347,6 +378,7 @@ export class KnowledgeService {
   private readonly entityRegistry: EntityRegistry;
   private readonly router: KnowledgeRouter;
   private readonly llm: KnowledgeLlm | null;
+  private readonly ownedAgentResolver: AgentResolver | null;
   /** 字节与登记表的唯一所有者是 modules/files（U9）；此处仅编排路由/ingest。 */
   private readonly files: FilesService;
   private readonly pendingSchedules = new Map<string, PendingSchedule>();
@@ -363,6 +395,7 @@ export class KnowledgeService {
     private readonly db: GatewayDatabase,
     private readonly config: KnowledgeServiceConfig,
     private readonly logger: KnowledgeServiceLogger,
+    agentResolver?: AgentResolver,
   ) {
     this.files = new FilesService(db, config.dataDir);
     this.ks = new KsAdminClient({
@@ -372,7 +405,10 @@ export class KnowledgeService {
     });
     this.registry = new RoomWikiRegistry(this.db, this.ks);
     this.entityRegistry = new EntityRegistry(this.db);
-    this.llm = config.llm ? new KnowledgeLlm(config.llm) : null;
+    this.ownedAgentResolver = config.llm && !agentResolver
+      ? createKnowledgeAgentResolver(config.dataDir, config.llm)
+      : null;
+    this.llm = config.llm ? new KnowledgeLlm(agentResolver ?? this.ownedAgentResolver!) : null;
     const embedding = config.embeddingLlm && config.embeddingModel
       ? { client: new EmbeddingClient(config.embeddingLlm, config.embeddingModel), model: config.embeddingModel }
       : null;
@@ -461,6 +497,7 @@ export class KnowledgeService {
   dispose(): void {
     if (this.drainTimer) clearInterval(this.drainTimer);
     this.drainTimer = null;
+    void this.ownedAgentResolver?.dispose();
     for (const schedule of this.pendingSchedules.values()) clearTimeout(schedule.timer);
     this.pendingSchedules.clear();
   }

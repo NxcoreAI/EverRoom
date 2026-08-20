@@ -38,6 +38,7 @@
     "@tiptap/markdown": "^3.30.1",
     "@tiptap/starter-kit": "^3.30.1",
     "ali-oss": "^6.23.0",
+    "ajv": "^8.20.0",
     "axios": "^1.19.0",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",

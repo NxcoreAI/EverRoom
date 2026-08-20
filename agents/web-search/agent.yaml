@@ -1,0 +1,13 @@
+schemaVersion: 1
+kind: builtin
+id: web-search
+name: Web Search Agent
+description: 基于联网搜索结果回答时效性问题并标注来源线索
+runtime: openai-completions
+systemPrompt: ./SYSTEM.md
+
+capabilities:
+  - web.search
+  - web.summarize
+
+tools: []

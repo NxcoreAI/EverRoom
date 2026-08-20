@@ -9,7 +9,8 @@
  * 全部输出严格 JSON；解析失败带错误反馈重试一次，再失败抛错交 worker 退避。
  */
 
-import type { KnowledgeLlmConfig } from "../../config.js";
+import { invokeAgent } from "../agent/invoke.js";
+import { BUILTIN_AGENT_IDS, type AgentResolver } from "../agent/resolver.js";
 
 const CHAT_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_CHARS = 4_000;
@@ -70,7 +71,7 @@ export interface RegisterResult {
 }
 
 export class KnowledgeLlm {
-  constructor(private readonly config: KnowledgeLlmConfig) {}
+  constructor(private readonly agentResolver: AgentResolver) {}
 
   /** ③′ 实体抽取：一次调用出 summary + 开放实体列表。 */
   async extract(title: string, markdown: string): Promise<ExtractionResult> {
@@ -81,7 +82,7 @@ export class KnowledgeLlm {
       "",
       "请给出抽取 JSON。",
     ].join("\n");
-    return this.chatJson(EXTRACT_SYSTEM_PROMPT, prompt, parseExtractionResponse);
+    return this.chatJson("entity-extraction", prompt, parseExtractionResponse);
   }
 
   /** 模糊带同一性判定（4.2/4.5）：双方是否同一实体。 */
@@ -95,7 +96,7 @@ export class KnowledgeLlm {
       "",
       "请给出同一性判定 JSON。",
     ].join("\n");
-    return this.chatJson(JUDGE_SYSTEM_PROMPT, prompt, parseJudgeResponse);
+    return this.chatJson("entity-identity", prompt, parseJudgeResponse);
   }
 
   /** 转正登记（4.4 步骤 3）：依据句 + 资料摘要 → Room 身份材料。 */
@@ -116,24 +117,21 @@ export class KnowledgeLlm {
       "",
       "请给出登记 JSON。",
     ].join("\n");
-    return this.chatJson(REGISTER_SYSTEM_PROMPT, prompt, parseRegisterResponse);
+    return this.chatJson("entity-registration", prompt, parseRegisterResponse);
   }
 
   /** 两次尝试（第二次带解析错误反馈），失败抛 KnowledgeLlmError。 */
   private async chatJson<T>(
-    systemPrompt: string,
+    skillName: string,
     userPrompt: string,
     parse: (content: string) => T,
   ): Promise<T> {
     let lastError = "";
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const content = await this.chat([
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: lastError ? `${userPrompt}\n\n上一次输出无法解析：${lastError}\n请严格只输出合法 JSON。` : userPrompt,
-        },
-      ]);
+      const content = await this.chat(
+        skillName,
+        lastError ? `${userPrompt}\n\n上一次输出无法解析：${lastError}\n请严格只输出合法 JSON。` : userPrompt,
+      );
       try {
         return parse(content);
       } catch (error) {
@@ -143,53 +141,21 @@ export class KnowledgeLlm {
     throw new KnowledgeLlmError(`LLM response unparsable: ${lastError}`);
   }
 
-  private async chat(messages: Array<{ role: "system" | "user" | "assistant"; content: string }>): Promise<string> {
-    let response: Response;
+  private async chat(skillName: string, prompt: string): Promise<string> {
     try {
-      response = await fetch(`${this.config.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages,
-          temperature: 0.1,
-          // 思考型模型（GLM-5.x 等）先烧推理 token 再出正文：实测 12K 字文档
-          // 抽取约 900+ token（推理 435+正文 472），1024 上限一碰就正文为空
-          // （finish_reason=length、content=null）。4K 给推理留足余量。
-          max_tokens: 4_096,
-        }),
-        signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
+      const content = await invokeAgent(this.agentResolver, BUILTIN_AGENT_IDS.knowledge, [
+        `使用 Knowledge Agent 的 ${skillName} Skill。`,
+        prompt,
+      ].join("\n"), {
+        pageLabel: "Knowledge internal workflow",
+        timeoutMs: CHAT_TIMEOUT_MS,
       });
+      return content.slice(0, MAX_RESPONSE_CHARS);
     } catch (error) {
       throw new KnowledgeLlmError(
-        `knowledge LLM request failed: ${error instanceof Error ? error.message : String(error)}`,
+        `knowledge Agent invocation failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new KnowledgeLlmError(`knowledge LLM HTTP ${response.status}: ${body.slice(0, 300)}`);
-    }
-    const payload = (await response.json()) as {
-      choices?: Array<{
-        finish_reason?: string;
-        message?: { content?: string; reasoning_content?: string };
-      }>;
-    };
-    const choice = payload.choices?.[0];
-    const content = choice?.message?.content;
-    if (typeof content !== "string" || content.length === 0) {
-      // 空正文最常见的两个来源:思考模型推理耗尽 max_tokens(finish=length),
-      // 或内容被安全策略过滤(content_filter)。带上两者便于一眼定位。
-      throw new KnowledgeLlmError(
-        `knowledge LLM response missing choices[0].message.content`
-        + ` (finish_reason=${choice?.finish_reason ?? "unknown"}`
-        + `, reasoning_content=${choice?.message?.reasoning_content ? "present" : "absent"})`,
-      );
-    }
-    return content.slice(0, MAX_RESPONSE_CHARS);
   }
 }
 
@@ -203,40 +169,6 @@ function identityLines(input: EntityIdentityInput): string[] {
   }
   return lines;
 }
-
-const EXTRACT_SYSTEM_PROMPT = [
-  "你是资料实体抽取器。从资料中抽取它涉及的实体（人物/项目/主题/长期目标/议题/事件），并概括资料内容。",
-  "规则：",
-  "1. name 用资料中的规范叫法（首次全称，后文简称可辨）；同一实体只出一个，不要既出全称又出简称。",
-  "2. kind 六选一：人物/项目/主题/长期目标/议题/事件。",
-  "3. 通用词不是实体：「用户」「API」「系统」「文档」「数据」「公司」「团队」等任何资料都会出现的词不成实体。",
-  "4. salience = 该实体在此资料中的分量 0~1：资料核心主题 ≈0.9，重要参与者 ≈0.5，顺带提及 <0.3。",
-  "5. evidence 一句原文短句（≤50 字），说明该实体在资料中的角色。",
-  "6. 单份资料实体数 ≤10；资料没有可抽取实体时输出空数组（合法结果，不要硬凑）。",
-  "只输出一个 JSON 对象，不要 markdown 代码块、不要解释。格式：",
-  '{"summary":"不超过300字的资料概括","entities":[{"name":"...","kind":"人物|项目|主题|长期目标|议题|事件","salience":0.9,"evidence":"..."}]}',
-].join("\n");
-
-const JUDGE_SYSTEM_PROMPT = [
-  "你是实体同一性判定员。判断两个实体描述是否指向同一个现实实体。",
-  "规则：",
-  "1. 名称相近但指代不同（如两个同名的不同人、缩写撞车的不同项目）必须判 different。",
-  "2. 类型（kind）语义冲突（一个人物一个项目）几乎必然 different，除非依据句显示确实混用。",
-  "3. 依据句是主要证据：双方依据句描述的对象/事件/时间段是否吻合。",
-  "4. 拿不准时判 different（分立累积无害，错合并才需要事后拆分）。",
-  "只输出一个 JSON 对象，不要 markdown 代码块、不要解释。格式：",
-  '{"same":true,"reason":"不超过100字的判定依据"}',
-].join("\n");
-
-const REGISTER_SYSTEM_PROMPT = [
-  "你是实体登记员。一个候选实体已积累足够证据即将转正为正式空间（Room），请综合它的全部依据句与关联资料摘要，产出登记材料。",
-  "规则：",
-  "1. name：实体的规范名称（Room 标题底稿）——用依据句中出现最一致、最正式的叫法，不要发明新名。",
-  "2. summary：Room 概述，不超过 200 字，综合它是什么、证据显示它在做什么。",
-  "3. aliases：规范名之外的其余叫法（曾用名/简称/译名），只收依据句中真实出现的，没有就空数组。",
-  "只输出一个 JSON 对象，不要 markdown 代码块、不要解释。格式：",
-  '{"name":"...","summary":"...","aliases":["..."]}',
-].join("\n");
 
 /** 剥围栏 + 定位 JSON 对象主体（导出供单测复用）。 */
 function parseJsonObject(content: string): Record<string, unknown> {

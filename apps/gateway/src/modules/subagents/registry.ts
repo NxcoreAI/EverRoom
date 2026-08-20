@@ -22,12 +22,14 @@ import type {
   SubagentMcpBinding,
   SubagentPolicy,
 } from "./types.js";
+import { BUILTIN_AGENT_IDS } from "../agent/resolver.js";
 
 const MAX_PROMPT_BYTES = 128 * 1024;
 const MAX_SCHEMA_BYTES = 256 * 1024;
 const MAX_SKILL_BYTES = 5 * 1024 * 1024;
 const MAX_SKILL_FILES = 256;
 const AGENT_ID_PATTERN = /^[a-z][a-z0-9-]{1,63}$/;
+const RESERVED_AGENT_IDS = new Set<string>(Object.values(BUILTIN_AGENT_IDS));
 
 interface SourceFile {
   absolutePath: string;
@@ -91,13 +93,19 @@ function digestJson(value: unknown): string {
 function parseMcpBindings(value: unknown): SubagentMcpBinding[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error("mcp must be an array");
+  const servers = new Set<string>();
   return value.map((entry, index) => {
     if (!isRecord(entry)) throw new Error(`mcp[${index}] must be an object`);
+    const server = requiredString(entry.server, `mcp[${index}].server`);
+    if (servers.has(server)) throw new Error(`mcp server is bound more than once: ${server}`);
+    servers.add(server);
+    const includeTools = stringArray(entry.includeTools, `mcp[${index}].includeTools`);
+    if (includeTools.length === 0) {
+      throw new Error(`mcp[${index}].includeTools must explicitly list tools; use ["*"] for all tools`);
+    }
     return {
-      server: requiredString(entry.server, `mcp[${index}].server`),
-      ...(entry.includeTools === undefined
-        ? {}
-        : { includeTools: stringArray(entry.includeTools, `mcp[${index}].includeTools`) }),
+      server,
+      includeTools,
       ...(entry.excludeTools === undefined
         ? {}
         : { excludeTools: stringArray(entry.excludeTools, `mcp[${index}].excludeTools`) }),
@@ -110,6 +118,7 @@ function parseManifest(raw: unknown, defaults: SubagentFrameworkConfig): Subagen
   if (raw.schemaVersion !== 1) throw new Error("schemaVersion must be 1");
   const id = requiredString(raw.id, "id");
   if (!AGENT_ID_PATTERN.test(id)) throw new Error("id must match /^[a-z][a-z0-9-]{1,63}$/");
+  if (RESERVED_AGENT_IDS.has(id)) throw new Error(`id is reserved for a built-in Agent: ${id}`);
   if (raw.mode !== undefined && raw.mode !== "dispatch_only") {
     throw new Error("mode must be dispatch_only");
   }
@@ -140,7 +149,11 @@ function parseManifest(raw: unknown, defaults: SubagentFrameworkConfig): Subagen
     id,
     name: requiredString(raw.name, "name"),
     description: requiredString(raw.description, "description"),
-    enabled: raw.enabled === undefined ? true : raw.enabled === true,
+    enabled: raw.enabled === undefined
+      ? true
+      : typeof raw.enabled === "boolean"
+        ? raw.enabled
+        : (() => { throw new Error("enabled must be a boolean"); })(),
     mode: "dispatch_only",
     promptPath: requiredString(raw.systemPrompt ?? raw.prompt, "systemPrompt"),
     skills: stringArray(raw.skills, "skills"),
@@ -200,6 +213,15 @@ async function collectSkillFiles(bundleRoot: string, skillPaths: string[]): Prom
     if (!skillManifest?.isFile() || skillManifest.isSymbolicLink()) {
       throw new Error(`skill ${skillPath} does not contain a regular SKILL.md`);
     }
+    const skillText = await readFile(join(root, "SKILL.md"), "utf8");
+    const frontmatterMatch = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(skillText);
+    if (!frontmatterMatch) throw new Error(`skill ${skillPath} is missing YAML frontmatter`);
+    const frontmatter = parseYaml(frontmatterMatch[1] ?? "") as unknown;
+    if (!isRecord(frontmatter)
+      || typeof frontmatter.description !== "string"
+      || !frontmatter.description.trim()) {
+      throw new Error(`skill ${skillPath} frontmatter requires a description`);
+    }
     await visit(root, root, join("skills", name));
   }
   return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
@@ -244,7 +266,10 @@ async function materializeRevision(runtimeDir: string, digest: string, files: So
   return agentDirectory;
 }
 
-function toLoadedRevision(row: typeof subagentRevisions.$inferSelect): LoadedSubagentRevision {
+function toLoadedRevision(
+  row: typeof subagentRevisions.$inferSelect,
+  resolvedMcpServers: Record<string, unknown> = row.mcpServers,
+): LoadedSubagentRevision {
   return {
     id: row.id,
     agentDefinitionId: row.agentDefinitionId,
@@ -253,7 +278,7 @@ function toLoadedRevision(row: typeof subagentRevisions.$inferSelect): LoadedSub
     manifest: row.manifest as unknown as SubagentManifest,
     systemPrompt: row.systemPrompt,
     agentDirectory: row.agentDirectory,
-    mcpServers: row.mcpServers,
+    mcpServers: resolvedMcpServers,
     policy: row.policy as unknown as SubagentPolicy,
     inputSchema: row.inputSchema,
     outputSchema: row.outputSchema,
@@ -280,6 +305,9 @@ export class SubagentRegistry {
     ]);
     const entries = await readdir(this.config.definitionsDir, { withFileTypes: true });
     for (const entry of entries.filter((item) => item.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+      // Built-in runtimes share the same shipped `agents/` directory but are
+      // registered by AgentResolver, not exposed as dispatch-only subagents.
+      if (RESERVED_AGENT_IDS.has(entry.name)) continue;
       const bundleRoot = join(this.config.definitionsDir, entry.name);
       try {
         const loaded = await this.loadBundle(bundleRoot);
@@ -398,7 +426,13 @@ export class SubagentRegistry {
           manifest: compiled.manifest as unknown as Record<string, unknown>,
           systemPrompt: compiled.systemPrompt,
           agentDirectory,
-          mcpServers: compiled.mcpServers,
+          mcpServers: Object.fromEntries(compiled.manifest.mcp.map((binding) => [
+            binding.server,
+            {
+              ...(binding.includeTools ? { includeTools: binding.includeTools } : {}),
+              ...(binding.excludeTools ? { excludeTools: binding.excludeTools } : {}),
+            },
+          ])),
           policy: compiled.manifest.policy as unknown as Record<string, unknown>,
           inputSchema: compiled.inputSchema,
           outputSchema: compiled.outputSchema,
@@ -426,7 +460,7 @@ export class SubagentRegistry {
         updatedAt: now,
       },
     }).returning().get();
-    const revision = toLoadedRevision(revisionRow);
+    const revision = toLoadedRevision(revisionRow, compiled.mcpServers);
     return {
       id: definitionRow.id,
       name: definitionRow.name,

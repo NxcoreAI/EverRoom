@@ -220,6 +220,8 @@ describe("ConnectorSyncService Agent ingestion", () => {
     let invocation = 0;
     const runtime = syncRuntime((input) => {
       invocation += 1;
+      expect(input.prompt).toContain("gmail-sync Skill");
+      expect(input.prompt).toContain("唯一允许访问的服务：gmail");
       const result = service.writeAgentBatch(input.runId, "email", [{
         sourceRecordId: "gmail-message-1",
         messageId: "message-1",

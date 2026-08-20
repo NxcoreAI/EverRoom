@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -113,6 +113,91 @@ describe("PiAgentRuntime", () => {
       await expect(runtime.deleteSession(join(dataDir, "outside.jsonl"))).rejects.toThrow(
         "outside the NxCore session directory",
       );
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
+  it("isolates a subagent system prompt and exposes only its configured skills and tools", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        requestBody = JSON.parse(raw) as Record<string, unknown>;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-subagent",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: { content: "完成" }, finish_reason: null }],
+        })}\n\n`);
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-subagent",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-subagent-test-"));
+    temporaryDirectories.push(dataDir);
+    const agentDirectory = join(dataDir, "agent");
+    await mkdir(join(agentDirectory, "skills", "fact-check"), { recursive: true });
+    await writeFile(join(agentDirectory, "skills", "fact-check", "SKILL.md"), [
+      "---",
+      "name: fact-check",
+      "description: Verify every factual claim against provided evidence",
+      "---",
+      "",
+      "# Fact Check",
+      "",
+      "Return citations for verified claims.",
+    ].join("\n"), "utf8");
+    const runtime = new PiAgentRuntime({
+      runtimeId: "pi:subagent:test-revision",
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory,
+      systemPrompt: "开发者专属规则：只返回经过核验的事实。",
+      skillsEnabled: true,
+      builtinTools: ["read"],
+      includeBashTool: false,
+    });
+
+    try {
+      expect(runtime.id).toBe("pi:subagent:test-revision");
+      const run = await runtime.start({
+        runId: "subagent-run",
+        sessionId: "subagent-invocation",
+        runtimeSessionRef: null,
+        prompt: "核验事实",
+        pageLabel: "Subagent: Fact Checker",
+        roomId: null,
+      });
+      for await (const _event of run.events) { /* consume */ }
+      const serialized = JSON.stringify(requestBody);
+      expect(serialized).toContain("开发者专属规则：只返回经过核验的事实。");
+      expect(serialized).toContain("Verify every factual claim against provided evidence");
+      expect(serialized).toContain('"name":"read"');
+      expect(serialized).not.toContain('"name":"bash"');
+      expect(serialized).not.toContain('"name":"write"');
     } finally {
       await runtime.dispose();
       await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
@@ -399,7 +484,7 @@ describe("PiAgentRuntime", () => {
       expect(JSON.stringify(requestBodies[0]?.tools)).toContain('"name":"bash"');
       expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("v2_desktop_user_pc_bash");
       const firstRequest = JSON.stringify(requestBodies[0]);
-      expect(firstRequest).toContain("必须使用简体中文");
+      expect(firstRequest).toContain("你是 NxCore 桌面工作区中的 AI 助手");
       expect(firstRequest).toContain("动态文档能力规范：只使用当前注册表提供的能力说明。");
       expect(firstRequest).not.toContain("准备写入正文的实际核心内容、重点或结论");
       expect(requestBodies[1]?.messages).toEqual(expect.arrayContaining([

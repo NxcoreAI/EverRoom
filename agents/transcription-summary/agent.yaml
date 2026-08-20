@@ -1,0 +1,16 @@
+schemaVersion: 1
+kind: builtin
+id: transcription-summary
+name: Transcription Summary Agent
+description: 将录音转写整理为可检索、可追溯的私人记忆结构
+runtime: pi
+systemPrompt: ./SYSTEM.md
+
+capabilities:
+  - transcription.structure
+  - private-memory.extract
+
+tools: []
+
+skills:
+  - ./skills/transcription-memory-reconstruction
