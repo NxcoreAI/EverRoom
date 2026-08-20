@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
-import { PiAgentRuntime } from "@nxcore/agent-runtime-pi";
+import { PiAgentRuntime, type PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { AgentRuntime } from "@nxcore/agent-runtime";
 import type { GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
@@ -12,6 +12,7 @@ import type { ConnectorSyncService } from "../connectors/service.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
 
 export interface AgentRuntimeIntegrationOptions {
+  tools?: readonly PiAgentRuntimeTool[];
   /** 会话级 Room wiki 解析（plan §6.1 resolveKnowledge），knowledge 模块注入。 */
   resolveKnowledgeWikiIds?: (input: {
     runId: string;
@@ -33,10 +34,11 @@ export function createAgentRuntime(
   if (!config.pi) throw new Error("Pi runtime configuration is missing");
   return new PiAgentRuntime(config.pi, {
     tools: [
+      ...(knowledge?.tools ?? []),
       ...createDocumentPiTools(mcpHost),
-      ...(config.connectorAgentMode === "local" && connectorSync
-        ? createConnectorDataPiTools(connectorSync, config.connectorSyncOwnerId ?? "local-user")
-        : config.openConnector ? createOpenConnectorPiTools(config.openConnector) : []),
+      ...(config.cliConnectorAgentMode === "local" && connectorSync
+        ? createConnectorDataPiTools(connectorSync, config.cliConnectorSyncOwnerId ?? "local-user")
+        : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector) : []),
       ...(config.webSearch ? createWebSearchPiTools(config.webSearch) : []),
     ],
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),
@@ -51,7 +53,7 @@ export function createConnectorSyncAgentRuntime(
   config: GatewayConfig,
   connectorSync: ConnectorSyncService,
 ): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !config.backgroundPi || !config.openConnector) return null;
+  if (config.agentRuntime === "fake" || !config.backgroundPi || !config.cliConnector) return null;
   const { memory: _memory, ...pi } = config.backgroundPi;
   return new PiAgentRuntime({
     ...pi,
@@ -61,7 +63,7 @@ export function createConnectorSyncAgentRuntime(
     workingDirectory: join(config.backgroundPi.workingDirectory, "connector-sync"),
     agentDirectory: join(config.backgroundPi.agentDirectory, "connector-sync"),
   }, {
-    tools: createConnectorSyncAgentTools(config.openConnector, connectorSync),
+    tools: createConnectorSyncAgentTools(config.cliConnector, connectorSync),
   });
 }
 

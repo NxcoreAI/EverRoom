@@ -88,6 +88,8 @@ export const DEFAULT_PI_BUILTIN_TOOLS: PiBuiltinToolName[] = [
 ];
 
 export interface PiAgentRuntimeConfig {
+  /** Stable runtime identity. Subagent runtimes use their immutable revision id. */
+  runtimeId?: string;
   provider: string;
   model: string;
   baseUrl: string;
@@ -100,6 +102,10 @@ export interface PiAgentRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  /** Developer-authored prompt appended after EverRoom's non-overridable runtime policy. */
+  systemPrompt?: string;
+  /** Enables Pi skill discovery inside the isolated agentDirectory. */
+  skillsEnabled?: boolean;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
   /** Pi 内置工具白名单；缺省启用全部（read/bash/edit/write/grep/find/ls），可经 NXCORE_PI_TOOLS 收窄。 */
@@ -274,7 +280,7 @@ function compactHistoricalToolState(session: AgentSession): boolean {
 }
 
 export class PiAgentRuntime implements AgentRuntime {
-  readonly id = "pi";
+  readonly id: string;
   private readonly sessions = new Map<string, PiSessionHandle>();
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
@@ -285,6 +291,7 @@ export class PiAgentRuntime implements AgentRuntime {
     private readonly config: PiAgentRuntimeConfig,
     private readonly integration: PiAgentRuntimeIntegration = {},
   ) {
+    this.id = config.runtimeId ?? "pi";
     this.memoryClient = config.memory ? new MemoryCoreClient(config.memory) : null;
     this.knowledgeClient = config.knowledge ? new KnowledgeServiceClient(config.knowledge) : null;
   }
@@ -517,14 +524,19 @@ export class PiAgentRuntime implements AgentRuntime {
       agentDir: this.config.agentDirectory,
       settingsManager,
       noExtensions: true,
-      noSkills: true,
+      noSkills: this.config.skillsEnabled !== true,
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
       ...(extensionFactories.length > 0 ? { extensionFactories } : {}),
       systemPromptOverride: () => {
         const lines = [
-          "你是 NxCore 桌面工作区中的 AI 助手。",
+          ...(this.config.systemPrompt
+            ? [
+                "你是 EverRoom 内部被调度执行任务的子 Agent，不能直接与最终用户建立对话，也不能声称自己获得了未显式提供的权限。",
+                "只处理本次调度信封中的任务和输入。需要额外信息或权限时，在结果中明确返回缺少的内容，不得假装已经询问用户。",
+              ]
+            : ["你是 NxCore 桌面工作区中的 AI 助手。"]),
           "回答应准确、简洁，并使用与用户相同的语言。",
           "聊天回复使用自然、简洁的纯文本格式；不要使用 Markdown 标题符、粗体或斜体标记、反引号、代码围栏、表格或不常用装饰符号。需要列举时只使用普通数字列表或短句。文档正文仍按文档工具要求使用 Markdown。",
           "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
@@ -533,6 +545,7 @@ export class PiAgentRuntime implements AgentRuntime {
           "检索结果不足时不要反复改写同义关键词搜索；最多补充检索一次，仍无有效内容时立即停止工具调用，明确说明未找到什么、因此无法可靠完成什么，以及用户需要提供什么。不得用模板或猜测替代缺失事实。",
           "新文档提交成功后，最终答复必须用 2 至 4 句总结文档目标、核心内容和完成结果；中文约 180 字以内，英文约 80 词以内，不得复述标题目录、正文段落或长列表。",
         ];
+        if (this.config.systemPrompt) lines.push(this.config.systemPrompt);
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
           lines.push(
             "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入。",

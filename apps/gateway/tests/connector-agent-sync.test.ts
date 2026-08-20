@@ -66,8 +66,8 @@ describe("ConnectorSyncService Agent ingestion", () => {
   it("derives a seven-day Gmail query and deterministically consumes every page", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-gmail-snapshot-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     const connectorInputs: Record<string, unknown>[] = [];
@@ -118,8 +118,8 @@ describe("ConnectorSyncService Agent ingestion", () => {
   it("backfills a derived Gmail query for an existing legacy task", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-gmail-backfill-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     const service = new ConnectorSyncService(database.db, config, logger);
@@ -153,9 +153,9 @@ describe("ConnectorSyncService Agent ingestion", () => {
   it("provisions Gmail bootstrap and incremental jobs and hands off the history checkpoint", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-gmail-managed-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "true",
-      NXCORE_CONNECTOR_SYNC_INTERVAL_MS: "600000",
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "true",
+      NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS: "600000",
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     const service = new ConnectorSyncService(database.db, config, logger, async (_connector, args) => {
@@ -211,9 +211,9 @@ describe("ConnectorSyncService Agent ingestion", () => {
   it("writes email records idempotently and commits the checkpoint only after sync_finish", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-connector-agent-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([emailJob()]),
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([emailJob()]),
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     let service: ConnectorSyncService;
@@ -325,9 +325,9 @@ describe("ConnectorSyncService Agent ingestion", () => {
   it("blocks unapproved connector actions and refuses an unbalanced completion", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-connector-guard-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([emailJob()]),
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([emailJob()]),
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     let service: ConnectorSyncService;
@@ -379,9 +379,9 @@ describe("ConnectorSyncService Agent ingestion", () => {
       dataset: "calendar_events", resourceType: "calendar", input: {}, goal: "同步日程",
     }];
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify(jobs),
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify(jobs),
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     let service: ConnectorSyncService;

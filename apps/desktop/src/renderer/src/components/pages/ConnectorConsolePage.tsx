@@ -96,7 +96,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     if (!window.nxcore) return
     setError(null)
     try {
-      setStatus(await window.nxcore.openConnector.status())
+      setStatus(await window.nxcore.cliConnector.status())
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : '无法获取连接器状态。')
     }
@@ -105,7 +105,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
   useEffect(() => {
     void refreshStatus()
     if (!window.nxcore) return
-    return window.nxcore.openConnector.onEvent((event) => {
+    return window.nxcore.cliConnector.onEvent((event) => {
       setEntries((current) => [
         ...current.slice(-199),
         { ...event, key: `${event.requestId}:${event.type}:${event.timestamp}:${current.length}` },
@@ -119,13 +119,13 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     return () => window.clearInterval(interval)
   }, [ready, refreshStatus])
 
-  const execute = async <T,>(command: Parameters<NonNullable<typeof window.nxcore>['openConnector']['execute']>[0]['command']) => {
+  const execute = async <T,>(command: Parameters<NonNullable<typeof window.nxcore>['cliConnector']['execute']>[0]['command']) => {
     if (!window.nxcore) throw new Error('连接器控制台仅在桌面端可用。')
     const requestId = crypto.randomUUID()
     setBusyRequestId(requestId)
     setError(null)
     try {
-      return await window.nxcore.openConnector.execute({ requestId, command }) as OpenConnectorCommandResult<T>
+      return await window.nxcore.cliConnector.execute({ requestId, command }) as OpenConnectorCommandResult<T>
     } catch (commandError) {
       setError(commandError instanceof Error ? commandError.message : 'EverRoom CLI 执行失败。')
       throw commandError
@@ -215,7 +215,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
           <span>{status?.cliState === 'ready' ? <CheckCircle2 /> : <CircleAlert />} EverRoom CLI {status?.cliVersion ?? '未检测'}</span>
           <span><TerminalSquare /> Token {status?.runtimeTokenConfigured ? '已隔离' : '未配置'}</span>
         </div>
-        <button type="button" className="secondary-button" onClick={() => void window.nxcore?.openConnector.openConsole()}>
+        <button type="button" className="secondary-button" onClick={() => void window.nxcore?.cliConnector.openConsole()}>
           EverRoom 管理台<ExternalLink aria-hidden="true" />
         </button>
       </section>
@@ -279,7 +279,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
                   <CheckCircle2 />仅校验
                 </button>
                 {busyRequestId ? (
-                  <button type="button" className="danger-button" onClick={() => void window.nxcore?.openConnector.cancel(busyRequestId)}><Square />终止</button>
+                  <button type="button" className="danger-button" onClick={() => void window.nxcore?.cliConnector.cancel(busyRequestId)}><Square />终止</button>
                 ) : (
                   <button type="button" className="primary-button" onClick={() => void runAction(false).catch(() => undefined)}><Play />执行 Action</button>
                 )}

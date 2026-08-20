@@ -48,7 +48,7 @@ describe("connector manager recovery",()=>{
  it("purges an orphan connection when scope discovery fails",async()=>{const {db,repo}=await setup();const manager=new ConnectorManager(repo,{discoverScopes:async()=>{throw new Error("discovery failed");},async *pull(){}} as any);await expect(manager.register({provider:"outlook",nangoConfigKey:"o",nangoConnectionId:"c"})).rejects.toThrow("discovery failed");expect(repo.listConnections()).toEqual([]);db.close();});
 });
 describe("connector routes",()=>{
- it("inherits bearer authentication and rejects disabled mutations",async()=>{const dir=await mkdtemp(join(tmpdir(),"connector-route-"));dirs.push(dir);const app=await createServer({host:"127.0.0.1",port:0,dataDir:dir,databasePath:join(dir,"gateway.sqlite"),migrationsDir:resolve("drizzle"),runtimeManifestPath:join(dir,"runtime.json"),logLevel:"silent",authToken:"test-token-0123456789",agentRuntime:"fake",memory:null,pi:null,backgroundPi:null,asrInputDir:join(dir,"recordings"),asr:null,knowledge:null,cursorCompletionPi:null,mcpConfigPath:join(dir,"agent","mcp.json"),webSearch:null});expect((await app.inject({url:"/v1/connectors/status"})).statusCode).toBe(401);const headers={authorization:"Bearer test-token-0123456789"};expect((await app.inject({url:"/v1/connectors/status",headers})).json()).toMatchObject({enabled:false,connections:[]});expect((await app.inject({method:"POST",url:"/v1/connectors/connections",headers,payload:{provider:"gmail",nangoConfigKey:"g",nangoConnectionId:"c"}})).statusCode).toBe(503);await app.close();});
+ it("inherits bearer authentication and rejects disabled mutations",async()=>{const dir=await mkdtemp(join(tmpdir(),"connector-route-"));dirs.push(dir);const app=await createServer({host:"127.0.0.1",port:0,dataDir:dir,databasePath:join(dir,"gateway.sqlite"),migrationsDir:resolve("drizzle"),runtimeManifestPath:join(dir,"runtime.json"),logLevel:"silent",authToken:"test-token-0123456789",agentRuntime:"fake",memory:null,pi:null,backgroundPi:null,asrInputDir:join(dir,"recordings"),asr:null,knowledge:null,cursorCompletionPi:null,mcpConfigPath:join(dir,"agent","mcp.json"),webSearch:null});expect((await app.inject({url:"/v1/nango-connectors/status"})).statusCode).toBe(401);const headers={authorization:"Bearer test-token-0123456789"};expect((await app.inject({url:"/v1/nango-connectors/status",headers})).json()).toMatchObject({enabled:false,connections:[]});expect((await app.inject({method:"POST",url:"/v1/nango-connectors/connections",headers,payload:{provider:"gmail",nangoConfigKey:"g",nangoConnectionId:"c"}})).statusCode).toBe(503);await app.close();});
 });
 import {
   connectorEmails,
@@ -71,7 +71,7 @@ describe("ConnectorSyncService", () => {
   it("paginates domain records and reports filtered totals", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-connectors-page-"));
     const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     const service = new ConnectorSyncService(database.db, config, logger);
@@ -124,10 +124,10 @@ describe("ConnectorSyncService", () => {
   it("seeds configured jobs and idempotently upserts synchronized records", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-connectors-"));
     const config = loadConfig(["--token", "0123456789abcdef"], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      OO_CONNECTOR_TOKEN: "runtime-secret",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "true",
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([{
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN: "runtime-secret",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "true",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([{
         id: "mail-recent",
         ownerId: "local-user",
         service: "gmail",
@@ -181,9 +181,9 @@ describe("ConnectorSyncService", () => {
   it("does not start a scheduler when connector sync is disabled", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-connectors-disabled-"));
     const config = loadConfig(["--token", "0123456789abcdef"], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([{
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([{
         id: "disabled-job",
         ownerId: "local-user",
         service: "github",
@@ -213,9 +213,9 @@ describe("ConnectorSyncService", () => {
   it("keeps the database as the task source after the one-time JSON bootstrap", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-connectors-source-"));
     const firstConfig = loadConfig(["--token", "0123456789abcdef"], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([{
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([{
         id: "database-job", ownerId: "local-user", service: "gmail", action: "fetch_emails",
         dataset: "emails", resourceType: "email", input: {},
       }]),
@@ -226,9 +226,9 @@ describe("ConnectorSyncService", () => {
     await firstService.dispose();
 
     const secondConfig = loadConfig(["--token", "0123456789abcdef"], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([{
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([{
         id: "environment-job", ownerId: "local-user", service: "notion", action: "search_pages",
         dataset: "documents", resourceType: "document", input: {},
       }]),
@@ -248,8 +248,8 @@ describe("ConnectorSyncService", () => {
   it("versions database-backed jobs and separates mutable scheduler state", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-connectors-config-"));
     const config = loadConfig(["--token", "0123456789abcdef"], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     const service = new ConnectorSyncService(database.db, config, logger);

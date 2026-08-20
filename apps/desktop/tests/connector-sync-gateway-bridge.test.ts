@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { ConnectorSyncGatewayBridge } from '../src/main/gateway/connector-sync-gateway-bridge'
+import { CliConnectorSyncGatewayBridge } from '../src/main/gateway/connector-sync-gateway-bridge'
 import type { GatewaySupervisor } from '../src/main/gateway/gateway-supervisor'
 
 const servers: Array<ReturnType<typeof createServer>> = []
@@ -30,7 +30,7 @@ afterEach(async () => {
   })))
 })
 
-describe('ConnectorSyncGatewayBridge requests', () => {
+describe('CliConnectorSyncGatewayBridge requests', () => {
   it('serializes pagination and posts selected record ids for ingest', async () => {
     const requests: Array<{ method: string; path: string; body: string }> = []
     const server = createServer(async (request, response) => {
@@ -50,7 +50,7 @@ describe('ConnectorSyncGatewayBridge requests', () => {
         version: 'test',
       }),
     } as GatewaySupervisor
-    const bridge = new ConnectorSyncGatewayBridge(supervisor)
+    const bridge = new CliConnectorSyncGatewayBridge(supervisor)
 
     const page = await bridge.data({ dataset: 'emails', query: '预算', limit: 25, offset: 50 })
     await bridge.ingestRecords(['record-1', 'record-2'])
@@ -58,12 +58,12 @@ describe('ConnectorSyncGatewayBridge requests', () => {
     expect(page).toMatchObject({ total: 1048, limit: 25, offset: 50 })
     expect(requests[0]).toEqual({
       method: 'GET',
-      path: '/v1/connectors/data?dataset=emails&query=%E9%A2%84%E7%AE%97&limit=25&offset=50',
+      path: '/v1/cli-connectors/data?dataset=emails&query=%E9%A2%84%E7%AE%97&limit=25&offset=50',
       body: '',
     })
     expect(requests[1]).toEqual({
       method: 'POST',
-      path: '/v1/connectors/data/ingest',
+      path: '/v1/cli-connectors/data/ingest',
       body: JSON.stringify({ recordIds: ['record-1', 'record-2'] }),
     })
   })
@@ -88,7 +88,7 @@ describe('ConnectorSyncGatewayBridge requests', () => {
         version: 'test',
       }),
     } as GatewaySupervisor
-    const bridge = new ConnectorSyncGatewayBridge(supervisor)
+    const bridge = new CliConnectorSyncGatewayBridge(supervisor)
 
     await bridge.createJob({
       name: 'Gmail recent mail',
@@ -110,8 +110,8 @@ describe('ConnectorSyncGatewayBridge requests', () => {
     await bridge.runJob('job-1')
 
     expect(requests.map(({ method, path }) => [method, path])).toEqual([
-      ['POST', '/v1/connectors/sync/jobs'],
-      ['POST', '/v1/connectors/sync/jobs/job-1/run'],
+      ['POST', '/v1/cli-connectors/sync/jobs'],
+      ['POST', '/v1/cli-connectors/sync/jobs/job-1/run'],
     ])
     expect(requests[0]).toMatchObject({
       contentType: 'application/json',

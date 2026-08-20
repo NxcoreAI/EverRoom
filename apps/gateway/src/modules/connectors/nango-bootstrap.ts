@@ -4,7 +4,7 @@ import type { ConnectorConfig } from "./types.js";
 
 /**
  * 启动时对 Nango 实例做自举:
- * 1. 校验/获取可用的 API key(NXCORE_NANGO_SECRET 缺失或失效时,通过无鉴权
+ * 1. 校验/获取可用的 API key(NXCORE_NANGO_CONNECTOR_SECRET 缺失或失效时,通过无鉴权
  *    dashboard API —— 即 FLAG_AUTH_ENABLED=false 的自托管实例 —— 创建或复用
  *    名为 everroom-gateway 的 key)。
  * 2. 按 .env 提供的 OAuth client 凭据,确保 Google/Notion 的 integration 存在
@@ -33,7 +33,7 @@ async function secretWorks(baseUrl: string, secret: string): Promise<boolean> {
 
 /** 通过无鉴权 dashboard API(自托管 FLAG_AUTH_ENABLED=false)创建/复用 API key。 */
 async function bootstrapApiKey(baseUrl: string): Promise<string | null> {
-  // ponytail: 固定用 dev 环境(账号 0);需要多环境时再引入 NXCORE_NANGO_ENV。
+  // ponytail: 固定用 dev 环境(账号 0);需要多环境时再引入 NXCORE_NANGO_CONNECTOR_ENV。
   const listUrl = `${baseUrl.replace(/\/$/, "")}/api/v1/environment/api-keys`;
   try {
     const list = await axios.get(listUrl, { params: { env: "dev" }, timeout: 10_000 });
@@ -92,7 +92,7 @@ export async function bootstrapNango(config: ConnectorConfig): Promise<string> {
       secret = bootstrapped;
       console.info("[nango-bootstrap] 使用自举的 Nango API key 替代配置中的 secret");
     } else if (config.nangoSecret) {
-      console.warn("[nango-bootstrap] 配置的 NXCORE_NANGO_SECRET 未通过校验且无法自举,授权请求可能失败");
+      console.warn("[nango-bootstrap] 配置的 NXCORE_NANGO_CONNECTOR_SECRET 未通过校验且无法自举,授权请求可能失败");
     }
   }
 

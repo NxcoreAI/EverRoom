@@ -14,6 +14,7 @@ import type {
   DocumentOperationStatus,
   DocumentMutationTarget,
   TiptapJsonContent,
+  SubagentInvocationResult,
 } from "@nxcore/agent-contract";
 import type {
   RealityCaptureDevice,
@@ -1134,5 +1135,103 @@ export const ingestEvents = sqliteTable(
   (table) => [
     index("ingest_events_source_idx").on(table.sourceKind, table.sourceId),
     index("ingest_events_source_hash_idx").on(table.sourceKind, table.sourceId, table.contentHash),
+  ],
+);
+
+export const subagentDefinitions = sqliteTable("subagent_definitions", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  currentRevisionId: text("current_revision_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const subagentRevisions = sqliteTable(
+  "subagent_revisions",
+  {
+    id: text("id").primaryKey(),
+    agentDefinitionId: text("agent_definition_id")
+      .notNull()
+      .references(() => subagentDefinitions.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    digest: text("digest").notNull(),
+    manifest: text("manifest", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    systemPrompt: text("system_prompt").notNull(),
+    agentDirectory: text("agent_directory").notNull(),
+    mcpServers: text("mcp_servers", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    policy: text("policy", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    inputSchema: text("input_schema", { mode: "json" }).$type<Record<string, unknown>>(),
+    outputSchema: text("output_schema", { mode: "json" }).$type<Record<string, unknown>>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("subagent_revisions_definition_version_idx").on(table.agentDefinitionId, table.version),
+    uniqueIndex("subagent_revisions_definition_digest_idx").on(table.agentDefinitionId, table.digest),
+  ],
+);
+
+export const subagentInvocations = sqliteTable(
+  "subagent_invocations",
+  {
+    id: text("id").primaryKey(),
+    agentDefinitionId: text("agent_definition_id")
+      .notNull()
+      .references(() => subagentDefinitions.id, { onDelete: "restrict" }),
+    agentRevisionId: text("agent_revision_id")
+      .notNull()
+      .references(() => subagentRevisions.id, { onDelete: "restrict" }),
+    source: text("source", {
+      enum: ["primary_agent", "scheduler", "internal_workflow"],
+    }).notNull(),
+    parentSessionId: text("parent_session_id"),
+    parentRunId: text("parent_run_id"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    task: text("task").notNull(),
+    input: text("input", { mode: "json" }).$type<unknown>().notNull(),
+    status: text("status", {
+      enum: ["accepted", "running", "completed", "failed", "cancelled", "interrupted", "timed_out"],
+    }).notNull().default("accepted"),
+    runtimeSessionRef: text("runtime_session_ref"),
+    lastEventSeq: integer("last_event_seq").notNull().default(0),
+    result: text("result", { mode: "json" }).$type<SubagentInvocationResult>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("subagent_invocations_source_idempotency_idx")
+      .on(table.source, table.parentRunId, table.idempotencyKey),
+    index("subagent_invocations_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const subagentInvocationEvents = sqliteTable(
+  "subagent_invocation_events",
+  {
+    id: text("id").primaryKey(),
+    invocationId: text("invocation_id")
+      .notNull()
+      .references(() => subagentInvocations.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    type: text("type").notNull(),
+    payload: text("payload", { mode: "json" }).$type<unknown>().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("subagent_invocation_events_invocation_seq_idx").on(table.invocationId, table.seq),
   ],
 );

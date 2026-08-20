@@ -60,7 +60,8 @@
     "remark-stringify": "^11.0.0",
     "turndown": "^7.2.4",
     "unified": "^11.0.5",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "yaml": "2.9.0"
   },
   "devDependencies": {
     "@types/ali-oss": "^6.23.3",

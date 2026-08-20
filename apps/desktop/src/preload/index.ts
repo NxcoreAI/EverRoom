@@ -95,51 +95,51 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
-  connectors: {
-    status: () => invoke('connector:status'),
-    startAuthorization: (provider) => invoke('connector:start-authorization', provider),
-    authorizationStatus: (id) => invoke('connector:authorization-status', id),
-    registerConnection: (input) => invoke('connector:register-connection', input),
-    disableConnection: (id) => invoke('connector:disable-connection', id),
-    purgeConnection: (id) => invoke('connector:purge-connection', id),
-    triggerSync: (id, mode) => invoke('connector:trigger-sync', id, mode),
-    cancelRun: (id) => invoke('connector:cancel-run', id),
-    scopes: (connectionId) => invoke('connector:list-scopes', connectionId),
-    runs: (connectionId) => invoke('connector:list-runs', connectionId),
-    mail: (query) => invoke('connector:list-mail', query),
-    documents: (connectionId) => invoke('connector:list-documents', connectionId),
-    document: (connectionId, documentId) => invoke('connector:read-document', connectionId, documentId),
-    records: (connectionId, type) => invoke('connector:list-records', connectionId, type),
+  nangoConnector: {
+    status: () => invoke('nango-connector:status'),
+    startAuthorization: (provider) => invoke('nango-connector:start-authorization', provider),
+    authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
+    registerConnection: (input) => invoke('nango-connector:register-connection', input),
+    disableConnection: (id) => invoke('nango-connector:disable-connection', id),
+    purgeConnection: (id) => invoke('nango-connector:purge-connection', id),
+    triggerSync: (id, mode) => invoke('nango-connector:trigger-sync', id, mode),
+    cancelRun: (id) => invoke('nango-connector:cancel-run', id),
+    scopes: (connectionId) => invoke('nango-connector:list-scopes', connectionId),
+    runs: (connectionId) => invoke('nango-connector:list-runs', connectionId),
+    mail: (query) => invoke('nango-connector:list-mail', query),
+    documents: (connectionId) => invoke('nango-connector:list-documents', connectionId),
+    document: (connectionId, documentId) => invoke('nango-connector:read-document', connectionId, documentId),
+    records: (connectionId, type) => invoke('nango-connector:list-records', connectionId, type),
   },
-  openConnector: {
-    status: () => invokeQuietly('open-connector:status'),
-    execute: (input) => invokeQuietly('open-connector:execute', input),
-    cancel: (requestId) => invokeQuietly('open-connector:cancel', requestId),
-    openConsole: () => invokeQuietly('open-connector:open-console'),
+  cliConnector: {
+    status: () => invokeQuietly('cli-connector:status'),
+    execute: (input) => invokeQuietly('cli-connector:execute', input),
+    cancel: (requestId) => invokeQuietly('cli-connector:cancel', requestId),
+    openConsole: () => invokeQuietly('cli-connector:open-console'),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
       }
-      ipcRenderer.on('open-connector:event', handleEvent)
-      return () => ipcRenderer.removeListener('open-connector:event', handleEvent)
+      ipcRenderer.on('cli-connector:event', handleEvent)
+      return () => ipcRenderer.removeListener('cli-connector:event', handleEvent)
     },
   },
-  connectorSync: {
-    status: () => invokeQuietly('connector-sync:status'),
-    accounts: () => invokeQuietly('connector-sync:accounts'),
-    promptProfiles: () => invokeQuietly('connector-sync:prompt-profiles'),
-    jobs: () => invokeQuietly('connector-sync:jobs'),
-    createJob: (input) => invokeQuietly('connector-sync:create-job', input),
-    updateJob: (id, input) => invokeQuietly('connector-sync:update-job', id, input),
-    runJob: (id) => invokeQuietly('connector-sync:run-job', id),
+  cliConnectorSync: {
+    status: () => invokeQuietly('cli-connector-sync:status'),
+    accounts: () => invokeQuietly('cli-connector-sync:accounts'),
+    promptProfiles: () => invokeQuietly('cli-connector-sync:prompt-profiles'),
+    jobs: () => invokeQuietly('cli-connector-sync:jobs'),
+    createJob: (input) => invokeQuietly('cli-connector-sync:create-job', input),
+    updateJob: (id, input) => invokeQuietly('cli-connector-sync:update-job', id, input),
+    runJob: (id) => invokeQuietly('cli-connector-sync:run-job', id),
     setJobPaused: (id, paused, configVersion) =>
-      invokeQuietly('connector-sync:set-job-paused', id, paused, configVersion),
-    archiveJob: (id, configVersion) => invokeQuietly('connector-sync:archive-job', id, configVersion),
-    runs: (jobId) => invokeQuietly('connector-sync:runs', jobId),
-    quarantine: (runId) => invokeQuietly('connector-sync:quarantine', runId),
-    data: (query) => invokeQuietly('connector-sync:data', query),
-    record: (id) => invokeQuietly('connector-sync:record', id),
-    ingestRecords: (recordIds) => invokeQuietly('connector-sync:ingest-records', recordIds),
+      invokeQuietly('cli-connector-sync:set-job-paused', id, paused, configVersion),
+    archiveJob: (id, configVersion) => invokeQuietly('cli-connector-sync:archive-job', id, configVersion),
+    runs: (jobId) => invokeQuietly('cli-connector-sync:runs', jobId),
+    quarantine: (runId) => invokeQuietly('cli-connector-sync:quarantine', runId),
+    data: (query) => invokeQuietly('cli-connector-sync:data', query),
+    record: (id) => invokeQuietly('cli-connector-sync:record', id),
+    ingestRecords: (recordIds) => invokeQuietly('cli-connector-sync:ingest-records', recordIds),
   },
   mcp: {
     listServers: () => invoke('mcp:servers:list'),

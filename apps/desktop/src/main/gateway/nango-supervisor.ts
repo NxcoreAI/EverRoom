@@ -8,12 +8,12 @@ import { app } from 'electron'
  * 托管 Nango(gateway/src/modules/connector 子模块)server 的子进程管理器。
  *
  * 三种工作模式(与 MemoryCoreSupervisor 一致):
- * 1. 外部模式:NXCORE_NANGO_URL 指向非默认地址,或 NXCORE_NANGO_MANAGED=false —— 不托管。
+ * 1. 外部模式:NXCORE_NANGO_CONNECTOR_URL 指向非默认地址,或 NXCORE_NANGO_CONNECTOR_MANAGED=false —— 不托管。
  * 2. 复用模式:127.0.0.1:3003 已有健康实例 —— 直接复用。
  * 3. 托管模式:在子模块目录里构建并拉起 nango server(NANGO_EMBEDDED_DB,无需 Docker)。
  *
  * 注意:secret key 存在于 Nango 数据库里(嵌入式 DB 持久化),沿用进程环境里的
- * NXCORE_NANGO_SECRET,这里只负责把 server 拉起来并注入 URL。
+ * NXCORE_NANGO_CONNECTOR_SECRET,这里只负责把 server 拉起来并注入 URL。
  */
 export interface NangoConnection {
   baseUrl: string
@@ -66,8 +66,8 @@ export class NangoSupervisor {
   async start(): Promise<NangoConnection | null> {
     if (this.connection) return this.connection
 
-    if (process.env.NXCORE_NANGO_MANAGED === 'false') return null
-    const externalBaseUrl = process.env.NXCORE_NANGO_URL?.trim()
+    if (process.env.NXCORE_NANGO_CONNECTOR_MANAGED === 'false') return null
+    const externalBaseUrl = process.env.NXCORE_NANGO_CONNECTOR_URL?.trim()
     if (externalBaseUrl && !isLoopbackNangoUrl(externalBaseUrl)) return null
 
     // ponytail: 打包形态尚未把 nango 子模块打进 extraResources,先只支持 dev 托管。

@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { describe, expect, it, vi } from "vitest";
-import { connectorSyncRoutes } from "../src/modules/connectors/routes.js";
+import { cliConnectorRoutes } from "../src/modules/connectors/routes.js";
 import type { ConnectorSyncService } from "../src/modules/connectors/service.js";
 import type { IngestService } from "../src/modules/ingest/service.js";
 
@@ -27,12 +27,12 @@ describe("connector data routes", () => {
       }),
     } as unknown as IngestService;
     const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
-    await app.register(connectorSyncRoutes(service, ingest));
+    await app.register(cliConnectorRoutes(service, ingest));
 
     try {
       const pageResponse = await app.inject({
         method: "GET",
-        url: "/v1/connectors/data?dataset=emails&limit=25&offset=50",
+        url: "/v1/cli-connectors/data?dataset=emails&limit=25&offset=50",
       });
       expect(pageResponse.statusCode).toBe(200);
       expect(pageResponse.json()).toMatchObject({ total: 1048, limit: 25, offset: 50 });
@@ -42,7 +42,7 @@ describe("connector data routes", () => {
 
       const ingestResponse = await app.inject({
         method: "POST",
-        url: "/v1/connectors/data/ingest",
+        url: "/v1/cli-connectors/data/ingest",
         payload: { recordIds: ["email-1", "document-1", "generic-1", "missing-1"] },
       });
       expect(ingestResponse.statusCode).toBe(200);

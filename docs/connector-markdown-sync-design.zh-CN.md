@@ -2,7 +2,7 @@
 
 ## 1. 背景与目标
 
-当前连接器同步链路是：OpenConnector 拉取数据 → 写入 `connector_*` 领域表 → 用户或桌面端显式调用 `/v1/connectors/data/ingest` → 统一理解引擎生成 Markdown 并扇出到 Room/Memory。
+当前连接器同步链路是：OpenConnector 拉取数据 → 写入 `connector_*` 领域表 → 用户或桌面端显式调用 `/v1/cli-connectors/data/ingest` → 统一理解引擎生成 Markdown 并扇出到 Room/Memory。
 
 这个时序有一个结构性问题：**同步成功不代表已经产生可阅读、可索引、可追溯的 Markdown 文件**。邮件尤其明显：一封邮件应当有一个稳定的 `.md` 对应物，后续更新覆盖同一身份，删除能够撤销下游索引，连接器或模型服务短暂不可用也不能丢失待处理数据。
 
@@ -24,7 +24,7 @@
 - `apps/gateway/src/modules/ingest/connector-markdown.ts` 已有邮件、文档、日程的确定性 Markdown renderer。
 - `apps/gateway/src/modules/ingest/service.ts` 已支持 `connector-email`、`connector-document`、`connector-calendar` 引用，并将结果写入 `parsed_contents` 和 `ingest_events`。
 - `apps/gateway/src/modules/files/service.ts` 管理内容寻址对象库和解析产物，但 `parsed_contents` 本身不是用户可见的独立 `.md` 文件。
-- `/v1/connectors/data/ingest` 目前是手动触发入口，应保留为重试/补偿入口，而不是主流程。
+- `/v1/cli-connectors/data/ingest` 目前是手动触发入口，应保留为重试/补偿入口，而不是主流程。
 
 因此本设计不新增第四套理解管线，而是在“领域记录落库”和“统一 ingest”之间增加持久化的 Markdown materialization 层。
 
@@ -286,11 +286,11 @@ source_content_hash: "..."
 
 保留现有接口兼容性，同时增加 artifact 视图：
 
-- `GET /v1/connectors/data/:id` 返回 `markdownArtifact: { id, path, version, status, markdownContentHash, ingestEventId }`。
-- `GET /v1/connectors/markdown/artifacts` 支持按 service、resourceType、status、updatedAt 查询。
-- `GET /v1/connectors/markdown/artifacts/:id` 返回 frontmatter/正文预览；原始文件读取必须走受鉴权 API，不接受任意路径。
-- `POST /v1/connectors/markdown/rebuild` 支持按 connector、记录 ID、renderer version 重建；这是迁移和修复入口。
-- 现有 `/v1/connectors/data/ingest` 改名语义为“补偿 ingest”：若 artifact 不存在先投递 materialization，存在则复用当前 artifact。
+- `GET /v1/cli-connectors/data/:id` 返回 `markdownArtifact: { id, path, version, status, markdownContentHash, ingestEventId }`。
+- `GET /v1/cli-connectors/markdown/artifacts` 支持按 service、resourceType、status、updatedAt 查询。
+- `GET /v1/cli-connectors/markdown/artifacts/:id` 返回 frontmatter/正文预览；原始文件读取必须走受鉴权 API，不接受任意路径。
+- `POST /v1/cli-connectors/markdown/rebuild` 支持按 connector、记录 ID、renderer version 重建；这是迁移和修复入口。
+- 现有 `/v1/cli-connectors/data/ingest` 改名语义为“补偿 ingest”：若 artifact 不存在先投递 materialization，存在则复用当前 artifact。
 
 桌面连接器页面展示：
 

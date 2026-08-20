@@ -147,14 +147,20 @@ CE Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessionId`
 
 ### OpenConnector
 
+项目内的两套连接器使用独立命名空间：Nango 连接器使用
+`NXCORE_NANGO_CONNECTOR_*`、`/v1/nango-connectors/*` 和
+`nango-connector:*`；基于 OpenConnector/`oo` CLI 的 CLI 连接器使用
+`NXCORE_CLI_CONNECTOR_*`、`/v1/cli-connectors/*` 和 `cli-connector:*`。
+`NANGO_*` 与 `OO_*` 只用于各自第三方子进程的内部协议。
+
 OpenConnector 已作为桌面端托管服务集成，无需安装 Docker、单独启动网关或手工填写 Token。启动 EverRoom 时会自动拉起固定版本的本地 OpenConnector，退出应用时自动回收进程；首次启动生成的加密密钥、Admin Token、Runtime Token 和端口保存在 EverRoom 用户数据目录中。
 
 默认不需要任何配置。仅当需要连接已有的外部 OpenConnector 时，才在根目录 `.env` 显式关闭托管模式：
 
 ```dotenv
-NXCORE_OPEN_CONNECTOR_MANAGED=false
-NXCORE_OPEN_CONNECTOR_URL=https://connector.example.com
-NXCORE_OPEN_CONNECTOR_RUNTIME_TOKEN=<runtime-token>
+NXCORE_CLI_CONNECTOR_MANAGED=false
+NXCORE_CLI_CONNECTOR_URL=https://connector.example.com
+NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN=<runtime-token>
 ```
 
 桌面端内置固定版本的 `oo` CLI，并通过受限 IPC 为侧栏“连接器”控制台提供 Action 搜索、Schema、账号选择、参数校验、执行和实时日志。“Web 管理台”会打开隔离的本地窗口并自动完成管理认证。Pi Agent 同时获得 `connector_search`、`connector_schema`、`connector_apps`、`connector_run` 四个工具；执行前会先读取实际账号连接，不猜测连接名称。Admin Token 和 Runtime Token 都不会进入 Renderer。完整设计见 [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md)。

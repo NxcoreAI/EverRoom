@@ -4,11 +4,11 @@ import { loadConfig } from "../src/config.js";
 describe("connector sync configuration", () => {
   it("parses the local Agent mode and static sync job registry", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_CONNECTOR_AGENT_MODE: "local",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "true",
-      NXCORE_CONNECTOR_SYNC_INTERVAL_MS: "10000",
-      NXCORE_CONNECTOR_SYNC_OWNER_ID: "desktop-user",
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([{
+      NXCORE_CLI_CONNECTOR_AGENT_MODE: "local",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "true",
+      NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS: "10000",
+      NXCORE_CLI_CONNECTOR_SYNC_OWNER_ID: "desktop-user",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([{
         id: "calendar-daily",
         ownerId: "desktop-user",
         service: "google_calendar",
@@ -21,11 +21,11 @@ describe("connector sync configuration", () => {
       }]),
     });
 
-    expect(config.connectorAgentMode).toBe("local");
-    expect(config.connectorSyncEnabled).toBe(true);
-    expect(config.connectorSyncIntervalMs).toBe(10_000);
-    expect(config.connectorSyncOwnerId).toBe("desktop-user");
-    expect(config.connectorSyncJobs).toEqual([expect.objectContaining({
+    expect(config.cliConnectorAgentMode).toBe("local");
+    expect(config.cliConnectorSyncEnabled).toBe(true);
+    expect(config.cliConnectorSyncIntervalMs).toBe(10_000);
+    expect(config.cliConnectorSyncOwnerId).toBe("desktop-user");
+    expect(config.cliConnectorSyncJobs).toEqual([expect.objectContaining({
       id: "calendar-daily",
       service: "google_calendar",
       resourceType: "calendar",
@@ -37,11 +37,11 @@ describe("connector sync configuration", () => {
 
   it("rejects malformed or unsafe sync jobs", () => {
     expect(() => loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_CONNECTOR_SYNC_JOBS: "not-json",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: "not-json",
     })).toThrow("must be valid JSON");
 
     expect(() => loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([{
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([{
         id: "unsafe",
         ownerId: "local-user",
         service: "gmail",
@@ -52,7 +52,7 @@ describe("connector sync configuration", () => {
     })).toThrow("must be at least 5000");
 
     expect(() => loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_CONNECTOR_SYNC_JOBS: JSON.stringify([{
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify([{
         id: "unsafe-mail",
         ownerId: "local-user",
         service: "gmail",

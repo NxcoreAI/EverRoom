@@ -40,9 +40,9 @@ import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
-import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
+import { CliConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
-import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
+import { NangoConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -128,31 +128,31 @@ const GATEWAY_CHANNELS = {
   status: 'gateway:status',
 } as const
 
-const CONNECTOR_CHANNELS = {
-  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', listDocuments: 'connector:list-documents', readDocument: 'connector:read-document', listRecords: 'connector:list-records', armFault: 'connector:arm-fault',
+const NANGO_CONNECTOR_CHANNELS = {
+  status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
 } as const
-const OPEN_CONNECTOR_CHANNELS = {
-  status: 'open-connector:status',
-  execute: 'open-connector:execute',
-  cancel: 'open-connector:cancel',
-  openConsole: 'open-connector:open-console',
+const CLI_CONNECTOR_CHANNELS = {
+  status: 'cli-connector:status',
+  execute: 'cli-connector:execute',
+  cancel: 'cli-connector:cancel',
+  openConsole: 'cli-connector:open-console',
 } as const
 
-const CONNECTOR_SYNC_CHANNELS = {
-  status: 'connector-sync:status',
-  accounts: 'connector-sync:accounts',
-  promptProfiles: 'connector-sync:prompt-profiles',
-  jobs: 'connector-sync:jobs',
-  createJob: 'connector-sync:create-job',
-  updateJob: 'connector-sync:update-job',
-  runJob: 'connector-sync:run-job',
-  setJobPaused: 'connector-sync:set-job-paused',
-  archiveJob: 'connector-sync:archive-job',
-  runs: 'connector-sync:runs',
-  quarantine: 'connector-sync:quarantine',
-  data: 'connector-sync:data',
-  record: 'connector-sync:record',
-  ingestRecords: 'connector-sync:ingest-records',
+const CLI_CONNECTOR_SYNC_CHANNELS = {
+  status: 'cli-connector-sync:status',
+  accounts: 'cli-connector-sync:accounts',
+  promptProfiles: 'cli-connector-sync:prompt-profiles',
+  jobs: 'cli-connector-sync:jobs',
+  createJob: 'cli-connector-sync:create-job',
+  updateJob: 'cli-connector-sync:update-job',
+  runJob: 'cli-connector-sync:run-job',
+  setJobPaused: 'cli-connector-sync:set-job-paused',
+  archiveJob: 'cli-connector-sync:archive-job',
+  runs: 'cli-connector-sync:runs',
+  quarantine: 'cli-connector-sync:quarantine',
+  data: 'cli-connector-sync:data',
+  record: 'cli-connector-sync:record',
+  ingestRecords: 'cli-connector-sync:ingest-records',
 } as const
 
 const CONTEXT_ROOM_CHANNELS = {
@@ -371,8 +371,8 @@ function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
-    OPEN_CONNECTOR_CHANNELS,
-    CONNECTOR_SYNC_CHANNELS,
+    CLI_CONNECTOR_CHANNELS,
+    CLI_CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
@@ -417,7 +417,7 @@ let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
-let connectorGatewayBridge: ConnectorGatewayBridge | null = null
+let nangoConnectorGatewayBridge: NangoConnectorGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
@@ -604,29 +604,29 @@ function registerGatewayHandlers(): void {
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
 }
 
-function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
-  ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
-  ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
-  ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
-  ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
-  ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
-  ipcMain.handle(CONNECTOR_CHANNELS.listRuns, (_event, connectionId) => bridge.runs(connectionId))
-  ipcMain.handle(CONNECTOR_CHANNELS.listMail, (_event, query) => bridge.mail(query))
-  ipcMain.handle(CONNECTOR_CHANNELS.listFailures, (_event, query) => bridge.failures(query))
-  ipcMain.handle(CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
-  ipcMain.handle(CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
-  ipcMain.handle(CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
-  ipcMain.handle(CONNECTOR_CHANNELS.armFault, (_event, point) => {
-    if (process.env.NXCORE_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
+function registerNangoConnectorHandlers(bridge: NangoConnectorGatewayBridge): void {
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.status, () => bridge.status())
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listRuns, (_event, connectionId) => bridge.runs(connectionId))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listMail, (_event, query) => bridge.mail(query))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listFailures, (_event, query) => bridge.failures(query))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
+  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.armFault, (_event, point) => {
+    if (process.env.NXCORE_NANGO_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
     return bridge.armFault(point)
   })
 }
 function resolveOoCliExecutable(): string {
-  const configured = process.env.NXCORE_OO_CLI_PATH?.trim()
+  const configured = process.env.NXCORE_CLI_CONNECTOR_CLI_PATH?.trim()
   if (configured) return configured
   const executableName = process.platform === 'win32' ? 'oo.exe' : 'oo'
   const packagedCandidates = [
@@ -654,7 +654,7 @@ function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
 function attachOpenConnectorBridge(bridge: OoCliBridge): void {
   bridge.onCommand((frame) => {
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send('open-connector:event', frame)
+      if (!window.isDestroyed()) window.webContents.send('cli-connector:event', frame)
     }
   })
 }
@@ -733,8 +733,8 @@ async function openConnectorManagementConsole(): Promise<void> {
   await window.loadURL(consoleUrl.toString())
 }
 
-function registerOpenConnectorHandlers(): void {
-  handle(OPEN_CONNECTOR_CHANNELS.status, () => {
+function registerCliConnectorHandlers(): void {
+  handle(CLI_CONNECTOR_CHANNELS.status, () => {
     if (ooCliBridge) return ooCliBridge.status()
     const status = openConnectorSupervisor?.getStatus()
     return {
@@ -751,17 +751,17 @@ function registerOpenConnectorHandlers(): void {
       cliMessage: null,
     }
   })
-  handle(OPEN_CONNECTOR_CHANNELS.execute, (_event, input: unknown) => {
+  handle(CLI_CONNECTOR_CHANNELS.execute, (_event, input: unknown) => {
     if (!ooCliBridge) throw new Error('EverRoom 连接器尚未就绪。')
     if (!input || typeof input !== 'object') throw new Error('无效的 EverRoom 连接器命令。')
     return ooCliBridge.execute(input as OpenConnectorExecutionInput)
   })
-  handle(OPEN_CONNECTOR_CHANNELS.cancel, (_event, requestId: unknown) => {
+  handle(CLI_CONNECTOR_CHANNELS.cancel, (_event, requestId: unknown) => {
     if (!ooCliBridge) return false
     if (typeof requestId !== 'string') throw new Error('无效的命令请求标识。')
     return ooCliBridge.cancel(requestId)
   })
-  handle(OPEN_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
+  handle(CLI_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
 }
 
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
@@ -769,22 +769,22 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
 }
 
-function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
-  handle(CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
-  handle(CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
-  handle(CONNECTOR_SYNC_CHANNELS.promptProfiles, () => bridge.promptProfiles())
-  handle(CONNECTOR_SYNC_CHANNELS.jobs, () => bridge.jobs())
-  handle(CONNECTOR_SYNC_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
-  handle(CONNECTOR_SYNC_CHANNELS.updateJob, (_event, id, input) => bridge.updateJob(id, input))
-  handle(CONNECTOR_SYNC_CHANNELS.runJob, (_event, id) => bridge.runJob(id))
-  handle(CONNECTOR_SYNC_CHANNELS.setJobPaused, (_event, id, paused, configVersion) =>
+function registerCliConnectorSyncHandlers(bridge: CliConnectorSyncGatewayBridge): void {
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.promptProfiles, () => bridge.promptProfiles())
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.jobs, () => bridge.jobs())
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.updateJob, (_event, id, input) => bridge.updateJob(id, input))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.runJob, (_event, id) => bridge.runJob(id))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.setJobPaused, (_event, id, paused, configVersion) =>
     bridge.setJobPaused(id, paused, configVersion))
-  handle(CONNECTOR_SYNC_CHANNELS.archiveJob, (_event, id, configVersion) => bridge.archiveJob(id, configVersion))
-  handle(CONNECTOR_SYNC_CHANNELS.runs, (_event, jobId) => bridge.runs(jobId))
-  handle(CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
-  handle(CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
-  handle(CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
-  handle(CONNECTOR_SYNC_CHANNELS.ingestRecords, (_event, recordIds) => bridge.ingestRecords(recordIds))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.archiveJob, (_event, id, configVersion) => bridge.archiveJob(id, configVersion))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.runs, (_event, jobId) => bridge.runs(jobId))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
+  handle(CLI_CONNECTOR_SYNC_CHANNELS.ingestRecords, (_event, recordIds) => bridge.ingestRecords(recordIds))
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
@@ -1230,7 +1230,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   installIpcRouters()
   registerSystemClipboardHandler()
   registerGatewayHandlers()
-  registerOpenConnectorHandlers()
+  registerCliConnectorHandlers()
   createWindow()
   try {
     openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
@@ -1264,9 +1264,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
-        ...(ooCliBridge ? ooCliBridge.environment() : {}),
-        ...(ooCliBridge ? { NXCORE_CONNECTOR_AGENT_MODE: 'local' } : {}),
-        ...(ooCliBridge ? { NXCORE_CONNECTOR_SYNC_ENABLED: 'true' } : {}),
+        ...(ooCliBridge ? ooCliBridge.gatewayEnvironment() : {}),
+        ...(ooCliBridge ? { NXCORE_CLI_CONNECTOR_AGENT_MODE: 'local' } : {}),
+        ...(ooCliBridge ? { NXCORE_CLI_CONNECTOR_SYNC_ENABLED: 'true' } : {}),
         ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
@@ -1274,9 +1274,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
           }
           : {}),
-        // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_SECRET。
-        ...((nango && process.env.NXCORE_NANGO_SECRET?.trim())
-          ? { NXCORE_NANGO_URL: nango.baseUrl }
+        // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_CONNECTOR_SECRET。
+        ...((nango && process.env.NXCORE_NANGO_CONNECTOR_SECRET?.trim())
+          ? { NXCORE_NANGO_CONNECTOR_URL: nango.baseUrl }
           : {}),
         ...(knowledge
           ? {
@@ -1304,11 +1304,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
-    registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))
+    registerCliConnectorSyncHandlers(new CliConnectorSyncGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
-    connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
-    registerConnectorHandlers(connectorGatewayBridge)
+    nangoConnectorGatewayBridge = new NangoConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
+    registerNangoConnectorHandlers(nangoConnectorGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
     cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
@@ -1383,7 +1383,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
     realityGatewayBridge = null
-    connectorGatewayBridge = null
+    nangoConnectorGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -1436,7 +1436,7 @@ app.on('before-quit', (event) => {
   cursorCompletionAgentBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
-  connectorGatewayBridge = null
+  nangoConnectorGatewayBridge = null
   recordingStore = null
   saasClient = null
   screenshotScheduler.stop()

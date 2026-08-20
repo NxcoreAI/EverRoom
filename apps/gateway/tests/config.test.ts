@@ -45,12 +45,12 @@ describe("loadConfig", () => {
   it("loads the isolated oo CLI connector target", () => {
     const dataDirectory = resolve("/tmp/everroom-test");
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", dataDirectory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      OO_CONNECTOR_TOKEN: "runtime-secret",
-      NXCORE_OO_CLI_PATH: "/opt/everroom/oo",
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN: "runtime-secret",
+      NXCORE_CLI_CONNECTOR_CLI_PATH: "/opt/everroom/oo",
     });
 
-    expect(config.openConnector).toEqual({
+    expect(config.cliConnector).toEqual({
       executable: "/opt/everroom/oo",
       baseUrl: "http://127.0.0.1:3000",
       runtimeToken: "runtime-secret",
@@ -61,8 +61,20 @@ describe("loadConfig", () => {
 
   it("requires HTTPS for non-loopback connector runtimes", () => {
     expect(() => loadConfig(["--token", "0123456789abcdef"], {
-      OO_CONNECTOR_URL: "http://connector.example.com",
+      NXCORE_CLI_CONNECTOR_URL: "http://connector.example.com",
     })).toThrow("plain HTTP is only allowed for loopback")
+  });
+
+  it("does not treat native or legacy connector variables as EverRoom configuration", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_OPEN_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_NANGO_URL: "http://127.0.0.1:3003",
+      NXCORE_NANGO_SECRET: "legacy-secret",
+    });
+
+    expect(config.cliConnector).toBeNull();
+    expect(config.nangoConnector?.enabled).toBe(false);
   });
 
   it("keeps MemoryCore available independently of the Agent runtime", () => {
@@ -244,12 +256,12 @@ describe("loadConfig", () => {
   });
 
   it("loads Nango connectors only from complete, safe configuration", () => {
-    expect(loadConfig(["--token", "0123456789abcdef"], {}).connectors?.enabled).toBe(false);
-    const enabled=loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"http://127.0.0.1:3003",NXCORE_NANGO_SECRET:"secret"});
-    expect(enabled.connectors).toMatchObject({enabled:true,nangoUrl:"http://127.0.0.1:3003",pollingIntervalMs:300000});
-    expect(enabled.connectors?.databasePath).toContain("connectors.sqlite");
-    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"https://nango.example.com"})).toThrow("requires both");
-    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"http://nango.example.com",NXCORE_NANGO_SECRET:"secret"})).toThrow("must use HTTPS");
+    expect(loadConfig(["--token", "0123456789abcdef"], {}).nangoConnector?.enabled).toBe(false);
+    const enabled=loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_CONNECTOR_URL:"http://127.0.0.1:3003",NXCORE_NANGO_CONNECTOR_SECRET:"secret"});
+    expect(enabled.nangoConnector).toMatchObject({enabled:true,nangoUrl:"http://127.0.0.1:3003",pollingIntervalMs:300000});
+    expect(enabled.nangoConnector?.databasePath).toContain("connectors.sqlite");
+    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_CONNECTOR_URL:"https://nango.example.com"})).toThrow("requires both");
+    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_CONNECTOR_URL:"http://nango.example.com",NXCORE_NANGO_CONNECTOR_SECRET:"secret"})).toThrow("must use HTTPS");
   });
 
   it("falls back to NXCORE_AI_* for the knowledge arbitration LLM", () => {

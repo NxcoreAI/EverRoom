@@ -110,11 +110,11 @@ export function OfficePage({ onNavigate, onFocusAgent }: { onNavigate: (page: Pa
     try {
       const [nextSessions, nextJobs] = await Promise.all([
         window.nxcore.agent.listSessions(),
-        window.nxcore.connectorSync.jobs(),
+        window.nxcore.cliConnectorSync.jobs(),
       ])
       const nextSnapshots = await Promise.all(nextSessions.map((session) => window.nxcore!.agent.getSession(session.id).catch(() => null)))
       const runGroups = await Promise.all(nextJobs.filter((job) => job.status !== 'archived').map(async (job) => {
-        try { return [job.id, await window.nxcore!.connectorSync.runs(job.id)] as const } catch { return [job.id, [] as ConnectorSyncRun[]] as const }
+        try { return [job.id, await window.nxcore!.cliConnectorSync.runs(job.id)] as const } catch { return [job.id, [] as ConnectorSyncRun[]] as const }
       }))
       setSessions(nextSessions)
       setSnapshots(nextSnapshots.filter((snapshot): snapshot is AgentSessionSnapshot => Boolean(snapshot)))

@@ -41,7 +41,7 @@ import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.j
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
-import { connectorRoutes, connectorSyncRoutes } from "../modules/connectors/routes.js";
+import { cliConnectorRoutes, nangoConnectorRoutes } from "../modules/connectors/routes.js";
 import { ConnectorMarkdownService } from "../modules/connectors/markdown-service.js";
 import { ConnectorSyncService } from "../modules/connectors/service.js";
 import { processingRoutes } from "../modules/processing/routes.js";
@@ -59,6 +59,11 @@ import { NangoExecutor } from "../modules/connectors/nango-executor.js";
 import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
 import { bootstrapNango } from "../modules/connectors/nango-bootstrap.js";
 import { ConnectorDocumentStore } from "../modules/connectors/document-store.js";
+import { SubagentRegistry } from "../modules/subagents/registry.js";
+import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
+import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
+import { createSubagentPiTools } from "../modules/subagents/tools.js";
+import { subagentRoutes } from "../modules/subagents/routes.js";
 
 function swaggerAssetsDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -86,30 +91,30 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
-  const connectorConfig = config.connectors ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
+  const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
   // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
-  const nangoSecret = connectorConfig.enabled ? await bootstrapNango(connectorConfig) : connectorConfig.nangoSecret;
-  const connectorDb = createConnectorDatabase(connectorConfig.enabled ? connectorConfig.databasePath : ":memory:");
-  const connectorManager = new ConnectorManager(
-    new ConnectorRepository(connectorDb.sqlite),
-    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, nangoSecret) : null,
-    connectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
+  const nangoSecret = nangoConnectorConfig.enabled ? await bootstrapNango(nangoConnectorConfig) : nangoConnectorConfig.nangoSecret;
+  const nangoConnectorDb = createConnectorDatabase(nangoConnectorConfig.enabled ? nangoConnectorConfig.databasePath : ":memory:");
+  const nangoConnectorManager = new ConnectorManager(
+    new ConnectorRepository(nangoConnectorDb.sqlite),
+    nangoConnectorConfig.enabled ? new NangoExecutor(nangoConnectorConfig.nangoUrl, nangoSecret) : null,
+    nangoConnectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
   );
-  const connectorAuthorization = connectorConfig.enabled && "gmailConfigKey" in connectorConfig
+  const nangoConnectorAuthorization = nangoConnectorConfig.enabled && "gmailConfigKey" in nangoConnectorConfig
     ? new NangoAuthorizationService(
-        connectorConfig.nangoUrl,
+        nangoConnectorConfig.nangoUrl,
         nangoSecret,
         {
-          gmail: connectorConfig.gmailConfigKey,
-          outlook: connectorConfig.outlookConfigKey,
-          "google-docs": connectorConfig.googleDocsConfigKey,
-          notion: connectorConfig.notionConfigKey,
-          "google-calendar": connectorConfig.googleCalendarConfigKey,
+          gmail: nangoConnectorConfig.gmailConfigKey,
+          outlook: nangoConnectorConfig.outlookConfigKey,
+          "google-docs": nangoConnectorConfig.googleDocsConfigKey,
+          notion: nangoConnectorConfig.notionConfigKey,
+          "google-calendar": nangoConnectorConfig.googleCalendarConfigKey,
         },
-        connectorManager,
+        nangoConnectorManager,
       )
     : undefined;
-  if (connectorConfig.enabled) connectorManager.startPolling("pollingIntervalMs" in connectorConfig ? connectorConfig.pollingIntervalMs : 300_000);
+  if (nangoConnectorConfig.enabled) nangoConnectorManager.startPolling("pollingIntervalMs" in nangoConnectorConfig ? nangoConnectorConfig.pollingIntervalMs : 300_000);
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
@@ -231,12 +236,41 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
     app.log,
   );
-  const connectorSyncService = new ConnectorSyncService(db, config, app.log);
-  let connectorMarkdownService: ConnectorMarkdownService | null = null;
-  const connectorSyncAgentRuntime = createConnectorSyncAgentRuntime(config, connectorSyncService);
-  if (connectorSyncAgentRuntime) connectorSyncService.attachAgentRuntime(connectorSyncAgentRuntime);
-  await connectorSyncService.initialize();
+  const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
+  let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
+  const cliConnectorSyncAgentRuntime = createConnectorSyncAgentRuntime(config, cliConnectorSyncService);
+  if (cliConnectorSyncAgentRuntime) cliConnectorSyncService.attachAgentRuntime(cliConnectorSyncAgentRuntime);
+  await cliConnectorSyncService.initialize();
+  const subagentConfig = config.subagents ?? {
+    enabled: true,
+    definitionsDir: resolve(config.dataDir, "agents"),
+    runtimeDir: resolve(config.dataDir, "agent", "subagents"),
+    defaultTimeoutMs: 300_000,
+    maxConcurrent: 4,
+  };
+  const subagentRegistry = new SubagentRegistry(
+    db,
+    subagentConfig,
+    config.pi?.mcp?.mcpServers ?? {},
+    app.log,
+  );
+  await subagentRegistry.initialize();
+  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig);
+  const subagentOrchestrator = new SubagentOrchestrator(
+    db,
+    subagentConfig,
+    subagentRegistry,
+    subagentRuntimeManager,
+    app.log,
+  );
+  const recoveredSubagentInvocations = subagentOrchestrator.initialize();
+  if (recoveredSubagentInvocations > 0) {
+    app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
+  }
   const agentRuntime = createAgentRuntime(config, documentMcpHost, {
+    ...(subagentConfig.enabled
+      ? { tools: createSubagentPiTools(subagentRegistry, subagentOrchestrator) }
+      : {}),
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
       ? {
@@ -247,7 +281,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           },
         }
       : {}),
-  }, connectorSyncService);
+  }, cliConnectorSyncService);
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -270,7 +304,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     contextRoomService,
     documentService,
     documentMcpHost,
-    config.connectorAgentMode ?? "direct",
+    config.cliConnectorAgentMode ?? "direct",
   );
   await agentService.initialize();
   const backgroundAgentRuntime = createBackgroundAgentRuntime(config);
@@ -314,21 +348,23 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   let documentOutboxWorker: DocumentOutboxWorker | null = null;
   app.addHook("onClose", async () => {
-    await connectorManager.dispose();
-    connectorDb.close();
+    await nangoConnectorManager.dispose();
+    nangoConnectorDb.close();
     clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
+    await subagentOrchestrator.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
-    await connectorSyncService.dispose();
-    await connectorMarkdownService?.dispose();
+    await cliConnectorSyncService.dispose();
+    await cliConnectorMarkdownService?.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
     sqlite.close();
     await gatewayLogger.close();
   });
   await app.register(agentRoutes(agentService));
+  await app.register(subagentRoutes(subagentOrchestrator));
   await app.register(mcpRoutes(config));
   await app.register(contextRoomRoutes(contextRoomService));
   await app.register(documentMcpRoutes(documentMcpHost));
@@ -364,7 +400,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
   // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
-  connectorManager.setMemorySink((input) =>
+  nangoConnectorManager.setMemorySink((input) =>
     ingestService.ingestConnector({
       kind: input.kind === "document" ? "cloud-doc" : "mail",
       sourceId: `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
@@ -384,13 +420,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
   );
   documentOutboxWorker.start();
-  connectorMarkdownService = new ConnectorMarkdownService(
+  cliConnectorMarkdownService = new ConnectorMarkdownService(
     db,
     config.dataDir,
     ingestService,
     app.log,
   );
-  await connectorMarkdownService.initialize();
+  await cliConnectorMarkdownService.initialize();
   // 智能感知在用户确认完成后自动进入统一理解引擎：
   // reality-event → Markdown → Room 路由 → Wiki（策略与文件链路共用）。
   if (config.knowledge?.roomWikisEnabled && config.knowledge.routerEnabled) {
@@ -403,9 +439,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(ingestRoutes(ingestService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
-  await app.register(connectorRoutes(connectorManager, connectorConfig.enabled, connectorAuthorization));
+  await app.register(nangoConnectorRoutes(nangoConnectorManager, nangoConnectorConfig.enabled, nangoConnectorAuthorization));
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
-  await app.register(connectorSyncRoutes(connectorSyncService, ingestService, connectorMarkdownService));
+  await app.register(cliConnectorRoutes(cliConnectorSyncService, ingestService, cliConnectorMarkdownService));
 
   return app;
 }

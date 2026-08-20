@@ -81,6 +81,66 @@ export interface RuntimeCapabilities {
   resume: boolean;
 }
 
+export type SubagentInvocationSource = "primary_agent" | "scheduler" | "internal_workflow";
+export type SubagentInvocationStatus =
+  | "accepted"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "timed_out";
+
+export interface SubagentDefinition {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubagentRevision {
+  id: string;
+  agentDefinitionId: string;
+  version: number;
+  digest: string;
+  createdAt: string;
+}
+
+export interface SubagentInvocationResult {
+  text: string;
+  structuredOutput?: unknown;
+}
+
+export interface SubagentInvocation {
+  id: string;
+  agentDefinitionId: string;
+  agentRevisionId: string;
+  source: SubagentInvocationSource;
+  parentSessionId: string | null;
+  parentRunId: string | null;
+  task: string;
+  input: unknown;
+  status: SubagentInvocationStatus;
+  result: SubagentInvocationResult | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface SubagentInvocationEvent {
+  id: string;
+  invocationId: string;
+  seq: number;
+  type: AgentEventType;
+  payload: unknown;
+  occurredAt: string;
+}
+
 export interface CreateAgentSessionInput {
   pageLabel: string;
   roomId?: string | null;

@@ -154,14 +154,13 @@ export class OoCliBridge {
     return () => this.listeners.delete(listener)
   }
 
-  environment(): Record<string, string> {
+  gatewayEnvironment(): Record<string, string> {
     return {
-      OO_CONNECTOR_URL: this.options.baseUrl,
-      ...(this.options.runtimeToken ? { OO_CONNECTOR_TOKEN: this.options.runtimeToken } : {}),
-      OO_CONFIG_DIR: this.options.configDirectory,
-      OO_DATA_DIR: this.options.dataDirectory,
-      NXCORE_OO_CLI_PATH: this.options.executable,
-      NO_COLOR: '1',
+      NXCORE_CLI_CONNECTOR_URL: this.options.baseUrl,
+      ...(this.options.runtimeToken ? { NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN: this.options.runtimeToken } : {}),
+      NXCORE_CLI_CONNECTOR_CONFIG_DIR: this.options.configDirectory,
+      NXCORE_CLI_CONNECTOR_DATA_DIR: this.options.dataDirectory,
+      NXCORE_CLI_CONNECTOR_CLI_PATH: this.options.executable,
     }
   }
 
@@ -216,7 +215,11 @@ export class OoCliBridge {
   private processEnvironment(): NodeJS.ProcessEnv {
     return {
       ...(this.options.environment ?? process.env),
-      ...this.environment(),
+      OO_CONNECTOR_URL: this.options.baseUrl,
+      ...(this.options.runtimeToken ? { OO_CONNECTOR_TOKEN: this.options.runtimeToken } : {}),
+      OO_CONFIG_DIR: this.options.configDirectory,
+      OO_DATA_DIR: this.options.dataDirectory,
+      NO_COLOR: '1',
     }
   }
 

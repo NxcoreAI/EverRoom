@@ -76,9 +76,9 @@ describe('OoCliBridge', () => {
     expect(result.data).toEqual({ ok: true, input: { subject: 'private value' } })
     expect(events).toEqual(['oo connector run mail --action send --data <json> --json'])
     expect(events[0]).not.toContain('private value')
-    expect(bridge.environment()).toMatchObject({
-      OO_CONNECTOR_URL: 'http://127.0.0.1:3000',
-      OO_CONNECTOR_TOKEN: 'top-secret-token',
+    expect(bridge.gatewayEnvironment()).toMatchObject({
+      NXCORE_CLI_CONNECTOR_URL: 'http://127.0.0.1:3000',
+      NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN: 'top-secret-token',
     })
   })
 

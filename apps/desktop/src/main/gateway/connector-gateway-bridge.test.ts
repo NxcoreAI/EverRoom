@@ -1,11 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ConnectorGatewayBridge } from './connector-gateway-bridge'
+import { NangoConnectorGatewayBridge } from './connector-gateway-bridge'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
-function bridge(): ConnectorGatewayBridge {
-  return new ConnectorGatewayBridge({} as GatewaySupervisor)
+function bridge(): NangoConnectorGatewayBridge {
+  return new NangoConnectorGatewayBridge({} as GatewaySupervisor)
 }
 
 const servers: Array<ReturnType<typeof createServer>> = []
@@ -27,7 +27,7 @@ function json(response: ServerResponse, value: unknown): void {
   response.end(JSON.stringify(value))
 }
 
-describe('ConnectorGatewayBridge input boundary', () => {
+describe('NangoConnectorGatewayBridge input boundary', () => {
   it('rejects unsupported providers before issuing a request', () => {
     expect(() => bridge().registerConnection({
       provider: 'imap' as 'gmail',
@@ -75,7 +75,7 @@ describe('ConnectorGatewayBridge input boundary', () => {
     servers.push(server)
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const { port } = server.address() as AddressInfo
-    const testBridge = new ConnectorGatewayBridge({
+    const testBridge = new NangoConnectorGatewayBridge({
       getConnection: () => ({ pid: 1, baseUrl: `http://127.0.0.1:${String(port)}`, token: 'test-token', version: 'test' }),
     } as GatewaySupervisor)
 
@@ -83,8 +83,8 @@ describe('ConnectorGatewayBridge input boundary', () => {
     await testBridge.disableConnection('connection-1')
 
     expect(requests.map((request) => request.path)).toEqual([
-      '/v1/connectors/runs/run-1/cancel',
-      '/v1/connectors/connections/connection-1/disable',
+      '/v1/nango-connectors/runs/run-1/cancel',
+      '/v1/nango-connectors/connections/connection-1/disable',
     ])
     for (const request of requests) {
       expect(request.contentType).toContain('application/json')

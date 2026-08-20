@@ -398,7 +398,7 @@ export interface NxcoreDesktopApi {
   gateway: {
     status(): Promise<GatewayStatus>
   }
-  connectors: {
+  nangoConnector: {
     status(): Promise<ConnectorStatus>
     startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
@@ -414,14 +414,14 @@ export interface NxcoreDesktopApi {
     document(connectionId: string, documentId: string): Promise<WikiDocumentPreview>
     records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]>
   }
-  openConnector: {
+  cliConnector: {
     status(): Promise<OpenConnectorStatus>
     execute(input: OpenConnectorExecutionInput): Promise<OpenConnectorCommandResult>
     cancel(requestId: string): Promise<boolean>
     openConsole(): Promise<void>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
   }
-  connectorSync: {
+  cliConnectorSync: {
     status(): Promise<ConnectorSyncStatus>
     accounts(): Promise<ConnectorAccount[]>
     promptProfiles(): Promise<ConnectorPromptProfile[]>

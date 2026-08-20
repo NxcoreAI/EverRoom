@@ -23,9 +23,9 @@ describe("managed document connector sync", () => {
   it("provisions Notion reconciliation and incremental jobs, then reconciles removals", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-notion-managed-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "true",
-      NXCORE_CONNECTOR_SYNC_INTERVAL_MS: "600000",
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "true",
+      NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS: "600000",
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     let searchMode: "page" | "empty" = "page";
@@ -87,9 +87,9 @@ describe("managed document connector sync", () => {
   it("uses a Drive change token and converts exported Google Docs HTML to stable Markdown", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-google-docs-managed-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
-      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
-      NXCORE_CONNECTOR_SYNC_ENABLED: "true",
-      NXCORE_CONNECTOR_SYNC_INTERVAL_MS: "600000",
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "true",
+      NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS: "600000",
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     let revision = 1;

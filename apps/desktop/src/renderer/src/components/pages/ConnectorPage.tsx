@@ -13,7 +13,7 @@ const VIEWS: Array<{ id: View; label: string; icon: typeof Database }> = [
 const INITIAL: ConnectorStatus = { enabled: false, connections: [], scopes: [], runs: [] }
 
 function date(value: string | null): string { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '--' }
-function api() { return window.nxcore?.connectors }
+function api() { return window.nxcore?.nangoConnector }
 
 /** 数据源页内嵌的连接器管理区块（邮件/日程/文档连接器的授权与同步）。 */
 export function ConnectorSection() {
@@ -73,7 +73,7 @@ export function ConnectorSection() {
     <div className="connector-toolbar"><div className="connector-tabs" role="tablist">{VIEWS.map(({ id, label, icon: Icon }) => <button key={id} role="tab" aria-selected={view === id} data-active={String(view === id)} onClick={() => setView(id)}><Icon aria-hidden="true" />{label}<span>{id === 'connections' ? connections.length : id === 'runs' ? status.runs.length : id === 'scopes' ? status.scopes.length : id === 'wiki' ? wikiConnections.length : id === 'calendar' ? calendarRecords.length : mail.length}</span></button>)}</div><button className="icon-button" onClick={() => void refresh()} disabled={busy !== null} title="刷新" aria-label="刷新"><RefreshCw className={busy === 'refresh' ? 'spin' : undefined} /></button></div>
     {error ? <div className="connector-error" role="alert"><AlertTriangle />{error}<button className="icon-button" onClick={() => setError(null)} title="关闭" aria-label="关闭"><X /></button></div> : null}
     {loading ? <div className="connector-loading" role="status"><LoaderCircle className="spin" />正在读取连接器状态...</div> : null}
-    {!loading && !status.enabled ? <div className="connector-callout"><AlertTriangle />连接器模块未配置。请在 .env 配置 Nango（NXCORE_NANGO_URL / NXCORE_NANGO_SECRET）并重启。</div> : null}
+    {!loading && !status.enabled ? <div className="connector-callout"><AlertTriangle />连接器模块未配置。请在 .env 配置 Nango（NXCORE_NANGO_CONNECTOR_URL / NXCORE_NANGO_CONNECTOR_SECRET）并重启。</div> : null}
     {view === 'connections' ? <ConnectionsView connections={connections} scopes={status.scopes} selectedId={selectedConnection} onSelect={setSelectedConnection} busy={busy} onSync={triggerConnection} onDisable={(id) => { if (window.confirm('停用后将停止该连接的自动同步。确认继续？')) void run(`disable:${id}`, () => connectors.disableConnection(id)) }} onPurge={(id) => { if (window.confirm('确认清理该连接器的本地数据？此操作不可撤销。')) void run(`purge:${id}`, () => connectors.purgeConnection(id)) }} /> : null}
     {view === 'runs' ? <RunsView runs={visibleRuns} scopes={status.scopes} connections={connections} busy={busy} onCancel={(id) => run(`cancel:${id}`, () => connectors.cancelRun(id))} /> : null}
     {view === 'scopes' ? <ScopesView scopes={visibleScopes} connections={connections} busy={busy} onSync={triggerScope} /> : null}

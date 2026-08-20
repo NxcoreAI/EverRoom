@@ -175,10 +175,10 @@ export function ConnectorSyncPage() {
     setError(null)
     try {
       const [nextStatus, nextJobs, nextProfiles, apps] = await Promise.all([
-        window.nxcore.connectorSync.status(),
-        window.nxcore.connectorSync.jobs(),
-        window.nxcore.connectorSync.promptProfiles(),
-        window.nxcore.openConnector.execute({ requestId: crypto.randomUUID(), command: { kind: 'apps' } }),
+        window.nxcore.cliConnectorSync.status(),
+        window.nxcore.cliConnectorSync.jobs(),
+        window.nxcore.cliConnectorSync.promptProfiles(),
+        window.nxcore.cliConnector.execute({ requestId: crypto.randomUUID(), command: { kind: 'apps' } }),
       ])
       const nextConnections = Array.isArray(apps.data) ? apps.data as OpenConnectorConnectionSummary[] : []
       setSyncStatus(nextStatus)
@@ -186,7 +186,7 @@ export function ConnectorSyncPage() {
       setProfiles(nextProfiles)
       setConnections(nextConnections)
       const runGroups = await Promise.all(nextJobs.map(async (job) =>
-        (await window.nxcore!.connectorSync.runs(job.id)).map((run) => ({ ...run, jobName: job.name }))))
+        (await window.nxcore!.cliConnectorSync.runs(job.id)).map((run) => ({ ...run, jobName: job.name }))))
       setRuns(runGroups.flat().sort((left, right) => right.startedAt.localeCompare(left.startedAt)))
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '无法读取连接器同步配置。')
@@ -202,7 +202,7 @@ export function ConnectorSyncPage() {
       const dataset = dataType === 'email' ? 'emails'
         : dataType === 'document' ? 'documents'
           : dataType === 'calendar' ? 'calendar_events' : undefined
-      const page = await window.nxcore.connectorSync.data({
+      const page = await window.nxcore.cliConnectorSync.data({
         dataset,
         query: appliedQuery || undefined,
         limit: DATA_PAGE_SIZE,
@@ -235,7 +235,7 @@ export function ConnectorSyncPage() {
       if (requesting) return
       requesting = true
       try {
-        const next = await window.nxcore!.connectorSync.status()
+        const next = await window.nxcore!.cliConnectorSync.status()
         if (active) setSyncStatus(next)
       } catch {
         // The main reload surface reports connection failures; background polling stays quiet.
@@ -280,9 +280,9 @@ export function ConnectorSyncPage() {
     setError(null)
     try {
       if (draft.id && draft.configVersion) {
-        await window.nxcore.connectorSync.updateJob(draft.id, { ...input, configVersion: draft.configVersion })
+        await window.nxcore.cliConnectorSync.updateJob(draft.id, { ...input, configVersion: draft.configVersion })
       } else {
-        await window.nxcore.connectorSync.createJob(input)
+        await window.nxcore.cliConnectorSync.createJob(input)
       }
       setDraft(null)
       await reload()
@@ -296,7 +296,7 @@ export function ConnectorSyncPage() {
   const runJob = async (job: ConnectorSyncJob) => {
     if (!window.nxcore) return
     setBusy(job.id)
-    try { await window.nxcore.connectorSync.runJob(job.id); await reload() }
+    try { await window.nxcore.cliConnectorSync.runJob(job.id); await reload() }
     catch (runError) { setError(runError instanceof Error ? runError.message : '同步失败。') }
     finally { setBusy(null) }
   }
@@ -305,7 +305,7 @@ export function ConnectorSyncPage() {
     if (!window.nxcore) return
     setBusy(job.id)
     try {
-      await window.nxcore.connectorSync.setJobPaused(job.id, job.status === 'active', job.configVersion)
+      await window.nxcore.cliConnectorSync.setJobPaused(job.id, job.status === 'active', job.configVersion)
       await reload()
     } catch (toggleError) { setError(toggleError instanceof Error ? toggleError.message : '更新任务状态失败。') }
     finally { setBusy(null) }
@@ -338,7 +338,7 @@ export function ConnectorSyncPage() {
       let deduped = 0
       const failedItems: Array<{ recordId: string; error: string | null }> = []
       for (let index = 0; index < recordIds.length; index += 100) {
-        const result = await window.nxcore.connectorSync.ingestRecords(recordIds.slice(index, index + 100))
+        const result = await window.nxcore.cliConnectorSync.ingestRecords(recordIds.slice(index, index + 100))
         imported += result.imported
         deduped += result.deduped
         failedItems.push(...result.items.filter((item) => item.error).map((item) => ({
@@ -418,7 +418,7 @@ export function ConnectorSyncPage() {
 
       {!loading && tab === 'accounts' ? (
         <section className="connector-sync-section">
-          <div className="connector-section-heading"><div><h2>已授权账号</h2><p>凭据由 EverRoom 连接器管理，本地数据库只保存连接引用。</p></div><button type="button" className="secondary-button" onClick={() => void window.nxcore?.openConnector.openConsole()}>管理授权</button></div>
+          <div className="connector-section-heading"><div><h2>已授权账号</h2><p>凭据由 EverRoom 连接器管理，本地数据库只保存连接引用。</p></div><button type="button" className="secondary-button" onClick={() => void window.nxcore?.cliConnector.openConsole()}>管理授权</button></div>
           <div className="connector-account-list">
             {connections.length === 0 ? <div className="connector-sync-empty">还没有已授权账号。</div> : connections.map((connection) => (
               <div className="connector-account-row" key={`${connection.service}:${connection.connectionName ?? 'default'}`}>
@@ -462,7 +462,7 @@ export function ConnectorSyncPage() {
           <div className="connector-data-toolbar"><div className="connector-segmented"><button type="button" data-active={String(dataType === '')} onClick={() => changeDataType('')}>全部</button><button type="button" data-active={String(dataType === 'email')} onClick={() => changeDataType('email')}>邮件</button><button type="button" data-active={String(dataType === 'document')} onClick={() => changeDataType('document')}>文档</button><button type="button" data-active={String(dataType === 'calendar')} onClick={() => changeDataType('calendar')}>日程</button></div><form onSubmit={(event) => { event.preventDefault(); setDataOffset(0); setSelectedRecordIds(new Set()); setImportSummary(null); setAppliedQuery(query.trim()) }}><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、正文、发件人或地点" /><button type="submit" className="secondary-button">搜索</button></form></div>
           <div className="connector-data-selection"><label><input type="checkbox" checked={allPageSelected} disabled={importableRecords.length === 0} onChange={() => setSelectedRecordIds((current) => { const next = new Set(current); for (const record of importableRecords) { if (allPageSelected) next.delete(record.id); else next.add(record.id) } return next })} /><span>选择当前页</span></label><span>{dataTotal} 条记录{selectedRecordIds.size > 0 ? ` · 已选 ${selectedRecordIds.size} 条` : ''}</span></div>
           {importSummary ? <div className="connector-import-summary" role="status">{importSummary}</div> : null}
-          <div className="connector-data-list" aria-busy={dataLoading}>{records.map((record) => <div className="connector-data-row" key={record.id}><input type="checkbox" aria-label={`选择 ${record.title || record.sourceRecordId}`} checked={selectedRecordIds.has(record.id)} disabled={!record.resourceType || record.resourceType === 'generic'} onChange={() => toggleRecordSelection(record.id)} /><button type="button" className="connector-data-open" onClick={async () => setSelectedRecord(await window.nxcore!.connectorSync.record(record.id))}><span className="connector-resource-icon">{resourceIcon(record.resourceType ?? 'generic')}</span><span><strong>{record.title || record.sourceRecordId}</strong><small>{record.snippet || record.service}</small></span><time>{formatTime(record.syncedAt)}</time></button></div>)}{dataLoading && records.length === 0 ? <div className="connector-sync-empty"><LoaderCircle className="spin" />正在读取数据</div> : null}{!dataLoading && records.length === 0 ? <div className="connector-sync-empty">没有匹配的本地数据。</div> : null}</div>
+          <div className="connector-data-list" aria-busy={dataLoading}>{records.map((record) => <div className="connector-data-row" key={record.id}><input type="checkbox" aria-label={`选择 ${record.title || record.sourceRecordId}`} checked={selectedRecordIds.has(record.id)} disabled={!record.resourceType || record.resourceType === 'generic'} onChange={() => toggleRecordSelection(record.id)} /><button type="button" className="connector-data-open" onClick={async () => setSelectedRecord(await window.nxcore!.cliConnectorSync.record(record.id))}><span className="connector-resource-icon">{resourceIcon(record.resourceType ?? 'generic')}</span><span><strong>{record.title || record.sourceRecordId}</strong><small>{record.snippet || record.service}</small></span><time>{formatTime(record.syncedAt)}</time></button></div>)}{dataLoading && records.length === 0 ? <div className="connector-sync-empty"><LoaderCircle className="spin" />正在读取数据</div> : null}{!dataLoading && records.length === 0 ? <div className="connector-sync-empty">没有匹配的本地数据。</div> : null}</div>
           <footer className="connector-data-pagination"><span>显示 {dataRangeStart}-{dataRangeEnd}，共 {dataTotal} 条</span><div><button type="button" title="上一页" disabled={dataOffset === 0 || dataLoading} onClick={() => setDataOffset(Math.max(0, dataOffset - DATA_PAGE_SIZE))}><ChevronLeft /></button><span>第 {dataTotal === 0 ? 0 : Math.floor(dataOffset / DATA_PAGE_SIZE) + 1} / {Math.ceil(dataTotal / DATA_PAGE_SIZE)} 页</span><button type="button" title="下一页" disabled={dataOffset + DATA_PAGE_SIZE >= dataTotal || dataLoading} onClick={() => setDataOffset(dataOffset + DATA_PAGE_SIZE)}><ChevronRight /></button></div></footer>
         </section>
       ) : null}
@@ -484,7 +484,7 @@ export function ConnectorSyncPage() {
               <div className="connector-form-grid"><label><span>运行方式</span><div className="connector-segmented"><button type="button" data-active={String(draft.scheduleType === 'manual')} onClick={() => setDraft({ ...draft, scheduleType: 'manual' })}>仅手动</button><button type="button" data-active={String(draft.scheduleType === 'interval')} onClick={() => setDraft({ ...draft, scheduleType: 'interval' })}>固定间隔</button></div></label><label><span>间隔分钟</span><input type="number" min={1} max={525600} disabled={draft.scheduleType === 'manual'} value={draft.intervalMinutes} onChange={(event) => setDraft({ ...draft, intervalMinutes: Number(event.target.value) })} /></label></div>
               <label className="connector-toggle-label"><input type="checkbox" checked={draft.status === 'active'} onChange={(event) => setDraft({ ...draft, status: event.target.checked ? 'active' : 'draft' })} /><span>保存后启用任务</span></label>
             </div>
-            <footer>{draft.id ? <button type="button" className="danger-button" onClick={async () => { if (!window.nxcore || !draft.id || !draft.configVersion) return; await window.nxcore.connectorSync.archiveJob(draft.id, draft.configVersion); setDraft(null); await reload() }}><Archive />归档</button> : <span />}<div><button type="button" className="secondary-button" onClick={() => setDraft(null)}>取消</button><button type="button" className="primary-button" disabled={busy === 'save'} onClick={() => void saveDraft()}>{busy === 'save' ? <LoaderCircle className="spin" /> : null}保存任务</button></div></footer>
+            <footer>{draft.id ? <button type="button" className="danger-button" onClick={async () => { if (!window.nxcore || !draft.id || !draft.configVersion) return; await window.nxcore.cliConnectorSync.archiveJob(draft.id, draft.configVersion); setDraft(null); await reload() }}><Archive />归档</button> : <span />}<div><button type="button" className="secondary-button" onClick={() => setDraft(null)}>取消</button><button type="button" className="primary-button" disabled={busy === 'save'} onClick={() => void saveDraft()}>{busy === 'save' ? <LoaderCircle className="spin" /> : null}保存任务</button></div></footer>
           </section>
         </div>
       ) : null}

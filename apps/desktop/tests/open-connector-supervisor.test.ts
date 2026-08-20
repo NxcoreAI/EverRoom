@@ -176,9 +176,9 @@ describe('OpenConnectorSupervisor', () => {
     const root = await mkdtemp(join(tmpdir(), 'everroom-open-connector-external-'))
     temporaryDirectories.push(root)
     const supervisor = createSupervisor(join(root, 'data'), join(root, 'missing-runtime'), {
-      NXCORE_OPEN_CONNECTOR_MANAGED: 'false',
-      NXCORE_OPEN_CONNECTOR_URL: 'http://127.0.0.1:4567/',
-      NXCORE_OPEN_CONNECTOR_RUNTIME_TOKEN: 'external-runtime-token',
+      NXCORE_CLI_CONNECTOR_MANAGED: 'false',
+      NXCORE_CLI_CONNECTOR_URL: 'http://127.0.0.1:4567/',
+      NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN: 'external-runtime-token',
     })
 
     const connection = await supervisor.start()

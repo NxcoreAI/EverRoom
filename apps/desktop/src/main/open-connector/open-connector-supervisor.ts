@@ -69,7 +69,7 @@ function normalizedBaseUrl(value: string): string {
   try {
     url = new URL(value)
   } catch {
-    throw new Error('NXCORE_OPEN_CONNECTOR_URL 必须是有效的 HTTP(S) 地址。')
+    throw new Error('NXCORE_CLI_CONNECTOR_URL 必须是有效的 HTTP(S) 地址。')
   }
   const loopback = ['localhost', '127.0.0.1', '::1'].includes(url.hostname)
   if (
@@ -147,14 +147,14 @@ export class OpenConnectorSupervisor {
     this.lastError = null
 
     try {
-      if (this.environment().NXCORE_OPEN_CONNECTOR_MANAGED === 'false') {
+      if (this.environment().NXCORE_CLI_CONNECTOR_MANAGED === 'false') {
         const baseUrl = normalizedBaseUrl(
-          this.environment().NXCORE_OPEN_CONNECTOR_URL?.trim() || 'http://127.0.0.1:3000',
+          this.environment().NXCORE_CLI_CONNECTOR_URL?.trim() || 'http://127.0.0.1:3000',
         )
         this.connection = {
           baseUrl,
           runtimeToken: this.configuredRuntimeToken(),
-          adminToken: this.environment().NXCORE_OPEN_CONNECTOR_ADMIN_TOKEN?.trim() || undefined,
+          adminToken: this.environment().NXCORE_CLI_CONNECTOR_ADMIN_TOKEN?.trim() || undefined,
           managed: false,
           pid: null,
           version: null,
@@ -195,7 +195,7 @@ export class OpenConnectorSupervisor {
 
       const packaged = this.options.packaged ?? app.isPackaged
       const command = this.options.command
-        ?? (packaged ? process.execPath : (this.environment().NXCORE_OPEN_CONNECTOR_NODE?.trim() || 'node'))
+        ?? (packaged ? process.execPath : (this.environment().NXCORE_CLI_CONNECTOR_NODE?.trim() || 'node'))
       const proxyEnvironment = await this.resolveProxyEnvironment()
       const child = spawn(command, [join(runtimeDirectory, 'src', 'server', 'index.ts')], {
         cwd: runtimeDirectory,
@@ -274,7 +274,7 @@ export class OpenConnectorSupervisor {
     return {
       state: this.starting || this.child ? 'starting' : this.lastError ? 'error' : 'stopped',
       baseUrl: null,
-      managed: this.environment().NXCORE_OPEN_CONNECTOR_MANAGED !== 'false',
+      managed: this.environment().NXCORE_CLI_CONNECTOR_MANAGED !== 'false',
       pid: null,
       version: null,
       message: this.lastError,
@@ -310,7 +310,7 @@ export class OpenConnectorSupervisor {
   }
 
   private configuredRuntimeToken(): string | undefined {
-    return this.environment().NXCORE_OPEN_CONNECTOR_RUNTIME_TOKEN?.trim()
+    return this.environment().NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN?.trim()
       || this.environment().OOMOL_CONNECT_RUNTIME_TOKEN?.trim()
       || undefined
   }
@@ -354,7 +354,7 @@ export class OpenConnectorSupervisor {
 
   private resolveRuntimeDirectory(): string {
     const configured = this.options.runtimeDirectory
-      ?? this.environment().NXCORE_OPEN_CONNECTOR_RUNTIME_DIR?.trim()
+      ?? this.environment().NXCORE_CLI_CONNECTOR_RUNTIME_DIR?.trim()
     const packaged = this.options.packaged ?? app.isPackaged
     const candidates = [
       configured,
@@ -381,7 +381,7 @@ export class OpenConnectorSupervisor {
     } catch {
       // Generate a fresh settings file below.
     }
-    const configuredPort = Number(this.environment().NXCORE_OPEN_CONNECTOR_PORT ?? DEFAULT_PORT)
+    const configuredPort = Number(this.environment().NXCORE_CLI_CONNECTOR_PORT ?? DEFAULT_PORT)
     const secrets: ManagedSecrets = {
       version: 1,
       encryptionKey: randomBytes(32).toString('base64url'),

@@ -65,9 +65,26 @@ describe("gateway server", () => {
     expect(authorized.statusCode).toBe(200);
   });
 
+  it("keeps Nango and CLI connector routes in disjoint namespaces", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    const nango = await app.inject({ method: "GET", url: "/v1/nango-connectors/status", headers });
+    const cli = await app.inject({ method: "GET", url: "/v1/cli-connectors/sync/status", headers });
+    const legacy = await app.inject({ method: "GET", url: "/v1/connectors/status", headers });
+    const crossed = await app.inject({ method: "GET", url: "/v1/cli-connectors/connections", headers });
+    await app.close();
+
+    expect(nango.statusCode).toBe(200);
+    expect(cli.statusCode).toBe(200);
+    expect(legacy.statusCode).toBe(404);
+    expect(crossed.statusCode).toBe(404);
+  });
+
   it("manages connector sync jobs without accepting a client owner id", async () => {
     const config = await testConfig();
-    config.connectorSyncOwnerId = "bound-owner";
+    config.cliConnectorSyncOwnerId = "bound-owner";
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
     const payload = {
@@ -77,16 +94,16 @@ describe("gateway server", () => {
       scheduleType: "interval", intervalMs: 900_000, timezone: "Asia/Shanghai", status: "active",
     };
     const created = await app.inject({
-      method: "POST", url: "/v1/connectors/sync/jobs", headers,
+      method: "POST", url: "/v1/cli-connectors/sync/jobs", headers,
       payload: { ...payload, ownerId: "other-owner" },
     });
     const createdJob = created.json<{ id: string; ownerId: string; configVersion: number }>();
     const paused = await app.inject({
-      method: "POST", url: `/v1/connectors/sync/jobs/${createdJob.id}/pause`, headers,
+      method: "POST", url: `/v1/cli-connectors/sync/jobs/${createdJob.id}/pause`, headers,
       payload: { configVersion: createdJob.configVersion },
     });
     const conflict = await app.inject({
-      method: "PATCH", url: `/v1/connectors/sync/jobs/${createdJob.id}`, headers,
+      method: "PATCH", url: `/v1/cli-connectors/sync/jobs/${createdJob.id}`, headers,
       payload: { configVersion: createdJob.configVersion, name: "过期修改" },
     });
     await app.close();

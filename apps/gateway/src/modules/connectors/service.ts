@@ -327,20 +327,20 @@ export class ConnectorSyncService {
     this.seedPromptProfiles(now);
     const existingJobs = this.db.select({ id: connectorSyncJobs.id }).from(connectorSyncJobs).all();
     if (existingJobs.length === 0) {
-      for (const job of this.config.connectorSyncJobs ?? []) this.seedJob(job, now);
+      for (const job of this.config.cliConnectorSyncJobs ?? []) this.seedJob(job, now);
     }
     this.backfillDerivedGmailQueries(now);
     for (const job of this.db.select().from(connectorSyncJobs).all()) this.ensureJobStateAndVersion(job, now);
-    if (!this.config.connectorSyncEnabled || !this.config.openConnector) return;
+    if (!this.config.cliConnectorSyncEnabled || !this.config.cliConnector) return;
     await this.refreshAccountsAndProvisionJobs(now);
     for (const job of this.db.select().from(connectorSyncJobs).all()) this.ensureJobStateAndVersion(job, now);
-    this.timer = setInterval(() => void this.tick(), this.config.connectorSyncIntervalMs ?? 300_000);
+    this.timer = setInterval(() => void this.tick(), this.config.cliConnectorSyncIntervalMs ?? 300_000);
     this.timer.unref?.();
     void this.tick();
   }
 
   currentOwnerId(): string {
-    return this.config.connectorSyncOwnerId ?? "local-user";
+    return this.config.cliConnectorSyncOwnerId ?? "local-user";
   }
 
   close(): void {
@@ -755,8 +755,8 @@ export class ConnectorSyncService {
       .all().length;
     const domainRecordCount = this.domainRecordCount(ownerId);
     return {
-      enabled: this.config.connectorSyncEnabled,
-      runtimeConfigured: Boolean(this.config.openConnector),
+      enabled: this.config.cliConnectorSyncEnabled,
+      runtimeConfigured: Boolean(this.config.cliConnector),
       jobs,
       recordCount: legacyRecords + domainRecordCount,
       domainRecordCount,
@@ -1042,7 +1042,7 @@ export class ConnectorSyncService {
   }
 
   private seedJob(job: ConnectorSyncJobConfig, now: Date): void {
-    const intervalMs = Math.max(job.intervalMs ?? this.config.connectorSyncIntervalMs ?? 300_000, MIN_INTERVAL_MS);
+    const intervalMs = Math.max(job.intervalMs ?? this.config.cliConnectorSyncIntervalMs ?? 300_000, MIN_INTERVAL_MS);
     const existing = this.db.select({ id: connectorSyncJobs.id })
       .from(connectorSyncJobs).where(eq(connectorSyncJobs.id, job.id)).get();
     if (existing) {
@@ -1096,7 +1096,7 @@ export class ConnectorSyncService {
   }
 
   private async tick(): Promise<void> {
-    if (!this.config.connectorSyncEnabled || !this.config.openConnector) return;
+    if (!this.config.cliConnectorSyncEnabled || !this.config.cliConnector) return;
     const now = new Date();
     await this.refreshAccountsAndProvisionJobs(now);
     const due = this.db.select().from(connectorSyncJobs)
@@ -1114,7 +1114,7 @@ export class ConnectorSyncService {
   }
 
   private async runJob(job: typeof connectorSyncJobs.$inferSelect): Promise<void> {
-    if (!this.config.openConnector || this.running.has(job.id)) return;
+    if (!this.config.cliConnector || this.running.has(job.id)) return;
     const startedAt = new Date();
     if (!this.acquireLease(job.id, startedAt)) return;
     this.running.add(job.id);
@@ -1448,7 +1448,7 @@ export class ConnectorSyncService {
     action: string,
     input: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    const connector = this.config.openConnector;
+    const connector = this.config.cliConnector;
     if (!connector) throw new Error("OpenConnector runtime is unavailable");
     const args = ["connector", "run", job.service, "--action", action, "--data", JSON.stringify(input)];
     if (job.connectionName) args.push("--connection-name", job.connectionName);
@@ -1729,7 +1729,7 @@ export class ConnectorSyncService {
   private async downloadConnectorTransitFile(value: unknown): Promise<Buffer> {
     const file = objectValue(objectValue(value).file);
     const downloadUrl = requiredText(file.downloadUrl, "connector transit downloadUrl");
-    const connector = this.config.openConnector;
+    const connector = this.config.cliConnector;
     if (!connector) throw new Error("OpenConnector runtime is unavailable");
     const expectedUrl = new URL(connector.baseUrl);
     const url = new URL(downloadUrl);
@@ -1857,7 +1857,7 @@ export class ConnectorSyncService {
   }
 
   private async refreshAccountsAndProvisionJobs(now: Date): Promise<void> {
-    const connector = this.config.openConnector;
+    const connector = this.config.cliConnector;
     if (!connector) return;
     let result: unknown;
     try {
@@ -2122,7 +2122,7 @@ export class ConnectorSyncService {
     runId: string,
   ): Promise<void> {
       if (!job.action) throw new Error("Connector sync Agent runtime is unavailable and no legacy action is configured");
-      const connector = this.config.openConnector;
+      const connector = this.config.cliConnector;
       if (!connector) throw new Error("OpenConnector runtime is unavailable");
       const args = ["connector", "run", job.service, "--action", job.action, "--data", JSON.stringify(job.input)];
       if (job.connectionName) args.push("--connection-name", job.connectionName);

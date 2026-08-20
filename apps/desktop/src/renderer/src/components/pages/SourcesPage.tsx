@@ -51,7 +51,7 @@ export function SourcesPage() {
   const [connectorsEnabled, setConnectorsEnabled] = useState(false)
 
   useEffect(() => {
-    void window.nxcore?.connectors.status().then((status) => setConnectorsEnabled(status.enabled)).catch(() => undefined)
+    void window.nxcore?.nangoConnector.status().then((status) => setConnectorsEnabled(status.enabled)).catch(() => undefined)
   }, [])
 
   // 授权确认由 gateway 在 status 轮询中完成（Nango 确认后自动注册连接），
@@ -62,7 +62,7 @@ export function SourcesPage() {
     let active = true
     const check = async () => {
       try {
-        const next = await window.nxcore!.connectors.authorizationStatus(authorizationId)
+        const next = await window.nxcore!.nangoConnector.authorizationStatus(authorizationId)
         if (!active) return
         if (next.status === 'connected') { setAuthorizationId(null); setMessage('连接已创建，同步范围正在初始化。') }
         else if (next.status !== 'pending') { setAuthorizationId(null); setMessage(next.error ?? '授权未完成。') }
@@ -77,7 +77,7 @@ export function SourcesPage() {
     setConnectMenuOpen(false)
     setMessage(null)
     try {
-      const attempt = await window.nxcore?.connectors.startAuthorization(provider)
+      const attempt = await window.nxcore?.nangoConnector.startAuthorization(provider)
       if (attempt) {
         setAuthorizationId(attempt.id)
         setMessage('已打开授权页面，请在浏览器中完成授权。')
