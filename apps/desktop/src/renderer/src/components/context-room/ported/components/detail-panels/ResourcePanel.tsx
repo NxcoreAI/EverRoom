@@ -228,7 +228,7 @@ export function ResourceTree({
     setCreatingDocument(true);
     try {
       const markdown = await file.text();
-      const title = newDocumentTitle.trim() || markdownDocumentTitle(file.name);
+      const title = newDocumentTitle.trim() || markdownDocumentTitle(file.name, t('contextRoom:documentOperationCenter.untitledDocument'));
       await onCreateDocument(title, parseMarkdownDocument(markdown));
       setCreatePopoverOpen(false);
       setNewDocumentTitle('');

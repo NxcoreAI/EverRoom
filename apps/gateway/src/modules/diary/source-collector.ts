@@ -78,7 +78,10 @@ export class DiarySourceCollector {
     }
 
     for (const row of this.db.select().from(visualNodes)
-      .where(and(lt(visualNodes.startAt, end), gte(visualNodes.endAt, start), isNull(visualNodes.deletedAt))).all()) {
+      .where(and(
+        lt(visualNodes.startAt, end), gte(visualNodes.endAt, start),
+        eq(visualNodes.vlmStatus, "ready"), isNull(visualNodes.deletedAt),
+      )).all()) {
       const observation = this.db.select().from(visualObservations).where(eq(visualObservations.nodeId, row.id))
         .orderBy(asc(visualObservations.capturedAt)).get();
       const occurredAt = clampDate(row.startAt, start, end);
@@ -97,7 +100,8 @@ export class DiarySourceCollector {
       });
     }
 
-    for (const row of this.db.select().from(realityEvents).all()
+    for (const row of this.db.select().from(realityEvents)
+      .where(eq(realityEvents.processingState, "ready")).all()
       .filter((item) => item.startedAt < end && (item.endedAt ?? item.startedAt) >= start)) {
       const occurredAt = clampDate(row.startedAt, start, end);
       const endedAt = clampDate(row.endedAt ?? row.startedAt, occurredAt, end);

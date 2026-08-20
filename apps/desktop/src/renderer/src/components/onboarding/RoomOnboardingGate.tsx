@@ -1,14 +1,25 @@
 import {
+  ArrowUpRight,
+  BookOpen,
+  BrainCircuit,
   Check,
+  ChevronRight,
+  DoorOpen,
   Languages,
+  LoaderCircle,
+  Network,
   RefreshCw,
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
+import { ProductBrand } from '@/components/ui/ProductBrand'
 import type { ContextRoomKind, ContextRoomRecord } from '@/components/context-room/ported/types'
+import { localizedUiText } from '@/components/context-room/ported/adapters'
+import { createRoomUsageGuide } from './roomUsageGuide'
 import {
+  readRoomOnboardingMarker,
   shouldShowRoomOnboarding,
   writeRoomOnboardingMarker,
   type RoomOnboardingMarker,
@@ -20,31 +31,38 @@ type GateMode = 'checking' | 'app' | 'form' | 'creating' | 'success' | 'unavaila
 interface RoomOnboardingGateProps {
   children: ReactNode
   onOpenRoom: (room: { id: string; title: string; kind: ContextRoomKind }) => void
+  suppressOnboarding?: boolean
 }
 
-// Keep the guide repeatable while it is being debugged. The marker is still
-// updated during a run so the form does not reopen after skip/create.
-const REPEATABLE_ROOM_ONBOARDING = true
+// The guide is shown only on first use. Its marker is still updated during a
+// run so the form does not reopen after skip/create.
+const REPEATABLE_ROOM_ONBOARDING = false
 
-export function RoomOnboardingGate({ children, onOpenRoom }: RoomOnboardingGateProps) {
+export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = false }: RoomOnboardingGateProps) {
   const { locale, setLocale, t } = useLocale()
+  const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const { state, backendReady, refreshFromBackend } = useContextRoomState()
-  const markerRef = useRef<RoomOnboardingMarker | null>(null)
+  const markerRef = useRef<RoomOnboardingMarker | null>(readRoomOnboardingMarker())
   const [mode, setMode] = useState<GateMode>('checking')
   const [name, setName] = useState('')
   const [purpose, setPurpose] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [createdRoom, setCreatedRoom] = useState<ContextRoomRecord | null>(null)
+  const [guideCreated, setGuideCreated] = useState<boolean | null>(null)
   const [checkRequest, setCheckRequest] = useState(0)
 
   useEffect(() => {
+    if (suppressOnboarding) {
+      setMode('app')
+      return
+    }
     if (markerRef.current && !REPEATABLE_ROOM_ONBOARDING) {
       setMode('app')
       return
     }
     if (!backendReady) return
     setMode(shouldShowRoomOnboarding(backendReady, state.rooms.length, markerRef.current) ? 'form' : 'app')
-  }, [backendReady, checkRequest, state.rooms.length])
+  }, [backendReady, checkRequest, state.rooms.length, suppressOnboarding])
 
   const skip = () => {
     writeRoomOnboardingMarker({ status: 'skipped' })
@@ -60,6 +78,7 @@ export function RoomOnboardingGate({ children, onOpenRoom }: RoomOnboardingGateP
       return
     }
     setError(null)
+    setGuideCreated(null)
     setMode('creating')
     try {
       const api = window.nxcore?.contextRooms
@@ -71,9 +90,27 @@ export function RoomOnboardingGate({ children, onOpenRoom }: RoomOnboardingGateP
       const refreshed = await refreshFromBackend()
       const room = refreshed?.rooms.find((item) => item.id === result.room.id)
       if (!room) throw new Error(t('contextRoom:roomDialogs.createFailed'))
+
+      let createdGuide = false
+      try {
+        const documents = window.nxcore?.documents
+        if (documents?.import) {
+          const guide = createRoomUsageGuide(room, t)
+          await documents.import({
+            id: guide.documentId,
+            roomId: room.id,
+            title: guide.title,
+            contentJson: guide.contentJson,
+          })
+          createdGuide = true
+        }
+      } catch (guideError) {
+        console.warn('Unable to create the Room usage guide', { roomId: room.id, guideError })
+      }
       writeRoomOnboardingMarker({ status: 'completed', roomId: room.id })
       markerRef.current = { status: 'completed', roomId: room.id }
       setCreatedRoom(room)
+      setGuideCreated(createdGuide)
       setMode('success')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('contextRoom:roomDialogs.createFailed'))
@@ -84,9 +121,14 @@ export function RoomOnboardingGate({ children, onOpenRoom }: RoomOnboardingGateP
   if (mode === 'app') return <>{children}</>
 
   return (
-    <div className="room-onboarding" data-mode={mode}>
+    <div className="room-onboarding" data-mode={mode} data-mac-desktop={String(isMacDesktop)}>
       <header className="room-onboarding-header drag-region">
-        <strong>EverRoom</strong>
+        <ProductBrand className="room-onboarding-brand" />
+        <nav className="room-onboarding-sequence no-drag" aria-label={t('contextRoom:onboarding.eyebrow')}>
+          <span data-state="complete"><Check aria-hidden="true" />{t('memory:onboarding.memorySetup')}</span>
+          <ChevronRight aria-hidden="true" />
+          <span data-state="active"><DoorOpen aria-hidden="true" />{t('contextRoom:onboarding.eyebrow')}</span>
+        </nav>
         <div className="room-onboarding-actions no-drag">
           <div className="room-onboarding-language" role="group" aria-label={t('contextRoom:onboarding.language')}>
             <Languages aria-hidden="true" />
@@ -128,8 +170,38 @@ export function RoomOnboardingGate({ children, onOpenRoom }: RoomOnboardingGateP
             </aside>
           </section>
         ) : null}
-        {mode === 'creating' ? <section className="room-onboarding-service"><Check className="room-onboarding-success-icon" aria-hidden="true" /><span>{t('contextRoom:onboarding.creating')}</span><h1>{t('contextRoom:onboarding.creatingTitle')}</h1></section> : null}
-        {mode === 'success' && createdRoom ? <section className="room-onboarding-service"><Check className="room-onboarding-success-icon" aria-hidden="true" /><span>{t('contextRoom:onboarding.successEyebrow')}</span><h1>{t('contextRoom:onboarding.success')}</h1><div className="room-onboarding-result"><strong>{createdRoom.title}</strong><span>{createdRoom.kind}</span></div><div className="room-onboarding-buttons"><button type="button" className="room-onboarding-primary" onClick={() => { setMode('app'); onOpenRoom({ id: createdRoom.id, title: createdRoom.title, kind: createdRoom.kind }) }}>{t('contextRoom:onboarding.open')}</button><button type="button" className="room-onboarding-secondary" onClick={() => setMode('app')}>{t('contextRoom:onboarding.continue')}</button></div></section> : null}
+        {mode === 'creating' ? <section className="room-onboarding-service" aria-busy="true"><LoaderCircle className="room-onboarding-loading-icon" aria-hidden="true" /><span>{t('contextRoom:onboarding.creating')}</span><h1>{t('contextRoom:onboarding.creatingTitle')}</h1><div className="room-onboarding-loading-track" aria-hidden="true"><i /><i /><i /></div></section> : null}
+        {mode === 'success' && createdRoom ? (
+          <section className="room-onboarding-success" aria-labelledby="room-onboarding-success-title">
+            <div className="room-onboarding-success-heading">
+              <div className="room-onboarding-success-icon" aria-hidden="true"><Check /></div>
+              <div>
+                <span>{t('contextRoom:onboarding.successEyebrow')}</span>
+                <h1 id="room-onboarding-success-title">{t('contextRoom:onboarding.success')}</h1>
+                <p>{t('contextRoom:onboarding.successBody')}</p>
+              </div>
+            </div>
+            <div className="room-onboarding-success-panel">
+              <div className="room-onboarding-success-room">
+                <div className="room-onboarding-success-kicker"><span>{t('contextRoom:display.room')}</span><span className="room-onboarding-success-ready"><Check aria-hidden="true" />{t('contextRoom:onboarding.ready')}</span></div>
+                <div className="room-onboarding-success-identity">
+                  <div className="room-onboarding-success-room-icon" aria-hidden="true">{createdRoom.icon || 'R'}</div>
+                  <div><h2>{createdRoom.title}</h2><p>{localizedUiText(createdRoom.kind, t)} · {createdRoom.roomCode}</p></div>
+                </div>
+                <p className="room-onboarding-success-goal">{createdRoom.brief.goal || purpose.trim()}</p>
+              </div>
+              <div className="room-onboarding-success-next">
+                <div className="room-onboarding-success-next-heading"><span>{t('contextRoom:onboarding.next')}</span><strong>{t('contextRoom:onboarding.successNext')}</strong></div>
+                <div className="room-onboarding-success-list">
+                  <div className="room-onboarding-success-item"><span className="room-onboarding-success-item-icon"><BrainCircuit aria-hidden="true" /></span><span><strong>{t('contextRoom:onboarding.memoryReady')}</strong><small>{t('contextRoom:onboarding.memoryReadyBody')}</small></span><Check aria-hidden="true" /></div>
+                  <div className="room-onboarding-success-item"><span className="room-onboarding-success-item-icon"><BookOpen aria-hidden="true" /></span><span><strong>{t('contextRoom:onboarding.guide')}</strong><small>{guideCreated ? t('contextRoom:onboarding.guideAdded') : t('contextRoom:onboarding.guideUnavailable')}</small></span>{guideCreated ? <Check aria-hidden="true" /> : <span className="room-onboarding-success-item-dot" aria-hidden="true" />}</div>
+                  <div className="room-onboarding-success-item"><span className="room-onboarding-success-item-icon"><Network aria-hidden="true" /></span><span><strong>{t('contextRoom:onboarding.workspaceReady')}</strong><small>{t('contextRoom:onboarding.workspaceReadyBody')}</small></span><Check aria-hidden="true" /></div>
+                </div>
+              </div>
+            </div>
+            <div className="room-onboarding-success-actions"><button type="button" className="room-onboarding-primary" onClick={() => { setMode('app'); onOpenRoom({ id: createdRoom.id, title: createdRoom.title, kind: createdRoom.kind }) }}>{t('contextRoom:onboarding.open')}<ArrowUpRight aria-hidden="true" /></button><button type="button" className="room-onboarding-secondary" onClick={() => setMode('app')}>{t('contextRoom:onboarding.continue')}</button></div>
+          </section>
+        ) : null}
       </main>
     </div>
   )

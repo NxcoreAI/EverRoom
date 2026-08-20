@@ -74,34 +74,6 @@
   background: var(--hover);
 }
 
-.mem-onboarding-button {
-  display: inline-flex;
-  height: 32px;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--icon-memory) 36%, var(--border));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--icon-memory) 8%, var(--surface));
-  color: color-mix(in srgb, var(--icon-memory) 86%, var(--text));
-  font-size: 11px;
-  font-weight: 650;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.mem-onboarding-button svg { width: 15px; height: 15px; }
-
-.mem-onboarding-button:hover {
-  border-color: color-mix(in srgb, var(--icon-memory) 58%, var(--border));
-  background: color-mix(in srgb, var(--icon-memory) 13%, var(--surface));
-}
-
-@media (max-width: 880px) {
-  .mem-onboarding-button { width: 32px; justify-content: center; padding: 0; }
-  .mem-onboarding-button span { display: none; }
-}
-
 .mem-spin {
   animation: mem-spin 0.9s linear infinite;
 }
@@ -230,49 +202,6 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-}
-
-.mem-first-memory {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 16px 18px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--icon-memory);
-  border-radius: 7px;
-  background: var(--surface);
-}
-
-.mem-first-memory-icon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--icon-memory) 12%, var(--surface));
-  color: var(--icon-memory);
-}
-
-.mem-first-memory-icon svg { width: 17px; height: 17px; }
-.mem-first-memory strong { display: block; color: var(--text); font-size: 13px; }
-.mem-first-memory p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
-
-.mem-first-memory > button {
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: 5px;
-  background: var(--accent);
-  color: var(--accent-contrast);
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.mem-first-memory > button:hover { background: var(--accent-strong); }
-
-@media (max-width: 720px) {
-  .mem-first-memory { grid-template-columns: 36px minmax(0, 1fr); }
-  .mem-first-memory > button { grid-column: 1 / -1; width: 100%; }
 }
 
 .mem-cards {

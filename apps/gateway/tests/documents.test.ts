@@ -1225,12 +1225,16 @@ describe('document transactions', () => {
       .toContain('用户已经明确要求在工作区创建、保存或写入文档')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
       .toContain('只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
+      .toContain('句子的创建对象是 Room、Context Room 或房间')
     expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
       .toContain('必须立即调用此只读工具')
     expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
       .toContain('不得询问用户是否需要列表')
     expect(result.tools?.find((tool) => tool.name === 'context_room_create')?.description)
       .toContain('用户明确要求创建')
+    expect(result.tools?.find((tool) => tool.name === 'context_room_create')?.description)
+      .toContain('创建一个管理项目文档的 Context Room')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
       .toContain('充实、完整的长篇内容')
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_append')?.description)
@@ -1245,6 +1249,8 @@ describe('document transactions', () => {
       .toContain('state/applied/documentChanged')
     expect(host.instructions()).toContain('最终回复以最后一次工具结果为准')
     expect(host.instructions()).toContain('awaiting_review')
+    expect(host.instructions()).toContain('用途从句中的“文档/文件/项目”只是 Room 管理的内容')
+    expect(host.instructions()).toContain('在 Context Room 里创建一份项目文档')
 
     await host.exchange('mcp-session', {
       jsonrpc: '2.0',

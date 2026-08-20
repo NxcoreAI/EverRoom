@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
+import { uiText } from '../../adapters';
 import { roomKindTone } from '../utils';
 import { PanelEmptyState } from './PanelEmptyState';
 
@@ -131,11 +132,11 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
       >
         <b>{task.title}</b>
         <span className="context-room-task-source">
-          {task.source?.name ?? t('contextRoom:activityPanes.ownerOwner', { owner: task.owner })}
+          {task.source?.name ?? t('contextRoom:activityPanes.ownerOwner', { owner: t(uiText(task.owner)) })}
         </span>
         <span className="context-room-task-meta">
-          <span>{task.owner}</span>
-          <span><CalendarDays aria-hidden="true" />{t('contextRoom:activityPanes.dueDeadline', { deadline: task.deadline })}</span>
+          <span>{t(uiText(task.owner))}</span>
+          <span><CalendarDays aria-hidden="true" />{t('contextRoom:activityPanes.dueDeadline', { deadline: t(uiText(task.deadline)) })}</span>
         </span>
       </button>
     </div>

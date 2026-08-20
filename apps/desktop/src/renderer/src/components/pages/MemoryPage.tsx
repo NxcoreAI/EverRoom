@@ -1,4 +1,4 @@
-import { RefreshCw, Search, Sparkles } from 'lucide-react'
+import { RefreshCw, Search } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { MEMORY_TAB_EVENT } from '../MemoryPipelineStatus'
@@ -25,7 +25,7 @@ const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'core', label: 'memory:memory.profile', level: 'L3' },
 ]
 
-export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => void }) {
+export function MemoryPage() {
   const { t } = useLocale()
   const overview = useMemoryOverview()
   const [tab, setTab] = useState<MemoryTabId>('overview')
@@ -110,17 +110,6 @@ export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => vo
               }}
             />
           </div>
-          {onStartOnboarding ? (
-            <button
-              type="button"
-              className="mem-onboarding-button"
-              title={t('memory:onboarding.reopen')}
-              onClick={onStartOnboarding}
-            >
-              <Sparkles aria-hidden="true" strokeWidth={1.7} />
-              <span>{t('memory:onboarding.reopen')}</span>
-            </button>
-          ) : null}
           <button
             type="button"
             className="mem-icon-button"
@@ -170,7 +159,7 @@ export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => vo
         <div className="mem-content">
           {tab === 'overview' ? (
             overview.data
-              ? <MemoryOverviewPane overview={overview.data} onNavigate={setTab} onStartOnboarding={onStartOnboarding} />
+              ? <MemoryOverviewPane overview={overview.data} onNavigate={setTab} />
               : <p className="mem-loading">{t('memory:memory.loading')}</p>
           ) : null}
           {tab === 'atomic' ? (

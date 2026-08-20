@@ -72,6 +72,7 @@ export function App() {
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
+  const [suppressRoomOnboarding, setSuppressRoomOnboarding] = useState(false)
   const [theme] = useState<ThemeId>(readStoredTheme)
   const enterOnboardingHome = useCallback(() => setActivePage('home'), [])
 
@@ -269,7 +270,7 @@ export function App() {
   return (
     <MemoryOnboardingGate onEnterHome={enterOnboardingHome}>
       {({ openMemoryOnboarding }) => (
-      <RoomOnboardingGate onOpenRoom={openContextRoomTab}>
+      <RoomOnboardingGate onOpenRoom={openContextRoomTab} suppressOnboarding={suppressRoomOnboarding}>
       <div
       className="app-shell"
       data-agent-open={String(agentOpen)}
@@ -320,7 +321,10 @@ export function App() {
           onNavigate={navigate}
           onFocusAgent={focusAgent}
           onOpenDocument={openDocumentTarget}
-          onStartMemoryOnboarding={openMemoryOnboarding}
+          onStartMemoryOnboarding={() => {
+            setSuppressRoomOnboarding(true)
+            openMemoryOnboarding()
+          }}
         />
       </main>
       {agentOpen ? (

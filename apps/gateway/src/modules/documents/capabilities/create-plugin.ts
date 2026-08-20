@@ -48,7 +48,7 @@ export function createPlugin(
   const begin: DocumentCapabilityTool = {
     name: "context_room_write_begin",
     title: "开始创建 Room 文档",
-    description: "仅当用户已经明确要求在工作区创建、保存或写入文档且 Room 已确认后调用。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。调用前根据上下文确定文档类型、目标读者、期望结果和格式约束，明确准备写入正文的核心内容、重点或结论，形成连贯提纲，并拟定能够准确概括正文的具体标题；上下文足够时不要机械追问。",
+    description: "仅当用户已经明确要求在工作区创建、保存或写入文档且 Room 已确认后调用。若句子的创建对象是 Room、Context Room 或房间，不得调用本工具；即使用途说明中出现“文档/文件/项目”，也应调用 context_room_create。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。调用前根据上下文确定文档类型、目标读者、期望结果和格式约束，明确准备写入正文的核心内容、重点或结论，形成连贯提纲，并拟定能够准确概括正文的具体标题；上下文足够时不要机械追问。",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
@@ -311,6 +311,7 @@ export function createPlugin(
     manifest: manifest("document.create", "mutation", "streaming_commit", "streaming-document", true, false),
     promptGuidelines: [
       "只在用户明确要求创建、保存或写入工作区文档时使用创建工具。",
+      "若被创建的对象是 Room、Context Room 或房间，不得使用文档创建工具；用途从句中出现文档、文件或项目不代表创建文档。“创建一个管理项目文档的 Context Room”应调用 context_room_create，“在 Context Room 里创建一份项目文档”才使用文档创建工具。",
       "写作前根据已有上下文确定文档类型、目标读者、期望结果与约束，并在内部形成连贯提纲；上下文足够时直接写，不要为了流程机械追问。",
       "文档标题与正文严格分离：context_room_write_begin.title 是唯一页面标题，并由界面以 H1 展示；后续 context_room_write_append 只能生成正文，不得再次写出标题、同义标题或任何 # 一级标题。正文主章节从 ## 开始，子章节从 ### 开始；编号章节必须保持对应层级，例如 2. 使用 ##、2.1 使用 ###。",
       "正文通常以简短引言开头；标题应唯一、完整且有描述性。使用标准 Markdown，代码围栏标注语言，链接文字说明目标内容，表格只用于真正的行列数据。",
