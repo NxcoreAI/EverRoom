@@ -107,8 +107,6 @@ export async function ensureIntegration(
       console.warn(`[nango-bootstrap] 查询 integration ${providerConfigKey} 失败(HTTP ${existing.status})`);
       return;
     }
-    // 显式传入的 scopes 优先；未传时回退到 executor 实际调用所需的最小集合。
-    const effectiveScopes = scopes ?? PROVIDER_SCOPES[providerConfigKey];
     await dashboard.post("/api/v1/integrations", {
       provider,
       integrationId: providerConfigKey,
