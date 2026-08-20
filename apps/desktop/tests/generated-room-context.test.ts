@@ -46,4 +46,14 @@ describe('applyGeneratedRoomContext', () => {
 
     expect(refreshed.actionItems[0]).toMatchObject({ completed: true, status: '已完成' })
   })
+
+  it('returns the existing Room when only the generation timestamp changes', () => {
+    const room = applyGeneratedRoomContext(createContextRoomFixture(), context())
+    const sameContent = {
+      ...context(),
+      generatedAt: '2026-08-21T12:00:00.000Z',
+    }
+
+    expect(applyGeneratedRoomContext(room, sameContent)).toBe(room)
+  })
 })

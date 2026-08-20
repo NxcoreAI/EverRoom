@@ -1,7 +1,10 @@
 import {
   ArrowLeft,
   ArrowRight,
+  BrainCircuit,
   Check,
+  ChevronRight,
+  DoorOpen,
   Languages,
   RefreshCw,
   Sparkles,
@@ -16,6 +19,7 @@ import {
 } from 'react'
 
 import type { MemoryAtomicItemDto, MemoryOnboardingResultDto } from '../../../../shared/memory'
+import { ProductBrand } from '@/components/ui/ProductBrand'
 import { useLocale } from '@/i18n/LocaleContext'
 import {
   candidateOnboardingMemories,
@@ -60,9 +64,9 @@ const TRACE_PLACEHOLDER_KEYS = [
   'memory:onboarding.tracePlaceholder3',
 ] as const
 
-// Keep the complete first-use sequence repeatable while it is being debugged.
 // A pending generation is still recovered instead of starting a duplicate run.
-const REPEATABLE_MEMORY_ONBOARDING = true
+// Completed or skipped onboarding is reopened explicitly from Settings.
+const REPEATABLE_MEMORY_ONBOARDING = false
 const MEMORY_SUCCESS_DISPLAY_MS = 1_200
 
 function createRequestId(): string {
@@ -71,6 +75,7 @@ function createRequestId(): string {
 
 export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboardingGateProps) {
   const { locale, setLocale, t, formatDate } = useLocale()
+  const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const storedMarker = readMemoryOnboardingMarker()
   const initialMarkerRef = useRef<MemoryOnboardingMarker | null>(
     REPEATABLE_MEMORY_ONBOARDING && storedMarker?.status !== 'pending' ? null : storedMarker,
@@ -309,9 +314,14 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
         : null
 
   return (
-    <div className="memory-onboarding" data-mode={mode}>
+    <div className="memory-onboarding" data-mode={mode} data-mac-desktop={String(isMacDesktop)}>
       <header className="memory-onboarding-header drag-region">
-        <div className="memory-onboarding-brand">EverRoom</div>
+        <ProductBrand className="memory-onboarding-brand" />
+        <nav className="memory-onboarding-sequence no-drag" aria-label={t('memory:onboarding.memorySetup')}>
+          <span data-state="active"><BrainCircuit aria-hidden="true" />{t('memory:onboarding.memorySetup')}</span>
+          <ChevronRight aria-hidden="true" />
+          <span data-state="upcoming"><DoorOpen aria-hidden="true" />{t('contextRoom:onboarding.eyebrow')}</span>
+        </nav>
         <div className="memory-onboarding-actions no-drag">
           <div className="memory-onboarding-language" role="group" aria-label={t('memory:onboarding.language')}>
             <Languages aria-hidden="true" />
@@ -417,6 +427,7 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
               <span className="memory-onboarding-kicker">{t('memory:onboarding.buildFirstMemory')}</span>
               <h1>{statusLabel}</h1>
               <p>{mode === 'saving' ? t('memory:onboarding.savingBody') : t('memory:onboarding.refiningBody')}</p>
+              <div className="memory-onboarding-loading-dots" aria-hidden="true"><i /><i /><i /></div>
               <div className="memory-onboarding-status-list">
                 <span data-complete={mode === 'refining'}><Check aria-hidden="true" />{t('memory:onboarding.savingAnswers')}</span>
                 <span data-active={mode === 'refining'}><Sparkles aria-hidden="true" />{t('memory:onboarding.refiningMemory')}</span>

@@ -31,7 +31,7 @@ import {
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
-import type { AccountKeyringStatus, CloudDevice, WindowScreenshotStatus } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
@@ -39,11 +39,12 @@ import { LocalModelSettingsSection } from '@/components/settings/LocalModelSetti
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
-  { id: 'settings-account', label: '账号与同步', description: '登录、设备、额度', icon: Cloud },
-  { id: 'settings-models', label: '模型与 Agent', description: '本地模型、MCP', icon: Brain },
-  { id: 'settings-reality', label: '现实感知', description: '录音与转写', icon: AudioLines },
-  { id: 'settings-capture', label: '窗口截图', description: '自动采集与保存', icon: Camera },
-  { id: 'settings-editor', label: '文档编辑', description: '智能补全', icon: Sparkles },
+  { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
+  { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
+  { id: 'settings-memory', label: 'memory:settings.memorySetupTitle', description: 'memory:settings.memorySetupActionBody', icon: Sparkles },
+  { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
+  { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
+  { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
 ]
 
 type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
@@ -84,14 +85,14 @@ function subscriptionStatusLabel(status: string, t: Translate): string {
   return t(labels[status] ?? status)
 }
 
-function formatSyncTime(value: string | null): string {
-  if (!value) return '尚未同步'
+function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): string {
+  if (!value) return t('surface:settings.notSyncedYet')
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '同步时间未知'
-  return `上次同步 ${date.toLocaleString('zh-CN', { dateStyle: 'short', timeStyle: 'short' })}`
+  if (Number.isNaN(date.getTime())) return t('surface:settings.syncTimeUnknown')
+  return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
 }
 
-export function SettingsPage() {
+export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboarding?: () => void }) {
   const { locale, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [identifier, setIdentifier] = useState('')
@@ -117,6 +118,8 @@ export function SettingsPage() {
   const [screenCaptureStatus, setScreenCaptureStatus] = useState<WindowScreenshotStatus | null>(null)
   const [screenCaptureInterval, setScreenCaptureInterval] = useState(5)
   const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
+  const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
+  const [perceptionBusy, setPerceptionBusy] = useState(false)
   const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
   const [activeSetting, setActiveSetting] = useState(SETTINGS_NAV[0].id)
 
@@ -218,10 +221,14 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (!window.nxcore) return
-    void window.nxcore.screenCapture.status()
-      .then((status) => {
+    void Promise.all([
+      window.nxcore.screenCapture.status(),
+      window.nxcore.screenCapture.perceptionSettings(),
+    ])
+      .then(([status, settings]) => {
         setScreenCaptureStatus(status)
         setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
+        setPerceptionSettings(settings)
       })
       .catch(() => undefined)
   }, [])
@@ -332,6 +339,19 @@ export function SettingsPage() {
     }
   }
 
+  const updateOnlineVlm = async (enabled: boolean) => {
+    if (!window.nxcore || !perceptionSettings) return
+    setPerceptionBusy(true)
+    try {
+      const settings = await window.nxcore.screenCapture.updateOnlineVlm(enabled, perceptionSettings.configVersion)
+      setPerceptionSettings(settings)
+    } catch {
+      // The preload request interceptor reports configuration and provider errors globally.
+    } finally {
+      setPerceptionBusy(false)
+    }
+  }
+
   const captureWindowNow = async () => {
     if (!window.nxcore) return
     setScreenCaptureBusy(true)
@@ -392,8 +412,8 @@ export function SettingsPage() {
       </section>
 
       <div className="settings-layout">
-        <nav className="settings-navigation" aria-label="设置导航">
-          <div className="settings-navigation-heading">设置目录</div>
+        <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>
+          <div className="settings-navigation-heading">{t('surface:settings.settingsDirectory')}</div>
           {SETTINGS_NAV.map(({ id, label, description, icon: Icon }) => (
             <button
               key={id}
@@ -405,14 +425,33 @@ export function SettingsPage() {
             >
               <span className="settings-navigation-icon"><Icon aria-hidden="true" /></span>
               <span>
-                <strong>{label}</strong>
-                <small>{description}</small>
+                <strong>{t(label)}</strong>
+                <small>{t(description)}</small>
               </span>
             </button>
           ))}
         </nav>
 
         <main className="settings-content" data-active-setting={activeSetting}>
+
+      <section id="settings-memory" className="reality-settings-section settings-anchor-section" aria-labelledby="memory-settings-title">
+        <header>
+          <span><Sparkles aria-hidden="true" /></span>
+          <div>
+            <h2 id="memory-settings-title">{t('memory:settings.memorySetupTitle')}</h2>
+            <p>{t('memory:settings.memorySetupBody')}</p>
+          </div>
+        </header>
+        <div className="reality-setting-row">
+          <div>
+            <strong>{t('memory:settings.memorySetupActionTitle')}</strong>
+            <small>{t('memory:settings.memorySetupActionBody')}</small>
+          </div>
+          <button type="button" className="primary-button" onClick={onStartMemoryOnboarding} disabled={!onStartMemoryOnboarding}>
+            <Sparkles aria-hidden="true" />{t('memory:onboarding.reopen')}
+          </button>
+        </div>
+      </section>
 
       <section id="settings-account" className="cloud-account-section settings-anchor-section" aria-labelledby="cloud-account-title">
         <header className="cloud-account-header">
@@ -551,7 +590,7 @@ export function SettingsPage() {
                   {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
                   {t('surface:settings.syncDeviceData')}
                 </button>
-                <small className="cloud-keyring-last-sync">{formatSyncTime(lastSyncAt)}</small>
+                <small className="cloud-keyring-last-sync">{formatSyncTime(lastSyncAt, locale, t)}</small>
               </div>
             </div>
           </div>
@@ -721,6 +760,22 @@ export function SettingsPage() {
           >
             <span aria-hidden="true" />
             {t(screenCaptureStatus?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.visualUnderstanding')}</strong><small>{t('surface:settings.visualUnderstandingDescription')}</small></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.visualUnderstanding')}
+            aria-checked={Boolean(perceptionSettings?.onlineVlmEnabled)}
+            disabled={perceptionBusy || perceptionSettings === null}
+            data-active={String(Boolean(perceptionSettings?.onlineVlmEnabled))}
+            onClick={() => void updateOnlineVlm(!perceptionSettings?.onlineVlmEnabled)}
+          >
+            <span aria-hidden="true" />
+            {t(perceptionSettings?.onlineVlmEnabled ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
         <div className="reality-setting-row">

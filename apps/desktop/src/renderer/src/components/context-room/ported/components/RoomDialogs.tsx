@@ -1,14 +1,104 @@
-import { RotateCcw, X } from 'lucide-react'
+import { CalendarDays, FileText, Mail, RotateCcw, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
 import type { ContextRoomRecord } from '../types'
 import { localizedUiText, uiText } from '../adapters'
-import { ActionConfirmDialog, ReferenceDialog } from './shared'
+import { ReferenceDialog } from './shared'
+import { roomKindIcon, roomKindTone } from './utils'
 
 export interface DraftRoom {
   name: string
   description: string
+}
+
+function DeleteRoomDialog({
+  room,
+  onOpenChange,
+  onConfirm,
+}: {
+  room: ContextRoomRecord | null
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => void
+}) {
+  const { t } = useLocale()
+  const RoomIcon = room ? roomKindIcon(room.kind) : null
+
+  return (
+    <ReferenceDialog
+      open={Boolean(room)}
+      onOpenChange={onOpenChange}
+      title={t('contextRoom:roomDialogs.deleteContextRoom')}
+      contentClassName="context-room-delete-room-dialog-shell"
+    >
+      <div className="context-room-delete-room-dialog">
+        <header>
+          <span className="context-room-delete-room-symbol">
+            <Trash2 aria-hidden="true" strokeWidth={1.8} />
+          </span>
+          <div>
+            <h2>{t('contextRoom:roomDialogs.deleteContextRoom')}</h2>
+            <p>{room ? t('contextRoom:roomDialogs.titleWillBeMovedToDeletedRooms', { title: room.title }) : ''}</p>
+          </div>
+        </header>
+
+        {room && RoomIcon ? (
+          <div className="context-room-delete-room-body">
+            <section className="context-room-delete-room-target" aria-label={t('contextRoom:roomDialogs.resourceScope')}>
+              <div className="context-room-delete-room-identity">
+                <span data-icon-tone={roomKindTone(room.kind)}>
+                  <RoomIcon aria-hidden="true" strokeWidth={1.8} />
+                </span>
+                <div>
+                  <strong>{room.title}</strong>
+                  <small>{t(uiText(room.kind))}</small>
+                </div>
+              </div>
+              <div className="context-room-delete-room-stats">
+                <span>
+                  <FileText aria-hidden="true" strokeWidth={1.8} />
+                  <b>{room.stats.docs}</b>
+                  <small>{t('contextRoom:roomDialogs.documents')}</small>
+                </span>
+                <span>
+                  <Mail aria-hidden="true" strokeWidth={1.8} />
+                  <b>{room.stats.mails}</b>
+                  <small>{t('contextRoom:roomDialogs.emails')}</small>
+                </span>
+                <span>
+                  <CalendarDays aria-hidden="true" strokeWidth={1.8} />
+                  <b>{room.stats.meetings}</b>
+                  <small>{t('contextRoom:roomDialogs.meetings')}</small>
+                </span>
+              </div>
+            </section>
+
+            <div className="context-room-delete-room-recovery">
+              <RotateCcw aria-hidden="true" strokeWidth={1.8} />
+              <p>{t('contextRoom:roomDialogs.theResourcesWillRemainButAgentWillNo')}</p>
+            </div>
+          </div>
+        ) : null}
+
+        <footer>
+          <button type="button" className="context-room-ghost" onClick={() => onOpenChange(false)}>
+            {t('contextRoom:roomDialogs.cancel')}
+          </button>
+          <button
+            type="button"
+            className="context-room-danger-button"
+            onClick={() => {
+              onOpenChange(false)
+              onConfirm()
+            }}
+          >
+            <Trash2 aria-hidden="true" strokeWidth={1.8} />
+            {t('contextRoom:roomDialogs.delete')}
+          </button>
+        </footer>
+      </div>
+    </ReferenceDialog>
+  )
 }
 
 export function RoomForm({
@@ -121,22 +211,9 @@ export function RoomLifecycleDialogs({
           />
         ) : null}
       </ReferenceDialog>
-      <ActionConfirmDialog
-        open={Boolean(deleteRoom)}
+      <DeleteRoomDialog
+        room={deleteRoom}
         onOpenChange={(open) => !open && onDeleteRoomChange(null)}
-        title={t('contextRoom:roomDialogs.deleteContextRoom')}
-        summary={deleteRoom ? t('contextRoom:roomDialogs.titleWillBeMovedToDeletedRooms', { title: deleteRoom.title }) : ''}
-        rows={deleteRoom ? [
-          { label: t('contextRoom:roomDialogs.roomType'), value: t(uiText(deleteRoom.kind)) },
-          { label: t('contextRoom:roomDialogs.resourceScope'), value: t('contextRoom:roomDialogs.documentsDocsEmailsMailsMeetingsMeetings', {
-            docs: deleteRoom.stats.docs,
-            mails: deleteRoom.stats.mails,
-            meetings: deleteRoom.stats.meetings,
-          }) },
-        ] : []}
-        risk={t('contextRoom:roomDialogs.theResourcesWillRemainButAgentWillNo')}
-        confirmLabel={t('contextRoom:roomDialogs.delete')}
-        danger
         onConfirm={() => {
           if (!deleteRoom) return
           onDeleteRoom(deleteRoom.id)

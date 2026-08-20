@@ -29,7 +29,7 @@ export function queryPlugins(
   const roomCreate: DocumentCapabilityTool = {
     name: "context_room_create",
     title: "创建 Context Room",
-    description: "当用户明确要求创建、新建或添加一个 EverRoom Context Room 时立即调用。title 必须使用用户指定的名称；description 应准确概括用户对 Room 的说明，用户只给名称时用该名称写一句中性的简短说明。Room 创建 Agent 会据此检索记忆、推断类型并补全信息。不要为普通聊天、文档创建、第三方服务页面或用户仅询问创建方法时调用。",
+    description: "当用户明确要求创建、新建或添加一个 EverRoom Context Room 时立即调用。被创建的对象是 Room、Context Room 或房间时，即使用途说明中出现文档、文件或项目，也必须调用本工具，例如“创建一个管理项目文档的 Context Room”。title 必须使用用户指定的名称；description 应准确概括用户对 Room 的说明，用户只给名称时用该名称写一句中性的简短说明。Room 创建 Agent 会据此检索记忆、推断类型并补全信息。不要为普通聊天、在 Room 内创建文档、第三方服务页面或用户仅询问创建方法时调用。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -141,7 +141,9 @@ export function queryPlugins(
       manifest: manifest("room.create", "mutation", null, null, false, false),
       promptGuidelines: [
         "用户明确要求创建、新建或添加 Context Room 时，必须在当前回合调用 context_room_create；不要只说明步骤或声称已经创建。若用户给出了名称，直接创建，不要再次确认。description 使用用户原话；只有名称时写一句中性的简短说明，不要编造具体事实。",
+        "按句子的创建对象分流：创建对象是 Room、Context Room 或房间时调用 context_room_create，用途从句中的“文档/文件/项目”只是 Room 管理的内容，不能触发文档创建。例如“创建一个管理项目文档的 Context Room”是创建 Room；“在 Context Room 里创建一份项目文档”才是创建文档。",
         "When the user explicitly asks to create, add, or make a Context Room, call context_room_create in the current turn. Use the exact requested title and the user's description. If only a title is given, provide a short neutral description without inventing facts.",
+        "Route by the grammatical object being created. If it is a Room or Context Room, call context_room_create even when its purpose mentions documents, files, or projects. For example, 'create a Context Room for managing project documents' creates a Room; 'create a project document in a Context Room' creates a document.",
       ],
       tools: [roomCreate],
     },
