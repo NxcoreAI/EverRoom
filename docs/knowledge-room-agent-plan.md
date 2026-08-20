@@ -155,9 +155,10 @@ profile: text("profile", { mode: "json" }).$type<RoomProfile | null>(),
   - `ingestEntityBacklog` 的 confirm 之后（晋升补账也真实沉淀材料）
   - 统一入口 `markProfileDirty(roomId)`：先查 rooms 行 `deletedAt IS NULL` 再 mark（删除房不积累；link-only 分支在 confirm 前返回，天然不触发）
 - worker 接线：
+  - **`start()` 加硬崩溃恢复**（照 `DocumentOutboxWorker.start()` 同款模式，`document-outbox-worker.ts:45-48`）：启动瞬间把 knowledge 各 job type 的 `running` 滞留行一次性 UPDATE 回 `pending`——进程被强杀时 `processJob` 的 catch 没机会执行，job 会永久卡 `running`（drain 只查 pending），此现状盲区顺手修复。安全性：启动瞬间 worker 尚未轮询、无活着的 running job 可误伤；各 job 类型本身幂等（ingest 靠同名覆盖 + 账本去重、promote 靠 `entity.roomId` 回填检查走 backlog 补账、profile-refresh 整体覆盖天然幂等），重跑只是重复幂等操作
   - drain 的 `inArray` 加新 type
   - `lockKeyOf` 加分支：profile-refresh → `roomId`（**与 ingest 同锁串行**——刷新读的 wiki 必已 settled，消掉半写竞态；worker 单飞下这条锁也是期望行为）
-  - dispatch 加分支；`dispose()` 加 `scheduler.dispose()`
+  - dispatch 加分支；`dispose()` 加 `scheduler.dispose()`（优雅退出时进行中的 job 由 `processJob` 的 catch 写回 pending，不依赖启动恢复）
 - 新方法 `runProfileRefreshJob(payload)`：
   1. 读 rooms 行，`!row || row.deletedAt` → return（刷新中被删）
   2. 无 wiki（`resolveRoomWikiId` null）且 materials/linkedSources 全空 → return（无素材不白跑、不建空 wiki）
@@ -238,6 +239,7 @@ export function mergeKnowledgeRooms(
 **新建 `apps/gateway/tests/knowledge-room-agent.test.ts`**（夹具照 `knowledge-file-upload.test.ts` 的 `serviceForTest`：临时 sqlite + 不可达 KS + 不 start()；agent 用自写 stub AgentRuntime——`FakeAgentRuntime` 回复不可注入，自写更直接）：
 
 - `ProfileRefreshScheduler`（vitest fake timers）：首次 mark 后 M 触发 / count≥N 提前触发 / hasActiveJob 重武装（再 mark 仍只 fire 一次）/ dispose 清 timer
+- 启动恢复：夹具预插一条 `running` 滞留的 knowledge job → `service.start()` 后被翻回 pending 并被 worker 重新执行
 - `runKnowledgeAgentTask`：正常 JSON → 返回；带围栏 JSON 仍解析成功；坏 JSON 两次 → 抛错；`run.failed` → 抛错；挂起不结束 + timeoutMs → 抛错且 `cancel` 被调用
 - `parseRoomProfileResponse` 纯函数：合法全字段 / 部分字段缺失给默认 / 超长截断 / 数组超限裁剪 / kind 枚举外回退 info / 坏 JSON 抛错
 - service 级（插 jobs 行驱动 worker）：
@@ -256,6 +258,8 @@ export function mergeKnowledgeRooms(
 
 | 风险 | 处置 |
 |---|---|
+| 进程硬崩溃/强杀（job 卡 running） | `start()` 启动恢复：running 滞留一次性翻回 pending，drain 重新捞起（§3.3；同款修复现有 knowledge worker 盲区）；优雅退出（dispose）本来就会把进行中 job 写回 pending |
+| gateway 重启丢内存态（防抖/去抖窗口） | 接受（scheduler/pendingSchedules 在内存；下次沉淀重新 mark，机会性刷新不丢数据——job 本身持久化在 jobs 表不受影响） |
 | agent hang | 5 分钟超时 + `runtime.cancel` 兜底（pi runtime 无内建超时，这是唯一兜底）；刷新失败保旧 |
 | worker 单飞被长刷新阻塞 | 超时封顶 5 分钟，与现状 `waitUntilSettled` 最长 10 分钟同量级 |
 | gateway 重启丢防抖态 | 接受（内存 scheduler；下次沉淀重新 mark，机会性刷新不丢数据） |
@@ -278,7 +282,7 @@ export function mergeKnowledgeRooms(
 
 1. 迁移 `0018_room_profile.sql` + schema.ts + `RoomProfile` 类型
 2. `room-agent.ts`（工具/prompt/解析器/runner/scheduler，无依赖可先行）
-3. `service.ts`（config 字段 → job type/deps/attach → 触发点 → worker 接线 → `runProfileRefreshJob` → `registerEntityOrFallback`）+ DTO 扩展
+3. `service.ts`（config 字段 → job type/deps/attach → 启动恢复 → 触发点 → worker 接线 → `runProfileRefreshJob` → `registerEntityOrFallback`）+ DTO 扩展
 4. `runtime-factory.ts` + `create-server.ts` 接线 + `config.ts` env 旋钮
 5. 渲染器 `shared/knowledge.ts` → `knowledgeRoomSync.ts` → `PortedContextRoom.tsx`
 6. 测试（gateway 新文件 → desktop 扩展）
