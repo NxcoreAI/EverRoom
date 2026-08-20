@@ -95,6 +95,22 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
+  connectors: {
+    status: () => invoke('connector:status'),
+    startAuthorization: (provider) => invoke('connector:start-authorization', provider),
+    authorizationStatus: (id) => invoke('connector:authorization-status', id),
+    registerConnection: (input) => invoke('connector:register-connection', input),
+    disableConnection: (id) => invoke('connector:disable-connection', id),
+    purgeConnection: (id) => invoke('connector:purge-connection', id),
+    triggerSync: (id, mode) => invoke('connector:trigger-sync', id, mode),
+    cancelRun: (id) => invoke('connector:cancel-run', id),
+    scopes: (connectionId) => invoke('connector:list-scopes', connectionId),
+    runs: (connectionId) => invoke('connector:list-runs', connectionId),
+    mail: (query) => invoke('connector:list-mail', query),
+    documents: (connectionId) => invoke('connector:list-documents', connectionId),
+    document: (connectionId, documentId) => invoke('connector:read-document', connectionId, documentId),
+    records: (connectionId, type) => invoke('connector:list-records', connectionId, type),
+  },
   openConnector: {
     status: () => invokeQuietly('open-connector:status'),
     execute: (input) => invokeQuietly('open-connector:execute', input),
@@ -306,6 +322,7 @@ const api: NxcoreDesktopApi = {
     list: () => invoke('sources:list'),
     listFiles: (id) => invoke('sources:list-files', id),
     listEvidence: (id, fileId) => invoke('sources:list-evidence', id, fileId),
+    previewFile: (id, fileId) => invoke('sources:preview-file', id, fileId),
     searchEvidence: (query, id) => invoke('sources:search-evidence', query, id),
     onChanged: (listener) => {
       const handleChanged = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]) => {
@@ -317,6 +334,8 @@ const api: NxcoreDesktopApi = {
     showFile: (id, fileId) => invoke('sources:show-file', id, fileId),
     addLocalFolder: () => invoke('sources:add-local-folder'),
     addGitHub: (input) => invoke('sources:add-github', input),
+    addGoogleDocs: (input) => invoke('sources:add-google-docs', input),
+    addNotion: (input) => invoke('sources:add-notion', input),
     sync: (id) => invoke('sources:sync', id),
     setPaused: (id, paused) => invoke('sources:set-paused', id, paused),
     disconnect: (id, deleteLocalData) =>

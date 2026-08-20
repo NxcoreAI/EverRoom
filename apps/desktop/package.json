@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@nxcore/agent-contract": "workspace:*",
+    "@nxcore/connector-contract": "workspace:*",
     "@nxcore/document-model": "workspace:*",
     "@nxcore/reality-contract": "workspace:*",
     "@radix-ui/react-context-menu": "^2.3.7",

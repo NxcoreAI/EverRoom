@@ -243,6 +243,15 @@ describe("loadConfig", () => {
     })).toThrow("NXCORE_ASR_ALIYUN_OSS_REGION");
   });
 
+  it("loads Nango connectors only from complete, safe configuration", () => {
+    expect(loadConfig(["--token", "0123456789abcdef"], {}).connectors?.enabled).toBe(false);
+    const enabled=loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"http://127.0.0.1:3003",NXCORE_NANGO_SECRET:"secret"});
+    expect(enabled.connectors).toMatchObject({enabled:true,nangoUrl:"http://127.0.0.1:3003",pollingIntervalMs:300000});
+    expect(enabled.connectors?.databasePath).toContain("connectors.sqlite");
+    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"https://nango.example.com"})).toThrow("requires both");
+    expect(()=>loadConfig(["--token", "0123456789abcdef"],{NXCORE_NANGO_URL:"http://nango.example.com",NXCORE_NANGO_SECRET:"secret"})).toThrow("must use HTTPS");
+  });
+
   it("falls back to NXCORE_AI_* for the knowledge arbitration LLM", () => {
     // 只配 NXCORE_AI_*（未配任何 NXCORE_KNOWLEDGE_LLM_*）→ ⑤ 仲裁可用
     const fromAi = loadConfig(["--token", "0123456789abcdef"], {

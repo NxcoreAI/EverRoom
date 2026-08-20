@@ -41,10 +41,14 @@ function readStoredTheme(): ThemeId {
   }
 }
 
+function readInitialPage(): PageId {
+  return 'home'
+}
+
 export function App() {
   const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
-  const [activePage, setActivePage] = useState<PageId>('home')
+  const [activePage, setActivePage] = useState<PageId>(readInitialPage)
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [closedContextRoomTabs, setClosedContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)

@@ -41,7 +41,7 @@ import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.j
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
-import { connectorRoutes } from "../modules/connectors/routes.js";
+import { connectorRoutes, connectorSyncRoutes } from "../modules/connectors/routes.js";
 import { ConnectorSyncService } from "../modules/connectors/service.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
@@ -51,6 +51,13 @@ import { RealityService } from "../modules/reality/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
+import { createConnectorDatabase } from "../infrastructure/connectors/client.js";
+import { ConnectorRepository } from "../modules/connectors/repository.js";
+import { ConnectorManager } from "../modules/connectors/manager.js";
+import { NangoExecutor } from "../modules/connectors/nango-executor.js";
+import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
+import { bootstrapNango } from "../modules/connectors/nango-bootstrap.js";
+import { ConnectorDocumentStore } from "../modules/connectors/document-store.js";
 
 function swaggerAssetsDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -69,10 +76,39 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const gatewayLogger = await createGatewayLogger(config.dataDir, config.logLevel);
   const app = Fastify({
     loggerInstance: gatewayLogger.logger,
+    routerOptions: {
+      // knowledge 文件路由的 id 可能是 caller_ref（如 connector:provider:<uuid>:<docId>），
+      // URL 编码后超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
+      maxParamLength: 500,
+    },
   }).withTypeProvider<TypeBoxTypeProvider>();
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
+  const connectorConfig = config.connectors ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
+  // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
+  const nangoSecret = connectorConfig.enabled ? await bootstrapNango(connectorConfig) : connectorConfig.nangoSecret;
+  const connectorDb = createConnectorDatabase(connectorConfig.enabled ? connectorConfig.databasePath : ":memory:");
+  const connectorManager = new ConnectorManager(
+    new ConnectorRepository(connectorDb.sqlite),
+    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, nangoSecret) : null,
+    connectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
+  );
+  const connectorAuthorization = connectorConfig.enabled && "gmailConfigKey" in connectorConfig
+    ? new NangoAuthorizationService(
+        connectorConfig.nangoUrl,
+        nangoSecret,
+        {
+          gmail: connectorConfig.gmailConfigKey,
+          outlook: connectorConfig.outlookConfigKey,
+          "google-docs": connectorConfig.googleDocsConfigKey,
+          notion: connectorConfig.notionConfigKey,
+          "google-calendar": connectorConfig.googleCalendarConfigKey,
+        },
+        connectorManager,
+      )
+    : undefined;
+  if (connectorConfig.enabled) connectorManager.startPolling("pollingIntervalMs" in connectorConfig ? connectorConfig.pollingIntervalMs : 300_000);
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
@@ -276,6 +312,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   let documentOutboxWorker: DocumentOutboxWorker | null = null;
   app.addHook("onClose", async () => {
+    await connectorManager.dispose();
+    connectorDb.close();
     clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
     await transcriptionSummaryService.dispose();
@@ -321,6 +359,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
     },
   );
+  // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
+  // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
+  connectorManager.setMemorySink((input) =>
+    ingestService.ingestConnector({
+      kind: input.kind === "document" ? "cloud-doc" : "mail",
+      sourceId: `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
+      dataType: input.kind,
+      title: input.title,
+      markdown: input.markdown,
+      ...(config.knowledge?.routerEnabled ? {} : { pipelines: { room: false, wiki: false, memory: true } }),
+    }).then(() => undefined));
   documentOutboxWorker = new DocumentOutboxWorker(
     db,
     ingestService,
@@ -335,8 +384,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(ingestRoutes(ingestService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
+  await app.register(connectorRoutes(connectorManager, connectorConfig.enabled, connectorAuthorization));
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
-  await app.register(connectorRoutes(connectorSyncService));
+  await app.register(connectorSyncRoutes(connectorSyncService));
 
   return app;
 }

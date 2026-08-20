@@ -63,6 +63,18 @@ export const DATA_TYPES: DataTypeDef[] = [
     matchExtensions: ["html", "htm"],
     defaults: { room: true, wiki: true, memory: false },
   },
+  {
+    key: "mail",
+    label: "邮件（连接器）",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: true },
+  },
+  {
+    key: "calendar",
+    label: "日程（连接器）",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: true },
+  },
 ];
 
 export function dataTypeDef(key: string): DataTypeDef | null {

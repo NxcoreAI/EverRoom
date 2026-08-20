@@ -91,6 +91,9 @@ const RawConfigSchema = Type.Object(
     asrAliyunOssAccessKeySecret: Type.String(),
     asrAliyunOssStsToken: Type.String(),
     asrAliyunOssPrefix: Type.String({ minLength: 1 }),
+    nangoUrl: Type.String(),
+    nangoSecret: Type.String(),
+    connectorPollMs: Type.Integer({ minimum: 1000 }),
     memoryEnabled: Type.Boolean(),
     memoryBaseUrl: Type.String(),
     memoryApiKey: Type.String(),
@@ -255,6 +258,24 @@ export interface GatewayConfig {
   webSearch: WebSearchConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
+  connectors?: {
+    enabled: boolean;
+    databasePath: string;
+    nangoUrl: string;
+    nangoSecret: string;
+    gmailConfigKey: string;
+    outlookConfigKey: string;
+    googleDocsConfigKey: string;
+    notionConfigKey: string;
+    googleCalendarConfigKey: string;
+    googleClientId: string;
+    googleClientSecret: string;
+    notionClientId: string;
+    notionClientSecret: string;
+    outlookClientId: string;
+    outlookClientSecret: string;
+    pollingIntervalMs: number;
+  };
   openConnector?: OpenConnectorCliConfig | null;
 }
 
@@ -615,6 +636,9 @@ export function loadConfig(
     asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
     asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
     asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
+    nangoUrl: env.NXCORE_NANGO_URL?.trim() ?? "",
+    nangoSecret: env.NXCORE_NANGO_SECRET?.trim() ?? "",
+    connectorPollMs: parsePositiveInteger("NXCORE_CONNECTOR_POLL_MS", env.NXCORE_CONNECTOR_POLL_MS ?? "300000"),
     memoryEnabled: env.NXCORE_MEMORY_ENABLED == null
       ? false
       : parseBoolean("NXCORE_MEMORY_ENABLED", env.NXCORE_MEMORY_ENABLED.trim()),
@@ -712,6 +736,8 @@ export function loadConfig(
       throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
     }
   }
+  if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_URL and NXCORE_NANGO_SECRET");
+  if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_URL must use HTTPS except for loopback development"); }
 
   const memory: MemoryRuntimeConfig | null = rawConfig.memoryEnabled
     ? {
@@ -882,6 +908,24 @@ export function loadConfig(
             : null,
         }
       : null,
+    connectors: {
+      enabled: Boolean(rawConfig.nangoUrl),
+      databasePath: join(dataDir,"database","connectors.sqlite"),
+      nangoUrl: rawConfig.nangoUrl,
+      nangoSecret: rawConfig.nangoSecret,
+      gmailConfigKey: env.NXCORE_NANGO_GMAIL_CONFIG_KEY?.trim() ?? "google-mail",
+      outlookConfigKey: env.NXCORE_NANGO_OUTLOOK_CONFIG_KEY?.trim() ?? "microsoft-mail",
+      googleDocsConfigKey: env.NXCORE_NANGO_GOOGLE_DOCS_CONFIG_KEY?.trim() ?? "google-drive",
+      notionConfigKey: env.NXCORE_NANGO_NOTION_CONFIG_KEY?.trim() ?? "notion",
+      googleCalendarConfigKey: env.NXCORE_NANGO_GOOGLE_CALENDAR_CONFIG_KEY?.trim() ?? "google-calendar",
+      googleClientId: env.NXCORE_NANGO_GOOGLE_CLIENT_ID?.trim() ?? "",
+      googleClientSecret: env.NXCORE_NANGO_GOOGLE_CLIENT_SECRET?.trim() ?? "",
+      notionClientId: env.NXCORE_NANGO_NOTION_CLIENT_ID?.trim() ?? "",
+      notionClientSecret: env.NXCORE_NANGO_NOTION_CLIENT_SECRET?.trim() ?? "",
+      outlookClientId: env.NXCORE_NANGO_OUTLOOK_CLIENT_ID?.trim() ?? "",
+      outlookClientSecret: env.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET?.trim() ?? "",
+      pollingIntervalMs: rawConfig.connectorPollMs,
+    },
     openConnector: openConnectorUrl
       ? {
           executable: env.NXCORE_OO_CLI_PATH?.trim() || 'oo',

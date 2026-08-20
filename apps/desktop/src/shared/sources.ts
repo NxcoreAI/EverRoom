@@ -1,5 +1,5 @@
 export type DataSourceStatus = 'connected' | 'syncing' | 'paused' | 'disconnected' | 'error'
-export type DataSourceKind = 'local-folder' | 'web-page' | 'github' | 'feishu'
+export type DataSourceKind = 'local-folder' | 'web-page' | 'github' | 'feishu' | 'google-docs' | 'notion'
 export type SourceFileStatus =
   | 'added'
   | 'updated'
@@ -53,6 +53,18 @@ import type {
   RealitySocketFrame,
   UpdateRealityTranscriptInput,
 } from '@nxcore/reality-contract'
+import type {
+  ConnectorAuthorizationAttempt,
+  ConnectorConnection,
+  ConnectorJsonRecord,
+  ConnectorStatus,
+  MailMessage,
+  SyncMode,
+  SyncRun,
+  SyncScope,
+  WikiDocumentPreview,
+  WikiDocumentSummary,
+} from '@nxcore/connector-contract'
 import type {
   KnowledgeAttachInput,
   KnowledgeDecisionDto,
@@ -145,6 +157,13 @@ export interface SourceFileSummary {
   lastSeenAt: string
   parseStatus: EvidenceParseStatus
   evidenceCount: number
+}
+
+export interface MarkdownPreview {
+  fileName: string
+  relativePath: string
+  modifiedAt: string
+  content: string
 }
 
 export interface DataSourceSummary {
@@ -377,6 +396,22 @@ export interface NxcoreDesktopApi {
   gateway: {
     status(): Promise<GatewayStatus>
   }
+  connectors: {
+    status(): Promise<ConnectorStatus>
+    startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt>
+    authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
+    registerConnection(input: { provider: 'gmail' | 'outlook' | 'google-calendar'; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
+    disableConnection(id: string): Promise<void>
+    purgeConnection(id: string): Promise<void>
+    triggerSync(id: string, mode: SyncMode): Promise<SyncRun>
+    cancelRun(id: string): Promise<SyncRun>
+    scopes(connectionId?: string): Promise<SyncScope[]>
+    runs(connectionId?: string): Promise<SyncRun[]>
+    mail(query?: { connectionId?: string; scopeId?: string; search?: string; limit?: number; cursor?: string }): Promise<MailMessage[]>
+    documents(connectionId: string): Promise<WikiDocumentSummary[]>
+    document(connectionId: string, documentId: string): Promise<WikiDocumentPreview>
+    records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]>
+  }
   openConnector: {
     status(): Promise<OpenConnectorStatus>
     execute(input: OpenConnectorExecutionInput): Promise<OpenConnectorCommandResult>
@@ -558,11 +593,14 @@ export interface NxcoreDesktopApi {
     list(): Promise<DataSourceSummary[]>
     listFiles(id: string): Promise<SourceFileSummary[]>
     listEvidence(id: string, fileId: string): Promise<EvidenceDocument>
+    previewFile(id: string, fileId: string): Promise<MarkdownPreview>
     searchEvidence(query: string, id?: string): Promise<EvidenceSearchResult[]>
     onChanged(listener: (event: SourceChangeEvent) => void): () => void
     showFile(id: string, fileId: string): Promise<void>
     addLocalFolder(): Promise<SyncResult | null>
     addGitHub(input: { repository: string; branch?: string; token?: string; syncIssues?: boolean }): Promise<SyncResult>
+    addGoogleDocs(input: { documentIds: string[]; token: string }): Promise<SyncResult>
+    addNotion(input: { pageIds: string[]; token: string }): Promise<SyncResult>
     sync(id: string): Promise<SyncResult>
     setPaused(id: string, paused: boolean): Promise<DataSourceSummary>
     disconnect(id: string, deleteLocalData: boolean): Promise<void>

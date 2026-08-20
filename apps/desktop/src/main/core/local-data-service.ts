@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream, mkdirSync } from 'node:fs'
-import { mkdir, rename, stat, unlink } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { DatabaseSync } from 'node:sqlite'
@@ -17,6 +17,7 @@ import type {
   DataSourceSummary,
   SourceFileStatus,
   SourceFileSummary,
+  MarkdownPreview,
   SourceChangeEvent,
   SyncResult,
 } from '../../shared/sources'
@@ -536,6 +537,26 @@ export class LocalDataService {
   listEvidence(dataSourceId: string, fileId: string) {
     this.requireSource(dataSourceId)
     return this.evidence.listDocument(dataSourceId, fileId)
+  }
+
+  async previewFile(dataSourceId: string, fileId: string): Promise<MarkdownPreview> {
+    this.requireSource(dataSourceId)
+    const row = this.database.prepare(`
+      SELECT relative_path, extension, modified_at, content_hash, state
+      FROM source_items WHERE id = ? AND data_source_id = ?
+    `).get(fileId, dataSourceId) as unknown as {
+      relative_path: string
+      extension: string
+      modified_at: string
+      content_hash: string | null
+      state: 'present' | 'missing'
+    } | undefined
+    if (!row) throw new Error('文件记录不存在。')
+    if (row.state !== 'present' || !row.content_hash) throw new Error('文件当前不可预览。')
+    if (!['.md', '.mdx', '.markdown'].includes(row.extension.toLowerCase())) throw new Error('仅支持 Markdown 文件预览。')
+    const content = await readFile(this.objectPath(row.content_hash), 'utf8')
+    if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) throw new Error('Markdown 文件过大，无法预览。')
+    return { fileName: basename(row.relative_path), relativePath: row.relative_path, modifiedAt: row.modified_at, content }
   }
 
   searchEvidence(query: string, dataSourceId: string | null) {

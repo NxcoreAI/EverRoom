@@ -19,6 +19,9 @@ importers:
       '@nxcore/agent-contract':
         specifier: workspace:*
         version: link:../../packages/agent-contract
+      '@nxcore/connector-contract':
+        specifier: workspace:*
+        version: link:../../packages/connector-contract
       '@nxcore/document-model':
         specifier: workspace:*
         version: link:../../packages/document-model
@@ -212,6 +215,9 @@ importers:
       '@nxcore/agent-runtime-pi':
         specifier: workspace:*
         version: link:../../packages/agent-runtime-pi
+      '@nxcore/connector-contract':
+        specifier: workspace:*
+        version: link:../../packages/connector-contract
       '@nxcore/document-model':
         specifier: workspace:*
         version: link:../../packages/document-model
@@ -371,6 +377,12 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(happy-dom@20.11.2)(vite@6.4.3(@types/node@26.2.0)(jiti@2.7.0)(sass-embedded@1.102.0)(sass@1.102.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/connector-contract:
+    devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
 
   packages/document-model:
     dependencies:
