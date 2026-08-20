@@ -1,0 +1,84 @@
+name: Create Feishu Issue
+
+on:
+  repository_dispatch:
+    types: [feishu-issue-create]
+
+permissions: {}
+
+jobs:
+  create:
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+
+    steps:
+      - name: Create or update Issue as github-actions bot
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          FEISHU_ISSUE: ${{ toJSON(github.event.client_payload) }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const input = JSON.parse(process.env.FEISHU_ISSUE);
+            const requestId = String(input.request_id ?? '');
+            const title = String(input.title ?? '').trim();
+            const body = String(input.body ?? '');
+            const assignees = Array.isArray(input.assignees) ? [...new Set(input.assignees)] : null;
+            const attachments = Array.isArray(input.attachments) ? [...new Set(input.attachments)] : null;
+
+            if (!/^[0-9a-f]{32}$/.test(requestId)
+                || !title || title.length > 256
+                || !body.trim() || body.length > 100000
+                || !assignees || !attachments
+                || assignees.length > 10
+                || assignees.some((login) => typeof login !== 'string'
+                  || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(login))
+                || attachments.some((line) => typeof line !== 'string'
+                  || !line.startsWith('![群内截图](https://raw.githubusercontent.com/NxcoreAI/EverRoom/issue-assets/.github/issue-assets/'))) {
+              core.setFailed('Invalid Feishu Issue payload.');
+              return;
+            }
+
+            const markerPattern = /\n?<!-- feishu-request:[0-9a-f]{32} -->/g;
+            const marker = `<!-- feishu-request:${requestId} -->`;
+            const normalize = (value) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => !issue.pull_request
+              && normalize(issue.title) === normalize(title));
+
+            if (existing) {
+              let updatedBody = String(existing.body ?? '').replace(markerPattern, '').trimEnd();
+              const missing = attachments.filter((line) => !updatedBody.includes(line));
+              if (missing.length > 0) {
+                const heading = updatedBody.includes('## 群内图片附件') ? '' : '\n\n## 群内图片附件';
+                updatedBody += `${heading}\n${missing.join('\n')}`;
+              }
+              const currentAssignees = existing.assignees.map(({ login }) => login);
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `${updatedBody}\n\n${marker}`,
+                assignees: [...new Set([...currentAssignees, ...assignees])],
+              });
+              core.info(`Updated existing Issue ${existing.html_url}`);
+              return;
+            }
+
+            const attachmentBlock = attachments.length > 0
+              ? `\n\n## 群内图片附件\n${attachments.join('\n')}`
+              : '';
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: `${body.trimEnd()}${attachmentBlock}\n\n${marker}`,
+              assignees,
+            });
+            core.info(`Created Issue ${issue.html_url}`);
