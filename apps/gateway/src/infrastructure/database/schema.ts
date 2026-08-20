@@ -1226,6 +1226,17 @@ export interface IngestMemoryOk {
   deduplicated: boolean;
 }
 
+/** agent 过滤器判定（ingest 第一级闸门）：无价值资料不进下游链路。 */
+export interface IngestFilterVerdict {
+  informative: boolean;
+  /** 判定依据（台账可见，用户能理解为什么被过滤）。 */
+  reason: string;
+  /** 细分类：bot-noise | trivial | template | empty | other */
+  category: string;
+  /** 置信 0~1，低于阈值放行（宁漏勿错杀）。 */
+  confidence: number;
+}
+
 /**
  * 统一进入台账（§6.1/U3）：每次经 /v1/ingest 进入的资料一行，
  * 含类型识别结果与策略快照——晋升/增量 ingest 的 wiki 判定读快照而非
@@ -1257,6 +1268,17 @@ export const ingestEvents = sqliteTable(
       .$type<IngestMemoryOk | { error: string }>(),
     /** Room 链路 route job 引用（knowledge.route）。 */
     routeJobId: text("route_job_id"),
+    /**
+     * 过滤闸状态（agent 过滤器，ingest 第一级）：
+     * null = 未经过闸（豁免/过滤关闭时的直通）；pending = 待判定；
+     * passed | filtered | bypassed（fail-open 放行，verdict 记录失败原因）
+     */
+    filterStatus: text("filter_status", {
+      enum: ["pending", "passed", "filtered", "bypassed"],
+    }),
+    /** 过滤器判定 json {informative, reason, category, confidence}（含 bypassed 的失败说明）。 */
+    filterVerdict: text("filter_verdict", { mode: "json" })
+      .$type<IngestFilterVerdict>(),
     /** file | paste-file | connector | reality | everroom-doc | upload */
     originChannel: text("origin_channel").notNull().default("upload"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

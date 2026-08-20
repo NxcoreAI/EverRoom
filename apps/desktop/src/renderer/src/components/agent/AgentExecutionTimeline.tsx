@@ -110,8 +110,93 @@ function statusLabel(status: DisplayAgentToolCall['status'], t: Translate): stri
 
 function localizeAgentActivityText(value: string | undefined, t: Translate): string | undefined {
   if (!value) return value
+  const exactKeys: Record<string, string> = {
+    '获取连接账户': 'surface:agentExecutionTimeline.getConnectedAccounts',
+    '已获取连接账户': 'surface:agentExecutionTimeline.connectedAccountsRetrieved',
+    '执行连接操作': 'surface:agentExecutionTimeline.runConnectorAction',
+    '已执行连接操作': 'surface:agentExecutionTimeline.connectorActionExecuted',
+    '查看操作要求': 'surface:agentExecutionTimeline.viewOperationRequirements',
+    '已查看操作要求': 'surface:agentExecutionTimeline.operationRequirementsViewed',
+    '查找可用操作': 'surface:agentExecutionTimeline.searchAvailableOperations',
+    '已查找可用操作': 'surface:agentExecutionTimeline.availableOperationsFound',
+    '准备创建选项': 'surface:agentExecutionTimeline.prepareCreationOptions',
+    '已准备创建选项': 'surface:agentExecutionTimeline.creationOptionsPrepared',
+    '获取文档列表': 'surface:agentExecutionTimeline.getDocumentList',
+    '已获取文档列表': 'surface:agentExecutionTimeline.documentListRetrieved',
+    '读取文档': 'surface:agentExecutionTimeline.readDocument',
+    '已读取文档': 'surface:agentExecutionTimeline.documentRead',
+    '获取 Room 列表': 'surface:agentExecutionTimeline.getRoomList',
+    '已获取 Room 列表': 'surface:agentExecutionTimeline.roomListRetrieved',
+    '准备文档修改': 'surface:agentExecutionTimeline.prepareDocumentChanges',
+    '已准备文档修改': 'surface:agentExecutionTimeline.documentChangesPrepared',
+    '提交文档修改': 'surface:agentExecutionTimeline.commitDocumentChanges',
+    '已提交文档修改': 'surface:agentExecutionTimeline.documentChangesCommitted',
+    '生成文档修改': 'surface:agentExecutionTimeline.generateDocumentChanges',
+    '已生成文档修改': 'surface:agentExecutionTimeline.documentChangesGenerated',
+    '写入文档内容': 'surface:agentExecutionTimeline.writeDocumentContent',
+    '已写入文档内容': 'surface:agentExecutionTimeline.documentContentWritten',
+    '开始创建文档': 'surface:agentExecutionTimeline.startDocumentCreation',
+    '已开始创建文档': 'surface:agentExecutionTimeline.documentCreationStarted',
+    '提交新文档': 'surface:agentExecutionTimeline.commitNewDocument',
+    '已提交新文档': 'surface:agentExecutionTimeline.newDocumentCommitted',
+    '选择所需工具': 'surface:agentExecutionTimeline.selectRequiredTool',
+    '已选择所需工具': 'surface:agentExecutionTimeline.requiredToolSelected',
+    '查看图像': 'surface:agentExecutionTimeline.viewImage',
+    '已查看图像': 'surface:agentExecutionTimeline.imageViewed',
+    '创建日程': 'surface:agentExecutionTimeline.createCalendarEvent',
+    '已创建日程': 'surface:agentExecutionTimeline.calendarEventCreated',
+    '查询日历': 'surface:agentExecutionTimeline.queryCalendar',
+    '已查询日历': 'surface:agentExecutionTimeline.calendarQueried',
+    '处理定时任务': 'surface:agentExecutionTimeline.handleScheduledTask',
+    '已处理定时任务': 'surface:agentExecutionTimeline.scheduledTaskHandled',
+    '查询个人记忆': 'surface:agentExecutionTimeline.queryMemory',
+    '已查询个人记忆': 'surface:agentExecutionTimeline.memoryQueried',
+    '同步邮件': 'surface:agentExecutionTimeline.syncEmail',
+    '已同步邮件': 'surface:agentExecutionTimeline.emailSynced',
+    '查询邮件': 'surface:agentExecutionTimeline.queryEmail',
+    '已查询邮件': 'surface:agentExecutionTimeline.emailQueried',
+    '查询会议': 'surface:agentExecutionTimeline.queryMeeting',
+    '已查询会议': 'surface:agentExecutionTimeline.meetingQueried',
+    '查询日记': 'surface:agentExecutionTimeline.queryDiary',
+    '已查询日记': 'surface:agentExecutionTimeline.diaryQueried',
+    '搜索网页': 'surface:agentExecutionTimeline.searchWeb',
+    '已搜索网页': 'surface:agentExecutionTimeline.webSearched',
+    '读取文件': 'surface:agentExecutionTimeline.readFile',
+    '已读取文件': 'surface:agentExecutionTimeline.fileRead',
+    '修改文件': 'surface:agentExecutionTimeline.modifyFile',
+    '已修改文件': 'surface:agentExecutionTimeline.fileModified',
+    '运行命令': 'surface:agentExecutionTimeline.runCommand',
+    '已运行命令': 'surface:agentExecutionTimeline.commandRun',
+    '已调用工具': 'surface:agentExecutionTimeline.toolCalled',
+    '调用工具': 'surface:agentExecutionTimeline.callTool',
+  }
+  const exactKey = exactKeys[value]
+  if (exactKey) return t(exactKey)
+  const documentRead = /^《(.+)》当前有 (\d+) 个可编辑内容块，基于版本 (\d+) 处理。$/.exec(value)
+  if (documentRead) {
+    return t('surface:agentExecutionTimeline.titleHasCountEditableBlocksAndWillBe', {
+      title: documentRead[1]!, count: documentRead[2]!, version: documentRead[3]!,
+    })
+  }
+  const changeScope = /^修改范围已确定：(.+?)[。！!？?]?$/.exec(value)
+  if (changeScope) return t('surface:agentExecutionTimeline.changeScopeConfirmedSummary', { summary: changeScope[1]! })
+  const itemChange = /^第 (\d+) 项为(新增内容|替换内容|删除内容|文档修改)(?:，建议内容 (\d+) 字)?。$/.exec(value)
+  if (itemChange) {
+    const actionKeys: Record<string, string> = {
+      新增内容: 'surface:agentExecutionTimeline.insertContent',
+      替换内容: 'surface:agentExecutionTimeline.replaceContent',
+      删除内容: 'surface:agentExecutionTimeline.deleteContent',
+      文档修改: 'surface:agentExecutionTimeline.documentChange',
+    }
+    const action = t(actionKeys[itemChange[2]!] ?? 'surface:agentExecutionTimeline.documentChange')
+    return itemChange[3]
+      ? t('surface:agentExecutionTimeline.itemSequenceIsActionWithCountCharactersOf', { sequence: itemChange[1]!, action, count: itemChange[3]! })
+      : t('surface:agentExecutionTimeline.itemSequenceIsAction', { sequence: itemChange[1]!, action })
+  }
   if (value === '工具调用失败' || value === '工具调用失败。') return t('surface:agentExecutionTimeline.failed')
   if (value === '操作已停止。' || value === '操作已停止') return t('surface:agentExecutionTimeline.stopped')
+  const resultCount = /^获得 (\d+) 条结果$/.exec(value)
+  if (resultCount) return t('surface:agentExecutionTimeline.countResults', { count: resultCount[1]! })
   const executed = /^已执行\s+(.+)$/u.exec(value)
   if (executed) return t('surface:agentExecutionTimeline.executedName', { name: executed[1]! })
   const executing = /^执行\s+(.+)$/u.exec(value)

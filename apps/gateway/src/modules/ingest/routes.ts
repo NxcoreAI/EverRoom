@@ -71,6 +71,22 @@ const IngestResultSchema = Type.Object({
   pipelines: PipelinesSchema,
   routeJobId: Type.Union([Type.String(), Type.Null()]),
   memoryResult: MemoryResultSchema,
+  filterStatus: Type.Union([
+    Type.Literal("pending"),
+    Type.Literal("passed"),
+    Type.Literal("filtered"),
+    Type.Literal("bypassed"),
+    Type.Null(),
+  ]),
+  filterVerdict: Type.Union([
+    Type.Object({
+      informative: Type.Boolean(),
+      reason: Type.String(),
+      category: Type.String(),
+      confidence: Type.Number(),
+    }),
+    Type.Null(),
+  ]),
   originChannel: Type.String(),
 });
 
@@ -87,6 +103,22 @@ const IngestEventDtoSchema = Type.Object({
   pipelines: PipelinesSchema,
   memoryResult: MemoryResultSchema,
   routeJobId: Type.Union([Type.String(), Type.Null()]),
+  filterStatus: Type.Union([
+    Type.Literal("pending"),
+    Type.Literal("passed"),
+    Type.Literal("filtered"),
+    Type.Literal("bypassed"),
+    Type.Null(),
+  ]),
+  filterVerdict: Type.Union([
+    Type.Object({
+      informative: Type.Boolean(),
+      reason: Type.String(),
+      category: Type.String(),
+      confidence: Type.Number(),
+    }),
+    Type.Null(),
+  ]),
   originChannel: Type.String(),
   createdAt: Type.String(),
   updatedAt: Type.String(),
@@ -108,7 +140,7 @@ const ErrorSchema = Type.Object({ error: Type.String(), message: Type.String() }
 
 const errorCodes = ["source_required", "source_conflict", "path_unreadable", "ref_not_found",
   "unsupported_type", "unknown_data_type", "invalid_pipelines", "no_pipelines",
-  "convert_failed", "empty_content", "router_disabled"] as const;
+  "convert_failed", "empty_content", "router_disabled", "not_filtered", "parsed_missing"] as const;
 
 const ErrorResponse = Type.Object({
   error: Type.Union(errorCodes.map((code) => Type.Literal(code))),
@@ -198,6 +230,28 @@ export function ingestRoutes(service: IngestService): FastifyPluginAsyncTypebox 
       },
       async (request, reply) => {
         const event: IngestEventDto | null = service.getEvent(request.params.id);
+        if (!event) throw new IngestError("台账无此事件", "ref_not_found", 404);
+        return event;
+      },
+    );
+
+    // 过滤误杀恢复：filtered 事件重新放行三链路扇出
+    app.post(
+      "/v1/ingest/:id/reinstate",
+      {
+        schema: {
+          tags: ["ingest"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 64 }) }),
+          response: {
+            200: IngestEventDtoSchema,
+            404: ErrorSchema,
+            409: ErrorResponse,
+            410: ErrorResponse,
+          },
+        },
+      },
+      async (request) => {
+        const event = await service.reinstate(request.params.id);
         if (!event) throw new IngestError("台账无此事件", "ref_not_found", 404);
         return event;
       },

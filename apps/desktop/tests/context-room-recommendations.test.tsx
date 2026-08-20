@@ -73,13 +73,13 @@ describe('Context Room recommendations', () => {
       renderer = TestRenderer.create(<KnowledgePendingPanel />)
     })
 
-    expect(api.listEntities).toHaveBeenCalledOnce()
+    expect(api.listEntities).toHaveBeenCalledTimes(3)
     expect(api.listEntities).toHaveBeenCalledWith('ready')
-    expect(api.listUnmatched).not.toHaveBeenCalled()
-    expect(api.listRecentDecisions).not.toHaveBeenCalled()
+    expect(api.listUnmatched).toHaveBeenCalledOnce()
+    expect(api.listRecentDecisions).toHaveBeenCalledOnce()
     expect(renderer!.root.findAllByProps({ className: 'context-room-knowledge-empty' })).toHaveLength(1)
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain('最近归类资料')
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain('未识别资料')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('最近归类资料')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('未识别资料')
   })
 
   it('renders only ready recommendations as creation cards', async () => {

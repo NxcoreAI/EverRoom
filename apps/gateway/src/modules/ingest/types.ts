@@ -162,7 +162,9 @@ export type IngestErrorCode =
   | "no_pipelines"
   | "convert_failed"
   | "empty_content"
-  | "router_disabled";
+  | "router_disabled"
+  | "not_filtered"
+  | "parsed_missing";
 
 export class IngestError extends Error {
   constructor(
