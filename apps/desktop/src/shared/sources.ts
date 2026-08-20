@@ -102,6 +102,7 @@ import type {
   ConnectorSyncRun,
   ConnectorSyncStatus,
 } from './connector-sync'
+import type { DesktopPageMode } from './page-mode'
 import type { DesktopLocale } from './i18n/desktop'
 
 export interface EvidenceBlock {
@@ -524,6 +525,7 @@ export interface DesktopDiagnosticLogInput {
 
 export interface NxcoreDesktopApi {
   platform: string
+  pageMode: DesktopPageMode
   locale: {
     set(locale: DesktopLocale): void
   }

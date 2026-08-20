@@ -16,6 +16,7 @@ import type {
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
+import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import {
   isDesktopLocale,
   translateDesktopMessage,
@@ -98,6 +99,7 @@ async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T>
 
 const api: NxcoreDesktopApi = {
   platform: process.platform,
+  pageMode: resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV]),
   locale: {
     set: (locale) => {
       if (!isDesktopLocale(locale)) return

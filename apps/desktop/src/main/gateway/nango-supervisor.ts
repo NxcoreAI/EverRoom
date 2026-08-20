@@ -139,7 +139,8 @@ export class NangoSupervisor {
     if (this.connection) return this.connection
 
     if (process.env.NXCORE_NANGO_MANAGED === 'false') return null
-    const externalBaseUrl = process.env.NXCORE_NANGO_URL?.trim()
+    const externalBaseUrl =
+      process.env.NXCORE_NANGO_CONNECTOR_URL?.trim() || process.env.NXCORE_NANGO_URL?.trim()
     if (externalBaseUrl && !isLoopbackNangoUrl(externalBaseUrl)) return null
 
     // ponytail: 打包形态尚未把 nango 子模块打进 extraResources,先只支持 dev 托管。

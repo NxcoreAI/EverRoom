@@ -13,6 +13,7 @@ import {
   PlugZap,
   Settings,
 } from 'lucide-react'
+import type { DesktopPageMode } from '../../../shared/page-mode'
 
 export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'settings'
 
@@ -67,6 +68,13 @@ export const navigationSections: NavigationSection[] = [
     ],
   },
 ]
+
+export function navigationSectionsForMode(mode: DesktopPageMode): NavigationSection[] {
+  const disabledPage: PageId = mode === 'sources' ? 'connectors' : 'sources'
+  return navigationSections
+    .map((section) => ({ ...section, items: section.items.filter((item) => item.id !== disabledPage) }))
+    .filter((section) => section.items.length > 0)
+}
 
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
   navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.label]))

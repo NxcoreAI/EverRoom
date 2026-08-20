@@ -1,7 +1,7 @@
 import { ChevronDown, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-import { navigationSections, type PageId } from '@/data/navigation'
+import { navigationSectionsForMode, type PageId } from '@/data/navigation'
 import { useAccount } from '@/state/AccountContext'
 import type { GatewayState, GatewayStatus } from '../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -36,6 +36,7 @@ export function Sidebar({
   onNavigate: (page: PageId) => void
 }) {
   const { t, formatNumber } = useLocale()
+  const pageMode = window.nxcore?.pageMode ?? 'sources'
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>(INITIAL_GATEWAY_STATUS)
   const gatewayStateRef = useRef<GatewayState>(INITIAL_GATEWAY_STATUS.state)
@@ -117,7 +118,7 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav" aria-label={t('surface:sidebar.mainNavigation')}>
-        {navigationSections.map((section) => (
+        {navigationSectionsForMode(pageMode).map((section) => (
           <section
             key={section.id}
             className="nav-section"

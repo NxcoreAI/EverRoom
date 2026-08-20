@@ -88,16 +88,26 @@ describe("loadConfig", () => {
     })).toThrow("plain HTTP is only allowed for loopback")
   });
 
-  it("does not treat native or legacy connector variables as EverRoom configuration", () => {
+  it("accepts legacy Nango variables while ignoring native connector variables", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {
       OO_CONNECTOR_URL: "http://127.0.0.1:3000",
       NXCORE_OPEN_CONNECTOR_URL: "http://127.0.0.1:3000",
       NXCORE_NANGO_URL: "http://127.0.0.1:3003",
       NXCORE_NANGO_SECRET: "legacy-secret",
+      NXCORE_NANGO_GMAIL_CONFIG_KEY: "legacy-gmail",
+      NXCORE_NANGO_GOOGLE_CLIENT_ID: "legacy-google-id",
+      NXCORE_CONNECTOR_POLL_MS: "120000",
     });
 
     expect(config.cliConnector).toBeNull();
-    expect(config.nangoConnector?.enabled).toBe(false);
+    expect(config.nangoConnector).toMatchObject({
+      enabled: true,
+      nangoUrl: "http://127.0.0.1:3003",
+      nangoSecret: "legacy-secret",
+      gmailConfigKey: "legacy-gmail",
+      googleClientId: "legacy-google-id",
+      pollingIntervalMs: 120_000,
+    });
   });
 
   it("keeps MemoryCore available independently of the Agent runtime", () => {

@@ -195,6 +195,14 @@ policy:
 
 ### OpenConnector
 
+桌面端“数据源”和“连接器”是互斥页面，由根目录 `.env` 中的
+`NXCORE_DESKTOP_PAGE_MODE` 控制，取值为 `sources` 或 `connectors`。缺省值为
+`sources`；此模式下不启动 OpenConnector/CLI 连接器服务。需要使用“连接器”页时设置：
+
+```dotenv
+NXCORE_DESKTOP_PAGE_MODE=connectors
+```
+
 项目内的两套连接器使用独立命名空间：Nango 连接器使用
 `NXCORE_NANGO_CONNECTOR_*`、`/v1/nango-connectors/*` 和
 `nango-connector:*`；基于 OpenConnector/`oo` CLI 的 CLI 连接器使用

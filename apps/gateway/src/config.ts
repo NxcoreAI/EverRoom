@@ -385,6 +385,15 @@ function parsePositiveInteger(name: string, value: string): number {
   return Number(value);
 }
 
+/** Return the first non-empty environment value, allowing renamed variables to fall back safely. */
+function firstEnvValue(env: NodeJS.ProcessEnv, ...names: string[]): string {
+  for (const name of names) {
+    const value = env[name]?.trim();
+    if (value) return value;
+  }
+  return "";
+}
+
 /** 防抖窗口等 legitimately 允许 0（=立即执行）的整数配置用这个。 */
 function parseNonNegativeInteger(name: string, value: string): number {
   if (!/^\d+$/.test(value)) {
@@ -729,11 +738,11 @@ export function loadConfig(
     asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
     asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
     asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
-    nangoUrl: env.NXCORE_NANGO_CONNECTOR_URL?.trim() ?? "",
-    nangoSecret: env.NXCORE_NANGO_CONNECTOR_SECRET?.trim() ?? "",
+    nangoUrl: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_URL", "NXCORE_NANGO_URL"),
+    nangoSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_SECRET", "NXCORE_NANGO_SECRET"),
     nangoConnectorPollMs: parsePositiveInteger(
       "NXCORE_NANGO_CONNECTOR_POLL_MS",
-      env.NXCORE_NANGO_CONNECTOR_POLL_MS ?? "300000",
+      firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_POLL_MS", "NXCORE_CONNECTOR_POLL_MS") || "300000",
     ),
     memoryEnabled: env.NXCORE_MEMORY_ENABLED == null
       ? false
@@ -1029,17 +1038,17 @@ export function loadConfig(
       databasePath: join(dataDir,"database","connectors.sqlite"),
       nangoUrl: rawConfig.nangoUrl,
       nangoSecret: rawConfig.nangoSecret,
-      gmailConfigKey: env.NXCORE_NANGO_CONNECTOR_GMAIL_CONFIG_KEY?.trim() ?? "google-mail",
-      outlookConfigKey: env.NXCORE_NANGO_CONNECTOR_OUTLOOK_CONFIG_KEY?.trim() ?? "microsoft-mail",
-      googleDocsConfigKey: env.NXCORE_NANGO_CONNECTOR_GOOGLE_DOCS_CONFIG_KEY?.trim() ?? "google-drive",
-      notionConfigKey: env.NXCORE_NANGO_CONNECTOR_NOTION_CONFIG_KEY?.trim() ?? "notion",
-      googleCalendarConfigKey: env.NXCORE_NANGO_CONNECTOR_GOOGLE_CALENDAR_CONFIG_KEY?.trim() ?? "google-calendar",
-      googleClientId: env.NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_ID?.trim() ?? "",
-      googleClientSecret: env.NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_SECRET?.trim() ?? "",
-      notionClientId: env.NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_ID?.trim() ?? "",
-      notionClientSecret: env.NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_SECRET?.trim() ?? "",
-      outlookClientId: env.NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_ID?.trim() ?? "",
-      outlookClientSecret: env.NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_SECRET?.trim() ?? "",
+      gmailConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GMAIL_CONFIG_KEY", "NXCORE_NANGO_GMAIL_CONFIG_KEY") || "google-mail",
+      outlookConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CONFIG_KEY", "NXCORE_NANGO_OUTLOOK_CONFIG_KEY") || "microsoft-mail",
+      googleDocsConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_DOCS_CONFIG_KEY") || "google-drive",
+      notionConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CONFIG_KEY") || "notion",
+      googleCalendarConfigKey: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CALENDAR_CONFIG_KEY") || "google-calendar",
+      googleClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_ID", "NXCORE_NANGO_GOOGLE_CLIENT_ID"),
+      googleClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_SECRET", "NXCORE_NANGO_GOOGLE_CLIENT_SECRET"),
+      notionClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_ID", "NXCORE_NANGO_NOTION_CLIENT_ID"),
+      notionClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_SECRET", "NXCORE_NANGO_NOTION_CLIENT_SECRET"),
+      outlookClientId: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_ID", "NXCORE_NANGO_OUTLOOK_CLIENT_ID"),
+      outlookClientSecret: firstEnvValue(env, "NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_SECRET", "NXCORE_NANGO_OUTLOOK_CLIENT_SECRET"),
       pollingIntervalMs: rawConfig.nangoConnectorPollMs,
     },
     cliConnector: cliConnectorUrl
