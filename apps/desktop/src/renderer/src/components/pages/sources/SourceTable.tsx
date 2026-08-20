@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Eye, File, FolderOpen, HardDrive, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Eraser, Eye, File, FolderOpen, HardDrive, Pause, Play, RefreshCw } from 'lucide-react'
 
 import type { DataSourceSummary, SourceFileSummary } from '../../../../../shared/sources'
 import { EVIDENCE_STATUS_LABELS, FILE_STATUS_LABELS, formatBytes, formatDate, SOURCE_STATUS_LABELS } from './sourceFormatters'
@@ -14,7 +14,7 @@ export function SourceTable({
   onToggleFiles,
   onSync,
   onTogglePaused,
-  onDelete,
+  onClear,
   onOpenEvidence,
   onPreviewFile,
   onShowFile,
@@ -28,7 +28,7 @@ export function SourceTable({
   onToggleFiles: (id: string) => void
   onSync: (source: DataSourceSummary) => void
   onTogglePaused: (source: DataSourceSummary) => void
-  onDelete: (source: DataSourceSummary) => void
+  onClear: (source: DataSourceSummary) => void
   onOpenEvidence: (sourceId: string, fileId: string) => void
   onPreviewFile: (sourceId: string, fileId: string) => void
   onShowFile: (sourceId: string, fileId: string) => void
@@ -66,8 +66,8 @@ export function SourceTable({
                 <button type="button" className="icon-button" aria-label={t(source.status === 'paused' || source.status === 'disconnected' || source.status === 'error' ? 'surface:sourceTable.resumeName' : 'surface:sourceTable.pauseName', { name: source.name })} title={t(source.status === 'disconnected' ? 'surface:sourceTable.reconnect' : source.status === 'paused' || source.status === 'error' ? 'surface:sourceTable.resumeSync' : 'surface:sourceTable.pauseSync')} disabled={busy} onClick={() => onTogglePaused(source)}>
                   {source.status === 'paused' || source.status === 'disconnected' || source.status === 'error' ? <Play aria-hidden="true" strokeWidth={1.8} /> : <Pause aria-hidden="true" strokeWidth={1.8} />}
                 </button>
-                <button type="button" className="icon-button danger" aria-label={t('surface:sourceTable.deleteName', { name: source.name })} title={t('surface:sourceTable.deleteAndCleanLocalCopy')} disabled={busy} onClick={() => onDelete(source)}>
-                  <Trash2 aria-hidden="true" strokeWidth={1.8} />
+                <button type="button" className="icon-button danger" aria-label={t('surface:sourceTable.clearDataName', { name: source.name })} title={t('surface:sourceTable.clearDataKeepFolder')} disabled={busyId === source.id} onClick={() => onClear(source)}>
+                  <Eraser aria-hidden="true" strokeWidth={1.8} />
                 </button>
               </span>
             </div>

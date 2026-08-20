@@ -44,5 +44,4 @@ CREATE TABLE `connector_markdown_outbox` (
 CREATE INDEX `connector_markdown_outbox_due_idx` ON `connector_markdown_outbox` (`status`,`available_at`,`lease_until`);--> statement-breakpoint
 CREATE INDEX `connector_markdown_outbox_source_idx` ON `connector_markdown_outbox` (`resource_type`,`ingest_source_id`,`created_at`);--> statement-breakpoint
 DROP INDEX `ingest_events_source_hash_idx`;--> statement-breakpoint
-ALTER TABLE `ingest_events` ADD `deleted_at` integer;--> statement-breakpoint
 CREATE INDEX `ingest_events_source_hash_idx` ON `ingest_events` (`source_kind`,`source_id`,`content_hash`);

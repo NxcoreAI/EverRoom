@@ -15,7 +15,7 @@ import { ENTITY_KINDS, type EntityKind } from "./llm.js";
 
 export type EntityStatus = "weak" | "ready" | "promoting" | "room" | "archived";
 export type LinkRole = "primary" | "mention" | "manual";
-export type SourceKind = "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc";
+export type SourceKind = "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc" | "calendar-event" | "connector-record";
 
 /** 链接角色 → 证据分权重（plan §4.3）。 */
 export const EVIDENCE_WEIGHTS: Record<LinkRole, number> = {
@@ -456,9 +456,9 @@ export class EntityRegistry {
     return Number(result.changes);
   }
 
-  /** 晋升失败回滚：promoting → weak（rooms 行未插时的唯一善后）。 */
-  releasePromotion(entityId: string): void {
-    this.db.update(entities).set({ status: "weak", updatedAt: new Date() })
+  /** 晋升失败回滚：promoting → 原候选态（rooms 行未插时的唯一善后）。 */
+  releasePromotion(entityId: string, status: "weak" | "ready" = "weak"): void {
+    this.db.update(entities).set({ status, updatedAt: new Date() })
       .where(and(eq(entities.id, entityId), eq(entities.status, "promoting")))
       .run();
   }

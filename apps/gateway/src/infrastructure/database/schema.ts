@@ -13,6 +13,7 @@ import type {
   DocumentOperationItemStatus,
   DocumentOperationStatus,
   DocumentMutationTarget,
+  SubagentInvocationResult,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
 import type {
@@ -333,6 +334,63 @@ export const connectorCalendarEvents = sqliteTable(
       .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
     index("connector_calendar_events_owner_start_idx").on(table.ownerId, table.startAt),
     index("connector_calendar_events_owner_event_idx").on(table.ownerId, table.eventId),
+  ],
+);
+
+export const connectorMarkdownArtifacts = sqliteTable(
+  "connector_markdown_artifacts",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    service: text("service").notNull(),
+    connectionName: text("connection_name").notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    sourceRecordId: text("source_record_id").notNull(),
+    ingestSourceId: text("ingest_source_id").notNull(),
+    activePath: text("active_path").notNull(),
+    sourceContentHash: text("source_content_hash").notNull(),
+    markdownContentHash: text("markdown_content_hash"),
+    rendererVersion: text("renderer_version").notNull(),
+    version: integer("version").notNull().default(1),
+    status: text("status", { enum: ["pending", "ready", "failed", "deleted"] }).notNull().default("pending"),
+    ingestStatus: text("ingest_status", { enum: ["pending", "succeeded", "failed", "skipped"] }).notNull().default("pending"),
+    lastError: text("last_error"),
+    parsedId: text("parsed_id"),
+    ingestEventId: text("ingest_event_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("connector_markdown_artifacts_source_idx").on(
+      table.ownerId, table.service, table.connectionName, table.resourceType, table.sourceRecordId,
+    ),
+    uniqueIndex("connector_markdown_artifacts_ingest_source_idx").on(table.resourceType, table.ingestSourceId),
+    index("connector_markdown_artifacts_status_idx").on(table.status, table.ingestStatus, table.updatedAt),
+  ],
+);
+
+export const connectorMarkdownOutbox = sqliteTable(
+  "connector_markdown_outbox",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    ingestSourceId: text("ingest_source_id").notNull(),
+    operation: text("operation", { enum: ["upsert", "delete"] }).notNull(),
+    sourceContentHash: text("source_content_hash").notNull(),
+    status: text("status", { enum: ["pending", "processing", "done", "dead"] }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    availableAt: integer("available_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    leaseOwner: text("lease_owner"),
+    leaseUntil: integer("lease_until", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("connector_markdown_outbox_due_idx").on(table.status, table.availableAt, table.leaseUntil),
+    index("connector_markdown_outbox_source_idx").on(table.resourceType, table.ingestSourceId, table.createdAt),
   ],
 );
 
@@ -821,7 +879,7 @@ export const entityDocLinks = sqliteTable(
     id: text("id").primaryKey(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -875,7 +933,7 @@ export const routeDecisions = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
     }).notNull().default("everroom-doc"),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1238,7 +1296,7 @@ export const ingestEvents = sqliteTable(
     /** ing-<uuid12> */
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1259,6 +1317,7 @@ export const ingestEvents = sqliteTable(
     routeJobId: text("route_job_id"),
     /** file | paste-file | connector | reality | everroom-doc | upload */
     originChannel: text("origin_channel").notNull().default("upload"),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1270,4 +1329,77 @@ export const ingestEvents = sqliteTable(
     index("ingest_events_source_idx").on(table.sourceKind, table.sourceId),
     index("ingest_events_source_hash_idx").on(table.sourceId, table.contentHash),
   ],
+);
+
+export const subagentDefinitions = sqliteTable("subagent_definitions", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  currentRevisionId: text("current_revision_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const subagentRevisions = sqliteTable(
+  "subagent_revisions",
+  {
+    id: text("id").primaryKey(),
+    agentDefinitionId: text("agent_definition_id").notNull().references(() => subagentDefinitions.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    digest: text("digest").notNull(),
+    manifest: text("manifest", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    systemPrompt: text("system_prompt").notNull(),
+    agentDirectory: text("agent_directory").notNull(),
+    mcpServers: text("mcp_servers", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    policy: text("policy", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    inputSchema: text("input_schema", { mode: "json" }).$type<Record<string, unknown>>(),
+    outputSchema: text("output_schema", { mode: "json" }).$type<Record<string, unknown>>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("subagent_revisions_definition_version_idx").on(table.agentDefinitionId, table.version),
+    uniqueIndex("subagent_revisions_definition_digest_idx").on(table.agentDefinitionId, table.digest),
+  ],
+);
+
+export const subagentInvocations = sqliteTable(
+  "subagent_invocations",
+  {
+    id: text("id").primaryKey(),
+    agentDefinitionId: text("agent_definition_id").notNull().references(() => subagentDefinitions.id, { onDelete: "restrict" }),
+    agentRevisionId: text("agent_revision_id").notNull().references(() => subagentRevisions.id, { onDelete: "restrict" }),
+    source: text("source", { enum: ["primary_agent", "scheduler", "internal_workflow"] }).notNull(),
+    parentSessionId: text("parent_session_id"),
+    parentRunId: text("parent_run_id"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    task: text("task").notNull(),
+    input: text("input", { mode: "json" }).$type<unknown>().notNull(),
+    status: text("status", { enum: ["accepted", "running", "completed", "failed", "cancelled", "interrupted", "timed_out"] }).notNull().default("accepted"),
+    runtimeSessionRef: text("runtime_session_ref"),
+    lastEventSeq: integer("last_event_seq").notNull().default(0),
+    result: text("result", { mode: "json" }).$type<SubagentInvocationResult>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("subagent_invocations_source_idempotency_idx").on(table.source, table.parentRunId, table.idempotencyKey),
+    index("subagent_invocations_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const subagentInvocationEvents = sqliteTable(
+  "subagent_invocation_events",
+  {
+    id: text("id").primaryKey(),
+    invocationId: text("invocation_id").notNull().references(() => subagentInvocations.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    type: text("type").notNull(),
+    payload: text("payload", { mode: "json" }).$type<unknown>().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("subagent_invocation_events_invocation_seq_idx").on(table.invocationId, table.seq)],
 );

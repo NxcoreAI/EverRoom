@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -177,6 +177,41 @@ function adoptPreReleaseConnectorMarkdownMigrations(
   })();
 }
 
+/** Repair installs whose migration cursor advanced across the diary/perception
+ * branch without applying its schema (a transient merge produced this state). */
+function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migrationsDir: string): void {
+  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
+  ).get(type, name));
+  const hasColumn = (table: string, column: string) => new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+  ).has(column);
+  if (!hasObject("table", "__drizzle_migrations")) return;
+  const runMigrationStatements = (tag: string) => {
+    const migrationPath = join(migrationsDir, `${tag}.sql`);
+    if (!existsSync(migrationPath)) return;
+    const sql = readFileSync(migrationPath, "utf8");
+    for (const statement of sql.split(/--> statement-breakpoint/g).map((item) => item.trim()).filter(Boolean)) {
+      const createObject = statement.match(/^CREATE(?: UNIQUE)? INDEX(?: IF NOT EXISTS)? [`"]([^`"]+)[`"]/) ?? statement.match(/^CREATE TABLE(?: IF NOT EXISTS)? [`"]([^`"]+)[`"]/);
+      if (createObject && hasObject(statement.startsWith("CREATE TABLE") ? "table" : "index", createObject[1]!)) continue;
+      const addColumn = statement.match(/^ALTER TABLE [`"]([^`"]+)[`"] ADD [`"]([^`"]+)[`"]+/);
+      if (addColumn && (!hasObject("table", addColumn[1]!) || hasColumn(addColumn[1]!, addColumn[2]!))) continue;
+      const dropIndex = statement.match(/^DROP INDEX [`"]([^`"]+)[`"]/);
+      if (dropIndex && !hasObject("index", dropIndex[1]!)) continue;
+      sqlite.exec(statement);
+    }
+  };
+  if (!hasObject("table", "diary_days")) runMigrationStatements("0018_living_secret_warriors");
+  if (hasObject("table", "diary_version_sources") && !hasColumn("diary_version_sources", "ended_at")) {
+    runMigrationStatements("0019_free_charles_xavier");
+  }
+  if (hasObject("table", "ingest_events") && !hasColumn("ingest_events", "deleted_at")) {
+    sqlite.exec("ALTER TABLE `ingest_events` ADD `deleted_at` integer");
+  }
+  if (!hasObject("table", "connector_markdown_artifacts")) runMigrationStatements("0018_charming_vampiro");
+  if (!hasObject("table", "subagent_definitions")) runMigrationStatements("0019_sturdy_fantastic_four");
+}
+
 export function createDatabase(databasePath: string, migrationsDir: string): DatabaseClient {
   mkdirSync(dirname(databasePath), { recursive: true });
 
@@ -191,6 +226,23 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
+  sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");
+  // Preserve canonical migration markers when a pre-release branch inserted
+  // later timestamps before the main branch was adopted.
+  const journalEntries = readMigrationJournal(migrationsDir);
+  const insertMigration = sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)");
+  for (const entry of journalEntries.filter((item) => typeof item.when === "number" && (item.tag?.startsWith("0017_") || item.tag?.startsWith("0018_") || item.tag?.startsWith("0019_")))) {
+    if (!entry.tag || typeof entry.when !== "number") continue;
+    if (sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(entry.when)) continue;
+    const migrationPath = join(migrationsDir, `${entry.tag}.sql`);
+    if (!existsSync(migrationPath)) continue;
+    insertMigration.run(createHash("sha256").update(readFileSync(migrationPath, "utf8")).digest("hex"), entry.when);
+  }
+  // Drizzle identifies migrations by timestamp; the merged branch contains
+  // two 0018/0019 entries with overlapping timestamps. Re-run the idempotent
+  // compatibility pass after migrate so fresh databases receive whichever
+  // branch migration Drizzle skipped.
+  repairIncompleteUnderstandingMigration(sqlite, migrationsDir);
 
   return { db, sqlite };
 }

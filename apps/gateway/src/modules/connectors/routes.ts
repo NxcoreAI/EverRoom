@@ -507,3 +507,25 @@ export function cliConnectorRoutes(
     );
   };
 }
+
+/** Legacy path aliases retained for clients released before the CLI connector rename. */
+export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPluginAsync {
+  return async (app) => {
+    app.post("/v1/connectors/sync/jobs", async (request, reply) => {
+      try { return reply.code(201).send(service.createJob(request.body as any)); }
+      catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "invalid_job" }); }
+    });
+    app.patch("/v1/connectors/sync/jobs/:id", async (request, reply) => {
+      try {
+        const result = service.updateJob((request.params as any).id, request.body as any);
+        return result ?? reply.code(404).send({ error: "not_found" });
+      } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "update_failed" }); }
+    });
+    app.post("/v1/connectors/sync/jobs/:id/pause", async (request, reply) => {
+      try {
+        const result = service.setJobStatus((request.params as any).id, "paused", (request.body as any)?.configVersion);
+        return result ?? reply.code(404).send({ error: "not_found" });
+      } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "pause_failed" }); }
+    });
+  };
+}

@@ -15,7 +15,7 @@ afterEach(async () => {
 })
 
 describe('default local folders', () => {
-  it('connects standard folders once and respects a later user deletion', async () => {
+  it('connects standard folders once and keeps a cleared folder available for rescanning', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-default-folders-'))
     temporaryDirectories.push(fixtureRoot)
     const dataDirectory = join(fixtureRoot, 'data')
@@ -46,8 +46,17 @@ describe('default local folders', () => {
       await service.disconnect(documentsSource.id, true)
       await service.bootstrapDefaultLocalFolders([desktop, documents, downloads])
       expect(service.listSources().map((source) => source.rootPath).sort()).toEqual(
-        [desktop, downloads].sort(),
+        [desktop, documents, downloads].sort(),
       )
+      expect(service.listSources().find((source) => source.rootPath === documents)).toMatchObject({
+        id: documentsSource.id,
+        status: 'paused',
+        fileCount: 0,
+        versionCount: 0,
+        totalBytes: 0,
+        lastSyncedAt: null,
+      })
+      expect(service.listFiles(documentsSource.id)).toEqual([])
     } finally {
       await service.shutdown()
     }

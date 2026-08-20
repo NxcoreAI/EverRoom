@@ -9,10 +9,10 @@ import { tiptapToMarkdown } from "./tiptap-markdown.js";
  */
 export interface DocEnvelope {
   ref: {
-    kind: "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc";
+    kind: "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc" | "calendar-event" | "connector-record";
     /** 对应资料表的主键。 */
     id: string;
-    /** 幂等与去重依据（documents.version / reality_events.version 等）。 */
+    /** 幂等与去重依据（documents.version / reality_events.resultVersion 等）。 */
     version: number;
   };
   title: string;
@@ -20,9 +20,6 @@ export interface DocEnvelope {
   markdown: string;
   /** 业务时间（会议/邮件发生时间），≠ 入库时间，⑤ 卷宗展示用。 */
   occurredAt?: string;
-  /** 用户显式指定的入口归属 Room（Room 内上传文件带出）：① 层消费，
-   *  Room 已删/不存在则忽略落瀑布；revert 重路由重建信封时不携带。 */
-  entryRoomId?: string;
   entrySignals?: {
     sourceTag?: string;
     threadId?: string;

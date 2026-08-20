@@ -164,6 +164,10 @@ export class OoCliBridge {
     }
   }
 
+  environment(): Record<string, string> {
+    return this.gatewayEnvironment()
+  }
+
   async status(): Promise<OpenConnectorStatus> {
     await this.initialize()
     const [gateway, cli] = await Promise.all([this.gatewayStatus(), this.cliStatus()])

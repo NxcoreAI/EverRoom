@@ -175,3 +175,6 @@ export class NangoConnectorGatewayBridge {
     return { ...scope, sourceCursor: null }
   }
 }
+
+// Compatibility export for the legacy IPC router name used by older builds.
+export { NangoConnectorGatewayBridge as ConnectorGatewayBridge }

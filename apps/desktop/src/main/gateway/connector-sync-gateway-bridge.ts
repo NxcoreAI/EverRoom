@@ -82,3 +82,7 @@ export class CliConnectorSyncGatewayBridge {
     return response.json() as Promise<T>
   }
 }
+
+// Keep the pre-CLI bridge name available to the main-process router while
+// older renderer builds are migrated to the explicit CLI naming.
+export { CliConnectorSyncGatewayBridge as ConnectorSyncGatewayBridge }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { DocumentEvent, RoomDocument, TiptapJsonContent } from "@nxcore/agent-contract";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { join } from "node:path";
+import type { DocumentEvent, RoomDocument } from "@nxcore/agent-contract";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { KnowledgeLlmConfig } from "../../config.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -17,6 +18,7 @@ import {
   uploadedFiles,
 } from "../../infrastructure/database/schema.js";
 import { FilesService } from "../files/service.js";
+import { fileIdOf } from "../files/storage.js";
 import { EmbeddingClient } from "./embedding.js";
 import {
   EntityRegistry,
@@ -28,13 +30,18 @@ import {
 import { bestMatch } from "./entity-index.js";
 import { buildDocumentEnvelope, envelopeFilename, type DocEnvelope } from "./envelope.js";
 import { truncateUtf8 } from "../ingest/normalizers.js";
-import { fileIdOf } from "../files/storage.js";
 import { convertUploadedFile } from "./file-convert.js";
-import { KnowledgeLlm, type RegisterResult, type RoomContextResult } from "./llm.js";
+import {
+  KnowledgeLlm,
+  type RegisterResult,
+} from "./llm.js";
+import { OpenAiCompletionAgentRuntime } from "../agent/openai-completion-runtime.js";
+import { AgentResolver, BUILTIN_AGENT_IDS } from "../agent/resolver.js";
+import { loadBuiltinAgentBundle } from "../agent/builtin-bundles.js";
+import { bundledAgentDefinitionsDir } from "../../config.js";
 import { KsAdminClient, KsBusyError, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
 import { KnowledgeRouter } from "./router.js";
-import { tiptapToMarkdown } from "./tiptap-markdown.js";
 
 export interface KnowledgeServiceConfig {
   baseUrl: string;
@@ -69,6 +76,29 @@ export interface KnowledgeServiceLogger {
   error(bindings: Record<string, unknown>, message: string): void;
 }
 
+function createKnowledgeAgentResolver(dataDir: string, llm: KnowledgeLlmConfig): AgentResolver {
+  const resolver = new AgentResolver();
+  const id = BUILTIN_AGENT_IDS.knowledge;
+  const bundle = loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), id);
+  const root = join(dataDir, "agent", "runtimes", id);
+  const configDirectory = join(root, "config");
+  resolver.register({ id, name: bundle.name, description: bundle.description, configDirectory, kind: "builtin" }, () => (
+    new OpenAiCompletionAgentRuntime({
+      runtimeId: id,
+      ...llm,
+      systemPrompt: bundle.systemPrompt,
+      skillPrompts: bundle.skillPrompts,
+      temperature: 0.1,
+      maxTokens: 4_096,
+      timeoutMs: 60_000,
+      sessionsDir: join(root, "sessions"),
+      workingDirectory: join(root, "workspace"),
+      agentDirectory: configDirectory,
+    })
+  ));
+  return resolver;
+}
+
 const INGEST_JOB_TYPE = "knowledge.ingest";
 const ROUTE_JOB_TYPE = "knowledge.route";
 const CLEANUP_JOB_TYPE = "knowledge.cleanup";
@@ -101,12 +131,12 @@ interface RouteJobPayload {
   sourceVersion: number;
   /** revert 后重路由：跳过 ①，否则同 Room 直连死循环（plan §5.5）。 */
   skipEntry?: boolean;
+  entryRoomId?: string;
   /** 外部信封（连接器契约）：无表可查时的路由直接输入。 */
   envelope?: {
     title: string;
     markdown: string;
     occurredAt?: string;
-    entryRoomId?: string;
     entrySignals?: DocEnvelope["entrySignals"];
   };
 }
@@ -120,6 +150,38 @@ interface PromoteJobPayload {
   entityId: string;
   /** 手动转正（REST）：审计用，执行路径与自动晋升一致。 */
   manual?: boolean;
+  previousStatus?: "weak" | "ready";
+}
+
+export type PromotionStage =
+  | "queued"
+  | "checking_identity"
+  | "registering_entity"
+  | "creating_room"
+  | "creating_wiki"
+  | "importing_documents"
+  | "completed"
+  | "failed";
+
+interface PromotionJobResult {
+  stage: PromotionStage;
+  message: string;
+  current?: number;
+  total?: number;
+  roomId?: string;
+}
+
+export interface PromotionProgress {
+  jobId: string;
+  status: "queued" | "running" | "completed" | "failed";
+  stage: PromotionStage;
+  message: string;
+  current: number | null;
+  total: number | null;
+  queuePosition: number | null;
+  roomId: string | null;
+  error: string | null;
+  updatedAt: Date;
 }
 
 interface PendingSchedule {
@@ -317,7 +379,7 @@ export class KnowledgeService {
   private readonly entityRegistry: EntityRegistry;
   private readonly router: KnowledgeRouter;
   private readonly llm: KnowledgeLlm | null;
-  private readonly roomContextCache = new Map<string, { key: string; value: RoomContextSummary }>();
+  private readonly ownedAgentResolver: AgentResolver | null;
   /** 字节与登记表的唯一所有者是 modules/files（U9）；此处仅编排路由/ingest。 */
   private readonly files: FilesService;
   private readonly pendingSchedules = new Map<string, PendingSchedule>();
@@ -326,11 +388,15 @@ export class KnowledgeService {
   private readonly transientAttempts = new Map<string, number>();
   private drainTimer: NodeJS.Timeout | null = null;
   private draining = false;
+  private drainRequested = false;
+  private promotionDraining = false;
+  private promotionDrainRequested = false;
 
   constructor(
     private readonly db: GatewayDatabase,
     private readonly config: KnowledgeServiceConfig,
     private readonly logger: KnowledgeServiceLogger,
+    agentResolver?: AgentResolver,
   ) {
     this.files = new FilesService(db, config.dataDir);
     this.ks = new KsAdminClient({
@@ -340,7 +406,10 @@ export class KnowledgeService {
     });
     this.registry = new RoomWikiRegistry(this.db, this.ks);
     this.entityRegistry = new EntityRegistry(this.db);
-    this.llm = config.llm ? new KnowledgeLlm(config.llm) : null;
+    this.ownedAgentResolver = config.llm && !agentResolver
+      ? createKnowledgeAgentResolver(config.dataDir, config.llm)
+      : null;
+    this.llm = config.llm ? new KnowledgeLlm(agentResolver ?? this.ownedAgentResolver!) : null;
     const embedding = config.embeddingLlm && config.embeddingModel
       ? { client: new EmbeddingClient(config.embeddingLlm, config.embeddingModel), model: config.embeddingModel }
       : null;
@@ -371,7 +440,35 @@ export class KnowledgeService {
         "uploaded files backfill failed",
       );
     });
-    // 晋升崩溃恢复：promoting 滞留 → 回 weak（plan §4.4，重试由 job 重试兜底）
+    // 崩溃/热重载恢复：运行中的本地任务没有外部 worker 接管，必须重新排队。
+    const recoveredJobs = this.db.update(jobs).set({ status: "pending", updatedAt: new Date() })
+      .where(and(
+        eq(jobs.status, "running"),
+        inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE, PROMOTE_JOB_TYPE]),
+      )).run() as { changes: number | bigint };
+    if (Number(recoveredJobs.changes) > 0) {
+      this.logger.warn(
+        { event: "knowledge.jobs.recovered", count: Number(recoveredJobs.changes) },
+        "stuck running knowledge jobs moved back to pending",
+      );
+    }
+    const deduplicatedJobs = this.deduplicatePendingJobs();
+    if (deduplicatedJobs > 0) {
+      this.logger.warn(
+        { event: "knowledge.jobs.deduplicated", count: deduplicatedJobs },
+        "duplicate pending knowledge jobs cancelled",
+      );
+    }
+    // 旧版本允许重复点击产生多条晋升任务。恢复时每个实体只保留最早一条，
+    // 其余任务作为同一意图的重复提交取消，避免重启后重复执行 backlog。
+    const deduplicatedPromotions = this.deduplicatePendingPromotions();
+    if (deduplicatedPromotions > 0) {
+      this.logger.warn(
+        { event: "knowledge.promotion_jobs.deduplicated", count: deduplicatedPromotions },
+        "duplicate entity promotion jobs cancelled",
+      );
+    }
+    // 晋升崩溃恢复：promoting 滞留 → 回 weak；下方阈值补账会恢复 ready。
     const released = this.entityRegistry.releaseStuckPromotions();
     if (released > 0) {
       this.logger.warn(
@@ -393,14 +490,15 @@ export class KnowledgeService {
       );
     }
     if (this.drainTimer || !this.config.roomWikisEnabled) return;
-    this.drainTimer = setInterval(() => void this.drain(), 1_000);
+    this.drainTimer = setInterval(() => this.wake(), 1_000);
     this.drainTimer.unref();
-    void this.drain();
+    this.wake();
   }
 
   dispose(): void {
     if (this.drainTimer) clearInterval(this.drainTimer);
     this.drainTimer = null;
+    void this.ownedAgentResolver?.dispose();
     for (const schedule of this.pendingSchedules.values()) clearTimeout(schedule.timer);
     this.pendingSchedules.clear();
   }
@@ -740,26 +838,87 @@ export class KnowledgeService {
     title: string;
     markdown: string;
     occurredAt?: string;
-    entryRoomId?: string;
     entrySignals?: DocEnvelope["entrySignals"];
     sourceId?: string;
     sourceVersion?: number;
+    entryRoomId?: string;
   }): { queued: boolean; jobId: string } {
     const payload: RouteJobPayload = {
       sourceKind: input.sourceKind,
       sourceId: input.sourceId ?? `ext-${randomUUID().slice(0, 12)}`,
       sourceVersion: input.sourceVersion ?? 1,
+      ...(input.entryRoomId ? { entryRoomId: input.entryRoomId } : {}),
       envelope: {
         title: input.title,
         markdown: input.markdown,
         ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
-        ...(input.entryRoomId ? { entryRoomId: input.entryRoomId } : {}),
         ...(input.entrySignals ? { entrySignals: input.entrySignals } : {}),
       },
     };
     const jobId = this.insertJob(ROUTE_JOB_TYPE, payload);
     this.wake();
     return { queued: true, jobId };
+  }
+
+  /**
+   * 上传文件入口（用户主路径：拖个文件进来 → 抽取实体 → 弱实体累积）。
+   * 四道判重闸门的前两道在此：闸1 同名同内容 → 全跳过（零成本）；
+   * 同名新内容 → 版本更新（同 sourceId，重新抽取解析——链接跟随实体走，
+   * plan §4.6，不再"永久锁死第一个 Room"）。
+   */
+  async submitFileUpload(input: {
+    filename: string;
+    buffer: Buffer;
+    occurredAt?: string;
+    entrySignals?: DocEnvelope["entrySignals"];
+  }): Promise<{ queued: boolean; sourceId: string; title: string; deduped: boolean }> {
+    const converted = convertUploadedFile(input.filename, input.buffer);
+    const sourceId = fileIdOf(input.filename);
+
+    // 资产段经 modules/files（U9）：闸1 同名同内容 → 全跳过；同名新内容 →
+    // 版本更新（身份不变）。存储完成后这里只做解析回填与路由入队。
+    const uploaded = await this.files.upload({ filename: input.filename, buffer: input.buffer });
+    if (uploaded.deduped) {
+      // 闸1：同名且内容未变——不存、不解析、不入队（链接与归属必然没变）
+      this.logger.info(
+        { event: "knowledge.file.deduped", sourceId, filename: input.filename },
+        "file re-upload with unchanged content skipped",
+      );
+      return { queued: false, sourceId, title: uploaded.originalName, deduped: true };
+    }
+    const parsedId = this.files.ensureParsed(uploaded.contentHash, converted.markdown);
+    this.files.touchParsed(sourceId, parsedId);
+
+    const sourceVersion = this.nextFileVersion(sourceId);
+    this.submitEnvelope({
+      sourceKind: "file",
+      sourceId,
+      sourceVersion,
+      title: converted.title,
+      markdown: converted.markdown,
+      ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
+      // 文件名进 ②b 规则信号（如 "发票-" 前缀规则）；用户显式传的字段优先
+      entrySignals: {
+        filenamePrefix: input.filename,
+        ...(input.entrySignals ?? {}),
+      },
+    });
+    this.logger.info(
+      { event: "knowledge.file.uploaded", sourceId, filename: input.filename, bytes: input.buffer.byteLength, version: sourceVersion },
+      uploaded.versionUpdated ? "file version updated for routing" : "file uploaded for routing",
+    );
+    return { queued: true, sourceId, title: converted.title, deduped: false };
+  }
+
+  /** file 的下一个版本号：取该源已有决策的最大 source_version + 1。 */
+  nextFileVersion(sourceId: string): number {
+    const rows = this.db.select({ sourceVersion: routeDecisions.sourceVersion })
+      .from(routeDecisions)
+      .where(and(eq(routeDecisions.sourceKind, "file"), eq(routeDecisions.sourceId, sourceId)))
+      .orderBy(desc(routeDecisions.sourceVersion))
+      .limit(1)
+      .all();
+    return (rows[0]?.sourceVersion ?? 0) + 1;
   }
 
   /**
@@ -827,7 +986,12 @@ export class KnowledgeService {
    * 账本逐房 raw/rm + 决策回退（与 document.deleted 同款异步 job）。
    */
   requestFileCleanup(sourceId: string): void {
-    this.enqueueCleanup("file", sourceId);
+    this.requestSourceCleanup("file", sourceId);
+  }
+
+  /** 任意统一 ingest 来源的 Room/wiki 清理入口。 */
+  requestSourceCleanup(sourceKind: SourceKind, sourceId: string): void {
+    this.enqueueCleanup(sourceKind, sourceId);
   }
 
   /** 文档永久删除后的可靠清理入口，由持久化 document outbox 调用。 */
@@ -844,38 +1008,53 @@ export class KnowledgeService {
   private insertJob(
     type: string,
     payload: IngestJobPayload | RouteJobPayload | CleanupJobPayload | PromoteJobPayload,
+    result?: Record<string, unknown>,
   ): string {
+    if (type !== PROMOTE_JOB_TYPE) {
+      const serializedPayload = JSON.stringify(payload);
+      const existing = this.db.select({ id: jobs.id, payload: jobs.payload }).from(jobs)
+        .where(and(eq(jobs.type, type), inArray(jobs.status, ["pending", "running"])))
+        .orderBy(asc(jobs.createdAt))
+        .all()
+        .find((job) => JSON.stringify(job.payload) === serializedPayload);
+      if (existing) {
+        this.logger.info(
+          { event: "knowledge.job.reused", jobId: existing.id, type },
+          `knowledge job already active: ${type}`,
+        );
+        return existing.id;
+      }
+    }
     const id = randomUUID();
-    this.db.insert(jobs).values({ id, type, status: "pending", payload }).run();
+    this.db.insert(jobs).values({ id, type, status: "pending", payload, ...(result ? { result } : {}) }).run();
     this.logger.info({ event: "knowledge.job.enqueued", jobId: id, type }, `knowledge job enqueued: ${type}`);
     return id;
   }
 
   private wake(): void {
+    this.drainRequested = true;
+    this.promotionDrainRequested = true;
     void this.drain();
+    void this.drainPromotions();
   }
 
   // ───────────────────────── worker（plan §5.3 + §4.4 晋升） ─────────────────────────
 
   private async drain(): Promise<void> {
-    if (this.draining) return;
+    if (this.draining) {
+      this.drainRequested = true;
+      return;
+    }
     this.draining = true;
     try {
-      const candidates = this.db.select().from(jobs)
-        .where(and(
-          eq(jobs.status, "pending"),
-          inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE, PROMOTE_JOB_TYPE]),
-        ))
-        .orderBy(asc(jobs.createdAt))
-        .all();
-      const now = Date.now();
-      for (const job of candidates) {
-        const retryAt = this.retryAfter.get(job.id);
-        if (retryAt && retryAt > now) continue;
-        const lockKey = this.lockKeyOf(job);
-        if (lockKey && this.busyRoomKeys.has(lockKey)) continue;
-        await this.processJob(job, lockKey);
-      }
+      do {
+        this.drainRequested = false;
+        for (;;) {
+          const candidate = this.nextRunnableJob();
+          if (!candidate) break;
+          await this.processJob(candidate.job, candidate.lockKey);
+        }
+      } while (this.drainRequested);
     } catch (error) {
       this.logger.error(
         { event: "knowledge.worker.error", error: error instanceof Error ? error.message : String(error) },
@@ -884,6 +1063,80 @@ export class KnowledgeService {
     } finally {
       this.draining = false;
     }
+  }
+
+  /**
+   * 每完成一项后重新取队，使新产生的 Room 资料任务可以优先于历史连接器
+   * route backlog 执行，而不是沿用 worker 启动时的一次性队列快照。
+   */
+  private nextRunnableJob(): { job: typeof jobs.$inferSelect; lockKey: string | null } | null {
+    const candidates = this.db.select().from(jobs)
+      .where(and(
+        eq(jobs.status, "pending"),
+        inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE]),
+      ))
+      // Room 的资料沉淀和清理先于连接器批量路由，缩短新 Room 可用时间。
+      .orderBy(
+        sql`case when ${jobs.type} = ${INGEST_JOB_TYPE} then 0 when ${jobs.type} = ${CLEANUP_JOB_TYPE} then 1 else 2 end`,
+        asc(jobs.createdAt),
+      )
+      .limit(100)
+      .all();
+    const now = Date.now();
+    for (const job of candidates) {
+      const retryAt = this.retryAfter.get(job.id);
+      if (retryAt && retryAt > now) continue;
+      const lockKey = this.lockKeyOf(job);
+      if (lockKey && this.busyRoomKeys.has(lockKey)) continue;
+      return { job, lockKey };
+    }
+    return null;
+  }
+
+  /**
+   * 用户触发的 Room 创建使用独立 worker。知识服务处理某个大 Wiki 时，
+   * 创建任务仍可完成实体登记和 Room 落库，不被 route/ingest 的网络等待阻塞。
+   */
+  private async drainPromotions(): Promise<void> {
+    if (this.promotionDraining) {
+      this.promotionDrainRequested = true;
+      return;
+    }
+    this.promotionDraining = true;
+    try {
+      do {
+        this.promotionDrainRequested = false;
+        for (;;) {
+          const candidate = this.nextRunnablePromotion();
+          if (!candidate) break;
+          await this.processJob(candidate.job, candidate.lockKey);
+        }
+      } while (this.promotionDrainRequested);
+    } catch (error) {
+      this.logger.error(
+        { event: "knowledge.promotion_worker.error", error: error instanceof Error ? error.message : String(error) },
+        "knowledge promotion worker drain failed",
+      );
+    } finally {
+      this.promotionDraining = false;
+    }
+  }
+
+  private nextRunnablePromotion(): { job: typeof jobs.$inferSelect; lockKey: string | null } | null {
+    const candidates = this.db.select().from(jobs)
+      .where(and(eq(jobs.status, "pending"), eq(jobs.type, PROMOTE_JOB_TYPE)))
+      .orderBy(asc(jobs.createdAt))
+      .limit(100)
+      .all();
+    const now = Date.now();
+    for (const job of candidates) {
+      const retryAt = this.retryAfter.get(job.id);
+      if (retryAt && retryAt > now) continue;
+      const lockKey = this.lockKeyOf(job);
+      if (lockKey && this.busyRoomKeys.has(lockKey)) continue;
+      return { job, lockKey };
+    }
+    return null;
   }
 
   /**
@@ -902,7 +1155,13 @@ export class KnowledgeService {
 
   private async processJob(job: typeof jobs.$inferSelect, lockKey: string | null): Promise<void> {
     if (lockKey) this.busyRoomKeys.add(lockKey);
-    this.db.update(jobs).set({ status: "running", updatedAt: new Date() })
+    this.db.update(jobs).set({
+      status: "running",
+      ...(job.type === PROMOTE_JOB_TYPE ? {
+        result: { stage: "checking_identity", message: "正在确认实体身份", current: 1, total: 5 },
+      } : {}),
+      updatedAt: new Date(),
+    })
       .where(eq(jobs.id, job.id)).run();
     try {
       if (job.type === INGEST_JOB_TYPE) {
@@ -910,17 +1169,30 @@ export class KnowledgeService {
       } else if (job.type === ROUTE_JOB_TYPE) {
         await this.runRouteJob(job.payload as RouteJobPayload);
       } else if (job.type === PROMOTE_JOB_TYPE) {
-        await this.runPromotionJob(job.payload as PromoteJobPayload);
+        await this.runPromotionJob(job.id, job.payload as PromoteJobPayload);
       } else {
         await this.runCleanupJob(job.payload as CleanupJobPayload);
       }
-      this.db.update(jobs).set({ status: "completed", updatedAt: new Date() }).where(eq(jobs.id, job.id)).run();
+      this.db.update(jobs).set({
+        status: "completed",
+        ...(job.type === PROMOTE_JOB_TYPE ? {
+          result: {
+            ...((this.db.select({ result: jobs.result }).from(jobs).where(eq(jobs.id, job.id)).get()?.result ?? {}) as Record<string, unknown>),
+            stage: "completed",
+            message: "Room 已创建，关联资料将在后台继续导入",
+          },
+        } : {}),
+        updatedAt: new Date(),
+      }).where(eq(jobs.id, job.id)).run();
       this.retryAfter.delete(job.id);
       this.transientAttempts.delete(job.id);
     } catch (error) {
       if (error instanceof KsBusyError) {
         // 409 busy：回 pending 退避重试（per-wiki 串行约束的来源）。
         this.db.update(jobs).set({ status: "pending", updatedAt: new Date() }).where(eq(jobs.id, job.id)).run();
+        if (job.type === PROMOTE_JOB_TYPE) {
+          this.setPromotionProgress(job.id, "queued", "知识服务正忙，稍后继续");
+        }
         this.retryAfter.set(job.id, Date.now() + BUSY_RETRY_DELAY_MS);
       } else {
         const attempts = (this.transientAttempts.get(job.id) ?? 0) + 1;
@@ -929,6 +1201,9 @@ export class KnowledgeService {
           this.db.update(jobs).set({ status: "pending", updatedAt: new Date() }).where(eq(jobs.id, job.id)).run();
           this.retryAfter.set(job.id, Date.now() + BUSY_RETRY_DELAY_MS * attempts);
           this.transientAttempts.set(job.id, attempts);
+          if (job.type === PROMOTE_JOB_TYPE) {
+            this.setPromotionProgress(job.id, "queued", `暂时失败，准备第 ${String(attempts + 1)} 次尝试`);
+          }
           this.logger.warn(
             { event: "knowledge.job.retry", jobId: job.id, attempts, error: message },
             "knowledge job failed, scheduled retry",
@@ -940,6 +1215,11 @@ export class KnowledgeService {
             updatedAt: new Date(),
           }).where(eq(jobs.id, job.id)).run();
           this.transientAttempts.delete(job.id);
+          if (job.type === PROMOTE_JOB_TYPE) {
+            const payload = job.payload as PromoteJobPayload;
+            this.setPromotionProgress(job.id, "failed", message);
+            this.entityRegistry.releasePromotion(payload.entityId, payload.previousStatus ?? "ready");
+          }
           this.logger.error(
             { event: "knowledge.job.failed", jobId: job.id, error: message },
             "knowledge job failed permanently",
@@ -955,12 +1235,11 @@ export class KnowledgeService {
   private async runRouteJob(payload: RouteJobPayload): Promise<void> {
     let envelope: DocEnvelope | null = null;
     if (payload.envelope) {
-      const { occurredAt, entryRoomId, entrySignals, ...rest } = payload.envelope;
+      const { occurredAt, entrySignals, ...rest } = payload.envelope;
       envelope = {
         ref: { kind: payload.sourceKind, id: payload.sourceId, version: payload.sourceVersion },
         ...rest,
         ...(occurredAt ? { occurredAt } : {}),
-        ...(entryRoomId ? { entryRoomId } : {}),
         ...(entrySignals ? { entrySignals } : {}),
       };
     } else if (payload.sourceKind === "everroom-doc") {
@@ -1027,8 +1306,15 @@ export class KnowledgeService {
       return;
     }
 
-    const knowledgeId = await this.registry.ensureWikiForRoom(payload.roomId);
     const filename = envelopeFilename(envelope);
+    if (ingestLedgerOf(decision).some((entry) => entry.roomId === payload.roomId && entry.filename === filename)) {
+      this.logger.info(
+        { event: "knowledge.ingest.already_confirmed", sourceId: payload.sourceId, roomId: payload.roomId },
+        "document already present in room wiki, skipping duplicate job",
+      );
+      return;
+    }
+    const knowledgeId = await this.registry.ensureWikiForRoom(payload.roomId);
 
     await this.ks.rawWrite(knowledgeId, [{ filename, content: envelope.markdown }]);
     await this.ks.ingest(knowledgeId);
@@ -1050,19 +1336,21 @@ export class KnowledgeService {
   // ───────────────────────── 晋升 job（entity-room-plan §4.4） ─────────────────────────
 
   /**
-   * 弱实体 → Room 的全流程：同名扫描 → 转正登记 → rooms 插行 →
-   * ensureWiki → 批量 ingest（全部链接的资料，不分角色，每源最新版本）。
+   * 弱实体 → Room 的创建流程：同名扫描 → 转正登记 → rooms 插行 →
+   * 将全部链接资料（不分角色，每源最新版本）展开为后台 ingest job。
    *
-   * 幂等性：room 行已建（roomId 回填）时直接走 backlog 补账——重复入队、
-   * 部分失败重试、晋升中途新链接的资料都收敛到同一条补账路径。
+   * 幂等性：room 行已建（roomId 回填）时只补排 backlog；重复 ingest job
+   * 在 runIngestJob 通过 Room/filename 台账跳过。
    */
-  private async runPromotionJob(payload: PromoteJobPayload): Promise<void> {
+  private async runPromotionJob(jobId: string, payload: PromoteJobPayload): Promise<void> {
     const entity = this.entityRegistry.getEntity(payload.entityId);
     if (!entity || entity.status === "archived") return;
 
     if (entity.roomId) {
-      // 已建 Room（含重试续跑/重复入队/种子实体）：只补未沉淀的 backlog
-      await this.ingestEntityBacklog(entity.id);
+      // 已建 Room（含崩溃恢复/重复入队）：补账拆成普通 ingest job，
+      // 不让慢 Wiki 阻塞其他 Room 的创建。
+      const queued = this.enqueueEntityBacklog(entity.id);
+      this.setPromotionProgress(jobId, "importing_documents", `已安排 ${String(queued)} 份资料后台导入`, 0, queued, entity.roomId);
       return;
     }
     if (entity.status !== "weak" && entity.status !== "ready" && entity.status !== "promoting") return;
@@ -1071,8 +1359,7 @@ export class KnowledgeService {
     // 步骤 2：同名扫描——撞已晋升实体（Dice ≥ judge 线）→ LLM 同一性判定
     const collision = await this.scanPromotedCollision(entity);
     if (collision.outcome === "hold") {
-      // 判定失败：回 weak 等重试（保守取向，不硬并也不硬立）
-      this.entityRegistry.releasePromotion(entity.id);
+      // 判定失败：保留 promoting 与任务进度，交给 worker 退避重试。
       throw new Error(`promotion identity judge failed for entity ${entity.id}`);
     }
     if (collision.target) {
@@ -1082,7 +1369,15 @@ export class KnowledgeService {
         fromId: entity.id,
         reason: collision.reason,
       });
-      await this.ingestEntityBacklog(collision.target.id);
+      const queued = this.enqueueEntityBacklog(collision.target.id);
+      this.setPromotionProgress(
+        jobId,
+        "importing_documents",
+        `已安排 ${String(queued)} 份资料后台导入`,
+        0,
+        queued,
+        collision.target.roomId,
+      );
       this.logger.info(
         { event: "knowledge.entity.merged_on_promote", fromId: entity.id, intoId: collision.target.id, reason: collision.reason },
         "weak entity merged into existing promoted entity",
@@ -1091,10 +1386,12 @@ export class KnowledgeService {
     }
 
     // 步骤 3：转正登记（LLM 一次；失败用现有 name + 首条依据拼底稿）
+    this.setPromotionProgress(jobId, "registering_entity", "正在整理 Room 名称与概述", 2, 5);
     const registration = await this.registerEntityOrFallback(entity);
 
     // 步骤 4：rooms 插行 + status=room + roomId 回填——先于链接查询（竞态防护：
     // 晋升中途到达的链接，其资料经 backlog 补账不会被漏掉）
+    this.setPromotionProgress(jobId, "creating_room", "正在创建 Room", 3, 5);
     const roomId = `auto-${randomUUID().slice(0, 8)}`;
     this.db.insert(rooms).values({
       id: roomId,
@@ -1109,8 +1406,10 @@ export class KnowledgeService {
     }).onConflictDoNothing().run();
     this.entityRegistry.promoteToRoom(entity.id, roomId);
 
-    // 步骤 6：批量 ingest（步骤 5 的 ensureWiki 在 backlog 内做）
-    await this.ingestEntityBacklog(entity.id);
+    // 资料沉淀拆为 per-room 串行的普通 ingest job。Room 创建在这里即可完成，
+    // 后台 Wiki 处理不会继续占用高优先级 promotion worker。
+    const queued = this.enqueueEntityBacklog(entity.id);
+    this.setPromotionProgress(jobId, "importing_documents", `已安排 ${String(queued)} 份资料后台导入`, 0, queued, roomId);
     this.logger.info(
       { event: "knowledge.entity.promoted", entityId: entity.id, roomId, name: registration.name, manual: payload.manual ?? false },
       "weak entity promoted to room",
@@ -1257,12 +1556,53 @@ export class KnowledgeService {
   }
 
   /**
+   * 将实体存量资料展开成普通 ingest job。创建 Room 只负责落库和排队，
+   * 资料写入沿用 per-room 锁、失败重试和统一 worker，不阻塞创建队列。
+   */
+  private enqueueEntityBacklog(entityId: string): number {
+    const entity = this.entityRegistry.getEntity(entityId);
+    if (!entity?.roomId) return 0;
+
+    const latestBySource = new Map<string, EntityLinkRow>();
+    for (const link of this.entityRegistry.linksOfEntity(entityId)) {
+      const key = `${link.sourceKind}:${link.sourceId}`;
+      const existing = latestBySource.get(key);
+      if (!existing || link.sourceVersion > existing.sourceVersion) latestBySource.set(key, link);
+    }
+
+    let queued = 0;
+    for (const link of latestBySource.values()) {
+      const decision = this.db.select().from(routeDecisions)
+        .where(and(
+          eq(routeDecisions.sourceKind, link.sourceKind),
+          eq(routeDecisions.sourceId, link.sourceId),
+        ))
+        .orderBy(desc(routeDecisions.createdAt))
+        .get();
+      if (!decision) continue;
+      this.insertJob(INGEST_JOB_TYPE, {
+        sourceKind: link.sourceKind,
+        sourceId: link.sourceId,
+        sourceVersion: link.sourceVersion,
+        roomId: entity.roomId,
+        decisionId: decision.id,
+      });
+      queued += 1;
+    }
+    if (queued > 0) this.wake();
+    return queued;
+  }
+
+  /**
    * 批量补账：把实体全部链接（不分角色——mention 链接的实体晋升后
    * 同样收正文）的资料（每源最新版本）落进实体 Room 的 wiki。收敛循环
    * 兜住晋升/合并中途到达的新链接；账本已含 {roomId, filename} 者跳过
    * （幂等，重复入队零副作用，其他 Room 的确认不挡本房补账）。
    */
-  private async ingestEntityBacklog(entityId: string): Promise<void> {
+  private async ingestEntityBacklog(
+    entityId: string,
+    onProgress?: (stage: PromotionStage, message: string, current?: number, total?: number) => void,
+  ): Promise<void> {
     const entity = this.entityRegistry.getEntity(entityId);
     if (!entity?.roomId) return;
     const roomId = entity.roomId;
@@ -1279,7 +1619,11 @@ export class KnowledgeService {
       }
 
       let ingested = 0;
+      let processed = 0;
+      const total = latestBySource.size;
+      if (pass === 0) onProgress?.("creating_wiki", "正在准备 Room Wiki", 4, 5);
       for (const link of latestBySource.values()) {
+        onProgress?.("importing_documents", `正在导入资料 ${String(processed)}/${String(total)}`, processed, total);
         const decision = this.db.select().from(routeDecisions)
           .where(and(
             eq(routeDecisions.sourceKind, link.sourceKind),
@@ -1287,7 +1631,11 @@ export class KnowledgeService {
           ))
           .orderBy(desc(routeDecisions.createdAt))
           .get();
-        if (!decision) continue; // 无决策行（信封已丢）：跳过，链接仍在
+        if (!decision) {
+          processed += 1;
+          onProgress?.("importing_documents", `正在导入资料 ${String(processed)}/${String(total)}`, processed, total);
+          continue; // 无决策行（信封已丢）：跳过，链接仍在
+        }
 
         // 台账快照过滤（§6.3）：wiki=false 的源晋升补账也只计链接分
         if (this.wikiDisabledForSource(link.sourceKind, link.sourceId)) {
@@ -1298,6 +1646,8 @@ export class KnowledgeService {
               updatedAt: new Date(),
             }).where(eq(routeDecisions.id, decision.id)).run();
           }
+          processed += 1;
+          onProgress?.("importing_documents", `正在导入资料 ${String(processed)}/${String(total)}`, processed, total);
           continue;
         }
 
@@ -1311,11 +1661,19 @@ export class KnowledgeService {
           },
           decision,
         );
-        if (!envelope) continue;
+        if (!envelope) {
+          processed += 1;
+          onProgress?.("importing_documents", `正在导入资料 ${String(processed)}/${String(total)}`, processed, total);
+          continue;
+        }
         const filename = envelopeFilename(envelope);
         // 账本制跳过：本房本文件已沉淀过才跳——多对多下其他 Room 的
         // 确认（primaryRoomId 指向别房）不是跳过理由
-        if (ingestLedgerOf(decision).some((entry) => entry.roomId === roomId && entry.filename === filename)) continue;
+        if (ingestLedgerOf(decision).some((entry) => entry.roomId === roomId && entry.filename === filename)) {
+          processed += 1;
+          onProgress?.("importing_documents", `正在导入资料 ${String(processed)}/${String(total)}`, processed, total);
+          continue;
+        }
 
         knowledgeId ??= await this.registry.ensureWikiForRoom(roomId);
         await this.ks.rawWrite(knowledgeId, [{ filename, content: envelope.markdown }]);
@@ -1330,6 +1688,8 @@ export class KnowledgeService {
           updatedAt: new Date(),
         }).where(eq(routeDecisions.id, decision.id)).run();
         ingested += 1;
+        processed += 1;
+        onProgress?.("importing_documents", `正在导入资料 ${String(processed)}/${String(total)}`, processed, total);
       }
       if (ingested === 0) return; // 收敛：本轮无新沉淀
     }
@@ -1445,6 +1805,7 @@ export class KnowledgeService {
     firstEvidence: string | null;
     lastLinkedAt: Date | null;
     updatedAt: Date;
+    promotion: PromotionProgress | null;
   }> {
     return this.entityRegistry.listEntities(status)
       .slice(0, LIST_PAGE_SIZE)
@@ -1461,6 +1822,7 @@ export class KnowledgeService {
         firstEvidence: this.evidenceSamplesOf(entity.id)[0] ?? null,
         lastLinkedAt: entity.lastLinkedAt,
         updatedAt: entity.updatedAt,
+        promotion: this.promotionProgress(entity.id),
       }));
   }
 
@@ -1503,20 +1865,153 @@ export class KnowledgeService {
       .get()?.title ?? null;
   }
 
+  /** Room 创建进度：优先返回仍在执行的任务，否则返回最近一次结果。 */
+  promotionProgress(entityId: string): PromotionProgress | null {
+    const promotionJobs = this.db.select().from(jobs)
+      .where(eq(jobs.type, PROMOTE_JOB_TYPE))
+      .orderBy(asc(jobs.createdAt))
+      .all()
+      .filter((job) => job.status !== "cancelled"
+        && (job.payload as PromoteJobPayload).entityId === entityId);
+    const job = promotionJobs.find((candidate) => candidate.status === "running")
+      ?? promotionJobs.find((candidate) => candidate.status === "pending")
+      ?? promotionJobs.at(-1);
+    if (!job) return null;
+    const result = (job.result ?? {}) as Partial<PromotionJobResult>;
+    const error = (job.error ?? {}) as { message?: unknown };
+    const status = job.status === "pending" ? "queued"
+      : job.status === "running" ? "running"
+        : job.status === "completed" ? "completed" : "failed";
+    const stage = result.stage
+      ?? (status === "queued" ? "queued" : status === "completed" ? "completed" : status === "failed" ? "failed" : "checking_identity");
+    const defaultMessage = status === "queued" ? "已加入 Room 创建队列"
+      : status === "running" ? "正在创建 Room"
+        : status === "completed" ? "Room 与知识资料已创建完成" : "Room 创建失败";
+    const pending = status === "queued"
+      ? this.db.select().from(jobs).where(and(eq(jobs.type, PROMOTE_JOB_TYPE), eq(jobs.status, "pending")))
+        .orderBy(asc(jobs.createdAt)).all()
+      : [];
+    const queueIndex = pending.findIndex((candidate) => candidate.id === job.id);
+    return {
+      jobId: job.id,
+      status,
+      stage,
+      message: result.message ?? defaultMessage,
+      current: typeof result.current === "number" ? result.current : null,
+      total: typeof result.total === "number" ? result.total : null,
+      queuePosition: queueIndex >= 0 ? queueIndex + 1 : null,
+      roomId: typeof result.roomId === "string" ? result.roomId : null,
+      error: typeof error.message === "string" ? error.message : null,
+      updatedAt: job.updatedAt,
+    };
+  }
+
+  private activePromotionJob(entityId: string): typeof jobs.$inferSelect | null {
+    return this.db.select().from(jobs)
+      .where(and(eq(jobs.type, PROMOTE_JOB_TYPE), inArray(jobs.status, ["pending", "running"])))
+      .orderBy(asc(jobs.createdAt))
+      .all()
+      .find((job) => (job.payload as PromoteJobPayload).entityId === entityId) ?? null;
+  }
+
+  private deduplicatePendingPromotions(): number {
+    const pending = this.db.select().from(jobs)
+      .where(and(eq(jobs.type, PROMOTE_JOB_TYPE), eq(jobs.status, "pending")))
+      .orderBy(asc(jobs.createdAt))
+      .all();
+    const canonicalByEntity = new Map<string, string>();
+    let cancelled = 0;
+    for (const job of pending) {
+      const entityId = (job.payload as PromoteJobPayload).entityId;
+      if (!entityId) continue;
+      const canonicalJobId = canonicalByEntity.get(entityId);
+      if (!canonicalJobId) {
+        canonicalByEntity.set(entityId, job.id);
+        continue;
+      }
+      const result = this.db.update(jobs).set({
+        status: "cancelled",
+        result: {
+          ...((job.result ?? {}) as Record<string, unknown>),
+          stage: "queued",
+          message: "重复请求已合并到已有创建任务",
+          supersededBy: canonicalJobId,
+        },
+        updatedAt: new Date(),
+      }).where(and(eq(jobs.id, job.id), eq(jobs.status, "pending"))).run() as { changes: number | bigint };
+      cancelled += Number(result.changes);
+    }
+    return cancelled;
+  }
+
+  /** 热重载或重复补账可能留下完全相同的活动任务；保留最早一条即可。 */
+  private deduplicatePendingJobs(): number {
+    const pending = this.db.select().from(jobs)
+      .where(and(eq(jobs.status, "pending"), inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE])))
+      .orderBy(asc(jobs.createdAt))
+      .all();
+    const canonicalByPayload = new Map<string, string>();
+    let cancelled = 0;
+    for (const job of pending) {
+      const key = `${job.type}:${JSON.stringify(job.payload)}`;
+      const canonicalJobId = canonicalByPayload.get(key);
+      if (!canonicalJobId) {
+        canonicalByPayload.set(key, job.id);
+        continue;
+      }
+      const result = this.db.update(jobs).set({
+        status: "cancelled",
+        result: { message: "重复任务已合并到已有任务", supersededBy: canonicalJobId },
+        updatedAt: new Date(),
+      }).where(and(eq(jobs.id, job.id), eq(jobs.status, "pending"))).run() as { changes: number | bigint };
+      cancelled += Number(result.changes);
+    }
+    return cancelled;
+  }
+
+  private setPromotionProgress(
+    jobId: string,
+    stage: PromotionStage,
+    message: string,
+    current?: number,
+    total?: number,
+    roomId?: string | null,
+  ): void {
+    const existing = this.db.select({ result: jobs.result }).from(jobs).where(eq(jobs.id, jobId)).get();
+    this.db.update(jobs).set({
+      result: {
+        ...((existing?.result ?? {}) as Record<string, unknown>),
+        stage,
+        message,
+        ...(current !== undefined ? { current } : {}),
+        ...(total !== undefined ? { total } : {}),
+        ...(roomId ? { roomId } : {}),
+      },
+      updatedAt: new Date(),
+    }).where(eq(jobs.id, jobId)).run();
+  }
+
   /**
    * 用户确认创建（推荐确认制的唯一建 Room 入口）：ready/weak 实体走完整
    * 晋升流程（含同名扫描与 LLM 转正登记）。用户出手即是明确信号——
    * 不设阈值门槛（ED8 修订：建 Room 收回用户确认权）。
    */
-  promoteEntity(entityId: string): { ok: true } | { ok: false; error: string } {
+  promoteEntity(entityId: string): { ok: true; queued: boolean; jobId: string } | { ok: false; error: string } {
     const entity = this.entityRegistry.getEntity(entityId);
     if (!entity) return { ok: false, error: "entity_not_found" };
+    const active = this.activePromotionJob(entityId);
+    if (active) return { ok: true, queued: false, jobId: active.id };
     if (entity.status !== "weak" && entity.status !== "ready") {
       return { ok: false, error: "entity_not_promotable" };
     }
-    this.insertJob(PROMOTE_JOB_TYPE, { entityId, manual: true });
+    const jobId = this.insertJob(
+      PROMOTE_JOB_TYPE,
+      { entityId, manual: true, previousStatus: entity.status },
+      { stage: "queued", message: "已加入 Room 创建队列", current: 0, total: 5 },
+    );
+    this.entityRegistry.claimForPromotion(entityId);
     this.wake();
-    return { ok: true };
+    return { ok: true, queued: true, jobId };
   }
 
   /**
@@ -1963,81 +2458,4 @@ export class KnowledgeService {
       ingested: ingested.has(document.id),
     }));
   }
-
-  /** Room 详情投影：资料集合是事实源，LLM 只负责汇总，不直接改用户 Room 数据。 */
-  async roomContext(roomId: string): Promise<RoomContextSummary> {
-    const rows = this.db.select({ document: documents })
-      .from(roomDocumentLinks)
-      .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
-      .where(and(eq(roomDocumentLinks.roomId, roomId), isNull(documents.deletedAt)))
-      .orderBy(desc(documents.updatedAt))
-      .all()
-      .filter(({ document }) => document.status === "active");
-    const sourceDocuments = rows.map(({ document }) => ({
-      documentId: document.id,
-      title: document.title,
-      version: document.version,
-      updatedAt: document.updatedAt.toISOString(),
-    }));
-    const key = sourceDocuments.map((item) => `${item.documentId}:${item.version}`).join("\u0000");
-    const cached = this.roomContextCache.get(roomId);
-    if (cached?.key === key) return cached.value;
-
-    const fallbackStatus = sourceDocuments.length > 0
-      ? `已收录 ${sourceDocuments.length} 份文档，最新资料《${sourceDocuments[0]!.title}》已更新。`
-      : "";
-    let context: RoomContextResult = {
-      overview: fallbackStatus,
-      status: fallbackStatus,
-      nextSteps: [],
-      entities: [],
-      actionItems: [],
-      meetings: [],
-    };
-    let cacheable = !this.llm || rows.length === 0;
-    if (this.llm && rows.length > 0) {
-      const room = this.db.select({ title: rooms.title }).from(rooms).where(eq(rooms.id, roomId)).get();
-      try {
-        const generated = await this.llm.summarizeRoom(
-          room?.title ?? roomId,
-          rows.map(({ document }) => ({
-            title: document.title,
-            markdown: tiptapToMarkdown(document.contentJson as TiptapJsonContent),
-          })),
-        );
-        const sourceTitles = new Set(sourceDocuments.map((document) => document.title));
-        context = {
-          ...generated,
-          status: generated.status || fallbackStatus,
-          actionItems: generated.actionItems.filter((item) => sourceTitles.has(item.sourceTitle)),
-          meetings: generated.meetings.filter((item) => sourceTitles.has(item.sourceTitle)),
-        };
-        cacheable = true;
-      } catch (error) {
-        this.logger.warn(
-          { event: "knowledge.room_context.failed", roomId, error: error instanceof Error ? error.message : String(error) },
-          "Room context refresh failed; using document fallback",
-        );
-      }
-    }
-    const value: RoomContextSummary = {
-      roomId,
-      generatedAt: new Date().toISOString(),
-      sourceDocuments,
-      ...context,
-    };
-    if (cacheable) this.roomContextCache.set(roomId, { key, value });
-    return value;
-  }
-}
-
-export interface RoomContextSummary extends RoomContextResult {
-  roomId: string;
-  generatedAt: string;
-  sourceDocuments: Array<{
-    documentId: string;
-    title: string;
-    version: number;
-    updatedAt: string;
-  }>;
 }

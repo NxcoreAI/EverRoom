@@ -10,12 +10,13 @@ import {
   ListChecks,
   AudioLines,
   Bot,
+  Building2,
   NotebookPen,
   PlugZap,
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'agents' | 'tasks' | 'diary' | 'settings'
+export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'agents' | 'tasks' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -36,6 +37,7 @@ export const navigationSections: NavigationSection[] = [
     label: 'surface:navigation.coreWork',
     items: [
       { id: 'home', label: 'surface:navigation.home', icon: Home, tone: 'slate' },
+      { id: 'office', label: '办公室', icon: Building2, tone: 'blue' },
       { id: 'rooms', label: 'surface:navigation.contextRoom', icon: BookOpen, tone: 'blue' },
       { id: 'docs', label: 'surface:navigation.documents', icon: FileText, tone: 'indigo' },
       { id: 'recording', label: 'surface:navigation.realityPerception', icon: AudioLines, tone: 'cyan' },

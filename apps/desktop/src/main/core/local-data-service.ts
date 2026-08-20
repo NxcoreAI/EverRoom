@@ -737,17 +737,17 @@ export class LocalDataService {
     this.notifyDeletion(id, 'queued', 5, '已加入清理队列。')
 
     // The renderer must not wait for a large scan or object cleanup. Keep the
-    // source hidden from new work, then finish removal after the current pass.
+    // source unavailable to new work, then clear its data after the current pass.
     const activeScan = this.activeScans.get(id)
     if (!activeScan) {
-      return this.removeSourceData(id).finally(() => this.disconnectingSources.delete(id))
+      return this.clearSourceData(id).finally(() => this.disconnectingSources.delete(id))
     }
 
     this.notifyDeletion(id, 'waiting', 15, '正在等待当前扫描结束。')
     const cleanup = (activeScan ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => new Promise<void>((resolve) => setImmediate(resolve)))
-      .then(() => this.removeSourceData(id))
+      .then(() => this.clearSourceData(id))
       .finally(() => this.disconnectingSources.delete(id))
     this.pendingDisconnects.add(cleanup)
     void cleanup.then(
@@ -756,12 +756,12 @@ export class LocalDataService {
     )
     void cleanup.catch((error) => {
       this.notifyDeletion(id, 'failed', 0, '清理失败，请重试。')
-      console.error(`[local-data] failed to remove source ${id}`, error)
+      console.error(`[local-data] failed to clear source ${id}`, error)
     })
     return Promise.resolve()
   }
 
-  private async removeSourceData(id: string): Promise<void> {
+  private async clearSourceData(id: string): Promise<void> {
     const objectHashes = this.database.prepare(`
       SELECT DISTINCT source_versions.object_hash AS object_hash
       FROM source_versions
@@ -770,7 +770,22 @@ export class LocalDataService {
     `).all(id) as unknown as Array<{ object_hash: string }>
 
     this.notifyDeletion(id, 'database', 55, '正在清理数据库记录。')
-    this.database.prepare('DELETE FROM data_sources WHERE id = ?').run(id)
+    const now = new Date().toISOString()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare('DELETE FROM source_items WHERE data_source_id = ?').run(id)
+      this.database.prepare('DELETE FROM sync_runs WHERE data_source_id = ?').run(id)
+      this.database.prepare(`
+        UPDATE data_sources
+        SET status = 'paused', last_synced_at = NULL, last_error = NULL,
+            last_change_run_id = NULL, disconnected_at = NULL, updated_at = ?
+        WHERE id = ?
+      `).run(now, id)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
     this.notifyDeletion(id, 'objects', 75, '正在删除本地文件副本。')
 
     let lastPercent = 75
@@ -788,7 +803,7 @@ export class LocalDataService {
         lastPercent = percent
       }
     }
-    this.notifyDeletion(id, 'completed', 100, '数据源及本地副本已清理。')
+    this.notifyDeletion(id, 'completed', 100, '文档数据已清理，目录已保留并暂停扫描。')
     this.notifyChanged(id, true)
   }
 

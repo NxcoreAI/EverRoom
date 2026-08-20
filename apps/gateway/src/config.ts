@@ -22,7 +22,7 @@ const AgentRuntimeSchema = Type.Union([
   Type.Literal("fake"),
   Type.Literal("pi"),
 ]);
-const ConnectorAgentModeSchema = Type.Union([
+const CliConnectorAgentModeSchema = Type.Union([
   Type.Literal("direct"),
   Type.Literal("local"),
 ]);
@@ -51,11 +51,15 @@ const RawConfigSchema = Type.Object(
     logLevel: LogLevelSchema,
     authToken: Type.String({ minLength: 16 }),
     agentRuntime: AgentRuntimeSchema,
-    connectorAgentMode: ConnectorAgentModeSchema,
-    connectorSyncEnabled: Type.Boolean(),
-    connectorSyncJobsJson: Type.String(),
-    connectorSyncIntervalMs: Type.Integer({ minimum: 5_000 }),
-    connectorSyncOwnerId: Type.String({ minLength: 1, maxLength: 128 }),
+    subagentsEnabled: Type.Boolean(),
+    subagentsDir: Type.String(),
+    subagentTimeoutMs: Type.Integer({ minimum: 1_000 }),
+    subagentMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    cliConnectorAgentMode: CliConnectorAgentModeSchema,
+    cliConnectorSyncEnabled: Type.Boolean(),
+    cliConnectorSyncJobsJson: Type.String(),
+    cliConnectorSyncIntervalMs: Type.Integer({ minimum: 5_000 }),
+    cliConnectorSyncOwnerId: Type.String({ minLength: 1, maxLength: 128 }),
     aiProvider: Type.String(),
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
@@ -97,7 +101,7 @@ const RawConfigSchema = Type.Object(
     asrAliyunOssPrefix: Type.String({ minLength: 1 }),
     nangoUrl: Type.String(),
     nangoSecret: Type.String(),
-    connectorPollMs: Type.Integer({ minimum: 1000 }),
+    nangoConnectorPollMs: Type.Integer({ minimum: 1000 }),
     memoryEnabled: Type.Boolean(),
     memoryBaseUrl: Type.String(),
     memoryApiKey: Type.String(),
@@ -131,7 +135,7 @@ const RawConfigSchema = Type.Object(
 
 export type LogLevel = typeof LogLevelSchema.static;
 export type AgentRuntimeMode = typeof AgentRuntimeSchema.static;
-export type ConnectorAgentMode = typeof ConnectorAgentModeSchema.static;
+export type CliConnectorAgentMode = typeof CliConnectorAgentModeSchema.static;
 export type AiApi = typeof AiApiSchema.static;
 export type AiReasoning = typeof AiReasoningSchema.static;
 
@@ -158,14 +162,8 @@ export interface WebSearchConfig {
   model: string;
 }
 
-/** 在线视觉理解配置；图片与推理结果仍只持久化在本地。 */
-export interface VlmConfig {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
-
 export interface PiRuntimeConfig {
+  runtimeId?: string;
   provider: string;
   model: string;
   baseUrl: string;
@@ -178,6 +176,12 @@ export interface PiRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  systemPrompt?: string;
+  runtimeRole?: "user-facing" | "internal";
+  skillsEnabled?: boolean;
+  additionalSkillPaths?: string[];
+  includeBashTool?: boolean;
+  maxToolCallsPerRun?: number;
   /** Pi 内置工具白名单；缺省启用全部，NXCORE_PI_TOOLS（逗号分隔）收窄。 */
   builtinTools?: string[];
   /** MCP 服务器注入配置（pi-mcp-adapter）；读取 NXCORE_MCP_CONFIG 或 dataDir/agent/mcp.json。 */
@@ -253,28 +257,28 @@ export interface GatewayConfig {
   logLevel: LogLevel;
   authToken: string;
   agentRuntime: AgentRuntimeMode;
-  demoDataEnabled?: boolean;
-  connectorAgentMode?: ConnectorAgentMode;
-  connectorSyncEnabled?: boolean;
-  connectorSyncIntervalMs?: number;
-  connectorSyncJobs?: ConnectorSyncJobConfig[];
+  cliConnectorAgentMode?: CliConnectorAgentMode;
+  cliConnectorSyncEnabled?: boolean;
+  cliConnectorSyncIntervalMs?: number;
+  cliConnectorSyncJobs?: ConnectorSyncJobConfig[];
+  cliConnectorSyncOwnerId?: string;
+  /** Backward-compatible aliases retained for merged clients/tests. */
   connectorSyncOwnerId?: string;
   memory: MemoryRuntimeConfig | null;
   pi: PiRuntimeConfig | null;
   cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
   backgroundPi: PiRuntimeConfig | null;
-  /** 日记 Agent 的独立输出预算，避免被短任务的后台预算截断。 */
   diaryMaxTokens?: number;
+  subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
   mcpConfigPath: string;
   /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
   webSearch: WebSearchConfig | null;
-  /** OpenAI-compatible 在线视觉模型；配置不完整时关闭。 */
   vlm?: VlmConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
-  connectors?: {
+  nangoConnector?: {
     enabled: boolean;
     databasePath: string;
     nangoUrl: string;
@@ -292,7 +296,21 @@ export interface GatewayConfig {
     outlookClientSecret: string;
     pollingIntervalMs: number;
   };
-  openConnector?: OpenConnectorCliConfig | null;
+  cliConnector?: OpenConnectorCliConfig | null;
+}
+
+export interface VlmConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface SubagentFrameworkConfig {
+  enabled: boolean;
+  definitionsDir: string;
+  runtimeDir: string;
+  defaultTimeoutMs: number;
+  maxConcurrent: number;
 }
 
 /** agent MCP 配置文件路径（NXCORE_MCP_CONFIG 优先，缺省 dataDir/agent/mcp.json）。 */
@@ -416,19 +434,19 @@ function validateMemoryEndpoint(name: string, value: string): void {
   }
 }
 
-function validateConnectorEndpoint(value: string): void {
+function validateConnectorEndpoint(name: string, value: string): void {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error('Invalid OO_CONNECTOR_URL: expected an absolute HTTP(S) URL');
+    throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
   }
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
-    throw new Error('Invalid OO_CONNECTOR_URL: plain HTTP is only allowed for loopback addresses');
+    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback addresses`);
   }
   if (url.username || url.password || url.search || url.hash) {
-    throw new Error('Invalid OO_CONNECTOR_URL: credentials, query, and fragment are not allowed');
+    throw new Error(`Invalid ${name}: credentials, query, and fragment are not allowed`);
   }
 }
 
@@ -454,48 +472,48 @@ function parseConnectorSyncJobs(value: string): ConnectorSyncJobConfig[] {
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new Error("NXCORE_CONNECTOR_SYNC_JOBS must be valid JSON");
+    throw new Error("NXCORE_CLI_CONNECTOR_SYNC_JOBS must be valid JSON");
   }
-  if (!Array.isArray(parsed)) throw new Error("NXCORE_CONNECTOR_SYNC_JOBS must be a JSON array");
+  if (!Array.isArray(parsed)) throw new Error("NXCORE_CLI_CONNECTOR_SYNC_JOBS must be a JSON array");
   return parsed.map((item, index) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}] must be an object`);
+      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] must be an object`);
     }
     const job = item as Record<string, unknown>;
     const required = ["id", "ownerId", "service", "dataset"] as const;
     for (const key of required) {
       if (typeof job[key] !== "string" || !job[key].trim()) {
-        throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].${key} is required`);
+        throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].${key} is required`);
       }
     }
     if (job.input !== undefined && (!job.input || typeof job.input !== "object" || Array.isArray(job.input))) {
-      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].input must be an object`);
+      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].input must be an object`);
     }
     if (job.intervalMs !== undefined && (!Number.isInteger(job.intervalMs) || Number(job.intervalMs) < 5_000)) {
-      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].intervalMs must be at least 5000`);
+      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].intervalMs must be at least 5000`);
     }
     const resourceType = typeof job.resourceType === "string"
       ? job.resourceType.trim()
       : inferConnectorResourceType(String(job.dataset));
     if (resourceType !== "email" && resourceType !== "document" && resourceType !== "calendar" && resourceType !== "generic") {
-      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, or generic`);
+      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, or generic`);
     }
     const action = typeof job.action === "string" && job.action.trim() ? job.action.trim() : undefined;
     if (job.allowedActions !== undefined && (!Array.isArray(job.allowedActions)
       || job.allowedActions.some((item) => typeof item !== "string" || !item.trim()))) {
-      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}].allowedActions must be an array of action names`);
+      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].allowedActions must be an array of action names`);
     }
     const allowedActions = [...new Set([
       ...(action ? [action] : []),
       ...((job.allowedActions as string[] | undefined) ?? []).map((item) => item.trim()),
     ])];
     if (allowedActions.length === 0) {
-      throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}] requires action or allowedActions`);
+      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] requires action or allowedActions`);
     }
     if (resourceType !== "generic") {
       const unsafeAction = allowedActions.find(isObviouslyMutatingConnectorAction);
       if (unsafeAction) {
-        throw new Error(`NXCORE_CONNECTOR_SYNC_JOBS[${String(index)}] action "${unsafeAction}" is not read-only`);
+        throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}] action "${unsafeAction}" is not read-only`);
       }
     }
     return {
@@ -548,6 +566,17 @@ function defaultMigrationsDir(): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
+/** Agent definitions are project assets copied beside the packaged Gateway. */
+export function bundledAgentDefinitionsDir(): string {
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(moduleDirectory, "agents"),
+    resolve(moduleDirectory, "..", "..", "..", "agents"),
+    resolve("agents"),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
 export function loadConfig(
   argv: string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
@@ -575,16 +604,28 @@ export function loadConfig(
     logLevel: values["log-level"] ?? env.NXCORE_GATEWAY_LOG_LEVEL ?? "info",
     authToken: values.token ?? env.NXCORE_GATEWAY_TOKEN ?? randomBytes(32).toString("base64url"),
     agentRuntime: env.NXCORE_AGENT_RUNTIME ?? "fake",
-    connectorAgentMode: env.NXCORE_CONNECTOR_AGENT_MODE ?? "direct",
-    connectorSyncEnabled: env.NXCORE_CONNECTOR_SYNC_ENABLED == null
-      ? false
-      : parseBoolean("NXCORE_CONNECTOR_SYNC_ENABLED", env.NXCORE_CONNECTOR_SYNC_ENABLED.trim()),
-    connectorSyncJobsJson: env.NXCORE_CONNECTOR_SYNC_JOBS?.trim() ?? "",
-    connectorSyncIntervalMs: parsePositiveInteger(
-      "NXCORE_CONNECTOR_SYNC_INTERVAL_MS",
-      env.NXCORE_CONNECTOR_SYNC_INTERVAL_MS ?? "300000",
+    subagentsEnabled: env.NXCORE_SUBAGENTS_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_SUBAGENTS_ENABLED", env.NXCORE_SUBAGENTS_ENABLED.trim()),
+    subagentsDir: env.NXCORE_SUBAGENTS_DIR?.trim() ?? "",
+    subagentTimeoutMs: parsePositiveInteger(
+      "NXCORE_SUBAGENT_TIMEOUT_MS",
+      env.NXCORE_SUBAGENT_TIMEOUT_MS ?? "300000",
     ),
-    connectorSyncOwnerId: env.NXCORE_CONNECTOR_SYNC_OWNER_ID?.trim() || "local-user",
+    subagentMaxConcurrent: parsePositiveInteger(
+      "NXCORE_SUBAGENT_MAX_CONCURRENT",
+      env.NXCORE_SUBAGENT_MAX_CONCURRENT ?? "4",
+    ),
+    cliConnectorAgentMode: env.NXCORE_CLI_CONNECTOR_AGENT_MODE ?? "direct",
+    cliConnectorSyncEnabled: env.NXCORE_CLI_CONNECTOR_SYNC_ENABLED == null
+      ? false
+      : parseBoolean("NXCORE_CLI_CONNECTOR_SYNC_ENABLED", env.NXCORE_CLI_CONNECTOR_SYNC_ENABLED.trim()),
+    cliConnectorSyncJobsJson: env.NXCORE_CLI_CONNECTOR_SYNC_JOBS?.trim() ?? "",
+    cliConnectorSyncIntervalMs: parsePositiveInteger(
+      "NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS",
+      env.NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS ?? "300000",
+    ),
+    cliConnectorSyncOwnerId: env.NXCORE_CLI_CONNECTOR_SYNC_OWNER_ID?.trim() || "local-user",
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
@@ -665,9 +706,12 @@ export function loadConfig(
     asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
     asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
     asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
-    nangoUrl: env.NXCORE_NANGO_URL?.trim() ?? "",
-    nangoSecret: env.NXCORE_NANGO_SECRET?.trim() ?? "",
-    connectorPollMs: parsePositiveInteger("NXCORE_CONNECTOR_POLL_MS", env.NXCORE_CONNECTOR_POLL_MS ?? "300000"),
+    nangoUrl: env.NXCORE_NANGO_CONNECTOR_URL?.trim() ?? "",
+    nangoSecret: env.NXCORE_NANGO_CONNECTOR_SECRET?.trim() ?? "",
+    nangoConnectorPollMs: parsePositiveInteger(
+      "NXCORE_NANGO_CONNECTOR_POLL_MS",
+      env.NXCORE_NANGO_CONNECTOR_POLL_MS ?? "300000",
+    ),
     memoryEnabled: env.NXCORE_MEMORY_ENABLED == null
       ? false
       : parseBoolean("NXCORE_MEMORY_ENABLED", env.NXCORE_MEMORY_ENABLED.trim()),
@@ -765,11 +809,8 @@ export function loadConfig(
       throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
     }
   }
-  if (rawConfig.vlmBaseUrl) {
-    validateAiEndpoint(rawConfig.vlmBaseUrl, "NXCORE_VLM_BASE_URL");
-  }
-  if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_URL and NXCORE_NANGO_SECRET");
-  if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_URL must use HTTPS except for loopback development"); }
+  if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_CONNECTOR_URL and NXCORE_NANGO_CONNECTOR_SECRET");
+  if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_CONNECTOR_URL must use HTTPS except for loopback development"); }
 
   const memory: MemoryRuntimeConfig | null = rawConfig.memoryEnabled
     ? {
@@ -898,9 +939,9 @@ export function loadConfig(
   if (cursorCompletionPi) {
     validateAiEndpoint(cursorCompletionPi.baseUrl, "NXCORE_CURSOR_COMPLETION_AI_BASE_URL");
   }
-  const openConnectorUrl = env.OO_CONNECTOR_URL?.trim();
-  if (openConnectorUrl) validateConnectorEndpoint(openConnectorUrl);
-  const connectorSyncJobs = parseConnectorSyncJobs(rawConfig.connectorSyncJobsJson);
+  const cliConnectorUrl = env.NXCORE_CLI_CONNECTOR_URL?.trim();
+  if (cliConnectorUrl) validateConnectorEndpoint("NXCORE_CLI_CONNECTOR_URL", cliConnectorUrl);
+  const cliConnectorSyncJobs = parseConnectorSyncJobs(rawConfig.cliConnectorSyncJobsJson);
 
   return {
     host: rawConfig.host,
@@ -909,12 +950,13 @@ export function loadConfig(
     logLevel: rawConfig.logLevel,
     authToken: rawConfig.authToken,
     agentRuntime: rawConfig.agentRuntime,
-    demoDataEnabled: true,
-    connectorAgentMode: rawConfig.connectorAgentMode,
-    connectorSyncEnabled: rawConfig.connectorSyncEnabled,
-    connectorSyncIntervalMs: rawConfig.connectorSyncIntervalMs,
-    connectorSyncJobs,
-    connectorSyncOwnerId: rawConfig.connectorSyncOwnerId,
+    cliConnectorAgentMode: rawConfig.cliConnectorAgentMode,
+    cliConnectorSyncEnabled: rawConfig.cliConnectorSyncEnabled,
+    cliConnectorSyncIntervalMs: rawConfig.cliConnectorSyncIntervalMs,
+    cliConnectorSyncJobs,
+    cliConnectorSyncOwnerId: rawConfig.cliConnectorSyncOwnerId,
+    connectorSyncOwnerId: rawConfig.cliConnectorSyncOwnerId,
+    diaryMaxTokens: rawConfig.diaryMaxTokens,
     memory,
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
@@ -941,38 +983,33 @@ export function loadConfig(
             : null,
         }
       : null,
-    vlm: rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel
-      ? {
-          baseUrl: rawConfig.vlmBaseUrl,
-          apiKey: rawConfig.vlmApiKey,
-          model: rawConfig.vlmModel,
-        }
-      : null,
-    connectors: {
+    nangoConnector: {
       enabled: Boolean(rawConfig.nangoUrl),
       databasePath: join(dataDir,"database","connectors.sqlite"),
       nangoUrl: rawConfig.nangoUrl,
       nangoSecret: rawConfig.nangoSecret,
-      gmailConfigKey: env.NXCORE_NANGO_GMAIL_CONFIG_KEY?.trim() ?? "google-mail",
-      outlookConfigKey: env.NXCORE_NANGO_OUTLOOK_CONFIG_KEY?.trim() ?? "microsoft-mail",
-      googleDocsConfigKey: env.NXCORE_NANGO_GOOGLE_DOCS_CONFIG_KEY?.trim() ?? "google-drive",
-      notionConfigKey: env.NXCORE_NANGO_NOTION_CONFIG_KEY?.trim() ?? "notion",
-      googleCalendarConfigKey: env.NXCORE_NANGO_GOOGLE_CALENDAR_CONFIG_KEY?.trim() ?? "google-calendar",
-      googleClientId: env.NXCORE_NANGO_GOOGLE_CLIENT_ID?.trim() ?? "",
-      googleClientSecret: env.NXCORE_NANGO_GOOGLE_CLIENT_SECRET?.trim() ?? "",
-      notionClientId: env.NXCORE_NANGO_NOTION_CLIENT_ID?.trim() ?? "",
-      notionClientSecret: env.NXCORE_NANGO_NOTION_CLIENT_SECRET?.trim() ?? "",
-      outlookClientId: env.NXCORE_NANGO_OUTLOOK_CLIENT_ID?.trim() ?? "",
-      outlookClientSecret: env.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET?.trim() ?? "",
-      pollingIntervalMs: rawConfig.connectorPollMs,
+      gmailConfigKey: env.NXCORE_NANGO_CONNECTOR_GMAIL_CONFIG_KEY?.trim() ?? "google-mail",
+      outlookConfigKey: env.NXCORE_NANGO_CONNECTOR_OUTLOOK_CONFIG_KEY?.trim() ?? "microsoft-mail",
+      googleDocsConfigKey: env.NXCORE_NANGO_CONNECTOR_GOOGLE_DOCS_CONFIG_KEY?.trim() ?? "google-drive",
+      notionConfigKey: env.NXCORE_NANGO_CONNECTOR_NOTION_CONFIG_KEY?.trim() ?? "notion",
+      googleCalendarConfigKey: env.NXCORE_NANGO_CONNECTOR_GOOGLE_CALENDAR_CONFIG_KEY?.trim() ?? "google-calendar",
+      googleClientId: env.NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_ID?.trim() ?? "",
+      googleClientSecret: env.NXCORE_NANGO_CONNECTOR_GOOGLE_CLIENT_SECRET?.trim() ?? "",
+      notionClientId: env.NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_ID?.trim() ?? "",
+      notionClientSecret: env.NXCORE_NANGO_CONNECTOR_NOTION_CLIENT_SECRET?.trim() ?? "",
+      outlookClientId: env.NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_ID?.trim() ?? "",
+      outlookClientSecret: env.NXCORE_NANGO_CONNECTOR_OUTLOOK_CLIENT_SECRET?.trim() ?? "",
+      pollingIntervalMs: rawConfig.nangoConnectorPollMs,
     },
-    openConnector: openConnectorUrl
+    cliConnector: cliConnectorUrl
       ? {
-          executable: env.NXCORE_OO_CLI_PATH?.trim() || 'oo',
-          baseUrl: openConnectorUrl.replace(/\/$/, ''),
-          ...(env.OO_CONNECTOR_TOKEN?.trim() ? { runtimeToken: env.OO_CONNECTOR_TOKEN.trim() } : {}),
-          configDirectory: env.OO_CONFIG_DIR?.trim() || join(dataDir, 'open-connector', 'oo-config'),
-          dataDirectory: env.OO_DATA_DIR?.trim() || join(dataDir, 'open-connector', 'oo-data'),
+          executable: env.NXCORE_CLI_CONNECTOR_CLI_PATH?.trim() || 'oo',
+          baseUrl: cliConnectorUrl.replace(/\/$/, ''),
+          ...(env.NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN?.trim()
+            ? { runtimeToken: env.NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN.trim() }
+            : {}),
+          configDirectory: env.NXCORE_CLI_CONNECTOR_CONFIG_DIR?.trim() || join(dataDir, 'open-connector', 'oo-config'),
+          dataDirectory: env.NXCORE_CLI_CONNECTOR_DATA_DIR?.trim() || join(dataDir, 'open-connector', 'oo-data'),
         }
       : null,
     pi,
@@ -984,7 +1021,13 @@ export function loadConfig(
           maxTokens: rawConfig.aiBackgroundMaxTokens,
         }
       : null,
-    diaryMaxTokens: rawConfig.diaryMaxTokens,
+    subagents: {
+      enabled: rawConfig.subagentsEnabled,
+      definitionsDir: resolve(rawConfig.subagentsDir || bundledAgentDefinitionsDir()),
+      runtimeDir: join(dataDir, "agent", "subagents"),
+      defaultTimeoutMs: rawConfig.subagentTimeoutMs,
+      maxConcurrent: rawConfig.subagentMaxConcurrent,
+    },
     mcpConfigPath,
     webSearch: pi && rawConfig.webSearchEnabled && rawConfig.webSearchApiKey
       ? {
@@ -992,6 +1035,9 @@ export function loadConfig(
           apiKey: rawConfig.webSearchApiKey,
           model: rawConfig.webSearchModel,
         }
+      : null,
+    vlm: rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel
+      ? { baseUrl: rawConfig.vlmBaseUrl, apiKey: rawConfig.vlmApiKey, model: rawConfig.vlmModel }
       : null,
     knowledge: knowledgeGateway,
   };
