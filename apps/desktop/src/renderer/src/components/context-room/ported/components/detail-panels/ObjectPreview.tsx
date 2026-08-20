@@ -91,11 +91,11 @@ export function ObjectPreview({
           </div>
           <div>
             <dt>{t('contextRoom:objectPreview.owner')}</dt>
-            <dd>{task.owner}</dd>
+            <dd>{t(uiText(task.owner))}</dd>
           </div>
           <div>
             <dt>{t('contextRoom:objectPreview.dueDate')}</dt>
-            <dd>{task.deadline}</dd>
+            <dd>{t(uiText(task.deadline))}</dd>
           </div>
         </dl>
       </article>

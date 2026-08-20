@@ -1,3 +1,5 @@
+import i18n from '@/i18n/i18next'
+
 interface ClipboardTextWriter {
   writeText(text: string): void | Promise<void>
 }
@@ -12,6 +14,6 @@ export async function writeTextToClipboard(
     : navigator.clipboard,
 ): Promise<void> {
   const writer = desktopClipboard ?? browserClipboard
-  if (!writer) throw new Error('剪贴板服务不可用。')
+  if (!writer) throw new Error(i18n.t('surface:agent.clipboardServiceUnavailable'))
   await writer.writeText(text)
 }

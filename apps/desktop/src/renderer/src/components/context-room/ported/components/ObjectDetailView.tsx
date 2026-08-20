@@ -350,8 +350,8 @@ function TaskDetail({
             </div>
           </div>
           <dl className="context-room-task-facts">
-            <TaskFact icon={User} label="contextRoom:objectDetail.owner" value={task.owner} />
-            <TaskFact icon={Clock3} label="contextRoom:objectDetail.dueDate" value={task.deadline} />
+            <TaskFact icon={User} label="contextRoom:objectDetail.owner" value={t(uiText(task.owner))} />
+            <TaskFact icon={Clock3} label="contextRoom:objectDetail.dueDate" value={t(uiText(task.deadline))} />
             <TaskFact icon={GitBranch} label="contextRoom:objectDetail.relatedRoom" value={room.title} wide />
           </dl>
           <div className="context-room-subsection-heading">
@@ -535,7 +535,7 @@ function MeetingDetail({
             <article key={action.id}>
               <div>
                 <b>{action.title}</b>
-                <span>{t('contextRoom:objectDetail.ownerOwner', { owner: action.owner })}</span>
+                <span>{t('contextRoom:objectDetail.ownerOwner', { owner: t(uiText(action.owner)) })}</span>
               </div>
               <button
                 type="button"

@@ -87,7 +87,7 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
     if (!api) return null
     const snapshot = await api.list()
     const restored = restoreContextRoomSnapshot(snapshot)
-    if (!restored) throw new Error('Room 快照格式无效')
+    if (!restored) throw new Error(i18n.t('contextRoom:contextRoomState.invalidSnapshot'))
     const restoredInput = createContextRoomSnapshotInput(restored)
     pendingRef.current = null
     lastSyncedFingerprintRef.current = fingerprint(restoredInput)
@@ -117,7 +117,7 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
           const snapshot = await api.syncSnapshot(pending.input)
           if (!mountedRef.current) return
           if (!restoreContextRoomSnapshot(snapshot)) {
-            throw new Error('Room 快照格式无效')
+            throw new Error(i18n.t('contextRoom:contextRoomState.invalidSnapshot'))
           }
           lastSyncedFingerprintRef.current = pending.fingerprint
           retryAttemptRef.current = 0

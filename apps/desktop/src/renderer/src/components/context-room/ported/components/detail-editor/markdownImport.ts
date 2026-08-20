@@ -19,8 +19,8 @@ const markdownManager = new MarkdownManager({
   ],
 })
 
-export function markdownDocumentTitle(fileName: string): string {
-  return fileName.replace(/\.(?:md|markdown)$/i, '').trim() || '无标题文档'
+export function markdownDocumentTitle(fileName: string, untitled = '无标题文档'): string {
+  return fileName.replace(/\.(?:md|markdown)$/i, '').trim() || untitled
 }
 
 export function parseMarkdownDocument(markdown: string): TiptapJsonContent {
