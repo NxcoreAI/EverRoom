@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { DocumentEvent, RoomDocument } from "@nxcore/agent-contract";
+import type { DocumentEvent, RoomDocument, TiptapJsonContent } from "@nxcore/agent-contract";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { KnowledgeLlmConfig } from "../../config.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -1197,15 +1197,22 @@ export class KnowledgeService {
       } else {
         const attempts = (this.transientAttempts.get(job.id) ?? 0) + 1;
         const message = error instanceof Error ? error.message : String(error);
-        if (attempts < MAX_TRANSIENT_ATTEMPTS) {
+        // 速率限制（429/1302）是账户级瞬态：退避拉长（30s 起步，按次翻倍，
+        // 上限 5 分钟），避免限速窗口内反复撞墙烧尝试次数。
+        const rateLimited = KnowledgeLlm.isRateLimited(error);
+        const maxAttempts = rateLimited ? MAX_TRANSIENT_ATTEMPTS * 4 : MAX_TRANSIENT_ATTEMPTS;
+        const backoffMs = rateLimited
+          ? Math.min(30_000 * 2 ** (attempts - 1), 300_000)
+          : BUSY_RETRY_DELAY_MS * attempts;
+        if (attempts < maxAttempts) {
           this.db.update(jobs).set({ status: "pending", updatedAt: new Date() }).where(eq(jobs.id, job.id)).run();
-          this.retryAfter.set(job.id, Date.now() + BUSY_RETRY_DELAY_MS * attempts);
+          this.retryAfter.set(job.id, Date.now() + backoffMs);
           this.transientAttempts.set(job.id, attempts);
           if (job.type === PROMOTE_JOB_TYPE) {
             this.setPromotionProgress(job.id, "queued", `暂时失败，准备第 ${String(attempts + 1)} 次尝试`);
           }
           this.logger.warn(
-            { event: "knowledge.job.retry", jobId: job.id, attempts, error: message },
+            { event: "knowledge.job.retry", jobId: job.id, attempts, backoffMs, rateLimited, error: message },
             "knowledge job failed, scheduled retry",
           );
         } else {

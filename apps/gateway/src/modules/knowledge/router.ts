@@ -32,7 +32,8 @@ import {
 } from "./entity-registry.js";
 import { embeddingInputText, nearestByCentroid, type EmbeddingClient } from "./embedding.js";
 import type { DocEnvelope } from "./envelope.js";
-import type { ExtractedEntity, KnowledgeLlm } from "./llm.js";
+import { KnowledgeLlm } from "./llm.js";
+import type { ExtractedEntity } from "./llm.js";
 
 export interface RouterThresholds {
   promoteScore: number;
@@ -194,6 +195,15 @@ export class KnowledgeRouter {
       extraction = await this.deps.llm.extract(envelope.title, envelope.markdown);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // 速率限制是瞬时态：抛错交 worker 退避重试，不落 awaiting_review——
+      // 否则该资料被永久定罪为"抽取失败"，限速过后也不会重新抽取。
+      if (KnowledgeLlm.isRateLimited(error)) {
+        this.deps.logger.warn(
+          { event: "knowledge.router.extract.rate_limited", sourceId: envelope.ref.id },
+          "entity extraction rate-limited, job will retry",
+        );
+        throw error;
+      }
       this.deps.logger.warn(
         { event: "knowledge.router.extract.failed", sourceId: envelope.ref.id, error: message },
         "entity extraction failed, falling back to unmatched",
