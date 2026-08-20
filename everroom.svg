@@ -1,6 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title description">
-  <title id="title">NxCore</title>
-  <desc id="description">The NxCore orbit mark, representing personal context moving through a governed local core.</desc>
-  <rect x="4" y="4" width="92" height="92" rx="23" fill="#F5F4F1"/>
-  <path d="M24 61C14 47 20 27 36 21c17-6 37 3 43 19 6 17-4 36-21 40-15 4-30-5-32-18-2-12 7-22 18-21 11 1 17 13 11 21-5 8-16 5-16-4 0-7 6-11 12-9 11 3 18 16 29 17" fill="none" stroke="#1857A5" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_51_52)">
+<path d="M54.6207 0H17.3793C7.78098 0 0 7.78098 0 17.3793V54.6207C0 64.219 7.78098 72 17.3793 72H54.6207C64.219 72 72 64.219 72 54.6207V17.3793C72 7.78098 64.219 0 54.6207 0Z" fill="#F7F7F2"/>
+<path d="M15 14.9375H57L45.5454 28.3011H15V14.9375Z" fill="#6DD0C5"/>
+<path d="M15 30.2095H44.9091L57 43.5731H15V30.2095Z" fill="#17323B"/>
+<path d="M15 45.4834H46.8181L34.7273 56.938H15V45.4834Z" fill="#F5AD71"/>
+</g>
+<defs>
+<clipPath id="clip0_51_52">
+<rect width="72" height="72" fill="white"/>
+</clipPath>
+</defs>
 </svg>
