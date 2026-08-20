@@ -1,4 +1,3 @@
-import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
@@ -42,8 +41,7 @@ describe("loadConfig", () => {
   });
 
   it("loads the isolated oo CLI connector target", () => {
-    const dataDirectory = resolve("/tmp/everroom-test");
-    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", dataDirectory], {
+    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", "/tmp/everroom-test"], {
       OO_CONNECTOR_URL: "http://127.0.0.1:3000",
       OO_CONNECTOR_TOKEN: "runtime-secret",
       NXCORE_OO_CLI_PATH: "/opt/everroom/oo",
@@ -53,8 +51,8 @@ describe("loadConfig", () => {
       executable: "/opt/everroom/oo",
       baseUrl: "http://127.0.0.1:3000",
       runtimeToken: "runtime-secret",
-      configDirectory: join(dataDirectory, "open-connector", "oo-config"),
-      dataDirectory: join(dataDirectory, "open-connector", "oo-data"),
+      configDirectory: "/tmp/everroom-test/open-connector/oo-config",
+      dataDirectory: "/tmp/everroom-test/open-connector/oo-data",
     });
   });
 
