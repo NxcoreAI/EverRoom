@@ -7,24 +7,15 @@ import type {
 import {
   Activity,
   Armchair,
-  Bot,
-  Brain,
   Check,
   CircleAlert,
   Clock3,
   Coffee,
-  Copy,
   CookingPot,
-  Database,
-  FileSearch,
-  FileText,
-  FolderLock,
   LoaderCircle,
   Monitor,
   RefreshCw,
-  Search,
   Sparkles,
-  Workflow,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 
@@ -37,15 +28,6 @@ const EMPTY_SNAPSHOT: AgentStatusSnapshot = {
   summary: { total: 0, running: 0, idle: 0, error: 0 },
   agents: [],
 }
-
-const AGENT_ICONS = {
-  main: Sparkles,
-  'connector-sync': Database,
-  'transcription-summary': FileText,
-  knowledge: Brain,
-  'web-search': Search,
-  'cursor-completion': FileSearch,
-} as const
 
 const SPRITE_COLORS = ['#2f8d72', '#c28645', '#6673b8', '#bd6571', '#4f8eaa', '#8b6aad']
 const SPRITE_COLUMNS = ['20%', '50%', '80%']
@@ -80,11 +62,6 @@ function runStatusLabel(status: AgentWorkspaceRunStatus): string {
   if (status === 'cancelled') return '已取消'
   if (status === 'timed_out') return '超时'
   return '已中断'
-}
-
-function AgentIcon({ agent }: { agent: AgentWorkspaceStatus }) {
-  const Icon = AGENT_ICONS[agent.agentId as keyof typeof AGENT_ICONS] ?? (agent.kind === 'developer' ? Workflow : Bot)
-  return <Icon aria-hidden="true" />
 }
 
 function StateMark({ state }: { state: AgentWorkspaceState }) {
@@ -172,13 +149,12 @@ function OfficeScene({
   )
 }
 
-export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) {
+export function AgentStatusPage() {
   const [snapshot, setSnapshot] = useState<AgentStatusSnapshot>(EMPTY_SNAPSHOT)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
 
   const refresh = useCallback(async (quiet = false) => {
     const api = window.nxcore?.agent
@@ -213,22 +189,12 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
     () => snapshot.agents.filter((agent) => filter === 'all' || agent.state === filter),
     [filter, snapshot.agents],
   )
-  const selectedAgent = snapshot.agents.find(({ agentId }) => agentId === selectedAgentId)
-    ?? visibleAgents[0]
-    ?? null
   const recentRuns = useMemo(
     () => [...snapshot.agents]
       .filter((agent) => agent.lastRun)
       .sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? '')),
     [snapshot.agents],
   )
-
-  const copyWorkspace = async () => {
-    if (!selectedAgent) return
-    await window.nxcore?.clipboard.writeText(selectedAgent.workspace.id)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1_500)
-  }
 
   return (
     <div className="page agent-status-page">
@@ -255,38 +221,7 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
       </section>
 
       <div className="agent-office-layout">
-        <OfficeScene agents={visibleAgents} selectedAgentId={selectedAgent?.agentId ?? null} onSelect={setSelectedAgentId} />
-
-        <aside className="agent-workspace-detail">
-          <header>
-            <i>{selectedAgent ? <AgentIcon agent={selectedAgent} /> : <Bot aria-hidden="true" />}</i>
-            {selectedAgent ? (
-              <div><span>{selectedAgent.kind === 'developer' ? 'DEVELOPER AGENT' : 'BUILT-IN AGENT'}</span><h2>{selectedAgent.name}</h2></div>
-            ) : <div><span>AGENT</span><h2>等待连接</h2></div>}
-            {selectedAgent ? <strong data-state={selectedAgent.state}><StateMark state={selectedAgent.state} />{stateLabel(selectedAgent.state)}</strong> : null}
-          </header>
-
-          {selectedAgent ? (
-            <>
-              <div className="agent-current-task">
-                <span>{selectedAgent.currentRun ? 'CURRENT TASK' : 'LAST TASK'}</span>
-                <h3>{selectedAgent.currentRun?.task ?? selectedAgent.lastRun?.task ?? '等待下一项任务'}</h3>
-                <p>{selectedAgent.currentRun
-                  ? `${selectedAgent.activeRunCount} 个运行正在此工作区执行。`
-                  : selectedAgent.lastRun
-                    ? `${runStatusLabel(selectedAgent.lastRun.status)} · ${elapsedLabel(selectedAgent.updatedAt)}`
-                    : '尚未产生运行记录。'}</p>
-              </div>
-              <div className="agent-workspace-meta">
-                <div><span>独立工作区</span><strong><FolderLock aria-hidden="true" />{selectedAgent.workspace.id}</strong><button type="button" title="复制工作区标识" onClick={() => void copyWorkspace()}>{copied ? <Check /> : <Copy />}</button></div>
-                <div><span>隔离策略</span><strong>Dedicated</strong></div>
-                {selectedAgent.workspace.revisionId ? <div><span>当前 Revision</span><strong>{selectedAgent.workspace.revisionId.slice(0, 12)}</strong></div> : null}
-                <div><span>并行运行</span><strong>{selectedAgent.activeRunCount}</strong></div>
-              </div>
-              {selectedAgent.agentId === 'main' ? <button className="agent-primary-action" type="button" onClick={onFocusAgent}><Sparkles aria-hidden="true" />发起新任务</button> : null}
-            </>
-          ) : <div className="agent-detail-empty"><Bot aria-hidden="true" /><span>暂无 Agent 状态</span></div>}
-        </aside>
+        <OfficeScene agents={visibleAgents} selectedAgentId={selectedAgentId} onSelect={setSelectedAgentId} />
       </div>
 
       <section className="agent-office-toolbar">
