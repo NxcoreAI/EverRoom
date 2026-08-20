@@ -753,7 +753,6 @@ describe("wiki 快照过滤：台账 wiki=false 的源只计链接分", () => {
     expect(wikiDisabledForSource(test.db, "file", "file-a")).toBe(true);
     seedLedgerEvent(test.db, "file-b", true);
     expect(wikiDisabledForSource(test.db, "file", "file-b")).toBe(false);
-    test.service.dispose();
     test.sqlite.close();
   });
 
@@ -786,7 +785,6 @@ describe("wiki 快照过滤：台账 wiki=false 的源只计链接分", () => {
     // 懒 ensure：link-only 不建 wiki，也不落 rooms 账本
     expect(ingestLedgerOf(decision)).toEqual([]);
     expect(test.sqlite.prepare("SELECT COUNT(*) c FROM room_wikis").get()).toMatchObject({ c: 0 });
-    test.service.dispose();
     test.sqlite.close();
   });
 
@@ -830,10 +828,63 @@ describe("wiki 快照过滤：台账 wiki=false 的源只计链接分", () => {
     expect(linkOnlyRoomsOf(decision)).toEqual(["room-r"]);
     expect(ingestLedgerOf(decision)).toEqual([]);
     expect(test.sqlite.prepare("SELECT COUNT(*) c FROM room_wikis").get()).toMatchObject({ c: 0 });
-    test.service.dispose();
     test.sqlite.close();
   });
 });
+
+// ───────────────────────── 连接器接入 ─────────────────────────
+
+describe("连接器接入：归一化直传共用台账与扇出", () => {
+  it("邮件：dataType=mail 三链路扇出，台账 kind=mail，幂等去重", async () => {
+    const test = await engineForTest();
+    const unit = {
+      kind: "mail" as const,
+      sourceId: "connector:gmail:c1:mail:m-1",
+      dataType: "mail" as const,
+      title: "季度总结",
+      markdown: "# 季度总结\n\n正文",
+    };
+
+    const first = await test.service.ingestConnector(unit);
+    expect(first).toMatchObject({
+      deduped: false,
+      dataType: "mail",
+      pipelines: { room: true, wiki: true, memory: true },
+      routeJobId: "route-job-1",
+    });
+    expect(first.memoryResult).toMatchObject({ documentId: "mdoc-1" });
+    expect(test.memory.importToMemoryCore).toHaveBeenCalledWith(expect.objectContaining({
+      callerRef: unit.sourceId,
+      title: "季度总结",
+    }));
+
+    // 闸1：同源同指纹重进零成本跳过
+    const again = await test.service.ingestConnector(unit);
+    expect(again.deduped).toBe(true);
+    expect(test.sqlite.prepare("SELECT COUNT(*) c FROM ingest_events").get()).toMatchObject({ c: 1 });
+    const event = test.sqlite.prepare("SELECT * FROM ingest_events").get() as Record<string, unknown>;
+    expect(event.source_kind).toBe("mail");
+    expect(event.origin_channel).toBe("connector");
+    test.sqlite.close();
+  });
+
+  it("router 未开启时显式降级为仅记忆链路（引擎 room 依赖 router）", async () => {
+    const test = await engineForTest();
+    const result = await test.service.ingestConnector({
+      kind: "mail",
+      sourceId: "connector:google-calendar:c1:calendar:ev-1",
+      dataType: "calendar",
+      title: "评审会",
+      markdown: "# 评审会\n\n过方案",
+      pipelines: { room: false, wiki: false, memory: true },
+    });
+    expect(result.pipelines).toEqual({ room: false, wiki: false, memory: true });
+    expect(result.routeJobId).toBeNull();
+    expect(result.memoryResult).toMatchObject({ documentId: "mdoc-1" });
+    test.sqlite.close();
+  });
+});
+
 
 // ───────────────────────── U2 格式转换（office/html/csv → md） ─────────────────────────
 

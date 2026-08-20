@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, File, FolderOpen, HardDrive, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Eye, File, FolderOpen, HardDrive, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
 
 import type { DataSourceSummary, SourceFileSummary } from '../../../../../shared/sources'
 import { EVIDENCE_STATUS_LABELS, FILE_STATUS_LABELS, formatBytes, formatDate, SOURCE_STATUS_LABELS } from './sourceFormatters'
@@ -15,6 +15,7 @@ export function SourceTable({
   onTogglePaused,
   onDelete,
   onOpenEvidence,
+  onPreviewFile,
   onShowFile,
 }: {
   sources: DataSourceSummary[]
@@ -28,6 +29,7 @@ export function SourceTable({
   onTogglePaused: (source: DataSourceSummary) => void
   onDelete: (source: DataSourceSummary) => void
   onOpenEvidence: (sourceId: string, fileId: string) => void
+  onPreviewFile: (sourceId: string, fileId: string) => void
   onShowFile: (sourceId: string, fileId: string) => void
 }) {
   return (
@@ -83,9 +85,10 @@ export function SourceTable({
                       {file.parseStatus === 'success' ? `${file.evidenceCount} 段` : EVIDENCE_STATUS_LABELS[file.parseStatus]}
                     </button>
                     <span>{formatDate(file.modifiedAt)}</span><span>{formatBytes(file.size)}</span>
-                    <button type="button" className="icon-button" aria-label={`打开 ${file.name} 的来源`} title={file.exists ? '打开来源' : '原始文件已不存在'} disabled={!file.exists} onClick={() => onShowFile(source.id, file.id)}>
-                      <FolderOpen aria-hidden="true" strokeWidth={1.8} />
-                    </button>
+                    <span className="source-file-actions">
+                      {['.md', '.mdx', '.markdown'].includes(file.extension.toLowerCase()) ? <button type="button" className="icon-button" aria-label={`预览 ${file.name}`} title="预览 Markdown" disabled={!file.exists} onClick={() => onPreviewFile(source.id, file.id)}><Eye aria-hidden="true" strokeWidth={1.8} /></button> : null}
+                      <button type="button" className="icon-button" aria-label={`打开 ${file.name} 的来源`} title={file.exists ? '打开来源' : '原始文件已不存在'} disabled={!file.exists} onClick={() => onShowFile(source.id, file.id)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button>
+                    </span>
                   </div>
                 ))}
               </div>

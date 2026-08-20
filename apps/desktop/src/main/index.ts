@@ -14,12 +14,15 @@ import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
+import { GoogleDocsConnector, type GoogleDocsConfig } from './connectors/google-docs-connector'
+import { NotionConnector, type NotionConfig } from './connectors/notion-connector'
 import { LocalDataService } from './core/local-data-service'
 import { CredentialStore } from './security/credential-store'
 import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
@@ -39,6 +42,7 @@ import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
+import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -107,11 +111,14 @@ const SOURCE_CHANNELS = {
   list: 'sources:list',
   listFiles: 'sources:list-files',
   listEvidence: 'sources:list-evidence',
+  previewFile: 'sources:preview-file',
   searchEvidence: 'sources:search-evidence',
   changed: 'sources:changed',
   showFile: 'sources:show-file',
   addLocalFolder: 'sources:add-local-folder',
   addGitHub: 'sources:add-github',
+  addGoogleDocs: 'sources:add-google-docs',
+  addNotion: 'sources:add-notion',
   sync: 'sources:sync',
   setPaused: 'sources:set-paused',
   disconnect: 'sources:disconnect',
@@ -121,6 +128,9 @@ const GATEWAY_CHANNELS = {
   status: 'gateway:status',
 } as const
 
+const CONNECTOR_CHANNELS = {
+  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', listDocuments: 'connector:list-documents', readDocument: 'connector:read-document', listRecords: 'connector:list-records', armFault: 'connector:arm-fault',
+} as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
   execute: 'open-connector:execute',
@@ -400,11 +410,13 @@ let ooCliBridge: OoCliBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
+let nangoSupervisor: NangoSupervisor | null = null
 let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
+let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
@@ -501,6 +513,11 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
       service.listEvidence(requireSourceId(id), requireSourceId(fileId)),
   )
   handle(
+    SOURCE_CHANNELS.previewFile,
+    (_event, id: unknown, fileId: unknown) =>
+      service.previewFile(requireSourceId(id), requireSourceId(fileId)),
+  )
+  handle(
     SOURCE_CHANNELS.searchEvidence,
     (_event, query: unknown, id: unknown) => {
       const sourceId = id === undefined ? null : requireSourceId(id)
@@ -542,6 +559,24 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     }
     return service.addConnection('github', config.repository, config)
   })
+  handle(SOURCE_CHANNELS.addGoogleDocs, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('无效的 Google Docs 配置。')
+    const value = input as Partial<GoogleDocsConfig>
+    if (!Array.isArray(value.documentIds) || value.documentIds.length < 1 || value.documentIds.length > 100) throw new Error('请至少提供一个 Google Docs 文档 ID。')
+    if (typeof value.token !== 'string' || !value.token.trim()) throw new Error('Google Docs access token 不能为空。')
+    const tokenCredentialKey = await credentials.set(value.token.trim())
+    const config = { documentIds: value.documentIds.map((id) => String(id).trim()).filter(Boolean), tokenCredentialKey }
+    return service.addConnection('google-docs', 'Google Docs', config)
+  })
+  handle(SOURCE_CHANNELS.addNotion, async (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('无效的 Notion 配置。')
+    const value = input as Partial<NotionConfig>
+    if (!Array.isArray(value.pageIds) || value.pageIds.length < 1 || value.pageIds.length > 100) throw new Error('请至少提供一个 Notion 页面 ID。')
+    if (typeof value.token !== 'string' || !value.token.trim()) throw new Error('Notion integration token 不能为空。')
+    const tokenCredentialKey = await credentials.set(value.token.trim())
+    const config = { pageIds: value.pageIds.map((id) => String(id).trim()).filter(Boolean), tokenCredentialKey }
+    return service.addConnection('notion', 'Notion', config)
+  })
 
   handle(SOURCE_CHANNELS.sync, (_event, id: unknown) => service.sync(requireSourceId(id)))
   handle(
@@ -568,6 +603,27 @@ function registerGatewayHandlers(): void {
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
 }
 
+function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
+  ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
+  ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
+  ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
+  ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
+  ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listRuns, (_event, connectionId) => bridge.runs(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listMail, (_event, query) => bridge.mail(query))
+  ipcMain.handle(CONNECTOR_CHANNELS.listFailures, (_event, query) => bridge.failures(query))
+  ipcMain.handle(CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
+  ipcMain.handle(CONNECTOR_CHANNELS.armFault, (_event, point) => {
+    if (process.env.NXCORE_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
+    return bridge.armFault(point)
+  })
+}
 function resolveOoCliExecutable(): string {
   const configured = process.env.NXCORE_OO_CLI_PATH?.trim()
   if (configured) return configured
@@ -1177,6 +1233,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
       return null
     })
+    // 数据同步用的 Nango 实例与 gateway 一并拉起(外部配置了 URL 时自动跳过)。
+    nangoSupervisor = new NangoSupervisor()
+    const nango = await nangoSupervisor.start().catch((error) => {
+      console.error('Managed Nango failed to start; connectors stay disabled.', error)
+      return null
+    })
     // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
     knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
     const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
@@ -1195,6 +1257,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
             NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
           }
+          : {}),
+        // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_SECRET。
+        ...((nango && process.env.NXCORE_NANGO_SECRET?.trim())
+          ? { NXCORE_NANGO_URL: nango.baseUrl }
           : {}),
         ...(knowledge
           ? {
@@ -1225,6 +1291,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
+    connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
+    registerConnectorHandlers(connectorGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
     cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
@@ -1280,10 +1348,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const connectors = new ConnectorRegistry()
       .register(new LocalFolderConnector())
       .register(new GitHubConnector((key) => credentials.get(key)))
-    localDataService = new LocalDataService(
-      dataDirectory,
-      connectors,
-    )
+      .register(new GoogleDocsConnector((key) => credentials.get(key)))
+      .register(new NotionConnector((key) => credentials.get(key)))
+    localDataService = new LocalDataService(dataDirectory, connectors)
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
     resolveServicesReady?.()
@@ -1300,6 +1367,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
     realityGatewayBridge = null
+    connectorGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -1331,6 +1399,7 @@ app.on('before-quit', (event) => {
   const connectorConsole = openConnectorConsoleWindow
   const cursorCompletion = cursorCompletionSupervisor
   const memoryCore = memoryCoreSupervisor
+  const nango = nangoSupervisor
   const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
   const cursorCompletionBridge = cursorCompletionAgentBridge
@@ -1345,11 +1414,13 @@ app.on('before-quit', (event) => {
   openConnectorConsoleWindow = null
   cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
+  nangoSupervisor = null
   knowledgeServiceSupervisor = null
   agentGatewayBridge = null
   cursorCompletionAgentBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
+  connectorGatewayBridge = null
   recordingStore = null
   saasClient = null
   screenshotScheduler.stop()
@@ -1367,6 +1438,7 @@ app.on('before-quit', (event) => {
     connectorRuntime?.shutdown(),
     cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
+    nango?.shutdown(),
     knowledgeService?.shutdown(),
   ]).then(() => flushDesktopLogs()).finally(() => app.quit())
 })

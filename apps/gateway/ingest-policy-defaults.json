@@ -23,5 +23,13 @@
   "html": {
     "$comment": "网页（html / htm，正文抽取）。导航/广告/模板文字噪音多，L1 提炼不可靠——memory 关。",
     "room": true, "wiki": true, "memory": false
+  },
+  "mail": {
+    "$comment": "邮件（连接器归一化 md）。发件人/主题/正文是高价值事实与实体来源——三链路全开。",
+    "room": true, "wiki": true, "memory": true
+  },
+  "calendar": {
+    "$comment": "日程（连接器归一化 md）。时间/地点/与会人是确定性事实——三链路全开。",
+    "room": true, "wiki": true, "memory": true
   }
 }

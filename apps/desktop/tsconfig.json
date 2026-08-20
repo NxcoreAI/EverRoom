@@ -17,7 +17,8 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/renderer/src/*"]
+      "@/*": ["src/renderer/src/*"],
+      "@nxcore/connector-contract": ["../../packages/connector-contract/src/index.ts"]
     },
     "types": ["node"]
   },

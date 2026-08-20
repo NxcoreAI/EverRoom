@@ -16,7 +16,7 @@ import {
 } from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
-import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
+import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
 
@@ -421,8 +421,8 @@ export function AgentChatView({
     if (!pendingIntentDocumentSelection) return []
     const allowedDocumentIds = new Set(pendingIntentDocumentSelection.intent.allowedDocumentIds)
     return (documentsByRoom[pendingIntentDocumentSelection.room.id] ?? [])
-      .filter((document) => allowedDocumentIds.has(document.id))
-      .map((document) => ({
+      .filter((document: RoomDocument) => allowedDocumentIds.has(document.id))
+      .map((document: RoomDocument) => ({
         documentId: document.id,
         roomId: document.roomId,
         title: document.title,

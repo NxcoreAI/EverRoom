@@ -1,3 +1,201 @@
+import type { FastifyPluginAsync } from "fastify";
+import { isConnectorProvider, isSyncMode } from "@nxcore/connector-contract";
+import type { ConnectorManager } from "./manager.js";
+import {
+  nangoAuthorizationErrorMessage,
+  type NangoAuthorizationService,
+} from "./nango-authorization.js";
+const pageParams = (query: any) => {
+  const limit = query?.limit === undefined ? 200 : Number(query.limit);
+  const offset = query?.offset === undefined ? 0 : Number(query.offset);
+  if (!Number.isInteger(limit) || !Number.isInteger(offset) || limit < 1 || limit > 500 || offset < 0)
+    throw Object.assign(new Error("invalid_page"), { statusCode: 400 });
+  const provider = query?.provider;
+  if (provider !== undefined && !isConnectorProvider(provider))
+    throw Object.assign(new Error("invalid_provider"), { statusCode: 400 });
+  return { limit, offset, ...(provider ? { provider } : {}) };
+};
+export const connectorRoutes =
+  (
+    manager: ConnectorManager,
+    enabled: boolean,
+    authorization?: NangoAuthorizationService,
+  ): FastifyPluginAsync =>
+  async (app) => {
+    const scopes = () =>
+      manager.repository
+        .listScopes()
+        .map((scope) => ({ ...scope, sourceCursor: null }));
+    const unavailable = (reply: any) =>
+      reply
+        .code(503)
+        .send({
+          error: "connectors_disabled",
+          message: "Connector module is disabled",
+        });
+    app.get("/v1/connectors/status", async () => ({
+      enabled,
+      connections: manager.repository.listConnections(),
+      scopes: scopes(),
+      runs: manager.repository.listRuns(),
+    }));
+    app.get("/v1/connectors/connections", async () =>
+      manager.repository.listConnections(),
+    );
+    app.post("/v1/connectors/authorizations", async (req, reply) => {
+      if (!enabled || !authorization) return unavailable(reply);
+      const provider = (req.body as any)?.provider;
+      if (!isConnectorProvider(provider))
+        return reply.code(400).send({ error: "invalid_provider" });
+      try {
+        return reply.code(201).send(await authorization.start(provider));
+      } catch (error) {
+        return reply.code(502).send({
+          error: "authorization_start_failed",
+          message: nangoAuthorizationErrorMessage(
+            error,
+            "Unable to start Nango authorization",
+          ),
+        });
+      }
+    });
+    app.get("/v1/connectors/authorizations/:id", async (req, reply) => {
+      if (!enabled || !authorization) return unavailable(reply);
+      try {
+        const attempt = await authorization.status((req.params as any).id);
+        return attempt ?? reply.code(404).send({ error: "authorization_not_found" });
+      } catch (error) {
+        return reply.code(502).send({
+          error: "authorization_status_failed",
+          message: nangoAuthorizationErrorMessage(
+            error,
+            "Unable to read Nango authorization status",
+          ),
+        });
+      }
+    });
+    app.post("/v1/connectors/connections", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      const b = req.body as any;
+      if (
+        !isConnectorProvider(b?.provider) ||
+        typeof b?.nangoConnectionId !== "string" ||
+        typeof b?.nangoConfigKey !== "string"
+      )
+        return reply.code(400).send({ error: "invalid_connection" });
+      try {
+        return reply.code(201).send(await manager.register(b));
+      } catch {
+        return reply
+          .code(409)
+          .send({ error: "connection_registration_failed" });
+      }
+    });
+    app.post("/v1/connectors/connections/:id/disable", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      manager.repository.disableConnection((req.params as any).id);
+      return { ok: true };
+    });
+    app.delete("/v1/connectors/connections/:id", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      manager.repository.purgeConnection((req.params as any).id);
+      return { ok: true };
+    });
+    app.get("/v1/connectors/scopes", async () => scopes());
+    app.get("/v1/connectors/runs", async () => manager.repository.listRuns());
+    app.post("/v1/connectors/runs/:id/cancel", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      return (
+        manager.cancel((req.params as any).id) ??
+        reply.code(404).send({ error: "run_not_found" })
+      );
+    });
+    app.post("/v1/connectors/scopes/:id/sync", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      const mode = (req.body as any)?.mode ?? "incremental";
+      if (!isSyncMode(mode))
+        return reply.code(400).send({ error: "invalid_mode" });
+      const scopeId = (req.params as any).id;
+      const existing = manager.repository
+        .listRuns()
+        .find((r) => r.scopeId === scopeId && r.status === "running");
+      if (existing) return reply.code(409).send({
+        error: "sync_already_running",
+        message: `该同步范围已有运行中的任务（${existing.id}）。`,
+        run: existing,
+      });
+      try {
+        return reply.code(202).send(manager.trigger(scopeId, mode));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "connection_unavailable";
+        return reply.code(409).send({ error: "sync_start_failed", message });
+      }
+    });
+    app.get("/v1/connectors/connections/:id/messages", async (req, reply) => {
+      try {
+        const page = pageParams(req.query);
+        return {
+          items: manager.repository.messages((req.params as any).id, page),
+          total: manager.repository.countMessages((req.params as any).id, page.provider),
+          limit: page.limit,
+          offset: page.offset,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid_request";
+        return reply.code(400).send({ error: message });
+      }
+    });
+    app.get("/v1/connectors/connections/:id/documents", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      try {
+        return await manager.listDocuments((req.params as any).id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "document_list_failed";
+        return reply.code(message === "document_connection_not_found" ? 404 : 500).send({ error: message, message });
+      }
+    });
+    app.get("/v1/connectors/connections/:id/documents/:documentId", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      try {
+        const params = req.params as any;
+        return await manager.readDocument(params.id, params.documentId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "document_read_failed";
+        const status = message === "document_too_large" ? 413 : message === "connector_document_store_unavailable" ? 500 : 404;
+        return reply.code(status).send({ error: message, message });
+      }
+    });
+    app.get("/v1/connectors/connections/:id/records", async (req, reply) => {
+      const type = (req.query as any)?.type ?? "mail";
+      if (type !== "mail" && type !== "calendar")
+        return reply.code(400).send({ error: "invalid_record_type" });
+      try {
+        const page = pageParams(req.query);
+        return {
+          items: manager.repository.records((req.params as any).id, type, page),
+          total: manager.repository.countRecords((req.params as any).id, type, page.provider),
+          limit: page.limit,
+          offset: page.offset,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid_request";
+        return reply.code(400).send({ error: message });
+      }
+    });
+    app.get("/v1/connectors/failures", async () =>
+      manager.repository.listFailures(),
+    );
+    app.post("/v1/connectors/debug/faults", async (_req, reply) => {
+      if (!enabled) return unavailable(reply);
+      return reply
+        .code(403)
+        .send({
+          error: "fault_injection_unavailable",
+          message:
+            "Fault injection is available only with a mock connector executor",
+        });
+    });
+  };
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import {
@@ -54,7 +252,7 @@ function sendServiceError(reply: { code(statusCode: number): { send(value: unkno
   return reply.code(notFound ? 404 : 400).send({ error: notFound ? "not_found" : "invalid_request", message });
 }
 
-export function connectorRoutes(service: ConnectorSyncService): FastifyPluginAsyncTypebox {
+export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.get("/v1/connectors/sync/status", { schema: { tags: ["connectors"] } }, async () => service.status(service.currentOwnerId()));
     app.get("/v1/connectors/accounts", { schema: { tags: ["connectors"] } }, async () => service.listAccounts());
