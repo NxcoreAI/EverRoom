@@ -60,7 +60,7 @@ export function PageCanvas({
 }) {
   const { t } = useLocale()
   let content = null
-  if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
+  if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
   if (page === 'rooms') {
     content = (
       <Suspense fallback={<ContextRoomHomeSkeleton />}>

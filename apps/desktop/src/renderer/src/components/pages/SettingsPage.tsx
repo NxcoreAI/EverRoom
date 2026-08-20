@@ -1,4 +1,5 @@
 import {
+  Activity,
   AudioLines,
   Brain,
   Camera,
@@ -36,11 +37,14 @@ import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
+import { TokenUsageSettingsSection } from '@/components/settings/TokenUsageSettingsSection'
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
+  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
+  { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
   { id: 'settings-memory', label: 'memory:settings.memorySetupTitle', description: 'memory:settings.memorySetupActionBody', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
@@ -377,7 +381,30 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
     <div className="page settings-page">
       <PageHeader title={t('surface:settings.settings')} description={t('surface:settings.manageTheLocalWorkspaceCloudAccountAndData')} />
 
-      <section className="reality-settings-section" aria-labelledby="interface-language-settings-title">
+      <div className="settings-layout">
+        <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>
+          <div className="settings-navigation-heading">{t('surface:settings.settingsDirectory')}</div>
+          {SETTINGS_NAV.map(({ id, label, description, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className="settings-navigation-item"
+              data-active={String(activeSetting === id)}
+              aria-current={activeSetting === id ? 'location' : undefined}
+              onClick={() => setActiveSetting(id)}
+            >
+              <span className="settings-navigation-icon"><Icon aria-hidden="true" /></span>
+              <span>
+                <strong>{t(label)}</strong>
+                <small>{t(description)}</small>
+              </span>
+            </button>
+          ))}
+        </nav>
+
+        <main className="settings-content" data-active-setting={activeSetting}>
+
+      <section id="settings-interface" className="reality-settings-section settings-anchor-section" aria-labelledby="interface-language-settings-title">
         <header>
           <span><Languages aria-hidden="true" /></span>
           <div>
@@ -410,29 +437,6 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
           </div>
         </div>
       </section>
-
-      <div className="settings-layout">
-        <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>
-          <div className="settings-navigation-heading">{t('surface:settings.settingsDirectory')}</div>
-          {SETTINGS_NAV.map(({ id, label, description, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              className="settings-navigation-item"
-              data-active={String(activeSetting === id)}
-              aria-current={activeSetting === id ? 'location' : undefined}
-              onClick={() => setActiveSetting(id)}
-            >
-              <span className="settings-navigation-icon"><Icon aria-hidden="true" /></span>
-              <span>
-                <strong>{t(label)}</strong>
-                <small>{t(description)}</small>
-              </span>
-            </button>
-          ))}
-        </nav>
-
-        <main className="settings-content" data-active-setting={activeSetting}>
 
       <section id="settings-memory" className="reality-settings-section settings-anchor-section" aria-labelledby="memory-settings-title">
         <header>
@@ -703,6 +707,10 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
         <LocalModelSettingsSection />
 
         <McpSettingsSection />
+      </div>
+
+      <div id="settings-token-usage" className="settings-anchor-section settings-token-usage-group">
+        <TokenUsageSettingsSection />
       </div>
 
       <section id="settings-reality" className="reality-settings-section settings-anchor-section" aria-labelledby="reality-settings-title">

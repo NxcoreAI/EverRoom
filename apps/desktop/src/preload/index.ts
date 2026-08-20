@@ -308,6 +308,7 @@ const api: NxcoreDesktopApi = {
     updateSession: (sessionId, input) => invoke('agent:update-session', sessionId, input),
     deleteSession: (sessionId) => invoke('agent:delete-session', sessionId),
     getSession: (sessionId) => invoke('agent:get-session', sessionId),
+    getUsage: (range) => invoke('agent:get-usage', range),
     getEvents: (sessionId, runId, afterSeq) =>
       invoke('agent:get-events', sessionId, runId, afterSeq),
     startRun: (sessionId, input) => invoke('agent:start-run', sessionId, input),

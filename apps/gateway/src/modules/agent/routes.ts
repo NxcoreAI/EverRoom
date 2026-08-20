@@ -71,6 +71,18 @@ const NavigationTarget = Type.Object({
 export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.get(
+      "/v1/agent/usage",
+      {
+        schema: {
+          tags: ["agent"],
+          querystring: Type.Object({
+            range: Type.Optional(Type.Union([Type.Literal("24h"), Type.Literal("7d"), Type.Literal("30d")])),
+          }),
+        },
+      },
+      async (request) => service.getUsage(request.query.range ?? "7d"),
+    );
+    app.get(
       "/v1/agent/sessions",
       {
         schema: {

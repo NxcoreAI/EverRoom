@@ -317,6 +317,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentService,
     documentMcpHost,
     config.connectorAgentMode ?? "direct",
+    config.pi ? { provider: config.pi.provider, model: config.pi.model } : undefined,
   );
   await agentService.initialize();
   const backgroundAgentRuntime = createBackgroundAgentRuntime(config);

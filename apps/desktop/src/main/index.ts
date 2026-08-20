@@ -179,6 +179,7 @@ const AGENT_CHANNELS = {
   updateSession: 'agent:update-session',
   deleteSession: 'agent:delete-session',
   getSession: 'agent:get-session',
+  getUsage: 'agent:get-usage',
   getEvents: 'agent:get-events',
   startRun: 'agent:start-run',
   submitPendingIntent: 'agent:submit-pending-intent',
@@ -829,6 +830,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
   handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
   handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))
+  handle(AGENT_CHANNELS.getUsage, (_event, range) => bridge.getUsage(range))
   handle(AGENT_CHANNELS.getEvents, (_event, sessionId, runId, afterSeq) =>
     bridge.getEvents(sessionId, runId, afterSeq))
   handle(AGENT_CHANNELS.startRun, (_event, sessionId, input) => bridge.startRun(sessionId, input))

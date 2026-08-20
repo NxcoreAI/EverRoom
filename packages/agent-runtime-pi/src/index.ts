@@ -190,6 +190,7 @@ interface ActivePiRun {
   input: StartRuntimeRunInput;
   unsubscribe: () => void;
   content: string;
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number };
   stopReason?: string;
   cancelled: boolean;
   toolCallCount: number;
@@ -326,6 +327,7 @@ export class PiAgentRuntime implements AgentRuntime {
       input,
       unsubscribe: () => undefined,
       content: "",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cancelled: false,
       toolCallCount: 0,
       toolLimitExceeded: false,
@@ -716,6 +718,13 @@ export class PiAgentRuntime implements AgentRuntime {
 
     if (event.type === "turn_end" && event.message.role === "assistant") {
       active.stopReason = event.message.stopReason;
+      const usage = (event.message as { usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } }).usage;
+      if (usage) {
+        active.usage.input += usage.input ?? 0;
+        active.usage.output += usage.output ?? 0;
+        active.usage.cacheRead += usage.cacheRead ?? 0;
+        active.usage.cacheWrite += usage.cacheWrite ?? 0;
+      }
       return;
     }
 
@@ -812,7 +821,11 @@ export class PiAgentRuntime implements AgentRuntime {
       if (finalOutcome === "completed") {
         active.queue.push({
           type: "message.completed",
-          payload: { role: "assistant", content: active.content },
+          payload: {
+            role: "assistant",
+            content: active.content,
+            usage: active.usage,
+          },
         });
         active.queue.push({ type: "run.completed", payload: {} });
       } else if (finalOutcome === "cancelled") {

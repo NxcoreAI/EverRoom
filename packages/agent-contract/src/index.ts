@@ -10,6 +10,27 @@ export type AgentRunStatus =
   | "interrupted";
 export type AgentMessageRole = "user" | "assistant" | "system";
 
+export type AgentUsageRange = "24h" | "7d" | "30d";
+
+export interface AgentUsagePoint {
+  startAt: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+export interface AgentUsageSnapshot {
+  provider: string;
+  model: string;
+  range: AgentUsageRange;
+  inputTokens: number;
+  outputTokens: number;
+  cacheHitTokens: number;
+  points: AgentUsagePoint[];
+  updatedAt: string;
+}
+
 export type AgentEventType =
   | "session.created"
   | "run.accepted"

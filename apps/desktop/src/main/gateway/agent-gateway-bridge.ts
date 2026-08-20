@@ -5,6 +5,8 @@ import type {
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
+  AgentUsageRange,
+  AgentUsageSnapshot,
   AgentSocketFrame,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
@@ -139,6 +141,10 @@ export class AgentGatewayBridge {
 
   getSession(sessionId: string): Promise<AgentSessionSnapshot> {
     return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}`)
+  }
+
+  getUsage(range: AgentUsageRange = '7d'): Promise<AgentUsageSnapshot> {
+    return this.request(`/v1/agent/usage?range=${encodeURIComponent(range)}`)
   }
 
   getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]> {

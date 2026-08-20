@@ -18,6 +18,8 @@ import type {
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
+  AgentUsageRange,
+  AgentUsageSnapshot,
   AgentSocketFrame,
   ContextRoomSnapshot,
   CreateContextRoomInput,
@@ -701,6 +703,7 @@ export interface NxcoreDesktopApi {
     updateSession(sessionId: string, input: UpdateAgentSessionInput): Promise<AgentSession>
     deleteSession(sessionId: string): Promise<void>
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
+    getUsage(range?: AgentUsageRange): Promise<AgentUsageSnapshot>
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
     startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
     submitPendingIntent(
