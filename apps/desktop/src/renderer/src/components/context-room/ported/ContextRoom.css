@@ -15,7 +15,7 @@
 }
 
 .context-room-operation-shell {
-  --cr-canvas: #fff;
+  --cr-canvas: var(--bg);
   --cr-surface: #fff;
   --cr-surface-secondary: #f7f8fa;
   --cr-surface-hover: #f3f4f6;
@@ -32,7 +32,7 @@
 }
 
 .context-room-app {
-  --cr-canvas: #fafafa;
+  --cr-canvas: var(--bg);
   --cr-surface: #ffffff;
   --cr-surface-secondary: #f7f7f6;
   --cr-surface-hover: #f1f2f3;
@@ -87,6 +87,39 @@
   margin: 0 auto;
   flex-direction: column;
   gap: 20px;
+}
+
+.context-room-home-layout > *,
+.context-room-all-layout > *,
+.context-room-object-page > *,
+.context-room-workspace-layout > * {
+  animation: context-room-content-enter 340ms var(--shell-motion-easing) backwards;
+}
+
+.context-room-home-layout > :nth-child(2),
+.context-room-all-layout > :nth-child(2),
+.context-room-object-page > :nth-child(2),
+.context-room-workspace-layout > :nth-child(2) {
+  animation-delay: 45ms;
+}
+
+.context-room-home-layout > :nth-child(3),
+.context-room-all-layout > :nth-child(3),
+.context-room-object-page > :nth-child(3),
+.context-room-workspace-layout > :nth-child(3) {
+  animation-delay: 90ms;
+}
+
+.context-room-home-layout > :nth-child(n + 4),
+.context-room-all-layout > :nth-child(n + 4),
+.context-room-object-page > :nth-child(n + 4),
+.context-room-workspace-layout > :nth-child(n + 4) {
+  animation-delay: 135ms;
+}
+
+@keyframes context-room-content-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .context-room-home-section {
@@ -4178,7 +4211,7 @@
 }
 
 .context-room-app {
-  --cr-canvas: #fff;
+  --cr-canvas: var(--bg);
   --cr-surface: #fff;
   --cr-surface-secondary: #f7f8fa;
   --cr-surface-sunken: #f3f4f6;
@@ -9330,6 +9363,10 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
 }
 
 .context-room-knowledge-panel .context-room-my-title {
@@ -9355,10 +9392,57 @@
   height: 20px;
 }
 
+.context-room-knowledge-empty h3 {
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .context-room-knowledge-empty p {
   margin: 0;
   max-width: 420px;
   font-size: 12px;
+}
+
+.context-room-knowledge-empty-cta {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 13px 4px 5px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 24%, var(--cr-border));
+  border-radius: 7px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.context-room-knowledge-empty-cta:hover {
+  border-color: var(--cr-blue);
+  background: color-mix(in srgb, var(--cr-blue) 15%, var(--cr-surface));
+  box-shadow: 0 2px 5px color-mix(in srgb, var(--cr-blue) 16%, transparent);
+}
+
+.context-room-knowledge-empty-cta:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cr-blue) 32%, transparent);
+  outline-offset: 2px;
+}
+
+.context-room-knowledge-empty-cta-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--cr-surface);
+}
+
+.context-room-knowledge-empty-cta-icon svg {
+  width: 15px;
+  height: 15px;
 }
 
 .context-room-knowledge-list {
@@ -9632,6 +9716,62 @@
   border: 1px solid var(--cr-border);
   border-radius: 10px;
   background: var(--cr-surface-secondary);
+}
+
+.context-room-knowledge-history {
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-knowledge-history > summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  color: var(--cr-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.context-room-knowledge-history > summary::-webkit-details-marker {
+  display: none;
+}
+
+.context-room-knowledge-history > summary small {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.context-room-knowledge-history > summary svg {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  transition: transform 0.15s ease;
+}
+
+.context-room-knowledge-history[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.context-room-knowledge-history-content {
+  padding: 0 10px 10px;
+}
+
+.context-room-knowledge-history .context-room-knowledge-recent {
+  padding: 0 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .context-room-knowledge-recent h3 {
