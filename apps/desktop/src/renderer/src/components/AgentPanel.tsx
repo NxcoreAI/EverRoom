@@ -19,6 +19,7 @@ import type { PageId } from '@/data/navigation'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import {
   buildAgentDocumentSelectionRunRequest,
+  type AgentDocumentSelectionItem,
   type AgentDocumentSelectionSubmission,
 } from '@/components/agent/agentDocumentSelection'
 
@@ -229,19 +230,24 @@ export function AgentPanel({
     }
   }
 
-  const selectDocumentRoom = async (room: AgentRoomReference, intent: PendingAgentIntent) => {
+  const selectDocumentRoom = async (
+    room: AgentRoomReference,
+    intent: PendingAgentIntent,
+    document?: AgentDocumentSelectionItem,
+  ) => {
     if (!roomBackendReady) return
     setSubmitting(true)
     try {
-      const runId = await session.submitPendingIntent(intent.id, room.id)
+      const runId = await session.submitPendingIntent(intent.id, room.id, document?.documentId)
       if (!runId) throw new Error('当前请求仍在处理中。')
       setPendingNavigationByRun((current) => ({
         ...current,
         [runId]: {
           pageId: 'rooms',
-          title: room.title,
-          action: 'created',
+          title: document?.title ?? room.title,
+          action: document ? 'updated' : 'created',
           roomId: room.id,
+          ...(document ? { objectId: document.documentId, objectType: 'document' as const } : {}),
         },
       }))
     } finally {

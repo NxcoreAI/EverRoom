@@ -10,12 +10,14 @@ import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
 import {
   findPendingAgentDocumentSelection,
+  type AgentDocumentSelectionItem,
   type AgentDocumentSelectionSubmission,
 } from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
+import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
 
 const quickPrompts = [
   ['总结当前页面的重点，并列出下一步', '总结当前页面最重要的内容，并按优先级列出下一步。'],
@@ -294,7 +296,11 @@ export function AgentChatView({
   onRetryPrompt: (prompt: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
   onRejectDocumentIntent: () => void
-  onSelectRoom: (room: AgentRoomReference, intent: PendingAgentIntent) => Promise<void>
+  onSelectRoom: (
+    room: AgentRoomReference,
+    intent: PendingAgentIntent,
+    document?: AgentDocumentSelectionItem,
+  ) => Promise<void>
   onSelectDocument: (selection: AgentDocumentSelectionSubmission) => void
   onSelectPrompt: (prompt: string) => void
   pendingNavigationByRun: Record<string, AgentNavigationTarget>
@@ -312,7 +318,13 @@ export function AgentChatView({
   const [confirmedDocumentIntent, setConfirmedDocumentIntent] = useState<(
     AgentDocumentIntentResult & { pendingIntent: PendingAgentIntent }
   ) | null>(null)
+  const [pendingIntentDocumentSelection, setPendingIntentDocumentSelection] = useState<{
+    room: AgentRoomReference
+    intent: PendingAgentIntent
+    toolId: string | null
+  } | null>(null)
   const handledDocumentSelectionsRef = useRef(new Set<string>())
+  const { documentsByRoom } = useRoomDocumentsState()
   const conversationRef = useRef<HTMLDivElement>(null)
   const hasConversation = messages.length > 0 || sessionLinks.length > 0
     || Boolean(activeRunId) || Boolean(error)
@@ -391,7 +403,7 @@ export function AgentChatView({
     }
     return null
   }, [activeRunId, dismissedDocumentIntents, messages, runCompletedAtByRun, runStartedAtByRun, toolCallsByRun])
-  const roomSelection = pendingRoomSelection
+  const roomSelection = pendingIntentDocumentSelection ? null : pendingRoomSelection
     ? {
         toolId: pendingRoomSelection.tool.id,
         rooms: pendingRoomSelection.result.rooms,
@@ -404,6 +416,19 @@ export function AgentChatView({
           intent: confirmedDocumentIntent.pendingIntent,
         }
       : null
+  const pendingIntentDocuments = useMemo(() => {
+    if (!pendingIntentDocumentSelection) return []
+    const allowedDocumentIds = new Set(pendingIntentDocumentSelection.intent.allowedDocumentIds)
+    return (documentsByRoom[pendingIntentDocumentSelection.room.id] ?? [])
+      .filter((document) => allowedDocumentIds.has(document.id))
+      .map((document) => ({
+        documentId: document.id,
+        roomId: document.roomId,
+        title: document.title,
+        version: document.version,
+        status: document.status,
+      }))
+  }, [documentsByRoom, pendingIntentDocumentSelection])
   const pendingDocumentSelection = useMemo(() => {
     if (activeDocument) return null
     return findPendingAgentDocumentSelection(
@@ -415,6 +440,7 @@ export function AgentChatView({
 
   useEffect(() => {
     setConfirmedDocumentIntent(null)
+    setPendingIntentDocumentSelection(null)
   }, [currentSessionId])
 
   useEffect(() => {
@@ -645,6 +671,14 @@ export function AgentChatView({
                 setConfirmedDocumentIntent(null)
               }}
               onSelect={(room) => {
+                if (roomSelection.intent.targetCapability !== 'document.create') {
+                  setPendingIntentDocumentSelection({
+                    room,
+                    intent: roomSelection.intent,
+                    toolId: roomSelection.toolId,
+                  })
+                  return
+                }
                 void onSelectRoom(room, roomSelection.intent).then(() => {
                   if (roomSelection.toolId) {
                     setDismissedRoomSelections((current) => new Set(current).add(roomSelection.toolId!))
@@ -654,7 +688,23 @@ export function AgentChatView({
               }}
             />
           ) : null}
-          {pendingDocumentSelection ? (
+          {pendingIntentDocumentSelection ? (
+            <AgentDocumentPicker
+              busy={loading || submitting || activeRunPending}
+              documents={pendingIntentDocuments}
+              onCancel={() => setPendingIntentDocumentSelection(null)}
+              onSelect={(document) => {
+                const selection = pendingIntentDocumentSelection
+                void onSelectRoom(selection.room, selection.intent, document).then(() => {
+                  if (selection.toolId) {
+                    setDismissedRoomSelections((current) => new Set(current).add(selection.toolId!))
+                  }
+                  setConfirmedDocumentIntent(null)
+                  setPendingIntentDocumentSelection(null)
+                }).catch(() => undefined)
+              }}
+            />
+          ) : pendingDocumentSelection ? (
             <AgentDocumentPicker
               busy={loading || submitting || activeRunPending}
               documents={pendingDocumentSelection.documents}
