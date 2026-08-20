@@ -37,7 +37,6 @@ import { FilesService } from "../modules/files/service.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
 import { IngestService } from "../modules/ingest/service.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
-import { truncateUtf8 } from "../modules/ingest/normalizers.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { connectorRoutes, connectorSyncRoutes } from "../modules/connectors/routes.js";
@@ -163,20 +162,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
   const memoryService = new MemoryService(config.pi?.memory ?? null, app.log, { db, dataDir: config.dataDir });
-  // 连接器同步到的文档/邮件/日程同步入记忆：
-  // 走与统一 ingest 相同的 importToMemoryCore（2MB 截断 + callerRef 幂等去重）。
-  connectorManager.setMemorySink(async (input) => {
-    if (!memoryService.enabled) return;
-    await memoryService.importToMemoryCore({
-      title: input.title,
-      markdown: truncateUtf8(
-        input.markdown,
-        2 * 1024 * 1024,
-        "<!-- 截断：原文超 2MB 消费端上限 -->",
-      ),
-      callerRef: `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
-    });
-  });
   const contextRoomService = new ContextRoomService(db);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
@@ -370,6 +355,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
     },
   );
+  // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
+  // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
+  connectorManager.setMemorySink((input) =>
+    ingestService.ingestConnector({
+      kind: input.kind === "document" ? "cloud-doc" : "mail",
+      sourceId: `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
+      dataType: input.kind,
+      title: input.title,
+      markdown: input.markdown,
+      ...(config.knowledge?.routerEnabled ? {} : { pipelines: { room: false, wiki: false, memory: true } }),
+    }).then(() => undefined));
   await app.register(ingestRoutes(ingestService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));

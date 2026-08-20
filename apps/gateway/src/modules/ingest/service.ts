@@ -49,8 +49,8 @@ import { emptyPolicyLayers, resolvePipelines, validatePipelines, type PolicyLaye
 /** 记忆链路消费端截断上限（§7 步骤 8：全文住 parsed_contents，消费端各自截断）。 */
 const MEMORY_MAX_BYTES = 2 * 1024 * 1024;
 
-/** 台账 sourceKind（与既有 knowledge SourceKind 对齐，mail/cloud-doc 留给 U4）。 */
-export type LedgerSourceKind = "everroom-doc" | "reality-event" | "file";
+/** 台账 sourceKind（与既有 knowledge SourceKind 对齐；mail/cloud-doc 为连接器预留位）。 */
+export type LedgerSourceKind = "everroom-doc" | "reality-event" | "file" | "mail" | "cloud-doc";
 
 export interface IngestResult {
   eventId: string;
@@ -118,6 +118,40 @@ export class IngestService {
       throw new IngestError("source.path 与 source.ref 只能提供一个", "source_conflict");
     }
     return hasPath ? this.ingestFromPath(input) : this.ingestFromRef(input);
+  }
+
+  /**
+   * 连接器接入（unified-ingest-plan U4「json 信封」预留位的落地形态）：
+   * 归一化 markdown 由连接器模块渲染好直传（家在 connectors.sqlite，引擎不回读），
+   * 共用台账（闸1 同源同指纹幂等）与三链路扇出。
+   * ponytail: calendar 复用 sourceKind "mail"（schema 预留位只有 mail/cloud-doc），
+   * 靠 dataType=calendar 区分；要独立枚举时再加迁移。
+   */
+  async ingestConnector(unit: {
+    kind: "cloud-doc" | "mail";
+    sourceId: string;
+    dataType: "document" | "mail" | "calendar";
+    title: string;
+    markdown: string;
+    occurredAt?: string;
+    pipelines?: Pipelines;
+  }): Promise<IngestResult> {
+    const contentHash = contentHashOf(Buffer.from(unit.markdown, "utf8"));
+    return this.processNormalized(
+      { pipelines: unit.pipelines },
+      {
+        sourceKind: unit.kind,
+        sourceId: unit.sourceId,
+        sourceVersion: this.nextLedgerVersion(unit.sourceId),
+        dataType: unit.dataType,
+        detectedBy: "source-kind",
+        title: unit.title,
+        markdown: unit.markdown,
+        occurredAt: unit.occurredAt,
+        contentHash,
+        origin: "connector",
+      },
+    );
   }
 
   // ───────────────────────── intake：path / ref ─────────────────────────
@@ -253,7 +287,7 @@ export class IngestService {
   }
 
   private async processNormalized(
-    input: IngestInput,
+    input: Pick<IngestInput, "pipelines" | "entrySignals">,
     unit: {
       sourceKind: LedgerSourceKind;
       sourceId: string;

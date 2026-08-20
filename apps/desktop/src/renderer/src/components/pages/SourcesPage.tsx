@@ -54,12 +54,34 @@ export function SourcesPage() {
     void window.nxcore?.connectors.status().then((status) => setConnectorsEnabled(status.enabled)).catch(() => undefined)
   }, [])
 
+  // 授权确认由 gateway 在 status 轮询中完成（Nango 确认后自动注册连接），
+  // 桌面端必须持续轮询 authorizationStatus 直到终态，否则连接永远不会登记。
+  const [authorizationId, setAuthorizationId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!authorizationId) return
+    let active = true
+    const check = async () => {
+      try {
+        const next = await window.nxcore!.connectors.authorizationStatus(authorizationId)
+        if (!active) return
+        if (next.status === 'connected') { setAuthorizationId(null); setMessage('连接已创建，同步范围正在初始化。') }
+        else if (next.status !== 'pending') { setAuthorizationId(null); setMessage(next.error ?? '授权未完成。') }
+      } catch { /* 网关暂不可达时继续等待 */ }
+    }
+    const timer = window.setInterval(() => void check(), 2_000)
+    void check()
+    return () => { active = false; window.clearInterval(timer) }
+  }, [authorizationId])
+
   const connectConnector = async (provider: ConnectorProviderId) => {
     setConnectMenuOpen(false)
     setMessage(null)
     try {
-      await window.nxcore?.connectors.startAuthorization(provider)
-      setMessage('已打开授权页面，完成后连接会自动出现在下方「连接器」列表。')
+      const attempt = await window.nxcore?.connectors.startAuthorization(provider)
+      if (attempt) {
+        setAuthorizationId(attempt.id)
+        setMessage('已打开授权页面，请在浏览器中完成授权。')
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '无法打开授权页面。')
     }
