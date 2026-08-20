@@ -1,0 +1,15 @@
+schemaVersion: 1
+kind: builtin
+id: cursor-completion
+name: Cursor Completion Agent
+description: 为 Context Room 文档编辑器提供低延迟、上下文受限的续写建议
+runtime: pi
+systemPrompt: ./SYSTEM.md
+
+capabilities:
+  - document.cursor-completion
+
+tools: []
+
+skills:
+  - ./skills/document-cursor-completion

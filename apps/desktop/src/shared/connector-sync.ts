@@ -114,6 +114,15 @@ export interface ConnectorDataRecord {
   snippet?: string
   syncedAt: string
   sourceUpdatedAt?: string | null
+  markdownArtifact?: {
+    id: string
+    version: number
+    status: 'pending' | 'ready' | 'failed' | 'deleted'
+    ingestStatus: 'pending' | 'succeeded' | 'failed' | 'skipped'
+    markdownContentHash: string | null
+    ingestEventId: string | null
+    updatedAt: string
+  } | null
   [key: string]: unknown
 }
 
@@ -123,6 +132,18 @@ export interface ConnectorSyncStatus {
   jobs: ConnectorSyncJob[]
   recordCount: number
   domainRecordCount: number
+  markdown?: {
+    total: number
+    ready: number
+    queued: number
+    processing: number
+    pending: number
+    failed: number
+    deleted: number
+    ingestSucceeded: number
+    ingestPending: number
+    ingestFailed: number
+  }
 }
 
 export interface ConnectorDataQuery {
@@ -130,5 +151,28 @@ export interface ConnectorDataQuery {
   dataset?: string
   query?: string
   limit?: number
+  offset?: number
   includeExpired?: boolean
+}
+
+export interface ConnectorDataPage {
+  items: ConnectorDataRecord[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface ConnectorIngestItem {
+  recordId: string
+  eventId: string | null
+  deduped: boolean
+  routeJobId: string | null
+  error: string | null
+}
+
+export interface ConnectorIngestResult {
+  items: ConnectorIngestItem[]
+  imported: number
+  deduped: number
+  failed: number
 }

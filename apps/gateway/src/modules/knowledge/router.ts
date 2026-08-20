@@ -1,8 +1,7 @@
 /**
  * 自动归类路由瀑布（entity-room-plan §2.1）：
- * ① 入口确定性（everroom-doc 源 Room 直达 / file 显式 entryRoomId 归属）
- *   → ② 规则 → ③′ LLM 实体抽取 → ③″ 实体解析（含 LLM
- *   同一性判定）→ ④ 链接落库 + 推荐检查（达阈值 → ready 推荐池）。
+ * ① 入口确定性 → ② 规则 → ③′ LLM 实体抽取 → ③″ 实体解析（含 LLM
+ * 同一性判定）→ ④ 链接落库 + 推荐检查（达阈值 → ready 推荐池）。
  *
  * ①② 是决策层（decidedBy=entry/rule，confidence=1，零 LLM 成本）；
  * ③′ 是唯一非确定性抽取环节（开集，无候选菜单——菜单偏差的根源被拆除）；
@@ -165,27 +164,6 @@ export class KnowledgeRouter {
           evidence: null,
         });
       }
-    }
-
-    // ── ①-bis 入口确定性（file 显式归属）：Room 内上传，用户意图最高优先；
-    // Room 已删/不存在 → 落瀑布（不拒绝上传）
-    if (!options.skipEntry && envelope.entryRoomId) {
-      const alive = this.deps.db.select({ id: rooms.id }).from(rooms)
-        .where(and(eq(rooms.id, envelope.entryRoomId), isNull(rooms.deletedAt))).get();
-      if (alive) {
-        return this.persist(envelope, {
-          disposition: "execute",
-          roomId: envelope.entryRoomId,
-          decidedBy: "entry",
-          confidence: 1,
-          reason: "文件上传于该 Room（入口确定性）",
-          evidence: null,
-        });
-      }
-      this.deps.logger.warn(
-        { event: "knowledge.router.entry_room_dead", roomId: envelope.entryRoomId, sourceId: envelope.ref.id },
-        "entry room missing/deleted, falling through to waterfall",
-      );
     }
 
     // ── ②b 规则：用户显式配置的逃生舱（默认空表，纯可选）

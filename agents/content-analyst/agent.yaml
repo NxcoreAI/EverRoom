@@ -1,0 +1,21 @@
+schemaVersion: 1
+id: content-analyst
+name: Content Analyst
+description: 分析调用方提供的材料，提取事实、观点、风险、缺口和可执行结论
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/analysis-method
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+
+policy:
+  allowedCallers: [primary-agent, internal-workflow]
+  maxConcurrency: 2
+  timeoutSeconds: 180
+  maxToolCalls: 8

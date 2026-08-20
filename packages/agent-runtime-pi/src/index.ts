@@ -100,6 +100,12 @@ export interface PiAgentRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  /** Optional per-agent metadata used by the Gateway resolver. */
+  runtimeId?: string;
+  runtimeRole?: "user-facing" | "internal";
+  skillsEnabled?: boolean;
+  additionalSkillPaths?: string[];
+  systemPrompt?: string;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
   /** Pi 内置工具白名单；缺省启用全部（read/bash/edit/write/grep/find/ls），可经 NXCORE_PI_TOOLS 收窄。 */

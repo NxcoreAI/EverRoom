@@ -134,4 +134,57 @@ describe('GatewaySupervisor connection recovery', () => {
     expect(supervisor.getConnection()).toEqual(first)
     expect(healthRequests).toBe(1)
   })
+
+  it('waits for a replacement runtime manifest during a gateway restart', async () => {
+    const server = createServer((request, response) => {
+      if (request.url !== '/v1/health/ready') {
+        response.writeHead(404).end()
+        return
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    servers.push(server)
+    const { port } = server.address() as AddressInfo
+
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'nxcore-gateway-supervisor-'))
+    temporaryDirectories.push(dataDirectory)
+    const runtimeDirectory = join(dataDirectory, 'runtime')
+    await mkdir(runtimeDirectory)
+    const manifestPath = join(runtimeDirectory, 'gateway.json')
+    const staleConnection: GatewayConnection = {
+      pid: 10,
+      baseUrl: 'http://127.0.0.1:1',
+      token: 'stable-token',
+      version: 'old',
+    }
+    await writeFile(manifestPath, JSON.stringify({
+      ...staleConnection,
+      startedAt: new Date().toISOString(),
+    }))
+    const supervisor = new GatewaySupervisor(dataDirectory)
+    const supervisorState = supervisor as unknown as {
+      child: object | null
+      connection: GatewayConnection | null
+    }
+    supervisorState.child = {}
+    supervisorState.connection = staleConnection
+
+    const recovery = supervisor.recoverConnection(staleConnection)
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    await writeFile(manifestPath, JSON.stringify({
+      pid: 20,
+      baseUrl: `http://127.0.0.1:${String(port)}`,
+      token: staleConnection.token,
+      startedAt: new Date().toISOString(),
+      version: 'new',
+    }))
+
+    await expect(recovery).resolves.toMatchObject({
+      pid: 20,
+      baseUrl: `http://127.0.0.1:${String(port)}`,
+      version: 'new',
+    })
+  })
 })

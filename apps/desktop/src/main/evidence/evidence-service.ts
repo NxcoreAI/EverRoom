@@ -9,10 +9,9 @@ import type {
   EvidenceSearchResult,
 } from '../../shared/sources'
 import { parseMarkdown, parsePlainText, type ParsedEvidenceBlock } from './text-parser'
+import { isLocalParseableExtension } from '../file-format-policy'
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.mdx'])
-const TEXT_EXTENSIONS = new Set(['.text', '.txt'])
-const SUPPORTED_EXTENSIONS = new Set([...MARKDOWN_EXTENSIONS, ...TEXT_EXTENSIONS])
 
 interface PendingJobRow {
   source_version_id: string
@@ -123,6 +122,9 @@ export class EvidenceService {
       CREATE INDEX IF NOT EXISTS idx_evidence_blocks_version_ordinal
         ON evidence_blocks(source_version_id, ordinal);
 
+      CREATE INDEX IF NOT EXISTS idx_evidence_blocks_parent_id
+        ON evidence_blocks(parent_id);
+
       CREATE VIRTUAL TABLE IF NOT EXISTS evidence_fts USING fts5(
         search_text,
         search_heading_path,
@@ -179,7 +181,7 @@ export class EvidenceService {
 
   enqueueVersion(sourceVersionId: string, extension: string): void {
     const normalizedExtension = extension.toLowerCase()
-    if (!SUPPORTED_EXTENSIONS.has(normalizedExtension)) return
+    if (!isLocalParseableExtension(normalizedExtension)) return
     this.database.prepare(`
       INSERT OR IGNORE INTO evidence_parse_jobs (
         source_version_id, parser, status, queued_at

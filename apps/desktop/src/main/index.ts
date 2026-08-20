@@ -83,8 +83,10 @@ import {
   OpenConnectorSupervisor,
   type OpenConnectorConnection,
 } from './open-connector/open-connector-supervisor'
+import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 
 const APP_NAME = 'EverRoom'
+const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
 
 interface IpcRateLimitNotice {
   __everroomRateLimited: true
@@ -139,7 +141,7 @@ const GATEWAY_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', listDocuments: 'connector:list-documents', readDocument: 'connector:read-document', listRecords: 'connector:list-records', armFault: 'connector:arm-fault',
+  status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -171,6 +173,7 @@ const CONTEXT_ROOM_CHANNELS = {
 } as const
 
 const AGENT_CHANNELS = {
+  getStatus: 'agent:get-status',
   listSessions: 'agent:list-sessions',
   createSession: 'agent:create-session',
   createSessionLink: 'agent:create-session-link',
@@ -766,6 +769,21 @@ async function openConnectorManagementConsole(): Promise<void> {
 
 function registerOpenConnectorHandlers(): void {
   handle(OPEN_CONNECTOR_CHANNELS.status, () => {
+    if (desktopPageMode !== 'connectors') {
+      return {
+        baseUrl: '',
+        managed: false,
+        gatewayPid: null,
+        gatewayVersion: null,
+        gatewayState: 'unreachable' as const,
+        gatewayMessage: '连接器页面未启用。',
+        runtimeTokenConfigured: false,
+        cliState: 'missing' as const,
+        cliVersion: null,
+        cliPath: resolveOoCliExecutable(),
+        cliMessage: '连接器页面未启用。',
+      }
+    }
     if (ooCliBridge) return ooCliBridge.status()
     const status = openConnectorSupervisor?.getStatus()
     return {
@@ -819,6 +837,7 @@ function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
+  handle(AGENT_CHANNELS.getStatus, () => bridge.getStatus())
   handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
   handle(AGENT_CHANNELS.createSessionLink, (_event, input) => bridge.createSessionLink(input))
@@ -1379,15 +1398,22 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerGatewayHandlers()
   registerOpenConnectorHandlers()
   createWindow()
+  const connectorPageEnabled = desktopPageMode === 'connectors'
+  const configuredNangoUrl =
+    process.env.NXCORE_NANGO_CONNECTOR_URL?.trim() || process.env.NXCORE_NANGO_URL?.trim() || ''
+  const configuredNangoSecret =
+    process.env.NXCORE_NANGO_CONNECTOR_SECRET?.trim() || process.env.NXCORE_NANGO_SECRET?.trim() || ''
   try {
-    openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
-    const openConnector = await openConnectorSupervisor.start().catch((error) => {
-      console.error('Managed OpenConnector failed to start; connector tools stay disabled.', error)
-      return null
-    })
-    if (openConnector) {
-      ooCliBridge = createOoCliBridge(openConnector)
-      attachOpenConnectorBridge(ooCliBridge)
+    if (connectorPageEnabled) {
+      openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
+      const openConnector = await openConnectorSupervisor.start().catch((error) => {
+        console.error('Managed OpenConnector failed to start; connector tools stay disabled.', error)
+        return null
+      })
+      if (openConnector) {
+        ooCliBridge = createOoCliBridge(openConnector)
+        attachOpenConnectorBridge(ooCliBridge)
+      }
     }
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
@@ -1397,11 +1423,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return null
     })
     // 数据同步用的 Nango 实例与 gateway 一并拉起(外部配置了 URL 时自动跳过)。
-    nangoSupervisor = new NangoSupervisor()
-    const nango = await nangoSupervisor.start().catch((error) => {
-      console.error('Managed Nango failed to start; connectors stay disabled.', error)
-      return null
-    })
+    const nango = connectorPageEnabled
+      ? null
+      : await (nangoSupervisor = new NangoSupervisor()).start().catch((error) => {
+        console.error('Managed Nango failed to start; data source connectors stay disabled.', error)
+        return null
+      })
     // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
     knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
     const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
@@ -1412,8 +1439,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       dataDirectory,
       {
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
-        ...(ooCliBridge ? { NXCORE_CONNECTOR_AGENT_MODE: 'local' } : {}),
-        ...(ooCliBridge ? { NXCORE_CONNECTOR_SYNC_ENABLED: 'true' } : {}),
+        NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
+        NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
         ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
@@ -1421,10 +1448,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
           }
           : {}),
-        // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_SECRET。
-        ...((nango && process.env.NXCORE_NANGO_SECRET?.trim())
-          ? { NXCORE_NANGO_URL: nango.baseUrl }
-          : {}),
+        // Gateway 配置要求 URL 和 SECRET 成对出现；兼容旧版 Nango 变量名。
+        // The selected page owns the connector runtime. Explicitly clear the
+        // other connector's URL so a user-level env override cannot re-enable it.
+        NXCORE_NANGO_CONNECTOR_URL: connectorPageEnabled
+          ? ''
+          : nango?.baseUrl ?? configuredNangoUrl,
+        NXCORE_NANGO_CONNECTOR_SECRET: connectorPageEnabled ? '' : configuredNangoSecret,
+        NXCORE_NANGO_URL: connectorPageEnabled ? '' : configuredNangoUrl,
+        NXCORE_NANGO_SECRET: connectorPageEnabled ? '' : configuredNangoSecret,
         ...(knowledge
           ? {
             NXCORE_KNOWLEDGE_ENABLED: 'true',

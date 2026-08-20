@@ -2,10 +2,11 @@ import mammoth from "mammoth";
 import TurndownService from "turndown";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
+import { convertRawEmailToMarkdown } from "./email-content.js";
 import { IngestError } from "./types.js";
 
 /**
- * U2 格式扩展（unified-ingest-plan §5.3）：office/html/csv → markdown，
+ * U2 格式扩展（unified-ingest-plan §5.3）：office/html/csv/eml -> markdown，
  * 全确定性零 LLM。约定：标题取文件名（文档内标题保留为正文首行），
  * 结构信息尽量保留（表格/分级标题/列表），转换失败 convert_failed。
  */
@@ -40,6 +41,18 @@ export function htmlToMarkdown(buffer: Buffer): string {
   } catch (error) {
     if (error instanceof IngestError) throw error;
     throw new IngestError(`html 转换失败：${(error as Error).message}`, "convert_failed");
+  }
+}
+
+/** RFC 822 / MIME email (.eml) -> cleaned canonical Markdown body. */
+export async function emlToMarkdown(buffer: Buffer): Promise<string> {
+  try {
+    const result = await convertRawEmailToMarkdown(buffer);
+    if (!result.markdown.trim()) throw new IngestError("eml 无可提取正文", "empty_content");
+    return result.markdown;
+  } catch (error) {
+    if (error instanceof IngestError) throw error;
+    throw new IngestError(`eml 转换失败：${(error as Error).message}`, "convert_failed");
   }
 }
 
@@ -176,7 +189,7 @@ function decodeXmlEntities(text: string): string {
     .replace(/&amp;/g, "&");
 }
 
-/** 扩展名 → 转换器（U2 注册点：加一行 case 即新格式）。 */
+/** 扩展名 -> 转换器（U2 注册点：加一行 case 即新格式）。 */
 export function converterOfExtension(
   extension: string,
 ): ((buffer: Buffer) => string | Promise<string>) | null {
@@ -185,6 +198,7 @@ export function converterOfExtension(
     case "xlsx": return xlsxToMarkdown;
     case "pptx": return pptxToMarkdown;
     case "csv": return csvToMarkdown;
+    case "eml": return emlToMarkdown;
     case "html":
     case "htm": return htmlToMarkdown;
     default: return null;

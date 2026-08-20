@@ -17,8 +17,6 @@ const RECENT_ITEMS: readonly string[] = []
 
 const TODAY_ITEMS: readonly string[] = []
 
-const UPCOMING_ITEMS: readonly { time: string; title: string }[] = []
-
 export function HomePage({
   onNavigate,
   onFocusAgent,
@@ -64,28 +62,6 @@ export function HomePage({
                 <button key={item} type="button" className="workspace-home-list-item is-muted" disabled>
                   <CheckCircle2 aria-hidden="true" strokeWidth={1.8} />
                   <span>{item}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-          ) : null}
-
-          {UPCOMING_ITEMS.length > 0 ? (
-          <section className="workspace-home-panel workspace-home-upcoming">
-            <div className="workspace-home-panel-heading">
-              <h2>{t('surface:home.upcoming')}</h2>
-              <button type="button" onClick={() => onNavigate('tasks')}>{t('surface:home.openCalendar')}</button>
-            </div>
-            <div className="workspace-upcoming-grid">
-              {UPCOMING_ITEMS.map((item) => (
-                <button
-                  key={`${item.time}-${item.title}`}
-                  type="button"
-                  aria-label={`${item.time} ${item.title}`}
-                  onClick={() => onNavigate('tasks')}
-                >
-                  <time>{item.time}</time>
-                  <span>{item.title}</span>
                 </button>
               ))}
             </div>

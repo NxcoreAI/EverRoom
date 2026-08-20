@@ -98,7 +98,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     if (!window.nxcore) return
     setError(null)
     try {
-      setStatus(await window.nxcore.openConnector.status())
+      setStatus(await window.nxcore.cliConnector.status())
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : t('surface:connectorConsole.unableToReadConnectorStatus'))
     }
@@ -107,7 +107,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
   useEffect(() => {
     void refreshStatus()
     if (!window.nxcore) return
-    return window.nxcore.openConnector.onEvent((event) => {
+    return window.nxcore.cliConnector.onEvent((event) => {
       setEntries((current) => [
         ...current.slice(-199),
         { ...event, key: `${event.requestId}:${event.type}:${event.timestamp}:${current.length}` },
@@ -121,13 +121,13 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     return () => window.clearInterval(interval)
   }, [ready, refreshStatus])
 
-  const execute = async <T,>(command: Parameters<NonNullable<typeof window.nxcore>['openConnector']['execute']>[0]['command']) => {
+  const execute = async <T,>(command: Parameters<NonNullable<typeof window.nxcore>['cliConnector']['execute']>[0]['command']) => {
     if (!window.nxcore) throw new Error(t('surface:connectorConsole.theConnectorConsoleIsAvailableOnlyInThe'))
     const requestId = crypto.randomUUID()
     setBusyRequestId(requestId)
     setError(null)
     try {
-      return await window.nxcore.openConnector.execute({ requestId, command }) as OpenConnectorCommandResult<T>
+      return await window.nxcore.cliConnector.execute({ requestId, command }) as OpenConnectorCommandResult<T>
     } catch (commandError) {
       setError(commandError instanceof Error ? commandError.message : t('surface:connectorConsole.ooCliExecutionFailed'))
       throw commandError
@@ -217,7 +217,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
           <span>{status?.cliState === 'ready' ? <CheckCircle2 /> : <CircleAlert />} oo {status?.cliVersion ?? t('surface:connectorConsole.notDetected')}</span>
           <span><TerminalSquare /> Token {t(status?.runtimeTokenConfigured ? 'surface:connectorConsole.isolated' : 'surface:connectorConsole.notConfigured')}</span>
         </div>
-        <button type="button" className="secondary-button" onClick={() => void window.nxcore?.openConnector.openConsole()}>
+        <button type="button" className="secondary-button" onClick={() => void window.nxcore?.cliConnector.openConsole()}>
           {t('surface:connectorConsole.webConsole')}<ExternalLink aria-hidden="true" />
         </button>
       </section>
@@ -281,7 +281,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
                   <CheckCircle2 />{t('surface:connectorConsole.validateOnly')}
                 </button>
                 {busyRequestId ? (
-                  <button type="button" className="danger-button" onClick={() => void window.nxcore?.openConnector.cancel(busyRequestId)}><Square />{t('surface:connectorConsole.cancel')}</button>
+                  <button type="button" className="danger-button" onClick={() => void window.nxcore?.cliConnector.cancel(busyRequestId)}><Square />{t('surface:connectorConsole.cancel')}</button>
                 ) : (
                   <button type="button" className="primary-button" onClick={() => void runAction(false).catch(() => undefined)}><Play />{t('surface:connectorConsole.runAction')}</button>
                 )}

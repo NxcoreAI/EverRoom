@@ -15,6 +15,7 @@ import type {
   AgentEvent,
   PendingAgentIntent,
   AgentRun,
+  AgentStatusSnapshot,
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
@@ -90,8 +91,10 @@ import type {
 } from './open-connector'
 import type {
   ConnectorAccount,
+  ConnectorDataPage,
   ConnectorDataQuery,
   ConnectorDataRecord,
+  ConnectorIngestResult,
   ConnectorPromptProfile,
   ConnectorQuarantinedRecord,
   ConnectorSyncJob,
@@ -99,6 +102,7 @@ import type {
   ConnectorSyncRun,
   ConnectorSyncStatus,
 } from './connector-sync'
+import type { DesktopPageMode } from './page-mode'
 import type { DesktopLocale } from './i18n/desktop'
 
 export interface EvidenceBlock {
@@ -198,6 +202,11 @@ export interface SyncResult {
 export interface SourceChangeEvent {
   sourceId: string
   filesChanged: boolean
+  deletion?: {
+    stage: 'queued' | 'waiting' | 'database' | 'objects' | 'completed' | 'failed'
+    percent: number
+    message: string
+  }
 }
 
 export type GatewayState = 'starting' | 'ready' | 'stopped' | 'error'
@@ -516,6 +525,7 @@ export interface DesktopDiagnosticLogInput {
 
 export interface NxcoreDesktopApi {
   platform: string
+  pageMode: DesktopPageMode
   locale: {
     set(locale: DesktopLocale): void
   }
@@ -532,7 +542,7 @@ export interface NxcoreDesktopApi {
   gateway: {
     status(): Promise<GatewayStatus>
   }
-  connectors: {
+  nangoConnector: {
     status(): Promise<ConnectorStatus>
     startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
@@ -548,14 +558,14 @@ export interface NxcoreDesktopApi {
     document(connectionId: string, documentId: string): Promise<WikiDocumentPreview>
     records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]>
   }
-  openConnector: {
+  cliConnector: {
     status(): Promise<OpenConnectorStatus>
     execute(input: OpenConnectorExecutionInput): Promise<OpenConnectorCommandResult>
     cancel(requestId: string): Promise<boolean>
     openConsole(): Promise<void>
     onEvent(listener: (event: OpenConnectorCommandEvent) => void): () => void
   }
-  connectorSync: {
+  cliConnectorSync: {
     status(): Promise<ConnectorSyncStatus>
     accounts(): Promise<ConnectorAccount[]>
     promptProfiles(): Promise<ConnectorPromptProfile[]>
@@ -567,8 +577,9 @@ export interface NxcoreDesktopApi {
     archiveJob(id: string, configVersion: number): Promise<ConnectorSyncJob>
     runs(jobId: string): Promise<ConnectorSyncRun[]>
     quarantine(runId: string): Promise<ConnectorQuarantinedRecord[]>
-    data(query: ConnectorDataQuery): Promise<ConnectorDataRecord[]>
+    data(query: ConnectorDataQuery): Promise<ConnectorDataPage>
     record(id: string): Promise<ConnectorDataRecord>
+    ingestRecords(recordIds: string[]): Promise<ConnectorIngestResult>
   }
   mcp: {
     listServers(): Promise<McpServersSnapshot>
@@ -687,6 +698,7 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: RealitySocketFrame) => void): () => void
   }
   agent: {
+    getStatus(): Promise<AgentStatusSnapshot>
     listSessions(pageLabel?: string, roomId?: string | null): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
     createSessionLink(input: CreateAgentSessionLinkInput): Promise<AgentSessionLink>
@@ -784,7 +796,7 @@ export interface NxcoreDesktopApi {
     listEntities(status: KnowledgeEntityStatus): Promise<{ items: KnowledgeEntityDto[] }>
     getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
     /** 用户确认创建（推荐态实体走完整晋升流程）。 */
-    promoteEntity(entityId: string): Promise<{ queued: boolean }>
+    promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }>
     /** 手动合并：from 并入 target。 */
     mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
     listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>

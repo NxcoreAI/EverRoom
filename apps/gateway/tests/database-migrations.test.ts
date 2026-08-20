@@ -76,6 +76,68 @@ describe("database migrations", () => {
     expect(latestMigration).toEqual({ created_at: journal.entries.at(-1)?.when });
   });
 
+  it("adopts the pre-release connector Markdown migrations after the main migration rebase", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-connector-markdown-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const currentMigrationsDir = resolve("drizzle");
+    const previousMigrationsDir = join(dataDir, "previous-migrations");
+    await mkdir(join(previousMigrationsDir, "meta"), { recursive: true });
+
+    const journal = JSON.parse(
+      await readFile(join(currentMigrationsDir, "meta", "_journal.json"), "utf8"),
+    ) as {
+      version: string;
+      dialect: string;
+      entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+    };
+    const previousEntries = journal.entries.filter((entry) => entry.idx <= 16);
+    await Promise.all(previousEntries.map((entry) => copyFile(
+      join(currentMigrationsDir, `${entry.tag}.sql`),
+      join(previousMigrationsDir, `${entry.tag}.sql`),
+    )));
+    await writeFile(join(previousMigrationsDir, "meta", "_journal.json"), JSON.stringify({
+      ...journal,
+      entries: previousEntries,
+    }));
+
+    const preRelease = createDatabase(databasePath, previousMigrationsDir);
+    const connectorMarkdownSql = await readFile(
+      join(currentMigrationsDir, "0018_charming_vampiro.sql"),
+      "utf8",
+    );
+    preRelease.sqlite.exec(connectorMarkdownSql.replaceAll("--> statement-breakpoint", "\n"));
+    preRelease.sqlite.prepare(
+      "INSERT INTO connector_markdown_artifacts "
+      + "(id, owner_id, service, connection_name, resource_type, source_record_id, ingest_source_id, "
+      + "active_path, source_content_hash, renderer_version, created_at, updated_at) "
+      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "artifact-1", "owner-1", "gmail", "connection-1", "email", "email-1", "source-1",
+      "/tmp/source-1.md", "source-hash", "renderer-v1", 1, 1,
+    );
+    const insertLegacyMigration = preRelease.sqlite.prepare(
+      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+    );
+    insertLegacyMigration.run("pre-release-connector-markdown", 1787208981931);
+    insertLegacyMigration.run("pre-release-ingest-soft-delete", 1787218751617);
+    insertLegacyMigration.run("pre-release-ingest-index", 1787218949702);
+    preRelease.sqlite.close();
+
+    const upgraded = createDatabase(databasePath, currentMigrationsDir);
+    expect(upgraded.sqlite.prepare(
+      "SELECT id, source_record_id FROM connector_markdown_artifacts WHERE id = ?",
+    ).get("artifact-1")).toEqual({ id: "artifact-1", source_record_id: "email-1" });
+    const jobIndexes = upgraded.sqlite.prepare("PRAGMA index_list(jobs)").all() as Array<{ name: string }>;
+    expect(jobIndexes.map(({ name }) => name)).toContain("jobs_type_status_created_idx");
+    const canonicalEntries = journal.entries.filter((entry) => entry.idx >= 17);
+    const placeholders = canonicalEntries.map(() => "?").join(", ");
+    const adopted = upgraded.sqlite.prepare(
+      `SELECT created_at FROM __drizzle_migrations WHERE created_at IN (${placeholders}) ORDER BY created_at`,
+    ).all(...canonicalEntries.map(({ when }) => when));
+    expect(adopted).toEqual(canonicalEntries.map(({ when }) => ({ created_at: when })));
+  });
+
   it("upgrades databases from the connector migration branch", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-connector-migration-test-"));
     temporaryDirectories.push(dataDir);

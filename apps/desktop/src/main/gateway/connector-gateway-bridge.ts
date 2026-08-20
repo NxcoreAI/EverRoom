@@ -45,7 +45,7 @@ export interface ConnectorFailure {
   createdAt: string
 }
 
-export class ConnectorGatewayBridge {
+export class NangoConnectorGatewayBridge {
   constructor(
     private readonly supervisor: GatewaySupervisor,
     private readonly openExternal: (url: string) => Promise<void> = async () => {
@@ -54,20 +54,20 @@ export class ConnectorGatewayBridge {
   ) {}
 
   async status(): Promise<ConnectorStatus> {
-    const status = await this.request<ConnectorStatus>('/v1/connectors/status')
+    const status = await this.request<ConnectorStatus>('/v1/nango-connectors/status')
     return { ...status, scopes: status.scopes.map((scope) => this.sanitizeScope(scope)) }
   }
 
   registerConnection(input: ConnectorConnectionInput): Promise<ConnectorConnection> {
     if (!['gmail', 'outlook', 'google-docs', 'notion', 'google-calendar'].includes(input.provider)) throw new Error('不支持的连接提供方。')
     if (!input.nangoConfigKey.trim() || !input.nangoConnectionId.trim()) throw new Error('连接配置不能为空。')
-    return this.request('/v1/connectors/connections', { method: 'POST', data: { ...input, nangoConfigKey: input.nangoConfigKey.trim(), nangoConnectionId: input.nangoConnectionId.trim() } })
+    return this.request('/v1/nango-connectors/connections', { method: 'POST', data: { ...input, nangoConfigKey: input.nangoConfigKey.trim(), nangoConnectionId: input.nangoConnectionId.trim() } })
   }
 
   async startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt> {
     if (!['gmail', 'outlook', 'google-docs', 'notion', 'google-calendar'].includes(provider)) throw new Error('不支持的连接提供方。')
     const result = await this.request<ConnectorAuthorizationAttempt & { authorizationUrl: string }>(
-      '/v1/connectors/authorizations',
+      '/v1/nango-connectors/authorizations',
       { method: 'POST', data: { provider } },
     )
     const authorizationUrl = new URL(result.authorizationUrl)
@@ -86,33 +86,33 @@ export class ConnectorGatewayBridge {
   }
 
   authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt> {
-    return this.request(`/v1/connectors/authorizations/${this.id(id)}`)
+    return this.request(`/v1/nango-connectors/authorizations/${this.id(id)}`)
   }
 
   async disableConnection(id: string): Promise<void> {
-    await this.request(`/v1/connectors/connections/${this.id(id)}/disable`, { method: 'POST', data: {} })
+    await this.request(`/v1/nango-connectors/connections/${this.id(id)}/disable`, { method: 'POST', data: {} })
   }
 
   async purgeConnection(id: string): Promise<void> {
-    await this.request(`/v1/connectors/connections/${this.id(id)}`, { method: 'DELETE' })
+    await this.request(`/v1/nango-connectors/connections/${this.id(id)}`, { method: 'DELETE' })
   }
 
   triggerSync(id: string, mode: SyncMode): Promise<SyncRun> {
     if (!['full', 'incremental', 'rebuild'].includes(mode)) throw new Error('无效的同步模式。')
-    return this.request(`/v1/connectors/scopes/${this.id(id)}/sync`, { method: 'POST', data: { mode } })
+    return this.request(`/v1/nango-connectors/scopes/${this.id(id)}/sync`, { method: 'POST', data: { mode } })
   }
 
   cancelRun(id: string): Promise<SyncRun> {
-    return this.request(`/v1/connectors/runs/${this.id(id)}/cancel`, { method: 'POST', data: {} })
+    return this.request(`/v1/nango-connectors/runs/${this.id(id)}/cancel`, { method: 'POST', data: {} })
   }
 
   async scopes(connectionId?: string): Promise<SyncScope[]> {
-    const scopes = await this.request<SyncScope[]>('/v1/connectors/scopes', { params: connectionId ? { connectionId: this.id(connectionId) } : undefined })
+    const scopes = await this.request<SyncScope[]>('/v1/nango-connectors/scopes', { params: connectionId ? { connectionId: this.id(connectionId) } : undefined })
     return scopes.map((scope) => this.sanitizeScope(scope))
   }
 
   runs(connectionId?: string): Promise<SyncRun[]> {
-    return this.request('/v1/connectors/runs', { params: connectionId ? { connectionId: this.id(connectionId) } : undefined })
+    return this.request('/v1/nango-connectors/runs', { params: connectionId ? { connectionId: this.id(connectionId) } : undefined })
   }
 
   async mail(query: ConnectorMailQuery = {}): Promise<MailMessage[]> {
@@ -121,7 +121,7 @@ export class ConnectorGatewayBridge {
       : (await this.status()).connections.filter((item) => !query.provider || item.provider === query.provider).map((item) => this.id(item.id))
     const limit = Math.min(200, Math.max(1, query.limit ?? 100))
     const pages = await Promise.all(all.map((id) =>
-      this.request<{ items?: MailMessage[] } | MailMessage[]>(`/v1/connectors/connections/${id}/messages`, { params: { limit: 500, ...(query.provider ? { provider: query.provider } : {}), ...(query.offset ? { offset: query.offset } : {}) } })
+      this.request<{ items?: MailMessage[] } | MailMessage[]>(`/v1/nango-connectors/connections/${id}/messages`, { params: { limit: 500, ...(query.provider ? { provider: query.provider } : {}), ...(query.offset ? { offset: query.offset } : {}) } })
     ))
     const search = query.search?.trim().toLocaleLowerCase()
     const messages = pages.flatMap((page) => Array.isArray(page) ? page : (page.items ?? [])).filter((item) => !search || `${item.subject ?? ''} ${item.snippet ?? ''}`.toLocaleLowerCase().includes(search))
@@ -129,26 +129,26 @@ export class ConnectorGatewayBridge {
   }
 
   failures(query: { connectionId?: string; runId?: string; limit?: number } = {}): Promise<ConnectorFailure[]> {
-    return this.request('/v1/connectors/failures', { params: query })
+    return this.request('/v1/nango-connectors/failures', { params: query })
   }
 
   documents(connectionId: string): Promise<WikiDocumentSummary[]> {
-    return this.request(`/v1/connectors/connections/${this.id(connectionId)}/documents`)
+    return this.request(`/v1/nango-connectors/connections/${this.id(connectionId)}/documents`)
   }
 
   document(connectionId: string, documentId: string): Promise<WikiDocumentPreview> {
-    return this.request(`/v1/connectors/connections/${this.id(connectionId)}/documents/${this.id(documentId)}`)
+    return this.request(`/v1/nango-connectors/connections/${this.id(connectionId)}/documents/${this.id(documentId)}`)
   }
 
   async records(connectionId: string, type: 'mail' | 'calendar', page: { limit?: number; offset?: number; provider?: string } = {}): Promise<ConnectorJsonRecord[]> {
     if (type !== 'mail' && type !== 'calendar') throw new Error('无效的数据记录类型。')
-    const result = await this.request<{ items?: ConnectorJsonRecord[] } | ConnectorJsonRecord[]>(`/v1/connectors/connections/${this.id(connectionId)}/records`, { params: { type, ...page } })
+    const result = await this.request<{ items?: ConnectorJsonRecord[] } | ConnectorJsonRecord[]>(`/v1/nango-connectors/connections/${this.id(connectionId)}/records`, { params: { type, ...page } })
     return Array.isArray(result) ? result : (result.items ?? [])
   }
 
   armFault(point: string): Promise<void> {
     if (!FAULT_POINTS.has(point)) throw new Error('无效的故障注入点。')
-    return this.request('/v1/connectors/debug/faults', { method: 'POST', data: { point } })
+    return this.request('/v1/nango-connectors/debug/faults', { method: 'POST', data: { point } })
   }
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
@@ -175,3 +175,6 @@ export class ConnectorGatewayBridge {
     return { ...scope, sourceCursor: null }
   }
 }
+
+// Compatibility export for the legacy IPC router name used by older builds.
+export { NangoConnectorGatewayBridge as ConnectorGatewayBridge }

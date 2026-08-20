@@ -2,6 +2,7 @@ import { AGENT_PROTOCOL_VERSION } from "@nxcore/agent-contract";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { AgentService } from "./service.js";
+import type { AgentStatusService } from "./status-service.js";
 import { DocumentServiceError } from "../documents/errors.js";
 
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
@@ -68,8 +69,18 @@ const NavigationTarget = Type.Object({
   ])),
 });
 
-export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
+export function agentRoutes(
+  service: AgentService,
+  statusService?: AgentStatusService,
+): FastifyPluginAsyncTypebox {
   return async (app) => {
+    if (statusService) {
+      app.get(
+        "/v1/agent/status",
+        { schema: { tags: ["agent"] } },
+        async () => statusService.snapshot(),
+      );
+    }
     app.get(
       "/v1/agent/sessions",
       {
@@ -231,7 +242,6 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
           body: Type.Object({
             prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
-            responseLanguage: Type.Optional(ResponseLanguage),
             captureMemory: Type.Optional(Type.Boolean()),
             recallMemory: Type.Optional(Type.Boolean()),
             toolsEnabled: Type.Optional(Type.Boolean()),
@@ -242,10 +252,6 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
                 id: Type.String({ minLength: 1, maxLength: 100 }),
                 title: Type.String({ minLength: 1, maxLength: 120 }),
                 kind: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
-                background: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
-                goal: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
-                status: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
-                contextSummary: Type.Optional(RoomContextSummary),
               }), { maxItems: 200 })),
               selectedRoomId: Type.Optional(Type.Union([
                 Type.String({ minLength: 1, maxLength: 100 }),
@@ -353,7 +359,6 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
             roomId: Type.String({ minLength: 1, maxLength: 100 }),
             documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
-            responseLanguage: Type.Optional(ResponseLanguage),
           }),
         },
       },

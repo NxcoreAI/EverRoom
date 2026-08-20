@@ -19,6 +19,10 @@ const IngestBody = Type.Object({
         Type.Literal("file"),
         Type.Literal("everroom-doc"),
         Type.Literal("reality-event"),
+        Type.Literal("connector-email"),
+        Type.Literal("connector-document"),
+        Type.Literal("connector-calendar"),
+        Type.Literal("connector-record"),
       ]),
       sourceId: Type.String({ minLength: 1, maxLength: 200 }),
     })),
@@ -27,8 +31,6 @@ const IngestBody = Type.Object({
   title: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
   occurredAt: Type.Optional(Type.String()),
   pipelines: Type.Optional(PipelinesSchema),
-  /** Room 内上传的显式归属：入口直达该 Room（知识路由 ① 层）。 */
-  roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   entrySignals: Type.Optional(Type.Object({
     sourceTag: Type.Optional(Type.String()),
     threadId: Type.Optional(Type.String()),

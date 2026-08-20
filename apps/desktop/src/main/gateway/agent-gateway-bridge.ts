@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   PendingAgentIntent,
   AgentRun,
+  AgentStatusSnapshot,
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
@@ -19,6 +20,7 @@ import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
+import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 const AGENT_EVENT_CHANNEL = 'agent:event'
 const http = createLoggedHttpClient('gateway-agent')
@@ -51,6 +53,7 @@ interface RunWatch {
 
 export class AgentGatewayBridge {
   private readonly subscriptions = new Map<number, Subscription>()
+  private readonly contentsLifecycle = new WebContentsLifecycle()
   private readonly runWatches = new Map<string, RunWatch>()
   private eventObserver: ((event: AgentEvent) => void) | null = null
 
@@ -85,6 +88,10 @@ export class AgentGatewayBridge {
       method: 'POST',
       data: { ...(runId ? { runId } : {}), ...(sessionId ? { sessionId } : {}) },
     })
+  }
+
+  getStatus(): Promise<AgentStatusSnapshot> {
+    return this.request('/v1/agent/status')
   }
 
   createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
@@ -208,7 +215,7 @@ export class AgentGatewayBridge {
       reconnectTimer: null,
     }
     this.subscriptions.set(contents.id, subscription)
-    contents.once('destroyed', () => this.unsubscribe(contents.id))
+    this.contentsLifecycle.observe(contents, () => this.unsubscribe(contents.id))
   }
 
   unsubscribe(contentsId: number): void {

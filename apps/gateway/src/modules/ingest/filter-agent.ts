@@ -13,7 +13,8 @@ import type { Logger } from "pino";
 import type { AgentRuntime } from "@nxcore/agent-runtime";
 import type { IngestFilterVerdict } from "../../infrastructure/database/schema.js";
 import { KnowledgeLlm } from "../knowledge/llm.js";
-import type { IngestFilterConfig, KnowledgeLlmConfig } from "../../config.js";
+import type { IngestFilterConfig } from "../../config.js";
+import type { AgentResolver } from "../agent/resolver.js";
 
 /** 单条送审材料（正文截断至 ~4KB；全文住 parsed_contents）。 */
 export interface FilterItem {
@@ -39,12 +40,12 @@ export class IngestFilterService {
 
   constructor(
     runtime: AgentRuntime | null,
-    llmConfig: KnowledgeLlmConfig | null,
+    agentResolver: AgentResolver | null,
     private readonly config: IngestFilterConfig,
     private readonly logger: Logger,
   ) {
     this.runtime = runtime;
-    this.llm = llmConfig ? new KnowledgeLlm(llmConfig) : null;
+    this.llm = agentResolver ? new KnowledgeLlm(agentResolver) : null;
   }
 
   get enabled(): boolean {

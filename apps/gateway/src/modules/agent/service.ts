@@ -297,6 +297,7 @@ export class AgentService {
     private readonly documentRegistry?: AgentDocumentRegistry,
     private readonly completedMessageResolver?: AgentCompletedMessageResolver,
     private readonly connectorMode: "direct" | "local" = "direct",
+    private readonly disposeRuntime = true,
   ) {}
 
   async initialize(): Promise<void> {
@@ -346,7 +347,7 @@ export class AgentService {
       for (const sessionId of sessionIds) revokeTrustedMcpSession(sessionId);
     }
     this.trustedMcpSessions.clear();
-    await this.runtime.dispose();
+    if (this.disposeRuntime) await this.runtime.dispose();
   }
 
   createSession(input: CreateAgentSessionInput): AgentSession {

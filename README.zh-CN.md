@@ -134,6 +134,8 @@ pnpm dev
 
 Gateway 会读取仓库根目录的 `.env`，也兼容 `apps/gateway/.env` 和通过 `NXCORE_ENV_FILE` 指定的文件。默认使用隔离的 `fake` runtime，确保没有模型密钥时桌面应用仍可启动。需要真实 Agent 时，配置内置 Pi runtime；Context Room 文档工具会直接注入 Agent：
 
+Gateway 中的生成式模型调用统一通过 `AgentResolver` 按稳定 ID 选择 Agent。主对话、Connector 同步、转写总结、Cursor Completion、Knowledge 抽取/判定/登记和 Web Search 都拥有独立的 Runtime 与 `config/sessions/workspace` 目录；业务模块不直接调用 LLM API。向量 Embedding 是非生成式基础设施能力，不经过 Agent Resolver。
+
 ```dotenv
 NXCORE_AGENT_RUNTIME=pi
 NXCORE_AI_PROVIDER=openai
@@ -145,16 +147,76 @@ NXCORE_AI_API=openai-responses
 
 CE Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessionId` Streamable HTTP MCP 入口，供经过认证的 MCP 客户端使用。已废弃的远端聊天传输不再属于 runtime 配置。
 
+#### 文件驱动的子 Agent
+
+子 Agent 只能被主 Agent 或 Gateway 内部工作流调度，不提供独立聊天入口，也不需要管理页面。Gateway 默认扫描仓库根目录的 `agents`。该目录在 Gateway 构建时复制到 `dist/agents`，并随 Desktop 一起打包；开发或测试时可以通过环境变量临时覆盖：
+
+```dotenv
+NXCORE_SUBAGENTS_ENABLED=true
+NXCORE_SUBAGENTS_DIR=/absolute/path/to/everroom-agents
+```
+
+每个一级子目录代表一个 Agent：
+
+```text
+everroom-agents/
+└── mail-researcher/
+    ├── agent.yaml
+    ├── SYSTEM.md
+    └── skills/
+        └── summarize/
+            └── SKILL.md
+```
+
+最小 `agent.yaml`：
+
+```yaml
+schemaVersion: 1
+id: mail-researcher
+name: 邮件研究员
+description: 检索邮件并返回带来源的摘要
+mode: dispatch_only
+systemPrompt: ./SYSTEM.md
+skills:
+  - ./skills/summarize
+mcp:
+  - server: gmail
+    includeTools: [search_messages, get_message]
+policy:
+  allowedCallers: [primary-agent]
+  timeoutMs: 300000
+  maxConcurrency: 1
+  maxToolCalls: 40
+```
+
+`mcp.server` 引用设置中已有的全局 MCP 服务器名称，子 Agent 只会看到自己绑定并通过 `includeTools` 筛选后的服务器。修改目录内容后重启 Gateway 会自动生成新的不可变 Revision；已有 Invocation 继续使用原 Revision。完整约束见 [`docs/subagent-framework-design.zh-CN.md`](./docs/subagent-framework-design.zh-CN.md)。
+
+每个 `SKILL.md` 必须包含 `name` 和 `description` YAML frontmatter。子 Agent 通过受限 `read` 工具读取自己的 Skill 快照，不能借此读取工作区或设备上的其他文件。MCP 的 `includeTools` 必须显式填写；需要开放服务器全部工具时使用 `["*"]`。
+
 ### OpenConnector
+
+桌面端“数据源”和“连接器”是互斥页面，由根目录 `.env` 中的
+`NXCORE_DESKTOP_PAGE_MODE` 控制，取值为 `sources` 或 `connectors`。缺省值为
+`sources`；此模式下不启动 OpenConnector/CLI 连接器服务。需要使用“连接器”页时设置：
+
+```dotenv
+NXCORE_DESKTOP_PAGE_MODE=connectors
+```
+
+项目内的两套连接器使用独立命名空间：Nango 连接器使用
+`NXCORE_NANGO_CONNECTOR_*`、`/v1/nango-connectors/*` 和
+`nango-connector:*`；基于 OpenConnector/`oo` CLI 的 CLI 连接器使用
+`NXCORE_CLI_CONNECTOR_*`、`/v1/cli-connectors/*` 和 `cli-connector:*`。
+`NANGO_*` 与 `OO_*` 只用于各自第三方子进程的内部协议。
 
 OpenConnector 已作为桌面端托管服务集成，无需安装 Docker、单独启动网关或手工填写 Token。启动 EverRoom 时会自动拉起固定版本的本地 OpenConnector，退出应用时自动回收进程；首次启动生成的加密密钥、Admin Token、Runtime Token 和端口保存在 EverRoom 用户数据目录中。
 
 默认不需要任何配置。仅当需要连接已有的外部 OpenConnector 时，才在根目录 `.env` 显式关闭托管模式：
 
 ```dotenv
-NXCORE_OPEN_CONNECTOR_MANAGED=false
-NXCORE_OPEN_CONNECTOR_URL=https://connector.example.com
-NXCORE_OPEN_CONNECTOR_RUNTIME_TOKEN=<runtime-token>
+NXCORE_CLI_CONNECTOR_MANAGED=false
+NXCORE_CLI_CONNECTOR_URL=https://connector.example.com
+NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN=<runtime-token>
 ```
 
 桌面端内置固定版本的 `oo` CLI，并通过受限 IPC 为侧栏“连接器”控制台提供 Action 搜索、Schema、账号选择、参数校验、执行和实时日志。“Web 管理台”会打开隔离的本地窗口并自动完成管理认证。Pi Agent 同时获得 `connector_search`、`connector_schema`、`connector_apps`、`connector_run` 四个工具；执行前会先读取实际账号连接，不猜测连接名称。Admin Token 和 Runtime Token 都不会进入 Renderer。完整设计见 [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md)。

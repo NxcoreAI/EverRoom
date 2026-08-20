@@ -16,6 +16,7 @@ import WebSocket from 'ws'
 import type { AsrJob } from '../../shared/sources'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
+import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 const REALITY_EVENT_CHANNEL = 'reality:event'
 const http = createLoggedHttpClient('gateway-reality', {}, { quiet: true })
@@ -40,6 +41,7 @@ interface Subscription {
 
 export class RealityGatewayBridge {
   private readonly subscriptions = new Map<number, Subscription>()
+  private readonly contentsLifecycle = new WebContentsLifecycle()
 
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
@@ -134,7 +136,7 @@ export class RealityGatewayBridge {
       reconnectTimer: null,
     }
     this.subscriptions.set(contents.id, subscription)
-    contents.once('destroyed', () => this.unsubscribe(contents.id))
+    this.contentsLifecycle.observe(contents, () => this.unsubscribe(contents.id))
   }
 
   unsubscribe(contentsId: number): void {
@@ -196,15 +198,15 @@ export class RealityGatewayBridge {
   private async rawRequest<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
     try {
-      return await this.requestWithConnection<T>(connection, path, config)
+      return await this.rawRequestWithConnection<T>(connection, path, config)
     } catch (error) {
       if (!isRecoverableConnectionError(error)) throw error
       const recoveredConnection = await this.supervisor.recoverConnection(connection)
-      return this.requestWithConnection<T>(recoveredConnection, path, config)
+      return this.rawRequestWithConnection<T>(recoveredConnection, path, config)
     }
   }
 
-  private async requestWithConnection<T>(
+  private async rawRequestWithConnection<T>(
     connection: ReturnType<GatewaySupervisor['getConnection']>,
     path: string,
     config: AxiosRequestConfig,
