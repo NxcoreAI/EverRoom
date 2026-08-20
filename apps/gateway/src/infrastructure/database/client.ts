@@ -108,6 +108,75 @@ function adoptPreReleaseConnectorConfigMigration(sqlite: Database.Database, migr
     .run(hash, canonical.when);
 }
 
+/**
+ * The connector Markdown work briefly shipped as migrations 0017-0019 before
+ * main claimed 0017. Those builds already have the complete schema, but their
+ * later timestamps make Drizzle skip main's 0017 and replay canonical 0018.
+ * Adopt both canonical migrations after verifying every legacy schema object.
+ */
+function adoptPreReleaseConnectorMarkdownMigrations(
+  sqlite: Database.Database,
+  migrationsDir: string,
+): void {
+  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
+  ).get(type, name));
+  if (!hasObject("table", "__drizzle_migrations")) return;
+
+  const hasColumns = (table: string, expected: string[]) => {
+    if (!hasObject("table", table)) return false;
+    const columns = new Set((sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+      .map(({ name }) => name));
+    return expected.every((name) => columns.has(name));
+  };
+  if (!hasColumns("connector_markdown_artifacts", [
+    "id", "owner_id", "service", "connection_name", "resource_type", "source_record_id",
+    "ingest_source_id", "active_path", "source_content_hash", "markdown_content_hash",
+    "renderer_version", "version", "status", "ingest_status", "last_error", "parsed_id",
+    "ingest_event_id", "created_at", "updated_at", "deleted_at",
+  ])) return;
+  if (!hasColumns("connector_markdown_outbox", [
+    "id", "owner_id", "resource_type", "ingest_source_id", "operation", "source_content_hash",
+    "status", "attempts", "available_at", "lease_owner", "lease_until", "last_error",
+    "created_at", "updated_at",
+  ])) return;
+  if (!hasColumns("ingest_events", ["deleted_at"])) return;
+  for (const index of [
+    "connector_markdown_artifacts_source_idx",
+    "connector_markdown_artifacts_ingest_source_idx",
+    "connector_markdown_artifacts_status_idx",
+    "connector_markdown_outbox_due_idx",
+    "connector_markdown_outbox_source_idx",
+    "ingest_events_source_hash_idx",
+  ]) {
+    if (!hasObject("index", index)) return;
+  }
+
+  const entries = readMigrationJournal(migrationsDir);
+  const canonicalEntries = [
+    entries.find((item) => item.tag === "0017_sour_madame_web"),
+    entries.find((item) => item.tag === "0018_charming_vampiro"),
+  ];
+  if (canonicalEntries.some((entry) => typeof entry?.when !== "number" || !entry.tag)) return;
+
+  const insertMigration = sqlite.prepare(
+    "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+  );
+  sqlite.transaction(() => {
+    sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");
+    for (const entry of canonicalEntries) {
+      if (!entry?.tag || typeof entry.when !== "number") continue;
+      const recorded = sqlite.prepare(
+        "SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1",
+      ).get(entry.when);
+      if (recorded) continue;
+      const migrationSql = readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8");
+      const hash = createHash("sha256").update(migrationSql).digest("hex");
+      insertMigration.run(hash, entry.when);
+    }
+  })();
+}
+
 export function createDatabase(databasePath: string, migrationsDir: string): DatabaseClient {
   mkdirSync(dirname(databasePath), { recursive: true });
 
@@ -119,6 +188,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
 
   repairLegacyMigrationCursor(sqlite, migrationsDir);
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
+  adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
 
