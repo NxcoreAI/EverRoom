@@ -5,10 +5,11 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import type { GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
-import { createOpenConnectorPiTools } from './open-connector-tools.js';
-import { createConnectorDataPiTools } from "../connectors/pi-tools.js";
+import { createNangoPiTools } from "../connectors/nango-agent-tools.js";
 import { createConnectorSyncAgentTools } from "../connectors/agent-tools.js";
 import type { ConnectorSyncService } from "../connectors/service.js";
+import type { ConnectorManager } from "../connectors/manager.js";
+import type { NangoExecutor } from "../connectors/nango-executor.js";
 import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
 
@@ -29,15 +30,14 @@ export function createAgentRuntime(
   mcpHost: DocumentMcpHost,
   knowledge?: AgentRuntimeIntegrationOptions,
   connectorSync?: ConnectorSyncService,
+  nango?: { manager: ConnectorManager; executor: NangoExecutor } | null,
 ): AgentRuntime {
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
   if (!config.pi) throw new Error("Pi runtime configuration is missing");
   return new PiAgentRuntime(config.pi, {
     tools: [
       ...createDocumentPiTools(mcpHost),
-      ...(config.connectorAgentMode === "local" && connectorSync
-        ? createConnectorDataPiTools(connectorSync, config.connectorSyncOwnerId ?? "local-user")
-        : config.openConnector ? createOpenConnectorPiTools(config.openConnector) : []),
+      ...(nango ? createNangoPiTools(nango.manager, nango.executor) : []),
       ...(config.webSearch ? createWebSearchPiTools(config.webSearch) : []),
     ],
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),

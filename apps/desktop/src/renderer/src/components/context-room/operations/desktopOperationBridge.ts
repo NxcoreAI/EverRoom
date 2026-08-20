@@ -1,4 +1,5 @@
 import type { DocumentOperationStatus, DocumentOperationSummary } from '@nxcore/agent-contract'
+import i18n from '@/i18n/i18next'
 
 import type { DocumentOperationListFilters, OperationBridge } from './types'
 
@@ -34,7 +35,7 @@ export function createDesktopOperationBridge(
 }
 
 function unavailableOperationBridge(): OperationBridge {
-  const unavailable = () => Promise.reject(new Error('文档操作服务不可用。'))
+  const unavailable = () => Promise.reject(new Error(i18n.t('surface:agent.documentOperationServiceUnavailable')))
   return {
     list: unavailable,
     start: unavailable,

@@ -65,6 +65,8 @@ export function PortedContextRoom({
     .map((document) => `${document.id}:${document.version}:${document.status}`)
     .sort()
     .join('\u0000')
+  const hasDocumentContext = activeDocuments.length > 0
+    || Boolean(activeRoom?.generatedContext?.sourceDocuments.length)
 
   const syncKnowledgeRooms = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge
@@ -154,22 +156,26 @@ export function PortedContextRoom({
   }, [activeRoomId, roomDocuments.refreshRoom])
 
   useEffect(() => {
-    if (!activeRoomId || !window.nxcore?.knowledge?.getRoomContext) return
+    if (!activeRoomId || !hasDocumentContext || !window.nxcore?.knowledge?.getRoomContext) return
     const requestId = roomContextRequestRef.current + 1
     roomContextRequestRef.current = requestId
     const timer = window.setTimeout(() => {
       void window.nxcore!.knowledge.getRoomContext(activeRoomId).then((context) => {
         if (roomContextRequestRef.current !== requestId || context.roomId !== activeRoomId) return
-        setState((current) => ({
-          ...current,
-          rooms: current.rooms.map((room) => room.id === activeRoomId
-            ? applyGeneratedRoomContext(room, context)
-            : room),
-        }))
+        setState((current) => {
+          const room = current.rooms.find((item) => item.id === activeRoomId)
+          if (!room) return current
+          const updated = applyGeneratedRoomContext(room, context)
+          if (updated === room) return current
+          return {
+            ...current,
+            rooms: current.rooms.map((item) => item.id === activeRoomId ? updated : item),
+          }
+        })
       }).catch(() => undefined)
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [activeDocumentKey, activeRoomId, setState])
+  }, [activeDocumentKey, activeRoomId, hasDocumentContext, setState])
 
   useEffect(() => {
     if (homeRequest === handledHomeRequest.current) return
@@ -203,14 +209,6 @@ export function PortedContextRoom({
     const room = state.rooms.find((item) => item.id === roomId)
     if (!room) return
     setInitialObject(null)
-    if (room.origin === 'auto') {
-      setState((current) => ({
-        ...current,
-        rooms: current.rooms.map((item) => item.id === roomId
-          ? { ...item, origin: 'user', updatedAt: new Date().toISOString() }
-          : item),
-      }))
-    }
     onOpenRoomTab({ id: room.id, title: room.title })
   }
 

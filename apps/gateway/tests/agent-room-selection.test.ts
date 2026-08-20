@@ -296,6 +296,69 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
+  it.each([
+    '创建一个管理项目文档的 context room',
+    'create a context room for managing project documents',
+  ])('lets the Agent handle explicit Room creation: %s', async (prompt) => {
+    const { db, runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    const run = await service.startRun(session.id, {
+      prompt,
+      idempotencyKey: `explicit-room-creation-${prompt}`,
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toEqual([
+      expect.objectContaining({ prompt, roomId: null, roomSelectionRequired: true }),
+    ])
+    expect(service.listEvents(session.id, run.id, 0)
+      .filter((event) => event.type === 'tool.completed')).toEqual([])
+    expect(db.select().from(pendingAgentIntents).all()).toEqual([])
+    sqlite.close()
+  })
+
+  it.each([
+    '如何创建 Context Room？',
+    '不要创建 Room，只告诉我有哪些用途。',
+  ])('keeps non-actionable Room creation discussion in the Agent: %s', async (prompt) => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt,
+      idempotencyKey: `room-creation-discussion-${prompt}`,
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toEqual([expect.objectContaining({ prompt })])
+    sqlite.close()
+  })
+
+  it.each([
+    '在当前 Room 里创建一份项目文档',
+    '创建一份项目文档并保存到 Context Room',
+    'create a project document in the Context Room',
+  ])('preserves document creation routing when Room is only the location: %s', async (prompt) => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    const run = await service.startRun(session.id, {
+      prompt,
+      idempotencyKey: `document-in-room-${prompt}`,
+      context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
+    })
+
+    expect(runtime.starts).toEqual([])
+    expect(service.listEvents(session.id, run.id, 0)[3]?.payload).toMatchObject({
+      name: 'context_room_list',
+      result: { selectionRequired: true },
+    })
+    sqlite.close()
+  })
+
   it('keeps document discussion in the Agent instead of opening the Room picker', async () => {
     const { runtime, service, sqlite } = await createHarness()
     const session = service.createSession({ pageLabel: 'Context Room', roomId: null })

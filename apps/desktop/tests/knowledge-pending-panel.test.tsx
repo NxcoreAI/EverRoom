@@ -2,7 +2,20 @@ import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const localeState = vi.hoisted(() => ({ value: 'zh-CN' as 'zh-CN' | 'en-US' }))
+
 vi.mock('@/state/toast', () => ({ showToast: vi.fn() }))
+vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/i18n/LocaleContext')>()
+  return {
+    ...actual,
+    useLocale: () => ({
+      t: (message: string, values?: Record<string, string | number>) => (
+        actual.translate(localeState.value, message, values)
+      ),
+    }),
+  }
+})
 
 import { KnowledgePendingPanel } from '../src/renderer/src/components/context-room/ported/components/KnowledgePendingPanel'
 
@@ -28,6 +41,7 @@ describe('KnowledgePendingPanel', () => {
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
+    localeState.value = 'zh-CN'
     vi.unstubAllGlobals()
   })
 
@@ -57,5 +71,37 @@ describe('KnowledgePendingPanel', () => {
     expect(agentButton).toBeDefined()
     act(() => agentButton!.props.onClick())
     expect(onFocusAgent).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders recommendation copy in English when the locale changes', async () => {
+    localeState.value = 'en-US'
+    installKnowledge({
+      recommended: [{
+        id: 'entity-1',
+        name: 'Launch plan',
+        kind: '主题',
+        status: 'ready',
+        roomId: null,
+        evidenceScore: 3,
+        sourceCount: 2,
+        promoteScore: 2,
+        promoteSources: 2,
+        firstEvidence: 'User-provided evidence',
+        lastLinkedAt: null,
+        updatedAt: '2026-08-21T00:00:00.000Z',
+      }],
+    })
+
+    await act(async () => {
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    const output = JSON.stringify(renderer!.toJSON())
+    expect(output).toContain('Recommended Rooms')
+    expect(output).toContain('Recommended (top 3 by evidence score)')
+    expect(output).toContain('Evidence 3.0 · 2 resources · Recommendation threshold reached')
+    expect(output).toContain('Topic')
+    expect(output).not.toContain('推荐（按证据分排序，前 3）')
   })
 })

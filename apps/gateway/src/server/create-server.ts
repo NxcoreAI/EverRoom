@@ -49,6 +49,7 @@ import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
 import { IngestService } from "../modules/ingest/service.js";
+import { IngestFilterService } from "../modules/ingest/filter-agent.js";
 import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
@@ -115,11 +116,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
   const nangoSecret = connectorConfig.enabled ? await bootstrapNango(connectorConfig) : connectorConfig.nangoSecret;
   const connectorDb = createConnectorDatabase(connectorConfig.enabled ? connectorConfig.databasePath : ":memory:");
+  const nangoExecutor = connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, nangoSecret) : null;
   const connectorManager = new ConnectorManager(
     new ConnectorRepository(connectorDb.sqlite),
-    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, nangoSecret) : null,
+    nangoExecutor,
     connectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
   );
+  // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
+  const nangoAgentTools = nangoExecutor ? { manager: connectorManager, executor: nangoExecutor } : null;
   const connectorAuthorization = connectorConfig.enabled && "gmailConfigKey" in connectorConfig
     ? new NangoAuthorizationService(
         connectorConfig.nangoUrl,
@@ -282,7 +286,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           },
         }
       : {}),
-  }, connectorSyncService);
+  }, connectorSyncService, nangoAgentTools);
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -429,6 +433,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
+    ingestService.disposeFilter();
     await connectorSyncService.dispose();
     await perceptionService.dispose();
     await diaryService.dispose();
@@ -462,6 +467,26 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
   // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
   const policyWarn = (message: string) => app.log.warn({ module: "ingest.policy" }, message);
+  // agent 过滤器（ingest 第一级闸门）：runtime 用无头 background agent，
+  // 降级链 agent → knowledge LLM → fail-open；enabled=false 时全量直通。
+  const ingestFilterService = config.ingestFilter.enabled
+    ? new IngestFilterService(
+        backgroundAgentRuntime,
+        config.knowledge?.llm ?? null,
+        config.ingestFilter,
+        app.log,
+      )
+    : null;
+  if (ingestFilterService) {
+    app.log.info(
+      {
+        mode: config.ingestFilter.mode,
+        threshold: config.ingestFilter.confidenceThreshold,
+        exempt: config.ingestFilter.exemptSourceKinds,
+      },
+      "ingest filter gate enabled",
+    );
+  }
   const ingestService = new IngestService(
     db,
     filesService,
@@ -472,7 +497,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       project: await loadProjectDefaults(policyWarn),
       deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
     },
+    ingestFilterService,
   );
+  // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
+  ingestService.recoverPendingFilters();
   realityService.setReadySink(async (event) => {
     diaryService.markStaleAt(new Date(event.startedAt));
     const roomEnabled = knowledgeService.routerEnabled;

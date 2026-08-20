@@ -1,7 +1,7 @@
 import type { AgentEvent } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
-import { mergeAgentToolEvent, reduceAgentRunEvents } from './useAgentSession'
+import { mergeAgentToolEvent, reduceAgentRunEvents, removeAgentRunMessages } from './useAgentSession'
 
 function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): AgentEvent {
   return {
@@ -16,6 +16,18 @@ function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): Ag
 }
 
 describe('agent event display state', () => {
+  it('removes only the run being regenerated', () => {
+    const messages = [
+      { id: 'user-1', sessionId: 'session-1', runId: 'run-1', role: 'user' as const, content: 'Earlier', createdAt: '2026-08-20T00:00:00.000Z' },
+      { id: 'assistant-1', sessionId: 'session-1', runId: 'run-1', role: 'assistant' as const, content: 'Earlier answer', createdAt: '2026-08-20T00:00:01.000Z' },
+      { id: 'user-2', sessionId: 'session-1', runId: 'run-2', role: 'user' as const, content: 'Regenerate this', createdAt: '2026-08-20T00:00:02.000Z' },
+      { id: 'assistant-2', sessionId: 'session-1', runId: 'run-2', role: 'assistant' as const, content: 'Old answer', createdAt: '2026-08-20T00:00:03.000Z' },
+    ]
+
+    expect(removeAgentRunMessages(messages, 'run-2').map((message) => message.id))
+      .toEqual(['user-1', 'assistant-1'])
+  })
+
   it('updates one tool in place and protects its terminal state', () => {
     const started = mergeAgentToolEvent([], event(1, 'tool.started', {
       toolCallId: 'search-1',

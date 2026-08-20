@@ -74,6 +74,7 @@ export function AgentPanel({
     ? `${pageLabel} · “${selectedTextSummary}”`
     : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
   const session = useAgentSession(pageLabel, roomId, rooms)
+  const agentAvailable = Boolean(window.nxcore?.agent)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
 
   const focusComposer = (attention = false) => {
@@ -220,15 +221,15 @@ export function AgentPanel({
       .catch(() => handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key))
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
-  const sendPrompt = async (prompt: string) => {
-    if (!prompt.trim() || !roomBackendReady) return
+  const sendPrompt = async (prompt: string, replaceRunId?: string) => {
+    if (!prompt.trim() || !agentAvailable) return
     const submittedPrompt = prompt.trim()
     const submittedContext = selectedText
     setDraft('')
     setSubmitting(true)
     try {
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
-      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext)
+      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId)
       setSelectedText('')
       setComposerResetKey((current) => current + 1)
     } catch {
@@ -300,7 +301,7 @@ export function AgentPanel({
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
-      available={roomBackendReady}
+      available={agentAvailable}
       onChange={setDraft}
       onClearContext={() => setSelectedText('')}
       onStop={() => void session.stop()}
@@ -347,7 +348,7 @@ export function AgentPanel({
         loading={session.loading}
         messages={session.messages}
         onRejectDocumentIntent={focusComposer}
-        onRetryPrompt={(prompt) => void sendPrompt(prompt)}
+        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}

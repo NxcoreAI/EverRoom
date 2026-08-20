@@ -2,6 +2,7 @@ import { Activity, Check, CircleAlert, Loader } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
 
 import type { PageId } from '@/data/navigation'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 import type { MemoryOverviewDto } from '../../../shared/memory'
 import './MemoryPipelineStatus.css'
 
@@ -14,12 +15,6 @@ const STATE_ICONS: Record<PipelineState, typeof Activity> = {
   queued: Activity,
   idle: Check,
   unavailable: CircleAlert,
-}
-
-const DELTA_LABELS: Record<DeltaLevel, string> = {
-  l1: '原子记忆',
-  l2: '场景',
-  l3: '长期画像',
 }
 
 /** 点击后跳转记忆页时要打开的 tab。 */
@@ -61,11 +56,11 @@ function deltaBetween(previous: MemorySnapshot, current: MemorySnapshot): Memory
   return delta.l1 > 0 || delta.l2 > 0 || delta.l3Updated ? delta : null
 }
 
-function deltaSummary(delta: MemoryDelta): string {
+function deltaSummary(delta: MemoryDelta, t: Translate): string {
   const parts: string[] = []
-  if (delta.l1 > 0) parts.push(`原子记忆 +${delta.l1}`)
-  if (delta.l2 > 0) parts.push(`场景 +${delta.l2}`)
-  if (delta.l3Updated) parts.push('画像已更新')
+  if (delta.l1 > 0) parts.push(t('memory:pipeline.atomicMemoryAdded', { count: delta.l1 }))
+  if (delta.l2 > 0) parts.push(t('memory:pipeline.scenesAdded', { count: delta.l2 }))
+  if (delta.l3Updated) parts.push(t('memory:pipeline.profileUpdated'))
   return parts.join(' · ')
 }
 
@@ -93,19 +88,19 @@ function activeLabel(overview: MemoryOverviewDto | null, state: PipelineState): 
   return ''
 }
 
-function tooltipLines(overview: MemoryOverviewDto | null, state: PipelineState, delta: MemoryDelta | null): string[] {
-  if (state === 'unavailable') return ['MemoryCore 暂未连接']
+function tooltipLines(overview: MemoryOverviewDto | null, state: PipelineState, delta: MemoryDelta | null, t: Translate): string[] {
+  if (state === 'unavailable') return [t('memory:pipeline.memoryCoreUnavailable')]
   if (state === 'running' || state === 'queued') {
     const running = stageCount(overview, 'l1', 'running') + stageCount(overview, 'l2', 'running') + stageCount(overview, 'l3', 'running')
     const queued = stageCount(overview, 'l1', 'queued') + stageCount(overview, 'l2', 'queued') + stageCount(overview, 'l3', 'queued')
     return state === 'running'
-      ? [`提炼中：${running} 个会话`, `等待：${queued} 个会话`]
-      : [`等待提炼：${queued} 个会话`]
+      ? [t('memory:pipeline.refiningSessions', { count: running }), t('memory:pipeline.waitingSessions', { count: queued })]
+      : [t('memory:pipeline.waitingToRefineSessions', { count: queued })]
   }
   const lines: string[] = []
-  if (delta) lines.push(`本轮新增：${deltaSummary(delta)}`)
-  if (overview?.l1) lines.push(`已沉淀 ${overview.l1.total} 条原子记忆 · ${overview.l2?.total ?? 0} 个场景`)
-  return lines.length > 0 ? lines : ['记忆已是最新']
+  if (delta) lines.push(t('memory:pipeline.newThisRound', { summary: deltaSummary(delta, t) }))
+  if (overview?.l1) lines.push(t('memory:pipeline.persistedSummary', { atomic: overview.l1.total, scenes: overview.l2?.total ?? 0 }))
+  return lines.length > 0 ? lines : [t('memory:pipeline.upToDate')]
 }
 
 export function getPipelineState(overview: MemoryOverviewDto | null, unavailable = false): PipelineState {
@@ -122,6 +117,7 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
 }: {
   onNavigate: (page: PageId) => void
 }) {
+  const { t } = useLocale()
   const [overview, setOverview] = useState<MemoryOverviewDto | null>(null)
   const [unavailable, setUnavailable] = useState(false)
   const [delta, setDelta] = useState<MemoryDelta | null>(null)
@@ -169,7 +165,7 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
   const state: PipelineState = getPipelineState(overview, unavailable)
   const StatusIcon = STATE_ICONS[state]
   const animated = state === 'running' || state === 'queued'
-  const label = delta ? deltaSummary(delta) : activeLabel(overview, state)
+  const label = delta ? deltaSummary(delta, t) : activeLabel(overview, state)
 
   // 整个状态条：提炼结束后静置 60s（无互动）就整体收起，
   // 等下一轮记忆提炼开始时再出现。
@@ -217,7 +213,7 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
       data-state={state}
       data-has-delta={String(Boolean(delta))}
       role="status"
-      aria-label="记忆提炼"
+      aria-label={t('memory:pipeline.statusLabel')}
       tabIndex={0}
       onClick={openMemory}
       onKeyDown={(event) => {
@@ -230,7 +226,7 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
       <span className="sidebar-memory-pipeline-icon" aria-hidden="true">
         <StatusIcon strokeWidth={1.8} />
       </span>
-      <span className="sidebar-memory-pipeline-label">记忆</span>
+      <span className="sidebar-memory-pipeline-label">{t('memory:pipeline.memory')}</span>
       {animated || delta ? (
         <span className="sidebar-memory-pipeline-state">{label}</span>
       ) : null}
@@ -249,8 +245,8 @@ export const MemoryPipelineStatus = memo(function MemoryPipelineStatus({
         </ol>
       ) : null}
       <div className="sidebar-memory-pipeline-tooltip" role="tooltip">
-        {tooltipLines(overview, state, delta).map((line) => <p key={line}>{line}</p>)}
-        <p className="sidebar-memory-pipeline-tooltip-hint">点击查看记忆</p>
+        {tooltipLines(overview, state, delta, t).map((line) => <p key={line}>{line}</p>)}
+        <p className="sidebar-memory-pipeline-tooltip-hint">{t('memory:pipeline.viewMemory')}</p>
       </div>
     </div>
   )

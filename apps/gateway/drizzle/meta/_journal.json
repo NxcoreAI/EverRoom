@@ -141,6 +141,13 @@
       "when": 1787218875498,
       "tag": "0019_free_charles_xavier",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1787258120105,
+      "tag": "0021_first_hulk",
+      "breakpoints": true
     }
   ]
 }

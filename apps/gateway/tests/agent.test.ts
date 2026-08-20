@@ -28,6 +28,7 @@ async function testConfig(): Promise<GatewayConfig> {
     pi: null,
     cursorCompletionPi: null,
     knowledge: null,
+    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [] },
     backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
     webSearch: null,

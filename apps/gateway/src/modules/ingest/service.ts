@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -9,6 +9,7 @@ import {
   ingestEvents,
   parsedContents,
   realityEvents,
+  type IngestFilterVerdict,
   type IngestMemoryOk,
 } from "../../infrastructure/database/schema.js";
 import { FilesService } from "../files/service.js";
@@ -37,6 +38,7 @@ import {
 } from "./normalizers.js";
 import { converterOfExtension } from "./converters.js";
 import { emptyPolicyLayers, resolvePipelines, validatePipelines, type PolicyLayers } from "./policy.js";
+import { IngestFilterService, type FilterItem } from "./filter-agent.js";
 
 /**
  * 统一理解引擎（unified-ingest-plan §7）：接入面唯一，normalize → classify →
@@ -66,6 +68,9 @@ export interface IngestResult {
   pipelines: Pipelines;
   routeJobId: string | null;
   memoryResult: IngestMemoryOk | { error: string } | null;
+  /** 过滤闸状态：null = 直通；pending = 待判定（routeJobId/memoryResult 此时尚空）。 */
+  filterStatus: "pending" | "passed" | "filtered" | "bypassed" | null;
+  filterVerdict: IngestFilterVerdict | null;
   originChannel: string;
 }
 
@@ -82,9 +87,22 @@ export interface IngestEventDto {
   pipelines: Pipelines;
   memoryResult: IngestResult["memoryResult"];
   routeJobId: string | null;
+  /** 过滤闸状态：null = 直通（豁免/关闭）；pending 待判定；passed/filtered/bypassed 见 schema 注释。 */
+  filterStatus: "pending" | "passed" | "filtered" | "bypassed" | null;
+  filterVerdict: IngestFilterVerdict | null;
   originChannel: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 过滤 pending 事件的扇出所需上下文（agent 判定通过后恢复扇出用）。 */
+interface PendingFanout {
+  eventId: string;
+  pipelines: Pipelines;
+  markdown: string;
+  filename?: string | undefined;
+  roomId?: string | undefined;
+  entrySignals?: IngestInput["entrySignals"];
 }
 
 export class IngestService {
@@ -96,7 +114,14 @@ export class IngestService {
     private readonly logger: Logger,
     /** 两层策略文件（①工程默认 ingest-policy-defaults.json ②部署覆盖 ingest-policies.json），启动时整表读入。 */
     private readonly policyLayers: PolicyLayers = emptyPolicyLayers(),
+    /** agent 过滤器（第一级闸门）；null = 过滤关闭，全量直通。 */
+    private readonly filter: IngestFilterService | null = null,
   ) {}
+
+  /** 过滤闸 worker：去抖批（N 条或 M ms）→ agent 判定 → 放行扇出 / 记 filtered。 */
+  private pendingFanouts = new Map<string, PendingFanout>();
+  private filterTimer: NodeJS.Timeout | null = null;
+  private filterRunning = false;
 
   /** 只读展示：当前生效的两层策略（REST GET /v1/ingest/policies 数据源）。 */
   get policy(): PolicyLayers {
@@ -388,6 +413,59 @@ export class IngestService {
 
     // 台账：类型识别 + 策略快照落定（晋升/增量 ingest 的 wiki 判定读快照）
     const eventId = `ing-${randomUUID().slice(0, 12)}`;
+
+    // 过滤闸（第一级）：开启且不豁免 → 记 pending 不扇出，去抖批送 agent 判定
+    const filterGate = this.filter && this.filter.enabled && !this.filter.exempt(unit.sourceKind);
+    if (filterGate) {
+      this.db.insert(ingestEvents).values({
+        id: eventId,
+        sourceKind: unit.sourceKind,
+        sourceId: unit.sourceId,
+        sourceVersion: unit.sourceVersion,
+        dataType: unit.dataType,
+        detectedBy: unit.detectedBy,
+        title: unit.title,
+        contentHash: unit.contentHash,
+        parsedId,
+        pipelines,
+        originChannel: unit.origin,
+        filterStatus: "pending",
+      }).run();
+      this.pendingFanouts.set(eventId, {
+        eventId,
+        pipelines,
+        markdown: unit.markdown,
+        filename: unit.filename,
+        roomId: input.roomId,
+        entrySignals: input.entrySignals,
+      });
+      this.scheduleFilterBatch();
+      this.logger.info(
+        { event: "ingest.filter.pending", eventId, sourceKind: unit.sourceKind, sourceId: unit.sourceId },
+        "ingest event pending filter verdict",
+      );
+      return {
+        eventId,
+        deduped: false,
+        source: {
+          sourceKind: unit.sourceKind,
+          sourceId: unit.sourceId,
+          sourceVersion: unit.sourceVersion,
+        },
+        dataType: unit.dataType,
+        detectedBy: unit.detectedBy,
+        title: unit.title,
+        contentHash: unit.contentHash,
+        parsedId,
+        pipelines,
+        routeJobId: null,
+        memoryResult: null,
+        filterStatus: "pending",
+        filterVerdict: null,
+        originChannel: unit.origin,
+      };
+    }
+
     this.db.insert(ingestEvents).values({
       id: eventId,
       sourceKind: unit.sourceKind,
@@ -402,9 +480,43 @@ export class IngestService {
       originChannel: unit.origin,
     }).run();
 
+    return this.fanOut({
+      ...unit,
+      eventId,
+      pipelines,
+      parsedId,
+      entrySignals: input.entrySignals,
+      roomId: input.roomId,
+    });
+  }
+
+  /**
+   * 三链路扇出（原 processNormalized 后半段）：过滤直通路径与判定放行路径共用。
+   * 失败只记 memoryResult/routeJobId 错误，不抛出（闸门视角扇出已不可重试地决定）。
+   */
+  private async fanOut(unit: {
+    eventId: string;
+    sourceKind: LedgerSourceKind;
+    sourceId: string;
+    sourceVersion: number;
+    dataType: string;
+    detectedBy: string;
+    title: string;
+    markdown: string;
+    occurredAt?: string | undefined;
+    contentHash: string;
+    parsedId: string;
+    origin: OriginChannel;
+    pipelines: Pipelines;
+    filename?: string | undefined;
+    roomId?: string | undefined;
+    entrySignals?: IngestInput["entrySignals"];
+  }): Promise<IngestResult> {
+    const eventId = unit.eventId;
+
     // 扇出 ①：记忆链路（失败只记 memoryResult，不阻塞 Room 链路）
     let memoryResult: IngestResult["memoryResult"] = null;
-    if (pipelines.memory) {
+    if (unit.pipelines.memory) {
       if (!this.memory.enabled) {
         memoryResult = { error: "memory_core_disabled" };
       } else {
@@ -441,8 +553,8 @@ export class IngestService {
 
     // 扇出 ②：Room 链路（knowledge.route job；wiki 沉淀在晋升/ingest 时按快照判定）
     let routeJobId: string | null = null;
-    if (pipelines.room) {
-      const entrySignals = input.entrySignals ?? (unit.filename
+    if (unit.pipelines.room) {
+      const entrySignals = unit.entrySignals ?? (unit.filename
         ? { filenamePrefix: unit.filename }
         : undefined);
       const submitted = unit.sourceKind === "everroom-doc"
@@ -460,7 +572,7 @@ export class IngestService {
             title: unit.title,
             markdown: unit.markdown,
             ...(unit.occurredAt ? { occurredAt: unit.occurredAt } : {}),
-            ...(input.roomId ? { entryRoomId: input.roomId } : {}),
+            ...(unit.roomId ? { entryRoomId: unit.roomId } : {}),
             ...(entrySignals ? { entrySignals } : {}),
           });
       routeJobId = submitted.jobId;
@@ -480,7 +592,7 @@ export class IngestService {
         sourceKind: unit.sourceKind,
         sourceId: unit.sourceId,
         dataType: unit.dataType,
-        pipelines,
+        pipelines: unit.pipelines,
         routeJobId,
       },
       "ingest event completed",
@@ -494,15 +606,189 @@ export class IngestService {
         sourceVersion: unit.sourceVersion,
       },
       dataType: unit.dataType,
-      detectedBy: unit.detectedBy,
+      detectedBy: unit.detectedBy as DetectedBy,
       title: unit.title,
       contentHash: unit.contentHash,
-      parsedId,
-      pipelines,
+      parsedId: unit.parsedId,
+      pipelines: unit.pipelines,
       routeJobId,
       memoryResult,
+      filterStatus: null,
+      filterVerdict: null,
       originChannel: unit.origin,
     };
+  }
+
+  // ───────────────────────── 过滤闸 worker（去抖批） ─────────────────────────
+
+  /** 去抖：攒 batchSize 条或 batchDelayMs 触发一次 agent 批量判定。 */
+  private scheduleFilterBatch(): void {
+    if (!this.filter) return;
+    const batchFull = this.pendingFanouts.size >= this.filter.batchSizeOf();
+    if (this.filterTimer && !batchFull) return;
+    if (this.filterTimer) {
+      clearTimeout(this.filterTimer);
+      this.filterTimer = null;
+    }
+    this.filterTimer = setTimeout(() => {
+      this.filterTimer = null;
+      void this.runFilterBatch();
+    }, batchFull ? 0 : this.filter.delayMsOf());
+    this.filterTimer.unref?.();
+  }
+
+  private async runFilterBatch(): Promise<void> {
+    if (!this.filter || this.filterRunning || this.pendingFanouts.size === 0) return;
+    this.filterRunning = true;
+    const batch = [...this.pendingFanouts.values()].slice(0, this.filter.batchSizeOf());
+    try {
+      const items: FilterItem[] = batch.map((pending) => {
+        const row = this.db.select().from(ingestEvents)
+          .where(eq(ingestEvents.id, pending.eventId)).get();
+        return {
+          eventId: pending.eventId,
+          title: row?.title ?? "",
+          dataType: row?.dataType ?? "document",
+          sourceKind: row?.sourceKind ?? "file",
+          occurredAt: row?.createdAt.toISOString(),
+          markdown: pending.markdown,
+        };
+      });
+      const outcomes = await this.filter.judgeBatch(items);
+      const enforce = this.filter.enforce();
+      for (const pending of batch) {
+        this.pendingFanouts.delete(pending.eventId);
+        const outcome = outcomes.get(pending.eventId);
+        if (!outcome) {
+          // 不应发生（judgeBatch 缺项兜底），fail-open 兜底
+          await this.releasePending(pending, "bypassed", failOpenVerdict("outcome_missing"));
+          continue;
+        }
+        if (enforce && !outcome.verdict.informative) {
+          // enforce + 判定无价值：拦下，不进下游链路（台账可见可 reinstate）
+          this.db.update(ingestEvents)
+            .set({ filterStatus: "filtered", filterVerdict: outcome.verdict, updatedAt: new Date() })
+            .where(eq(ingestEvents.id, pending.eventId)).run();
+          this.logger.info(
+            { event: "ingest.filter.blocked", eventId: pending.eventId, category: outcome.verdict.category },
+            "ingest event filtered out",
+          );
+          continue;
+        }
+        const status = outcome.kind === "fail-open" ? "bypassed" : "passed";
+        await this.releasePending(pending, status, outcome.verdict);
+      }
+    } catch (error) {
+      // judgeBatch 内部已 fail-open，这里只是防御：整批放行
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error({ event: "ingest.filter.batch_error", error: message }, "ingest filter batch crashed");
+      for (const pending of batch) {
+        this.pendingFanouts.delete(pending.eventId);
+        await this.releasePending(pending, "bypassed", failOpenVerdict(message)).catch(() => undefined);
+      }
+    } finally {
+      this.filterRunning = false;
+      if (this.pendingFanouts.size > 0) this.scheduleFilterBatch();
+    }
+  }
+
+  /** pending → 终态（passed/bypassed）并恢复扇出。 */
+  private async releasePending(
+    pending: PendingFanout,
+    status: "passed" | "bypassed",
+    verdict: IngestFilterVerdict,
+  ): Promise<void> {
+    this.db.update(ingestEvents)
+      .set({ filterStatus: status, filterVerdict: verdict, updatedAt: new Date() })
+      .where(eq(ingestEvents.id, pending.eventId)).run();
+    const row = this.db.select().from(ingestEvents)
+      .where(eq(ingestEvents.id, pending.eventId)).get();
+    if (!row) return;
+    await this.fanOut({
+      eventId: row.id,
+      sourceKind: row.sourceKind as LedgerSourceKind,
+      sourceId: row.sourceId,
+      sourceVersion: row.sourceVersion,
+      dataType: row.dataType,
+      detectedBy: row.detectedBy,
+      title: row.title,
+      markdown: pending.markdown,
+      contentHash: row.contentHash,
+      parsedId: row.parsedId,
+      origin: row.originChannel as OriginChannel,
+      pipelines: pending.pipelines,
+      filename: pending.filename,
+      roomId: pending.roomId,
+      entrySignals: pending.entrySignals,
+    });
+  }
+
+  /** 误杀恢复：filtered 事件重新放行扇出（POST /v1/ingest/events/:id/reinstate）。 */
+  async reinstate(eventId: string): Promise<IngestEventDto | null> {
+    const row = this.db.select().from(ingestEvents)
+      .where(eq(ingestEvents.id, eventId)).get();
+    if (!row) return null;
+    if (row.filterStatus !== "filtered") throw new IngestError("仅 filtered 状态的事件可恢复", "not_filtered", 409);
+    const parsed = this.db.select().from(parsedContents)
+      .where(eq(parsedContents.id, row.parsedId)).get();
+    if (!parsed) throw new IngestError("归一化产物缺失，无法恢复", "parsed_missing", 410);
+    this.db.update(ingestEvents)
+      .set({ filterStatus: "passed", updatedAt: new Date() })
+      .where(eq(ingestEvents.id, eventId)).run();
+    await this.fanOut({
+      eventId: row.id,
+      sourceKind: row.sourceKind as LedgerSourceKind,
+      sourceId: row.sourceId,
+      sourceVersion: row.sourceVersion,
+      dataType: row.dataType,
+      detectedBy: row.detectedBy,
+      title: row.title,
+      markdown: parsed.markdown,
+      occurredAt: row.createdAt.toISOString(),
+      contentHash: row.contentHash,
+      parsedId: row.parsedId,
+      origin: row.originChannel as OriginChannel,
+      pipelines: row.pipelines,
+    });
+    return this.getEvent(eventId);
+  }
+
+  /** 启动恢复：pending 滞留（进程被杀时去抖批未跑）重新入队。 */
+  recoverPendingFilters(): void {
+    if (!this.filter?.enabled) return;
+    const rows = this.db.select({ id: ingestEvents.id })
+      .from(ingestEvents)
+      .where(eq(ingestEvents.filterStatus, "pending"))
+      .all();
+    for (const row of rows) {
+      const event = this.db.select().from(ingestEvents)
+        .where(eq(ingestEvents.id, row.id)).get();
+      if (!event) continue;
+      const parsed = this.db.select().from(parsedContents)
+        .where(eq(parsedContents.id, event.parsedId)).get();
+      if (!parsed) {
+        // 产物缺失无法扇出，fail-open 落终态避免永久滞留
+        this.db.update(ingestEvents)
+          .set({ filterStatus: "bypassed", filterVerdict: failOpenVerdict("parsed_missing_on_recover"), updatedAt: new Date() })
+          .where(eq(ingestEvents.id, row.id)).run();
+        continue;
+      }
+      this.pendingFanouts.set(row.id, {
+        eventId: row.id,
+        pipelines: event.pipelines,
+        markdown: parsed.markdown,
+      });
+    }
+    if (this.pendingFanouts.size > 0) {
+      this.logger.info({ count: this.pendingFanouts.size }, "recovered pending filter fanouts");
+      this.scheduleFilterBatch();
+    }
+  }
+
+  disposeFilter(): void {
+    if (this.filterTimer) clearTimeout(this.filterTimer);
+    this.filterTimer = null;
+    this.pendingFanouts.clear();
   }
 
   // ───────────────────────── 台账读取 ─────────────────────────
@@ -625,6 +911,8 @@ export class IngestService {
       pipelines: dto.pipelines,
       routeJobId: dto.routeJobId,
       memoryResult: dto.memoryResult,
+      filterStatus: dto.filterStatus,
+      filterVerdict: dto.filterVerdict,
       originChannel: dto.originChannel,
     };
   }
@@ -766,8 +1054,20 @@ function toEventDto(row: typeof ingestEvents.$inferSelect): IngestEventDto {
     pipelines: row.pipelines,
     memoryResult: row.memoryResult ?? null,
     routeJobId: row.routeJobId ?? null,
+    filterStatus: row.filterStatus ?? null,
+    filterVerdict: row.filterVerdict ?? null,
     originChannel: row.originChannel,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+/** 过滤器故障放行 verdict（bypassed 终态记录失败原因）。 */
+function failOpenVerdict(reason: string): IngestFilterVerdict {
+  return {
+    informative: true,
+    reason: `过滤器故障放行：${reason.slice(0, 200)}`,
+    category: "other",
+    confidence: 0,
   };
 }

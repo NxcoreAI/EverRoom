@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "2f7c6057-efca-470a-bc55-b74afa8460d9",
-  "prevId": "3adc0f20-a167-4fda-85bf-6bd1064f7f0d",
+  "id": "291d7de1-cfcf-43a3-bea3-d3fd7a09306f",
+  "prevId": "9c133ef4-7adb-4314-b14b-1017651b046e",
   "tables": {
     "agent_events": {
       "name": "agent_events",
@@ -2717,6 +2717,21 @@
           "notNull": true,
           "autoincrement": false
         },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "time_basis": {
+          "name": "time_basis",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'recorded_at'"
+        },
         "content_fingerprint": {
           "name": "content_fingerprint",
           "type": "text",
@@ -4184,6 +4199,20 @@
         },
         "route_job_id": {
           "name": "route_job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "filter_status": {
+          "name": "filter_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "filter_verdict": {
+          "name": "filter_verdict",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

@@ -1,6 +1,16 @@
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/i18n/LocaleContext')>()
+  return {
+    ...actual,
+    useLocale: () => ({
+      t: (message: string, values?: Record<string, string | number>) => actual.translate('zh-CN', message, values),
+    }),
+  }
+})
+
 import { KnowledgePendingPanel } from '../src/renderer/src/components/context-room/ported/components/KnowledgePendingPanel'
 
 function entity(id: string, evidenceScore: number) {
@@ -63,13 +73,13 @@ describe('Context Room recommendations', () => {
       renderer = TestRenderer.create(<KnowledgePendingPanel />)
     })
 
-    expect(api.listEntities).toHaveBeenCalledOnce()
+    expect(api.listEntities).toHaveBeenCalledTimes(3)
     expect(api.listEntities).toHaveBeenCalledWith('ready')
-    expect(api.listUnmatched).not.toHaveBeenCalled()
-    expect(api.listRecentDecisions).not.toHaveBeenCalled()
+    expect(api.listUnmatched).toHaveBeenCalledOnce()
+    expect(api.listRecentDecisions).toHaveBeenCalledOnce()
     expect(renderer!.root.findAllByProps({ className: 'context-room-knowledge-empty' })).toHaveLength(1)
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain('最近归类资料')
-    expect(JSON.stringify(renderer!.toJSON())).not.toContain('未识别资料')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('最近归类资料')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('未识别资料')
   })
 
   it('renders only ready recommendations as creation cards', async () => {

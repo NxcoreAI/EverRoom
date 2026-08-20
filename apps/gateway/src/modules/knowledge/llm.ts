@@ -141,8 +141,7 @@ export class KnowledgeLlm {
   }
 
   /** 转正登记（4.4 步骤 3）：依据句 + 资料摘要 → Room 身份材料。 */
-  async registerEntity(input: RegisterInput): Promise<RegisterResult> {
-    const prompt = [
+  async registerEntity(input: RegisterInput): Promise<RegisterResult> {    const prompt = [
       `实体名称（可能不规范）：${input.name}`,
       `类型：${input.kind}`,
       "",
@@ -159,6 +158,20 @@ export class KnowledgeLlm {
       "请给出登记 JSON。",
     ].join("\n");
     return this.chatJson(REGISTER_SYSTEM_PROMPT, prompt, parseRegisterResponse);
+  }
+
+  /**
+   * 过滤器降级通道（ingest 第一级闸门）：prompt 自带格式要求，原样透传一次
+   * 调用返回原始 JSON 文本（解析由调用方负责）。失败抛 KnowledgeLlmError。
+   */
+  async chatForFilter(prompt: string): Promise<string> {
+    return this.chat([
+      {
+        role: "system",
+        content: "你是资料过滤器。只输出调用方要求的 JSON，不要使用 Markdown 代码块，不要添加解释。",
+      },
+      { role: "user", content: prompt },
+    ]);
   }
 
   /** 两次尝试（第二次带解析错误反馈），失败抛 KnowledgeLlmError。 */

@@ -45,10 +45,12 @@ export function clearRoomOnboardingMarker(
 
 export function shouldShowRoomOnboarding(
   backendReady: boolean,
-  _roomCount: number,
+  roomCount: number,
   marker: RoomOnboardingMarker | null,
+  suppress = false,
 ): boolean {
-  // The guide is about creating a Room, not about whether the workspace is empty.
-  // This also keeps first-use onboarding visible when starter/demo data already exists.
-  return backendReady && marker === null
+  if (suppress) return false
+  // Existing workspaces have already completed the first-use moment, even if
+  // an older install does not have an onboarding marker yet.
+  return backendReady && roomCount === 0 && marker === null
 }
