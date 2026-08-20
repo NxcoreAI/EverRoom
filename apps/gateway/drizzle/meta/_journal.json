@@ -127,6 +127,13 @@
       "when": 1787158500761,
       "tag": "0017_sour_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1787253685785,
+      "tag": "0018_thankful_scorpion",
+      "breakpoints": true
     }
   ]
 }

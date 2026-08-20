@@ -37,6 +37,7 @@ import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
 import { IngestService } from "../modules/ingest/service.js";
+import { IngestFilterService } from "../modules/ingest/filter-agent.js";
 import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
@@ -322,6 +323,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
+    ingestService.disposeFilter();
     await connectorSyncService.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
@@ -351,6 +353,26 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
   // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
   const policyWarn = (message: string) => app.log.warn({ module: "ingest.policy" }, message);
+  // agent 过滤器（ingest 第一级闸门）：runtime 用无头 background agent，
+  // 降级链 agent → knowledge LLM → fail-open；enabled=false 时全量直通。
+  const ingestFilterService = config.ingestFilter.enabled
+    ? new IngestFilterService(
+        backgroundAgentRuntime,
+        config.knowledge?.llm ?? null,
+        config.ingestFilter,
+        app.log,
+      )
+    : null;
+  if (ingestFilterService) {
+    app.log.info(
+      {
+        mode: config.ingestFilter.mode,
+        threshold: config.ingestFilter.confidenceThreshold,
+        exempt: config.ingestFilter.exemptSourceKinds,
+      },
+      "ingest filter gate enabled",
+    );
+  }
   const ingestService = new IngestService(
     db,
     filesService,
@@ -361,7 +383,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       project: await loadProjectDefaults(policyWarn),
       deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
     },
+    ingestFilterService,
   );
+  // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
+  ingestService.recoverPendingFilters();
   // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
   // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
   connectorManager.setMemorySink((input) =>
