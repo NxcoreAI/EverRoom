@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
 import type {
@@ -8,6 +9,7 @@ import type {
 } from '@nxcore/agent-contract'
 
 import type { CloudAccountStatus } from '../shared/sources'
+import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
@@ -32,6 +34,7 @@ import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
+import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
@@ -56,6 +59,11 @@ import {
   DocumentAssetStore,
   DOCUMENT_ASSET_SCHEME,
 } from './document-asset-store'
+import { OoCliBridge } from './open-connector/oo-cli-bridge'
+import {
+  OpenConnectorSupervisor,
+  type OpenConnectorConnection,
+} from './open-connector/open-connector-supervisor'
 
 const APP_NAME = 'EverRoom'
 
@@ -106,6 +114,29 @@ const SOURCE_CHANNELS = {
 
 const GATEWAY_CHANNELS = {
   status: 'gateway:status',
+} as const
+
+const OPEN_CONNECTOR_CHANNELS = {
+  status: 'open-connector:status',
+  execute: 'open-connector:execute',
+  cancel: 'open-connector:cancel',
+  openConsole: 'open-connector:open-console',
+} as const
+
+const CONNECTOR_SYNC_CHANNELS = {
+  status: 'connector-sync:status',
+  accounts: 'connector-sync:accounts',
+  promptProfiles: 'connector-sync:prompt-profiles',
+  jobs: 'connector-sync:jobs',
+  createJob: 'connector-sync:create-job',
+  updateJob: 'connector-sync:update-job',
+  runJob: 'connector-sync:run-job',
+  setJobPaused: 'connector-sync:set-job-paused',
+  archiveJob: 'connector-sync:archive-job',
+  runs: 'connector-sync:runs',
+  quarantine: 'connector-sync:quarantine',
+  data: 'connector-sync:data',
+  record: 'connector-sync:record',
 } as const
 
 const CONTEXT_ROOM_CHANNELS = {
@@ -317,6 +348,8 @@ function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
+    OPEN_CONNECTOR_CHANNELS,
+    CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
@@ -350,6 +383,9 @@ function installIpcRouters(): void {
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
+let ooCliBridge: OoCliBridge | null = null
+let openConnectorSupervisor: OpenConnectorSupervisor | null = null
+let openConnectorConsoleWindow: BrowserWindow | null = null
 let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
 let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
@@ -519,9 +555,151 @@ function registerGatewayHandlers(): void {
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
 }
 
+function resolveOoCliExecutable(): string {
+  const configured = process.env.NXCORE_OO_CLI_PATH?.trim()
+  if (configured) return configured
+  const executableName = process.platform === 'win32' ? 'oo.exe' : 'oo'
+  const packagedCandidates = [
+    join(process.resourcesPath, 'oo', `${process.platform}-${process.arch}`, executableName),
+    join(process.resourcesPath, 'oo', executableName),
+    join(app.getAppPath(), 'build', 'oo', `${process.platform}-${process.arch}`, executableName),
+  ]
+  return packagedCandidates.find((candidate) => existsSync(candidate)) ?? 'oo'
+}
+
+function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
+  const root = join(dataDirectory, 'open-connector')
+  return new OoCliBridge({
+    executable: resolveOoCliExecutable(),
+    baseUrl: connection.baseUrl,
+    runtimeToken: connection.runtimeToken,
+    managed: connection.managed,
+    gatewayPid: connection.pid,
+    gatewayVersion: connection.version,
+    configDirectory: join(root, 'oo-config'),
+    dataDirectory: join(root, 'oo-data'),
+  })
+}
+
+function attachOpenConnectorBridge(bridge: OoCliBridge): void {
+  bridge.onCommand((frame) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('open-connector:event', frame)
+    }
+  })
+}
+
+function openConnectorExternalUrl(value: string): void {
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'http:' || url.protocol === 'https:') void shell.openExternal(url.toString())
+  } catch {
+    // Ignore malformed or unsupported external navigation from the console.
+  }
+}
+
+async function openConnectorManagementConsole(): Promise<void> {
+  const connection = openConnectorSupervisor?.getConnection()
+  if (!connection) throw new Error('OpenConnector 尚未就绪。')
+  if (!connection.managed || !connection.adminToken) {
+    await shell.openExternal(`${connection.baseUrl}/`)
+    return
+  }
+  if (openConnectorConsoleWindow && !openConnectorConsoleWindow.isDestroyed()) {
+    openConnectorConsoleWindow.show()
+    openConnectorConsoleWindow.focus()
+    return
+  }
+  const origin = new URL(connection.baseUrl).origin
+  const window = new BrowserWindow({
+    width: 1180,
+    height: 820,
+    minWidth: 900,
+    minHeight: 640,
+    show: false,
+    title: 'OpenConnector 管理台',
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      partition: 'persist:everroom-open-connector-console',
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  openConnectorConsoleWindow = window
+  window.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: [`${origin}/*`] },
+    (details, callback) => callback({
+      requestHeaders: { ...details.requestHeaders, Authorization: `Bearer ${connection.adminToken}` },
+    }),
+  )
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openConnectorExternalUrl(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (new URL(url).origin === origin) return
+    event.preventDefault()
+    openConnectorExternalUrl(url)
+  })
+  window.once('ready-to-show', () => window.show())
+  window.once('closed', () => {
+    if (openConnectorConsoleWindow === window) openConnectorConsoleWindow = null
+  })
+  await window.loadURL(`${connection.baseUrl}/`)
+}
+
+function registerOpenConnectorHandlers(): void {
+  handle(OPEN_CONNECTOR_CHANNELS.status, () => {
+    if (ooCliBridge) return ooCliBridge.status()
+    const status = openConnectorSupervisor?.getStatus()
+    return {
+      baseUrl: status?.baseUrl ?? '',
+      managed: status?.managed ?? true,
+      gatewayPid: status?.pid ?? null,
+      gatewayVersion: status?.version ?? null,
+      gatewayState: status?.state === 'starting' || !status ? 'starting' : 'unreachable',
+      gatewayMessage: status?.message ?? null,
+      runtimeTokenConfigured: false,
+      cliState: 'checking',
+      cliVersion: null,
+      cliPath: resolveOoCliExecutable(),
+      cliMessage: null,
+    }
+  })
+  handle(OPEN_CONNECTOR_CHANNELS.execute, (_event, input: unknown) => {
+    if (!ooCliBridge) throw new Error('OpenConnector 尚未就绪。')
+    if (!input || typeof input !== 'object') throw new Error('无效的 OpenConnector 命令。')
+    return ooCliBridge.execute(input as OpenConnectorExecutionInput)
+  })
+  handle(OPEN_CONNECTOR_CHANNELS.cancel, (_event, requestId: unknown) => {
+    if (!ooCliBridge) return false
+    if (typeof requestId !== 'string') throw new Error('无效的命令请求标识。')
+    return ooCliBridge.cancel(requestId)
+  })
+  handle(OPEN_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
+}
+
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
+}
+
+function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
+  handle(CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
+  handle(CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
+  handle(CONNECTOR_SYNC_CHANNELS.promptProfiles, () => bridge.promptProfiles())
+  handle(CONNECTOR_SYNC_CHANNELS.jobs, () => bridge.jobs())
+  handle(CONNECTOR_SYNC_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
+  handle(CONNECTOR_SYNC_CHANNELS.updateJob, (_event, id, input) => bridge.updateJob(id, input))
+  handle(CONNECTOR_SYNC_CHANNELS.runJob, (_event, id) => bridge.runJob(id))
+  handle(CONNECTOR_SYNC_CHANNELS.setJobPaused, (_event, id, paused, configVersion) =>
+    bridge.setJobPaused(id, paused, configVersion))
+  handle(CONNECTOR_SYNC_CHANNELS.archiveJob, (_event, id, configVersion) => bridge.archiveJob(id, configVersion))
+  handle(CONNECTOR_SYNC_CHANNELS.runs, (_event, jobId) => bridge.runs(jobId))
+  handle(CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
+  handle(CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
+  handle(CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
@@ -939,8 +1117,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   installIpcRouters()
   registerGatewayHandlers()
+  registerOpenConnectorHandlers()
   createWindow()
   try {
+    openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
+    const openConnector = await openConnectorSupervisor.start().catch((error) => {
+      console.error('Managed OpenConnector failed to start; connector tools stay disabled.', error)
+      return null
+    })
+    if (openConnector) {
+      ooCliBridge = createOoCliBridge(openConnector)
+      attachOpenConnectorBridge(ooCliBridge)
+    }
     // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
     // 让队友拉代码后无需手工部署即可使用记忆功能。
     memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
@@ -957,6 +1145,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
+        ...(ooCliBridge ? ooCliBridge.environment() : {}),
+        ...(ooCliBridge ? { NXCORE_CONNECTOR_AGENT_MODE: 'local' } : {}),
+        ...(ooCliBridge ? { NXCORE_CONNECTOR_SYNC_ENABLED: 'true' } : {}),
         ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
@@ -995,6 +1186,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       + `(pid=${cursorCompletionGateway.pid})`,
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
+    registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
@@ -1097,6 +1289,9 @@ app.on('before-quit', (event) => {
   shutdownStarted = true
   const service = localDataService
   const gateway = gatewaySupervisor
+  const connectorCli = ooCliBridge
+  const connectorRuntime = openConnectorSupervisor
+  const connectorConsole = openConnectorConsoleWindow
   const cursorCompletion = cursorCompletionSupervisor
   const memoryCore = memoryCoreSupervisor
   const knowledgeService = knowledgeServiceSupervisor
@@ -1108,6 +1303,9 @@ app.on('before-quit', (event) => {
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
+  ooCliBridge = null
+  openConnectorSupervisor = null
+  openConnectorConsoleWindow = null
   cursorCompletionSupervisor = null
   memoryCoreSupervisor = null
   knowledgeServiceSupervisor = null
@@ -1118,6 +1316,8 @@ app.on('before-quit', (event) => {
   recordingStore = null
   saasClient = null
   screenshotScheduler.stop()
+  if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
+  connectorCli?.shutdown()
   agentBridge?.dispose()
   cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
@@ -1127,6 +1327,7 @@ app.on('before-quit', (event) => {
     service?.shutdown(),
     recordings?.dispose(),
     gateway?.shutdown(),
+    connectorRuntime?.shutdown(),
     cursorCompletion?.shutdown(),
     memoryCore?.shutdown(),
     knowledgeService?.shutdown(),

@@ -358,25 +358,9 @@
 .cloud-keyring-heading svg { width: 15px; height: 15px; }
 .cloud-keyring-heading div { display: grid; gap: 3px; }
 .cloud-keyring-heading strong { font-size: 12px; }
-.cloud-keyring-heading small, .cloud-keyring-pending small, .cloud-keyring-result { color: var(--muted); font-size: 10px; }
-
-.cloud-keyring-pending {
-  display: grid;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
-  border-radius: 6px;
-  background: var(--accent-soft);
-}
-
-.cloud-keyring-pending > span { color: var(--muted); font-size: 10px; }
-.cloud-keyring-pending code { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+.cloud-keyring-heading small, .cloud-keyring-result { color: var(--muted); font-size: 10px; }
 .cloud-keyring-sync { width: max-content; }
 .cloud-keyring-result { margin-left: 4px; }
-.cloud-keyring-pairing { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
-.cloud-keyring-pairing-info { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
-.cloud-keyring-pairing-info code { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 1px; }
-.cloud-keyring-qr { width: 220px; height: 220px; padding: 8px; background: #fff; border-radius: 6px; }
 .cloud-subscription {
   display: grid;
   grid-template-columns: minmax(120px, 0.8fr) minmax(240px, 1.6fr) minmax(130px, 0.8fr);

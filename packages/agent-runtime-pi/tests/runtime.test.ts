@@ -423,6 +423,94 @@ describe("PiAgentRuntime", () => {
     }
   });
 
+  it("stops a run before executing a tool past maxToolCallsPerRun", async () => {
+    let requestIndex = 0;
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        JSON.parse(raw);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) => JSON.stringify({
+          id: `chatcmpl-tool-limit-${String(requestIndex)}`,
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta, finish_reason: finishReason }],
+        });
+        response.write(`data: ${chunk({
+          tool_calls: [{
+            index: 0,
+            id: `call-limit-${String(requestIndex)}`,
+            type: "function",
+            function: {
+              name: "limited_tool",
+              arguments: "{}",
+            },
+          }],
+        })}\n\n`);
+        response.write(`data: ${chunk({}, "tool_calls")}\n\n`);
+        requestIndex += 1;
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-tool-limit-test-"));
+    temporaryDirectories.push(dataDir);
+    let executions = 0;
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+      maxToolCallsPerRun: 1,
+    }, {
+      tools: [{
+        name: "limited_tool",
+        label: "受限工具",
+        description: "用于测试调用上限",
+        parameters: { type: "object", properties: {} },
+        execute: async () => {
+          executions += 1;
+          return { content: "工具完成" };
+        },
+      }],
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-tool-limit",
+        sessionId: "session-tool-limit",
+        runtimeSessionRef: null,
+        prompt: "连续调用工具",
+        pageLabel: "测试工作区",
+        roomId: null,
+      });
+      const events: RuntimeEvent[] = [];
+      for await (const event of run.events) events.push(event);
+
+      expect(executions).toBe(1);
+      expect(requestIndex).toBe(2);
+      expect(events.map((event) => event.type)).toContain("run.failed");
+      expect(events.find((event) => event.type === "run.failed")?.payload).toEqual({
+        message: "Pi runtime exceeded the maximum tool calls per run (1)",
+      });
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
   it("awaits run cleanup when the model request fails", async () => {
     const endpoint = createServer((_request, response) => {
       response.writeHead(500, { "content-type": "application/json" });

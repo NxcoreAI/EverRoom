@@ -25,6 +25,7 @@ async function testConfig(): Promise<GatewayConfig> {
     memory: null,
     knowledge: null,
     pi: null,
+    knowledge: null,
     backgroundPi: null,
     asrInputDir: join(dataDir, 'recordings'),
     asr: null,

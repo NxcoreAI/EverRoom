@@ -20,7 +20,7 @@ import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
-import { createAgentRuntime, createBackgroundAgentRuntime } from "../modules/agent/runtime-factory.js";
+import { createAgentRuntime, createBackgroundAgentRuntime, createConnectorSyncAgentRuntime } from "../modules/agent/runtime-factory.js";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
@@ -39,6 +39,8 @@ import { IngestService } from "../modules/ingest/service.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
+import { connectorRoutes } from "../modules/connectors/routes.js";
+import { ConnectorSyncService } from "../modules/connectors/service.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
@@ -190,6 +192,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
     app.log,
   );
+  const connectorSyncService = new ConnectorSyncService(db, config, app.log);
+  const connectorSyncAgentRuntime = createConnectorSyncAgentRuntime(config, connectorSyncService);
+  if (connectorSyncAgentRuntime) connectorSyncService.attachAgentRuntime(connectorSyncAgentRuntime);
+  await connectorSyncService.initialize();
   const agentRuntime = createAgentRuntime(config, documentMcpHost, {
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
@@ -201,7 +207,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           },
         }
       : {}),
-  });
+  }, connectorSyncService);
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -224,6 +230,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     contextRoomService,
     documentService,
     documentMcpHost,
+    config.connectorAgentMode ?? "direct",
   );
   await agentService.initialize();
   const backgroundAgentRuntime = createBackgroundAgentRuntime(config);
@@ -271,6 +278,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await agentService.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
+    await connectorSyncService.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
     sqlite.close();
@@ -313,6 +321,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
+  await app.register(connectorRoutes(connectorSyncService));
 
   return app;
 }

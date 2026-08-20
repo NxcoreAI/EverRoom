@@ -5,11 +5,11 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
+    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/dev.mjs",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package:mac": "pnpm run build && electron-builder --mac dmg zip --arm64"
+    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64"
   },
   "dependencies": {
     "@antv/g6": "^5.1.1",
@@ -39,13 +39,15 @@
     "docx": "^9.7.1",
     "gsap": "3.15.0",
     "lucide-react": "^0.468.0",
-    "qrcode": "^1.5.4",
     "prosemirror-changeset": "^2.4.1",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@oomol-lab/oo-cli": "1.7.5",
+    "@oomol-lab/open-connector": "https://codeload.github.com/oomol-lab/open-connector/tar.gz/5719a69468c698c7cb8108e062ff64ecef8a2e65",
     "@electron/asar": "3.4.1",
     "@sentry/vite-plugin": "5.4.0",
     "@types/node": "^22.10.2",
@@ -97,6 +99,20 @@
           "!**/{test,spec}.*",
           "!**/*.{test,spec}.*",
           "!**/*.{map,ts,tsx,mts,cts}"
+        ]
+      },
+      {
+        "from": "build/open-connector",
+        "to": "open-connector",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/oo",
+        "to": "oo",
+        "filter": [
+          "**/*"
         ]
       }
     ],
