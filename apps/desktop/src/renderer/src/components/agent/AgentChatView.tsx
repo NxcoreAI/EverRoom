@@ -8,7 +8,7 @@ import { parseAgentNavigationTarget } from './agentNavigation'
 import { formatAgentOutput } from './agentOutputFormat'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
-import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
+import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
 import {
   findPendingAgentDocumentSelection,
   type AgentDocumentSelectionItem,
@@ -18,7 +18,7 @@ import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
-import { writeTextToClipboard } from '@/lib/systemClipboard'
+import { writeTextToClipboard } from '../../lib/systemClipboard'
 
 const quickPrompts = [
   ['总结当前页面的重点，并列出下一步', '总结当前页面最重要的内容，并按优先级列出下一步。'],

@@ -1,0 +1,48 @@
+name: Notify Feishu when pull request is merged
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Notify Feishu
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        shell: bash
+        run: |
+          if [[ -z "$FEISHU_WEBHOOK_URL" ]]; then
+            echo "::warning::FEISHU_RELEASE_WEBHOOK is not configured; skipping notification."
+            exit 0
+          fi
+
+          message="EverRoom PR 已合并
+          PR：#${PR_NUMBER} ${PR_TITLE}
+          作者：${PR_AUTHOR}
+          合并人：${PR_MERGED_BY}
+          分支：${PR_HEAD} -> ${PR_BASE}
+          链接：${PR_URL}"
+          payload="$(jq -n --arg text "$message" '{msg_type:"text",content:{text:$text}}')"
+          response="$(curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$FEISHU_WEBHOOK_URL")"
+          code="$(jq -r '.code // .StatusCode // -1' <<< "$response")"
+          test "$code" = "0" || {
+            echo "Feishu rejected the notification with code $code" >&2
+            exit 1
+          }
