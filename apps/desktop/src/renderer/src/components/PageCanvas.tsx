@@ -10,11 +10,9 @@ import { HomePage } from './pages/HomePage'
 import { MemoryPage } from './pages/MemoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SourcesPage } from './pages/SourcesPage'
-import { TasksPage } from './pages/TasksPage'
 import { WikiPage } from './pages/WikiPage'
 import { ConnectorSyncPage } from './pages/ConnectorSyncPage'
 import { AgentStatusPage } from './pages/AgentStatusPage'
-import { OfficePage } from './pages/OfficePage'
 import { useLocale } from '@/i18n/LocaleContext'
 
 const ContextRoomPage = lazy(() =>
@@ -62,7 +60,7 @@ export function PageCanvas({
   const { t } = useLocale()
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
-  if (page === 'office') content = <OfficePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
+  if (page === 'office') content = <AgentStatusPage onFocusAgent={onFocusAgent} />
   if (page === 'rooms') {
     content = (
       <Suspense fallback={<ContextRoomHomeSkeleton />}>
@@ -93,8 +91,6 @@ export function PageCanvas({
   if (page === 'memory') content = <MemoryPage />
   if (page === 'wiki') content = <WikiPage />
   if (page === 'connectors') content = <ConnectorSyncPage />
-  if (page === 'agents') content = <AgentStatusPage onFocusAgent={onFocusAgent} />
-  if (page === 'tasks') content = <TasksPage />
   if (page === 'diary') {
     content = (
       <Suspense fallback={<DiaryPageSkeleton />}>

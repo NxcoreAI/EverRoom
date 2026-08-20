@@ -167,11 +167,11 @@ function AssistantMessageContent({ content }: { content: string }) {
 
 const navigationPageLabels: Record<string, string> = {
   home: 'surface:navigation.home',
+  office: 'surface:navigation.office',
   rooms: 'surface:navigation.contextRoom',
   docs: 'surface:navigation.documents',
   sources: 'surface:navigation.sources',
   memory: 'surface:navigation.memory',
-  tasks: 'surface:navigation.tasks',
   diary: 'surface:navigation.diary',
 }
 

@@ -1153,7 +1153,6 @@ summary:focus-visible {
 
 .doc-list,
 .data-table,
-.task-board,
 .settings-list,
 .memory-layout {
   overflow: hidden;
@@ -1187,20 +1186,17 @@ summary:focus-visible {
 .doc-row:hover,
 .settings-row:hover,
 .table-row:hover,
-.memory-row:hover,
-.task-row:hover {
+.memory-row:hover {
   background: var(--surface-alt);
 }
 
-.doc-row time,
-.task-row time {
+.doc-row time {
   color: var(--subtle);
   font-size: 10px;
 }
 
 .doc-row > svg,
 .settings-row > svg,
-.task-row > svg,
 .memory-row > svg {
   width: 15px;
   height: 15px;
@@ -2189,24 +2185,21 @@ summary:focus-visible {
   height: 16px;
 }
 
-.memory-row > div,
-.task-row > div {
+.memory-row > div {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 5px;
 }
 
-.memory-row strong,
-.task-row strong {
+.memory-row strong {
   overflow: hidden;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.memory-row small,
-.task-row small {
+.memory-row small {
   overflow: hidden;
   color: var(--muted);
   font-size: 9px;
@@ -2223,36 +2216,6 @@ summary:focus-visible {
   font-weight: 650;
 }
 
-.task-row {
-  display: grid;
-  min-height: 62px;
-  grid-template-columns: 26px minmax(0, 1fr) 62px 54px 16px;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
-}
-
-.task-row:first-child {
-  border-top: 0;
-}
-
-.task-state {
-  display: inline-flex;
-  width: 26px;
-  height: 26px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.task-state svg {
-  width: 14px;
-  height: 14px;
-}
-
 .settings-list {
   max-width: 720px;
 }
@@ -2264,7 +2227,6 @@ summary:focus-visible {
 :root[data-theme='soft'] .room-card,
 :root[data-theme='soft'] .doc-list,
 :root[data-theme='soft'] .data-table,
-:root[data-theme='soft'] .task-board,
 :root[data-theme='soft'] .settings-list,
 :root[data-theme='soft'] .memory-layout,
 :root[data-theme='soft'] .sources-empty {
@@ -2319,8 +2281,7 @@ summary:focus-visible {
 
 :root[data-theme='soft'] .item-icon,
 :root[data-theme='soft'] .room-glyph,
-:root[data-theme='soft'] .memory-symbol,
-:root[data-theme='soft'] .task-state {
+:root[data-theme='soft'] .memory-symbol {
   background: var(--surface-alt);
   color: var(--text);
   box-shadow: none;
