@@ -191,12 +191,15 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
 
   if (selectedFile) {
     return (
-      <div className="context-room-wiki-pane">
-        <header>
-          <button type="button" className="context-room-wiki-back" onClick={() => setSelectedFile(null)}>
-            <ChevronLeft aria-hidden="true" />
-            返回列表
-          </button>
+      <div className="context-room-wiki-pane is-reading-file">
+        <header className="context-room-wiki-reader-toolbar">
+          <div className="context-room-wiki-reader-heading">
+            <button type="button" className="context-room-wiki-back" onClick={() => setSelectedFile(null)}>
+              <ChevronLeft aria-hidden="true" />
+              返回列表
+            </button>
+            <strong title={selectedFile.title}>{selectedFile.title}</strong>
+          </div>
           <button
             type="button"
             className="context-room-wiki-reveal"
@@ -216,41 +219,47 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
 
   return (
     <div className="context-room-wiki-pane">
-      <header>
-        <h2>知识库</h2>
+      <header className="context-room-wiki-header">
+        <div className="context-room-wiki-title">
+          <h2>知识库</h2>
+          {pages.length > 0 ? <span>{pages.length} 页</span> : null}
+        </div>
         <div className="context-room-wiki-actions">
           <div className="context-room-wiki-toggle" role="tablist" aria-label="知识库视图">
             <button
               type="button"
               role="tab"
+              aria-label="目录树"
               aria-selected={view === 'tree'}
               className={view === 'tree' ? 'is-active' : ''}
               title="目录树"
               onClick={() => setView('tree')}
             >
               <ListTree aria-hidden="true" />
-              目录
+              <span>目录</span>
             </button>
             <button
               type="button"
               role="tab"
+              aria-label="页面内链图谱"
               aria-selected={view === 'graph'}
               className={view === 'graph' ? 'is-active' : ''}
               title="页面内链图谱"
               onClick={() => setView('graph')}
             >
               <Network aria-hidden="true" />
-              图谱
+              <span>图谱</span>
             </button>
           </div>
           <button
             type="button"
             className="context-room-wiki-upload"
+            aria-label={uploading ? '正在上传文件' : '上传文件'}
             disabled={uploading}
             onClick={() => void uploadFiles()}
           >
             <Upload aria-hidden="true" />
-            {uploading ? '上传中…' : '上传文件'}
+            <span>{uploading ? '上传中…' : '上传文件'}</span>
           </button>
           <button
             type="button"
@@ -293,7 +302,8 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
               }}
             />
             <p className="context-room-wiki-graph-hint">
-              节点 = 页面，连线 = 页面内链（[[链接]] / md 链接）；点击节点在编辑栏打开该页。
+              <span>{graph.nodes.length} 个页面</span>
+              <span>{graph.edges.length} 条内链</span>
             </p>
           </div>
         ) : (

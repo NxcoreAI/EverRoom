@@ -230,6 +230,20 @@ export class GatewaySupervisor {
     return this.connection
   }
 
+  async ensureConnection(): Promise<GatewayConnection> {
+    if (this.connection) return this.connection
+    if (this.stopping) throw new Error(`${this.serviceLabel()} 正在停止。`)
+    if (this.connectionRecovery) return this.connectionRecovery
+
+    const startup = this.start()
+    this.connectionRecovery = startup
+    try {
+      return await startup
+    } finally {
+      if (this.connectionRecovery === startup) this.connectionRecovery = null
+    }
+  }
+
   async recoverConnection(staleConnection: GatewayConnection): Promise<GatewayConnection> {
     const current = this.connection
     if (current && !this.isSameConnection(current, staleConnection)) return current

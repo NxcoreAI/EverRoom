@@ -3,8 +3,8 @@
 .wiki-page {
   display: flex;
   flex-direction: column;
-  gap: 14px;
   min-height: 0;
+  overflow: hidden;
   /* 复用 context-room 的 WikiTree：其样式依赖 --cr-* 变量（作用域在 .context-room-app），此处补齐 */
   --cr-text: var(--text);
   --cr-muted: var(--muted);
@@ -16,7 +16,7 @@
 
 .wiki-body {
   display: grid;
-  grid-template-columns: 216px 264px 1fr;
+  grid-template-columns: 216px minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
   flex: 1;
@@ -85,6 +85,7 @@
 
 .wiki-main {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   min-height: 0;
   gap: 8px;
@@ -157,8 +158,14 @@
 .wiki-panes {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   gap: 12px;
+}
+
+.wiki-panes.is-graph {
+  position: relative;
+  gap: 0;
 }
 
 /* 目录树区直接复用 context-room 的 WikiTree（wiki-tree-* 由其自带类名渲染） */
@@ -190,6 +197,12 @@
   background: var(--surface);
 }
 
+.wiki-preview > .context-room-wiki-markdown,
+.wiki-node-drawer-body > .context-room-wiki-markdown {
+  width: min(100%, 760px);
+  margin: 0 auto;
+}
+
 .wiki-preview-header {
   display: flex;
   flex-direction: column;
@@ -200,36 +213,276 @@
 }
 
 .wiki-preview-header strong {
+  overflow: hidden;
   font-size: 15px;
   font-weight: 650;
   color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wiki-preview-header span {
+  overflow: hidden;
   font-size: 12px;
   color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wiki-graph-pane {
+  position: relative;
   display: flex;
-  flex: 1.5;
+  width: 100%;
   flex-direction: column;
-  gap: 8px;
+  flex: 1;
   min-height: 0;
-  padding: 8px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--surface);
 }
 
-.wiki-graph-pane .context-room-g6-graph-shell {
+.wiki-graph-pane .context-room-graph-shell {
   flex: 1;
-  min-height: 260px;
+  min-height: 0;
+  background:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px),
+    var(--surface);
+  background-size: 24px 24px;
 }
 
-.wiki-graph-hint {
+.wiki-graph-pane .context-room-graph-shell,
+.wiki-graph-pane .context-room-graph-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.wiki-graph-pane .context-room-graph-canvas {
+  display: block;
+  min-height: 0;
+  touch-action: none;
+}
+
+.wiki-graph-pane .context-room-graph-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.wiki-graph-stats {
+  position: absolute;
+  z-index: 2;
+  bottom: 12px;
+  left: 12px;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 14px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  color: var(--muted);
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.06);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.wiki-graph-stats span + span {
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+
+.wiki-node-drawer {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: clamp(320px, 34%, 440px);
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: -12px 0 28px rgba(17, 24, 39, 0.08);
+}
+
+.wiki-node-drawer > header {
+  display: flex;
+  min-height: 64px;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 12px 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.wiki-node-drawer-title {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.wiki-node-drawer-title > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.wiki-node-drawer-title strong,
+.wiki-node-drawer-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-node-drawer-title strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.wiki-node-drawer-title span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.wiki-node-drawer-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--accent-soft, rgba(64, 140, 240, 0.12));
+  color: var(--accent);
+}
+
+.wiki-node-drawer-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.wiki-node-drawer-close {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.wiki-node-drawer-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.wiki-node-drawer-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.wiki-node-drawer-description {
+  flex: 0 0 auto;
   margin: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
-  text-align: center;
+  line-height: 1.6;
+}
+
+.wiki-node-drawer-body {
+  min-height: 0;
+  flex: 1;
+  padding: 18px 18px 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.wiki-node-drawer-loading {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .wiki-body {
+    grid-template-columns: 176px minmax(0, 1fr);
+  }
+
+  .wiki-tree-pane {
+    flex-basis: 220px;
+  }
+
+  .wiki-node-drawer {
+    width: min(380px, 56%);
+  }
+}
+
+@media (max-width: 720px) {
+  .wiki-page {
+    overflow-y: auto;
+  }
+
+  .wiki-body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .wiki-room-list {
+    min-height: 54px;
+    flex: 0 0 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .wiki-room-item {
+    width: 168px;
+    flex: 0 0 auto;
+  }
+
+  .wiki-main {
+    min-height: 520px;
+  }
+
+  .wiki-panes:not(.is-graph) {
+    flex-direction: column;
+  }
+
+  .wiki-tree-pane {
+    min-height: 180px;
+    flex-basis: 180px;
+  }
+
+  .wiki-preview {
+    min-height: 320px;
+  }
+
+  .wiki-node-drawer {
+    top: auto;
+    width: 100%;
+    height: min(72%, 520px);
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    box-shadow: 0 -12px 28px rgba(17, 24, 39, 0.1);
+  }
 }

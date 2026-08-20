@@ -1,3 +1,4 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
@@ -7,6 +8,7 @@ describe("loadConfig", () => {
 
     expect(config.agentRuntime).toBe("fake");
     expect(config.pi).toBeNull();
+    expect(config.cursorCompletionPi).toBeNull();
     expect(config.backgroundPi).toBeNull();
   });
 
@@ -41,7 +43,8 @@ describe("loadConfig", () => {
   });
 
   it("loads the isolated oo CLI connector target", () => {
-    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", "/tmp/everroom-test"], {
+    const dataDirectory = resolve("/tmp/everroom-test");
+    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", dataDirectory], {
       OO_CONNECTOR_URL: "http://127.0.0.1:3000",
       OO_CONNECTOR_TOKEN: "runtime-secret",
       NXCORE_OO_CLI_PATH: "/opt/everroom/oo",
@@ -51,8 +54,8 @@ describe("loadConfig", () => {
       executable: "/opt/everroom/oo",
       baseUrl: "http://127.0.0.1:3000",
       runtimeToken: "runtime-secret",
-      configDirectory: "/tmp/everroom-test/open-connector/oo-config",
-      dataDirectory: "/tmp/everroom-test/open-connector/oo-data",
+      configDirectory: join(dataDirectory, "open-connector", "oo-config"),
+      dataDirectory: join(dataDirectory, "open-connector", "oo-data"),
     });
   });
 
@@ -98,6 +101,67 @@ describe("loadConfig", () => {
       model: "deepseek-chat",
       maxTokens: 4096,
     });
+    expect(config.cursorCompletionPi).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      maxTokens: 8192,
+      reasoning: "off",
+    });
+  });
+
+  it("loads an independent cursor completion model with per-field AI fallbacks", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_AI_PROVIDER: "openai",
+      NXCORE_AI_MODEL: "gpt-main",
+      NXCORE_AI_BASE_URL: "https://api.openai.com/v1",
+      NXCORE_AI_API_KEY: "main-key",
+      NXCORE_AI_API: "openai-responses",
+      NXCORE_AI_CONTEXT_WINDOW: "128000",
+      NXCORE_CURSOR_COMPLETION_AI_PROVIDER: "deepseek",
+      NXCORE_CURSOR_COMPLETION_AI_MODEL: "deepseek-chat",
+      NXCORE_CURSOR_COMPLETION_AI_BASE_URL: "https://api.deepseek.com",
+      NXCORE_CURSOR_COMPLETION_AI_API_KEY: "completion-key",
+      NXCORE_CURSOR_COMPLETION_AI_API: "openai-completions",
+      NXCORE_CURSOR_COMPLETION_AI_MAX_TOKENS: "512",
+      NXCORE_CURSOR_COMPLETION_AI_TEMPERATURE: "0.1",
+      NXCORE_CURSOR_COMPLETION_AI_REASONING: "off",
+    });
+
+    expect(config.pi).toMatchObject({ model: "gpt-main", apiKey: "main-key" });
+    expect(config.cursorCompletionPi).toMatchObject({
+      provider: "deepseek",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "completion-key",
+      api: "openai-completions",
+      maxTokens: 512,
+      contextWindow: 128000,
+      temperature: 0.1,
+      reasoning: "off",
+    });
+    expect(config.cursorCompletionPi?.sessionsDir).toContain("cursor-completion-pi-sessions");
+  });
+
+  it("rejects invalid cursor completion model values", () => {
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_AI_PROVIDER: "openai",
+      NXCORE_AI_MODEL: "gpt-main",
+      NXCORE_AI_BASE_URL: "https://api.openai.com/v1",
+      NXCORE_AI_API_KEY: "main-key",
+      NXCORE_CURSOR_COMPLETION_AI_BASE_URL: "file:///tmp/model",
+    })).toThrow("NXCORE_CURSOR_COMPLETION_AI_BASE_URL");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_AI_PROVIDER: "openai",
+      NXCORE_AI_MODEL: "gpt-main",
+      NXCORE_AI_BASE_URL: "https://api.openai.com/v1",
+      NXCORE_AI_API_KEY: "main-key",
+      NXCORE_CURSOR_COMPLETION_AI_TEMPERATURE: "3",
+    })).toThrow("NXCORE_CURSOR_COMPLETION_AI_TEMPERATURE");
   });
 
   it("supports a stronger model and larger output budget for background summaries", () => {

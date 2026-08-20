@@ -39,6 +39,14 @@ export interface ProjectedDocumentReference {
   ordinal: number;
 }
 
+export interface EverroomBlockReference {
+  roomId: string;
+  documentId: string;
+  blockId: string;
+  fallbackTitle?: string | null;
+  fallbackPreview?: string | null;
+}
+
 export interface NormalizeDocumentOptions {
   createId?: () => string;
 }
@@ -60,6 +68,49 @@ const DOCUMENT_TITLE_LIMIT = 120;
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function cleanOptionalText(value: string | null | undefined): string | null {
+  const text = value?.trim();
+  return text ? text : null;
+}
+
+export function createEverroomBlockReferenceUrl(reference: EverroomBlockReference): string {
+  const path = [reference.roomId, reference.documentId, reference.blockId]
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  const query = new URLSearchParams();
+  const title = cleanOptionalText(reference.fallbackTitle);
+  const preview = cleanOptionalText(reference.fallbackPreview);
+  if (title) query.set("title", title);
+  if (preview) query.set("preview", preview);
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return `everroom://room/${path}${suffix}`;
+}
+
+export function parseEverroomBlockReferenceUrl(value: string): EverroomBlockReference | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "everroom:" || url.hostname !== "room") return null;
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 3) return null;
+  try {
+    const [roomId, documentId, blockId] = parts.map(decodeURIComponent);
+    if (!roomId || !documentId || !blockId) return null;
+    return {
+      roomId,
+      documentId,
+      blockId,
+      fallbackTitle: cleanOptionalText(url.searchParams.get("title")),
+      fallbackPreview: cleanOptionalText(url.searchParams.get("preview")),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function isValidBlockId(value: unknown): value is string {
@@ -142,7 +193,7 @@ export function freshenDocumentContent(
     if (node.marks) {
       node.marks = node.marks.map((mark) => {
         if (mark.type !== "link" || typeof mark.attrs?.href !== "string") return mark;
-        const reference = parseEverroomReference(mark.attrs.href);
+        const reference = parseEverroomBlockReferenceUrl(mark.attrs.href);
         const targetBlockId = reference?.documentId === documentId
           ? idMap.get(reference.blockId)
           : null;
@@ -151,7 +202,7 @@ export function freshenDocumentContent(
           ...mark,
           attrs: {
             ...mark.attrs,
-            href: `everroom://room/${encodeURIComponent(reference.roomId)}/${encodeURIComponent(reference.documentId)}/${encodeURIComponent(targetBlockId)}`,
+            href: createEverroomBlockReferenceUrl({ ...reference, blockId: targetBlockId }),
           },
         };
       });
@@ -170,28 +221,6 @@ function defaultCreateId(): string {
   return globalThis.crypto.randomUUID();
 }
 
-function parseEverroomReference(value: string): {
-  roomId: string;
-  documentId: string;
-  blockId: string;
-} | null {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "everroom:" || url.hostname !== "room") return null;
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (parts.length !== 3) return null;
-  try {
-    const [roomId, documentId, blockId] = parts.map(decodeURIComponent);
-    return roomId && documentId && blockId ? { roomId, documentId, blockId } : null;
-  } catch {
-    return null;
-  }
-}
-
 function nodeReferences(node: TiptapJsonContent): Array<{
   roomId: string;
   documentId: string;
@@ -208,7 +237,7 @@ function nodeReferences(node: TiptapJsonContent): Array<{
   }
   for (const mark of node.marks ?? []) {
     if (mark.type !== "link" || typeof mark.attrs?.href !== "string") continue;
-    const reference = parseEverroomReference(mark.attrs.href);
+    const reference = parseEverroomBlockReferenceUrl(mark.attrs.href);
     if (reference) result.push(reference);
   }
   return result;

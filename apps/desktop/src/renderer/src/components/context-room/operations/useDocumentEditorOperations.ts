@@ -59,8 +59,9 @@ export interface DocumentEditorOperationCommands {
   closeContinuation(): void
   decideContinuationItem(itemId: string, decision: 'accepted' | 'rejected'): void
   updateContinuationItemDraft(itemId: string, markdown: string): void
+  acceptContinuationItems(itemIds: string[]): Promise<void>
   acceptAllContinuationItems(): Promise<void>
-  requestContinuationRevision(itemId: string, feedback: string): Promise<void>
+  requestContinuationRevision(itemIds: string | string[], feedback: string): Promise<void>
 }
 
 export interface DocumentEditorOperationViewModel {
@@ -292,10 +293,13 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
     )
   }, [continuationEntry, continuationReview, operations])
 
-  const acceptAllContinuationItems = useCallback(async () => {
+  const acceptContinuationItems = useCallback(async (itemIds: string[]) => {
     if (!continuationReview) return
     if (!continuationEntry) return
-    for (const block of pendingContinuationBlocks(continuationReview)) {
+    const requested = new Set(itemIds)
+    const blocks = pendingContinuationBlocks(continuationReview)
+      .filter((block) => requested.has(block.blockId))
+    for (const block of blocks) {
       operations.setDecision(continuationEntry.id, block.blockId, 'accepted')
       const replacementMarkdown = markdownDraftsRef.current[markdownDraftKey(continuationEntry.id, block.blockId)]
       const payload = replacementMarkdown === undefined
@@ -306,13 +310,26 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
     }
   }, [continuationEntry, continuationReview, operations])
 
-  const requestContinuationRevision = useCallback(async (itemId: string, feedback: string) => {
+  const acceptAllContinuationItems = useCallback(async () => {
+    if (!continuationReview) return
+    await acceptContinuationItems(
+      pendingContinuationBlocks(continuationReview).map((block) => block.blockId),
+    )
+  }, [acceptContinuationItems, continuationReview])
+
+  const requestContinuationRevision = useCallback(async (requestedItemIds: string | string[], feedback: string) => {
     if (!continuationReview || !continuationEntry) return
+    const itemIds = Array.isArray(requestedItemIds) ? requestedItemIds : [requestedItemIds]
     const current = pendingContinuationBlock(continuationReview)
     const normalizedFeedback = feedback.trim()
-    if (!current || current.blockId !== itemId) return
-    const rejectedText = markdownDraftsRef.current[markdownDraftKey(continuationEntry.id, itemId)]
-      ?? current.textPreview
+    if (!current || itemIds[0] !== current.blockId) return
+    const requested = new Set(itemIds)
+    const rejectedBlocks = pendingContinuationBlocks(continuationReview)
+      .filter((block) => requested.has(block.blockId))
+    if (!rejectedBlocks.length) return
+    const rejectedText = rejectedBlocks.map((block) =>
+      markdownDraftsRef.current[markdownDraftKey(continuationEntry.id, block.blockId)]
+        ?? block.textPreview).join('\n\n')
     const documentId = continuationEntry.summary.documentId
     const api = window.nxcore?.agent
     if (!documentId || !api) throw new Error('Agent 续写服务不可用。')
@@ -407,12 +424,14 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
         closeContinuation,
         decideContinuationItem,
         updateContinuationItemDraft,
+        acceptContinuationItems,
         acceptAllContinuationItems,
         requestContinuationRevision,
       },
     }
   }, [
     acceptAllAtomicDiffItems,
+    acceptContinuationItems,
     acceptAllContinuationItems,
     atomicEntry,
     atomicReview,

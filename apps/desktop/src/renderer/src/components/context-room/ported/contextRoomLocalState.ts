@@ -5,12 +5,22 @@ import type {
 } from '@nxcore/agent-contract';
 
 import type { ContextRoomRecord } from './types';
+import { removeDemoContextRooms } from './demoContextRooms';
 
 export const CONTEXT_ROOM_LOCAL_STATE_KEY = 'nexcore:context-room:state:v1';
 
 export interface ContextRoomLocalState {
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
+}
+
+export function removeDemoContextRoomState(
+  state: ContextRoomLocalState,
+): ContextRoomLocalState {
+  return {
+    rooms: removeDemoContextRooms(state.rooms),
+    deletedRooms: removeDemoContextRooms(state.deletedRooms),
+  };
 }
 
 const CONTEXT_ROOM_KINDS = new Set(['人物', '项目', '主题', '长期目标', '议题', '事件']);
@@ -83,25 +93,27 @@ function mergeStoredRoom(stored: ContextRoomRecord, fallback?: ContextRoomRecord
 }
 
 export function loadContextRoomLocalState(fallback: ContextRoomRecord[]): ContextRoomLocalState {
-  if (typeof window === 'undefined') return { rooms: fallback, deletedRooms: [] };
+  if (typeof window === 'undefined') {
+    return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
+  }
 
   try {
     const raw = window.localStorage.getItem(CONTEXT_ROOM_LOCAL_STATE_KEY);
-    if (!raw) return { rooms: fallback, deletedRooms: [] };
+    if (!raw) return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
     const parsed = migrateLegacyBrandText(JSON.parse(raw)) as Partial<ContextRoomLocalState>;
     if (!Array.isArray(parsed.rooms) || !parsed.rooms.every(isContextRoomRecord)) {
-      return { rooms: fallback, deletedRooms: [] };
+      return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
     }
     const deletedRooms = Array.isArray(parsed.deletedRooms)
       ? parsed.deletedRooms.filter(isContextRoomRecord)
       : [];
     const fallbackById = new Map(fallback.map((room) => [room.id, room]));
-    return {
+    return removeDemoContextRoomState({
       rooms: parsed.rooms.map((room) => mergeStoredRoom(room, fallbackById.get(room.id))),
       deletedRooms: deletedRooms.map((room) => mergeStoredRoom(room, fallbackById.get(room.id))),
-    };
+    });
   } catch {
-    return { rooms: fallback, deletedRooms: [] };
+    return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
   }
 }
 
@@ -148,10 +160,10 @@ export function restoreContextRoomSnapshot(
   if (rooms.some((room) => room === null) || deletedRooms.some((room) => room === null)) return null;
   const allIds = [...rooms, ...deletedRooms].map((room) => room!.id);
   if (new Set(allIds).size !== allIds.length) return null;
-  return {
+  return removeDemoContextRoomState({
     rooms: rooms as ContextRoomRecord[],
     deletedRooms: deletedRooms as ContextRoomRecord[],
-  };
+  });
 }
 
 export function saveContextRoomLocalState(state: ContextRoomLocalState): void {

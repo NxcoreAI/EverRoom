@@ -32,6 +32,58 @@ afterEach(async () => {
 })
 
 describe('GatewaySupervisor connection recovery', () => {
+  it('starts lazily and coalesces concurrent first connection requests', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'nxcore-gateway-supervisor-'))
+    temporaryDirectories.push(dataDirectory)
+    const supervisor = new GatewaySupervisor(dataDirectory)
+    const connection: GatewayConnection = {
+      pid: 10,
+      baseUrl: 'http://127.0.0.1:4000',
+      token: 'lazy-token',
+      version: 'test',
+    }
+    const start = vi.spyOn(supervisor, 'start').mockImplementation(async () => {
+      await Promise.resolve()
+      ;(supervisor as unknown as { connection: GatewayConnection | null }).connection = connection
+      return connection
+    })
+
+    const [first, second] = await Promise.all([
+      supervisor.ensureConnection(),
+      supervisor.ensureConnection(),
+    ])
+
+    expect(first).toEqual(connection)
+    expect(second).toEqual(connection)
+    expect(start).toHaveBeenCalledOnce()
+  })
+
+  it('starts a replacement process after the cached child has exited', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'nxcore-gateway-supervisor-'))
+    temporaryDirectories.push(dataDirectory)
+    const supervisor = new GatewaySupervisor(dataDirectory)
+    const staleConnection: GatewayConnection = {
+      pid: 10,
+      baseUrl: 'http://127.0.0.1:1',
+      token: 'stale-token',
+      version: 'old',
+    }
+    const replacement: GatewayConnection = {
+      pid: 20,
+      baseUrl: 'http://127.0.0.1:2',
+      token: 'replacement-token',
+      version: 'new',
+    }
+    ;(supervisor as unknown as { connection: GatewayConnection | null }).connection = staleConnection
+    const start = vi.spyOn(supervisor, 'start').mockImplementation(async () => {
+      ;(supervisor as unknown as { connection: GatewayConnection | null }).connection = replacement
+      return replacement
+    })
+
+    await expect(supervisor.recoverConnection(staleConnection)).resolves.toEqual(replacement)
+    expect(start).toHaveBeenCalledOnce()
+  })
+
   it('refreshes a cached connection from the latest healthy runtime manifest', async () => {
     let healthRequests = 0
     const server = createServer((request, response) => {

@@ -13,7 +13,10 @@ import {
 import type { SaveContextRoomSnapshotInput } from '@nxcore/agent-contract'
 
 import { showToast } from '@/state/toast'
-import { CONTEXT_ROOMS } from './ported/data'
+import {
+  isDemoContextRoomId,
+  removeDemoContextRoomLocalArtifacts,
+} from './ported/demoContextRooms'
 import {
   createContextRoomSnapshotInput,
   isContextRoomSnapshotEmpty,
@@ -42,19 +45,11 @@ function fingerprint(input: SaveContextRoomSnapshotInput): string {
   return JSON.stringify(input)
 }
 
-function withDemoRooms(state: ContextRoomLocalState): ContextRoomLocalState {
-  const knownRoomIds = new Set([
-    ...state.rooms.map((room) => room.id),
-    ...state.deletedRooms.map((room) => room.id),
-  ])
-  const missingDemoRooms = CONTEXT_ROOMS.filter((room) => !knownRoomIds.has(room.id))
-  return missingDemoRooms.length
-    ? { ...state, rooms: [...state.rooms, ...missingDemoRooms] }
-    : state
-}
-
 export function ContextRoomStateProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState(() => withDemoRooms(loadContextRoomLocalState(CONTEXT_ROOMS)))
+  const [state, setState] = useState(() => {
+    removeDemoContextRoomLocalArtifacts()
+    return loadContextRoomLocalState([])
+  })
   const [backendReady, setBackendReady] = useState(false)
   const stateRef = useRef(state)
   const mountedRef = useRef(true)
@@ -181,9 +176,13 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
           if (cancelled) return
           const restoredSnapshot = restoreContextRoomSnapshot(snapshot)
           if (!restoredSnapshot) throw new Error('Room 快照格式无效')
-          const restored = withDemoRooms(restoredSnapshot)
+          const restored = restoredSnapshot
           const restoredInput = createContextRoomSnapshotInput(restored)
-          lastSyncedFingerprintRef.current = fingerprint(restoredInput)
+          const containsDemoRooms = [...snapshot.rooms, ...snapshot.deletedRooms]
+            .some((room) => isDemoContextRoomId(room.id))
+          lastSyncedFingerprintRef.current = containsDemoRooms
+            ? fingerprint({ rooms: snapshot.rooms, deletedRooms: snapshot.deletedRooms })
+            : fingerprint(restoredInput)
           bootstrappedRef.current = true
           syncErrorShownRef.current = false
           if (importInput) {

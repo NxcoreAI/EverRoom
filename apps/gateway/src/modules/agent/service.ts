@@ -579,7 +579,7 @@ export class AgentService {
             },
           } : {}),
         },
-      });
+      }, { persistUserMessage: false });
       return { intent: toPendingIntent(consumed), run };
     } catch (error) {
       // startRun persists a failed run when the runtime itself fails. Re-open the intent
@@ -682,7 +682,11 @@ export class AgentService {
       }));
   }
 
-  async startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun> {
+  async startRun(
+    sessionId: string,
+    input: StartAgentRunInput,
+    options: { persistUserMessage?: boolean } = {},
+  ): Promise<AgentRun> {
     const existing = this.db
       .select()
       .from(agentRuns)
@@ -722,14 +726,16 @@ export class AgentService {
     };
     this.db.transaction((tx) => {
       tx.insert(agentRuns).values(runRow).run();
-      tx.insert(agentMessages).values({
-        id: randomUUID(),
-        sessionId,
-        runId,
-        role: "user",
-        content: input.prompt,
-        createdAt: now,
-      }).run();
+      if (options.persistUserMessage !== false) {
+        tx.insert(agentMessages).values({
+          id: randomUUID(),
+          sessionId,
+          runId,
+          role: "user",
+          content: input.prompt,
+          createdAt: now,
+        }).run();
+      }
       tx.update(agentSessions)
         .set({ status: "running", updatedAt: now, title: session.title ?? input.prompt.slice(0, 48) })
         .where(eq(agentSessions.id, sessionId))

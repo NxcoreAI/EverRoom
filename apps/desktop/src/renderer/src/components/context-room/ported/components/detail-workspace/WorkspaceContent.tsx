@@ -1,12 +1,12 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
-import { BrainCircuit, CalendarDays, CheckSquare2, ChevronLeft, FileText, Mail, Network } from 'lucide-react';
+import { BookOpen, BrainCircuit, CalendarDays, CheckSquare2, ChevronLeft, FileText, Mail, Network } from 'lucide-react';
 
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { ObjectDetailView } from '../ObjectDetailView';
 import type { DetailPane } from '../RoomIconSidebar';
 import { ObjectPreview, type WorkspaceObjectPreview } from '../detail-panels';
-import { FakeDocumentContent } from '../detail-panels/FakeDocumentPane';
+import { DocumentContent } from '../detail-panels/DocumentPane';
 import { PanelEmptyState } from '../detail-panels/PanelEmptyState';
 import { OfficePreview } from '../detail-panels/ResourcePanel';
 import { WikiPageReader } from '../detail-panels/WikiPageReader';
@@ -80,7 +80,9 @@ export function WorkspaceContent({
           ? { icon: Network, title: '选择一个关联 Room', description: '从左侧关系图中选择要查看的 Room。' }
           : panels.includes('memories')
             ? { icon: BrainCircuit, title: '选择一条记忆', description: '从左侧图谱中选择要查看的实体或事实。' }
-            : { icon: Mail, title: '选择一封邮件', description: '从左侧邮件列表中选择要查看的邮件。' };
+            : panels.includes('wiki')
+              ? { icon: BookOpen, title: '选择一个知识页面', description: '从左侧目录或图谱中选择要查看的页面。' }
+              : { icon: Mail, title: '选择一封邮件', description: '从左侧邮件列表中选择要查看的邮件。' };
 
   return (
     <section className="context-room-workspace-content">
@@ -114,7 +116,7 @@ export function WorkspaceContent({
           onOpenRoom={onOpenRoom}
         />
       ) : showCloudDocs ? (
-        <FakeDocumentContent
+        <DocumentContent
           room={room}
           resource={visibleResource}
           backendDocuments={backendDocuments}

@@ -657,6 +657,46 @@ export function useAgentSession(
     }
   }
 
+  const submitPendingIntent = async (
+    intentId: string,
+    selectedRoomId: string,
+    documentId?: string,
+  ): Promise<string | null> => {
+    if (!api || activeRunId || loading || sending) return null
+    setSending(true)
+    setError(null)
+    try {
+      const { run } = await api.submitPendingIntent(intentId, {
+        roomId: selectedRoomId,
+        ...(documentId ? { documentId } : {}),
+        idempotencyKey: crypto.randomUUID(),
+      })
+      const runCompleted = terminalRunIdsRef.current.has(run.id)
+      const updatedAt = new Date().toISOString()
+      setSessions((current) => current.map((session) => session.id === run.sessionId
+        ? { ...session, ...(!runCompleted ? { status: 'running' as const } : {}), updatedAt }
+        : session))
+      setCurrentSession((current) => current?.id === run.sessionId
+        ? { ...current, ...(!runCompleted ? { status: 'running' as const } : {}), updatedAt }
+        : current)
+      if (!runCompleted) {
+        setActiveRunId(run.id)
+        setReasoningByRun((current) => ({ ...current, [run.id]: '' }))
+      }
+      return run.id
+    } catch (requestError) {
+      const message = requestErrorMessage(requestError, '继续处理失败。')
+      setError(/no longer available/i.test(message)
+        ? '当前选择已失效，请重新发起请求。'
+        : /not allowed/i.test(message)
+          ? '所选 Room 已不可用，请选择其他 Room。'
+          : /active run/i.test(message) ? 'Agent 正在处理其他请求，请稍后再试。' : message)
+      throw requestError
+    } finally {
+      setSending(false)
+    }
+  }
+
   const stop = async (): Promise<void> => {
     if (!api || !activeRunId) return
     try {
@@ -691,6 +731,7 @@ export function useAgentSession(
     sessionLinks,
     sessions,
     stop,
+    submitPendingIntent,
     toolCallsByRun,
   }
 }

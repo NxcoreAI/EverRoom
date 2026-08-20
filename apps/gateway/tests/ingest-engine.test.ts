@@ -8,13 +8,16 @@ import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import pino from "pino";
 import type { Logger } from "pino";
+import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
   documents,
   entities as entitiesTable,
   entityDocLinks,
   ingestEvents,
+  jobs,
   realityEvents,
+  roomDocumentLinks,
   routeDecisions,
 } from "../src/infrastructure/database/schema.js";
 import type { RealityCaptureDevice, RealityInsights, RealityMarker } from "@nxcore/reality-contract";
@@ -53,8 +56,11 @@ const silentLogger: Logger = pino({ level: "silent" });
 
 interface EngineOptions {
   routerEnabled?: boolean;
+  knowledgeEnabled?: boolean;
   memoryEnabled?: boolean;
   memoryError?: boolean;
+  memoryErrorOnce?: boolean;
+  knowledgeErrorOnce?: boolean;
   policyLayers?: PolicyLayers;
 }
 
@@ -65,22 +71,30 @@ async function engineForTest(options: EngineOptions = {}) {
   const files = new FilesService(db, dataDir);
 
   const knowledge = {
+    enabled: options.knowledgeEnabled ?? true,
     routerEnabled: options.routerEnabled ?? true,
     submitEnvelope: vi.fn().mockReturnValue({ queued: true, jobId: "route-job-1" }),
+    submitCommittedDocument: options.knowledgeErrorOnce
+      ? vi.fn().mockImplementationOnce(() => { throw new Error("knowledge unavailable"); })
+        .mockReturnValue({ queued: true, jobId: "route-job-1" })
+      : vi.fn().mockReturnValue({ queued: true, jobId: "route-job-1" }),
   } as unknown as KnowledgeService;
+  const memorySuccess = {
+    document: { id: "mdoc-1", title: "", callerRef: "", version: 1, sessionId: "s1", chunkCount: 3, derivedMemoryCount: null },
+    version: 1,
+    sessionId: "s1",
+    chunkCount: 3,
+    deduplicated: false,
+    replacedVersions: [],
+    acceptedChunks: 3,
+  };
   const memory = {
     enabled: options.memoryEnabled ?? true,
     importToMemoryCore: options.memoryError
       ? vi.fn().mockRejectedValue(new Error("memorycore down"))
-      : vi.fn().mockResolvedValue({
-          document: { id: "mdoc-1", title: "", callerRef: "", version: 1, sessionId: "s1", chunkCount: 3, derivedMemoryCount: null },
-          version: 1,
-          sessionId: "s1",
-          chunkCount: 3,
-          deduplicated: false,
-          replacedVersions: [],
-          acceptedChunks: 3,
-        }),
+      : options.memoryErrorOnce
+        ? vi.fn().mockRejectedValueOnce(new Error("memorycore down")).mockResolvedValue(memorySuccess)
+        : vi.fn().mockResolvedValue(memorySuccess),
   } as unknown as MemoryService;
 
   const service = new IngestService(db, files, knowledge, memory, silentLogger, options.policyLayers);
@@ -363,7 +377,7 @@ describe("ref 输入：file / everroom-doc / reality-event", () => {
       title: "需求文档",
       originChannel: "everroom-doc",
     });
-    const submitted = (test.knowledge.submitEnvelope as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    const submitted = (test.knowledge.submitCommittedDocument as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(submitted.markdown).toContain("# 需求");
 
     // 内容不变重进 → 台账闸 1
@@ -371,6 +385,86 @@ describe("ref 输入：file / everroom-doc / reality-event", () => {
       source: { ref: { sourceKind: "everroom-doc", sourceId: "doc-1" } },
     });
     expect(again.deduped).toBe(true);
+    test.sqlite.close();
+  });
+
+  it("committed document：router 关闭仍按已有 Room 摄取，且仅改标题也产生新事件", async () => {
+    const test = await engineForTest({ routerEnabled: false });
+    test.db.insert(documents).values({
+      id: "doc-committed",
+      title: "第一版标题",
+      version: 1,
+      status: "active",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "相同正文" }] }] },
+    }).run();
+
+    const first = await test.service.ingestCommittedDocument("doc-committed", 1);
+    test.db.update(documents).set({ title: "第二版标题", version: 2 }).where(eq(documents.id, "doc-committed")).run();
+    const second = await test.service.ingestCommittedDocument("doc-committed", 2);
+
+    expect(first?.deduped).toBe(false);
+    expect(second?.deduped).toBe(false);
+    expect(second?.contentHash).not.toBe(first?.contentHash);
+    expect(test.db.select().from(ingestEvents).all()).toHaveLength(2);
+    expect(test.knowledge.submitCommittedDocument).toHaveBeenCalledTimes(2);
+    test.sqlite.close();
+  });
+
+  it("committed document：空正文作为无可摄取内容跳过而不是失败重试", async () => {
+    const test = await engineForTest();
+    test.db.insert(documents).values({
+      id: "doc-empty",
+      title: "Empty",
+      version: 1,
+      status: "active",
+      contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+    }).run();
+
+    await expect(test.service.ingestCommittedDocument("doc-empty", 1)).resolves.toBeNull();
+    expect(test.db.select().from(ingestEvents).all()).toEqual([]);
+    expect(test.knowledge.submitCommittedDocument).not.toHaveBeenCalled();
+    expect(test.memory.importToMemoryCore).not.toHaveBeenCalled();
+    test.sqlite.close();
+  });
+
+  it("committed document：Memory 首次失败后从既有台账恢复", async () => {
+    const test = await engineForTest({ knowledgeEnabled: false, memoryErrorOnce: true });
+    test.db.insert(documents).values({
+      id: "doc-memory-retry",
+      title: "Memory retry",
+      version: 1,
+      status: "active",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "正文" }] }] },
+    }).run();
+
+    await expect(test.service.ingestCommittedDocument("doc-memory-retry", 1))
+      .rejects.toThrow("document memory ingest failed");
+    await expect(test.service.ingestCommittedDocument("doc-memory-retry", 1))
+      .resolves.toMatchObject({ deduped: true, memoryResult: { documentId: "mdoc-1" } });
+
+    expect(test.db.select().from(ingestEvents).all()).toHaveLength(1);
+    expect(test.memory.importToMemoryCore).toHaveBeenCalledTimes(2);
+    test.sqlite.close();
+  });
+
+  it("committed document：Knowledge 首次入队失败后恢复缺失扇出且不重复导入 Memory", async () => {
+    const test = await engineForTest({ knowledgeErrorOnce: true });
+    test.db.insert(documents).values({
+      id: "doc-knowledge-retry",
+      title: "Knowledge retry",
+      version: 1,
+      status: "active",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "正文" }] }] },
+    }).run();
+
+    await expect(test.service.ingestCommittedDocument("doc-knowledge-retry", 1))
+      .rejects.toThrow("knowledge unavailable");
+    await expect(test.service.ingestCommittedDocument("doc-knowledge-retry", 1))
+      .resolves.toMatchObject({ deduped: true, routeJobId: "route-job-1" });
+
+    expect(test.db.select().from(ingestEvents).all()).toHaveLength(1);
+    expect(test.memory.importToMemoryCore).toHaveBeenCalledTimes(1);
+    expect(test.knowledge.submitCommittedDocument).toHaveBeenCalledTimes(2);
     test.sqlite.close();
   });
 
@@ -577,7 +671,7 @@ describe("REST /v1/ingest", () => {
 // ───────────────────────── knowledge 侧 wiki 快照过滤（§6.3） ─────────────────────────
 
 describe("wiki 快照过滤：台账 wiki=false 的源只计链接分", () => {
-  async function knowledgeForTest() {
+  async function knowledgeForTest(routerEnabled = true) {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-ingest-wiki-"));
     temporaryDirectories.push(dataDir);
     const { db, sqlite } = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
@@ -590,7 +684,7 @@ describe("wiki 快照过滤：台账 wiki=false 的源只计链接分", () => {
         dataDir,
         roomWikisEnabled: false,
         ingestDebounceMs: 600_000,
-        routerEnabled: true,
+        routerEnabled,
         entityPromoteScore: 2.0,
         entityPromoteSources: 2,
         mergeAutoDice: 0.75,
@@ -623,6 +717,34 @@ describe("wiki 快照过滤：台账 wiki=false 的源只计链接分", () => {
       originChannel: "file",
     }).run();
   }
+
+  it("router 关闭时已提交文档按权威 Room 走确定性直连", async () => {
+    const test = await knowledgeForTest(false);
+    test.db.insert(documents).values({
+      id: "doc-direct",
+      title: "Direct",
+      version: 2,
+      status: "active",
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+    }).run();
+    test.db.insert(roomDocumentLinks).values({ roomId: "room-direct", documentId: "doc-direct" }).run();
+    const direct = vi.spyOn(test.service as unknown as {
+      enqueueEntryIngest(document: unknown, roomId: string): string;
+    }, "enqueueEntryIngest").mockReturnValue("direct-ingest-job");
+    const routed = vi.spyOn(test.service, "submitEnvelope");
+
+    expect(test.service.submitCommittedDocument({
+      documentId: "doc-direct",
+      sourceVersion: 2,
+      title: "Direct",
+      markdown: "body",
+    })).toEqual({ queued: true, jobId: "direct-ingest-job" });
+    expect(direct).toHaveBeenCalledWith(expect.objectContaining({ id: "doc-direct", roomId: "room-direct" }), "room-direct");
+    expect(routed).not.toHaveBeenCalled();
+    expect(test.db.select().from(jobs).all()).toEqual([]);
+    test.service.dispose();
+    test.sqlite.close();
+  });
 
   it("wikiDisabledForSource：无台账行=旧入口不动；有行看快照；多次取最新", async () => {
     const test = await knowledgeForTest();

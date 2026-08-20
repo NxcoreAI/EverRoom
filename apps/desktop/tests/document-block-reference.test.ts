@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import type { ResolveDocumentBlockReferencesInput } from '@nxcore/agent-contract'
+import { describe, expect, it, vi } from 'vitest'
 import { MarkdownManager } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 
@@ -12,6 +13,8 @@ import {
   parseEverroomBlockReferenceUrl,
   parseSameRoomBlockReferenceLink,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentBlockReferenceLink'
+import { documentBlockReferenceInvalidationMatches } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentBlockReferenceInvalidation'
+import { resolveDocumentBlockReference } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentBlockReferenceResolver'
 
 describe('document block references', () => {
   const reference = {
@@ -84,5 +87,59 @@ describe('document block references', () => {
     expect(parseSameRoomBlockReferenceLink(url, reference.roomId)).toEqual(reference)
     expect(parseSameRoomBlockReferenceLink(url, 'another-room')).toBeNull()
     expect(parseSameRoomBlockReferenceLink('https://example.com', reference.roomId)).toBeNull()
+  })
+
+  it('matches reference invalidations at room, document, and block scope', () => {
+    expect(documentBlockReferenceInvalidationMatches({}, reference)).toBe(true)
+    expect(documentBlockReferenceInvalidationMatches({ roomId: reference.roomId }, reference)).toBe(true)
+    expect(documentBlockReferenceInvalidationMatches({ documentId: reference.documentId }, reference)).toBe(true)
+    expect(documentBlockReferenceInvalidationMatches({ blockId: 'another-block' }, reference)).toBe(false)
+  })
+
+  it('batches reference resolutions queued in the same turn', async () => {
+    const resolver = vi.fn(async (input: ResolveDocumentBlockReferencesInput) => ({
+      resolutions: input.references.map((item) => ({
+        ...item,
+        status: 'available' as const,
+        title: '目标文档',
+        textPreview: item.blockId,
+        version: 1,
+      })),
+    }))
+    const references = ['block-1', 'block-2', 'block-3'].map((blockId) => ({
+      roomId: 'room-1',
+      documentId: 'doc-1',
+      blockId,
+    }))
+
+    const resolutions = await Promise.all(references.map((item) => (
+      resolveDocumentBlockReference(resolver, 'room-1', item)
+    )))
+
+    expect(resolver).toHaveBeenCalledTimes(1)
+    expect(resolver).toHaveBeenCalledWith({ sourceRoomId: 'room-1', references })
+    expect(resolutions.map((item) => item?.textPreview)).toEqual(['block-1', 'block-2', 'block-3'])
+  })
+
+  it('splits reference resolution batches at the API limit', async () => {
+    const resolver = vi.fn(async (input: ResolveDocumentBlockReferencesInput) => ({
+      resolutions: input.references.map((item) => ({
+        ...item,
+        status: 'available' as const,
+        title: '目标文档',
+        textPreview: item.blockId,
+        version: 1,
+      })),
+    }))
+    const references = Array.from({ length: 201 }, (_, index) => ({
+      roomId: 'room-1',
+      documentId: 'doc-1',
+      blockId: `block-${index}`,
+    }))
+
+    await Promise.all(references.map((item) => resolveDocumentBlockReference(resolver, 'room-1', item)))
+
+    expect(resolver).toHaveBeenCalledTimes(2)
+    expect(resolver.mock.calls.map(([input]) => input.references.length)).toEqual([200, 1])
   })
 })

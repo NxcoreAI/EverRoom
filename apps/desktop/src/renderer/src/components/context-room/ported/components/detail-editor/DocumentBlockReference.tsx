@@ -14,7 +14,7 @@ import {
   type NodeViewProps,
 } from '@tiptap/react'
 import { FileWarning, Link2, LoaderCircle } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   DOCUMENT_BLOCK_REFERENCE_NODE,
@@ -27,16 +27,20 @@ import {
   type DocumentBlockReferenceAttrs,
   type DocumentBlockReferenceNodeAttrs,
 } from './documentBlockReferenceLink'
+import {
+  DOCUMENT_BLOCK_REFERENCES_INVALIDATED_EVENT,
+  documentBlockReferenceInvalidationMatches,
+  invalidateDocumentBlockReferences,
+  type DocumentBlockReferenceInvalidation,
+} from './documentBlockReferenceInvalidation'
+import { resolveDocumentBlockReference } from './documentBlockReferenceResolver'
 import './DocumentBlockReference.css'
 
-export const DOCUMENT_BLOCK_REFERENCES_INVALIDATED_EVENT =
-  'everroom:document-block-references-invalidated'
-
-export interface DocumentBlockReferenceInvalidation {
-  roomId?: string
-  documentId?: string
-  blockId?: string
+export {
+  DOCUMENT_BLOCK_REFERENCES_INVALIDATED_EVENT,
+  invalidateDocumentBlockReferences,
 }
+export type { DocumentBlockReferenceInvalidation }
 
 export interface DocumentBlockReferenceOptions {
   sourceRoomId: string
@@ -47,12 +51,6 @@ export interface DocumentBlockReferenceOptions {
     target: DocumentBlockReferenceInput,
     resolution: DocumentBlockResolution | null,
   ) => void
-}
-
-export function invalidateDocumentBlockReferences(
-  detail: DocumentBlockReferenceInvalidation = {},
-): void {
-  window.dispatchEvent(new CustomEvent(DOCUMENT_BLOCK_REFERENCES_INVALIDATED_EVENT, { detail }))
 }
 
 export function insertDocumentBlockReference(
@@ -69,9 +67,7 @@ function invalidationMatches(
   detail: DocumentBlockReferenceInvalidation,
   reference: DocumentBlockReferenceAttrs,
 ): boolean {
-  return (!detail.roomId || detail.roomId === reference.roomId)
-    && (!detail.documentId || detail.documentId === reference.documentId)
-    && (!detail.blockId || detail.blockId === reference.blockId)
+  return documentBlockReferenceInvalidationMatches(detail, reference)
 }
 
 function attrsFromNodeView(node: NodeViewProps['node']): DocumentBlockReferenceAttrs {
@@ -90,24 +86,30 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
   const options = props.extension.options as DocumentBlockReferenceOptions
   const [resolution, setResolution] = useState<DocumentBlockResolution | null>(null)
   const [loading, setLoading] = useState(true)
+  const resolveSequence = useRef(0)
 
   const resolve = useCallback(async () => {
+    const sequence = ++resolveSequence.current
     if (!reference.roomId || !reference.documentId || !reference.blockId) {
-      setLoading(false)
-      setResolution(null)
+      if (sequence === resolveSequence.current) {
+        setLoading(false)
+        setResolution(null)
+      }
       return
     }
     if (!isSameRoomBlockReference(options.sourceRoomId, reference)) {
-      setLoading(false)
-      setResolution({
-        roomId: reference.roomId,
-        documentId: reference.documentId,
-        blockId: reference.blockId,
-        status: 'room_unavailable',
-        title: null,
-        textPreview: null,
-        version: null,
-      })
+      if (sequence === resolveSequence.current) {
+        setLoading(false)
+        setResolution({
+          roomId: reference.roomId,
+          documentId: reference.documentId,
+          blockId: reference.blockId,
+          status: 'room_unavailable',
+          title: null,
+          textPreview: null,
+          version: null,
+        })
+      }
       return
     }
     if (!options.resolveReferences) {
@@ -116,19 +118,16 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
     }
     setLoading(true)
     try {
-      const result = await options.resolveReferences({
-        sourceRoomId: options.sourceRoomId,
-        references: [{
-          roomId: reference.roomId,
-          documentId: reference.documentId,
-          blockId: reference.blockId,
-        }],
-      })
-      setResolution(result.resolutions[0] ?? null)
+      const result = await resolveDocumentBlockReference(
+        options.resolveReferences,
+        options.sourceRoomId,
+        reference,
+      )
+      if (sequence === resolveSequence.current) setResolution(result)
     } catch {
-      setResolution(null)
+      if (sequence === resolveSequence.current) setResolution(null)
     } finally {
-      setLoading(false)
+      if (sequence === resolveSequence.current) setLoading(false)
     }
   }, [
     options,
@@ -147,6 +146,7 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
     window.addEventListener('focus', refreshOnFocus)
     window.addEventListener(DOCUMENT_BLOCK_REFERENCES_INVALIDATED_EVENT, refreshOnInvalidation)
     return () => {
+      resolveSequence.current += 1
       window.removeEventListener('focus', refreshOnFocus)
       window.removeEventListener(DOCUMENT_BLOCK_REFERENCES_INVALIDATED_EVENT, refreshOnInvalidation)
     }

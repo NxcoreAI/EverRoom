@@ -60,14 +60,13 @@ describe('AgentGatewayBridge requests', () => {
       return json(response, 200, {})
     })
     const port = await listen(server)
-    const supervisor = {
-      getConnection: () => ({
+    const ensureConnection = vi.fn(async () => ({
         pid: 1,
         baseUrl: `http://127.0.0.1:${String(port)}`,
         token: 'test-token',
         version: 'test',
-      }),
-    } as GatewaySupervisor
+      }))
+    const supervisor = { ensureConnection } as unknown as GatewaySupervisor
     const bridge = new AgentGatewayBridge(supervisor)
 
     await bridge.createSession({ pageLabel: 'AI 重写', roomId: 'room-1' })
@@ -89,6 +88,7 @@ describe('AgentGatewayBridge requests', () => {
       expect(requests[index]).toMatchObject({ body: '' })
       expect(requests[index]).not.toHaveProperty('contentType')
     }
+    expect(ensureConnection).toHaveBeenCalledTimes(4)
   })
 
   it('refreshes a stale gateway connection and retries the request once', async () => {
@@ -114,7 +114,7 @@ describe('AgentGatewayBridge requests', () => {
     }
     const recoverConnection = vi.fn(async () => recoveredConnection)
     const supervisor = {
-      getConnection: () => staleConnection,
+      ensureConnection: async () => staleConnection,
       recoverConnection,
     } as unknown as GatewaySupervisor
     const bridge = new AgentGatewayBridge(supervisor)
@@ -139,7 +139,7 @@ describe('AgentGatewayBridge requests', () => {
     }
     const recoverConnection = vi.fn(async () => connection)
     const supervisor = {
-      getConnection: () => connection,
+      ensureConnection: async () => connection,
       recoverConnection,
     } as unknown as GatewaySupervisor
     const bridge = new AgentGatewayBridge(supervisor)

@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  PendingAgentIntent,
   AgentRun,
   AgentSession,
   AgentSessionLink,
@@ -8,6 +9,7 @@ import type {
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   StartAgentRunInput,
+  SubmitPendingAgentIntentInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
 import { isAgentSocketFrame } from '@nxcore/agent-contract'
@@ -94,6 +96,16 @@ export class AgentGatewayBridge {
     })
   }
 
+  submitPendingIntent(
+    intentId: string,
+    input: SubmitPendingAgentIntentInput,
+  ): Promise<{ intent: PendingAgentIntent; run: AgentRun }> {
+    return this.request(`/v1/agent/pending-intents/${encodeURIComponent(intentId)}/submit`, {
+      method: 'POST',
+      data: input,
+    })
+  }
+
   cancelRun(runId: string): Promise<AgentRun> {
     return this.request(`/v1/agent/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
   }
@@ -165,7 +177,7 @@ export class AgentGatewayBridge {
   }
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
-    const connection = this.supervisor.getConnection()
+    const connection = await this.supervisor.ensureConnection()
     try {
       return await this.requestWithConnection<T>(connection, path, config)
     } catch (error) {

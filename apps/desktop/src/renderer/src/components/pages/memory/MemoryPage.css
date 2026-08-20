@@ -705,15 +705,166 @@
   color: var(--subtle);
 }
 
-/* Markdown 原文（场景正文 / 画像）以 pre-wrap 呈现 */
-.mem-markdown {
+/* Markdown 阅读区：文档、分块、场景和画像共用。 */
+.mem-markdown-body {
   margin: 0;
-  font-family: inherit;
   font-size: 12.5px;
   line-height: 1.7;
   color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.mem-markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.mem-markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.mem-markdown-body h1,
+.mem-markdown-body h2,
+.mem-markdown-body h3,
+.mem-markdown-body h4,
+.mem-markdown-body h5,
+.mem-markdown-body h6 {
+  margin: 1.25em 0 0.45em;
+  color: var(--text);
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.mem-markdown-body h1 { font-size: 20px; }
+.mem-markdown-body h2 { font-size: 17px; }
+.mem-markdown-body h3 { font-size: 15px; }
+.mem-markdown-body h4,
+.mem-markdown-body h5,
+.mem-markdown-body h6 { font-size: 13px; }
+
+.mem-markdown-body p {
+  margin: 0.65em 0;
+}
+
+.mem-markdown-body ul,
+.mem-markdown-body ol {
+  margin: 0.65em 0;
+  padding-left: 1.8em;
+}
+
+.mem-markdown-body li + li {
+  margin-top: 0.22em;
+}
+
+.mem-markdown-body li > p {
+  margin: 0.2em 0;
+}
+
+.mem-markdown-body .contains-task-list {
+  padding-left: 0.25em;
+  list-style: none;
+}
+
+.mem-markdown-body .task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.mem-markdown-body .task-list-item input {
+  margin: 0.42em 0 0;
+  accent-color: var(--accent);
+}
+
+.mem-markdown-body blockquote {
+  margin: 0.8em 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+}
+
+.mem-markdown-body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mem-markdown-body code {
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: var(--surface-alt);
+  font-family: var(--mono, monospace);
+  font-size: 0.92em;
+}
+
+.mem-markdown-body pre {
+  max-width: 100%;
+  margin: 0.8em 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  line-height: 1.55;
+}
+
+.mem-markdown-body pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+.mem-markdown-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0.8em 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.mem-markdown-body th,
+.mem-markdown-body td {
+  min-width: 100px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.mem-markdown-body th {
+  background: var(--surface-alt);
+  font-weight: 650;
+}
+
+.mem-markdown-body hr {
+  margin: 1.2em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.mem-markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.8em 0;
+  border-radius: 4px;
+}
+
+.mem-markdown-body.is-compact h1 { font-size: 16px; }
+.mem-markdown-body.is-compact h2 { font-size: 14px; }
+.mem-markdown-body.is-compact h3,
+.mem-markdown-body.is-compact h4,
+.mem-markdown-body.is-compact h5,
+.mem-markdown-body.is-compact h6 { font-size: 12.5px; }
+
+.mem-core-markdown {
+  min-height: 320px;
+  padding: 14px 16px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
 }
 
 /* L3 画像 */
@@ -1162,13 +1313,10 @@ button.mem-search-item:hover {
   color: var(--subtle);
 }
 
-.mem-doc-chunk pre {
+.mem-doc-chunk > .mem-markdown-body {
   margin: 0;
   padding: 10px 11px;
-  font-family: var(--mono, monospace);
   font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
   max-height: 180px;
   overflow: auto;
 }

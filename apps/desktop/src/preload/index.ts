@@ -74,6 +74,9 @@ async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T>
 
 const api: NxcoreDesktopApi = {
   platform: process.platform,
+  clipboard: {
+    writeText: (text) => invokeQuietly('system-clipboard:write-text', text),
+  },
   errors: {
     onRequestError: (listener) => {
       requestErrorListeners.add(listener)
@@ -245,6 +248,8 @@ const api: NxcoreDesktopApi = {
     getEvents: (sessionId, runId, afterSeq) =>
       invoke('agent:get-events', sessionId, runId, afterSeq),
     startRun: (sessionId, input) => invoke('agent:start-run', sessionId, input),
+    submitPendingIntent: (intentId, input) =>
+      invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),

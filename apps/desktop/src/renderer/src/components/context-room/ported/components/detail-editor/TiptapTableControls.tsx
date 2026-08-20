@@ -16,6 +16,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { isTableHeaderAxisActive, toggleTableHeaderAxis } from './documentTableHeaders'
 
 type TableMenuKind = 'row' | 'column' | 'cell' | 'table'
 
@@ -148,6 +149,8 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
       canMerge: currentEditor.can().mergeCells(),
       canSplit: currentEditor.can().splitCell(),
       canDeleteTable: currentEditor.can().deleteTable(),
+      rowIsHeader: isTableHeaderAxisActive(currentEditor.state, 'row'),
+      columnIsHeader: isTableHeaderAxisActive(currentEditor.state, 'column'),
     }),
   })
 
@@ -287,7 +290,7 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
             <>
               <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addRowBefore().run() })}>在上方插入行</MenuButton>
               <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addRowAfter().run() })}>在下方插入行</MenuButton>
-              <MenuButton icon={<PanelTop />} onClick={() => run(() => { editor.chain().focus().toggleHeaderRow().run() })}>切换表头行</MenuButton>
+              <MenuButton icon={<PanelTop />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'row') })}>{commandState.rowIsHeader ? '取消表头行' : '设为表头行'}</MenuButton>
               <span />
               <MenuButton destructive disabled={!commandState.canDeleteRow} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteRow().run() })}>删除当前行</MenuButton>
             </>
@@ -296,7 +299,7 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
             <>
               <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addColumnBefore().run() })}>在左侧插入列</MenuButton>
               <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addColumnAfter().run() })}>在右侧插入列</MenuButton>
-              <MenuButton icon={<PanelLeft />} onClick={() => run(() => { editor.chain().focus().toggleHeaderColumn().run() })}>切换表头列</MenuButton>
+              <MenuButton icon={<PanelLeft />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'column') })}>{commandState.columnIsHeader ? '取消表头列' : '设为表头列'}</MenuButton>
               <span />
               <MenuButton destructive disabled={!commandState.canDeleteColumn} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteColumn().run() })}>删除当前列</MenuButton>
             </>
@@ -310,8 +313,8 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
           ) : null}
           {menu.kind === 'table' ? (
             <>
-              <MenuButton icon={<Rows3 />} onClick={() => run(() => { editor.chain().focus().toggleHeaderRow().run() })}>切换表头行</MenuButton>
-              <MenuButton icon={<Columns3 />} onClick={() => run(() => { editor.chain().focus().toggleHeaderColumn().run() })}>切换表头列</MenuButton>
+              <MenuButton icon={<Rows3 />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'row') })}>{commandState.rowIsHeader ? '取消表头行' : '设为表头行'}</MenuButton>
+              <MenuButton icon={<Columns3 />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'column') })}>{commandState.columnIsHeader ? '取消表头列' : '设为表头列'}</MenuButton>
               <span />
               <MenuButton destructive disabled={!commandState.canDeleteTable} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteTable().run() })}>删除表格</MenuButton>
             </>

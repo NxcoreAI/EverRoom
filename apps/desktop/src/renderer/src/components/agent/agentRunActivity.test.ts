@@ -1,7 +1,8 @@
 import type { AgentEvent } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
-import { agentToolStageText, reduceAgentRunActivity } from './agentRunActivity'
+import { toolKind } from './AgentExecutionTimeline'
+import { agentToolLabel, agentToolStageText, agentToolSubject, reduceAgentRunActivity } from './agentRunActivity'
 
 function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): AgentEvent {
   return {
@@ -16,6 +17,35 @@ function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): Ag
 }
 
 describe('Agent run activity', () => {
+  it('maps connector tools to distinct timeline presentations', () => {
+    const tools = [
+      { name: 'connector_search', args: { service: 'gmail', query: 'find messages' } },
+      { name: 'connector_schema', args: { service: 'notion', name: 'create_page' } },
+      { name: 'connector_apps', args: { service: 'github' } },
+      { name: 'connector_run', args: { service: 'slack', name: 'send_message' } },
+    ].map((tool, index) => ({
+      id: `connector-${index}`,
+      runId: 'run-1',
+      status: 'running' as const,
+      startedAt: new Date().toISOString(),
+      ...tool,
+    }))
+
+    expect(tools.map((tool) => toolKind(tool.name))).toEqual(['search', 'schema', 'connector', 'action'])
+    expect(tools.map((tool) => agentToolLabel(tool))).toEqual([
+      '查找可用操作',
+      '查看操作要求',
+      '获取连接账户',
+      '执行连接操作',
+    ])
+    expect(tools.map((tool) => agentToolSubject(tool))).toEqual([
+      'gmail · find messages',
+      'notion · create_page',
+      'github',
+      'slack · send_message',
+    ])
+  })
+
   it('keeps commentary and tools in event order and separates the final answer', () => {
     const activity = reduceAgentRunActivity([
       event(1, 'run.started'),

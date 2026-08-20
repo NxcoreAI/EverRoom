@@ -36,6 +36,7 @@ import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
 import { IngestService } from "../modules/ingest/service.js";
+import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
@@ -296,9 +297,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (recoveredCaptures > 0) {
     app.log.info({ recoveredCaptures }, "interrupted reality captures recovered");
   }
-  // knowledge 路由层接管 documents 事件（committed/updated → 入队 ingest，deleted → 清理）。
+  // Knowledge consumes durable jobs; document commits enter Ingest through the outbox worker.
   if (config.knowledge?.roomWikisEnabled) {
-    documentService.broker.listen((event) => knowledgeService.handleDocumentEvent(event));
     knowledgeService.start();
     app.log.info(
       {
@@ -309,6 +309,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       "knowledge entity-room routing enabled",
     );
   }
+  let documentOutboxWorker: DocumentOutboxWorker | null = null;
   app.addHook("onClose", async () => {
     await connectorManager.dispose();
     connectorDb.close();
@@ -316,6 +317,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await agentService.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
+    await documentOutboxWorker?.dispose();
     await connectorSyncService.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
@@ -366,6 +368,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       markdown: input.markdown,
       ...(config.knowledge?.routerEnabled ? {} : { pipelines: { room: false, wiki: false, memory: true } }),
     }).then(() => undefined));
+  documentOutboxWorker = new DocumentOutboxWorker(
+    db,
+    ingestService,
+    knowledgeService,
+    memoryService,
+    app.log,
+    {
+      debounceMs: knowledgeService.enabled ? config.knowledge?.ingestDebounceMs ?? 600_000 : 0,
+    },
+  );
+  documentOutboxWorker.start();
   await app.register(ingestRoutes(ingestService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));

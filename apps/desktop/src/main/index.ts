@@ -58,6 +58,8 @@ import {
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
+import { registerSystemClipboardHandler } from './system-clipboard'
+import { installCrossOriginIsolation } from './cross-origin-isolation'
 import {
   assertNoEmbeddedDocumentImages,
   DocumentAssetStore,
@@ -165,6 +167,7 @@ const AGENT_CHANNELS = {
   getSession: 'agent:get-session',
   getEvents: 'agent:get-events',
   startRun: 'agent:start-run',
+  submitPendingIntent: 'agent:submit-pending-intent',
   cancelRun: 'agent:cancel-run',
   subscribe: 'agent:subscribe',
   unsubscribe: 'agent:unsubscribe',
@@ -769,6 +772,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   handle(AGENT_CHANNELS.getEvents, (_event, sessionId, runId, afterSeq) =>
     bridge.getEvents(sessionId, runId, afterSeq))
   handle(AGENT_CHANNELS.startRun, (_event, sessionId, input) => bridge.startRun(sessionId, input))
+  handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
+    bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
@@ -1084,6 +1089,8 @@ function createWindow(): void {
     },
   })
 
+  installCrossOriginIsolation(window.webContents.session, process.env.ELECTRON_RENDERER_URL)
+
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Failed to load preload script: ${preloadPath}`, error)
   })
@@ -1169,6 +1176,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   })
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   installIpcRouters()
+  registerSystemClipboardHandler()
   registerGatewayHandlers()
   registerOpenConnectorHandlers()
   createWindow()
@@ -1242,11 +1250,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         logLabel: 'cursor-completion',
         devPortEnvironment: 'NXCORE_CURSOR_COMPLETION_DEV_PORT',
       },
-    )
-    const cursorCompletionGateway = await cursorCompletionSupervisor.start()
-    console.info(
-      `Cursor completion service ready at ${cursorCompletionGateway.baseUrl} `
-      + `(pid=${cursorCompletionGateway.pid})`,
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
     registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))

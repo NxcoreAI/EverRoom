@@ -1,6 +1,7 @@
 import { Extension, type Editor } from '@tiptap/react'
 import { closeHistory } from '@tiptap/pm/history'
 import { Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { useEffect, useRef, useState } from 'react'
 
@@ -84,6 +85,8 @@ function recordShownCompletion(
 const cursorCompletionKey = new PluginKey<DocumentCursorCompletionState | null>('documentCursorCompletion')
 export const DOCUMENT_CURSOR_COMPLETION_DELAY_MS = 700
 const MIN_TYPED_CHARACTERS = 2
+const NEARBY_BLOCK_LIMIT = 3
+const NEARBY_NODE_VISIT_LIMIT = 64
 
 function completionDecorations(
   doc: Parameters<typeof DecorationSet.create>[0],
@@ -226,6 +229,126 @@ export function clearDocumentCursorCompletion(editor: Editor): void {
   editor.view.dispatch(editor.state.tr.setMeta(cursorCompletionKey, null))
 }
 
+function nearbyBlockAttrs(ancestors: ProseMirrorNode[]): Record<string, string | number | boolean | null> {
+  const attrs: Record<string, string | number | boolean | null> = {}
+  for (const ancestor of ancestors) {
+    if (ancestor.type.name === 'heading' && typeof ancestor.attrs.level === 'number') {
+      attrs.level = ancestor.attrs.level
+    } else if (ancestor.type.name === 'codeBlock') {
+      attrs.language = typeof ancestor.attrs.language === 'string'
+        ? ancestor.attrs.language
+        : null
+    } else if (ancestor.type.name === 'orderedList'
+      && typeof ancestor.attrs.start === 'number') {
+      attrs.start = ancestor.attrs.start
+    } else if (ancestor.type.name === 'taskItem'
+      && typeof ancestor.attrs.checked === 'boolean') {
+      attrs.checked = ancestor.attrs.checked
+    }
+  }
+  return attrs
+}
+
+function nearbyBlockSnapshot(
+  node: ProseMirrorNode,
+  ancestors: ProseMirrorNode[],
+  relation: DocumentCursorCompletionNearbyBlock['relation'],
+): DocumentCursorCompletionNearbyBlock {
+  return {
+    relation,
+    type: node.type.name,
+    text: Array.from(node.textContent).slice(0, 320).join(''),
+    ancestorTypes: ancestors.map((ancestor) => ancestor.type.name),
+    attrs: nearbyBlockAttrs(ancestors),
+  }
+}
+
+function collectNearbyTextblocks(
+  node: ProseMirrorNode,
+  ancestors: ProseMirrorNode[],
+  relation: 'previous' | 'next',
+  reverse: boolean,
+  output: DocumentCursorCompletionNearbyBlock[],
+  budget: { visited: number },
+): void {
+  if (output.length >= NEARBY_BLOCK_LIMIT || budget.visited >= NEARBY_NODE_VISIT_LIMIT) return
+  budget.visited += 1
+  const nodeAncestors = [...ancestors, node]
+  if (node.isTextblock) {
+    output.push(nearbyBlockSnapshot(node, nodeAncestors, relation))
+    return
+  }
+  if (reverse) {
+    for (let index = node.childCount - 1; index >= 0; index -= 1) {
+      collectNearbyTextblocks(node.child(index), nodeAncestors, relation, reverse, output, budget)
+      if (output.length >= NEARBY_BLOCK_LIMIT || budget.visited >= NEARBY_NODE_VISIT_LIMIT) return
+    }
+    return
+  }
+  for (let index = 0; index < node.childCount; index += 1) {
+    collectNearbyTextblocks(node.child(index), nodeAncestors, relation, reverse, output, budget)
+    if (output.length >= NEARBY_BLOCK_LIMIT || budget.visited >= NEARBY_NODE_VISIT_LIMIT) return
+  }
+}
+
+function nearbyDocumentBlocks(
+  ancestorNodes: ProseMirrorNode[],
+  selection: TextSelection,
+): DocumentCursorCompletionNearbyBlock[] {
+  const previousBlocks: DocumentCursorCompletionNearbyBlock[] = []
+  const nextBlocks: DocumentCursorCompletionNearbyBlock[] = []
+  const previousBudget = { visited: 0 }
+  const nextBudget = { visited: 0 }
+
+  for (let parentDepth = selection.$from.depth - 1;
+    parentDepth >= 0 && previousBlocks.length < NEARBY_BLOCK_LIMIT
+      && previousBudget.visited < NEARBY_NODE_VISIT_LIMIT;
+    parentDepth -= 1) {
+    const parent = selection.$from.node(parentDepth)
+    const ancestors = ancestorNodes.slice(0, parentDepth + 1)
+    for (let index = selection.$from.index(parentDepth) - 1;
+      index >= 0 && previousBlocks.length < NEARBY_BLOCK_LIMIT
+        && previousBudget.visited < NEARBY_NODE_VISIT_LIMIT;
+      index -= 1) {
+      collectNearbyTextblocks(
+        parent.child(index),
+        ancestors,
+        'previous',
+        true,
+        previousBlocks,
+        previousBudget,
+      )
+    }
+  }
+
+  for (let parentDepth = selection.$from.depth - 1;
+    parentDepth >= 0 && nextBlocks.length < NEARBY_BLOCK_LIMIT
+      && nextBudget.visited < NEARBY_NODE_VISIT_LIMIT;
+    parentDepth -= 1) {
+    const parent = selection.$from.node(parentDepth)
+    const ancestors = ancestorNodes.slice(0, parentDepth + 1)
+    for (let index = selection.$from.index(parentDepth) + 1;
+      index < parent.childCount && nextBlocks.length < NEARBY_BLOCK_LIMIT
+        && nextBudget.visited < NEARBY_NODE_VISIT_LIMIT;
+      index += 1) {
+      collectNearbyTextblocks(
+        parent.child(index),
+        ancestors,
+        'next',
+        false,
+        nextBlocks,
+        nextBudget,
+      )
+    }
+  }
+
+  return [
+    ...previousBlocks.reverse(),
+    nearbyBlockSnapshot(selection.$from.parent, ancestorNodes, 'current'),
+    ...nextBlocks,
+  ]
+}
+
 export function documentCursorCompletionContext(
   editor: Editor,
 ): DocumentCursorCompletionContext | null {
@@ -301,51 +424,7 @@ export function documentCursorCompletionContext(
     '\n',
     '\n',
   )
-  const currentBlockPosition = selection.$from.before(selection.$from.depth)
-  const previousBlocks: DocumentCursorCompletionNearbyBlock[] = []
-  const nextBlocks: DocumentCursorCompletionNearbyBlock[] = []
-  let currentBlock: DocumentCursorCompletionNearbyBlock | null = null
-  editor.state.doc.descendants((node, nodePosition) => {
-    if (!node.isTextblock) return
-    const resolved = editor.state.doc.resolve(Math.min(nodePosition + 1, editor.state.doc.content.size))
-    const attrs: Record<string, string | number | boolean | null> = {}
-    for (let depth = 0; depth <= resolved.depth; depth += 1) {
-      const ancestor = resolved.node(depth)
-      if (ancestor.type.name === 'heading' && typeof ancestor.attrs.level === 'number') {
-        attrs.level = ancestor.attrs.level
-      } else if (ancestor.type.name === 'codeBlock') {
-        attrs.language = typeof ancestor.attrs.language === 'string'
-          ? ancestor.attrs.language
-          : null
-      } else if (ancestor.type.name === 'orderedList'
-        && typeof ancestor.attrs.start === 'number') {
-        attrs.start = ancestor.attrs.start
-      } else if (ancestor.type.name === 'taskItem'
-        && typeof ancestor.attrs.checked === 'boolean') {
-        attrs.checked = ancestor.attrs.checked
-      }
-    }
-    const snapshot: DocumentCursorCompletionNearbyBlock = {
-      relation: nodePosition < currentBlockPosition
-        ? 'previous'
-        : nodePosition > currentBlockPosition ? 'next' : 'current',
-      type: node.type.name,
-      text: Array.from(node.textContent).slice(0, 320).join(''),
-      ancestorTypes: Array.from(
-        { length: resolved.depth + 1 },
-        (_, depth) => resolved.node(depth).type.name,
-      ),
-      attrs,
-    }
-    if (snapshot.relation === 'previous') previousBlocks.push(snapshot)
-    else if (snapshot.relation === 'next') nextBlocks.push(snapshot)
-    else currentBlock = snapshot
-  })
-  const nearbyBlocks = [
-    ...previousBlocks.slice(-3),
-    ...(currentBlock ? [currentBlock] : []),
-    ...nextBlocks.slice(0, 3),
-  ]
+  const nearbyBlocks = nearbyDocumentBlocks(ancestorNodes, selection)
   return {
     position,
     contextBefore,

@@ -1,8 +1,9 @@
 import { ChevronLeft, FilePlus2, FileText, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { MarkdownBody } from '../../context-room/ported/components/detail-panels/MarkdownBody'
 import type { MemoryDocumentDto } from '../../../../../shared/memory'
+import { MarkdownBody } from '../../context-room/ported/components/detail-panels/MarkdownBody'
+import { MemoryMarkdown } from './MemoryMarkdown'
 import { MemoryEmptyView } from './MemoryStatusViews'
 import { formatDate, useAsyncData } from './useMemoryData'
 
@@ -93,7 +94,7 @@ function DocumentDetail({ document, onBack, onDeleted }: {
         <h3>原文预览</h3>
         {preview.data ? (
           <div className="mem-doc-preview">
-            <MarkdownBody markdown={preview.data.markdown} />
+            <MemoryMarkdown markdown={preview.data.markdown} />
           </div>
         ) : preview.failure ? (
           // 无知识资产（callerRef 非文件 id，如 ingest/连接器直入 MemoryCore）时
@@ -119,7 +120,7 @@ function DocumentDetail({ document, onBack, onDeleted }: {
                 <span className="mem-doc-chunk-path">{chunk.headingPath || '（无标题小节）'}</span>
                 <small>第 {chunk.chunkIndex + 1} 块 · 原文第 {chunk.lineStart}–{chunk.lineEnd} 行</small>
               </header>
-              <pre>{chunk.content}</pre>
+              <MemoryMarkdown markdown={chunk.content} compact />
             </li>
           ))}
         </ul>

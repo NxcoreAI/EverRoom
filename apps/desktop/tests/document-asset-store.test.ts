@@ -53,6 +53,7 @@ describe('DocumentAssetStore', () => {
     const response = await store.response(stored.src)
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('image/png')
+    expect(response.headers.get('cross-origin-resource-policy')).toBe('cross-origin')
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(png))
     await expect(store.response('nxcore-document-asset://local/../../credentials.json'))
       .resolves.toMatchObject({ status: 404 })

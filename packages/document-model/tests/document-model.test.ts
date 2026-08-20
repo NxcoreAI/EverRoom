@@ -1,13 +1,34 @@
 import { describe, expect, it } from "vitest";
 import {
+  createEverroomBlockReferenceUrl,
   freshenDocumentContent,
   hasEmbeddedDocumentImages,
   normalizeDocumentContent,
   normalizeDocumentFragment,
+  parseEverroomBlockReferenceUrl,
   stripDocumentTitle,
 } from "../src/index.js";
 
 describe("document model", () => {
+  it("round trips canonical block reference URLs with fallback metadata", () => {
+    const reference = {
+      roomId: "room/a",
+      documentId: "doc 1",
+      blockId: "block-1",
+      fallbackTitle: "  计划草案  ",
+      fallbackPreview: "第一阶段：调研",
+    };
+    const url = createEverroomBlockReferenceUrl(reference);
+
+    expect(url).toContain("everroom://room/room%2Fa/doc%201/block-1?");
+    expect(parseEverroomBlockReferenceUrl(url)).toEqual({
+      ...reference,
+      fallbackTitle: "计划草案",
+    });
+    expect(parseEverroomBlockReferenceUrl("https://example.com")).toBeNull();
+    expect(parseEverroomBlockReferenceUrl("everroom://room/only/two")).toBeNull();
+  });
+
   it("detects embedded image bytes but allows stable asset URLs", () => {
     expect(hasEmbeddedDocumentImages({
       type: "doc",
@@ -102,6 +123,13 @@ describe("document model", () => {
 
   it("freshens imported block IDs and remaps only internal references", () => {
     const generated = ["fresh-source", "fresh-reference"];
+    const internalReference = createEverroomBlockReferenceUrl({
+      roomId: "room-1",
+      documentId: "doc-import",
+      blockId: "source",
+      fallbackTitle: "来源文档",
+      fallbackPreview: "来源内容",
+    });
     const content = freshenDocumentContent({
       type: "doc",
       content: [{
@@ -111,7 +139,7 @@ describe("document model", () => {
           type: "text",
           text: "links",
           marks: [
-            { type: "link", attrs: { href: "everroom://room/room-1/doc-import/source" } },
+            { type: "link", attrs: { href: internalReference } },
             { type: "link", attrs: { href: "everroom://room/room-1/doc-other/source" } },
           ],
         }],
@@ -131,9 +159,14 @@ describe("document model", () => {
       id: "fresh-reference",
       targetBlockId: "fresh-source",
     });
-    expect(content.content?.[0]?.content?.[0]?.marks?.map((mark) => mark.attrs?.href)).toEqual([
-      "everroom://room/room-1/doc-import/fresh-source",
-      "everroom://room/room-1/doc-other/source",
-    ]);
+    const rewrittenLinks = content.content?.[0]?.content?.[0]?.marks?.map((mark) => mark.attrs?.href);
+    expect(parseEverroomBlockReferenceUrl(String(rewrittenLinks?.[0]))).toEqual({
+      roomId: "room-1",
+      documentId: "doc-import",
+      blockId: "fresh-source",
+      fallbackTitle: "来源文档",
+      fallbackPreview: "来源内容",
+    });
+    expect(rewrittenLinks?.[1]).toBe("everroom://room/room-1/doc-other/source");
   });
 });

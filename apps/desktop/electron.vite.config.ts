@@ -8,6 +8,10 @@ import packageJson from './package.json'
 
 const uploadSourceMaps = Boolean(process.env.SENTRY_AUTH_TOKEN)
 const sourceMap = uploadSourceMaps ? 'hidden' as const : false
+const crossOriginIsolationHeaders = {
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+}
 
 function sentryPlugins() {
   if (!uploadSourceMaps) return []
@@ -49,8 +53,12 @@ export default defineConfig({
       sourcemap: sourceMap,
     },
     server: {
+      headers: crossOriginIsolationHeaders,
       port: 5180,
       strictPort: false,
+    },
+    preview: {
+      headers: crossOriginIsolationHeaders,
     },
     resolve: {
       dedupe: ['react', 'react-dom'],
