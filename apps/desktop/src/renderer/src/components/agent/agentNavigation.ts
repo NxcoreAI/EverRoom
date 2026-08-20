@@ -8,7 +8,7 @@ import type {
 import type { PageId } from '@/data/navigation'
 import type { DisplayAgentToolCall } from './useAgentSession'
 
-const pages = new Set<PageId>(['home', 'rooms', 'docs', 'sources', 'memory', 'diary'])
+const pages = new Set<PageId>(['home', 'office', 'rooms', 'docs', 'sources', 'memory', 'diary'])
 const actions = new Set<AgentNavigationAction>(['created', 'updated', 'opened', 'referenced'])
 const objectTypes = new Set<AgentNavigationObjectType>(['room', 'document', 'source', 'memory', 'task', 'diary'])
 
