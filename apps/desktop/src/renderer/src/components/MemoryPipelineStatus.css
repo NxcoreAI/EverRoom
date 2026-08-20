@@ -98,6 +98,28 @@
   background: color-mix(in srgb, var(--memory-pipeline-color) 55%, var(--border-strong));
 }
 
+.memory-particle-layer {
+  position: fixed;
+  z-index: 140;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.memory-particle {
+  position: absolute;
+  top: var(--particle-start-y);
+  left: var(--particle-start-x);
+  display: block;
+  width: var(--particle-size);
+  height: var(--particle-size);
+  margin: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  animation: memory-particle-flight var(--particle-duration) cubic-bezier(0.22, 1, 0.36, 1) var(--particle-delay) both;
+}
+
 .sidebar-memory-pipeline-tooltip {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -145,9 +167,39 @@
   50% { opacity: 1; }
 }
 
+@keyframes memory-particle-flight {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.25);
+  }
+  15% {
+    opacity: 0.72;
+    transform: translate3d(0, 0, 0) scale(0.72);
+  }
+  36% {
+    opacity: 0.88;
+    transform: translate3d(var(--particle-gather-x), var(--particle-gather-y), 0) scale(0.95);
+  }
+  48% {
+    opacity: 0.76;
+    transform: translate3d(var(--particle-gather-x), var(--particle-gather-y), 0) scale(0.72);
+  }
+  72% {
+    opacity: 0.72;
+    transform: translate3d(var(--particle-mid-x), var(--particle-mid-y), 0) scale(0.82);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--particle-dx), var(--particle-dy), 0) scale(0.32);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sidebar-memory-pipeline-icon svg,
-  .sidebar-memory-pipeline-steps li {
+  .sidebar-memory-pipeline-steps li,
+  .memory-particle-layer {
     animation: none !important;
   }
+
+  .memory-particle-layer { display: none; }
 }

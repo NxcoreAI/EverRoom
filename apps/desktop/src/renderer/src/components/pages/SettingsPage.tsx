@@ -41,7 +41,6 @@ import { TokenUsageSettingsSection } from '@/components/settings/TokenUsageSetti
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
-  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
   { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
@@ -49,6 +48,7 @@ const SETTINGS_NAV = [
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
+  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
 ]
 
 type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
@@ -383,7 +383,6 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
 
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>
-          <div className="settings-navigation-heading">{t('surface:settings.settingsDirectory')}</div>
           {SETTINGS_NAV.map(({ id, label, description, icon: Icon }) => (
             <button
               key={id}

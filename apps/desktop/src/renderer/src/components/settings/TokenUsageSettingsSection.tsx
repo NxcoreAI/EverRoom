@@ -67,7 +67,6 @@ export function TokenUsageSettingsSection() {
             <h2 id="token-usage-settings-title">{t('surface:settings.tokenUsage')}</h2>
             <span className="token-usage-preview-badge">{snapshot?.provider ?? 'piagent'}</span>
           </div>
-          <p>{snapshot?.model && snapshot.model !== 'unknown' ? `${snapshot.model} · ${t('surface:settings.tokenUsageBody')}` : t('surface:settings.tokenUsageBody')}</p>
         </div>
         <button className="cloud-account-refresh token-usage-refresh" type="button" title={t('surface:settings.refreshUsage')} aria-label={t('surface:settings.refreshUsage')} onClick={() => void load()} disabled={loading}>
           <RefreshCw aria-hidden="true" />

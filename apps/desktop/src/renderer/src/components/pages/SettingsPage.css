@@ -15,14 +15,6 @@
   padding: 6px 0;
 }
 
-.settings-navigation-heading {
-  padding: 0 10px 8px;
-  color: var(--subtle);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .02em;
-}
-
 .settings-navigation-item {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
@@ -97,10 +89,6 @@
 
 .settings-content[data-active-setting='settings-token-usage'] > #settings-token-usage {
   display: block;
-}
-
-.token-usage-settings > header {
-  grid-template-columns: 38px minmax(0, 1fr) auto;
 }
 
 .token-usage-title-row {
@@ -289,6 +277,7 @@
 .reality-settings-section > header svg { width: 18px; height: 18px; }
 .reality-settings-section h2 { margin: 0; font-size: 14px; }
 .reality-settings-section header p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+.reality-settings-section.token-usage-settings > header { grid-template-columns: 38px minmax(0, 1fr) auto; }
 .reality-setting-row { display: flex; min-height: 62px; align-items: center; justify-content: space-between; gap: 20px; padding: 11px 18px; border-bottom: 1px solid var(--border); }
 .reality-setting-row > div:first-child { display: grid; gap: 4px; }
 .reality-setting-row strong { font-size: 12px; }
@@ -600,10 +589,6 @@
     border-bottom: 1px solid var(--border);
     background: color-mix(in srgb, var(--bg) 92%, transparent);
     backdrop-filter: blur(10px);
-  }
-
-  .settings-navigation-heading {
-    display: none;
   }
 
   .settings-navigation-item {
