@@ -198,6 +198,11 @@ export class KnowledgeLlm {
     throw new KnowledgeLlmError(`LLM response unparsable: ${lastError}`);
   }
 
+  /** 判定错误是否为速率限制（429/1302）——瞬时态，退避重试可恢复。 */
+  static isRateLimited(error: unknown): boolean {
+    return error instanceof KnowledgeLlmError && /HTTP 429|速率限制|rate.?limit/i.test(error.message);
+  }
+
   private async chat(messages: Array<{ role: "system" | "user" | "assistant"; content: string }>): Promise<string> {
     let response: Response;
     try {
