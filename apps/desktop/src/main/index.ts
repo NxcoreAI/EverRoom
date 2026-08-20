@@ -152,6 +152,7 @@ const CONNECTOR_SYNC_CHANNELS = {
   quarantine: 'connector-sync:quarantine',
   data: 'connector-sync:data',
   record: 'connector-sync:record',
+  ingestRecords: 'connector-sync:ingest-records',
 } as const
 
 const CONTEXT_ROOM_CHANNELS = {
@@ -669,7 +670,7 @@ function openConnectorExternalUrl(value: string): void {
 
 async function openConnectorManagementConsole(): Promise<void> {
   const connection = openConnectorSupervisor?.getConnection()
-  if (!connection) throw new Error('OpenConnector 尚未就绪。')
+  if (!connection) throw new Error('EverRoom 连接器尚未就绪。')
   if (!connection.managed || !connection.adminToken) {
     await shell.openExternal(`${connection.baseUrl}/`)
     return
@@ -686,7 +687,7 @@ async function openConnectorManagementConsole(): Promise<void> {
     minWidth: 900,
     minHeight: 640,
     show: false,
-    title: 'OpenConnector 管理台',
+    title: 'EverRoom 连接器管理台',
     backgroundColor: '#ffffff',
     webPreferences: {
       partition: 'persist:everroom-open-connector-console',
@@ -702,6 +703,18 @@ async function openConnectorManagementConsole(): Promise<void> {
       requestHeaders: { ...details.requestHeaders, Authorization: `Bearer ${connection.adminToken}` },
     }),
   )
+  window.webContents.session.webRequest.onHeadersReceived(
+    { urls: [`${origin}/*`] },
+    (details, callback) => callback({
+      responseHeaders: details.resourceType === 'mainFrame'
+        ? {
+            ...details.responseHeaders,
+            'Cache-Control': ['no-store, no-cache, must-revalidate'],
+            Pragma: ['no-cache'],
+          }
+        : details.responseHeaders,
+    }),
+  )
   window.webContents.setWindowOpenHandler(({ url }) => {
     openConnectorExternalUrl(url)
     return { action: 'deny' }
@@ -715,7 +728,9 @@ async function openConnectorManagementConsole(): Promise<void> {
   window.once('closed', () => {
     if (openConnectorConsoleWindow === window) openConnectorConsoleWindow = null
   })
-  await window.loadURL(`${connection.baseUrl}/`)
+  const consoleUrl = new URL('/', connection.baseUrl)
+  consoleUrl.searchParams.set('everroom-opened-at', String(Date.now()))
+  await window.loadURL(consoleUrl.toString())
 }
 
 function registerOpenConnectorHandlers(): void {
@@ -737,8 +752,8 @@ function registerOpenConnectorHandlers(): void {
     }
   })
   handle(OPEN_CONNECTOR_CHANNELS.execute, (_event, input: unknown) => {
-    if (!ooCliBridge) throw new Error('OpenConnector 尚未就绪。')
-    if (!input || typeof input !== 'object') throw new Error('无效的 OpenConnector 命令。')
+    if (!ooCliBridge) throw new Error('EverRoom 连接器尚未就绪。')
+    if (!input || typeof input !== 'object') throw new Error('无效的 EverRoom 连接器命令。')
     return ooCliBridge.execute(input as OpenConnectorExecutionInput)
   })
   handle(OPEN_CONNECTOR_CHANNELS.cancel, (_event, requestId: unknown) => {
@@ -769,6 +784,7 @@ function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void
   handle(CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
   handle(CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
   handle(CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
+  handle(CONNECTOR_SYNC_CHANNELS.ingestRecords, (_event, recordIds) => bridge.ingestRecords(recordIds))
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {

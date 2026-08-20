@@ -69,6 +69,8 @@ const ManualRouteBody = Type.Union([
       Type.Literal("mail"),
       Type.Literal("file"),
       Type.Literal("cloud-doc"),
+      Type.Literal("calendar-event"),
+      Type.Literal("connector-record"),
     ]),
     sourceId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     sourceVersion: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -93,6 +95,21 @@ const EntityDto = Type.Object({
   firstEvidence: Type.Union([Type.String(), Type.Null()]),
   lastLinkedAt: Type.Union([Type.String(), Type.Null()]),
   updatedAt: Type.String(),
+  promotion: Type.Union([
+    Type.Object({
+      jobId: Type.String(),
+      status: Type.Union([Type.Literal("queued"), Type.Literal("running"), Type.Literal("completed"), Type.Literal("failed")]),
+      stage: Type.String(),
+      message: Type.String(),
+      current: Type.Union([Type.Integer(), Type.Null()]),
+      total: Type.Union([Type.Integer(), Type.Null()]),
+      queuePosition: Type.Union([Type.Integer(), Type.Null()]),
+      roomId: Type.Union([Type.String(), Type.Null()]),
+      error: Type.Union([Type.String(), Type.Null()]),
+      updatedAt: Type.String(),
+    }),
+    Type.Null(),
+  ]),
 });
 
 const EntityStatusQuery = Type.Object({
@@ -157,6 +174,8 @@ const DocSourceParams = Type.Object({
     Type.Literal("mail"),
     Type.Literal("file"),
     Type.Literal("cloud-doc"),
+    Type.Literal("calendar-event"),
+    Type.Literal("connector-record"),
   ]),
   sourceId: Type.String({ minLength: 1, maxLength: 200 }),
 });
@@ -514,6 +533,10 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           ...entity,
           lastLinkedAt: entity.lastLinkedAt ? iso(entity.lastLinkedAt) : null,
           updatedAt: iso(entity.updatedAt),
+          promotion: entity.promotion ? {
+            ...entity.promotion,
+            updatedAt: iso(entity.promotion.updatedAt),
+          } : null,
         })),
       }),
     );
@@ -575,7 +598,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           tags: ["knowledge"],
           params: EntityIdParams,
           response: {
-            202: Type.Object({ queued: Type.Boolean() }),
+            202: Type.Object({ queued: Type.Boolean(), jobId: Type.String() }),
             400: Type.Object({ error: Type.String() }),
             404: Type.Object({ error: Type.String() }),
           },
@@ -587,7 +610,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           const status = result.error === "entity_not_found" ? 404 : 400;
           return reply.code(status).send(errorOf(result.error));
         }
-        return reply.code(202).send({ queued: true });
+        return reply.code(202).send({ queued: result.queued, jobId: result.jobId });
       },
     );
 

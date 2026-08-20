@@ -203,6 +203,9 @@ import {
   type ConnectorSyncJobInput,
   type ConnectorSyncService,
 } from "./service.js";
+import type { IngestService } from "../ingest/service.js";
+import type { RefSourceKind } from "../ingest/types.js";
+import type { ConnectorMarkdownService } from "./markdown-service.js";
 
 const JobParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
 const RunParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
@@ -252,9 +255,16 @@ function sendServiceError(reply: { code(statusCode: number): { send(value: unkno
   return reply.code(notFound ? 404 : 400).send({ error: notFound ? "not_found" : "invalid_request", message });
 }
 
-export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPluginAsyncTypebox {
+export function connectorSyncRoutes(
+  service: ConnectorSyncService,
+  ingest: IngestService,
+  markdown?: ConnectorMarkdownService,
+): FastifyPluginAsyncTypebox {
   return async (app) => {
-    app.get("/v1/connectors/sync/status", { schema: { tags: ["connectors"] } }, async () => service.status(service.currentOwnerId()));
+    app.get("/v1/connectors/sync/status", { schema: { tags: ["connectors"] } }, async () => ({
+      ...service.status(service.currentOwnerId()),
+      ...(markdown ? { markdown: markdown.stats(service.currentOwnerId()) } : {}),
+    }));
     app.get("/v1/connectors/accounts", { schema: { tags: ["connectors"] } }, async () => service.listAccounts());
 
     app.get(
@@ -391,18 +401,109 @@ export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPlugi
             dataset: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             query: Type.Optional(Type.String({ maxLength: 500 })),
             limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+            offset: Type.Optional(Type.Integer({ minimum: 0 })),
             includeExpired: Type.Optional(Type.Boolean()),
           }),
         },
       },
-      async (request) => service.queryRecords({ ...request.query, ownerId: service.currentOwnerId() }),
+      async (request) => service.queryRecordPage({ ...request.query, ownerId: service.currentOwnerId() }),
+    );
+
+    app.post(
+      "/v1/connectors/data/ingest",
+      {
+        schema: {
+          tags: ["connectors", "ingest"],
+          body: Type.Object({
+            recordIds: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 100 }),
+          }),
+        },
+      },
+      async (request) => {
+        const ownerId = service.currentOwnerId();
+        const recordIds = [...new Set(request.body.recordIds)];
+        const items = [] as Array<{
+          recordId: string;
+          eventId: string | null;
+          deduped: boolean;
+          routeJobId: string | null;
+          error: string | null;
+        }>;
+        for (const recordId of recordIds) {
+          const record = service.getRecord(ownerId, recordId);
+          if (!record) {
+            items.push({ recordId, eventId: null, deduped: false, routeJobId: null, error: "Connector record not found" });
+            continue;
+          }
+          const sourceKindByResource: Partial<Record<typeof record.resourceType, RefSourceKind>> = {
+            email: "connector-email",
+            document: "connector-document",
+            calendar: "connector-calendar",
+            generic: "connector-record",
+          };
+          const sourceKind = sourceKindByResource[record.resourceType];
+          if (!sourceKind) {
+            items.push({ recordId, eventId: null, deduped: false, routeJobId: null, error: "Unsupported connector record type" });
+            continue;
+          }
+          try {
+            const result = await ingest.ingest({
+              source: { ref: { sourceKind, sourceId: recordId } },
+              originChannel: "connector",
+            });
+            items.push({
+              recordId,
+              eventId: result.eventId,
+              deduped: result.deduped,
+              routeJobId: result.routeJobId,
+              error: null,
+            });
+          } catch (error) {
+            items.push({
+              recordId,
+              eventId: null,
+              deduped: false,
+              routeJobId: null,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        return {
+          items,
+          imported: items.filter((item) => !item.error && !item.deduped).length,
+          deduped: items.filter((item) => !item.error && item.deduped).length,
+          failed: items.filter((item) => item.error).length,
+        };
+      },
     );
 
     app.get(
       "/v1/connectors/data/:id",
       { schema: { tags: ["connectors"], params: RunParams } },
-      async (request, reply) => service.getRecord(service.currentOwnerId(), request.params.id)
-        ?? reply.code(404).send({ error: "not_found", message: "Connector record not found" }),
+      async (request, reply) => {
+        const record = service.getRecord(service.currentOwnerId(), request.params.id);
+        if (!record) return reply.code(404).send({ error: "not_found", message: "Connector record not found" });
+        const resourceType = record.resourceType === "email"
+          || record.resourceType === "document"
+          || record.resourceType === "calendar"
+          ? record.resourceType
+          : record.resourceType === "generic" ? "generic" : null;
+        const artifact = markdown && resourceType
+          ? markdown.getByIngestSource(resourceType, record.id)
+          : null;
+        return {
+          ...record,
+          markdownArtifact: artifact ? {
+            id: artifact.id,
+            version: artifact.version,
+            status: artifact.status,
+            ingestStatus: artifact.ingestStatus,
+            markdownContentHash: artifact.markdownContentHash,
+            ingestEventId: artifact.ingestEventId,
+            updatedAt: artifact.updatedAt.toISOString(),
+          } : null,
+        };
+      },
     );
   };
 }

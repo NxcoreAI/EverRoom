@@ -63,8 +63,9 @@ export class AgentGatewayBridge {
     return this.request(`/v1/agent/session-links/${encodeURIComponent(linkId)}/return`, { method: 'POST' })
   }
 
-  listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]> {
-    const query = new URLSearchParams({ pageLabel })
+  listSessions(pageLabel?: string, roomId?: string | null): Promise<AgentSession[]> {
+    const query = new URLSearchParams()
+    if (pageLabel) query.set('pageLabel', pageLabel)
     if (roomId !== undefined) query.set('roomId', roomId ?? '')
     return this.request(`/v1/agent/sessions?${query}`)
   }

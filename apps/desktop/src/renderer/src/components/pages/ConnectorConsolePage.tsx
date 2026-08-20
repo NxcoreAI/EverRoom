@@ -127,7 +127,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     try {
       return await window.nxcore.openConnector.execute({ requestId, command }) as OpenConnectorCommandResult<T>
     } catch (commandError) {
-      setError(commandError instanceof Error ? commandError.message : 'oo CLI 执行失败。')
+      setError(commandError instanceof Error ? commandError.message : 'EverRoom CLI 执行失败。')
       throw commandError
     } finally {
       setBusyRequestId(null)
@@ -193,7 +193,7 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     <div className={embedded ? 'connector-console-page connector-console-embedded' : 'page connector-console-page'}>
       {!embedded ? <PageHeader
         title="连接器控制台"
-        description="通过 oo CLI 安全衔接 Agent 与 OpenConnector 网关"
+        description="通过 EverRoom CLI 安全衔接 Agent 与连接器网关"
         extraAction={(
           <button type="button" className="secondary-button" onClick={() => void refreshStatus()}>
             <RefreshCw aria-hidden="true" />刷新状态
@@ -212,11 +212,11 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
         </div>
         <div className="connector-runtime-facts">
           <span>{status?.gatewayState === 'ready' ? <CheckCircle2 /> : status?.gatewayState === 'starting' ? <LoaderCircle className="spin" /> : <CircleAlert />} Gateway {status?.gatewayVersion ?? ''}</span>
-          <span>{status?.cliState === 'ready' ? <CheckCircle2 /> : <CircleAlert />} oo {status?.cliVersion ?? '未检测'}</span>
+          <span>{status?.cliState === 'ready' ? <CheckCircle2 /> : <CircleAlert />} EverRoom CLI {status?.cliVersion ?? '未检测'}</span>
           <span><TerminalSquare /> Token {status?.runtimeTokenConfigured ? '已隔离' : '未配置'}</span>
         </div>
         <button type="button" className="secondary-button" onClick={() => void window.nxcore?.openConnector.openConsole()}>
-          Web 管理台<ExternalLink aria-hidden="true" />
+          EverRoom 管理台<ExternalLink aria-hidden="true" />
         </button>
       </section>
 

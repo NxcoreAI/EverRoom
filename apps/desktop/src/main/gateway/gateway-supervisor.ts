@@ -27,7 +27,9 @@ export interface GatewayConnection {
 // 一分钟以上，60s 会误杀：拉长到 3 分钟只影响异常场景的失败反馈时延。
 const STARTUP_TIMEOUT_MS = 180_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
-const CONNECTION_RECOVERY_TIMEOUT_MS = 5_000
+// A dev hot reload may spend five seconds terminating the previous tsx process
+// before the replacement can publish its runtime manifest.
+const CONNECTION_RECOVERY_TIMEOUT_MS = 15_000
 const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 })
 
 function delay(milliseconds: number): Promise<void> {

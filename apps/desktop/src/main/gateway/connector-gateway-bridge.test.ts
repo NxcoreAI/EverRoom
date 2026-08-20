@@ -56,8 +56,8 @@ describe('ConnectorGatewayBridge input boundary', () => {
     expect(() => bridge().armFault('before_commit')).toThrow('无效的故障注入点')
   })
 
-  it('rejects unknown record types before issuing a request', () => {
-    expect(() => bridge().records('connection-1', 'document' as 'mail')).toThrow('无效的数据记录类型')
+  it('rejects unknown record types before issuing a request', async () => {
+    await expect(bridge().records('connection-1', 'document' as 'mail')).rejects.toThrow('无效的数据记录类型')
   })
 
   it('sends valid JSON for bodyless connector POST actions', async () => {

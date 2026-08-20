@@ -75,6 +75,36 @@ export const DATA_TYPES: DataTypeDef[] = [
     matchExtensions: [],
     defaults: { room: true, wiki: true, memory: true },
   },
+  {
+    key: "email",
+    label: "邮件",
+    matchExtensions: ["eml"],
+    defaults: { room: true, wiki: true, memory: false },
+  },
+  {
+    key: "connector-email",
+    label: "连接器邮件",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: false },
+  },
+  {
+    key: "connector-document",
+    label: "连接器文档",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: false },
+  },
+  {
+    key: "connector-calendar",
+    label: "连接器日程",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: false },
+  },
+  {
+    key: "connector-record",
+    label: "连接器结构化记录",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: false },
+  },
 ];
 
 export function dataTypeDef(key: string): DataTypeDef | null {
@@ -103,7 +133,14 @@ export type OriginChannel =
   | "upload";
 
 /** 引擎接受的源形态（U8 定死：只收有家数据——本地路径或库表引用）。 */
-export type RefSourceKind = "file" | "everroom-doc" | "reality-event";
+export type RefSourceKind =
+  | "file"
+  | "everroom-doc"
+  | "reality-event"
+  | "connector-email"
+  | "connector-document"
+  | "connector-calendar"
+  | "connector-record";
 
 export interface IngestSourceInput {
   /** 本地路径（逃生舱：明确不想入库的一次性文件；引擎只读不拷贝）。 */

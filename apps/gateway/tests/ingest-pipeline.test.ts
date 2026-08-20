@@ -516,7 +516,25 @@ describe("统一理解引擎三链路 e2e", { timeout: 600_000 }, () => {
 
       // 手动晋升（推荐确认制：唯一建 Room 路径）
       const promoted = knowledge.promoteEntity(entity.id);
-      expect(promoted).toEqual({ ok: true });
+      expect(promoted).toMatchObject({
+        ok: true,
+        queued: true,
+        jobId: expect.any(String),
+      });
+      const duplicatePromotion = knowledge.promoteEntity(entity.id);
+      expect(duplicatePromotion).toEqual({
+        ok: true,
+        queued: false,
+        jobId: promoted.ok ? promoted.jobId : "",
+      });
+      const activePromotionTasks = database.sqlite.prepare(`
+        SELECT count(*) AS count
+        FROM jobs
+        WHERE type = 'knowledge.entity-promote'
+          AND status IN ('pending', 'running')
+          AND json_extract(payload, '$.entityId') = ?
+      `).get(entity.id) as { count: number };
+      expect(activePromotionTasks.count).toBe(1);
       const room = await until("auto room created", PIPELINE_TIMEOUT_MS, () => {
         const rooms = knowledge.listRooms("auto");
         return rooms.length > 0 ? rooms[0]! : null;

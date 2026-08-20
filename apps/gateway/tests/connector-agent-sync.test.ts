@@ -2,14 +2,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AgentRuntime, RuntimeEvent, RuntimeRun, StartRuntimeRunInput } from "@nxcore/agent-runtime";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, isNull } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
+  connectorSyncJobStates,
   connectorCalendarEvents,
   connectorDocuments,
   connectorEmails,
+  connectorMarkdownOutbox,
   connectorQuarantinedRecords,
   connectorSyncJobs,
   connectorSyncRuns,
@@ -61,6 +63,151 @@ function emailJob() {
 }
 
 describe("ConnectorSyncService Agent ingestion", () => {
+  it("derives a seven-day Gmail query and deterministically consumes every page", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "nxcore-gmail-snapshot-"));
+    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
+      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
+    });
+    const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
+    const connectorInputs: Record<string, unknown>[] = [];
+    const service = new ConnectorSyncService(database.db, config, logger, async (_connector, args) => {
+      const input = JSON.parse(args[args.indexOf("--data") + 1]!) as Record<string, unknown>;
+      connectorInputs.push(input);
+      const page = input.pageToken ? 2 : 1;
+      return {
+        data: {
+          messages: [gmailMessage(`message-${String(page)}`, `Subject ${String(page)}`)],
+          nextPageToken: page === 1 ? "page-2" : null,
+          resultSizeEstimate: 2,
+        },
+      };
+    });
+    try {
+      await service.initialize();
+      const job = service.createJob({
+        name: "获取一周内的邮件", service: "gmail", dataset: "emails", resourceType: "email",
+        connectionName: "default", allowedActions: ["fetch_emails", "get_message"],
+        input: { maxResults: 50, detail: "full" }, goal: "同步指定范围内的完整邮件",
+        scheduleType: "manual", intervalMs: 900_000, timezone: "Asia/Shanghai", status: "active",
+      });
+      expect(job.input).toMatchObject({ query: "newer_than:7d" });
+
+      await service.triggerJob(job.id);
+
+      expect(connectorInputs).toEqual([
+        { query: "newer_than:7d", detail: "full", maxResults: 50 },
+        { query: "newer_than:7d", detail: "full", maxResults: 50, pageToken: "page-2" },
+      ]);
+      expect(database.db.select().from(connectorEmails).all()).toHaveLength(2);
+      expect(database.db.select().from(connectorMarkdownOutbox).all())
+        .toEqual([
+          expect.objectContaining({ operation: "upsert", ingestSourceId: expect.any(String) }),
+          expect.objectContaining({ operation: "upsert", ingestSourceId: expect.any(String) }),
+        ]);
+      expect(database.db.select().from(connectorSyncRuns).get()).toMatchObject({
+        status: "success", discovered: 2, inserted: 2, agentModel: null,
+      });
+    } finally {
+      await service.dispose();
+      database.sqlite.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("backfills a derived Gmail query for an existing legacy task", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "nxcore-gmail-backfill-"));
+    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
+      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CONNECTOR_SYNC_ENABLED: "false",
+    });
+    const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
+    const service = new ConnectorSyncService(database.db, config, logger);
+
+    try {
+      await service.initialize();
+      const job = service.createJob({
+        name: "旧版邮件同步", service: "gmail", dataset: "emails", resourceType: "email",
+        connectionName: "default", allowedActions: ["fetch_emails"], input: { maxResults: 50, detail: "full" },
+        goal: "同步指定范围内的完整邮件", scheduleType: "manual", intervalMs: 900_000,
+        timezone: "Asia/Shanghai", status: "paused",
+      });
+      database.db.update(connectorSyncJobs).set({
+        name: "获取一周内的邮件",
+        input: { maxResults: 50, detail: "full" },
+      }).where(eq(connectorSyncJobs.id, job.id)).run();
+
+      await service.initialize();
+
+      expect(service.getJob(job.id)).toMatchObject({
+        input: { maxResults: 50, detail: "full", query: "newer_than:7d" },
+        configVersion: 2,
+      });
+    } finally {
+      await service.dispose();
+      database.sqlite.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("provisions Gmail bootstrap and incremental jobs and hands off the history checkpoint", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "nxcore-gmail-managed-"));
+    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
+      OO_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CONNECTOR_SYNC_ENABLED: "true",
+      NXCORE_CONNECTOR_SYNC_INTERVAL_MS: "600000",
+    });
+    const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
+    const service = new ConnectorSyncService(database.db, config, logger, async (_connector, args) => {
+      if (args[1] === "apps") {
+        return [{ service: "gmail", connectionName: "default", displayName: "mail@example.com", status: "active" }];
+      }
+      const action = args[args.indexOf("--action") + 1];
+      if (action === "get_profile") return { data: { emailAddress: "mail@example.com", historyId: "100" } };
+      if (action === "fetch_emails") {
+        return { data: { messages: [gmailMessage("message-1", "Initial")], nextPageToken: null } };
+      }
+      if (action === "list_history") {
+        return {
+          data: {
+            history: [{
+              messagesAdded: [{ message: { id: "message-2" } }],
+              messagesDeleted: [{ message: { id: "message-1" } }],
+            }],
+            historyId: "101",
+            nextPageToken: null,
+          },
+        };
+      }
+      if (action === "fetch_message_by_message_id") return { data: gmailMessage("message-2", "Incremental") };
+      throw new Error(`Unexpected connector action: ${String(action)}`);
+    });
+
+    try {
+      await service.initialize();
+      await until(() => service.listJobs().find((job) => job.name.startsWith("Gmail 全量初始化"))?.status === "paused");
+      const jobs = service.listJobs();
+      const bootstrap = jobs.find((job) => job.name.startsWith("Gmail 全量初始化"))!;
+      const incremental = jobs.find((job) => job.name.startsWith("Gmail 增量同步"))!;
+      expect(bootstrap).toMatchObject({ status: "paused", checkpoint: { historyId: "100" } });
+      expect(incremental).toMatchObject({ status: "active", checkpoint: { historyId: "100" } });
+
+      await service.triggerJob(incremental.id);
+
+      expect(service.getJob(incremental.id)?.checkpoint).toMatchObject({ historyId: "101" });
+      expect(database.db.select().from(connectorEmails).where(isNull(connectorEmails.deletedAt)).all())
+        .toEqual([expect.objectContaining({ messageId: "message-2", subject: "Incremental" })]);
+      expect(database.db.select().from(connectorMarkdownOutbox).all().map((event) => event.operation).sort())
+        .toEqual(["delete", "upsert", "upsert"]);
+      expect(database.db.select().from(connectorSyncJobStates).where(eq(connectorSyncJobStates.jobId, incremental.id)).get()?.consecutiveFailures)
+        .toBe(0);
+    } finally {
+      await service.dispose();
+      database.sqlite.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("writes email records idempotently and commits the checkpoint only after sync_finish", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-connector-agent-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
@@ -105,6 +252,7 @@ describe("ConnectorSyncService Agent ingestion", () => {
 
       const emails = database.db.select().from(connectorEmails).all();
       expect(emails).toHaveLength(1);
+      expect(database.db.select().from(connectorMarkdownOutbox).all()).toHaveLength(1);
       expect(emails[0]).toMatchObject({
         subject: "预算审批",
         schemaVersion: 3,
@@ -276,3 +424,25 @@ describe("ConnectorSyncService Agent ingestion", () => {
     }
   });
 });
+
+function gmailMessage(messageId: string, subject: string) {
+  return {
+    messageId,
+    threadId: `thread-${messageId}`,
+    labelIds: ["INBOX"],
+    subject,
+    sender: "Sender <sender@example.com>",
+    to: "Receiver <receiver@example.com>",
+    messageTimestamp: "2026-08-20T00:00:00.000Z",
+    messageText: `${subject} body`,
+    attachmentList: [],
+  };
+}
+
+async function until(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for connector sync");
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+}

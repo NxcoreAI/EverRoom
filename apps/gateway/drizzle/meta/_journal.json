@@ -127,6 +127,13 @@
       "when": 1787158500761,
       "tag": "0017_sour_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1787228141894,
+      "tag": "0018_charming_vampiro",
+      "breakpoints": true
     }
   ]
 }

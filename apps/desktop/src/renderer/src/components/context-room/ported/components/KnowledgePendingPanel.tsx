@@ -1,4 +1,4 @@
-import { Inbox, Link2, RefreshCw, Sparkles, Undo2, Upload } from 'lucide-react';
+import { AlertCircle, Clock3, Inbox, Link2, LoaderCircle, RefreshCw, Sparkles, Undo2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showToast } from '@/state/toast';
@@ -6,9 +6,9 @@ import {
   KNOWLEDGE_ENTITY_KINDS,
   type KnowledgeDecisionDto,
   type KnowledgeEntityDto,
+  type KnowledgePromotionProgressDto,
   type KnowledgeUnmatchedItemDto,
 } from '../../../../../../shared/knowledge';
-import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
 
 const SOURCE_KIND_LABELS: Record<string, string> = {
   'everroom-doc': 'Room 文档',
@@ -22,6 +22,23 @@ const NEW_ENTITY = '__new__';
 
 function sourceKindLabel(kind: string): string {
   return SOURCE_KIND_LABELS[kind] ?? kind;
+}
+
+function promotionPercent(progress: KnowledgePromotionProgressDto): number {
+  if (progress.status === 'completed') return 100;
+  if (progress.status === 'failed') return 100;
+  if (progress.stage === 'queued') return 5;
+  if (progress.stage === 'checking_identity') return 15;
+  if (progress.stage === 'registering_entity') return 30;
+  if (progress.stage === 'creating_room') return 45;
+  if (progress.stage === 'creating_wiki') return 60;
+  if (progress.stage === 'importing_documents') {
+    const materialRatio = progress.total && progress.current !== null
+      ? progress.current / progress.total
+      : 0;
+    return Math.min(95, Math.round(60 + materialRatio * 35));
+  }
+  return 5;
 }
 
 /** 推荐池展示上限：页面只放前三个，按证据分排（推荐确认制）。 */
@@ -41,27 +58,54 @@ export function KnowledgePendingPanel() {
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const promotionControllers = useRef(new Map<string, AbortController>());
+  const activePromotionsRef = useRef(new Map<string, string>());
 
   const refresh = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge;
     if (!knowledge) return;
     try {
       // ready = 推荐池；weak+room 仅供未识别栏挂载下拉（该区块不动）
-      const [ready, weak, rooms, unmatchedData, recentData] = await Promise.all([
+      const [ready, promoting, weak, rooms, unmatchedData, recentData] = await Promise.all([
         knowledge.listEntities('ready'),
+        knowledge.listEntities('promoting'),
         knowledge.listEntities('weak'),
         knowledge.listEntities('room'),
         knowledge.listUnmatched(),
         knowledge.listRecentDecisions(10),
       ]);
-      setRecommended(
-        [...ready.items].sort((a, b) => b.evidenceScore - a.evidenceScore).slice(0, RECOMMEND_LIMIT),
-      );
+      const promotionActive = (entity: KnowledgeEntityDto) =>
+        entity.promotion?.status === 'queued' || entity.promotion?.status === 'running';
+      // Room 行会先于 Wiki/资料导入创建。任务真正 completed 前仍要留在进度区，
+      // 否则卡片会在“创建 Room”阶段提前消失并误报完成。
+      const activePromotions = [...promoting.items, ...ready.items, ...rooms.items]
+        .filter(promotionActive);
+      const activeIds = new Set(activePromotions.map((entity) => entity.id));
+      const failedFirst = [...ready.items].sort((a, b) => {
+        const failureDelta = Number(b.promotion?.status === 'failed') - Number(a.promotion?.status === 'failed');
+        return failureDelta || b.evidenceScore - a.evidenceScore;
+      });
+      setRecommended([
+        ...activePromotions,
+        ...failedFirst.filter((entity) => !activeIds.has(entity.id)).slice(0, RECOMMEND_LIMIT),
+      ]);
       setAttachPool([...weak.items, ...rooms.items]);
       setUnmatched(unmatchedData.items);
       setRecent(recentData.items);
       setLoaded(true);
+      const previous = activePromotionsRef.current;
+      const completed = rooms.items.filter((entity) =>
+        previous.has(entity.id) && entity.promotion?.status === 'completed');
+      const failed = ready.items.filter((entity) => previous.has(entity.id) && entity.promotion?.status === 'failed');
+      activePromotionsRef.current = new Map(activePromotions.map((entity) => [entity.id, entity.name]));
+      for (const entity of completed) {
+        showToast({ title: 'Room 创建完成', message: `「${entity.name}」已可以使用` });
+      }
+      for (const entity of failed) {
+        showToast({ title: 'Room 创建失败', message: entity.promotion?.error ?? entity.promotion?.message });
+      }
+      if (completed.length > 0) {
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom:knowledge-changed')), 0);
+      }
     } catch {
       setLoaded(true); // 知识服务不可用：面板静默为空
     }
@@ -78,10 +122,13 @@ export function KnowledgePendingPanel() {
     };
   }, [refresh]);
 
-  useEffect(() => () => {
-    for (const controller of promotionControllers.current.values()) controller.abort();
-    promotionControllers.current.clear();
-  }, []);
+  const hasActivePromotion = recommended.some((entity) =>
+    entity.promotion?.status === 'queued' || entity.promotion?.status === 'running');
+  useEffect(() => {
+    if (!hasActivePromotion) return;
+    const timer = window.setInterval(() => void refresh(), 1_000);
+    return () => window.clearInterval(timer);
+  }, [hasActivePromotion, refresh]);
 
   const runBusy = async (key: string, action: () => Promise<void>) => {
     setBusy((current) => new Set(current).add(key));
@@ -103,28 +150,10 @@ export function KnowledgePendingPanel() {
   const confirmCreate = (entity: KnowledgeEntityDto) =>
     runBusy(`entity:${entity.id}:promote`, async () => {
       try {
-        const knowledge = window.nxcore?.knowledge;
-        if (!knowledge) return;
-        await knowledge.promoteEntity(entity.id);
-        showToast({ title: '正在创建 Room', message: `「${entity.name}」的 Room 与 wiki 开始构建` });
-        const controller = new AbortController();
-        promotionControllers.current.get(entity.id)?.abort();
-        promotionControllers.current.set(entity.id, controller);
-        let promoted: Awaited<ReturnType<typeof waitForKnowledgeEntityPromotion>>;
-        try {
-          promoted = await waitForKnowledgeEntityPromotion(knowledge, entity.id, {
-            signal: controller.signal,
-          });
-        } finally {
-          if (promotionControllers.current.get(entity.id) === controller) {
-            promotionControllers.current.delete(entity.id);
-          }
-        }
-        if (promoted) {
-          showToast({ title: 'Room 已创建', message: `「${promoted.room?.title ?? entity.name}」已加入 Context Room` });
-        } else if (!controller.signal.aborted) {
-          showToast({ title: '仍在后台创建', message: '完成后会自动同步到 Context Room' });
-        }
+        const result = await window.nxcore?.knowledge?.promoteEntity(entity.id);
+        showToast(result?.queued
+          ? { title: '已加入创建队列', message: `正在为「${entity.name}」创建 Room` }
+          : { title: '创建任务已存在', message: `「${entity.name}」会继续使用原任务处理` });
       } catch (cause) {
         showToast({ title: '创建失败', message: cause instanceof Error ? cause.message : undefined });
         throw cause;
@@ -235,6 +264,9 @@ export function KnowledgePendingPanel() {
           {recommended.length > 0 ? <h3 className="context-room-knowledge-group">推荐（按证据分排序，前 3）</h3> : null}
           {recommended.map((entity) => {
             const scoreRatio = Math.min(1, entity.evidenceScore / entity.promoteScore);
+            const promotion = entity.promotion;
+            const promotionActive = promotion?.status === 'queued' || promotion?.status === 'running';
+            const creationPercent = promotion ? promotionPercent(promotion) : 0;
             return (
               <article key={entity.id} className="context-room-knowledge-card" data-state="recommended">
                 <header>
@@ -252,15 +284,36 @@ export function KnowledgePendingPanel() {
                 {entity.firstEvidence ? (
                   <p className="context-room-knowledge-summary">{entity.firstEvidence}</p>
                 ) : null}
+                {promotion ? (
+                  <div className="context-room-creation-progress" data-status={promotion.status} role="status">
+                    <div className="context-room-creation-progress-heading">
+                      {promotion.status === 'failed'
+                        ? <AlertCircle aria-hidden="true" />
+                        : promotion.status === 'queued'
+                          ? <Clock3 aria-hidden="true" />
+                          : <LoaderCircle className="spin" aria-hidden="true" />}
+                      <strong>{promotion.message}</strong>
+                      <span>{creationPercent}%</span>
+                    </div>
+                    <div className="context-room-creation-progress-bar" aria-hidden="true">
+                      <div style={{ width: `${creationPercent}%` }} />
+                    </div>
+                    {promotion.status === 'queued' && promotion.queuePosition ? (
+                      <small>队列位置：第 {promotion.queuePosition} 个</small>
+                    ) : promotion.stage === 'importing_documents' && promotion.total !== null ? (
+                      <small>资料进度：{promotion.current ?? 0} / {promotion.total}</small>
+                    ) : promotion.error ? <small>{promotion.error}</small> : null}
+                  </div>
+                ) : null}
                 <footer>
                   <button
                     type="button"
                     className="context-room-knowledge-confirm"
-                    disabled={busy.has(`entity:${entity.id}:promote`)}
+                    disabled={busy.has(`entity:${entity.id}:promote`) || promotionActive}
                     onClick={() => void confirmCreate(entity)}
                   >
-                    <Sparkles aria-hidden="true" />
-                    确认创建
+                    {promotionActive ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+                    {promotionActive ? (promotion?.status === 'queued' ? '排队中' : '创建中') : promotion?.status === 'failed' ? '重试创建' : '确认创建'}
                   </button>
                 </footer>
               </article>

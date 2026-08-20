@@ -1,10 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
+  connectorCalendarEvents,
+  connectorDocuments,
+  connectorEmails,
+  connectorRecords,
   documents,
   ingestEvents,
   parsedContents,
@@ -36,6 +40,12 @@ import {
 } from "./normalizers.js";
 import { converterOfExtension } from "./converters.js";
 import { emptyPolicyLayers, resolvePipelines, validatePipelines, type PolicyLayers } from "./policy.js";
+import {
+  connectorCalendarEventToMarkdown,
+  connectorDocumentToMarkdown,
+  connectorEmailToMarkdown,
+  connectorGenericRecordToMarkdown,
+} from "./connector-markdown.js";
 
 /**
  * 统一理解引擎（unified-ingest-plan §7）：接入面唯一，normalize → classify →
@@ -50,8 +60,19 @@ import { emptyPolicyLayers, resolvePipelines, validatePipelines, type PolicyLaye
 /** 记忆链路消费端截断上限（§7 步骤 8：全文住 parsed_contents，消费端各自截断）。 */
 const MEMORY_MAX_BYTES = 2 * 1024 * 1024;
 
-/** 台账 sourceKind（与既有 knowledge SourceKind 对齐；mail/cloud-doc 为连接器预留位）。 */
-export type LedgerSourceKind = "everroom-doc" | "reality-event" | "file" | "mail" | "cloud-doc";
+function isoDate(value: Date | null): string | undefined {
+  return value?.toISOString();
+}
+
+/** 台账 sourceKind（与既有 knowledge SourceKind 对齐，mail/cloud-doc 留给 U4）。 */
+export type LedgerSourceKind =
+  | "everroom-doc"
+  | "reality-event"
+  | "file"
+  | "mail"
+  | "cloud-doc"
+  | "calendar-event"
+  | "connector-record";
 
 export interface IngestResult {
   eventId: string;
@@ -143,7 +164,7 @@ export class IngestService {
       {
         sourceKind: unit.kind,
         sourceId: unit.sourceId,
-        sourceVersion: this.nextLedgerVersion(unit.sourceId),
+        sourceVersion: this.nextLedgerVersion(unit.kind, unit.sourceId),
         dataType: unit.dataType,
         detectedBy: "source-kind",
         title: unit.title,
@@ -190,6 +211,20 @@ export class IngestService {
     if (result.deduped) return this.resumeDocumentFanout(result, document.updatedAt.toISOString());
     if (!result.memoryResult || !("error" in result.memoryResult)) return result;
     throw new Error(`document memory ingest failed: ${result.memoryResult.error}`);
+  }
+
+  /**
+   * 撤销一个已 ingest 来源的下游可见性，同时保留历史台账。
+   * 软删除后的旧 hash 不参与幂等命中，因此来源恢复时会重新扇出。
+   */
+  async cleanupSource(sourceKind: LedgerSourceKind, sourceId: string): Promise<void> {
+    if (this.knowledge.routerEnabled) this.knowledge.requestSourceCleanup(sourceKind, sourceId);
+    await this.memory.deleteDocumentsByCallerRef(sourceId);
+    this.db.update(ingestEvents).set({ deletedAt: new Date(), updatedAt: new Date() }).where(and(
+      eq(ingestEvents.sourceKind, sourceKind),
+      eq(ingestEvents.sourceId, sourceId),
+      isNull(ingestEvents.deletedAt),
+    )).run();
   }
 
   // ───────────────────────── intake：path / ref ─────────────────────────
@@ -270,7 +305,16 @@ export class IngestService {
         const markdown = realityEventToMarkdown(row);
         if (!markdown.trim()) throw new IngestError("现实事件尚无转录/洞察内容", "empty_content");
         const contentHash = contentHashOf(Buffer.from(
-          JSON.stringify({ title: row.title, transcript: row.transcript, insights: row.insights, version: row.version }),
+          JSON.stringify({
+            title: row.title,
+            transcript: row.transcript,
+            transcriptSegments: row.transcriptSegments.map((segment) => ({
+              text: segment.text,
+              beginTime: segment.beginTime,
+              speakerId: segment.speakerId,
+            })),
+            insights: row.insights,
+          }),
           "utf8",
         ));
         return this.processNormalized(input, {
@@ -284,6 +328,89 @@ export class IngestService {
           contentHash,
           occurredAt: input.occurredAt ?? (row.endedAt ?? row.startedAt).toISOString(),
           origin: input.originChannel ?? "reality",
+        });
+      }
+      case "connector-email": {
+        const row = this.db.select().from(connectorEmails).where(eq(connectorEmails.id, sourceId)).get();
+        if (!row) throw new IngestError(`connector_emails 无此行：${sourceId}`, "ref_not_found", 404);
+        const markdown = connectorEmailToMarkdown(row);
+        return this.processNormalized({
+          ...input,
+          entrySignals: input.entrySignals ?? {
+            sourceTag: `connector:${row.service}`,
+            ...(row.threadId ? { threadId: row.threadId } : {}),
+          },
+        }, {
+          sourceKind: "mail",
+          sourceId,
+          sourceVersion: this.nextLedgerVersion("mail", sourceId),
+          dataType: input.dataType ?? "connector-email",
+          detectedBy: input.dataType ? "explicit" : "source-kind",
+          title: input.title ?? row.subject,
+          markdown,
+          contentHash: contentHashOf(Buffer.from(markdown, "utf8")),
+          occurredAt: input.occurredAt ?? isoDate(row.sentAt ?? row.sourceUpdatedAt),
+          origin: input.originChannel ?? "connector",
+        });
+      }
+      case "connector-document": {
+        const row = this.db.select().from(connectorDocuments).where(eq(connectorDocuments.id, sourceId)).get();
+        if (!row) throw new IngestError(`connector_documents 无此行：${sourceId}`, "ref_not_found", 404);
+        const markdown = connectorDocumentToMarkdown(row);
+        return this.processNormalized({
+          ...input,
+          entrySignals: input.entrySignals ?? { sourceTag: `connector:${row.service}` },
+        }, {
+          sourceKind: "cloud-doc",
+          sourceId,
+          sourceVersion: this.nextLedgerVersion("cloud-doc", sourceId),
+          dataType: input.dataType ?? "connector-document",
+          detectedBy: input.dataType ? "explicit" : "source-kind",
+          title: input.title ?? row.title,
+          markdown,
+          contentHash: contentHashOf(Buffer.from(markdown, "utf8")),
+          occurredAt: input.occurredAt ?? isoDate(row.sourceUpdatedAt),
+          origin: input.originChannel ?? "connector",
+        });
+      }
+      case "connector-calendar": {
+        const row = this.db.select().from(connectorCalendarEvents).where(eq(connectorCalendarEvents.id, sourceId)).get();
+        if (!row) throw new IngestError(`connector_calendar_events 无此行：${sourceId}`, "ref_not_found", 404);
+        const markdown = connectorCalendarEventToMarkdown(row);
+        return this.processNormalized({
+          ...input,
+          entrySignals: input.entrySignals ?? { sourceTag: `connector:${row.service}` },
+        }, {
+          sourceKind: "calendar-event",
+          sourceId,
+          sourceVersion: this.nextLedgerVersion("calendar-event", sourceId),
+          dataType: input.dataType ?? "connector-calendar",
+          detectedBy: input.dataType ? "explicit" : "source-kind",
+          title: input.title ?? row.title,
+          markdown,
+          contentHash: contentHashOf(Buffer.from(markdown, "utf8")),
+          occurredAt: input.occurredAt ?? isoDate(row.startAt ?? row.sourceUpdatedAt),
+          origin: input.originChannel ?? "connector",
+        });
+      }
+      case "connector-record": {
+        const row = this.db.select().from(connectorRecords).where(eq(connectorRecords.id, sourceId)).get();
+        if (!row) throw new IngestError(`connector_records 无此行：${sourceId}`, "ref_not_found", 404);
+        const markdown = connectorGenericRecordToMarkdown(row);
+        return this.processNormalized({
+          ...input,
+          entrySignals: input.entrySignals ?? { sourceTag: `connector:${row.service}` },
+        }, {
+          sourceKind: "connector-record",
+          sourceId,
+          sourceVersion: this.nextLedgerVersion("connector-record", sourceId),
+          dataType: input.dataType ?? "connector-record",
+          detectedBy: input.dataType ? "explicit" : "source-kind",
+          title: input.title ?? row.dataset,
+          markdown,
+          contentHash: contentHashOf(Buffer.from(markdown, "utf8")),
+          occurredAt: input.occurredAt ?? isoDate(row.sourceUpdatedAt),
+          origin: input.originChannel ?? "connector",
         });
       }
     }
@@ -306,14 +433,14 @@ export class IngestService {
     const contentHash = contentHashOf(ctx.buffer);
 
     // 闸1（台账层）：同源同指纹零成本跳过——归一化/解析/扇出全免
-    const existing = this.ledgerHit(ctx.sourceId, contentHash);
+    const existing = this.ledgerHit(ctx.sourceKind, ctx.sourceId, contentHash);
     if (existing) return this.toResult(existing, true);
 
     const normalized = await normalizeFileBytes(ctx.filename, ctx.buffer, input.dataType);
     return this.processNormalized(input, {
       sourceKind: ctx.sourceKind,
       sourceId: ctx.sourceId,
-      sourceVersion: this.nextLedgerVersion(ctx.sourceId),
+      sourceVersion: this.nextLedgerVersion(ctx.sourceKind, ctx.sourceId),
       dataType: normalized.dataType,
       detectedBy: normalized.detectedBy,
       title: input.title ?? normalized.title,
@@ -345,7 +472,7 @@ export class IngestService {
       filename?: string | undefined;
     },
   ): Promise<IngestResult> {
-    const existing = this.ledgerHit(unit.sourceId, unit.contentHash);
+    const existing = this.ledgerHit(unit.sourceKind, unit.sourceId, unit.contentHash);
     if (existing) return this.toResult(existing, true);
 
     // 策略解析（请求覆盖 > 配置文件 > defaults）+ 组合校验 + router 前置
@@ -513,26 +640,35 @@ export class IngestService {
   /** 台账取某源最新事件（wiki 快照判定 / 桌面端导入记录用）。 */
   latestEventOf(sourceKind: LedgerSourceKind, sourceId: string): IngestEventDto | null {
     const row = this.db.select().from(ingestEvents)
-      .where(and(eq(ingestEvents.sourceKind, sourceKind), eq(ingestEvents.sourceId, sourceId)))
+      .where(and(
+        eq(ingestEvents.sourceKind, sourceKind),
+        eq(ingestEvents.sourceId, sourceId),
+        isNull(ingestEvents.deletedAt),
+      ))
       .orderBy(desc(ingestEvents.createdAt), desc(ingestEvents.id))
       .limit(1)
       .get();
     return row ? toEventDto(row) : null;
   }
 
-  private ledgerHit(sourceId: string, contentHash: string) {
+  private ledgerHit(sourceKind: LedgerSourceKind, sourceId: string, contentHash: string) {
     return this.db.select().from(ingestEvents)
-      .where(and(eq(ingestEvents.sourceId, sourceId), eq(ingestEvents.contentHash, contentHash)))
+      .where(and(
+        eq(ingestEvents.sourceKind, sourceKind),
+        eq(ingestEvents.sourceId, sourceId),
+        eq(ingestEvents.contentHash, contentHash),
+        isNull(ingestEvents.deletedAt),
+      ))
       .orderBy(desc(ingestEvents.createdAt))
       .limit(1)
       .get() ?? null;
   }
 
   /** file 源版本流：引擎台账自身记账（knowledge route 版本由扇出带回）。 */
-  private nextLedgerVersion(sourceId: string): number {
+  private nextLedgerVersion(sourceKind: LedgerSourceKind, sourceId: string): number {
     const row = this.db.select({ sourceVersion: ingestEvents.sourceVersion })
       .from(ingestEvents)
-      .where(eq(ingestEvents.sourceId, sourceId))
+      .where(and(eq(ingestEvents.sourceKind, sourceKind), eq(ingestEvents.sourceId, sourceId)))
       .orderBy(desc(ingestEvents.sourceVersion))
       .limit(1)
       .get();
@@ -607,7 +743,7 @@ export class IngestService {
 
 /**
  * 识别优先级（§4）：显式声明 > jsonType 结构 > 扩展名注册表 > 嗅探。
- * md 族直通；json 载荷按结构归一化；office/html/csv 走 converters（U2）；
+ * md 族直通；json 载荷按结构归一化；office/html/csv/eml 走 converters（U2）；
  * 未知/无扩展名嗅探 UTF-8 文本，二进制拒绝 unsupported_type。
  */
 async function normalizeFileBytes(
@@ -646,7 +782,7 @@ async function normalizeFileBytes(
     };
   }
 
-  // U2 转换器：docx/xlsx/pptx/csv/html → md（类型随扩展名注册表）
+  // U2 转换器：docx/xlsx/pptx/csv/html/eml -> md（类型随扩展名注册表）
   const converter = converterOfExtension(extension);
   if (converter) {
     const markdown = await converter(buffer);

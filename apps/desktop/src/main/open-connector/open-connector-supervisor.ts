@@ -79,7 +79,7 @@ function normalizedBaseUrl(value: string): string {
     || url.search
     || url.hash
   ) {
-    throw new Error('OpenConnector 外部地址必须使用 HTTPS；HTTP 仅允许回环地址。')
+    throw new Error('EverRoom 连接器外部地址必须使用 HTTPS；HTTP 仅允许回环地址。')
   }
   return url.toString().replace(/\/$/, '')
 }
@@ -142,7 +142,7 @@ export class OpenConnectorSupervisor {
 
   async start(): Promise<OpenConnectorConnection> {
     if (this.connection) return this.connection
-    if (this.starting || this.child) throw new Error('OpenConnector 正在启动。')
+    if (this.starting || this.child) throw new Error('EverRoom 连接器正在启动。')
     this.starting = true
     this.lastError = null
 
@@ -227,7 +227,7 @@ export class OpenConnectorSupervisor {
         this.child = null
         this.connection = null
         if (!this.stopping) {
-          this.lastError = `OpenConnector 进程已退出（code=${String(code)}, signal=${String(signal)}）`
+          this.lastError = `EverRoom 连接器进程已退出（code=${String(code)}, signal=${String(signal)}）`
           console.error(this.lastError)
         }
       })
@@ -248,7 +248,7 @@ export class OpenConnectorSupervisor {
       if (child) this.killChild(child, 'SIGTERM')
       this.child = null
       this.connection = null
-      this.lastError = error instanceof Error ? error.message : 'OpenConnector 启动失败'
+      this.lastError = error instanceof Error ? error.message : 'EverRoom 连接器启动失败'
       throw error
     } finally {
       this.starting = false
@@ -367,7 +367,7 @@ export class OpenConnectorSupervisor {
       && existsSync(join(candidate, 'dist', 'web', 'index.html'))
     ))
     if (!directory) {
-      throw new Error(`OpenConnector 运行时未准备。已检查：${candidates.join(', ')}`)
+      throw new Error(`EverRoom 连接器运行时未准备。已检查：${candidates.join(', ')}`)
     }
     return directory
   }
@@ -432,7 +432,7 @@ export class OpenConnectorSupervisor {
         const address = server.address()
         if (!address || typeof address === 'string') {
           server.close()
-          reject(new Error('无法分配 OpenConnector 本地端口。'))
+          reject(new Error('无法分配 EverRoom 连接器本地端口。'))
           return
         }
         server.close((error) => error ? reject(error) : resolve(address.port))
@@ -462,12 +462,12 @@ export class OpenConnectorSupervisor {
     const deadline = Date.now() + STARTUP_TIMEOUT_MS
     while (Date.now() < deadline) {
       if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`OpenConnector 启动期间退出（code=${String(child.exitCode)}）。`)
+        throw new Error(`EverRoom 连接器启动期间退出（code=${String(child.exitCode)}）。`)
       }
       if (await this.probe(baseUrl, runtimeToken)) return
       await delay(100)
     }
-    throw new Error(`OpenConnector 未能在 ${STARTUP_TIMEOUT_MS}ms 内就绪。`)
+    throw new Error(`EverRoom 连接器未能在 ${STARTUP_TIMEOUT_MS}ms 内就绪。`)
   }
 
   private killChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): boolean {

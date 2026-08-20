@@ -196,15 +196,15 @@ export class RealityGatewayBridge {
   private async rawRequest<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
     try {
-      return await this.requestWithConnection<T>(connection, path, config)
+      return await this.rawRequestWithConnection<T>(connection, path, config)
     } catch (error) {
       if (!isRecoverableConnectionError(error)) throw error
       const recoveredConnection = await this.supervisor.recoverConnection(connection)
-      return this.requestWithConnection<T>(recoveredConnection, path, config)
+      return this.rawRequestWithConnection<T>(recoveredConnection, path, config)
     }
   }
 
-  private async requestWithConnection<T>(
+  private async rawRequestWithConnection<T>(
     connection: ReturnType<GatewaySupervisor['getConnection']>,
     path: string,
     config: AxiosRequestConfig,

@@ -87,8 +87,10 @@ import type {
 } from './open-connector'
 import type {
   ConnectorAccount,
+  ConnectorDataPage,
   ConnectorDataQuery,
   ConnectorDataRecord,
+  ConnectorIngestResult,
   ConnectorPromptProfile,
   ConnectorQuarantinedRecord,
   ConnectorSyncJob,
@@ -431,8 +433,9 @@ export interface NxcoreDesktopApi {
     archiveJob(id: string, configVersion: number): Promise<ConnectorSyncJob>
     runs(jobId: string): Promise<ConnectorSyncRun[]>
     quarantine(runId: string): Promise<ConnectorQuarantinedRecord[]>
-    data(query: ConnectorDataQuery): Promise<ConnectorDataRecord[]>
+    data(query: ConnectorDataQuery): Promise<ConnectorDataPage>
     record(id: string): Promise<ConnectorDataRecord>
+    ingestRecords(recordIds: string[]): Promise<ConnectorIngestResult>
   }
   mcp: {
     listServers(): Promise<McpServersSnapshot>
@@ -529,7 +532,7 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: RealitySocketFrame) => void): () => void
   }
   agent: {
-    listSessions(pageLabel: string, roomId?: string | null): Promise<AgentSession[]>
+    listSessions(pageLabel?: string, roomId?: string | null): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
     createSessionLink(input: CreateAgentSessionLinkInput): Promise<AgentSessionLink>
     listSessionLinks(sessionId: string): Promise<AgentSessionLink[]>
@@ -625,7 +628,7 @@ export interface NxcoreDesktopApi {
     listEntities(status: KnowledgeEntityStatus): Promise<{ items: KnowledgeEntityDto[] }>
     getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
     /** 用户确认创建（推荐态实体走完整晋升流程）。 */
-    promoteEntity(entityId: string): Promise<{ queued: boolean }>
+    promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }>
     /** 手动合并：from 并入 target。 */
     mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
     listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>

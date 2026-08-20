@@ -42,6 +42,7 @@ import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/poli
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { connectorRoutes, connectorSyncRoutes } from "../modules/connectors/routes.js";
+import { ConnectorMarkdownService } from "../modules/connectors/markdown-service.js";
 import { ConnectorSyncService } from "../modules/connectors/service.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
@@ -231,6 +232,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   const connectorSyncService = new ConnectorSyncService(db, config, app.log);
+  let connectorMarkdownService: ConnectorMarkdownService | null = null;
   const connectorSyncAgentRuntime = createConnectorSyncAgentRuntime(config, connectorSyncService);
   if (connectorSyncAgentRuntime) connectorSyncService.attachAgentRuntime(connectorSyncAgentRuntime);
   await connectorSyncService.initialize();
@@ -320,6 +322,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
     await connectorSyncService.dispose();
+    await connectorMarkdownService?.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
     sqlite.close();
@@ -381,12 +384,28 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
   );
   documentOutboxWorker.start();
+  connectorMarkdownService = new ConnectorMarkdownService(
+    db,
+    config.dataDir,
+    ingestService,
+    app.log,
+  );
+  await connectorMarkdownService.initialize();
+  // 智能感知在用户确认完成后自动进入统一理解引擎：
+  // reality-event → Markdown → Room 路由 → Wiki（策略与文件链路共用）。
+  if (config.knowledge?.roomWikisEnabled && config.knowledge.routerEnabled) {
+    realityService.setKnowledgeIngestHandler(({ sourceId }) => ingestService.ingest({
+      source: { ref: { sourceKind: "reality-event", sourceId } },
+      dataType: "meeting-minutes",
+      originChannel: "reality",
+    }));
+  }
   await app.register(ingestRoutes(ingestService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
   await app.register(connectorRoutes(connectorManager, connectorConfig.enabled, connectorAuthorization));
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
-  await app.register(connectorSyncRoutes(connectorSyncService));
+  await app.register(connectorSyncRoutes(connectorSyncService, ingestService, connectorMarkdownService));
 
   return app;
 }

@@ -78,7 +78,7 @@ export class OpenConnectorAdminClient {
     })
     const payload = await response.json().catch(() => null) as ResponseEnvelope<T> | null
     if (!response.ok) {
-      throw new Error(payload?.message || `OpenConnector 请求失败（${response.status}）。`)
+      throw new Error(payload?.message || `EverRoom 连接器请求失败（${response.status}）。`)
     }
     return (payload?.data ?? payload) as T
   }

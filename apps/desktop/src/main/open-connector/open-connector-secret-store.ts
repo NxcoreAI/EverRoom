@@ -31,7 +31,7 @@ export class OpenConnectorSecretStore {
   async getOrCreate(): Promise<OpenConnectorSecrets> {
     if (this.value) return this.value
     if (!safeStorage.isEncryptionAvailable() || isBasicTextStorage()) {
-      throw new Error('系统密钥环不可用，无法安全启动 OpenConnector。')
+      throw new Error('系统密钥环不可用，无法安全启动 EverRoom 连接器。')
     }
 
     try {
@@ -64,4 +64,3 @@ export class OpenConnectorSecretStore {
     return this.value
   }
 }
-

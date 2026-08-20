@@ -71,7 +71,7 @@ describe("database migrations", () => {
     ).get("gmail-email-v1")).toEqual({ id: "gmail-email-v1", template: "prompt" });
     expect(upgraded.sqlite.prepare(
       "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
-    ).get()).toEqual({ created_at: 1787150345690 });
+    ).get()).toEqual({ created_at: journal.entries[journal.entries.length - 1]!.when });
     upgraded.sqlite.close();
   });
 

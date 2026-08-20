@@ -1,7 +1,9 @@
 import type {
   ConnectorAccount,
+  ConnectorDataPage,
   ConnectorDataQuery,
   ConnectorDataRecord,
+  ConnectorIngestResult,
   ConnectorPromptProfile,
   ConnectorQuarantinedRecord,
   ConnectorSyncJob,
@@ -43,17 +45,23 @@ export class ConnectorSyncGatewayBridge {
   quarantine(runId: string): Promise<ConnectorQuarantinedRecord[]> {
     return this.request(`/v1/connectors/sync/runs/${encodeURIComponent(runId)}/quarantine`)
   }
-  data(query: ConnectorDataQuery): Promise<ConnectorDataRecord[]> {
+  data(query: ConnectorDataQuery): Promise<ConnectorDataPage> {
     const params = new URLSearchParams()
     if (query.service) params.set('service', query.service)
     if (query.dataset) params.set('dataset', query.dataset)
     if (query.query) params.set('query', query.query)
     if (query.limit !== undefined) params.set('limit', String(query.limit))
+    if (query.offset !== undefined) params.set('offset', String(query.offset))
     if (query.includeExpired !== undefined) params.set('includeExpired', String(query.includeExpired))
     return this.request(`/v1/connectors/data?${params}`)
   }
   record(id: string): Promise<ConnectorDataRecord> {
     return this.request(`/v1/connectors/data/${encodeURIComponent(id)}`)
+  }
+  ingestRecords(recordIds: string[]): Promise<ConnectorIngestResult> {
+    return this.request('/v1/connectors/data/ingest', {
+      method: 'POST', body: JSON.stringify({ recordIds }),
+    })
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -62,7 +70,7 @@ export class ConnectorSyncGatewayBridge {
       ...init,
       headers: {
         Authorization: `Bearer ${connection.token}`,
-        'Content-Type': 'application/json',
+        ...(init?.body !== undefined && init.body !== null ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
     })

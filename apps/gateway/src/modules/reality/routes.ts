@@ -280,6 +280,12 @@ export function realityRoutes(service: RealityService): FastifyPluginAsyncTypebo
     );
 
     app.post(
+      "/v1/reality/events/:id/knowledge-ingest",
+      { schema: { tags: ["reality"], params: IdParams } },
+      async (request) => service.ingestToKnowledge(request.params.id),
+    );
+
+    app.post(
       "/v1/reality/events/:id/fail",
       {
         schema: {

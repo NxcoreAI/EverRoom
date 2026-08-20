@@ -139,6 +139,7 @@ const api: NxcoreDesktopApi = {
     quarantine: (runId) => invokeQuietly('connector-sync:quarantine', runId),
     data: (query) => invokeQuietly('connector-sync:data', query),
     record: (id) => invokeQuietly('connector-sync:record', id),
+    ingestRecords: (recordIds) => invokeQuietly('connector-sync:ingest-records', recordIds),
   },
   mcp: {
     listServers: () => invoke('mcp:servers:list'),

@@ -14,6 +14,7 @@ import { TasksPage } from './pages/TasksPage'
 import { WikiPage } from './pages/WikiPage'
 import { ConnectorSyncPage } from './pages/ConnectorSyncPage'
 import { AgentStatusPage } from './pages/AgentStatusPage'
+import { OfficePage } from './pages/OfficePage'
 
 const ContextRoomPage = lazy(() =>
   import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
@@ -57,6 +58,7 @@ export function PageCanvas({
 }) {
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
+  if (page === 'office') content = <OfficePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
   if (page === 'rooms') {
     content = (
       <Suspense fallback={<ContextRoomHomeSkeleton />}>

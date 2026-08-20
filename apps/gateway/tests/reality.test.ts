@@ -3,9 +3,11 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { RealityEvent, RealitySocketFrame } from "@nxcore/reality-contract";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import type { GatewayConfig } from "../src/config.js";
+import { createDatabase } from "../src/infrastructure/database/client.js";
+import { RealityService } from "../src/modules/reality/service.js";
 import { createServer } from "../src/server/create-server.js";
 
 const temporaryDirectories: string[] = [];
@@ -39,6 +41,54 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) =>
     rm(path, { recursive: true, force: true })
   ));
+});
+
+describe("reality knowledge ingest bridge", () => {
+  it("ingests completed content, ignores metadata-only updates, and keeps confirm idempotent", async () => {
+    const config = await testConfig();
+    const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
+    const service = new RealityService(db, config.asrInputDir);
+    const ingest = vi.fn().mockResolvedValue({ eventId: "ing-1" });
+    service.setKnowledgeIngestHandler(ingest);
+    const eventId = randomUUID();
+
+    const imported = service.importEvent({
+      id: eventId,
+      title: "架构评审",
+      captureDevice: { id: "iphone", name: "iPhone", kind: "iphone" },
+      audioSource: "microphone",
+      durationMs: 12_000,
+      transcript: "决定采用统一理解引擎。",
+      transcriptSegments: [{ text: "决定采用统一理解引擎。", beginTime: 0, endTime: 2_000, speakerId: 0 }],
+      resultVersion: 1,
+      startedAt: "2026-08-20T02:00:00.000Z",
+      endedAt: "2026-08-20T02:00:12.000Z",
+    });
+    expect(imported.status).toBe("completed");
+    expect(ingest).toHaveBeenCalledTimes(1);
+
+    await service.ingestToKnowledge(eventId);
+    expect(ingest).toHaveBeenCalledTimes(2);
+
+    const confirmed = service.confirm(eventId);
+    expect(confirmed.status).toBe("completed");
+    expect(ingest).toHaveBeenCalledTimes(2);
+    expect(ingest).toHaveBeenLastCalledWith({ sourceId: eventId });
+
+    const marked = service.addMarker(eventId, { atMs: 1_000, label: "重点" });
+    service.confirm(eventId);
+    expect(ingest).toHaveBeenCalledTimes(2);
+
+    service.updateTranscript(eventId, {
+      transcript: "决定采用统一理解引擎，并复用文件进入 Wiki 的链路。",
+      expectedVersion: marked.version,
+    });
+    expect(ingest).toHaveBeenCalledTimes(3);
+
+    await service.ingestToKnowledge(eventId);
+    expect(ingest).toHaveBeenCalledTimes(4);
+    sqlite.close();
+  });
 });
 
 describe("reality routes", () => {

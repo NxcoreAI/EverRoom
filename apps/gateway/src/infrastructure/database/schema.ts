@@ -335,6 +335,67 @@ export const connectorCalendarEvents = sqliteTable(
   ],
 );
 
+export const connectorMarkdownArtifacts = sqliteTable(
+  "connector_markdown_artifacts",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    service: text("service").notNull(),
+    connectionName: text("connection_name").notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    sourceRecordId: text("source_record_id").notNull(),
+    ingestSourceId: text("ingest_source_id").notNull(),
+    activePath: text("active_path").notNull(),
+    sourceContentHash: text("source_content_hash").notNull(),
+    markdownContentHash: text("markdown_content_hash"),
+    rendererVersion: text("renderer_version").notNull(),
+    version: integer("version").notNull().default(1),
+    status: text("status", { enum: ["pending", "ready", "failed", "deleted"] }).notNull().default("pending"),
+    ingestStatus: text("ingest_status", { enum: ["pending", "succeeded", "failed", "skipped"] }).notNull().default("pending"),
+    lastError: text("last_error"),
+    parsedId: text("parsed_id"),
+    ingestEventId: text("ingest_event_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("connector_markdown_artifacts_source_idx").on(
+      table.ownerId,
+      table.service,
+      table.connectionName,
+      table.resourceType,
+      table.sourceRecordId,
+    ),
+    uniqueIndex("connector_markdown_artifacts_ingest_source_idx").on(table.resourceType, table.ingestSourceId),
+    index("connector_markdown_artifacts_status_idx").on(table.status, table.ingestStatus, table.updatedAt),
+  ],
+);
+
+export const connectorMarkdownOutbox = sqliteTable(
+  "connector_markdown_outbox",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    ingestSourceId: text("ingest_source_id").notNull(),
+    operation: text("operation", { enum: ["upsert", "delete"] }).notNull(),
+    sourceContentHash: text("source_content_hash").notNull(),
+    status: text("status", { enum: ["pending", "processing", "done", "dead"] }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    availableAt: integer("available_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    leaseOwner: text("lease_owner"),
+    leaseUntil: integer("lease_until", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("connector_markdown_outbox_due_idx").on(table.status, table.availableAt, table.leaseUntil),
+    index("connector_markdown_outbox_source_idx").on(table.resourceType, table.ingestSourceId, table.createdAt),
+  ],
+);
+
 export const connectorQuarantinedRecords = sqliteTable(
   "connector_quarantined_records",
   {
@@ -820,7 +881,7 @@ export const entityDocLinks = sqliteTable(
     id: text("id").primaryKey(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -874,7 +935,7 @@ export const routeDecisions = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
     }).notNull().default("everroom-doc"),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1040,7 +1101,7 @@ export const ingestEvents = sqliteTable(
     /** ing-<uuid12> */
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1061,6 +1122,8 @@ export const ingestEvents = sqliteTable(
     routeJobId: text("route_job_id"),
     /** file | paste-file | connector | reality | everroom-doc | upload */
     originChannel: text("origin_channel").notNull().default("upload"),
+    /** 来源被删除/失权后的软删除标记；历史保留，但不再参与 ingest 幂等命中。 */
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1070,6 +1133,6 @@ export const ingestEvents = sqliteTable(
   },
   (table) => [
     index("ingest_events_source_idx").on(table.sourceKind, table.sourceId),
-    index("ingest_events_source_hash_idx").on(table.sourceId, table.contentHash),
+    index("ingest_events_source_hash_idx").on(table.sourceKind, table.sourceId, table.contentHash),
   ],
 );
