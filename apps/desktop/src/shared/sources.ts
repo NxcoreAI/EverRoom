@@ -13,6 +13,7 @@ export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' |
 
 import type {
   AgentEvent,
+  PendingAgentIntent,
   AgentRun,
   AgentSession,
   AgentSessionLink,
@@ -37,6 +38,7 @@ import type {
   SaveRoomDocumentInput,
   SaveContextRoomSnapshotInput,
   StartAgentRunInput,
+  SubmitPendingAgentIntentInput,
   StartDocumentOperationInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
@@ -496,6 +498,10 @@ export interface NxcoreDesktopApi {
     getSession(sessionId: string): Promise<AgentSessionSnapshot>
     getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
     startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
+    submitPendingIntent(
+      intentId: string,
+      input: SubmitPendingAgentIntentInput,
+    ): Promise<{ intent: PendingAgentIntent; run: AgentRun }>
     cancelRun(runId: string): Promise<AgentRun>
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>

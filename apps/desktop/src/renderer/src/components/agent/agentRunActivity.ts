@@ -110,6 +110,10 @@ function userText(value: unknown, limit = 600): string | undefined {
 export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.status === 'completed'): string {
   const name = tool.name.toLowerCase()
   const labels: Record<string, [string, string]> = {
+    connector_apps: ['获取连接账户', '已获取连接账户'],
+    connector_run: ['执行连接操作', '已执行连接操作'],
+    connector_schema: ['查看操作要求', '已查看操作要求'],
+    connector_search: ['查找可用操作', '已查找可用操作'],
     context_room_document_intent: ['准备创建选项', '已准备创建选项'],
     context_room_document_list: ['获取文档列表', '已获取文档列表'],
     context_room_document_read: ['读取文档', '已读取文档'],
@@ -146,6 +150,13 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
 }
 
 export function agentToolSubject(tool: DisplayAgentToolCall): string | undefined {
+  if (tool.name.toLowerCase().startsWith('connector_')) {
+    const service = userText(tool.args.service, 40)
+    const operation = userText(tool.args.name, 80) ?? userText(tool.args.query, 80)
+    if (service && operation) return `${service} · ${operation}`
+    if (operation) return operation
+    if (service) return service
+  }
   for (const key of [
     'command', 'cmd', 'script', 'code', 'input',
     'query', 'search_query', 'keyword', 'prompt', 'path', 'filePath', 'title', 'documentTitle', 'url',
