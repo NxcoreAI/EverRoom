@@ -1,5 +1,5 @@
 .cloud-account-section {
-  width: min(720px, 100%);
+  width: min(1200px, 100%);
   margin-bottom: 18px;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -7,7 +7,7 @@
   background: var(--surface);
 }
 
-.reality-settings-section { width: min(720px, 100%); margin-bottom: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.reality-settings-section { width: min(1200px, 100%); margin-bottom: 18px; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
 .reality-settings-section > header { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
 .reality-settings-section > header > span { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--accent); }
 .reality-settings-section > header svg { width: 18px; height: 18px; }
@@ -509,7 +509,7 @@
     border-bottom: 0;
   }
 }
-.developer-settings-section { display: flex; width: min(720px, 100%); align-items: center; gap: 16px; margin-top: 18px; padding: 14px 16px; border: 1px dashed var(--border-strong); border-radius: 6px; background: var(--surface-alt); }
+.developer-settings-section { display: flex; width: min(1200px, 100%); align-items: center; gap: 16px; margin-top: 18px; padding: 14px 16px; border: 1px dashed var(--border-strong); border-radius: 6px; background: var(--surface-alt); }
 .developer-settings-section header { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; }
 .developer-settings-section header > span { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--muted); }
 .developer-settings-section header svg, .developer-settings-section button svg { width: 15px; height: 15px; }
@@ -518,16 +518,22 @@
 
 
 /* MCP 服务器管理 */
-.mcp-settings-section header {
-  align-items: flex-start;
+.mcp-settings-section > header {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.mcp-settings-section > header .secondary-button {
+  white-space: nowrap;
 }
 
 .mcp-server-form {
   display: grid;
   gap: 12px;
+  margin: 14px 16px 0;
   padding: 14px 16px;
   border: 1px solid var(--border, #e5e3dd);
-  border-radius: 12px;
+  border-radius: 7px;
   background: var(--surface, #faf9f6);
 }
 
@@ -558,16 +564,18 @@
 .mcp-server-list {
   display: grid;
   gap: 8px;
+  margin: 14px 16px;
 }
 
 .mcp-server-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
   border: 1px solid var(--border, #e5e3dd);
-  border-radius: 10px;
+  border-radius: 7px;
   background: #fff;
 }
 
@@ -584,7 +592,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 420px;
   color: var(--muted, #6f6a60);
 }
 
@@ -605,13 +612,39 @@
   gap: 4px;
   padding: 18px 16px;
   border: 1px dashed var(--border, #e5e3dd);
-  border-radius: 10px;
+  margin: 14px 16px;
+  border-radius: 7px;
   color: var(--muted, #6f6a60);
   text-align: center;
 }
 
 .mcp-config-path {
   display: block;
+  margin: 0 16px 14px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  background: var(--surface-alt, #faf9f6);
   color: var(--muted, #6f6a60);
-  word-break: break-all;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .mcp-settings-section > header {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .mcp-settings-section > header .secondary-button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .mcp-server-row {
+    grid-template-columns: 1fr;
+  }
+
+  .mcp-server-actions {
+    flex-wrap: wrap;
+  }
 }

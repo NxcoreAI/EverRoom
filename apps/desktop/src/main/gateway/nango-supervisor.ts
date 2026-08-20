@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { cpSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -25,6 +26,16 @@ const CONNECT_UI_PORT = 3009
 const BASE_URL = `http://127.0.0.1:${NANGO_PORT}`
 const STARTUP_TIMEOUT_MS = 120_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
+
+function managedEncryptionKey(): string | undefined {
+  if (process.env.NANGO_ENCRYPTION_KEY || process.env.NANGO_ENCRYPTION_KEY_WRAPPED) {
+    return process.env.NANGO_ENCRYPTION_KEY
+  }
+  const secret = process.env.NXCORE_NANGO_SECRET?.trim()
+  return secret
+    ? createHash('sha256').update('everroom:nango:encryption:v1\0').update(secret).digest('base64')
+    : undefined
+}
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -85,7 +96,8 @@ export class NangoSupervisor {
     if (!existsSync(join(nangoDirectory, 'package.json'))) {
       throw new Error(`Nango 子模块不存在: ${nangoDirectory}（试试 git submodule update --init）`)
     }
-    if (!existsSync(join(nangoDirectory, 'node_modules', '.bin', 'tsx'))) {
+    const tsxCli = join(nangoDirectory, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+    if (!existsSync(tsxCli)) {
       throw new Error('Nango 依赖未安装:请在 apps/gateway/src/modules/connector 下执行 npm install')
     }
     // 同仓包(shared/utils/...)以 dist 解析,先做一次性全量构建再拉起 server。
@@ -102,16 +114,19 @@ export class NangoSupervisor {
     }
 
     const serverDirectory = join(nangoDirectory, 'packages', 'server')
-    // tsx bin 是带 shebang 的可执行文件,直接 spawn(cwd 在 server 目录,lib/server.ts 相对解析)。
     const child = spawn(
-      join(nangoDirectory, 'node_modules', '.bin', 'tsx'),
-      ['-r', 'dotenv/config', 'lib/server.ts'],
+      process.execPath,
+      [tsxCli, '-r', 'dotenv/config', 'lib/server.ts'],
       {
         cwd: serverDirectory,
         env: {
           ...process.env,
+          ELECTRON_RUN_AS_NODE: '1',
           DOTENV_CONFIG_PATH: join(nangoDirectory, '.env'),
+          FLAG_AUTH_ENABLED: 'false',
           NANGO_EMBEDDED_DB: 'true',
+          NANGO_DB_PORT: '5433',
+          NANGO_ENCRYPTION_KEY: managedEncryptionKey(),
           SERVER_PORT: String(NANGO_PORT),
         },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -161,9 +176,21 @@ export class NangoSupervisor {
         if (build !== 0) throw new Error(`Connect UI 构建失败（exit=${build}）`)
       }
       const child = spawn(
-        join(nangoDirectory, 'node_modules', '.bin', 'serve'),
-        ['-s', 'dist', '-p', String(CONNECT_UI_PORT), '--no-clipboard'],
-        { cwd: connectUiDirectory, env: process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+        process.execPath,
+        [
+          join(nangoDirectory, 'node_modules', 'serve', 'build', 'main.js'),
+          '-s',
+          'dist',
+          '-p',
+          String(CONNECT_UI_PORT),
+          '--no-clipboard',
+        ],
+        {
+          cwd: connectUiDirectory,
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        },
       )
       this.connectUiChild = child
       child.stdin.end()
