@@ -6,6 +6,9 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: feishu-issue-create
+
 jobs:
   create:
     runs-on: ubuntu-24.04
@@ -29,7 +32,7 @@ jobs:
 
             if (!/^[0-9a-f]{32}$/.test(requestId)
                 || !title || title.length > 256
-                || !body.trim() || body.length > 100000
+                || !body.trim() || body.length > 60000
                 || !assignees || !attachments
                 || assignees.length > 10
                 || assignees.some((login) => typeof login !== 'string'
@@ -37,6 +40,10 @@ jobs:
                 || attachments.some((line) => typeof line !== 'string'
                   || !line.startsWith('![群内截图](https://raw.githubusercontent.com/NxcoreAI/EverRoom/issue-assets/.github/issue-assets/'))) {
               core.setFailed('Invalid Feishu Issue payload.');
+              return;
+            }
+            if (body.length + attachments.join('\n').length > 65000) {
+              core.setFailed('Feishu Issue body is too long.');
               return;
             }
 
