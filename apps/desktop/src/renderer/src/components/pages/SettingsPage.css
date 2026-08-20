@@ -141,6 +141,26 @@
   font-size: 9px;
 }
 
+.token-usage-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 180px;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.token-usage-empty button {
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 5px 9px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+
 .token-usage-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

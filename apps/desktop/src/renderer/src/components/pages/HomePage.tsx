@@ -83,6 +83,21 @@ export function HomePage({
   const { documentsByRoom, documentsLoading } = useRoomDocumentsState()
   const [diary, setDiary] = useState<HomeDiarySnapshot | null>(null)
   const [diaryLoading, setDiaryLoading] = useState(true)
+  const [currentHour, setCurrentHour] = useState(() => new Date().getHours())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentHour(new Date().getHours())
+    }, 60_000)
+
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const greetingKey = currentHour >= 5 && currentHour < 12
+    ? 'surface:home.goodMorning'
+    : currentHour < 18
+      ? 'surface:home.goodAfternoon'
+      : 'surface:home.goodEvening'
 
   const recentRooms = useMemo(() => (
     [...roomState.rooms]
@@ -145,7 +160,7 @@ export function HomePage({
       <div className="workspace-home-inner">
         <header className="workspace-home-heading">
           <div>
-            <h1>{t('surface:home.goodEvening')}</h1>
+            <h1>{t(greetingKey)}</h1>
             <p>{t('surface:home.continueWhereYouLeftOffOrStartSomething')}</p>
           </div>
         </header>

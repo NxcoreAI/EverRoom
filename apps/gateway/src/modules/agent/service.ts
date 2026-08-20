@@ -331,10 +331,12 @@ export class AgentService {
       const cacheRead = typeof payload.usage.cacheRead === "number" ? payload.usage.cacheRead : 0;
       const cacheWrite = typeof payload.usage.cacheWrite === "number" ? payload.usage.cacheWrite : 0;
       const bucket = Math.min(bucketCount - 1, Math.max(0, Math.floor((event.createdAt.getTime() - startMs) / bucketMs)));
-      points[bucket].inputTokens += input;
-      points[bucket].outputTokens += output;
-      points[bucket].cacheReadTokens += cacheRead;
-      points[bucket].cacheWriteTokens += cacheWrite;
+      const point = points[bucket];
+      if (!point) continue;
+      point.inputTokens += input;
+      point.outputTokens += output;
+      point.cacheReadTokens += cacheRead;
+      point.cacheWriteTokens += cacheWrite;
       inputTokens += input;
       outputTokens += output;
       cacheHitTokens += cacheRead;
