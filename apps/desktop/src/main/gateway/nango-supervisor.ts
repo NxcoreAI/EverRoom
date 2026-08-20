@@ -156,7 +156,8 @@ export class NangoSupervisor {
       this.runtimeState = 'disabled'
       return null
     }
-    const externalBaseUrl = process.env.NXCORE_NANGO_URL?.trim()
+    const externalBaseUrl =
+      process.env.NXCORE_NANGO_CONNECTOR_URL?.trim() || process.env.NXCORE_NANGO_URL?.trim()
     if (externalBaseUrl && !isLoopbackNangoUrl(externalBaseUrl)) {
       this.runtimeState = 'ready'
       return null
@@ -292,7 +293,8 @@ export class NangoSupervisor {
   }
 
   gatewayBaseUrl(): string | null {
-    const configured = process.env.NXCORE_NANGO_URL?.trim()
+    const configured =
+      process.env.NXCORE_NANGO_CONNECTOR_URL?.trim() || process.env.NXCORE_NANGO_URL?.trim()
     if (process.env.NXCORE_NANGO_MANAGED === 'false') return configured || null
     if (configured && !isLoopbackNangoUrl(configured)) return configured
     return app.isPackaged ? null : BASE_URL

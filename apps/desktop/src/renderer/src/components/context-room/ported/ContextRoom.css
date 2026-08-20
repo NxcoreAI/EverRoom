@@ -9884,6 +9884,68 @@
   transition: width 0.3s ease;
 }
 
+.context-room-creation-progress {
+  display: grid;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-creation-progress-heading {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  color: var(--cr-muted);
+}
+
+.context-room-creation-progress-heading svg {
+  width: 15px;
+  height: 15px;
+  color: var(--cr-blue);
+}
+
+.context-room-creation-progress-heading strong {
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-creation-progress-heading span,
+.context-room-creation-progress small {
+  color: var(--cr-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-creation-progress-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--cr-border);
+}
+
+.context-room-creation-progress-bar > div {
+  height: 100%;
+  background: var(--cr-blue);
+  transition: width 220ms ease;
+}
+
+.context-room-creation-progress[data-status='failed'] .context-room-creation-progress-heading svg,
+.context-room-creation-progress[data-status='failed'] .context-room-creation-progress-heading strong,
+.context-room-creation-progress[data-status='failed'] small {
+  color: #c9372c;
+}
+
+.context-room-creation-progress[data-status='failed'] .context-room-creation-progress-bar > div {
+  background: #c9372c;
+}
+
 .context-room-knowledge-detail {
   display: flex;
   flex-direction: column;

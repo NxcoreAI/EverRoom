@@ -1,5 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
+import { FileConvertError } from "./file-convert.js";
 import type { KnowledgeService } from "./service.js";
 
 const RoomOriginQuery = Type.Object({
@@ -49,37 +50,6 @@ const MaterialDto = Type.Object({
   ingested: Type.Boolean(),
 });
 
-const RoomContextDto = Type.Object({
-  roomId: Type.String(),
-  generatedAt: Type.String(),
-  sourceDocuments: Type.Array(Type.Object({
-    documentId: Type.String(),
-    title: Type.String(),
-    version: Type.Integer(),
-    updatedAt: Type.String(),
-  })),
-  overview: Type.String(),
-  status: Type.String(),
-  nextSteps: Type.Array(Type.String()),
-  entities: Type.Array(Type.Object({
-    name: Type.String(),
-    kind: Type.String(),
-    description: Type.String(),
-  })),
-  actionItems: Type.Array(Type.Object({
-    title: Type.String(),
-    owner: Type.Union([Type.String(), Type.Null()]),
-    dueDate: Type.Union([Type.String(), Type.Null()]),
-    sourceTitle: Type.String(),
-  })),
-  meetings: Type.Array(Type.Object({
-    title: Type.String(),
-    when: Type.String(),
-    participants: Type.Array(Type.String()),
-    sourceTitle: Type.String(),
-  })),
-});
-
 const EntrySignalsSchema = Type.Object({
   sourceTag: Type.Optional(Type.String({ maxLength: 200 })),
   threadId: Type.Optional(Type.String({ maxLength: 200 })),
@@ -96,10 +66,11 @@ const ManualRouteBody = Type.Union([
     /** 外部信封（连接器契约，plan §5.1）：非 everroom-doc 源必填。 */
     sourceKind: Type.Union([
       Type.Literal("reality-event"),
-      Type.Literal("visual-event"),
       Type.Literal("mail"),
       Type.Literal("file"),
       Type.Literal("cloud-doc"),
+      Type.Literal("calendar-event"),
+      Type.Literal("connector-record"),
     ]),
     sourceId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     sourceVersion: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -124,6 +95,21 @@ const EntityDto = Type.Object({
   firstEvidence: Type.Union([Type.String(), Type.Null()]),
   lastLinkedAt: Type.Union([Type.String(), Type.Null()]),
   updatedAt: Type.String(),
+  promotion: Type.Union([
+    Type.Object({
+      jobId: Type.String(),
+      status: Type.Union([Type.Literal("queued"), Type.Literal("running"), Type.Literal("completed"), Type.Literal("failed")]),
+      stage: Type.String(),
+      message: Type.String(),
+      current: Type.Union([Type.Integer(), Type.Null()]),
+      total: Type.Union([Type.Integer(), Type.Null()]),
+      queuePosition: Type.Union([Type.Integer(), Type.Null()]),
+      roomId: Type.Union([Type.String(), Type.Null()]),
+      error: Type.Union([Type.String(), Type.Null()]),
+      updatedAt: Type.String(),
+    }),
+    Type.Null(),
+  ]),
 });
 
 const EntityStatusQuery = Type.Object({
@@ -185,10 +171,11 @@ const DocSourceParams = Type.Object({
   sourceKind: Type.Union([
     Type.Literal("everroom-doc"),
     Type.Literal("reality-event"),
-    Type.Literal("visual-event"),
     Type.Literal("mail"),
     Type.Literal("file"),
     Type.Literal("cloud-doc"),
+    Type.Literal("calendar-event"),
+    Type.Literal("connector-record"),
   ]),
   sourceId: Type.String({ minLength: 1, maxLength: 200 }),
 });
@@ -211,6 +198,14 @@ const UnmatchedItemDto = Type.Object({
   summary: Type.Union([Type.String(), Type.Null()]),
   reason: Type.Union([Type.String(), Type.Null()]),
   createdAt: Type.String(),
+});
+
+const FileUploadBody = Type.Object({
+  filename: Type.String({ minLength: 1, maxLength: 300 }),
+  /** base64 编码的文件内容（20MB 上限在转换层校验）。 */
+  contentBase64: Type.String({ minLength: 1, maxLength: 27 * 1024 * 1024 }),
+  occurredAt: Type.Optional(Type.String({ maxLength: 40 })),
+  entrySignals: Type.Optional(EntrySignalsSchema),
 });
 
 /** wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */
@@ -321,8 +316,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         },
       },
       async (request, reply) => {
-        const deleted = service.deleteRoom(request.params.id);
-        if (!deleted) return reply.code(404).send(errorOf("room_not_found"));
+        service.deleteRoom(request.params.id);
         return reply.code(204).send();
       },
     );
@@ -379,6 +373,50 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         const markdown = await service.readRoomWikiPage(request.params.id, ref);
         if (markdown === null) return reply.code(404).send(errorOf("page_not_found"));
         return { ref, markdown };
+      },
+    );
+
+    app.post(
+      "/v1/knowledge/files",
+      {
+        bodyLimit: 32 * 1024 * 1024,
+        schema: {
+          tags: ["knowledge"],
+          body: FileUploadBody,
+          response: {
+            202: Type.Object({
+              queued: Type.Boolean(),
+              sourceId: Type.String(),
+              title: Type.String(),
+              /** true = 判重闸 1 命中：同名同内容，全链路跳过 */
+              deduped: Type.Boolean(),
+            }),
+            400: Type.Object({ error: Type.String() }),
+            413: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        // 与 route/manual 同语义：router 关闭时无人消费该信封
+        if (!service.routerEnabled) {
+          return reply.code(400).send(errorOf("router_disabled"));
+        }
+        const buffer = Buffer.from(request.body.contentBase64, "base64");
+        if (buffer.byteLength === 0) return reply.code(400).send(errorOf("empty_file"));
+        try {
+          const result = await service.submitFileUpload({
+            filename: request.body.filename,
+            buffer,
+            ...(request.body.occurredAt ? { occurredAt: request.body.occurredAt } : {}),
+            ...(request.body.entrySignals ? { entrySignals: request.body.entrySignals } : {}),
+          });
+          return reply.code(202).send(result);
+        } catch (error) {
+          if (error instanceof FileConvertError) {
+            return reply.code(error.code === "too_large" ? 413 : 400).send(errorOf(error.code));
+          }
+          throw error;
+        }
       },
     );
 
@@ -459,18 +497,6 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
     );
 
     app.get(
-      "/v1/knowledge/rooms/:id/context",
-      {
-        schema: {
-          tags: ["knowledge"],
-          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) }),
-          response: { 200: RoomContextDto },
-        },
-      },
-      async (request) => service.roomContext(request.params.id),
-    );
-
-    app.get(
       "/v1/knowledge/wikis",
       {
         schema: {
@@ -506,6 +532,10 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           ...entity,
           lastLinkedAt: entity.lastLinkedAt ? iso(entity.lastLinkedAt) : null,
           updatedAt: iso(entity.updatedAt),
+          promotion: entity.promotion ? {
+            ...entity.promotion,
+            updatedAt: iso(entity.promotion.updatedAt),
+          } : null,
         })),
       }),
     );
@@ -567,7 +597,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           tags: ["knowledge"],
           params: EntityIdParams,
           response: {
-            202: Type.Object({ queued: Type.Boolean() }),
+            202: Type.Object({ queued: Type.Boolean(), jobId: Type.String() }),
             400: Type.Object({ error: Type.String() }),
             404: Type.Object({ error: Type.String() }),
           },
@@ -579,7 +609,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           const status = result.error === "entity_not_found" ? 404 : 400;
           return reply.code(status).send(errorOf(result.error));
         }
-        return reply.code(202).send({ queued: true });
+        return reply.code(202).send({ queued: result.queued, jobId: result.jobId });
       },
     );
 

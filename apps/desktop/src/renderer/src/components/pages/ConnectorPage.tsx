@@ -37,7 +37,7 @@ function connectorStatusKey(value: string): string {
 }
 
 function date(value: string | null, locale: AppLocale): string { return value ? new Date(value).toLocaleString(locale, { hour12: false }) : '--' }
-function api() { return window.nxcore?.connectors }
+function api() { return window.nxcore?.nangoConnector }
 
 /** 数据源页内嵌的连接器管理区块（邮件/日程/文档连接器的授权与同步）。 */
 export function ConnectorSection() {

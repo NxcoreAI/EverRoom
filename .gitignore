@@ -5,6 +5,11 @@ dist/
 out/
 release/
 screenshots/
+
+# Agent bundles are product source assets and must be committed with the app.
+!agents/
+!agents/**
+
 apps/desktop/build/oo/
 apps/desktop/build/open-connector/
 apps/desktop/build/.open-connector-*/

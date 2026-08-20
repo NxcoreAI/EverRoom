@@ -97,7 +97,7 @@ function parseJsonOutput(output: string): unknown {
   try {
     return JSON.parse(normalized)
   } catch {
-    throw new Error('oo CLI 返回了无法解析的 JSON。')
+    throw new Error('EverRoom CLI 返回了无法解析的 JSON。')
   }
 }
 
@@ -154,15 +154,18 @@ export class OoCliBridge {
     return () => this.listeners.delete(listener)
   }
 
-  environment(): Record<string, string> {
+  gatewayEnvironment(): Record<string, string> {
     return {
-      OO_CONNECTOR_URL: this.options.baseUrl,
-      ...(this.options.runtimeToken ? { OO_CONNECTOR_TOKEN: this.options.runtimeToken } : {}),
-      OO_CONFIG_DIR: this.options.configDirectory,
-      OO_DATA_DIR: this.options.dataDirectory,
-      NXCORE_OO_CLI_PATH: this.options.executable,
-      NO_COLOR: '1',
+      NXCORE_CLI_CONNECTOR_URL: this.options.baseUrl,
+      ...(this.options.runtimeToken ? { NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN: this.options.runtimeToken } : {}),
+      NXCORE_CLI_CONNECTOR_CONFIG_DIR: this.options.configDirectory,
+      NXCORE_CLI_CONNECTOR_DATA_DIR: this.options.dataDirectory,
+      NXCORE_CLI_CONNECTOR_CLI_PATH: this.options.executable,
     }
+  }
+
+  environment(): Record<string, string> {
+    return this.gatewayEnvironment()
   }
 
   async status(): Promise<OpenConnectorStatus> {
@@ -216,7 +219,11 @@ export class OoCliBridge {
   private processEnvironment(): NodeJS.ProcessEnv {
     return {
       ...(this.options.environment ?? process.env),
-      ...this.environment(),
+      OO_CONNECTOR_URL: this.options.baseUrl,
+      ...(this.options.runtimeToken ? { OO_CONNECTOR_TOKEN: this.options.runtimeToken } : {}),
+      OO_CONFIG_DIR: this.options.configDirectory,
+      OO_DATA_DIR: this.options.dataDirectory,
+      NO_COLOR: '1',
     }
   }
 
@@ -242,7 +249,7 @@ export class OoCliBridge {
         data?: { ok?: unknown }
       } | null
       if (payload?.success !== true || payload.data?.ok !== true) {
-        return { gatewayState: 'unreachable', gatewayMessage: '目标服务不是兼容的 OpenConnector 网关。' }
+        return { gatewayState: 'unreachable', gatewayMessage: '目标服务不是兼容的 EverRoom 连接器网关。' }
       }
       return { gatewayState: 'ready', gatewayMessage: null }
     } catch (error) {
@@ -299,7 +306,7 @@ export class OoCliBridge {
         if (code === 0) resolve({ stdout, stderr })
         else reject(new Error(
           redactText(stderr.trim(), this.options.runtimeToken)
-            || `oo CLI 退出码为 ${String(code)}。`,
+            || `EverRoom CLI 退出码为 ${String(code)}。`,
         ))
       })
     })
@@ -378,14 +385,14 @@ export class OoCliBridge {
       }
       const timeout = setTimeout(() => {
         child.kill('SIGTERM')
-        finish(new Error('oo CLI 执行超时。'), 124)
+        finish(new Error('EverRoom CLI 执行超时。'), 124)
       }, this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       const append = (stream: 'stdout' | 'stderr', chunk: string): void => {
         if (settled) return
         outputBytes += Buffer.byteLength(chunk)
         if (outputBytes > MAX_OUTPUT_BYTES) {
           child.kill('SIGTERM')
-          finish(new Error('oo CLI 输出超过 4 MiB 限制。'), 125)
+          finish(new Error('EverRoom CLI 输出超过 4 MiB 限制。'), 125)
           return
         }
         if (stream === 'stdout') stdout += chunk
@@ -402,7 +409,7 @@ export class OoCliBridge {
         const exitCode = code ?? (signal ? 130 : 1)
         finish(exitCode === 0 ? null : new Error(
           redactText(stderr.trim(), this.options.runtimeToken)
-            || `oo CLI 执行失败（${exitCode}）。`,
+            || `EverRoom CLI 执行失败（${exitCode}）。`,
         ), exitCode)
       })
     })

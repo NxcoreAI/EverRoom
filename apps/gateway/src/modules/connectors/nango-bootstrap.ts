@@ -39,7 +39,7 @@ export async function waitForNango(
 
 /**
  * 启动时对 Nango 实例做自举:
- * 1. 校验/获取可用的 API key(NXCORE_NANGO_SECRET 缺失或失效时,通过无鉴权
+ * 1. 校验/获取可用的 API key(NXCORE_NANGO_CONNECTOR_SECRET 缺失或失效时,通过无鉴权
  *    dashboard API —— 即 FLAG_AUTH_ENABLED=false 的自托管实例 —— 创建或复用
  *    名为 everroom-gateway 的 key)。
  * 2. 按 .env 提供的 OAuth client 凭据,确保 Google/Notion 的 integration 存在
@@ -56,8 +56,7 @@ function authedHttp(baseUrl: string, secret: string): AxiosInstance {
 async function secretWorks(baseUrl: string, secret: string): Promise<boolean> {
   if (!secret) return false;
   try {
-    // ponytail: /integrations 不认 limit 参数(400),只做鉴权探测,别带查询参数。
-    const response = await authedHttp(baseUrl, secret).get("/integrations");
+    const response = await authedHttp(baseUrl, secret).get("/integrations", { params: { limit: 1 } });
     return response.status < 400;
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 401) return false;
@@ -69,24 +68,14 @@ async function secretWorks(baseUrl: string, secret: string): Promise<boolean> {
 
 /** 通过无鉴权 dashboard API(自托管 FLAG_AUTH_ENABLED=false)创建/复用 API key。 */
 async function bootstrapApiKey(baseUrl: string): Promise<string | null> {
-  // ponytail: 固定用 dev 环境(账号 0);需要多环境时再引入 NXCORE_NANGO_ENV。
+  // ponytail: 固定用 dev 环境(账号 0);需要多环境时再引入 NXCORE_NANGO_CONNECTOR_ENV。
   const listUrl = `${baseUrl.replace(/\/$/, "")}/api/v1/environment/api-keys`;
-  const SECRET_MASK_PREFIX = "****";
   try {
     const list = await axios.get(listUrl, { params: { env: "dev" }, timeout: 10_000 });
     const existing = (list.data?.data ?? []).find((key: { display_name?: string; secret?: string }) => key.display_name === API_KEY_NAME);
-    if (existing && typeof existing.secret === "string" && !existing.secret.startsWith(SECRET_MASK_PREFIX)) return existing.secret;
+    if (existing && typeof existing.secret === "string" && !existing.secret.startsWith("****")) return existing.secret;
     if (existing) {
-      // dev 环境列表接口不掩码 secret;掩码说明实例不是无鉴权模式或环境不对,删除旧 key 重建。
-      const keyId = existing.id;
-      await axios.delete(`${listUrl}/${String(keyId)}`, { params: { env: "dev" }, timeout: 10_000 }).catch(() => undefined);
-      const recreated = await axios.post(listUrl, { display_name: API_KEY_NAME, scopes: ["environment:*"] }, { params: { env: "dev" }, timeout: 10_000 });
-      const secret = recreated.data?.data?.secret;
-      if (typeof secret === "string" && secret) {
-        console.info(`[nango-bootstrap] 已重建被掩码的 Nango API key "${API_KEY_NAME}"`);
-        return secret;
-      }
-      console.warn("[nango-bootstrap] 重建被掩码的 API key 失败");
+      console.warn("[nango-bootstrap] 现有 API key 的 secret 被掩码,无法复用;请检查环境配置");
       return null;
     }
     const created = await axios.post(listUrl, { display_name: API_KEY_NAME, scopes: ["environment:*"] }, { params: { env: "dev" }, timeout: 10_000 });
@@ -102,20 +91,6 @@ async function bootstrapApiKey(baseUrl: string): Promise<string | null> {
   }
 }
 
-/**
- * 各 provider 创建 integration 时显式声明的 OAuth scopes。
- * ponytail: Google 系 provider 在 Nango providers.yaml 里故意不设 default_scopes(按 scope
- * 划分产品让用户自选),缺省时授权 URL 的 scope 为空,Google 直接 400 invalid_request。
- * scope 集合按 nango-executor 实际调用的 API 裁剪(gmail history/messages、calendar
- * events 读写、drive files list/export)。
- */
-const PROVIDER_SCOPES: Record<string, string> = {
-  "google-mail": "https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/userinfo.email",
-  "google-calendar": "https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/userinfo.email",
-  "google-drive": "https://www.googleapis.com/auth/drive.readonly,https://www.googleapis.com/auth/userinfo.email",
-  // microsoft 的 default_scopes(offline_access,.default)由 provider 兜底,无需显式传。
-};
-
 export async function ensureIntegration(
   dashboard: AxiosInstance,
   providerConfigKey: string,
@@ -124,14 +99,13 @@ export async function ensureIntegration(
   clientSecret: string,
   scopes?: string,
 ): Promise<void> {
-  const effectiveScopes = scopes ?? PROVIDER_SCOPES[provider];
   try {
     const existing = await dashboard.get(`/api/v1/integrations/${encodeURIComponent(providerConfigKey)}`, { params: { env: "dev" }, validateStatus: () => true });
     if (existing.status === 200) {
-      if (effectiveScopes && existing.data?.data?.integration?.oauth_scopes !== effectiveScopes) {
+      if (scopes && existing.data?.data?.integration?.oauth_scopes !== scopes) {
         await dashboard.patch(
           `/api/v1/integrations/${encodeURIComponent(providerConfigKey)}`,
-          { authType: "OAUTH2", scopes: effectiveScopes },
+          { authType: "OAUTH2", scopes },
           { params: { env: "dev" } },
         );
         console.info(`[nango-bootstrap] Updated scopes for integration ${providerConfigKey}`);
@@ -146,9 +120,9 @@ export async function ensureIntegration(
       provider,
       integrationId: providerConfigKey,
       useSharedCredentials: false,
-      auth: { authType: "OAUTH2", clientId, clientSecret, ...(effectiveScopes ? { scopes: effectiveScopes } : {}) },
+      auth: { authType: "OAUTH2", clientId, clientSecret, ...(scopes ? { scopes } : {}) },
     }, { params: { env: "dev" } });
-    console.info(`[nango-bootstrap] 已创建 integration ${providerConfigKey} (provider=${provider}${effectiveScopes ? `, scopes=${effectiveScopes}` : ""})`);
+    console.info(`[nango-bootstrap] 已创建 integration ${providerConfigKey} (provider=${provider})`);
   } catch (error) {
     console.warn(`[nango-bootstrap] 创建 integration ${providerConfigKey} 失败:`, error instanceof Error ? error.message : error);
   }
@@ -164,7 +138,7 @@ export async function bootstrapNango(config: ConnectorConfig): Promise<string> {
       secret = bootstrapped;
       console.info("[nango-bootstrap] 使用自举的 Nango API key 替代配置中的 secret");
     } else if (config.nangoSecret) {
-      console.warn("[nango-bootstrap] 配置的 NXCORE_NANGO_SECRET 未通过校验且无法自举,授权请求可能失败");
+      console.warn("[nango-bootstrap] 配置的 NXCORE_NANGO_CONNECTOR_SECRET 未通过校验且无法自举,授权请求可能失败");
     }
   }
 

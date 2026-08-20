@@ -6,6 +6,7 @@ import type {
   EvidenceDocument,
   EvidenceSearchResult,
   MarkdownPreview,
+  SourceChangeEvent,
   SourceFileSummary,
 } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
@@ -28,12 +29,15 @@ const EMPTY_GITHUB_FORM: GitHubConnectionInput = {
   syncIssues: true,
 }
 
+type DeletionProgress = NonNullable<SourceChangeEvent['deletion']> & { sourceId: string }
+
 export function SourcesPage() {
   const { t } = useLocale()
   const api = window.nxcore?.sources
   const [sources, setSources] = useState<DataSourceSummary[]>([])
   const [loading, setLoading] = useState(Boolean(api))
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [deletionProgress, setDeletionProgress] = useState<DeletionProgress | null>(null)
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null)
   const [filesBySource, setFilesBySource] = useState<Record<string, SourceFileSummary[]>>({})
   const [filesLoadingId, setFilesLoadingId] = useState<string | null>(null)
@@ -53,22 +57,7 @@ export function SourcesPage() {
   const [connectorsEnabled, setConnectorsEnabled] = useState(false)
 
   useEffect(() => {
-    const connectors = window.nxcore?.connectors
-    if (!connectors) return
-    const refresh = async () => {
-      try {
-        const [status, runtime] = await Promise.all([
-          connectors.status(),
-          connectors.runtimeStatus(),
-        ])
-        setConnectorsEnabled(status.enabled && runtime.state === 'ready')
-      } catch {
-        setConnectorsEnabled(false)
-      }
-    }
-    void refresh()
-    const timer = window.setInterval(() => void refresh(), 2_000)
-    return () => window.clearInterval(timer)
+    void window.nxcore?.nangoConnector.status().then((status) => setConnectorsEnabled(status.enabled)).catch(() => undefined)
   }, [])
 
   // 授权确认由 gateway 在 status 轮询中完成（Nango 确认后自动注册连接），
@@ -79,7 +68,7 @@ export function SourcesPage() {
     let active = true
     const check = async () => {
       try {
-        const next = await window.nxcore!.connectors.authorizationStatus(authorizationId)
+        const next = await window.nxcore!.nangoConnector.authorizationStatus(authorizationId)
         if (!active) return
         if (next.status === 'connected') { setAuthorizationId(null); setMessage(t('surface:sources.connectionCreatedSyncScopesAreBeingInitialized')) }
         else if (next.status !== 'pending') { setAuthorizationId(null); setMessage(next.error ?? t('surface:sources.authorizationWasNotCompleted')) }
@@ -94,7 +83,7 @@ export function SourcesPage() {
     setConnectMenuOpen(false)
     setMessage(null)
     try {
-      const attempt = await window.nxcore?.connectors.startAuthorization(provider)
+      const attempt = await window.nxcore?.nangoConnector.startAuthorization(provider)
       if (attempt) {
         setAuthorizationId(attempt.id)
         setMessage(t('surface:sources.theAuthorizationPageIsOpenCompleteAuthorizationIn'))
@@ -145,6 +134,15 @@ export function SourcesPage() {
     void loadSources()
     if (!api) return
     return api.onChanged((event) => {
+      if (event.deletion) setDeletionProgress({ sourceId: event.sourceId, ...event.deletion })
+      const terminalDeletion = event.deletion?.stage === 'completed' || event.deletion?.stage === 'failed'
+      if (terminalDeletion) {
+        setBusyId((current) => current === event.sourceId ? null : current)
+        window.setTimeout(() => {
+          setDeletionProgress((current) => current?.sourceId === event.sourceId ? null : current)
+        }, event.deletion?.stage === 'completed' ? 1800 : 4000)
+      }
+      if (event.deletion && !terminalDeletion) return
       void loadSources().then((nextSources) => {
         if (event.filesChanged && expandedSourceId === event.sourceId && nextSources?.some((source) => source.id === event.sourceId)) {
           void loadFiles(event.sourceId, false)
@@ -253,10 +251,21 @@ export function SourcesPage() {
     }
   }
 
-  const deleteSource = (source: DataSourceSummary) => {
-    if (!api || !window.confirm(t('surface:sources.deleteNameThisRemovesFileCopiesAndVersion', { name: source.name, product: PRODUCT_NAME }))) return
+  const clearSourceData = (source: DataSourceSummary) => {
+    if (!api || !window.confirm(t('surface:sources.clearNameThisRemovesFileCopiesAndKeepsFolder', { name: source.name, product: PRODUCT_NAME }))) return
+    setBusyId(source.id)
+    setFilesBySource((current) => {
+      const next = { ...current }
+      delete next[source.id]
+      return next
+    })
     if (expandedSourceId === source.id) setExpandedSourceId(null)
-    void runAction(source.id, () => api.disconnect(source.id, true))
+    setMessage(t('surface:sources.clearingFolderDocumentData'))
+    void api.disconnect(source.id, true).catch((error) => {
+      setBusyId(null)
+      setMessage(error instanceof Error ? error.message : '清理数据源失败，请稍后重试。')
+      void loadSources()
+    })
   }
 
   const showFile = (sourceId: string, fileId: string) => {
@@ -278,11 +287,11 @@ export function SourcesPage() {
       <PageHeader title={t('surface:sources.sources')} description={t('surface:sources.manageFilesAppsAndWebContentEnteringProduct', { product: PRODUCT_NAME })} action={t('surface:sources.connectSource')} actionDisabled={busyId === 'new'} onAction={() => setConnectMenuOpen((open) => !open)} />
       {api && connectMenuOpen ? <ConnectSourceMenu busy={busyId === 'new'} onLocalFolder={() => void addLocalFolder()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} /> : null}
       {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:sources.connectLocalFoldersInTheDesktopApp')}</strong><span>{t('surface:sources.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div> : null}
-      {message ? <div className="source-feedback" role="status">{message}</div> : null}
+      {deletionProgress ? <div className="source-feedback source-delete-progress" role="status"><div className="source-delete-progress-copy"><strong>{deletionProgress.message}</strong><span className="source-delete-progress-track"><span style={{ width: `${deletionProgress.percent}%` }} /></span></div><b>{deletionProgress.percent}%</b></div> : message ? <div className="source-feedback" role="status">{message}</div> : null}
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
       {api && sources.length > 0 ? <EvidenceSearch query={searchQuery} results={searchResults} searching={searching} onQueryChange={setSearchQuery} onSearch={(event) => void searchEvidence(event)} onClear={() => { setSearchQuery(''); setSearchResults(null) }} onOpen={(result) => void openEvidence(result.sourceId, result.fileId, result.id)} /> : null}
       {api && !loading && sources.length === 0 ? <div className="sources-empty"><span className="sources-empty-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span><strong>{t('surface:sources.noSourcesConnectedYet')}</strong><p>{t('surface:sources.connectASourceAndProductWillTrackVersions', { product: PRODUCT_NAME })}</p><button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><Plus aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.connectFolder')}</button></div> : null}
-      {api && (loading || sources.length > 0) ? <SourceTable sources={sources} loading={loading} busyId={busyId} expandedSourceId={expandedSourceId} filesBySource={filesBySource} filesLoadingId={filesLoadingId} onToggleFiles={(id) => setExpandedSourceId((current) => current === id ? null : id)} onSync={(source) => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={(source) => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onDelete={deleteSource} onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)} onPreviewFile={(sourceId, fileId) => void previewFile(sourceId, fileId)} onShowFile={showFile} /> : null}
+      {api && (loading || sources.length > 0) ? <SourceTable sources={sources} loading={loading} busyId={busyId} expandedSourceId={expandedSourceId} filesBySource={filesBySource} filesLoadingId={filesLoadingId} onToggleFiles={(id) => setExpandedSourceId((current) => current === id ? null : id)} onSync={(source) => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={(source) => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onClear={clearSourceData} onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)} onPreviewFile={(sourceId, fileId) => void previewFile(sourceId, fileId)} onShowFile={showFile} /> : null}
       <div className="sources-connector-heading">
         <h2>{t('surface:sources.connectors')}</h2>
       </div>

@@ -39,6 +39,30 @@ async function serviceForTest() {
 }
 
 describe("统一上传（闸1/版本更新）", () => {
+  it("JSON 文件在写对象和数据库前被拒绝", async () => {
+    const test = await serviceForTest();
+    await expect(test.service.upload({ filename: "package.json", buffer: Buffer.from("{}") }))
+      .rejects.toThrow("JSON 文件不会进入文件库");
+    expect(test.sqlite.prepare("SELECT COUNT(*) c FROM uploaded_files").get())
+      .toMatchObject({ c: 0 });
+    test.sqlite.close();
+  });
+
+  it("启动清理会删除旧版本遗留的 JSON 文件行", async () => {
+    const test = await serviceForTest();
+    const now = Date.now();
+    test.sqlite.prepare(`
+      INSERT INTO uploaded_files (
+        id, content_hash, storage_path, original_name, bytes, mime, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("file-legacy-json", "a".repeat(64), "files/sha256/aa/legacy", "package.json", 2, "application/json", now, now);
+
+    await expect(test.service.purgeUnsupportedFiles()).resolves.toBe(1);
+    expect(test.sqlite.prepare("SELECT COUNT(*) c FROM uploaded_files").get())
+      .toMatchObject({ c: 0 });
+    test.sqlite.close();
+  });
+
   it("首传落对象库与登记行；同名同内容重传 deduped 且零写入", async () => {
     const test = await serviceForTest();
     const buffer = Buffer.from("# 方案", "utf8");
@@ -226,6 +250,32 @@ describe("REST /v1/files", () => {
     expect(await app.inject({ method: "GET", url: `/v1/files/${uploaded.id}` })).toMatchObject({
       statusCode: 404,
     });
+    await app.close();
+    test.sqlite.close();
+  });
+
+  it("拒绝扩展名为 JSON 的 multipart 文件", async () => {
+    const { app, test } = await appForTest();
+    const boundary = "----everroom-json-test";
+    const body = Buffer.from([
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="package.json"',
+      "Content-Type: application/json",
+      "",
+      "{}",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n"));
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/files",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "unsupported_file_type" });
+    expect(test.sqlite.prepare("SELECT COUNT(*) c FROM uploaded_files").get())
+      .toMatchObject({ c: 0 });
     await app.close();
     test.sqlite.close();
   });

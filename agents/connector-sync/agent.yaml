@@ -1,0 +1,27 @@
+schemaVersion: 1
+kind: builtin
+id: connector-sync
+name: Connector Sync Agent
+description: 读取连接器分页数据，规范化记录并可靠写入本地同步存储
+runtime: pi
+systemPrompt: ./SYSTEM.md
+
+capabilities:
+  - connector.read
+  - connector.sync-write
+  - connector.quarantine
+  - connector.checkpoint
+
+tools:
+  - connector_search
+  - connector_schema
+  - connector_apps
+  - connector_run
+  - sync_write_batch
+  - sync_quarantine
+  - sync_finish
+
+skills:
+  - ./skills/gmail-sync
+  - ./skills/notion-sync
+  - ./skills/google-calendar-sync

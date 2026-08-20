@@ -299,57 +299,59 @@ export class AgentService {
     private readonly documentRegistry?: AgentDocumentRegistry,
     private readonly completedMessageResolver?: AgentCompletedMessageResolver,
     private readonly connectorMode: "direct" | "local" = "direct",
-    private readonly usageMetadata: { provider: string; model: string } = { provider: "piagent", model: "unknown" },
+    private readonly disposeRuntime = true,
   ) {}
 
   getUsage(range: AgentUsageRange): AgentUsageSnapshot {
-    const now = Date.now();
-    const durationMs = range === "24h" ? 24 * 60 * 60 * 1000 : range === "7d" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
-    const bucketCount = range === "24h" ? 12 : range === "7d" ? 7 : 30;
-    const bucketMs = durationMs / bucketCount;
-    const startMs = now - durationMs;
+    const now = Date.now()
+    const durationMs = range === "24h" ? 24 * 60 * 60 * 1000 : range === "7d" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000
+    const bucketCount = range === "24h" ? 12 : range === "7d" ? 7 : 30
+    const bucketMs = durationMs / bucketCount
+    const startMs = now - durationMs
     const points = Array.from({ length: bucketCount }, (_, index) => ({
       startAt: new Date(startMs + index * bucketMs).toISOString(),
       inputTokens: 0,
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
-    }));
-    const events = this.db.select({ createdAt: agentEvents.createdAt, payload: agentEvents.payload })
+    }))
+    const events = this.db
+      .select({ createdAt: agentEvents.createdAt, payload: agentEvents.payload })
       .from(agentEvents)
       .where(gt(agentEvents.createdAt, new Date(startMs)))
-      .all();
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheHitTokens = 0;
+      .all()
+    let inputTokens = 0
+    let outputTokens = 0
+    let cacheHitTokens = 0
     for (const event of events) {
-      if (event.payload === null || typeof event.payload !== "object") continue;
-      const payload = event.payload as { usage?: { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown } };
-      if (!payload.usage) continue;
-      const input = typeof payload.usage.input === "number" ? payload.usage.input : 0;
-      const output = typeof payload.usage.output === "number" ? payload.usage.output : 0;
-      const cacheRead = typeof payload.usage.cacheRead === "number" ? payload.usage.cacheRead : 0;
-      const cacheWrite = typeof payload.usage.cacheWrite === "number" ? payload.usage.cacheWrite : 0;
-      const bucket = Math.min(bucketCount - 1, Math.max(0, Math.floor((event.createdAt.getTime() - startMs) / bucketMs)));
-      const point = points[bucket];
-      if (!point) continue;
-      point.inputTokens += input;
-      point.outputTokens += output;
-      point.cacheReadTokens += cacheRead;
-      point.cacheWriteTokens += cacheWrite;
-      inputTokens += input;
-      outputTokens += output;
-      cacheHitTokens += cacheRead;
+      if (event.payload === null || typeof event.payload !== "object") continue
+      const payload = event.payload as { usage?: { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown } }
+      if (!payload.usage) continue
+      const input = typeof payload.usage.input === "number" ? payload.usage.input : 0
+      const output = typeof payload.usage.output === "number" ? payload.usage.output : 0
+      const cacheRead = typeof payload.usage.cacheRead === "number" ? payload.usage.cacheRead : 0
+      const cacheWrite = typeof payload.usage.cacheWrite === "number" ? payload.usage.cacheWrite : 0
+      const bucket = Math.min(bucketCount - 1, Math.max(0, Math.floor((event.createdAt.getTime() - startMs) / bucketMs)))
+      const point = points[bucket]
+      if (!point) continue
+      point.inputTokens += input
+      point.outputTokens += output
+      point.cacheReadTokens += cacheRead
+      point.cacheWriteTokens += cacheWrite
+      inputTokens += input
+      outputTokens += output
+      cacheHitTokens += cacheRead
     }
     return {
-      ...this.usageMetadata,
+      provider: "piagent",
+      model: "unknown",
       range,
       inputTokens,
       outputTokens,
       cacheHitTokens,
       points,
       updatedAt: new Date(now).toISOString(),
-    };
+    }
   }
 
   async initialize(): Promise<void> {
@@ -399,7 +401,7 @@ export class AgentService {
       for (const sessionId of sessionIds) revokeTrustedMcpSession(sessionId);
     }
     this.trustedMcpSessions.clear();
-    await this.runtime.dispose();
+    if (this.disposeRuntime) await this.runtime.dispose();
   }
 
   createSession(input: CreateAgentSessionInput): AgentSession {

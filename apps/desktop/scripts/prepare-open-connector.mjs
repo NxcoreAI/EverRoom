@@ -12,10 +12,13 @@ const desktopDirectory = dirname(import.meta.dirname)
 const buildDirectory = join(desktopDirectory, 'build')
 const targetDirectory = join(buildDirectory, 'open-connector')
 const markerPath = join(targetDirectory, '.everroom-runtime.json')
+const everroomLogoPath = join(desktopDirectory, 'src', 'renderer', 'src', 'assets', 'nxcore-logo.svg')
+const everroomIconPath = join(desktopDirectory, 'build', 'icon.png')
 
 const sourceManifest = JSON.parse(await readFile(sourcePackagePath, 'utf8'))
 const expectedMarker = JSON.stringify({
   runtimeFormat: 1,
+  brandingVersion: 2,
   revision: OPEN_CONNECTOR_REVISION,
   version: sourceManifest.version,
 })
@@ -54,6 +57,7 @@ for (const entry of [
 try {
   await run('npm', ['install', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], stagingDirectory)
   await run(process.execPath, ['scripts/ensure-generated.ts'], stagingDirectory)
+  await applyEverRoomBranding(stagingDirectory)
   await run('npm', ['run', 'build:web'], stagingDirectory)
 
   const runtimeManifest = JSON.parse(await readFile(join(stagingDirectory, 'package.json'), 'utf8'))
@@ -93,6 +97,35 @@ try {
   console.log(`Prepared OpenConnector ${sourceManifest.version}: ${targetDirectory}`)
 } finally {
   await rm(stagingDirectory, { recursive: true, force: true })
+}
+
+async function applyEverRoomBranding(directory) {
+  const uiPath = join(directory, 'web', 'src', 'ui.tsx')
+  const indexPath = join(directory, 'web', 'index.html')
+  const logoPath = join(directory, 'web', 'src', 'assets', 'everroom-connect-logo.svg')
+  const faviconPath = join(directory, 'web', 'public', 'favicon.png')
+
+  await cp(everroomLogoPath, logoPath)
+  await cp(everroomIconPath, faviconPath)
+  await replaceExact(uiPath, [
+    ['import oomolConnectLogoUrl from "./assets/oomol-connect-logo.png";', 'import everroomConnectLogoUrl from "./assets/everroom-connect-logo.svg";'],
+    ['src={oomolConnectLogoUrl}', 'src={everroomConnectLogoUrl}'],
+    ['<div className="brand-name">OOMOL Connect</div>', '<div className="brand-name">EverRoom</div>'],
+  ])
+  await replaceExact(indexPath, [
+    ['<title>OOMOL Connect</title>', '<title>EverRoom</title>'],
+  ])
+}
+
+async function replaceExact(path, replacements) {
+  let contents = await readFile(path, 'utf8')
+  for (const [source, replacement] of replacements) {
+    if (!contents.includes(source)) {
+      throw new Error(`OpenConnector branding source changed; missing ${JSON.stringify(source)} in ${path}`)
+    }
+    contents = contents.replaceAll(source, replacement)
+  }
+  await writeFile(path, contents)
 }
 
 function run(command, arguments_, cwd) {

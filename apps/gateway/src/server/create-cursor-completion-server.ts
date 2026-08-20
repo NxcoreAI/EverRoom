@@ -6,7 +6,8 @@ import type { GatewayConfig } from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
-import { createCursorCompletionRuntime } from "../modules/agent/runtime-factory.js";
+import { createAgentResolver, registerCursorCompletionAgent } from "../modules/agent/runtime-factory.js";
+import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
 import { AgentService } from "../modules/agent/service.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
@@ -35,7 +36,9 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
 
-  const runtime = createCursorCompletionRuntime(config);
+  const agentResolver = createAgentResolver(config);
+  registerCursorCompletionAgent(agentResolver, config);
+  const runtime = agentResolver.resolve(BUILTIN_AGENT_IDS.cursorCompletion);
   app.log.info(
     {
       runtimeId: runtime.id,
@@ -50,11 +53,22 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
     },
     "cursor completion runtime configured",
   );
-  const agentService = new AgentService(db, runtime, new AgentEventBroker(), app.log);
+  const agentService = new AgentService(
+    db,
+    runtime,
+    new AgentEventBroker(),
+    app.log,
+    undefined,
+    undefined,
+    undefined,
+    "direct",
+    false,
+  );
   await agentService.initialize();
 
   app.addHook("onClose", async () => {
     await agentService.dispose();
+    await agentResolver.dispose();
     sqlite.close();
     await gatewayLogger.close();
   });

@@ -1,5 +1,5 @@
-import { Eye, FolderOpen, HardDrive, Pencil, Trash2, X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { ArrowLeft, ChevronRight, Eye, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Pencil, Search, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type {
   FileDto,
@@ -8,6 +8,7 @@ import type {
   IngestPipelines,
 } from '../../../../shared/ingest'
 import { PageHeader } from './PageHeader'
+import { categoryForFile, FILE_CATEGORY_DEFINITIONS } from './fileCategories'
 import { formatBytes, formatDate } from './sources/sourceFormatters'
 import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
@@ -47,11 +48,15 @@ export function FilesPage() {
   const [files, setFiles] = useState<FileDto[]>([])
   const [loading, setLoading] = useState(Boolean(filesApi))
   const [events, setEvents] = useState<IngestEventDto[]>([])
+  const [fileEvents, setFileEvents] = useState<IngestEventDto[]>([])
   const [outcomes, setOutcomes] = useState<FileImportOutcome[] | null>(null)
   const [importing, setImporting] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [preview, setPreview] = useState<FilePreview | null>(null)
+  const [selectedCategoryKey, setSelectedCategoryKey] = useState<string | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const loadFiles = useCallback(async () => {
     if (!filesApi) return
@@ -72,10 +77,58 @@ export function FilesPage() {
     }
   }, [ingestApi])
 
+  const loadFileEvents = useCallback(async () => {
+    if (!ingestApi) return
+    try {
+      const firstPage = await ingestApi.listEvents({ limit: 200, offset: 0, sourceKind: 'file' })
+      const pages = [firstPage.items]
+      for (let offset = firstPage.items.length; offset < firstPage.total; offset += 200) {
+        pages.push((await ingestApi.listEvents({ limit: 200, offset, sourceKind: 'file' })).items)
+      }
+      setFileEvents(pages.flat())
+    } catch {
+    }
+  }, [ingestApi])
+
   useEffect(() => {
     void loadFiles()
     void loadEvents()
-  }, [loadEvents, loadFiles])
+    void loadFileEvents()
+  }, [loadEvents, loadFileEvents, loadFiles])
+
+  const fileEventBySourceId = useMemo(() => {
+    const result = new Map<string, IngestEventDto>()
+    for (const event of fileEvents) {
+      const current = result.get(event.sourceId)
+      if (!current || event.sourceVersion >= current.sourceVersion) result.set(event.sourceId, event)
+    }
+    return result
+  }, [fileEvents])
+
+  const visibleFiles = useMemo(
+    () => files.filter((file) => !file.originalName.toLowerCase().endsWith('.json')),
+    [files],
+  )
+
+  const classifiedFiles = useMemo(() => visibleFiles.map((file) => {
+    const event = fileEventBySourceId.get(file.id)
+    return { file, event, category: categoryForFile(file, event) }
+  }), [fileEventBySourceId, visibleFiles])
+
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
+  const categoryCards = useMemo(() => FILE_CATEGORY_DEFINITIONS.map((definition) => ({
+    ...definition,
+    files: classifiedFiles.filter(({ file, event, category }) => {
+      if (category.key !== definition.key) return false
+      if (!normalizedSearch) return true
+      return `${file.originalName} ${event?.title ?? ''}`.toLocaleLowerCase().includes(normalizedSearch)
+    }),
+  })).filter(({ files: categoryFiles }) => categoryFiles.length > 0), [classifiedFiles, normalizedSearch])
+
+  const selectedCategory = selectedCategoryKey
+    ? categoryCards.find((category) => category.key === selectedCategoryKey) ?? null
+    : null
+  const SelectedCategoryIcon = selectedCategory?.icon
 
   const importFiles = async () => {
     if (!filesApi || importing) return
@@ -87,7 +140,7 @@ export function FilesPage() {
       setOutcomes(result)
       const entered = result.filter((outcome) => outcome.eventId).length
       setMessage(t('surface:files.importCompleteEnteredTotalFilesEnteredThePipeline', { entered, total: result.length }))
-      await Promise.all([loadFiles(), loadEvents()])
+      await Promise.all([loadFiles(), loadEvents(), loadFileEvents()])
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t('surface:files.importFailedTryAgainLater'))
     } finally {
@@ -139,8 +192,8 @@ export function FilesPage() {
   return (
     <div className="page">
       <PageHeader
-        title={t('surface:files.files')}
-        description={t('surface:files.importFilesAndTrackHowTheyFlowInto')}
+        title="文档识别"
+        description={`按识别类型整理 ${PRODUCT_NAME} 中的文件，点击类型卡片查看聚类清单。`}
         action={t('surface:files.importFiles')}
         actionDisabled={!filesApi || importing}
         onAction={() => void importFiles()}
@@ -184,36 +237,104 @@ export function FilesPage() {
       ) : null}
 
       {view === 'files' && filesApi ? (
-        <div className="data-table files-table">
-          <div className="table-head"><span>{t('surface:files.name')}</span><span>{t('surface:files.size')}</span><span>{t('surface:files.status')}</span><span>{t('surface:files.imported')}</span><span className="files-actions-column">{t('surface:files.actions')}</span></div>
-          {loading ? <div className="source-loading">{t('surface:files.loadingFiles')}</div> : null}
-          {!loading && files.length === 0 ? <div className="source-files-empty">{t('surface:files.noFilesImportedYetSelectImportFilesTo')}</div> : null}
-          {files.map((file) => (
-            <div key={file.id} className="table-row">
-              <span className="name-cell"><strong title={file.contentHash}>{file.originalName}</strong></span>
-              <span>{formatBytes(file.bytes)}</span>
-              <span className="status-cell">
-                <span className={`status-dot${file.parsed ? ' active' : ''}`} />
-                {t(file.parsed ? 'surface:files.parsed' : 'surface:files.notProcessed')}
-              </span>
-              <span>{formatDate(file.createdAt, locale, t)}</span>
-              <span className="files-actions">
-                <button type="button" className="icon-button" aria-label={t('surface:files.previewName', { name: file.originalName })} title={t('surface:files.previewParsedOutput')} disabled={!file.parsed || busyId === file.id} onClick={() => void openPreview(file)}>
-                  <Eye aria-hidden="true" strokeWidth={1.8} />
-                </button>
-                <button type="button" className="icon-button" aria-label={t('surface:files.renameName', { name: file.originalName })} title={t('surface:files.rename')} disabled={busyId === file.id} onClick={() => renameFile(file)}>
-                  <Pencil aria-hidden="true" strokeWidth={1.8} />
-                </button>
-                <button type="button" className="icon-button" aria-label={t('surface:files.revealName', { name: file.originalName })} title={t('surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => void filesApi.reveal(file.id).catch(() => undefined)}>
-                  <FolderOpen aria-hidden="true" strokeWidth={1.8} />
-                </button>
-                <button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}>
-                  <Trash2 aria-hidden="true" strokeWidth={1.8} />
-                </button>
-              </span>
+        <section className="file-recognition" aria-labelledby="file-recognition-heading">
+          <div className="file-recognition-toolbar">
+            {selectedCategory ? (
+              <button type="button" className="file-back-button" onClick={() => setSelectedCategoryKey(null)}>
+                <ArrowLeft aria-hidden="true" strokeWidth={1.8} />
+                <span>{t('surface:files.files')}</span>
+              </button>
+            ) : (
+              <h2 id="file-recognition-heading">文档识别（{categoryCards.length}）</h2>
+            )}
+            <div className="file-recognition-tools">
+              {searchOpen ? (
+                <input
+                  autoFocus
+                  type="search"
+                  value={searchQuery}
+                  placeholder="搜索文件"
+                  aria-label="搜索文件"
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
+              ) : null}
+              <button type="button" className="icon-button file-search-button" aria-label="搜索文件" title="搜索文件" onClick={() => setSearchOpen((open) => !open)}>
+                <Search aria-hidden="true" strokeWidth={1.8} />
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
+
+          {loading ? <div className="source-loading">{t('surface:files.loadingFiles')}</div> : null}
+          {!loading && !selectedCategory && categoryCards.length === 0 ? (
+            <div className="file-recognition-empty">
+              <span className="file-recognition-empty-icon"><FileTextIcon /></span>
+              <strong>{searchQuery ? '没有匹配的文件' : '还没有可识别的文件'}</strong>
+              <p>{searchQuery ? '换一个关键词试试。' : '点击右上角“导入文件”后，文件会按识别类型自动归类。'}</p>
+            </div>
+          ) : null}
+
+          {!loading && !selectedCategory ? (
+            <div className="file-category-grid">
+              {categoryCards.map((category) => {
+                const CategoryIcon = category.icon
+                return (
+                  <button
+                    key={category.key}
+                    type="button"
+                    className={`file-category-card file-category-${category.tone}`}
+                    onClick={() => setSelectedCategoryKey(category.key)}
+                  >
+                    <span className="file-category-card-head">
+                      <span className="file-category-title-wrap">
+                        <span className="file-category-icon"><CategoryIcon aria-hidden="true" strokeWidth={1.8} /></span>
+                        <span>
+                          <strong>{category.label}</strong>
+                          <small>{category.files.length} 份文件</small>
+                        </span>
+                      </span>
+                      <ChevronRight aria-hidden="true" strokeWidth={1.8} />
+                    </span>
+                    <span className="file-category-list">
+                      {category.files.slice(0, 5).map(({ file }) => (
+                        <span className="file-category-item" key={file.id}>
+                          <FileTypeIcon file={file} />
+                          <span title={file.originalName}>{file.originalName}</span>
+                        </span>
+                      ))}
+                      {category.files.length > 5 ? <small className="file-category-more">+ {category.files.length - 5} 份</small> : null}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+
+          {!loading && selectedCategory ? (
+            <div className="file-category-detail">
+              <div className="file-category-detail-title">
+                <span className={`file-category-icon file-category-${selectedCategory.tone}`}>{SelectedCategoryIcon ? <SelectedCategoryIcon aria-hidden="true" strokeWidth={1.8} /> : null}</span>
+                <div><h2>{selectedCategory.label}</h2><span>{selectedCategory.files.length} 份文件</span></div>
+              </div>
+              <div className="data-table files-table">
+                <div className="table-head"><span>{t('surface:files.name')}</span><span>{t('surface:files.size')}</span><span>{t('surface:files.status')}</span><span>{t('surface:files.imported')}</span><span className="files-actions-column">{t('surface:files.actions')}</span></div>
+                {selectedCategory.files.map(({ file }) => (
+                  <div key={file.id} className="table-row">
+                    <span className="name-cell"><strong title={file.contentHash}>{file.originalName}</strong></span>
+                    <span>{formatBytes(file.bytes)}</span>
+                    <span className="status-cell"><span className={`status-dot${file.parsed ? ' active' : ''}`} />{t(file.parsed ? 'surface:files.parsed' : 'surface:files.notProcessed')}</span>
+                    <span>{formatDate(file.createdAt, locale, t)}</span>
+                    <span className="files-actions">
+                      <button type="button" className="icon-button" aria-label={t('surface:files.previewName', { name: file.originalName })} title={t('surface:files.previewParsedOutput')} disabled={!file.parsed || busyId === file.id} onClick={() => void openPreview(file)}><Eye aria-hidden="true" strokeWidth={1.8} /></button>
+                      <button type="button" className="icon-button" aria-label={t('surface:files.renameName', { name: file.originalName })} title={t('surface:files.rename')} disabled={busyId === file.id} onClick={() => renameFile(file)}><Pencil aria-hidden="true" strokeWidth={1.8} /></button>
+                      <button type="button" className="icon-button" aria-label={t('surface:files.revealName', { name: file.originalName })} title={t('surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => void filesApi.reveal(file.id).catch(() => undefined)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button>
+                      <button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
       ) : null}
 
       {view === 'events' && ingestApi ? (
@@ -257,6 +378,16 @@ export function FilesPage() {
       ) : null}
     </div>
   )
+}
+
+function FileTypeIcon({ file }: { file: FileDto }) {
+  const extension = file.originalName.split('.').pop()?.toLowerCase()
+  const Icon = extension === 'xlsx' || extension === 'xls' || extension === 'csv'
+    ? FileSpreadsheet
+    : extension === 'pdf'
+      ? FileType2
+      : FileTextIcon
+  return <Icon className="file-type-icon" aria-hidden="true" strokeWidth={1.8} />
 }
 
 function describeMemory(memory: FileImportOutcome['memoryResult'], t: Translate): string {

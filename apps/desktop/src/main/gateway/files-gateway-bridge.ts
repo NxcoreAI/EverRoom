@@ -1,5 +1,6 @@
 import { dialog, shell } from 'electron'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { basename, extname, relative, resolve, sep } from 'node:path'
 import type {
   FileDto,
   FileImportOutcome,
@@ -8,6 +9,65 @@ import type {
 } from '../../shared/ingest'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
+
+const SUPPORTED_IMPORT_EXTENSIONS = new Set([
+  '.csv', '.docx', '.html', '.htm', '.md', '.markdown', '.pptx', '.txt', '.xlsx',
+])
+
+export interface ImportCandidate {
+  filePath: string
+  filename: string
+}
+
+function isSupportedImportFile(filePath: string): boolean {
+  return SUPPORTED_IMPORT_EXTENSIONS.has(extname(filePath).toLowerCase())
+}
+
+async function collectDirectoryFiles(directory: string): Promise<ImportCandidate[]> {
+  const rootPath = resolve(directory)
+  const candidates: ImportCandidate[] = []
+  const visit = async (currentDirectory: string, isRoot = false): Promise<void> => {
+    let entries
+    try {
+      entries = await readdir(currentDirectory, { withFileTypes: true })
+    } catch (error) {
+      if (isRoot) throw error
+      return
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue
+      const filePath = resolve(currentDirectory, entry.name)
+      if (entry.isDirectory()) {
+        await visit(filePath)
+      } else if (entry.isFile() && isSupportedImportFile(filePath)) {
+        candidates.push({ filePath, filename: relative(rootPath, filePath).split(sep).join('/') })
+      }
+    }
+  }
+  await visit(rootPath, true)
+  candidates.sort((left, right) => left.filename.localeCompare(right.filename))
+  return candidates
+}
+
+export async function collectImportCandidates(selectedPaths: string[]): Promise<ImportCandidate[]> {
+  const candidates: ImportCandidate[] = []
+  const seen = new Set<string>()
+  for (const selectedPath of selectedPaths) {
+    const resolvedPath = resolve(selectedPath)
+    if (seen.has(resolvedPath)) continue
+    seen.add(resolvedPath)
+    let selectedStat
+    try {
+      selectedStat = await stat(resolvedPath)
+    } catch {
+      candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
+      continue
+    }
+    if (selectedStat.isDirectory()) candidates.push(...await collectDirectoryFiles(resolvedPath))
+    else if (selectedStat.isFile() && isSupportedImportFile(resolvedPath)) candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
+  }
+  return [...new Map(candidates.map((candidate) => [resolve(candidate.filePath), candidate])).values()]
+}
 
 /**
  * 文件中心桥（unified-ingest-plan §8-§9）：modules/files 的管理面 +

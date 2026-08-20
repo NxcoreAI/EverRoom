@@ -59,14 +59,14 @@ OpenConnector 启动失败不会阻止 EverRoom 其他功能启动；连接器�
 只有明确关闭托管模式时，EverRoom 才不会启动内置服务：
 
 ```dotenv
-NXCORE_OPEN_CONNECTOR_MANAGED=false
-NXCORE_OPEN_CONNECTOR_URL=https://connector.example.com
-NXCORE_OPEN_CONNECTOR_RUNTIME_TOKEN=<runtime-token>
+NXCORE_CLI_CONNECTOR_MANAGED=false
+NXCORE_CLI_CONNECTOR_URL=https://connector.example.com
+NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN=<runtime-token>
 ```
 
 远程地址必须使用 HTTPS；HTTP 只允许 `localhost`、`127.0.0.1` 或 `::1`。外部模式的 Web 管理台使用系统浏览器打开，EverRoom 不保存或注入 Admin Token。
 
-桌面端会将以下无头环境传给 `oo`：
+EverRoom 自身只接受 `NXCORE_CLI_CONNECTOR_*` 配置。调用 `oo` 子进程时，桥接层会在内部转换为以下 `oo` 原生环境变量；这些 `OO_*` 变量不是 EverRoom 的配置入口：
 
 - `OO_CONNECTOR_URL`
 - `OO_CONNECTOR_TOKEN`
@@ -101,4 +101,4 @@ resources/open-connector/
 resources/oo/<platform>-<arch>/oo[.exe]
 ```
 
-Electron Builder 将它们作为 `extraResources` 分发。运行时不执行 npm install，也不访问 GitHub；CLI 优先解析随包二进制，再回退到 `PATH`，`NXCORE_OO_CLI_PATH` 仅用于开发覆盖。跨平台发布流水线需要分别在目标平台准备 `oo` 二进制。
+Electron Builder 将它们作为 `extraResources` 分发。运行时不执行 npm install，也不访问 GitHub；CLI 优先解析随包二进制，再回退到 `PATH`，`NXCORE_CLI_CONNECTOR_CLI_PATH` 仅用于开发覆盖。跨平台发布流水线需要分别在目标平台准备 `oo` 二进制。

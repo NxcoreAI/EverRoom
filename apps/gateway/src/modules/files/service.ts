@@ -3,7 +3,7 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { parsedContents, uploadedFiles } from "../../infrastructure/database/schema.js";
+import { ingestEvents, parsedContents, uploadedFiles } from "../../infrastructure/database/schema.js";
 import {
   contentHashOf,
   fileIdOf,
@@ -13,6 +13,16 @@ import {
 } from "./storage.js";
 
 export type UploadedFileRow = typeof uploadedFiles.$inferSelect;
+
+export const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
+  ".csv", ".docx", ".gif", ".html", ".htm", ".jpeg", ".jpg", ".md", ".markdown", ".png", ".pptx", ".txt", ".webp", ".xlsx",
+]);
+
+export function isSupportedUploadFilename(filename: string): boolean {
+  const basename = filename.split(/[\\/]/).pop() ?? filename;
+  const dot = basename.lastIndexOf(".");
+  return dot > 0 && SUPPORTED_UPLOAD_EXTENSIONS.has(basename.slice(dot).toLowerCase());
+}
 
 /** 统一上传结果：deduped = 判重闸 1 命中（同名同内容，零写入）。 */
 export interface FileUploadResult {
@@ -149,6 +159,16 @@ export class FilesService {
       .all();
     const total = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles).all().length;
     return { items: rows, total };
+  }
+
+  async purgeUnsupportedFiles(): Promise<number> {
+    const rows = this.db.select().from(uploadedFiles).all()
+      .filter((row) => !isSupportedUploadFilename(row.originalName));
+    for (const row of rows) {
+      this.db.delete(ingestEvents).where(and(eq(ingestEvents.sourceKind, "file"), eq(ingestEvents.sourceId, row.id))).run();
+      await this.deleteFile(row.id);
+    }
+    return rows.length;
   }
 
   /** 文件当前解析产物的 markdown（预览用）；无文件或未解析返回 null。 */

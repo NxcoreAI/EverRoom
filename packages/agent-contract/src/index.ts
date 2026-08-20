@@ -104,6 +104,108 @@ export interface RuntimeCapabilities {
   resume: boolean;
 }
 
+export type AgentWorkspaceState = "idle" | "running" | "error";
+export type AgentWorkspaceRunStatus =
+  | AgentRunStatus
+  | SubagentInvocationStatus;
+
+export interface AgentWorkspaceRunSummary {
+  id: string;
+  task: string;
+  pageLabel: string | null;
+  status: AgentWorkspaceRunStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface AgentWorkspaceStatus {
+  agentId: string;
+  name: string;
+  description: string;
+  kind: "builtin" | "developer";
+  state: AgentWorkspaceState;
+  activeRunCount: number;
+  workspace: {
+    id: string;
+    isolation: "dedicated";
+    revisionId: string | null;
+  };
+  currentRun: AgentWorkspaceRunSummary | null;
+  lastRun: AgentWorkspaceRunSummary | null;
+  updatedAt: string | null;
+}
+
+export interface AgentStatusSnapshot {
+  generatedAt: string;
+  summary: {
+    total: number;
+    running: number;
+    idle: number;
+    error: number;
+  };
+  agents: AgentWorkspaceStatus[];
+}
+
+export type SubagentInvocationSource = "primary_agent" | "scheduler" | "internal_workflow";
+export type SubagentInvocationStatus =
+  | "accepted"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "timed_out";
+
+export interface SubagentDefinition {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubagentRevision {
+  id: string;
+  agentDefinitionId: string;
+  version: number;
+  digest: string;
+  createdAt: string;
+}
+
+export interface SubagentInvocationResult {
+  text: string;
+  structuredOutput?: unknown;
+}
+
+export interface SubagentInvocation {
+  id: string;
+  agentDefinitionId: string;
+  agentRevisionId: string;
+  source: SubagentInvocationSource;
+  parentSessionId: string | null;
+  parentRunId: string | null;
+  task: string;
+  input: unknown;
+  status: SubagentInvocationStatus;
+  result: SubagentInvocationResult | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface SubagentInvocationEvent {
+  id: string;
+  invocationId: string;
+  seq: number;
+  type: AgentEventType;
+  payload: unknown;
+  occurredAt: string;
+}
+
 export interface CreateAgentSessionInput {
   pageLabel: string;
   /** Legacy input accepted for compatibility; ignored for user sessions. */

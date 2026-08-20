@@ -170,16 +170,16 @@ export function ConnectorSyncPage() {
     setError(null)
     try {
       const [nextJobs, nextProfiles, apps] = await Promise.all([
-        window.nxcore.connectorSync.jobs(),
-        window.nxcore.connectorSync.promptProfiles(),
-        window.nxcore.openConnector.execute({ requestId: crypto.randomUUID(), command: { kind: 'apps' } }),
+        window.nxcore.cliConnectorSync.jobs(),
+        window.nxcore.cliConnectorSync.promptProfiles(),
+        window.nxcore.cliConnector.execute({ requestId: crypto.randomUUID(), command: { kind: 'apps' } }),
       ])
       const nextConnections = Array.isArray(apps.data) ? apps.data as OpenConnectorConnectionSummary[] : []
       setJobs(nextJobs)
       setProfiles(nextProfiles)
       setConnections(nextConnections)
       const runGroups = await Promise.all(nextJobs.map(async (job) =>
-        (await window.nxcore!.connectorSync.runs(job.id)).map((run) => ({ ...run, jobName: job.name }))))
+        (await window.nxcore!.cliConnectorSync.runs(job.id)).map((run) => ({ ...run, jobName: job.name }))))
       setRuns(runGroups.flat().sort((left, right) => right.startedAt.localeCompare(left.startedAt)))
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t('surface:connectorSync.unableToLoadConnectorSyncSettings'))
@@ -194,7 +194,8 @@ export function ConnectorSyncPage() {
       const dataset = dataType === 'email' ? 'emails'
         : dataType === 'document' ? 'documents'
           : dataType === 'calendar' ? 'calendar_events' : undefined
-      setRecords(await window.nxcore.connectorSync.data({ dataset, query: query.trim() || undefined, limit: 100 }))
+      const page = await window.nxcore.cliConnectorSync.data({ dataset, query: query.trim() || undefined, limit: 100 })
+      setRecords(page.items)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t('surface:connectorSync.unableToLoadLocalData'))
     }
@@ -233,9 +234,9 @@ export function ConnectorSyncPage() {
     setError(null)
     try {
       if (draft.id && draft.configVersion) {
-        await window.nxcore.connectorSync.updateJob(draft.id, { ...input, configVersion: draft.configVersion })
+        await window.nxcore.cliConnectorSync.updateJob(draft.id, { ...input, configVersion: draft.configVersion })
       } else {
-        await window.nxcore.connectorSync.createJob(input)
+        await window.nxcore.cliConnectorSync.createJob(input)
       }
       setDraft(null)
       await reload()
@@ -249,7 +250,7 @@ export function ConnectorSyncPage() {
   const runJob = async (job: ConnectorSyncJob) => {
     if (!window.nxcore) return
     setBusy(job.id)
-    try { await window.nxcore.connectorSync.runJob(job.id); await reload() }
+    try { await window.nxcore.cliConnectorSync.runJob(job.id); await reload() }
     catch (runError) { setError(runError instanceof Error ? runError.message : t('surface:connectorSync.syncFailed')) }
     finally { setBusy(null) }
   }
@@ -258,7 +259,7 @@ export function ConnectorSyncPage() {
     if (!window.nxcore) return
     setBusy(job.id)
     try {
-      await window.nxcore.connectorSync.setJobPaused(job.id, job.status === 'active', job.configVersion)
+      await window.nxcore.cliConnectorSync.setJobPaused(job.id, job.status === 'active', job.configVersion)
       await reload()
     } catch (toggleError) { setError(toggleError instanceof Error ? toggleError.message : t('surface:connectorSync.unableToUpdateJobStatus')) }
     finally { setBusy(null) }
@@ -281,7 +282,7 @@ export function ConnectorSyncPage() {
 
       {!loading && tab === 'accounts' ? (
         <section className="connector-sync-section">
-          <div className="connector-section-heading"><div><h2>{t('surface:connectorSync.connectedAccounts')}</h2><p>{t('surface:connectorSync.credentialsAreManagedByOpenconnectorTheLocalDatabase')}</p></div><button type="button" className="secondary-button" onClick={() => void window.nxcore?.openConnector.openConsole()}>{t('surface:connectorSync.manageConnections')}</button></div>
+          <div className="connector-section-heading"><div><h2>{t('surface:connectorSync.connectedAccounts')}</h2><p>{t('surface:connectorSync.credentialsAreManagedByOpenconnectorTheLocalDatabase')}</p></div><button type="button" className="secondary-button" onClick={() => void window.nxcore?.cliConnector.openConsole()}>{t('surface:connectorSync.manageConnections')}</button></div>
           <div className="connector-account-list">
             {connections.length === 0 ? <div className="connector-sync-empty">{t('surface:connectorSync.noConnectedAccountsYet')}</div> : connections.map((connection) => (
               <div className="connector-account-row" key={`${connection.service}:${connection.connectionName ?? 'default'}`}>
@@ -323,7 +324,7 @@ export function ConnectorSyncPage() {
         <section className="connector-sync-section">
           <div className="connector-section-heading"><div><h2>{t('surface:connectorSync.localData')}</h2><p>{t('surface:connectorSync.chatAgentAndThisPageReadTheSame')}</p></div></div>
           <div className="connector-data-toolbar"><div className="connector-segmented"><button type="button" data-active={String(dataType === '')} onClick={() => setDataType('')}>{t('surface:connectorSync.all')}</button><button type="button" data-active={String(dataType === 'email')} onClick={() => setDataType('email')}>{t('surface:connectorSync.email')}</button><button type="button" data-active={String(dataType === 'document')} onClick={() => setDataType('document')}>{t('surface:connectorSync.documents')}</button><button type="button" data-active={String(dataType === 'calendar')} onClick={() => setDataType('calendar')}>{t('surface:connectorSync.calendar')}</button></div><form onSubmit={(event) => { event.preventDefault(); void loadData() }}><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('surface:connectorSync.searchTitleBodySenderOrLocation')} /><button type="submit" className="secondary-button">{t('surface:connectorSync.search')}</button></form></div>
-          <div className="connector-data-list">{records.map((record) => <button type="button" key={record.id} onClick={async () => setSelectedRecord(await window.nxcore!.connectorSync.record(record.id))}><span className="connector-resource-icon">{resourceIcon(record.resourceType ?? 'generic')}</span><span><strong>{record.title || record.sourceRecordId}</strong><small>{record.snippet || record.service}</small></span><time>{formatTime(record.syncedAt, locale)}</time></button>)}{records.length === 0 ? <div className="connector-sync-empty">{t('surface:connectorSync.noMatchingLocalData')}</div> : null}</div>
+          <div className="connector-data-list">{records.map((record) => <button type="button" key={record.id} onClick={async () => setSelectedRecord(await window.nxcore!.cliConnectorSync.record(record.id))}><span className="connector-resource-icon">{resourceIcon(record.resourceType ?? 'generic')}</span><span><strong>{record.title || record.sourceRecordId}</strong><small>{record.snippet || record.service}</small></span><time>{formatTime(record.syncedAt, locale)}</time></button>)}{records.length === 0 ? <div className="connector-sync-empty">{t('surface:connectorSync.noMatchingLocalData')}</div> : null}</div>
         </section>
       ) : null}
 
@@ -344,7 +345,7 @@ export function ConnectorSyncPage() {
               <div className="connector-form-grid"><label><span>{t('surface:connectorSync.scheduleMode')}</span><div className="connector-segmented"><button type="button" data-active={String(draft.scheduleType === 'manual')} onClick={() => setDraft({ ...draft, scheduleType: 'manual' })}>{t('surface:connectorSync.manualOnly')}</button><button type="button" data-active={String(draft.scheduleType === 'interval')} onClick={() => setDraft({ ...draft, scheduleType: 'interval' })}>{t('surface:connectorSync.fixedInterval')}</button></div></label><label><span>{t('surface:connectorSync.intervalInMinutes')}</span><input type="number" min={1} max={525600} disabled={draft.scheduleType === 'manual'} value={draft.intervalMinutes} onChange={(event) => setDraft({ ...draft, intervalMinutes: Number(event.target.value) })} /></label></div>
               <label className="connector-toggle-label"><input type="checkbox" checked={draft.status === 'active'} onChange={(event) => setDraft({ ...draft, status: event.target.checked ? 'active' : 'draft' })} /><span>{t('surface:connectorSync.enableJobAfterSaving')}</span></label>
             </div>
-            <footer>{draft.id ? <button type="button" className="danger-button" onClick={async () => { if (!window.nxcore || !draft.id || !draft.configVersion) return; await window.nxcore.connectorSync.archiveJob(draft.id, draft.configVersion); setDraft(null); await reload() }}><Archive />{t('surface:connectorSync.archive')}</button> : <span />}<div><button type="button" className="secondary-button" onClick={() => setDraft(null)}>{t('surface:connectorSync.cancel')}</button><button type="button" className="primary-button" disabled={busy === 'save'} onClick={() => void saveDraft()}>{busy === 'save' ? <LoaderCircle className="spin" /> : null}{t('surface:connectorSync.saveJob')}</button></div></footer>
+            <footer>{draft.id ? <button type="button" className="danger-button" onClick={async () => { if (!window.nxcore || !draft.id || !draft.configVersion) return; await window.nxcore.cliConnectorSync.archiveJob(draft.id, draft.configVersion); setDraft(null); await reload() }}><Archive />{t('surface:connectorSync.archive')}</button> : <span />}<div><button type="button" className="secondary-button" onClick={() => setDraft(null)}>{t('surface:connectorSync.cancel')}</button><button type="button" className="primary-button" disabled={busy === 'save'} onClick={() => void saveDraft()}>{busy === 'save' ? <LoaderCircle className="spin" /> : null}{t('surface:connectorSync.saveJob')}</button></div></footer>
           </section>
         </div>
       ) : null}

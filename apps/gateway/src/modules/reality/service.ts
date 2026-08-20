@@ -19,6 +19,8 @@ import { realityEvents } from "../../infrastructure/database/schema.js";
 import { RealityError } from "./errors.js";
 import { RealityEventBroker } from "./event-broker.js";
 
+export type RealityKnowledgeIngestHandler = (input: { sourceId: string }) => Promise<unknown>;
+
 const EMPTY_INSIGHTS: RealityInsights = {
   currentTopic: null,
   summary: null,
@@ -102,6 +104,22 @@ export class RealityService {
 
   setReadySink(sink: ((event: RealityEvent) => Promise<void>) | null): void {
     this.readySink = sink;
+  }
+
+  setKnowledgeIngestHandler(handler: RealityKnowledgeIngestHandler | null): void {
+    this.readySink = handler ? async (event) => { await handler({ sourceId: event.id }); } : null;
+  }
+
+  async ingestToKnowledge(id: string): Promise<unknown> {
+    const event = this.requireRow(id);
+    if (event.status !== "completed") {
+      throw new RealityError("reality_event_not_completed", "Reality event is not completed", 409);
+    }
+    if (!this.readySink) {
+      throw new RealityError("knowledge_ingest_unavailable", "Knowledge ingest is not enabled", 503);
+    }
+    await this.readySink(toEvent(event));
+    return { ok: true };
   }
 
   listEvents(filters: { status?: string; search?: string }): RealityEvent[] {

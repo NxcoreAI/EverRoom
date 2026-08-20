@@ -141,6 +141,12 @@ function formatElapsed(seconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 }
 
+function formatActivityCount(count: number, t: Translate): string {
+  if (count === 0) return t('diaryReality:diary.noActivityRecordedForThisDay')
+  if (count === 1) return t('diaryReality:diary.oneActivityInThisDayTimeline')
+  return t('diaryReality:diary.countActivitiesInThisDayTimeline', { count })
+}
+
 function eventPresentation(sourceRef: string | undefined, t: Translate): Pick<DiaryEvent, 'kind' | 'label'> {
   const kind = sourceRef?.split(':', 1)[0]
   if (kind === 'visual_node') return { kind: 'image', label: t('diaryReality:diary.visualPerception') }
@@ -844,15 +850,12 @@ export function DiaryPage() {
         if (run.status === 'completed') {
           const details = await window.nxcore!.diary.day(activeRun.date)
           if (cancelled) return
-          const generated = details ? toDiaryDay(details, locale, t) : null
+          // Keep this effect alive until screenshot data is loaded. Clearing the
+          // active run first would clean up the effect and cancel the media
+          // update, leaving the freshly generated diary without its image grid.
+          const generated = details ? await loadDiaryMedia(details, locale, t) : null
+          if (cancelled) return
           if (generated) setGeneratedDays((current) => ({ ...current, [activeRun.date]: generated }))
-          if (details) {
-            void loadDiaryMedia(details, locale, t).then((withMedia) => {
-              if (!cancelled && withMedia) {
-                setGeneratedDays((current) => ({ ...current, [activeRun.date]: withMedia }))
-              }
-            })
-          }
           setActiveRun(null)
           showToast({
             title: t('diaryReality:diary.diaryGenerationComplete'),
@@ -1085,7 +1088,7 @@ export function DiaryPage() {
 
         <section className="diary-trace">
           <header>
-            <div><span>{t('diaryReality:diary.dayTrace')}</span><h2>{t('diaryReality:diary.countMomentsWorthRememberingFromThisDay', { count: diary?.events.length ?? 0 })}</h2></div>
+            <div><span>{t('diaryReality:diary.dayTrace')}</span><h2>{formatActivityCount(diary?.events.length ?? 0, t)}</h2></div>
             <time>{diary?.range ?? t('diaryReality:diary.noActivity')}</time>
           </header>
           <DiaryTimeline events={diary?.events ?? []} />

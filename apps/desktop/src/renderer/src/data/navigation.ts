@@ -3,19 +3,19 @@ import {
   BookOpen,
   BookOpenText,
   Brain,
+  Building2,
   FileText,
   FolderOpen,
   FolderSync,
   Home,
-  ListChecks,
   AudioLines,
-  Bot,
   NotebookPen,
   PlugZap,
   Settings,
 } from 'lucide-react'
+import type { DesktopPageMode } from '../../../shared/page-mode'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'agents' | 'tasks' | 'diary' | 'settings'
+export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -56,19 +56,25 @@ export const navigationSections: NavigationSection[] = [
     id: 'execution',
     label: 'surface:navigation.execution',
     items: [
-      { id: 'agents', label: 'surface:navigation.agentStatus', icon: Bot, tone: 'blue' },
-      { id: 'tasks', label: 'surface:navigation.tasks', icon: ListChecks, tone: 'green' },
+      { id: 'office', label: 'surface:navigation.office', icon: Building2, tone: 'blue' },
+      { id: 'diary', label: 'surface:navigation.diary', icon: NotebookPen, tone: 'blue' },
     ],
   },
   {
     id: 'system',
     label: 'surface:navigation.system',
     items: [
-      { id: 'diary', label: 'surface:navigation.diary', icon: NotebookPen, tone: 'blue' },
       { id: 'settings', label: 'surface:navigation.settings', icon: Settings, tone: 'slate' },
     ],
   },
 ]
+
+export function navigationSectionsForMode(mode: DesktopPageMode): NavigationSection[] {
+  const disabledPage: PageId = mode === 'sources' ? 'connectors' : 'sources'
+  return navigationSections
+    .map((section) => ({ ...section, items: section.items.filter((item) => item.id !== disabledPage) }))
+    .filter((section) => section.items.length > 0)
+}
 
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
   navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.label]))
@@ -95,10 +101,10 @@ const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
   'Wiki': 'surface:navigation.wiki',
   '连接器': 'surface:navigation.connectors',
   'Connectors': 'surface:navigation.connectors',
-  'Agent 状态': 'surface:navigation.agentStatus',
-  'Agent status': 'surface:navigation.agentStatus',
-  '任务': 'surface:navigation.tasks',
-  'Tasks': 'surface:navigation.tasks',
+  '办公室': 'surface:navigation.office',
+  'Office': 'surface:navigation.office',
+  'Agent 状态': 'surface:navigation.office',
+  'Agent status': 'surface:navigation.office',
   '日记': 'surface:navigation.diary',
   'Diary': 'surface:navigation.diary',
   '设置': 'surface:navigation.settings',

@@ -78,6 +78,19 @@ export const KNOWLEDGE_ENTITY_KINDS = ['人物', '项目', '主题', '长期目�
 /** ready = 推荐态（达阈值等用户确认创建，entity-room-plan 推荐确认制）。 */
 export type KnowledgeEntityStatus = 'weak' | 'ready' | 'promoting' | 'room' | 'archived'
 
+export interface KnowledgePromotionProgressDto {
+  jobId: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  stage: 'queued' | 'checking_identity' | 'registering_entity' | 'creating_room' | 'creating_wiki' | 'importing_documents' | 'completed' | 'failed'
+  message: string
+  current: number | null
+  total: number | null
+  queuePosition: number | null
+  roomId: string | null
+  error: string | null
+  updatedAt: string
+}
+
 /** 候选实体（entity-room-plan §4.7）：弱期概述由 UI 从依据句派生（ED7）。 */
 export interface KnowledgeEntityDto {
   id: string
@@ -92,6 +105,7 @@ export interface KnowledgeEntityDto {
   firstEvidence: string | null
   lastLinkedAt: string | null
   updatedAt: string
+  promotion: KnowledgePromotionProgressDto | null
 }
 
 export interface KnowledgeEntityLinkDto {

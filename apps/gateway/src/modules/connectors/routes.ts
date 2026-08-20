@@ -15,7 +15,7 @@ const pageParams = (query: any) => {
     throw Object.assign(new Error("invalid_provider"), { statusCode: 400 });
   return { limit, offset, ...(provider ? { provider } : {}) };
 };
-export const connectorRoutes =
+export const nangoConnectorRoutes =
   (
     manager: ConnectorManager,
     enabled: boolean,
@@ -33,16 +33,16 @@ export const connectorRoutes =
           error: "connectors_disabled",
           message: "Connector module is disabled",
         });
-    app.get("/v1/connectors/status", async () => ({
+    app.get("/v1/nango-connectors/status", async () => ({
       enabled,
       connections: manager.repository.listConnections(),
       scopes: scopes(),
       runs: manager.repository.listRuns(),
     }));
-    app.get("/v1/connectors/connections", async () =>
+    app.get("/v1/nango-connectors/connections", async () =>
       manager.repository.listConnections(),
     );
-    app.post("/v1/connectors/authorizations", async (req, reply) => {
+    app.post("/v1/nango-connectors/authorizations", async (req, reply) => {
       if (!enabled || !authorization) return unavailable(reply);
       const provider = (req.body as any)?.provider;
       if (!isConnectorProvider(provider))
@@ -59,7 +59,7 @@ export const connectorRoutes =
         });
       }
     });
-    app.get("/v1/connectors/authorizations/:id", async (req, reply) => {
+    app.get("/v1/nango-connectors/authorizations/:id", async (req, reply) => {
       if (!enabled || !authorization) return unavailable(reply);
       try {
         const attempt = await authorization.status((req.params as any).id);
@@ -74,7 +74,7 @@ export const connectorRoutes =
         });
       }
     });
-    app.post("/v1/connectors/connections", async (req, reply) => {
+    app.post("/v1/nango-connectors/connections", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       const b = req.body as any;
       if (
@@ -91,26 +91,26 @@ export const connectorRoutes =
           .send({ error: "connection_registration_failed" });
       }
     });
-    app.post("/v1/connectors/connections/:id/disable", async (req, reply) => {
+    app.post("/v1/nango-connectors/connections/:id/disable", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       manager.repository.disableConnection((req.params as any).id);
       return { ok: true };
     });
-    app.delete("/v1/connectors/connections/:id", async (req, reply) => {
+    app.delete("/v1/nango-connectors/connections/:id", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       manager.repository.purgeConnection((req.params as any).id);
       return { ok: true };
     });
-    app.get("/v1/connectors/scopes", async () => scopes());
-    app.get("/v1/connectors/runs", async () => manager.repository.listRuns());
-    app.post("/v1/connectors/runs/:id/cancel", async (req, reply) => {
+    app.get("/v1/nango-connectors/scopes", async () => scopes());
+    app.get("/v1/nango-connectors/runs", async () => manager.repository.listRuns());
+    app.post("/v1/nango-connectors/runs/:id/cancel", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       return (
         manager.cancel((req.params as any).id) ??
         reply.code(404).send({ error: "run_not_found" })
       );
     });
-    app.post("/v1/connectors/scopes/:id/sync", async (req, reply) => {
+    app.post("/v1/nango-connectors/scopes/:id/sync", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       const mode = (req.body as any)?.mode ?? "incremental";
       if (!isSyncMode(mode))
@@ -131,7 +131,7 @@ export const connectorRoutes =
         return reply.code(409).send({ error: "sync_start_failed", message });
       }
     });
-    app.get("/v1/connectors/connections/:id/messages", async (req, reply) => {
+    app.get("/v1/nango-connectors/connections/:id/messages", async (req, reply) => {
       try {
         const page = pageParams(req.query);
         return {
@@ -145,7 +145,7 @@ export const connectorRoutes =
         return reply.code(400).send({ error: message });
       }
     });
-    app.get("/v1/connectors/connections/:id/documents", async (req, reply) => {
+    app.get("/v1/nango-connectors/connections/:id/documents", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       try {
         return await manager.listDocuments((req.params as any).id);
@@ -154,7 +154,7 @@ export const connectorRoutes =
         return reply.code(message === "document_connection_not_found" ? 404 : 500).send({ error: message, message });
       }
     });
-    app.get("/v1/connectors/connections/:id/documents/:documentId", async (req, reply) => {
+    app.get("/v1/nango-connectors/connections/:id/documents/:documentId", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       try {
         const params = req.params as any;
@@ -165,7 +165,7 @@ export const connectorRoutes =
         return reply.code(status).send({ error: message, message });
       }
     });
-    app.get("/v1/connectors/connections/:id/records", async (req, reply) => {
+    app.get("/v1/nango-connectors/connections/:id/records", async (req, reply) => {
       const type = (req.query as any)?.type ?? "mail";
       if (type !== "mail" && type !== "calendar")
         return reply.code(400).send({ error: "invalid_record_type" });
@@ -182,10 +182,10 @@ export const connectorRoutes =
         return reply.code(400).send({ error: message });
       }
     });
-    app.get("/v1/connectors/failures", async () =>
+    app.get("/v1/nango-connectors/failures", async () =>
       manager.repository.listFailures(),
     );
-    app.post("/v1/connectors/debug/faults", async (_req, reply) => {
+    app.post("/v1/nango-connectors/debug/faults", async (_req, reply) => {
       if (!enabled) return unavailable(reply);
       return reply
         .code(403)
@@ -203,6 +203,9 @@ import {
   type ConnectorSyncJobInput,
   type ConnectorSyncService,
 } from "./service.js";
+import type { IngestService } from "../ingest/service.js";
+import type { RefSourceKind } from "../ingest/types.js";
+import type { ConnectorMarkdownService } from "./markdown-service.js";
 
 const JobParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
 const RunParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
@@ -252,16 +255,23 @@ function sendServiceError(reply: { code(statusCode: number): { send(value: unkno
   return reply.code(notFound ? 404 : 400).send({ error: notFound ? "not_found" : "invalid_request", message });
 }
 
-export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPluginAsyncTypebox {
+export function cliConnectorRoutes(
+  service: ConnectorSyncService,
+  ingest: IngestService,
+  markdown?: ConnectorMarkdownService,
+): FastifyPluginAsyncTypebox {
   return async (app) => {
-    app.get("/v1/connectors/sync/status", { schema: { tags: ["connectors"] } }, async () => service.status(service.currentOwnerId()));
-    app.get("/v1/connectors/accounts", { schema: { tags: ["connectors"] } }, async () => service.listAccounts());
+    app.get("/v1/cli-connectors/sync/status", { schema: { tags: ["cli-connectors"] } }, async () => ({
+      ...service.status(service.currentOwnerId()),
+      ...(markdown ? { markdown: markdown.stats(service.currentOwnerId()) } : {}),
+    }));
+    app.get("/v1/cli-connectors/accounts", { schema: { tags: ["cli-connectors"] } }, async () => service.listAccounts());
 
     app.get(
-      "/v1/connectors/prompt-profiles",
+      "/v1/cli-connectors/prompt-profiles",
       {
         schema: {
-          tags: ["connectors"],
+          tags: ["cli-connectors"],
           querystring: Type.Object({
             service: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             resourceType: Type.Optional(ResourceType),
@@ -271,11 +281,11 @@ export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPlugi
       async (request) => service.listPromptProfiles(request.query.service, request.query.resourceType),
     );
 
-    app.get("/v1/connectors/sync/jobs", { schema: { tags: ["connectors"] } }, async () => service.listJobs());
+    app.get("/v1/cli-connectors/sync/jobs", { schema: { tags: ["cli-connectors"] } }, async () => service.listJobs());
 
     app.post(
-      "/v1/connectors/sync/jobs",
-      { schema: { tags: ["connectors"], body: CreateJobBody } },
+      "/v1/cli-connectors/sync/jobs",
+      { schema: { tags: ["cli-connectors"], body: CreateJobBody } },
       async (request, reply) => {
         try {
           return reply.code(201).send(service.createJob(request.body as ConnectorSyncJobInput));
@@ -286,15 +296,15 @@ export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPlugi
     );
 
     app.get(
-      "/v1/connectors/sync/jobs/:id",
-      { schema: { tags: ["connectors"], params: JobParams } },
+      "/v1/cli-connectors/sync/jobs/:id",
+      { schema: { tags: ["cli-connectors"], params: JobParams } },
       async (request, reply) => service.getJob(request.params.id)
         ?? reply.code(404).send({ error: "not_found", message: "Connector sync job not found" }),
     );
 
     app.patch(
-      "/v1/connectors/sync/jobs/:id",
-      { schema: { tags: ["connectors"], params: JobParams, body: UpdateJobBody } },
+      "/v1/cli-connectors/sync/jobs/:id",
+      { schema: { tags: ["cli-connectors"], params: JobParams, body: UpdateJobBody } },
       async (request, reply) => {
         try {
           return service.updateJob(request.params.id, request.body)
@@ -306,8 +316,8 @@ export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPlugi
     );
 
     app.delete(
-      "/v1/connectors/sync/jobs/:id",
-      { schema: { tags: ["connectors"], params: JobParams, body: VersionBody } },
+      "/v1/cli-connectors/sync/jobs/:id",
+      { schema: { tags: ["cli-connectors"], params: JobParams, body: VersionBody } },
       async (request, reply) => {
         try {
           return service.setJobStatus(request.params.id, "archived", request.body.configVersion)
@@ -319,8 +329,8 @@ export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPlugi
     );
 
     app.post(
-      "/v1/connectors/sync/jobs/:id/run",
-      { schema: { tags: ["connectors"], params: JobParams } },
+      "/v1/cli-connectors/sync/jobs/:id/run",
+      { schema: { tags: ["cli-connectors"], params: JobParams } },
       async (request, reply) => {
         try {
           const job = await service.triggerJob(request.params.id);
@@ -333,8 +343,8 @@ export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPlugi
 
     for (const [path, status] of [["pause", "paused"], ["resume", "active"]] as const) {
       app.post(
-        `/v1/connectors/sync/jobs/:id/${path}`,
-        { schema: { tags: ["connectors"], params: JobParams, body: VersionBody } },
+        `/v1/cli-connectors/sync/jobs/:id/${path}`,
+        { schema: { tags: ["cli-connectors"], params: JobParams, body: VersionBody } },
         async (request, reply) => {
           try {
             return service.setJobStatus(request.params.id, status, request.body.configVersion)
@@ -347,18 +357,18 @@ export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPlugi
     }
 
     app.get(
-      "/v1/connectors/sync/jobs/:id/versions",
-      { schema: { tags: ["connectors"], params: JobParams } },
+      "/v1/cli-connectors/sync/jobs/:id/versions",
+      { schema: { tags: ["cli-connectors"], params: JobParams } },
       async (request, reply) => {
         try { return service.listJobVersions(request.params.id); } catch (error) { return sendServiceError(reply, error); }
       },
     );
 
     app.get(
-      "/v1/connectors/sync/jobs/:id/runs",
+      "/v1/cli-connectors/sync/jobs/:id/runs",
       {
         schema: {
-          tags: ["connectors"], params: JobParams,
+          tags: ["cli-connectors"], params: JobParams,
           querystring: Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
         },
       },
@@ -368,41 +378,154 @@ export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPlugi
     );
 
     app.get(
-      "/v1/connectors/sync/runs/:id",
-      { schema: { tags: ["connectors"], params: RunParams } },
+      "/v1/cli-connectors/sync/runs/:id",
+      { schema: { tags: ["cli-connectors"], params: RunParams } },
       async (request, reply) => service.getRun(request.params.id)
         ?? reply.code(404).send({ error: "not_found", message: "Connector sync run not found" }),
     );
 
     app.get(
-      "/v1/connectors/sync/runs/:id/quarantine",
-      { schema: { tags: ["connectors"], params: RunParams } },
+      "/v1/cli-connectors/sync/runs/:id/quarantine",
+      { schema: { tags: ["cli-connectors"], params: RunParams } },
       async (request, reply) => service.listRunQuarantine(request.params.id)
         ?? reply.code(404).send({ error: "not_found", message: "Connector sync run not found" }),
     );
 
     app.get(
-      "/v1/connectors/data",
+      "/v1/cli-connectors/data",
       {
         schema: {
-          tags: ["connectors"],
+          tags: ["cli-connectors"],
           querystring: Type.Object({
             service: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             dataset: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             query: Type.Optional(Type.String({ maxLength: 500 })),
             limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+            offset: Type.Optional(Type.Integer({ minimum: 0 })),
             includeExpired: Type.Optional(Type.Boolean()),
           }),
         },
       },
-      async (request) => service.queryRecords({ ...request.query, ownerId: service.currentOwnerId() }),
+      async (request) => service.queryRecordPage({ ...request.query, ownerId: service.currentOwnerId() }),
+    );
+
+    app.post(
+      "/v1/cli-connectors/data/ingest",
+      {
+        schema: {
+          tags: ["cli-connectors", "ingest"],
+          body: Type.Object({
+            recordIds: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { minItems: 1, maxItems: 100 }),
+          }),
+        },
+      },
+      async (request) => {
+        const ownerId = service.currentOwnerId();
+        const recordIds = [...new Set(request.body.recordIds)];
+        const items = [] as Array<{
+          recordId: string;
+          eventId: string | null;
+          deduped: boolean;
+          routeJobId: string | null;
+          error: string | null;
+        }>;
+        for (const recordId of recordIds) {
+          const record = service.getRecord(ownerId, recordId);
+          if (!record) {
+            items.push({ recordId, eventId: null, deduped: false, routeJobId: null, error: "Connector record not found" });
+            continue;
+          }
+          const sourceKindByResource: Partial<Record<typeof record.resourceType, RefSourceKind>> = {
+            email: "connector-email",
+            document: "connector-document",
+            calendar: "connector-calendar",
+            generic: "connector-record",
+          };
+          const sourceKind = sourceKindByResource[record.resourceType];
+          if (!sourceKind) {
+            items.push({ recordId, eventId: null, deduped: false, routeJobId: null, error: "Unsupported connector record type" });
+            continue;
+          }
+          try {
+            const result = await ingest.ingest({
+              source: { ref: { sourceKind, sourceId: recordId } },
+              originChannel: "connector",
+            });
+            items.push({
+              recordId,
+              eventId: result.eventId,
+              deduped: result.deduped,
+              routeJobId: result.routeJobId,
+              error: null,
+            });
+          } catch (error) {
+            items.push({
+              recordId,
+              eventId: null,
+              deduped: false,
+              routeJobId: null,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        return {
+          items,
+          imported: items.filter((item) => !item.error && !item.deduped).length,
+          deduped: items.filter((item) => !item.error && item.deduped).length,
+          failed: items.filter((item) => item.error).length,
+        };
+      },
     );
 
     app.get(
-      "/v1/connectors/data/:id",
-      { schema: { tags: ["connectors"], params: RunParams } },
-      async (request, reply) => service.getRecord(service.currentOwnerId(), request.params.id)
-        ?? reply.code(404).send({ error: "not_found", message: "Connector record not found" }),
+      "/v1/cli-connectors/data/:id",
+      { schema: { tags: ["cli-connectors"], params: RunParams } },
+      async (request, reply) => {
+        const record = service.getRecord(service.currentOwnerId(), request.params.id);
+        if (!record) return reply.code(404).send({ error: "not_found", message: "Connector record not found" });
+        const resourceType = record.resourceType === "email"
+          || record.resourceType === "document"
+          || record.resourceType === "calendar"
+          ? record.resourceType
+          : record.resourceType === "generic" ? "generic" : null;
+        const artifact = markdown && resourceType
+          ? markdown.getByIngestSource(resourceType, record.id)
+          : null;
+        return {
+          ...record,
+          markdownArtifact: artifact ? {
+            id: artifact.id,
+            version: artifact.version,
+            status: artifact.status,
+            ingestStatus: artifact.ingestStatus,
+            markdownContentHash: artifact.markdownContentHash,
+            ingestEventId: artifact.ingestEventId,
+            updatedAt: artifact.updatedAt.toISOString(),
+          } : null,
+        };
+      },
     );
+  };
+}
+
+/** Legacy path aliases retained for clients released before the CLI connector rename. */
+export function connectorSyncRoutes(service: ConnectorSyncService): FastifyPluginAsync {
+  return async (app) => {
+    app.post("/v1/connectors/sync/jobs", async (request, reply) => {
+      try { return reply.code(201).send(service.createJob(request.body as any)); }
+      catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "invalid_job" }); }
+    });
+    app.patch("/v1/connectors/sync/jobs/:id", async (request, reply) => {
+      try {
+        const result = service.updateJob((request.params as any).id, request.body as any);
+        return result ?? reply.code(404).send({ error: "not_found" });
+      } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "update_failed" }); }
+    });
+    app.post("/v1/connectors/sync/jobs/:id/pause", async (request, reply) => {
+      try {
+        const result = service.setJobStatus((request.params as any).id, "paused", (request.body as any)?.configVersion);
+        return result ?? reply.code(404).send({ error: "not_found" });
+      } catch (error) { return reply.code(409).send({ error: error instanceof Error ? error.message : "pause_failed" }); }
+    });
   };
 }

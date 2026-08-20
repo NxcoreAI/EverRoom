@@ -10,31 +10,10 @@ import type {
   ConnectorScanResult,
   ConnectorSubscription,
 } from './types'
-
-const SUPPORTED_EXTENSIONS = new Set([
-  '.docx',
-  '.gif',
-  '.heic',
-  '.htm',
-  '.html',
-  '.jpeg',
-  '.jpg',
-  '.md',
-  '.mdx',
-  '.pdf',
-  '.png',
-  '.pptx',
-  '.rtf',
-  '.text',
-  '.txt',
-  '.tif',
-  '.tiff',
-  '.webp',
-  '.xlsx',
-  '.xml',
-  '.yaml',
-  '.yml',
-])
+import {
+  isIgnoredLocalDirectory,
+  isLocalParseableExtension,
+} from '../file-format-policy'
 
 export interface LocalFolderConfig {
   rootPath: string
@@ -66,6 +45,7 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
 
       for (const entry of entries) {
         if (entry.name.startsWith('.')) continue
+        if (entry.isDirectory() && isIgnoredLocalDirectory(entry.name)) continue
         const absolutePath = resolve(directory, entry.name)
         if (entry.isDirectory()) {
           await visit(absolutePath)
@@ -74,7 +54,7 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
         if (!entry.isFile()) continue
 
         const extension = extname(entry.name).toLowerCase()
-        if (!SUPPORTED_EXTENSIONS.has(extension)) continue
+        if (!isLocalParseableExtension(extension)) continue
 
         try {
           const info = await stat(absolutePath)

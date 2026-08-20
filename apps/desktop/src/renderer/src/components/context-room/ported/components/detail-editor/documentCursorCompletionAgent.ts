@@ -176,11 +176,8 @@ export function buildDocumentCursorCompletionPrompt(
       ? `当前文字 marks 为 ${formatContext.activeMarks.join(', ')}；只输出文字，不要重复添加 Markdown 格式标记。`
       : null
   return [
-    '这是一项富文本文档的 Fill-In-the-Middle（FIM）补全。只生成 <CURSOR /> 位置应出现的内容。',
-    '用户可能刚输入、删除或拼错了内容。若光标前存在明显错字、拼写错误或错误单词，可以纠正；否则只补充光标后的内容。',
-    '输出必须使用两行协议：第一行只能是 KEEP 或 REPLACE:n，第二行开始是应插入的文本。不要调用工具，不要输出解释、Markdown 围栏或其他前缀。',
-    'KEEP 表示不删除已有字符；REPLACE:n 仅表示请求纠正 blockPrefix 末尾紧邻光标的一个完整错词，第二行必须从完整的正确词开始。最终替换范围由编辑器按词边界和相似度决定，不能替换任意句子片段。',
-    '只有高度确信存在错误时才使用 REPLACE；不要借纠错改写无误的措辞。插入文本必须自然衔接 contextAfter。',
+    '使用 document-cursor-completion Skill 完成富文本文档的 FIM 补全。只生成 <CURSOR /> 位置应出现的内容。',
+    '若光标前存在明显错字可以按 Skill 协议纠正，否则只补充光标后的内容。',
     outputRule,
     ...(markRule ? [markRule] : []),
     '不要复述 PREFIX 或 SUFFIX；必须与当前 Tiptap 块类型、祖先结构和 marks 保持一致。',

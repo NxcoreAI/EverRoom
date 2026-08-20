@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream, mkdirSync } from 'node:fs'
 import { mkdir, readFile, rename, stat, unlink } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, extname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -13,6 +13,10 @@ import type {
   ConnectorSubscription,
 } from '../connectors/types'
 import { EvidenceService } from '../evidence/evidence-service'
+import {
+  isIgnoredLocalDirectory,
+  isLocalParseableExtension,
+} from '../file-format-policy'
 import type {
   DataSourceSummary,
   SourceFileStatus,
@@ -74,6 +78,8 @@ export class LocalDataService {
   private readonly objectsDirectory: string
   private readonly evidence: EvidenceService
   private readonly activeScans = new Map<string, Promise<SyncResult>>()
+  private readonly disconnectingSources = new Set<string>()
+  private readonly pendingDisconnects = new Set<Promise<void>>()
   private readonly watchers = new Map<string, ConnectorSubscription>()
   private readonly watchTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly verificationTimers = new Map<string, ReturnType<typeof setInterval>>()
@@ -176,6 +182,12 @@ export class LocalDataService {
         error_message TEXT,
         started_at TEXT NOT NULL,
         finished_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS local_service_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
     `)
 
@@ -444,6 +456,7 @@ export class LocalDataService {
     for (const watcher of this.watchers.values()) watcher.close()
     this.watchers.clear()
     await Promise.allSettled(this.activeScans.values())
+    await Promise.allSettled(this.pendingDisconnects)
     await this.evidence.shutdown()
     this.database.close()
   }
@@ -604,6 +617,30 @@ export class LocalDataService {
     return this.addConnection('local-folder', basename(rootPath), { rootPath }, rootPath)
   }
 
+  /**
+   * 首次启动时连接系统常用目录。标记先于扫描写入，确保用户后续删除或
+   * 暂停默认数据源后，不会在下次启动时被应用强制恢复。
+   */
+  async bootstrapDefaultLocalFolders(rootPaths: string[]): Promise<void> {
+    const now = new Date().toISOString()
+    const claimed = this.database.prepare(`
+      INSERT OR IGNORE INTO local_service_metadata (key, value, updated_at)
+      VALUES ('default_local_folders_v1', 'started', ?)
+    `).run(now).changes > 0
+    if (!claimed) return
+
+    const uniquePaths = [...new Set(rootPaths.map((rootPath) => rootPath.trim()).filter(Boolean))]
+    await Promise.all(uniquePaths.map(async (rootPath) => {
+      try {
+        const info = await stat(rootPath)
+        if (!info.isDirectory()) return
+        await this.addLocalFolder(rootPath)
+      } catch {
+        // A denied or unavailable standard folder must not block the other defaults.
+      }
+    }))
+  }
+
   async addConnection<TConfig>(
     kind: ConnectorKind,
     name: string,
@@ -648,6 +685,9 @@ export class LocalDataService {
   }
 
   sync(id: string): Promise<SyncResult> {
+    if (this.disconnectingSources.has(id)) {
+      return Promise.reject(new Error('数据源正在清理，请稍候。'))
+    }
     const running = this.activeScans.get(id)
     if (running) return running
 
@@ -657,6 +697,7 @@ export class LocalDataService {
   }
 
   setPaused(id: string, paused: boolean): DataSourceSummary {
+    if (this.disconnectingSources.has(id)) throw new Error('数据源正在清理，请稍候。')
     if (this.activeScans.has(id)) throw new Error('同步进行中，请等待完成后再更改状态。')
     const source = this.requireSource(id)
     const now = new Date().toISOString()
@@ -680,8 +721,7 @@ export class LocalDataService {
     })
   }
 
-  async disconnect(id: string, deleteLocalData: boolean): Promise<void> {
-    if (this.activeScans.has(id)) throw new Error('同步进行中，请等待完成后再断开。')
+  disconnect(id: string, deleteLocalData: boolean): Promise<void> {
     this.requireSource(id)
     this.stopWatching(id)
     if (!deleteLocalData) {
@@ -689,29 +729,82 @@ export class LocalDataService {
         UPDATE data_sources SET status = 'paused', disconnected_at = ?, last_error = NULL, updated_at = ? WHERE id = ?
       `).run(new Date().toISOString(), new Date().toISOString(), id)
       this.notifyChanged(id, false)
-      return
+      return Promise.resolve()
     }
 
-    const objectHashes = deleteLocalData
-      ? (this.database.prepare(`
-          SELECT DISTINCT source_versions.object_hash AS object_hash
-          FROM source_versions
-          JOIN source_items ON source_items.id = source_versions.source_item_id
-          WHERE source_items.data_source_id = ?
-        `).all(id) as unknown as Array<{ object_hash: string }>)
-      : []
+    if (this.disconnectingSources.has(id)) return Promise.resolve()
+    this.disconnectingSources.add(id)
+    this.notifyDeletion(id, 'queued', 5, '已加入清理队列。')
 
-    this.database.prepare('DELETE FROM data_sources WHERE id = ?').run(id)
-    this.notifyChanged(id, true)
+    // The renderer must not wait for a large scan or object cleanup. Keep the
+    // source unavailable to new work, then clear its data after the current pass.
+    const activeScan = this.activeScans.get(id)
+    if (!activeScan) {
+      return this.clearSourceData(id).finally(() => this.disconnectingSources.delete(id))
+    }
 
-    for (const { object_hash: objectHash } of objectHashes) {
+    this.notifyDeletion(id, 'waiting', 15, '正在等待当前扫描结束。')
+    const cleanup = (activeScan ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => new Promise<void>((resolve) => setImmediate(resolve)))
+      .then(() => this.clearSourceData(id))
+      .finally(() => this.disconnectingSources.delete(id))
+    this.pendingDisconnects.add(cleanup)
+    void cleanup.then(
+      () => this.pendingDisconnects.delete(cleanup),
+      () => this.pendingDisconnects.delete(cleanup),
+    )
+    void cleanup.catch((error) => {
+      this.notifyDeletion(id, 'failed', 0, '清理失败，请重试。')
+      console.error(`[local-data] failed to clear source ${id}`, error)
+    })
+    return Promise.resolve()
+  }
+
+  private async clearSourceData(id: string): Promise<void> {
+    const objectHashes = this.database.prepare(`
+      SELECT DISTINCT source_versions.object_hash AS object_hash
+      FROM source_versions
+      JOIN source_items ON source_items.id = source_versions.source_item_id
+      WHERE source_items.data_source_id = ?
+    `).all(id) as unknown as Array<{ object_hash: string }>
+
+    this.notifyDeletion(id, 'database', 55, '正在清理数据库记录。')
+    const now = new Date().toISOString()
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.prepare('DELETE FROM source_items WHERE data_source_id = ?').run(id)
+      this.database.prepare('DELETE FROM sync_runs WHERE data_source_id = ?').run(id)
+      this.database.prepare(`
+        UPDATE data_sources
+        SET status = 'paused', last_synced_at = NULL, last_error = NULL,
+            last_change_run_id = NULL, disconnected_at = NULL, updated_at = ?
+        WHERE id = ?
+      `).run(now, id)
+      this.database.exec('COMMIT')
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
+    this.notifyDeletion(id, 'objects', 75, '正在删除本地文件副本。')
+
+    let lastPercent = 75
+    const totalObjects = Math.max(1, objectHashes.length)
+    for (const [index, { object_hash: objectHash }] of objectHashes.entries()) {
       const reference = this.database
         .prepare('SELECT 1 FROM source_versions WHERE object_hash = ? LIMIT 1')
         .get(objectHash)
       if (!reference && /^[a-f0-9]{64}$/.test(objectHash)) {
         await unlink(this.objectPath(objectHash)).catch(() => undefined)
       }
+      const percent = 75 + Math.round(((index + 1) / totalObjects) * 25)
+      if (percent !== lastPercent) {
+        this.notifyDeletion(id, 'objects', percent, '正在删除本地文件副本。')
+        lastPercent = percent
+      }
     }
+    this.notifyDeletion(id, 'completed', 100, '文档数据已清理，目录已保留并暂停扫描。')
+    this.notifyChanged(id, true)
   }
 
   private async performSync(id: string): Promise<SyncResult> {
@@ -734,17 +827,34 @@ export class LocalDataService {
     try {
       const connector = this.connectors.get(source.kind)
       const scan = await connector.scan(this.toConnection(source))
-      const items = scan.items
+      if (this.disconnectingSources.has(id)) throw new Error('数据源正在清理。')
+      // Keep the database boundary defensive: a connector must never be able
+      // to reintroduce generated directories or formats without a parser.
+      const items = source.kind === 'local-folder'
+        ? scan.items.filter((item) => {
+            const segments = item.path.split(/[\\/]/)
+            const extension = extname(item.path).toLowerCase()
+            return !segments.slice(0, -1).some(isIgnoredLocalDirectory) &&
+              !item.title.startsWith('.') &&
+              isLocalParseableExtension(extension)
+          })
+        : scan.items
       counts.failed = scan.failed
       counts.discovered = items.length
-      const existingItems = this.database
+      const allExistingItems = this.database
         .prepare('SELECT id, remote_id, relative_path, content_hash, state FROM source_items WHERE data_source_id = ?')
         .all(id) as unknown as ItemRow[]
+      const filteredItemIds = source.kind === 'local-folder'
+        ? await this.pruneFilteredLocalItems(allExistingItems)
+        : new Set<string>()
+      const existingItems = allExistingItems.filter((item) => !filteredItemIds.has(item.id))
+      counts.removed += filteredItemIds.size
       const itemsByRemoteId = new Map(existingItems.map((item) => [item.remote_id, item]))
       const itemsByPath = new Map(existingItems.map((item) => [item.relative_path, item]))
       const seenRemoteIds = new Set<string>()
 
       for (const item of items) {
+        if (this.disconnectingSources.has(id)) throw new Error('数据源正在清理。')
         const existingItem = itemsByRemoteId.get(item.remoteId) ?? itemsByPath.get(item.path)
         seenRemoteIds.add(item.remoteId)
         if (existingItem) seenRemoteIds.add(existingItem.remote_id)
@@ -829,6 +939,7 @@ export class LocalDataService {
 
       return { source: this.getSummary(id), ...counts }
     } catch (error) {
+      if (this.disconnectingSources.has(id)) throw error
       const message = error instanceof Error ? error.message : '同步失败'
       const finishedAt = new Date().toISOString()
       this.finishRun(runId, 'failed', counts, finishedAt, message)
@@ -920,12 +1031,54 @@ export class LocalDataService {
     })
   }
 
+  private async pruneFilteredLocalItems(items: ItemRow[]): Promise<Set<string>> {
+    const filtered = items.filter((item) => {
+      const segments = item.relative_path.split(/[\\/]/)
+      const extension = extname(item.relative_path).toLowerCase()
+      return segments.slice(0, -1).some(isIgnoredLocalDirectory) ||
+      !isLocalParseableExtension(extension)
+    })
+    if (filtered.length === 0) return new Set()
+
+    const objectHashes = new Set<string>()
+    const findVersions = this.database.prepare(
+      'SELECT object_hash FROM source_versions WHERE source_item_id = ?',
+    )
+    const deleteItem = this.database.prepare('DELETE FROM source_items WHERE id = ?')
+    for (const item of filtered) {
+      const versions = findVersions.all(item.id) as unknown as Array<{ object_hash: string }>
+      for (const version of versions) objectHashes.add(version.object_hash)
+      deleteItem.run(item.id)
+    }
+
+    for (const objectHash of objectHashes) {
+      const reference = this.database.prepare(
+        'SELECT 1 FROM source_versions WHERE object_hash = ? LIMIT 1',
+      ).get(objectHash)
+      if (!reference && /^[a-f0-9]{64}$/.test(objectHash)) {
+        await unlink(this.objectPath(objectHash)).catch(() => undefined)
+      }
+    }
+    return new Set(filtered.map((item) => item.id))
+  }
+
   private objectPath(hash: string): string {
     return join(this.objectsDirectory, hash.slice(0, 2), hash)
   }
 
   private notifyChanged(sourceId: string, filesChanged: boolean): void {
     for (const listener of this.changeListeners) listener({ sourceId, filesChanged })
+  }
+
+  private notifyDeletion(
+    sourceId: string,
+    stage: NonNullable<SourceChangeEvent['deletion']>['stage'],
+    percent: number,
+    message: string,
+  ): void {
+    for (const listener of this.changeListeners) {
+      listener({ sourceId, filesChanged: false, deletion: { stage, percent, message } })
+    }
   }
 
   private insertItemAndVersion(
