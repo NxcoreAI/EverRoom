@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DocumentEvent, RoomDocument, TiptapJsonContent } from "@nxcore/agent-contract";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { KnowledgeLlmConfig } from "../../config.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -861,12 +861,19 @@ export class KnowledgeService {
     if (this.draining) return;
     this.draining = true;
     try {
+      // 优先级调度：手动晋升（用户交互等结果）> 清理 > wiki ingest > 批量 route。
+      // 同优先级按创建时间 FIFO。背景：连接器批量灌入时 route 队列可达数十个，
+      // 用户"确认创建"若与之同权重 FIFO 会被淹没（表现为点击无响应）。
       const candidates = this.db.select().from(jobs)
         .where(and(
           eq(jobs.status, "pending"),
           inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE, PROMOTE_JOB_TYPE]),
         ))
-        .orderBy(asc(jobs.createdAt))
+        .orderBy(asc(sql`CASE ${jobs.type}
+          WHEN ${PROMOTE_JOB_TYPE} THEN 0
+          WHEN ${CLEANUP_JOB_TYPE} THEN 1
+          WHEN ${INGEST_JOB_TYPE} THEN 2
+          ELSE 3 END`), asc(jobs.createdAt))
         .all();
       const now = Date.now();
       for (const job of candidates) {
@@ -925,12 +932,19 @@ export class KnowledgeService {
       } else {
         const attempts = (this.transientAttempts.get(job.id) ?? 0) + 1;
         const message = error instanceof Error ? error.message : String(error);
-        if (attempts < MAX_TRANSIENT_ATTEMPTS) {
+        // 速率限制（429/1302）是账户级瞬态：退避拉长（30s 起步，按次翻倍，
+        // 上限 5 分钟），避免限速窗口内反复撞墙烧尝试次数。
+        const rateLimited = KnowledgeLlm.isRateLimited(error);
+        const maxAttempts = rateLimited ? MAX_TRANSIENT_ATTEMPTS * 4 : MAX_TRANSIENT_ATTEMPTS;
+        const backoffMs = rateLimited
+          ? Math.min(30_000 * 2 ** (attempts - 1), 300_000)
+          : BUSY_RETRY_DELAY_MS * attempts;
+        if (attempts < maxAttempts) {
           this.db.update(jobs).set({ status: "pending", updatedAt: new Date() }).where(eq(jobs.id, job.id)).run();
-          this.retryAfter.set(job.id, Date.now() + BUSY_RETRY_DELAY_MS * attempts);
+          this.retryAfter.set(job.id, Date.now() + backoffMs);
           this.transientAttempts.set(job.id, attempts);
           this.logger.warn(
-            { event: "knowledge.job.retry", jobId: job.id, attempts, error: message },
+            { event: "knowledge.job.retry", jobId: job.id, attempts, backoffMs, rateLimited, error: message },
             "knowledge job failed, scheduled retry",
           );
         } else {
