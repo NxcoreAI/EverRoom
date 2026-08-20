@@ -69,10 +69,11 @@ describe("database migrations", () => {
     expect(upgraded.sqlite.prepare(
       "SELECT id, template FROM connector_prompt_profiles WHERE id = ?",
     ).get("gmail-email-v1")).toEqual({ id: "gmail-email-v1", template: "prompt" });
-    expect(upgraded.sqlite.prepare(
+    const latestMigration = upgraded.sqlite.prepare(
       "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
-    ).get()).toEqual({ created_at: journal.entries[journal.entries.length - 1]!.when });
+    ).get();
     upgraded.sqlite.close();
+    expect(latestMigration).toEqual({ created_at: journal.entries.at(-1)?.when });
   });
 
   it("adopts the pre-release connector Markdown migrations after the main migration rebase", async () => {
@@ -135,7 +136,6 @@ describe("database migrations", () => {
       `SELECT created_at FROM __drizzle_migrations WHERE created_at IN (${placeholders}) ORDER BY created_at`,
     ).all(...canonicalEntries.map(({ when }) => when));
     expect(adopted).toEqual(canonicalEntries.map(({ when }) => ({ created_at: when })));
-    upgraded.sqlite.close();
   });
 
   it("upgrades databases from the connector migration branch", async () => {

@@ -56,16 +56,27 @@ async function bootstrapApiKey(baseUrl: string): Promise<string | null> {
   }
 }
 
-async function ensureIntegration(
+export async function ensureIntegration(
   dashboard: AxiosInstance,
   providerConfigKey: string,
   provider: string,
   clientId: string,
   clientSecret: string,
+  scopes?: string,
 ): Promise<void> {
   try {
     const existing = await dashboard.get(`/api/v1/integrations/${encodeURIComponent(providerConfigKey)}`, { params: { env: "dev" }, validateStatus: () => true });
-    if (existing.status === 200) return;
+    if (existing.status === 200) {
+      if (scopes && existing.data?.data?.integration?.oauth_scopes !== scopes) {
+        await dashboard.patch(
+          `/api/v1/integrations/${encodeURIComponent(providerConfigKey)}`,
+          { authType: "OAUTH2", scopes },
+          { params: { env: "dev" } },
+        );
+        console.info(`[nango-bootstrap] Updated scopes for integration ${providerConfigKey}`);
+      }
+      return;
+    }
     if (existing.status !== 404) {
       console.warn(`[nango-bootstrap] 查询 integration ${providerConfigKey} 失败(HTTP ${existing.status})`);
       return;
@@ -74,7 +85,7 @@ async function ensureIntegration(
       provider,
       integrationId: providerConfigKey,
       useSharedCredentials: false,
-      auth: { authType: "OAUTH2", clientId, clientSecret },
+      auth: { authType: "OAUTH2", clientId, clientSecret, ...(scopes ? { scopes } : {}) },
     }, { params: { env: "dev" } });
     console.info(`[nango-bootstrap] 已创建 integration ${providerConfigKey} (provider=${provider})`);
   } catch (error) {
@@ -101,8 +112,13 @@ export async function bootstrapNango(config: ConnectorConfig): Promise<string> {
   // 无鉴权 dashboard API(创建 integration 需要);外部带鉴权的 Nango 会 401,仅记录。
   const dashboard = axios.create({ baseURL: baseUrl.replace(/\/$/, ""), timeout: 15_000 });
   if (config.googleClientId && config.googleClientSecret) {
-    for (const key of [config.gmailConfigKey, config.googleCalendarConfigKey, config.googleDocsConfigKey]) {
-      if (key) await ensureIntegration(dashboard, key, key, config.googleClientId, config.googleClientSecret);
+    const integrations = [
+      [config.gmailConfigKey, "google-mail", "openid,email,profile,https://www.googleapis.com/auth/gmail.readonly"],
+      [config.googleCalendarConfigKey, "google-calendar", "openid,email,profile,https://www.googleapis.com/auth/calendar.readonly"],
+      [config.googleDocsConfigKey, "google-drive", "openid,email,profile,https://www.googleapis.com/auth/drive.readonly"],
+    ] as const;
+    for (const [key, provider, scopes] of integrations) {
+      if (key) await ensureIntegration(dashboard, key, provider, config.googleClientId, config.googleClientSecret, scopes);
     }
   }
   if (config.notionClientId && config.notionClientSecret) {

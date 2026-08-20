@@ -666,7 +666,13 @@ export function loadConfig(
     webSearchBaseUrl: env.NXCORE_WEB_SEARCH_BASE_URL?.trim()
       ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
     webSearchModel: env.NXCORE_WEB_SEARCH_MODEL?.trim() ?? "qwen-plus",
-    webSearchApiKey: env.NXCORE_WEB_SEARCH_API_KEY?.trim() ?? env.NXCORE_AI_API_KEY?.trim() ?? "",
+    webSearchApiKey: env.NXCORE_WEB_SEARCH_API_KEY?.trim()
+      ?? env.DASHSCOPE_API_KEY?.trim()
+      ?? env.NXCORE_ASR_ALIYUN_API_KEY?.trim()
+      ?? (env.NXCORE_AI_BASE_URL?.trim().toLowerCase().startsWith("https://dashscope.aliyuncs.com/")
+        ? env.NXCORE_AI_API_KEY?.trim()
+        : "")
+      ?? "",
     asrProvider: env.NXCORE_ASR_PROVIDER ?? "disabled",
     asrAliyunApiKey: env.NXCORE_ASR_ALIYUN_API_KEY?.trim() ?? "",
     asrAliyunBaseUrl: env.NXCORE_ASR_ALIYUN_BASE_URL?.trim()

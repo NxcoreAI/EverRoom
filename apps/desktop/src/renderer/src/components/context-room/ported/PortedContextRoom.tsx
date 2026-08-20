@@ -47,6 +47,7 @@ export function PortedContextRoom({
   onOpenRoomTab,
   onRoomsChange,
   onShowHome,
+  onFocusAgent,
 }: {
   activeRoomId: string | null
   focusedDocumentId: string | null
@@ -57,6 +58,7 @@ export function PortedContextRoom({
   onOpenRoomTab: (room: ContextRoomWorkspaceTab) => void
   onRoomsChange: (rooms: ContextRoomWorkspaceTab[]) => void
   onShowHome: () => void
+  onFocusAgent: () => void
 }) {
   const { state, setState } = useContextRoomState()
   const handledHomeRequest = useRef(homeRequest)
@@ -274,6 +276,7 @@ export function PortedContextRoom({
       }}
       onOpenDetail={openRoom}
       onShowAll={() => setHomeView('all')}
+      onFocusAgent={onFocusAgent}
     />
   )
 }

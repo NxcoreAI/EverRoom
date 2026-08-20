@@ -3,7 +3,7 @@
   --diary-skeleton-soft: color-mix(in srgb, var(--border) 34%, var(--surface));
   overflow: hidden auto;
   padding: 0 0 96px;
-  background: var(--surface);
+  background: var(--bg);
 }
 
 .diary-skeleton-status {
