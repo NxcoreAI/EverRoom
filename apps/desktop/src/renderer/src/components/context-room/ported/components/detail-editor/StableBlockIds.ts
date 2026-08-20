@@ -2,7 +2,11 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin } from '@tiptap/pm/state'
 import { Extension, type Editor } from '@tiptap/react'
-import { addressableBlockTypes } from '@nxcore/document-model'
+import {
+  addressableBlockTypes,
+  createEverroomBlockReferenceUrl,
+  parseEverroomBlockReferenceUrl,
+} from '@nxcore/document-model'
 
 export const stableBlockTypes = addressableBlockTypes
 
@@ -24,28 +28,13 @@ function remapEverroomUrl(
   sourceDocumentId?: string,
 ): unknown {
   if (typeof value !== 'string') return value
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return value
-  }
-  if (url.protocol !== 'everroom:' || url.hostname !== 'room') return value
-  const parts = url.pathname.split('/').filter(Boolean)
-  if (parts.length !== 3) return value
-  let documentId: string
-  let blockId: string
-  try {
-    documentId = decodeURIComponent(parts[1]!)
-    blockId = decodeURIComponent(parts[2]!)
-  } catch {
-    return value
-  }
-  const replacement = (!sourceDocumentId || sourceDocumentId === documentId) ? remap.get(blockId) : undefined
+  const reference = parseEverroomBlockReferenceUrl(value)
+  if (!reference) return value
+  const replacement = (!sourceDocumentId || sourceDocumentId === reference.documentId)
+    ? remap.get(reference.blockId)
+    : undefined
   if (!replacement) return value
-  parts[2] = encodeURIComponent(replacement)
-  url.pathname = `/${parts.join('/')}`
-  return url.toString()
+  return createEverroomBlockReferenceUrl({ ...reference, blockId: replacement })
 }
 
 function freshenPastedNode(

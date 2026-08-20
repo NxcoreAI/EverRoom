@@ -2,6 +2,7 @@ import { Pencil, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { MemoryEmptyView } from './MemoryStatusViews'
+import { MemoryMarkdown } from './MemoryMarkdown'
 import { formatDate, useAsyncData } from './useMemoryData'
 
 export function CoreProfilePane() {
@@ -63,7 +64,7 @@ export function CoreProfilePane() {
           <p className="mem-core-hint">保存为全量覆盖：请基于当前内容修改，避免直接粘贴片段覆盖整篇画像。</p>
         </>
       ) : data?.content ? (
-        <pre className="mem-markdown">{data.content}</pre>
+        <MemoryMarkdown markdown={data.content} className="mem-core-markdown" />
       ) : (
         <MemoryEmptyView
           title="画像尚未生成"

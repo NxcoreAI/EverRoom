@@ -1,9 +1,6 @@
 import { randomUUID } from "node:crypto";
-import TaskItem from "@tiptap/extension-task-item";
-import TaskList from "@tiptap/extension-task-list";
-import { MarkdownManager } from "@tiptap/markdown";
-import StarterKit from "@tiptap/starter-kit";
 import type { DocumentOperation, DocumentOperationCommandInput, DocumentOperationItem, DocumentMutationTarget, TiptapJsonContent } from "@nxcore/agent-contract";
+import { agentDocumentMarkdown } from "../agent-markdown.js";
 import { applyDocumentMutation, findBlockPath, mutationTargetBlockIds, targetsOverlap, tiptapText } from "../content-model.js";
 import { DocumentContentEngine } from "../core/index.js";
 import { DocumentServiceError } from "../errors.js";
@@ -16,7 +13,6 @@ import { integerArg, record, stringArg, success, type DocumentCapabilityPlugin, 
 const CHUNK_MAX_BYTES = 64 * 1024;
 const OPERATION_MAX_BYTES = 2 * 1024 * 1024;
 const OPERATION_TTL_MS = 10 * 60 * 1000;
-const markdown = new MarkdownManager({ extensions: [StarterKit, TaskList, TaskItem] });
 
 function kernel(value?: DocumentOperationService): DocumentOperationService {
   if (!value) throw new Error("DOCUMENT_OPERATION_KERNEL_REQUIRED: mutation tools require the Operation Kernel");
@@ -104,7 +100,7 @@ function authoritativeDocument(backend: CapabilityBackend, operation: DocumentOp
 function parseFragment(backend: CapabilityBackend, documentId: string, roomId: string, source: string): TiptapJsonContent[] {
   const engine = new DocumentContentEngine({ findDocumentRoom: (id) => backend.get(id)?.roomId ?? null });
   try {
-    return engine.normalizeFragment(markdown.parse(source) as TiptapJsonContent, documentId, roomId).content.content ?? [];
+    return engine.normalizeFragment(agentDocumentMarkdown.parse(source) as TiptapJsonContent, documentId, roomId).content.content ?? [];
   } catch (error) {
     if (error instanceof DocumentServiceError) throw error;
     throw new DocumentServiceError(
@@ -293,7 +289,7 @@ function stripAdjacentTargetContext(
 }
 
 function equivalentContent(left: TiptapJsonContent[], right: TiptapJsonContent[]): boolean {
-  const serialize = (content: TiptapJsonContent[]) => markdown.serialize({ type: "doc", content }).trim();
+  const serialize = (content: TiptapJsonContent[]) => agentDocumentMarkdown.serialize({ type: "doc", content }).trim();
   return serialize(left) === serialize(right)
     || (left.length === right.length
       && left.every((node, index) => comparableBlock(node) === comparableBlock(right[index]!)));
@@ -502,7 +498,7 @@ function hunkTool(
         const reduced = reduceRepeatedFullDocumentEdit(document, normalized.target, after);
         if (reduced) {
           after = reduced;
-          acceptedMarkdown = markdown.serialize({ type: "doc", content: after });
+          acceptedMarkdown = agentDocumentMarkdown.serialize({ type: "doc", content: after });
           fragmentReduced = true;
         }
       }
@@ -511,7 +507,7 @@ function hunkTool(
         after = stripped.content;
         adjacentContextStripped = stripped.stripped;
         if (stripped.stripped) {
-          acceptedMarkdown = markdown.serialize({ type: "doc", content: after });
+          acceptedMarkdown = agentDocumentMarkdown.serialize({ type: "doc", content: after });
           fragmentReduced = true;
         }
       }
@@ -591,7 +587,7 @@ function hunkTool(
         previousContinuationId = id;
         return { id, sequence: current.items.length + index + 1, operation: "insert" as const,
           target,
-          before: [], after: [contentJson], markdown: markdown.serialize({ type: "doc", content: [contentJson] }),
+          before: [], after: [contentJson], markdown: agentDocumentMarkdown.serialize({ type: "doc", content: [contentJson] }),
           contentHash: contentHash(contentJson) };
       }) : [{ sequence, operation: kind as "insert" | "replace" | "delete", target: normalized.target, before: applied.before, after, markdown: acceptedMarkdown,
         contentHash: contentHash({ kind, target: normalized.target, source }) }];
@@ -761,11 +757,14 @@ async function continuationCommand(backend: CapabilityBackend, operation: Docume
   let auditFields: ReturnType<typeof replacementAuditFields> | undefined;
   if (typeof rawReplacement === "string") {
     const parsed = validatedReplacementMarkdown(backend, document, rawReplacement);
-    if (parsed.length !== 1) {
-      throw new DocumentServiceError("CONTINUATION_REPLACEMENT_BLOCK_COUNT", "Continuation replacement must contain exactly one top-level block");
-    }
-    const node = parsed[0]!;
-    after = [{ ...node, attrs: { ...node.attrs, id: item.id } }];
+    after = parsed.map((node, index) => ({
+      ...node,
+      attrs: {
+        ...node.attrs,
+        // The item ID anchors the next accepted continuation after the whole edited fragment.
+        id: index === parsed.length - 1 ? item.id : (node.attrs?.id ?? randomUUID()),
+      },
+    }));
     auditFields = replacementAuditFields(rawReplacement, after);
   }
   const ordered = [...operation.items].sort((left, right) => left.sequence - right.sequence);

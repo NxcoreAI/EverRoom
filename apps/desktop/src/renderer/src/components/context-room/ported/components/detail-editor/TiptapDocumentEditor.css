@@ -1146,6 +1146,136 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   transform: translate(50%, 50%);
 }
 
+.context-room-document-image-preview {
+  position: fixed;
+  z-index: 180;
+  inset: 0;
+  background: rgba(17, 22, 30, 0.9);
+  backdrop-filter: blur(10px) saturate(80%);
+  -webkit-backdrop-filter: blur(10px) saturate(80%);
+}
+
+.context-room-document-image-preview-viewport {
+  position: absolute;
+  inset: 56px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+}
+
+.context-room-document-image-preview-canvas {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  place-items: center;
+}
+
+.context-room-document-image-preview-canvas > img {
+  display: block;
+  max-width: min(1180px, 92vw);
+  max-height: calc(100vh - 112px);
+  border-radius: 7px;
+  object-fit: contain;
+  box-shadow: 0 24px 72px rgba(5, 10, 18, 0.36);
+  transition: width 120ms ease, height 120ms ease;
+}
+
+.context-room-document-image-preview > span {
+  position: absolute;
+  bottom: 70px;
+  left: 50%;
+  max-width: min(720px, calc(100vw - 112px));
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.context-room-document-image-preview-close {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.context-room-document-image-preview-close:hover,
+.context-room-document-image-preview-close:focus-visible {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.context-room-document-image-preview-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+.context-room-document-image-preview-controls {
+  position: absolute;
+  z-index: 1;
+  bottom: 18px;
+  left: 50%;
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 7px;
+  background: rgba(20, 25, 33, 0.76);
+  color: #fff;
+  box-shadow: 0 8px 28px rgba(5, 10, 18, 0.28);
+  backdrop-filter: blur(8px);
+  transform: translateX(-50%);
+}
+
+.context-room-document-image-preview-controls > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  outline: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.context-room-document-image-preview-controls > button:hover:not(:disabled),
+.context-room-document-image-preview-controls > button:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.context-room-document-image-preview-controls > button:disabled {
+  opacity: 0.34;
+}
+
+.context-room-document-image-preview-controls svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-document-image-preview-controls output {
+  width: 48px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .context-room-tiptap-table-handle,
 .context-room-tiptap-table-extend {
   position: fixed;
@@ -1298,71 +1428,6 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 
 .context-room-tiptap-content ::selection {
   background: var(--cr-blue-soft);
-}
-
-.context-room-pdf-export {
-  display: none;
-}
-
-@media print {
-  @page {
-    size: A4;
-    margin: 18mm 16mm 20mm;
-  }
-
-  html,
-  body {
-    width: auto !important;
-    height: auto !important;
-    overflow: visible !important;
-    background: #ffffff !important;
-  }
-
-  body > *:not(.context-room-pdf-export) {
-    display: none !important;
-  }
-
-  .context-room-pdf-export {
-    display: block !important;
-    width: auto;
-    height: auto !important;
-    min-height: 0;
-    overflow: visible !important;
-    background: #ffffff;
-    color: var(--cr-text);
-    print-color-adjust: exact;
-    -webkit-print-color-adjust: exact;
-  }
-
-  .context-room-pdf-export .context-room-tiptap-content {
-    width: 100%;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
-    outline: 0;
-  }
-
-  .context-room-pdf-export .is-empty::before {
-    content: none;
-  }
-
-  .context-room-pdf-export :is(h1, h2, h3) {
-    break-after: avoid-page;
-  }
-
-  .context-room-pdf-export :is(pre, blockquote, li) {
-    break-inside: avoid-page;
-  }
-
-  .context-room-pdf-export pre {
-    overflow: visible;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .context-room-pdf-export a {
-    color: inherit;
-  }
 }
 
 @container context-room-shell (max-width: 620px) {

@@ -1,5 +1,5 @@
 import { Inbox, Link2, RefreshCw, Sparkles, Undo2, Upload } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showToast } from '@/state/toast';
 import {
@@ -8,6 +8,7 @@ import {
   type KnowledgeEntityDto,
   type KnowledgeUnmatchedItemDto,
 } from '../../../../../../shared/knowledge';
+import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
 
 const SOURCE_KIND_LABELS: Record<string, string> = {
   'everroom-doc': 'Room 文档',
@@ -40,6 +41,7 @@ export function KnowledgePendingPanel() {
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const promotionControllers = useRef(new Map<string, AbortController>());
 
   const refresh = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge;
@@ -67,10 +69,19 @@ export function KnowledgePendingPanel() {
 
   useEffect(() => {
     void refresh();
+    const interval = window.setInterval(() => void refresh(), 5_000);
     const onChanged = () => void refresh();
     window.addEventListener('everroom:knowledge-changed', onChanged);
-    return () => window.removeEventListener('everroom:knowledge-changed', onChanged);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('everroom:knowledge-changed', onChanged);
+    };
   }, [refresh]);
+
+  useEffect(() => () => {
+    for (const controller of promotionControllers.current.values()) controller.abort();
+    promotionControllers.current.clear();
+  }, []);
 
   const runBusy = async (key: string, action: () => Promise<void>) => {
     setBusy((current) => new Set(current).add(key));
@@ -78,6 +89,8 @@ export function KnowledgePendingPanel() {
       await action();
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
       void refresh();
+    } catch {
+      // Each action reports its own user-facing error; do not leak a rejected click promise.
     } finally {
       setBusy((current) => {
         const next = new Set(current);
@@ -90,8 +103,28 @@ export function KnowledgePendingPanel() {
   const confirmCreate = (entity: KnowledgeEntityDto) =>
     runBusy(`entity:${entity.id}:promote`, async () => {
       try {
-        await window.nxcore?.knowledge?.promoteEntity(entity.id);
+        const knowledge = window.nxcore?.knowledge;
+        if (!knowledge) return;
+        await knowledge.promoteEntity(entity.id);
         showToast({ title: '正在创建 Room', message: `「${entity.name}」的 Room 与 wiki 开始构建` });
+        const controller = new AbortController();
+        promotionControllers.current.get(entity.id)?.abort();
+        promotionControllers.current.set(entity.id, controller);
+        let promoted: Awaited<ReturnType<typeof waitForKnowledgeEntityPromotion>>;
+        try {
+          promoted = await waitForKnowledgeEntityPromotion(knowledge, entity.id, {
+            signal: controller.signal,
+          });
+        } finally {
+          if (promotionControllers.current.get(entity.id) === controller) {
+            promotionControllers.current.delete(entity.id);
+          }
+        }
+        if (promoted) {
+          showToast({ title: 'Room 已创建', message: `「${promoted.room?.title ?? entity.name}」已加入 Context Room` });
+        } else if (!controller.signal.aborted) {
+          showToast({ title: '仍在后台创建', message: '完成后会自动同步到 Context Room' });
+        }
       } catch (cause) {
         showToast({ title: '创建失败', message: cause instanceof Error ? cause.message : undefined });
         throw cause;

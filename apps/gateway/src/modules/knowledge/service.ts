@@ -412,6 +412,11 @@ export class KnowledgeService {
     return this.config.routerEnabled;
   }
 
+  /** Room wiki/路由 worker 是否启用。 */
+  get enabled(): boolean {
+    return this.config.roomWikisEnabled;
+  }
+
   /**
    * 台账快照读取（unified-ingest-plan §6.3）：源经 /v1/ingest 进入时，
    * 取其最近一次 ingest_events 的策略快照——wiki=false 则路由/晋升只计
@@ -617,6 +622,34 @@ export class KnowledgeService {
     return { queued: true, roomId: target.roomId };
   }
 
+  /**
+   * 统一 ingest 的文档扇出入口：实体 router 开启时提交完整信封；关闭时
+   * 使用 documents -> room_doc_links 的权威归属，直接进入该 Room。
+   */
+  submitCommittedDocument(input: {
+    documentId: string;
+    sourceVersion: number;
+    title: string;
+    markdown: string;
+    occurredAt?: string;
+  }): { queued: boolean; jobId: string } {
+    if (this.config.routerEnabled) {
+      return this.submitEnvelope({
+        sourceKind: "everroom-doc",
+        sourceId: input.documentId,
+        sourceVersion: input.sourceVersion,
+        title: input.title,
+        markdown: input.markdown,
+        ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
+      });
+    }
+    const target = this.getDocumentWithRoom(input.documentId);
+    if (!target || target.document.version !== input.sourceVersion) {
+      throw new Error(`committed document ${input.documentId}@${input.sourceVersion} has no current Room`);
+    }
+    return { queued: true, jobId: this.enqueueEntryIngest(target.document, target.roomId) };
+  }
+
   private getDocumentWithRoom(documentId: string): { document: RoomDocument; roomId: string } | null {
     const row = this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
       .from(documents)
@@ -654,24 +687,24 @@ export class KnowledgeService {
   }
 
   /** 防抖到点 / 手动触发：按 router 开关走瀑布或 M0 直连。 */
-  private enqueueFromDocument(documentId: string): void {
+  private enqueueFromDocument(documentId: string): string | null {
     const target = this.getDocumentWithRoom(documentId);
-    if (!target) return;
+    if (!target) return null;
     if (this.config.routerEnabled) {
       const payload: RouteJobPayload = {
         sourceKind: "everroom-doc",
         sourceId: target.document.id,
         sourceVersion: target.document.version,
       };
-      this.insertJob(ROUTE_JOB_TYPE, payload);
+      const jobId = this.insertJob(ROUTE_JOB_TYPE, payload);
       this.wake();
-      return;
+      return jobId;
     }
-    this.enqueueEntryIngest(target.document, target.roomId);
+    return this.enqueueEntryIngest(target.document, target.roomId);
   }
 
   /** M0 路径（router 关闭）：① 入口决策 + ingest job 一步到位。 */
-  private enqueueEntryIngest(document: RoomDocument, roomId: string): void {
+  private enqueueEntryIngest(document: RoomDocument, roomId: string): string {
     const decisionId = randomUUID();
     this.db.insert(routeDecisions).values({
       id: decisionId,
@@ -693,8 +726,9 @@ export class KnowledgeService {
       roomId,
       decisionId,
     };
-    this.insertJob(INGEST_JOB_TYPE, payload);
+    const jobId = this.insertJob(INGEST_JOB_TYPE, payload);
     this.wake();
+    return jobId;
   }
 
   /** 外部信封入口（route/manual 全量信封）：router 必须开启。 */
@@ -850,6 +884,11 @@ export class KnowledgeService {
    */
   requestFileCleanup(sourceId: string): void {
     this.enqueueCleanup("file", sourceId);
+  }
+
+  /** 文档永久删除后的可靠清理入口，由持久化 document outbox 调用。 */
+  requestDocumentCleanup(documentId: string): void {
+    this.enqueueCleanup("everroom-doc", documentId);
   }
 
   private enqueueCleanup(sourceKind: SourceKind, sourceId: string): void {

@@ -56,4 +56,18 @@ describe('ContextRoomService', () => {
       .toThrow('context_room_snapshot_has_duplicate_ids')
     sqlite.close()
   })
+
+  it('removes Rooms omitted from the next complete snapshot', async () => {
+    const { service, sqlite } = await createHarness()
+    const keep = { id: 'room-keep', title: '保留 Room', data: { id: 'room-keep', title: '保留 Room' } }
+    const remove = { id: 'room-remove', title: '移除 Room', data: { id: 'room-remove', title: '移除 Room' } }
+    service.saveSnapshot({ rooms: [keep, remove], deletedRooms: [] })
+
+    expect(service.saveSnapshot({ rooms: [keep], deletedRooms: [] }).rooms).toEqual([keep])
+    expect(service.isActive(remove.id)).toBe(false)
+
+    expect(service.saveSnapshot({ rooms: [], deletedRooms: [] }))
+      .toMatchObject({ rooms: [], deletedRooms: [] })
+    sqlite.close()
+  })
 })

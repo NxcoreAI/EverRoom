@@ -9,6 +9,7 @@ import {
 } from "../../../infrastructure/database/schema.js";
 import type { NormalizedGatewayDocument } from "./content-engine.js";
 import { DocumentServiceError } from "../errors.js";
+import { enqueueDocumentIngest } from "../integration-outbox.js";
 import { DocumentContentEngine } from "./content-engine.js";
 import { DocumentRepository } from "./repository.js";
 
@@ -130,6 +131,12 @@ export class DocumentCommitService {
     }).run();
     if (input.writeVersion !== false && input.version > 0) {
       this.insertVersion(tx, input, normalized, now);
+      enqueueDocumentIngest(tx, {
+        documentId: input.documentId,
+        roomId: input.roomId,
+        version: input.version,
+        sourceTransactionId: input.sourceTransactionId ?? null,
+      }, now);
     }
     this.repository.replaceProjection(tx, input.documentId, normalized);
     input.mutate?.(tx, normalized, now);
@@ -199,7 +206,15 @@ export class DocumentCommitService {
         409,
       );
     }
-    if (input.writeVersion !== false) this.insertVersion(tx, input, normalized, now);
+    if (input.writeVersion !== false) {
+      this.insertVersion(tx, input, normalized, now);
+      enqueueDocumentIngest(tx, {
+        documentId: input.documentId,
+        roomId: input.roomId,
+        version: input.version,
+        sourceTransactionId: input.sourceTransactionId ?? null,
+      }, now);
+    }
     this.repository.replaceProjection(tx, input.documentId, normalized);
     input.mutate?.(tx, normalized, now);
   }

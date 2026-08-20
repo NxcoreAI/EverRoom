@@ -1,8 +1,7 @@
+import { generateHTML } from '@tiptap/html'
 import type { Editor } from '@tiptap/react'
 
 import type { ExportDocumentPdfResult } from '../../../../../../../shared/sources'
-
-const PDF_EXPORT_ROOT_ID = 'context-room-pdf-export'
 
 export function pdfExportFileName(documentName: string): string {
   const safeName = documentName
@@ -12,32 +11,19 @@ export function pdfExportFileName(documentName: string): string {
   return `${safeName || '无标题文档'}.pdf`
 }
 
-function preparePrintRoot(editor: Editor, documentName: string): HTMLElement {
-  document.getElementById(PDF_EXPORT_ROOT_ID)?.remove()
-
-  const root = document.createElement('main')
-  root.id = PDF_EXPORT_ROOT_ID
-  root.className = 'context-room-pdf-export context-room-app'
-  root.setAttribute('aria-label', documentName)
-
-  const content = editor.view.dom.cloneNode(true) as HTMLElement
-  content.classList.remove('ProseMirror-focused')
-  content.removeAttribute('contenteditable')
-  content.removeAttribute('spellcheck')
-  content.querySelectorAll('[contenteditable]').forEach((element) => {
-    element.removeAttribute('contenteditable')
+function staticDocumentHtml(editor: Editor): string {
+  const container = document.createElement('div')
+  container.innerHTML = generateHTML(editor.getJSON(), editor.extensionManager.extensions)
+  container.querySelectorAll<HTMLElement>('[data-document-block-reference]').forEach((reference) => {
+    const title = reference.dataset.fallbackTitle?.trim() || '引用的文档'
+    const preview = reference.dataset.fallbackPreview?.trim() || '内容预览不可用'
+    const heading = document.createElement('strong')
+    const summary = document.createElement('small')
+    heading.textContent = title
+    summary.textContent = preview
+    reference.replaceChildren(heading, summary)
   })
-  content.querySelectorAll('[data-reference-focus]').forEach((element) => {
-    element.removeAttribute('data-reference-focus')
-  })
-
-  root.append(content)
-  document.body.append(root)
-  return root
-}
-
-function nextPaint(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  return container.innerHTML
 }
 
 export async function exportEditorPdf(
@@ -46,13 +32,9 @@ export async function exportEditorPdf(
 ): Promise<ExportDocumentPdfResult> {
   const api = window.nxcore?.documents
   if (!api) throw new Error('PDF 导出仅在桌面版中可用。')
-
-  const root = preparePrintRoot(editor, documentName)
-  try {
-    await document.fonts.ready
-    await nextPaint()
-    return await api.exportPdf({ fileName: pdfExportFileName(documentName) })
-  } finally {
-    root.remove()
-  }
+  return api.exportPdf({
+    fileName: pdfExportFileName(documentName),
+    title: documentName.trim() || '无标题文档',
+    html: staticDocumentHtml(editor),
+  })
 }

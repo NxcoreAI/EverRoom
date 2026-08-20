@@ -649,11 +649,8 @@ export class MemoryService {
       },
       {
         role: "assistant",
-        content: [
-          `[document:${input.documentId}] 已创建文档《${input.title}》。`,
-          "",
-          input.markdown,
-        ].join("\n"),
+        // 正文由统一 ingest 以文档来源导入；对话只保留操作事实，避免全文双写。
+        content: `[document:${input.documentId}] 已创建文档《${input.title}》。`,
         timestamp,
       },
     ]));

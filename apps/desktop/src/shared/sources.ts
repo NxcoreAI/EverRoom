@@ -328,6 +328,8 @@ export interface WindowScreenshotStatus {
 
 export interface ExportDocumentPdfInput {
   fileName: string
+  title: string
+  html: string
 }
 
 export type ExportDocumentPdfResult =
@@ -362,6 +364,9 @@ export interface DesktopDiagnosticLogInput {
 
 export interface NxcoreDesktopApi {
   platform: string
+  clipboard: {
+    writeText(text: string): Promise<void>
+  }
   errors: {
     onRequestError(listener: (error: DesktopRequestError) => void): () => void
     report(error: DesktopRequestError): void

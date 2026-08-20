@@ -11,9 +11,30 @@ function createEditor(query: string, coords = { left: 16, top: 16, bottom: 32 })
     deleteRange: vi.fn(),
     insertTable: vi.fn(),
     setImage: vi.fn(),
+    setParagraph: vi.fn(),
+    setHeading: vi.fn(),
+    toggleBulletList: vi.fn(),
+    toggleOrderedList: vi.fn(),
+    toggleTaskList: vi.fn(),
+    toggleBlockquote: vi.fn(),
+    setCodeBlock: vi.fn(),
+    setHorizontalRule: vi.fn(),
     run: vi.fn(),
   }
-  for (const method of ['focus', 'deleteRange', 'insertTable', 'setImage']) {
+  for (const method of [
+    'focus',
+    'deleteRange',
+    'insertTable',
+    'setImage',
+    'setParagraph',
+    'setHeading',
+    'toggleBulletList',
+    'toggleOrderedList',
+    'toggleTaskList',
+    'toggleBlockquote',
+    'setCodeBlock',
+    'setHorizontalRule',
+  ]) {
     chain[method as keyof typeof chain].mockReturnValue(chain)
   }
   const editor = {
@@ -68,6 +89,45 @@ describe('TiptapSlashCommandMenu insertion commands', () => {
     expect(chain.deleteRange).toHaveBeenCalledWith({ from: 0, to: 3 })
     expect(chain.insertTable).toHaveBeenCalledWith({ rows: 3, cols: 3, withHeaderRow: true })
     expect(chain.run).toHaveBeenCalled()
+    act(() => renderer.unmount())
+  })
+
+  it('applies the keyboard-selected format before the editor can insert a newline', () => {
+    vi.stubGlobal('window', { innerHeight: 800, innerWidth: 1200 })
+    const { editor, chain } = createEditor('')
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => {
+      renderer = TestRenderer.create(<TiptapSlashCommandMenu editor={editor} documentId="doc-1" />)
+    })
+    const editorDom = (editor as unknown as {
+      view: { dom: { addEventListener: ReturnType<typeof vi.fn> } }
+    }).view.dom
+    const keydownRegistration = editorDom.addEventListener.mock.calls.find(([event]) => event === 'keydown')
+    const handleKeyDown = keydownRegistration?.[1] as (event: KeyboardEvent) => void
+    const arrowEvent = {
+      key: 'ArrowDown',
+      preventDefault: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    } as unknown as KeyboardEvent
+    const enterEvent = {
+      key: 'Enter',
+      preventDefault: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    } as unknown as KeyboardEvent
+
+    act(() => {
+      handleKeyDown(arrowEvent)
+      handleKeyDown(enterEvent)
+    })
+
+    expect(keydownRegistration?.[2]).toBe(true)
+    expect(arrowEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(arrowEvent.stopImmediatePropagation).toHaveBeenCalledOnce()
+    expect(enterEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(enterEvent.stopImmediatePropagation).toHaveBeenCalledOnce()
+    expect(chain.deleteRange).toHaveBeenCalledWith(expect.objectContaining({ from: 0, to: 1 }))
+    expect(chain.setHeading).toHaveBeenCalledWith({ level: 1 })
+    expect(chain.run).toHaveBeenCalledOnce()
     act(() => renderer.unmount())
   })
 

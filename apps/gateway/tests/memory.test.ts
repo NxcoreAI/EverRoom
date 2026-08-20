@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 describe("document memory capture", () => {
-  it("stores a committed Agent document with its final title and Markdown", async () => {
+  it("stores the Agent document creation fact without duplicating the full Markdown", async () => {
     const { service, requests } = serviceWithCapture();
 
     await expect(service.captureDocumentCreation({
@@ -49,7 +49,7 @@ describe("document memory capture", () => {
     const messages = requests[0]?.messages as Array<{ role: string; content: string }>;
     expect(messages[0]?.content).toContain("[document:create]");
     expect(messages[1]?.content).toContain("《认证服务演进路线》");
-    expect(messages[1]?.content).toContain("# 第一章\n\n完整正文");
+    expect(messages[1]?.content).not.toContain("# 第一章\n\n完整正文");
   });
 
   it("stores only the accepted selection rewrite result", async () => {

@@ -1,14 +1,19 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 
 import { AllRoomsViewSkeleton } from '../AllRoomsViewSkeleton'
-import { CONTEXT_ROOMS } from './data'
 import type { ContextRoomKind, ContextRoomRecord } from './types'
+import { createEmptyContextRoom } from './contextRoomFactory'
 import type { ContextRoomWorkspaceTab } from '../contextRoomTabs'
 import { useContextRoomState } from '../ContextRoomStateProvider'
 import { useRoomDocumentsState } from '../RoomDocumentsProvider'
 import { HomeView } from './components/HomeView'
 import { PortedDetail } from './components/PortedDetail'
 import type { DetailPane } from './components/RoomIconSidebar'
+import {
+  mergeAutoKnowledgeRooms,
+  shouldDeleteRoomFromKnowledge,
+  shouldSyncRoomToKnowledge,
+} from './knowledgeRoomSync'
 
 const AllRoomsView = lazy(() =>
   import('./components/AllRoomsView').then((module) => ({ default: module.AllRoomsView })),
@@ -22,36 +27,14 @@ interface DraftRoom {
 
 function createRoom(draft: DraftRoom): ContextRoomRecord {
   const id = `room-${Date.now()}`
-  return {
-    ...CONTEXT_ROOMS[0],
+  return createEmptyContextRoom({
     id,
     title: draft.name,
     kind: draft.kind,
-    status: '进行中',
-    starred: false,
-    lastViewed: '刚刚',
-    roomCode: id.toUpperCase(),
-    brief: {
-      background: draft.summary || '待补充 Room 的背景和资料范围。',
-      goal: '明确目标并聚合相关资料。',
-      status: 'Room 已创建，等待补充资料。',
-      risks: [],
-      decisions: [],
-    },
-    stats: { docs: 0, mails: 0, meetings: 0, events: 0, memories: 0, tasks: 0 },
-    riskCount: 0,
-    pendingMemoryCount: 0,
-    people: [],
-    timeline: [],
-    materials: [],
-    actionItems: [],
-    graphEdges: [],
-    pendingMemoryItems: [],
-    memoryItems: [],
-    fileItems: [],
-    nextReverseRecall: '暂无',
-    cloudDoc: { workspaceId: 'local-placeholder', docId: `local-${id}`, title: draft.name },
-  }
+    background: draft.summary || '待补充 Room 的背景和资料范围。',
+    goal: '明确目标并聚合相关资料。',
+    briefStatus: 'Room 已创建，等待补充资料。',
+  })
 }
 
 export function PortedContextRoom({
@@ -86,6 +69,62 @@ export function PortedContextRoom({
   } | null>(null)
   const activeRoom = state.rooms.find((room) => room.id === activeRoomId) ?? null
   const roomDocuments = useRoomDocumentsState()
+  const reportedRoomsRef = useRef(new Map<string, string>())
+  const deletedKnowledgeRoomsRef = useRef(new Set<string>())
+
+  const syncKnowledgeRooms = useCallback(async () => {
+    const knowledge = window.nxcore?.knowledge
+    if (!knowledge) return
+
+    const activeIds = new Set(state.rooms.map((room) => room.id))
+    for (const room of state.rooms) {
+      deletedKnowledgeRoomsRef.current.delete(room.id)
+      if (!shouldSyncRoomToKnowledge(room)) continue
+      const fingerprint = `${room.title}\u0000${room.kind}`
+      if (reportedRoomsRef.current.get(room.id) === fingerprint) continue
+      reportedRoomsRef.current.set(room.id, fingerprint)
+      void knowledge.upsertRoom({ id: room.id, title: room.title, kind: room.kind }).catch(() => {
+        if (reportedRoomsRef.current.get(room.id) === fingerprint) {
+          reportedRoomsRef.current.delete(room.id)
+        }
+      })
+    }
+
+    for (const room of state.deletedRooms) {
+      reportedRoomsRef.current.delete(room.id)
+      if (!shouldDeleteRoomFromKnowledge(room) || deletedKnowledgeRoomsRef.current.has(room.id)) continue
+      deletedKnowledgeRoomsRef.current.add(room.id)
+      void knowledge.deleteRoom(room.id).catch((cause: unknown) => {
+        const message = cause instanceof Error ? cause.message : String(cause)
+        if (!/room_not_found/i.test(message)) deletedKnowledgeRoomsRef.current.delete(room.id)
+      })
+    }
+
+    try {
+      const remote = await knowledge.listRooms('auto')
+      setState((current) => {
+        const rooms = mergeAutoKnowledgeRooms(current.rooms, current.deletedRooms, remote.items)
+        return rooms === current.rooms ? current : { ...current, rooms }
+      })
+    } catch {
+      // Knowledge is optional during startup; the interval below retries once it is ready.
+    }
+
+    for (const roomId of [...reportedRoomsRef.current.keys()]) {
+      if (!activeIds.has(roomId)) reportedRoomsRef.current.delete(roomId)
+    }
+  }, [setState, state.deletedRooms, state.rooms])
+
+  useEffect(() => {
+    void syncKnowledgeRooms()
+    const interval = window.setInterval(() => void syncKnowledgeRooms(), 5_000)
+    const onChanged = () => void syncKnowledgeRooms()
+    window.addEventListener('everroom:knowledge-changed', onChanged)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('everroom:knowledge-changed', onChanged)
+    }
+  }, [syncKnowledgeRooms])
 
   useEffect(() => {
     onRoomsChange(state.rooms.map(({ id, title, kind }) => ({ id, title, kind })))
@@ -127,12 +166,20 @@ export function PortedContextRoom({
     const room = state.rooms.find((item) => item.id === roomId)
     if (!room) return
     setInitialObject(null)
+    if (room.origin === 'auto') {
+      setState((current) => ({
+        ...current,
+        rooms: current.rooms.map((item) => item.id === roomId ? { ...item, origin: 'user' } : item),
+      }))
+    }
     onOpenRoomTab({ id: room.id, title: room.title })
   }
 
   const renameRoom = (roomId: string, name: string) => setState((current) => ({
     ...current,
-    rooms: current.rooms.map((room) => room.id === roomId ? { ...room, title: name } : room),
+    rooms: current.rooms.map((room) => room.id === roomId
+      ? { ...room, title: name, ...(room.origin === 'auto' ? { origin: 'user' as const } : {}) }
+      : room),
   }))
 
   const deleteRoom = (roomId: string) => setState((current) => {
@@ -145,7 +192,10 @@ export function PortedContextRoom({
   const restoreRoom = (roomId: string) => setState((current) => {
     const room = current.deletedRooms.find((item) => item.id === roomId)
     return room
-      ? { rooms: [room, ...current.rooms], deletedRooms: current.deletedRooms.filter((item) => item.id !== roomId) }
+      ? {
+          rooms: [{ ...room, origin: 'user' }, ...current.rooms],
+          deletedRooms: current.deletedRooms.filter((item) => item.id !== roomId),
+        }
       : current
   })
 

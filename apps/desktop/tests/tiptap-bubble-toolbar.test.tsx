@@ -7,6 +7,11 @@ vi.mock('@tiptap/react/menus', () => ({
   BubbleMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
 
+vi.mock('react-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-dom')>('react-dom')
+  return { ...actual, createPortal: (children: ReactNode) => children }
+})
+
 vi.mock('@tiptap/react', async () => {
   const actual = await vi.importActual<typeof import('@tiptap/react')>('@tiptap/react')
   return {
@@ -130,6 +135,7 @@ describe('TiptapBubbleToolbar', () => {
 
     expect(renderer.root.findByProps({ 'aria-label': '替换图片' })).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': '替代文本' })).toBeDefined()
+    expect(renderer.root.findByProps({ 'aria-label': '放大预览' })).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': '恢复原始尺寸' })).toBeDefined()
     expect(renderer.root.findByProps({ 'aria-label': '删除图片' })).toBeDefined()
 
@@ -137,6 +143,53 @@ describe('TiptapBubbleToolbar', () => {
     expect(chain.setNodeSelection).toHaveBeenCalledWith(7)
     expect(chain.updateAttributes).toHaveBeenCalledWith('image', { width: null, height: null })
     expect(chain.run).toHaveBeenCalled()
+  })
+
+  it('opens and closes a full image preview without changing the document', () => {
+    const keydownListeners = new Set<(event: KeyboardEvent) => void>()
+    vi.stubGlobal('document', {
+      body: { style: { overflow: '' } },
+      addEventListener: vi.fn((event: string, listener: (event: KeyboardEvent) => void) => {
+        if (event === 'keydown') keydownListeners.add(listener)
+      }),
+      removeEventListener: vi.fn((event: string, listener: (event: KeyboardEvent) => void) => {
+        if (event === 'keydown') keydownListeners.delete(listener)
+      }),
+    })
+    const { chain, editor } = createEditor({
+      image: true,
+      imageAttributes: {
+        src: 'nxcore-document-asset://doc/image.png',
+        alt: '架构图',
+      },
+    })
+    let renderer: TestRenderer.ReactTestRenderer
+    act(() => {
+      renderer = TestRenderer.create(
+        <TiptapBubbleToolbar editor={editor as never} documentId="doc-1" onAskAi={vi.fn()} />,
+      )
+    })
+
+    act(() => renderer.root.findByProps({ 'aria-label': '放大预览' }).props.onClick())
+    expect(renderer.root.findByProps({ role: 'dialog', 'aria-label': '图片预览' })).toBeDefined()
+    expect(renderer.root.findByProps({
+      src: 'nxcore-document-asset://doc/image.png',
+      alt: '架构图',
+    })).toBeDefined()
+    expect(chain.updateAttributes).not.toHaveBeenCalled()
+
+    act(() => renderer.root.findByProps({ 'aria-label': '放大图片' }).props.onClick())
+    expect(renderer.root.findByType('output').children.join('')).toBe('125%')
+    expect(renderer.root.findByProps({ role: 'dialog', 'aria-label': '图片预览' }).props['data-scale']).toBe(1.25)
+    act(() => renderer.root.findByProps({ 'aria-label': '缩小图片' }).props.onClick())
+    expect(renderer.root.findByType('output').children.join('')).toBe('100%')
+
+    act(() => renderer.root.findByProps({ 'aria-label': '放大图片' }).props.onClick())
+    act(() => renderer.root.findByProps({ 'aria-label': '恢复适配大小' }).props.onClick())
+    expect(renderer.root.findByType('output').children.join('')).toBe('100%')
+
+    act(() => renderer.root.findByProps({ 'aria-label': '关闭图片预览' }).props.onClick())
+    expect(renderer.root.findAllByProps({ role: 'dialog', 'aria-label': '图片预览' })).toHaveLength(0)
   })
 
   it('updates image alternative text and deletes the selected image', () => {

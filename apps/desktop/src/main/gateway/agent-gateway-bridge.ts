@@ -177,7 +177,7 @@ export class AgentGatewayBridge {
   }
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
-    const connection = this.supervisor.getConnection()
+    const connection = await this.supervisor.ensureConnection()
     try {
       return await this.requestWithConnection<T>(connection, path, config)
     } catch (error) {

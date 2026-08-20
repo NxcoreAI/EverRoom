@@ -2,7 +2,7 @@
 
 > 状态：当前规范真源<br>
 > 适用范围：Gateway 文档域、Agent 文档能力、MCP/Pi 适配、Desktop 文档操作交互<br>
-> 更新日期：2026-08-18
+> 更新日期：2026-08-19
 
 本文规定 Agent 文档能力的设计、实现、测试和发布流程。后续新增或修改文档能力必须遵守本文，不得重新引入旧 transaction、Patch REST API 或 Renderer ACK 模式。
 
@@ -14,6 +14,9 @@ flowchart LR
   B --> C[Document Operation Kernel]
   C --> D[Document Commit Core]
   D --> E[SQLite / Version / Projection]
+  D --> H[Transactional Document Outbox]
+  H --> I[Unified Ingest]
+  I --> J[Knowledge / Memory]
   C --> F[Operation Event Log]
   F --> G[WebSocket / Operation Store]
 ```
@@ -74,6 +77,18 @@ flowchart LR
 - Desktop 收到 `document.changed` 后合并权威文档，必须按 `version`，同版本按 `updatedAt` 防止旧响应覆盖新状态。
 - 断线重连、应用启动和编辑器重新挂载都必须能从 REST 基线恢复，不依赖历史事件重放。
 - Editor 的流式动画、diff decoration 和候选预览都只是表现层，不能作为提交确认。
+
+### 2.5 Knowledge / Memory 集成
+
+- 每次写入正式版本时，Commit Core 必须在正文事务内向既有 `jobs` 表登记 `document.ingest`；version 0 draft 和 `writeVersion=false` 不登记。
+- 永久删除和清空回收站必须在删除事务内登记 `document.delete`。移动到回收站不清理下游，因为文档仍可恢复。
+- 正文事务内只允许登记 outbox，不得调用 KnowledgeService、MemoryCore 或其他外部服务。外部服务失败不能回滚已提交正文。
+- `DocumentOutboxWorker` 是文档提交进入下游的唯一消费者。服务重启必须恢复 `running` 任务；失败次数和退避基准必须持久化；同一文档的旧版本任务可以淘汰，但不得越过失败的前序删除任务。
+- 文档必须经 `IngestService.ingestCommittedDocument()` 进入 `ingest_events` 台账，再按策略扇出 Knowledge / Memory。不得重新增加 document broker 到 Knowledge 的并行直连。
+- 内容指纹必须覆盖标题和正文。仅标题变化同样是一个新版本，必须产生新的 ingest 台账事件。
+- 命中已有台账时不能盲目视为全部成功；必须恢复 `memoryResult` 失败或 `routeJobId` 缺失的下游扇出，防止部分成功被内容去重吞掉。
+- Agent 创建文档的对话记忆只记录“创建了哪份文档”的事实；完整 Markdown 只通过统一 ingest 作为 Memory 文档导入，不得双写到会话记忆。
+- 永久删除由 outbox 同时触发 Knowledge 清理任务和按 `callerRef=documentId` 删除 Memory 文档。
 
 ## 3. Operation Kernel 契约
 
@@ -275,6 +290,7 @@ Gateway route
 - 必测 expectedVersion 成功和冲突。
 - 必测 title/content/schemaVersion 的版本快照一致性。
 - 必测投影失败、版本插入失败时正文不部分提交。
+- 必测正式版本和 `document.ingest` 同事务提交、version 0 draft 不登记、事务失败时 job 一起回滚。
 - 事件和 hook 必须在事务成功后执行。
 - 人工写入和 Agent 写入不能出现两套提交逻辑。
 

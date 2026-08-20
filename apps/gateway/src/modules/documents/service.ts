@@ -12,10 +12,6 @@ import type {
   SaveRoomDocumentInput,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
-import TaskItem from "@tiptap/extension-task-item";
-import TaskList from "@tiptap/extension-task-list";
-import { MarkdownManager } from "@tiptap/markdown";
-import StarterKit from "@tiptap/starter-kit";
 import { and, asc, eq } from "drizzle-orm";
 import { freshenDocumentContent } from "@nxcore/document-model";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -41,6 +37,7 @@ import {
   type AtomicDocumentCreateInput,
   type AtomicDocumentCommitInput,
 } from "./core/index.js";
+import { agentDocumentMarkdown } from "./agent-markdown.js";
 
 export { DocumentServiceError } from "./errors.js";
 
@@ -210,9 +207,6 @@ function normalizeCompleteAgentDocumentBody(
 
 export class DocumentService {
   private readonly queue = new DocumentWriteQueue();
-  private readonly markdown = new MarkdownManager({
-    extensions: [StarterKit, TaskList, TaskItem],
-  });
   private readonly repository: DocumentRepository;
   private readonly contentEngine: DocumentContentEngine;
   private readonly commitService: DocumentCommitService;
@@ -304,6 +298,7 @@ export class DocumentService {
         roomId: document.roomId,
         title: historical.title,
         content,
+        expectedVersion: baseVersion,
         version: nextVersion,
         ...(coordination ? { mutate: (tx, _normalized, now) => coordination.mutate(tx, now) } : {}),
       });
@@ -375,7 +370,7 @@ export class DocumentService {
     const blocks = this.listBlocks(documentId);
     let markdown: string;
     try {
-      markdown = this.markdown.serialize(documentBodyContent(document.contentJson));
+      markdown = agentDocumentMarkdown.serialize(documentBodyContent(document.contentJson));
     } catch {
       markdown = blocks.map((block) => `<!-- block:${block.blockId} type:${block.type} -->\n${block.textPreview}`).join("\n\n");
     }
@@ -437,6 +432,7 @@ export class DocumentService {
         roomId: current.roomId,
         title,
         content: normalized.content,
+        expectedVersion: input.baseVersion,
         version: nextVersion,
         ...(coordination ? { mutate: (tx, _normalized, now) => coordination.mutate(tx, now) } : {}),
       });
@@ -504,7 +500,7 @@ export class DocumentService {
   normalizeAgentDocumentChunk(title: string, markdown: string): string {
     if (!markdown) return markdown;
     const normalized = normalizeAgentDocumentBody(this.parseMarkdown(markdown), title);
-    return normalized.changed ? this.markdown.serialize(normalized.content) : markdown;
+    return normalized.changed ? agentDocumentMarkdown.serialize(normalized.content) : markdown;
   }
 
   prepareAgentDocumentFinalize(input: {
@@ -528,7 +524,7 @@ export class DocumentService {
       this.parseMarkdown(input.markdown),
       input.title,
     ).content;
-    const markdown = this.markdown.serialize(normalizedBody);
+    const markdown = agentDocumentMarkdown.serialize(normalizedBody);
     const prepared = this.prepareAgentDocumentDraft({ ...input, markdown });
     return {
       commit: {
@@ -583,7 +579,7 @@ export class DocumentService {
 
 
   private parseMarkdown(markdown: string): TiptapJsonContent {
-    return this.markdown.parse(markdown) as TiptapJsonContent;
+    return agentDocumentMarkdown.parse(markdown) as TiptapJsonContent;
   }
 
   private normalizeStoredDocuments(): void {

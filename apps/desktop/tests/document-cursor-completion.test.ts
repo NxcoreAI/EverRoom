@@ -562,6 +562,43 @@ describe('document cursor completion format context', () => {
     ])
   })
 
+  it('collects only the three nearest text blocks in each direction', () => {
+    const editor = createContextEditor({
+      type: 'doc',
+      content: [
+        ...Array.from({ length: 5 }, (_, index) => ({
+          type: 'paragraph',
+          content: [{ type: 'text', text: `前${String(index)}` }],
+        })),
+        { type: 'paragraph', content: [{ type: 'text', text: '当前' }] },
+        ...Array.from({ length: 5 }, (_, index) => ({
+          type: 'paragraph',
+          content: [{ type: 'text', text: `后${String(index)}` }],
+        })),
+      ],
+    })
+    let currentPosition = 1
+    editor.state.doc.descendants((node, position) => {
+      if (node.isTextblock && node.textContent === '当前') currentPosition = position + node.nodeSize - 1
+    })
+    editor.view.updateState(editor.state.apply(editor.state.tr.setSelection(
+      TextSelection.create(editor.state.doc, currentPosition),
+    )))
+
+    expect(documentCursorCompletionContext(editor)?.nearbyBlocks.map(({ relation, text }) => ({
+      relation,
+      text,
+    }))).toEqual([
+      { relation: 'previous', text: '前2' },
+      { relation: 'previous', text: '前3' },
+      { relation: 'previous', text: '前4' },
+      { relation: 'current', text: '当前' },
+      { relation: 'next', text: '后0' },
+      { relation: 'next', text: '后1' },
+      { relation: 'next', text: '后2' },
+    ])
+  })
+
   it('keeps the current block suffix separate for FIM completion', () => {
     const editor = createContextEditor({
       type: 'doc',

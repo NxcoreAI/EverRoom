@@ -150,6 +150,7 @@ export class DocumentAssetStore {
         status: 200,
         headers: {
           'Cache-Control': 'private, max-age=31536000, immutable',
+          'Cross-Origin-Resource-Policy': 'cross-origin',
           'Content-Type': request.mimeType,
           'X-Content-Type-Options': 'nosniff',
         },

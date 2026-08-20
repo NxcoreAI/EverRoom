@@ -77,7 +77,8 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
 
 export function createCursorCompletionRuntime(config: GatewayConfig): AgentRuntime {
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  if (!config.pi) throw new Error("Cursor completion Pi runtime configuration is missing");
-  const { memory: _memory, ...pi } = config.pi;
-  return new PiAgentRuntime(pi);
+  if (!config.cursorCompletionPi) {
+    throw new Error("Cursor completion Pi runtime configuration is missing");
+  }
+  return new PiAgentRuntime(config.cursorCompletionPi);
 }

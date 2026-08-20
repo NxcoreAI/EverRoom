@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import { documents } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
+import { enqueueDocumentDelete } from "../integration-outbox.js";
 import { DocumentRepository } from "./repository.js";
 
 export interface DocumentLifecycleHooks {
@@ -48,7 +49,11 @@ export class DocumentLifecycleService {
     if (!current.deletedAt) {
       throw new DocumentServiceError("DOCUMENT_NOT_TRASHED", "Move the document to trash first", 409);
     }
-    this.db.delete(documents).where(eq(documents.id, documentId)).run();
+    const now = new Date();
+    this.db.transaction((tx) => {
+      enqueueDocumentDelete(tx, { documentId: current.id, roomId: current.roomId }, now);
+      tx.delete(documents).where(eq(documents.id, documentId)).run();
+    });
     this.hooks.deleted?.(current);
     return current;
   }
@@ -58,6 +63,7 @@ export class DocumentLifecycleService {
     if (trashed.length === 0) return trashed;
     this.db.transaction((tx) => {
       for (const document of trashed) {
+        enqueueDocumentDelete(tx, { documentId: document.id, roomId: document.roomId }, new Date());
         tx.delete(documents).where(eq(documents.id, document.id)).run();
       }
     });

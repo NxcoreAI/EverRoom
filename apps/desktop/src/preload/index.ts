@@ -74,6 +74,9 @@ async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T>
 
 const api: NxcoreDesktopApi = {
   platform: process.platform,
+  clipboard: {
+    writeText: (text) => invokeQuietly('system-clipboard:write-text', text),
+  },
   errors: {
     onRequestError: (listener) => {
       requestErrorListeners.add(listener)

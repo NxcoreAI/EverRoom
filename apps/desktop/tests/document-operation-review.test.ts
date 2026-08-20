@@ -1,9 +1,11 @@
 import type { DocumentOperation } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
+import { createContinuationMarkdownEditor } from '../src/renderer/src/components/context-room/operations/DocumentContinuationExtension'
 import {
   buildContinuationRevisionPrompt,
   continuationRevealScrollTop,
+  groupContinuationCandidates,
   pendingContinuationBlock,
   pendingContinuationBlocks,
   shouldHandleContinuationTab,
@@ -155,6 +157,23 @@ describe('document operation review presenters', () => {
     expect(pendingContinuationBlock({ ...continuation, status: 'conflicted' })).toBeNull()
   })
 
+  it('groups short continuation candidates by Unicode length and keeps long candidates alone', () => {
+    const candidates = [1, 2, 3, 4].map((sequence) => ({
+      blockId: `candidate-${sequence}`,
+      sequence,
+      target: { at: 'end' } as const,
+      contentJson: { type: 'paragraph', content: [{ type: 'text', text: '候选' }] },
+      textPreview: sequence === 1 ? '短' : sequence === 2 ? '中文续写内容' : sequence === 3 ? '第三块' : '第四块',
+      addedCharacters: 2,
+    }))
+    expect(groupContinuationCandidates(candidates, 'candidate-1', { targetCharacters: 8 })
+      .map((candidate) => candidate.blockId)).toEqual(['candidate-1', 'candidate-2', 'candidate-3'])
+    expect(groupContinuationCandidates(candidates, 'candidate-1', { targetCharacters: 1 })
+      .map((candidate) => candidate.blockId)).toEqual(['candidate-1'])
+    expect(groupContinuationCandidates(candidates, 'candidate-2', { targetCharacters: 20, maxBlocks: 2 })
+      .map((candidate) => candidate.blockId)).toEqual(['candidate-2', 'candidate-3'])
+  })
+
   it('handles only an unmodified Tab for a visible idle candidate', () => {
     const candidate = { key: 'Tab', candidateVisible: true, busy: false }
     expect(shouldHandleContinuationTab(candidate)).toBe(true)
@@ -204,6 +223,26 @@ describe('document operation review presenters', () => {
       candidateTop: 1100,
       candidateBottom: 1180,
     })).toBe(700)
+  })
+
+  it('renders and serializes editable continuation Markdown', () => {
+    const changes: string[] = []
+    const editor = createContinuationMarkdownEditor({
+      markdown: '## 标题\n\n- 第一项\n- **第二项**',
+      editable: true,
+      onChange: (markdown) => changes.push(markdown),
+    })
+
+    const content = editor.getJSON().content
+    expect(content?.map((node) => node.type)).toEqual(['heading', 'bulletList'])
+    expect(content?.[1]?.content?.[1]?.content?.[0]?.content?.[0]?.marks).toEqual([{ type: 'bold' }])
+    expect(editor.getMarkdown()).toContain('- **第二项**')
+
+    editor.commands.setContent('> 用户修改后的引用', { contentType: 'markdown' })
+    expect(changes.at(-1)).toContain('> 用户修改后的引用')
+    editor.commands.setContent('x'.repeat(65_537), { contentType: 'markdown' })
+    expect(editor.getMarkdown()).toContain('用户修改后的引用')
+    editor.destroy()
   })
 
   it('builds a continuation revision prompt from feedback without accepting old candidates', () => {
