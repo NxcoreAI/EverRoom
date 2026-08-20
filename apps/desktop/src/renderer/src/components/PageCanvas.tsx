@@ -14,6 +14,7 @@ import { TasksPage } from './pages/TasksPage'
 import { WikiPage } from './pages/WikiPage'
 import { ConnectorSyncPage } from './pages/ConnectorSyncPage'
 import { AgentStatusPage } from './pages/AgentStatusPage'
+import { useLocale } from '@/i18n/LocaleContext'
 
 const ContextRoomPage = lazy(() =>
   import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
@@ -57,6 +58,7 @@ export function PageCanvas({
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onStartMemoryOnboarding?: () => void
 }) {
+  const { t } = useLocale()
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
   if (page === 'rooms') {
@@ -86,7 +88,7 @@ export function PageCanvas({
   if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage />
-  if (page === 'memory') content = <MemoryPage onStartOnboarding={onStartMemoryOnboarding} />
+  if (page === 'memory') content = <MemoryPage />
   if (page === 'wiki') content = <WikiPage />
   if (page === 'connectors') content = <ConnectorSyncPage />
   if (page === 'agents') content = <AgentStatusPage onFocusAgent={onFocusAgent} />
@@ -98,7 +100,7 @@ export function PageCanvas({
       </Suspense>
     )
   }
-  if (page === 'settings') content = <SettingsPage />
+  if (page === 'settings') content = <SettingsPage onStartMemoryOnboarding={onStartMemoryOnboarding} />
   return (
     <>
       <div
@@ -106,7 +108,7 @@ export function PageCanvas({
         data-page="recording"
         hidden={page !== 'recording'}
       >
-        <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载现实感知...</div></div>}>
+        <Suspense fallback={<div className="page"><div className="evidence-viewer-state">{t('surface:pageCanvas.loadingPerception')}</div></div>}>
           <RealityPage onOpenSettings={() => onNavigate('settings')} />
         </Suspense>
       </div>

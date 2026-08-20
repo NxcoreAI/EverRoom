@@ -110,6 +110,8 @@ function statusLabel(status: DisplayAgentToolCall['status'], t: Translate): stri
 
 function localizeAgentActivityText(value: string | undefined, t: Translate): string | undefined {
   if (!value) return value
+  if (value === '工具调用失败' || value === '工具调用失败。') return t('surface:agentExecutionTimeline.failed')
+  if (value === '操作已停止。' || value === '操作已停止') return t('surface:agentExecutionTimeline.stopped')
   const executed = /^已执行\s+(.+)$/u.exec(value)
   if (executed) return t('surface:agentExecutionTimeline.executedName', { name: executed[1]! })
   const executing = /^执行\s+(.+)$/u.exec(value)

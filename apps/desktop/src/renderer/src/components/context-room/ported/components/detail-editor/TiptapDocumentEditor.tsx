@@ -404,7 +404,7 @@ export function TiptapDocumentEditor({
     while (saveInFlight.current) await wait(10)
     if (pendingSave.current) await persistPendingSave()
     while (saveInFlight.current) await wait(10)
-    if (pendingSave.current) throw new Error('文档尚未保存，请稍后重试。')
+    if (pendingSave.current) throw new Error(t('contextRoom:tiptapDocumentEditor.documentNotSavedTryAgainLater'))
     return versionRef.current
   }, [persistPendingSave])
 
@@ -448,7 +448,7 @@ export function TiptapDocumentEditor({
         sourceRoomId: room.id,
         resolveReferences: async (input) => {
           const documents = window.nxcore?.documents
-          if (!documents) throw new Error('文档引用服务不可用。')
+          if (!documents) throw new Error(t('contextRoom:tiptapDocumentEditor.documentReferenceServiceUnavailable'))
           return documents.resolveBlockReferences(input)
         },
         onNavigate: (target, resolution) => {
@@ -655,7 +655,7 @@ export function TiptapDocumentEditor({
 
   const listDocumentBlocks = useCallback(async (targetDocumentId: string) => {
     const documents = window.nxcore?.documents
-    if (!documents) throw new Error('文档块服务不可用。')
+    if (!documents) throw new Error(t('contextRoom:tiptapDocumentEditor.documentBlockServiceUnavailable'))
     return documents.listBlocks(targetDocumentId)
   }, [])
 
@@ -686,7 +686,7 @@ export function TiptapDocumentEditor({
       ).content
       if (hasEmbeddedDocumentImages(contentJson)) {
         const localized = await localizeDocumentImages(contentJson, documentId, documents.storeImage)
-        if (localized.unsupported > 0) throw new Error('文档包含无法迁移的旧图片。')
+        if (localized.unsupported > 0) throw new Error(t('contextRoom:tiptapDocumentEditor.documentContainsUnsupportedLegacyImages'))
         contentJson = localized.content
         applyingRemote.current = true
         try {
@@ -1055,7 +1055,7 @@ export function TiptapDocumentEditor({
             onChange={(event) => setDocumentName(event.target.value.replace(/[\r\n]+/g, ' '))}
             onBlur={() => {
               if (!editor || editorLocked) return
-              const title = documentName.trim() || '无标题文档'
+              const title = documentName.trim() || t('contextRoom:documentOperationCenter.untitledDocument')
               if (title !== documentName) setDocumentName(title)
               queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0, title)
             }}

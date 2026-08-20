@@ -202,6 +202,33 @@ describe("DiaryService", () => {
     expect(generate).toHaveBeenCalledOnce();
   });
 
+  it("does not include visual nodes until VLM processing is ready", async () => {
+    const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => ({
+      headline: "已完成感知", summary: "只有完成理解的截图进入日记", reflection: "", range: input.range,
+      events: input.sources.map((source) => ({
+        time: source.occurredAt, title: source.evidenceSummary, summary: source.evidenceSummary,
+        sourceRefs: [source.sourceId],
+      })), closing: "",
+    }));
+    const { database, service } = await setup({ model: "test", generate });
+    const capturedAt = new Date("2026-08-20T10:05:00.000Z");
+    for (const [id, status] of [["visual-pending", "pending"], ["visual-ready", "ready"]] as const) {
+      database.db.insert(visualNodes).values({
+        id, kind: "screenshot", startAt: capturedAt, endAt: capturedAt,
+        sampleCount: 1, vlmStatus: status, summary: status === "ready" ? "VLM 已描述内容" : null,
+      }).run();
+    }
+
+    service.createRun("2026-08-20");
+    await service.drain();
+
+    expect(generate).toHaveBeenCalledOnce();
+    expect(generate.mock.calls[0]?.[0].sources).toHaveLength(1);
+    expect(generate.mock.calls[0]?.[0].sources[0]).toMatchObject({
+      sourceId: "visual_node:visual-ready", evidenceSummary: "VLM 已描述内容",
+    });
+  });
+
   it("includes a visual range that started before the local diary day", async () => {
     const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => ({
       headline: "跨日记录", summary: "跨日活动", reflection: "", range: input.range,

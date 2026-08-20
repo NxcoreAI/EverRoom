@@ -26,12 +26,16 @@ describe('room onboarding state', () => {
     expect(shouldShowRoomOnboarding(true, 0, null)).toBe(true)
   })
 
-  it('still shows on first use when a starter Room already exists', () => {
-    expect(shouldShowRoomOnboarding(true, 1, null)).toBe(true)
+  it('does not interrupt an existing workspace without a marker', () => {
+    expect(shouldShowRoomOnboarding(true, 1, null)).toBe(false)
   })
 
   it('waits for the Context Room backend before showing', () => {
     expect(shouldShowRoomOnboarding(false, 0, null)).toBe(false)
+  })
+
+  it('does not show after Memory onboarding is reopened from Settings', () => {
+    expect(shouldShowRoomOnboarding(true, 0, null, true)).toBe(false)
   })
 
   it('persists a skipped marker and suppresses the guide', () => {

@@ -49,7 +49,7 @@ export function applyGeneratedRoomContext(
   }))
   const actionItems = [...manualActions, ...generatedActions]
   const materials = [...manualMaterials, ...generatedMeetings]
-  return {
+  const updated: ContextRoomRecord = {
     ...room,
     generatedContext: context,
     actionItems,
@@ -62,4 +62,11 @@ export function applyGeneratedRoomContext(
     },
     updatedAt: context.generatedAt,
   }
+  const comparable = (value: ContextRoomRecord) => {
+    const { updatedAt: _updatedAt, generatedContext, ...rest } = value
+    if (!generatedContext) return rest
+    const { generatedAt: _generatedAt, ...contextWithoutTimestamp } = generatedContext
+    return { ...rest, generatedContext: contextWithoutTimestamp }
+  }
+  return JSON.stringify(comparable(updated)) === JSON.stringify(comparable(room)) ? room : updated
 }

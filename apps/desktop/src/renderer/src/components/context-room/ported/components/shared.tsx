@@ -99,11 +99,13 @@ export function ReferenceDialog({
   open,
   onOpenChange,
   title,
+  contentClassName,
   children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
+  contentClassName?: string;
   children: ReactNode;
 }) {
   const { t } = useLocale();
@@ -111,7 +113,7 @@ export function ReferenceDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="context-room-dialog-overlay" />
-        <Dialog.Content className="context-room-dialog-content" aria-label={title}>
+        <Dialog.Content className={cn('context-room-dialog-content', contentClassName)} aria-label={title}>
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
           <Dialog.Description className="sr-only">{t('contextRoom:shared.completeTheCurrentContextRoomAction')}</Dialog.Description>
           <Dialog.Close className="context-room-dialog-close" aria-label={t('contextRoom:shared.closeDialog')}>

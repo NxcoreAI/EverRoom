@@ -8,15 +8,16 @@ import {
   Square,
 } from 'lucide-react'
 import { useState } from 'react'
+import { useLocale } from '@/i18n/LocaleContext'
 
 type RuntimeState = 'ready' | 'running'
 
 interface LocalModelOption {
   id: string
   name: string
-  description: string
+  descriptionKey: string
   size: string
-  memory: string
+  memoryGb: number
   recommended?: boolean
 }
 
@@ -24,28 +25,29 @@ const LOCAL_MODELS: LocalModelOption[] = [
   {
     id: 'llama-3.2-3b-instruct-q4',
     name: 'Llama 3.2 3B Instruct',
-    description: 'Q4_K_M · 适合日常对话与轻量 Agent',
+    descriptionKey: 'surface:settings.localModel3bDescription',
     size: '2.0 GB',
-    memory: '约 4 GB 内存',
+    memoryGb: 4,
     recommended: true,
   },
   {
     id: 'llama-3.1-8b-instruct-q4',
     name: 'Llama 3.1 8B Instruct',
-    description: 'Q4_K_M · 更好的复杂任务理解能力',
+    descriptionKey: 'surface:settings.localModel8bDescription',
     size: '4.9 GB',
-    memory: '约 7 GB 内存',
+    memoryGb: 7,
   },
   {
     id: 'llama-3.2-1b-instruct-q4',
     name: 'Llama 3.2 1B Instruct',
-    description: 'Q4_K_M · 启动快，适合低内存设备',
+    descriptionKey: 'surface:settings.localModel1bDescription',
     size: '0.8 GB',
-    memory: '约 2 GB 内存',
+    memoryGb: 2,
   },
 ]
 
 export function LocalModelSettingsSection() {
+  const { t } = useLocale()
   const [runtimeState, setRuntimeState] = useState<RuntimeState>('ready')
   const [selectedModelId, setSelectedModelId] = useState(LOCAL_MODELS[0].id)
   const [contextSize, setContextSize] = useState('8192')
@@ -59,21 +61,21 @@ export function LocalModelSettingsSection() {
         <span><Cpu aria-hidden="true" /></span>
         <div>
           <div className="local-model-title-row">
-            <h2 id="local-model-settings-title">本地模型</h2>
-            <span className="local-model-preview-badge">界面预览</span>
+            <h2 id="local-model-settings-title">{t('surface:settings.localModels')}</h2>
+            <span className="local-model-preview-badge">{t('surface:settings.interfacePreview')}</span>
           </div>
-          <p>参考 Jan 的本地优先体验，使用 Llama 在设备上完成推理。</p>
+          <p>{t('surface:settings.localModelsBody')}</p>
         </div>
       </header>
 
       <div className="local-runtime-row" data-state={runtimeState} aria-live="polite">
         <span className="local-runtime-icon" aria-hidden="true"><Gauge /></span>
         <div className="local-runtime-copy">
-          <strong>{isRunning ? '本地服务运行中' : 'Llama Runtime 已就绪'}</strong>
+          <strong>{isRunning ? t('surface:settings.localRuntimeRunning') : t('surface:settings.localRuntimeReady')}</strong>
           <small>
             {isRunning
-              ? `${selectedModel.name} · 仅为交互预览，尚未启动真实推理进程`
-              : 'Mock 状态 · 后续由桌面主进程管理 llama.cpp 生命周期'}
+              ? t('surface:settings.localRuntimePreviewOnly', { name: selectedModel.name })
+              : t('surface:settings.localRuntimeMockStatus')}
           </small>
         </div>
         <span className="local-runtime-address">127.0.0.1:39281</span>
@@ -83,22 +85,22 @@ export function LocalModelSettingsSection() {
           onClick={() => setRuntimeState(isRunning ? 'ready' : 'running')}
         >
           {isRunning ? <Square aria-hidden="true" /> : <Play aria-hidden="true" />}
-          {isRunning ? '停止预览' : '预览启动'}
+          {isRunning ? t('surface:settings.stopPreview') : t('surface:settings.startPreview')}
         </button>
       </div>
 
       <div className="local-model-body">
         <div className="local-model-section-heading">
           <div>
-            <strong>模型</strong>
-            <small>选择默认用于对话和 Agent 的本地 Llama 模型。</small>
+            <strong>{t('surface:settings.model')}</strong>
+            <small>{t('surface:settings.localModelSelectionBody')}</small>
           </div>
-          <button className="secondary-button" type="button" disabled title="真实模型导入将在接入 llama.cpp 后开放">
-            <FolderOpen aria-hidden="true" />导入 GGUF
+          <button className="secondary-button" type="button" disabled title={t('surface:settings.importModelsUnavailable')}>
+            <FolderOpen aria-hidden="true" />{t('surface:settings.importGguf')}
           </button>
         </div>
 
-        <div className="local-model-list" role="radiogroup" aria-label="本地模型">
+        <div className="local-model-list" role="radiogroup" aria-label={t('surface:settings.localModels')}>
           {LOCAL_MODELS.map((model) => {
             const selected = model.id === selectedModelId
             return (
@@ -116,13 +118,13 @@ export function LocalModelSettingsSection() {
                 <span className="local-model-option-copy">
                   <span>
                     <strong>{model.name}</strong>
-                    {model.recommended ? <em>推荐</em> : null}
+                    {model.recommended ? <em>{t('surface:settings.recommended')}</em> : null}
                   </span>
-                  <small>{model.description}</small>
+                  <small>{t(model.descriptionKey)}</small>
                 </span>
                 <span className="local-model-meta">
                   <strong>{model.size}</strong>
-                  <small>{model.memory}</small>
+                  <small>{t('surface:settings.approximatelyMemory', { memory: model.memoryGb })}</small>
                 </span>
               </button>
             )
@@ -132,11 +134,11 @@ export function LocalModelSettingsSection() {
 
       <div className="local-model-config">
         <div className="local-model-config-heading">
-          <strong>运行配置</strong>
-          <small>修改后将在下次启动本地模型时生效。</small>
+          <strong>{t('surface:settings.runtimeConfiguration')}</strong>
+          <small>{t('surface:settings.runtimeConfigurationBody')}</small>
         </div>
         <label>
-          <span>上下文长度</span>
+          <span>{t('surface:settings.contextLength')}</span>
           <select value={contextSize} disabled={isRunning} onChange={(event) => setContextSize(event.target.value)}>
             <option value="4096">4K</option>
             <option value="8192">8K</option>
@@ -146,30 +148,30 @@ export function LocalModelSettingsSection() {
         </label>
         <div className="local-model-config-switch">
           <span>
-            <strong>GPU 加速</strong>
-            <small>优先使用 Metal 或 CUDA，失败时回退到 CPU。</small>
+            <strong>{t('surface:settings.gpuAcceleration')}</strong>
+            <small>{t('surface:settings.gpuAccelerationBody')}</small>
           </span>
           <button
             className="settings-toggle"
             type="button"
             role="switch"
-            aria-label="GPU 加速"
+            aria-label={t('surface:settings.gpuAcceleration')}
             aria-checked={gpuAcceleration}
             data-active={String(gpuAcceleration)}
             disabled={isRunning}
             onClick={() => setGpuAcceleration((current) => !current)}
           >
             <span aria-hidden="true" />
-            {gpuAcceleration ? '已开启' : '已关闭'}
+            {t(gpuAcceleration ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
       </div>
 
       <footer className="local-model-footer">
         <HardDrive aria-hidden="true" />
-        <span>模型目录</span>
+        <span>{t('surface:settings.modelDirectory')}</span>
         <code>~/Library/Application Support/EverRoom/models</code>
-        <small>占位配置，当前不会创建或下载模型文件。</small>
+        <small>{t('surface:settings.modelDirectoryPlaceholder')}</small>
       </footer>
     </section>
   )
