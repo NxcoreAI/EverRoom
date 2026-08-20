@@ -33,7 +33,7 @@ export interface SelectionRewriteFormatContext {
 interface StreamSelectionRewriteOptions {
   signal: AbortSignal
   onText: (text: string) => void
-  responseLanguage?: 'zh-CN' | 'en-US'
+  responseLanguage?: StartAgentRunInput['responseLanguage']
   pollIntervalMs?: number
   timeoutMs?: number
 }

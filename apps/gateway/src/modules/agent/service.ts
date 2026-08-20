@@ -203,6 +203,20 @@ function navigationTargetKey(target: AgentNavigationTarget): string {
 }
 
 const EXTERNAL_CONNECTOR_REQUEST = /(?:Gmail|GitHub|Google Drive|Slack|Notion|Dropbox|日历|邮件|邮箱|云盘|连接器|第三方服务|OAuth|API)/iu;
+const AGENT_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/u;
+
+function normalizeAgentLocale(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized && normalized.length <= 35 && AGENT_LOCALE_PATTERN.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function localeInstruction(locale: string | undefined): string | null {
+  const normalized = normalizeAgentLocale(locale);
+  if (!normalized) return null;
+  return `当前界面 locale：${normalized}。除非用户明确要求本次输出使用另一种语言，所有 Agent 生成的自然语言内容（包括聊天答复、总结、文档标题和文档正文）都必须使用 ${normalized} 对应的主要语言；代码、路径、引用、专有名词和用户原文保持原样。`;
+}
 
 function runtimePrompt(
   input: StartAgentRunInput,
@@ -210,11 +224,7 @@ function runtimePrompt(
   connectorMode: "direct" | "local",
 ): string {
   const selectedText = input.context?.selectedText?.trim();
-  const languageRule = input.responseLanguage === "en-US"
-    ? "Response language: Reply in English. Keep user-provided names, quoted text, code, paths, and source content unchanged."
-    : input.responseLanguage === "zh-CN"
-      ? "回复语言：使用简体中文回答。用户提供的名称、引文、代码、路径和资料原文保持不变。"
-      : null;
+  const languageRule = localeInstruction(input.responseLanguage);
   const connectorRouting = EXTERNAL_CONNECTOR_REQUEST.test(input.prompt)
     ? connectorMode === "local"
       ? "外部服务数据规则：普通 Agent 只能查询 EverRoom 已同步到本地的连接器数据。使用 connector_data_search 获取数据，并用 connector_sync_status 解释最后同步时间、新鲜度或缺失原因。禁止声称进行了实时第三方调用；本地没有数据或数据已过期时，明确告知用户需要授权、同步或使用专用 CLI Agent。"
@@ -235,11 +245,21 @@ function runtimePrompt(
 }
 
 function availableRooms(input: StartAgentRunInput, registry?: AgentRoomRegistry) {
-  return (registry?.listReferences() ?? input.context?.rooms ?? []).map((room) => ({
-    id: room.id.trim(),
-    title: room.title.trim(),
-    ...(room.kind?.trim() ? { kind: room.kind.trim() } : {}),
-  }));
+  return (registry?.listReferences() ?? input.context?.rooms ?? []).map((room) => {
+    const background = room.background?.trim();
+    const goal = room.goal?.trim();
+    const status = room.status?.trim();
+    const contextSummary = room.contextSummary;
+    return {
+      id: room.id.trim(),
+      title: room.title.trim(),
+      ...(room.kind?.trim() ? { kind: room.kind.trim() } : {}),
+      ...(background ? { background: background.slice(0, 2_000) } : {}),
+      ...(goal ? { goal: goal.slice(0, 2_000) } : {}),
+      ...(status ? { status: status.slice(0, 500) } : {}),
+      ...(contextSummary ? { contextSummary } : {}),
+    };
+  });
 }
 
 function selectedRunRoomId(
@@ -579,6 +599,7 @@ export class AgentService {
       const run = await this.startRun(intent.sessionId, {
         prompt: intent.originalPrompt,
         idempotencyKey: input.idempotencyKey,
+        ...(input.responseLanguage ? { responseLanguage: input.responseLanguage } : {}),
         context: {
           selectedRoomId: roomId,
           rooms: availableRooms({ prompt: intent.originalPrompt, idempotencyKey: input.idempotencyKey }, this.roomRegistry),
@@ -822,11 +843,13 @@ export class AgentService {
 
     let runtimeRun;
     try {
+      const responseLanguage = normalizeAgentLocale(input.responseLanguage);
       runtimeRun = await this.runtime.start({
         runId,
         sessionId,
         runtimeSessionRef: session.runtimeSessionRef,
         prompt: runtimePrompt(input, session.pageLabel, this.connectorMode),
+        ...(responseLanguage ? { responseLanguage } : {}),
         pageLabel: session.pageLabel,
         roomId: runRoomId,
         availableRooms: rooms,

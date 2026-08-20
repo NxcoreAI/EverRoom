@@ -225,11 +225,11 @@ export function useTiptapSelectionRewrite({
   previewRef.current = preview
 
   const rewriteErrorMessage = useCallback((error: unknown): string => {
-    const message = error instanceof Error ? error.message : t('文档操作失败，请重试。')
+    const message = error instanceof Error ? error.message : t('contextRoom:tiptapSelectionRewrite.documentOperationFailedTryAgain')
     if (/DOCUMENT_CONFLICT|VERSION(?:_MISMATCH| HAS CHANGED)/i.test(message)) {
-      return t('文档内容已更新，请重新选择后重试。')
+      return t('contextRoom:tiptapSelectionRewrite.theDocumentHasChangedSelectTheTextAgain')
     }
-    if (/DOCUMENT_BUSY/i.test(message)) return t('文档正在处理其他修改，请完成后再试。')
+    if (/DOCUMENT_BUSY/i.test(message)) return t('contextRoom:tiptapSelectionRewrite.theDocumentIsProcessingAnotherChangeTryAgain')
     return message
   }, [t])
 
@@ -278,7 +278,7 @@ export function useTiptapSelectionRewrite({
         current.operationId,
         current.phase === 'requesting' ? 'operation.cancel' : 'review.reject',
       ).then((result) => {
-        if (!result) throw new Error(t('文档操作正在处理中。'))
+        if (!result) throw new Error(t('contextRoom:tiptapSelectionRewrite.theDocumentOperationIsStillProcessing'))
         finish(operation?.wasEditable ?? true, current.sessionId)
       }).catch((error: unknown) => {
         void preservePreviewError(current, error)
@@ -290,10 +290,10 @@ export function useTiptapSelectionRewrite({
 
   const createOperation = useCallback(async (current: RewritePreviewState): Promise<DocumentOperation> => {
     if (!editor || editor.isDestroyed || !current.sessionId || !current.runId) {
-      throw new Error(t('文档操作服务不可用。'))
+      throw new Error(t('contextRoom:tiptapSelectionRewrite.theDocumentOperationServiceIsUnavailable'))
     }
     if (selectionText(editor, current.from, current.to) !== current.originalText) {
-      throw new Error(t('原选区已经变化，请重新选择。'))
+      throw new Error(t('contextRoom:tiptapSelectionRewrite.theOriginalSelectionHasChangedSelectItAgain'))
     }
     const localOperation = operationRef.current
     if (localOperation) localOperation.startingOperation = true
@@ -304,7 +304,7 @@ export function useTiptapSelectionRewrite({
         throw new DOMException('Selection rewrite cancelled', 'AbortError')
       }
       if (selectionText(editor, current.from, current.to) !== current.originalText) {
-        throw new Error(t('原选区已经变化，请重新选择。'))
+        throw new Error(t('contextRoom:tiptapSelectionRewrite.theOriginalSelectionHasChangedSelectItAgain'))
       }
       operation = await start({
         capabilityId: 'document.selection-rewrite',
@@ -328,7 +328,7 @@ export function useTiptapSelectionRewrite({
           instruction: current.instruction.trim() || '保持原意，重写得更清晰、自然。',
         },
       })
-      if (!operation) throw new Error(t('文档操作服务不可用。'))
+      if (!operation) throw new Error(t('contextRoom:tiptapSelectionRewrite.theDocumentOperationServiceIsUnavailable'))
     } finally {
       const activeOperation = operationRef.current
       if (activeOperation && activeOperation.id === localOperation?.id) activeOperation.startingOperation = false
@@ -476,7 +476,7 @@ export function useTiptapSelectionRewrite({
     const current = previewRef.current
     if (!current || !editor || editor.isDestroyed) return
     if (selectionText(editor, current.from, current.to) !== current.originalText) {
-      setPreview({ ...current, phase: 'error', error: t('原选区已经变化，请重新选择。') })
+      setPreview({ ...current, phase: 'error', error: t('contextRoom:tiptapSelectionRewrite.theOriginalSelectionHasChangedSelectItAgain') })
       return
     }
     if (current.replacementText && current.sessionId && current.runId && !current.operationId) {
@@ -502,7 +502,7 @@ export function useTiptapSelectionRewrite({
       || !current.replacementText || !editor || editor.isDestroyed) return
     if (selectionText(editor, current.from, current.to) !== current.originalText) {
       restoreEditor(operation?.wasEditable ?? true)
-      setPreview({ ...current, phase: 'error', error: t('原选区已经变化，请重新选择。') })
+      setPreview({ ...current, phase: 'error', error: t('contextRoom:tiptapSelectionRewrite.theOriginalSelectionHasChangedSelectItAgain') })
       return
     }
     setPreview({ ...current, phase: 'submitting', error: null })
@@ -513,7 +513,7 @@ export function useTiptapSelectionRewrite({
         const rejected = await executeResult(operationId, 'review.reject')
         if (!rejected) {
           await executeResult(replacementOperation.id, 'operation.cancel')
-          throw new Error(t('无法替换旧的重写候选。'))
+          throw new Error(t('contextRoom:tiptapSelectionRewrite.unableToReplaceThePreviousRewriteCandidate'))
         }
         operationId = replacementOperation.id
         setPreview((value) => value ? {
@@ -527,7 +527,7 @@ export function useTiptapSelectionRewrite({
       }
       return executeResult(operationId, 'review.apply')
     })().then((result) => {
-      if (!result?.document) throw new Error(t('文档操作未返回权威文档。'))
+      if (!result?.document) throw new Error(t('contextRoom:tiptapSelectionRewrite.theDocumentOperationDidNotReturnTheAuthoritative'))
       const scrollElement = editor.view.dom.closest<HTMLElement>('.context-room-tiptap-scroll')
       const scrollPosition = scrollElement
         ? { top: scrollElement.scrollTop, left: scrollElement.scrollLeft }
@@ -623,25 +623,25 @@ export function TiptapSelectionRewritePreview({
       className="context-room-tiptap-rewrite-preview"
       data-phase={preview.phase}
       style={{ left: preview.left, top: preview.top }}
-      aria-label={t('AI 重写预览')}
+      aria-label={t('contextRoom:tiptapSelectionRewrite.aiRewritePreview')}
       aria-live="polite"
     >
       <header>
         {preview.phase === 'requesting' || preview.phase === 'submitting' ? <LoaderCircle className="is-spinning" /> : <Sparkles />}
         <span>{preview.phase === 'requesting'
-          ? t('正在重写')
-          : t(preview.phase === 'submitting' ? '正在提交' : preview.phase === 'ready' ? '建议修改' : '重写失败')}</span>
+          ? t('contextRoom:tiptapSelectionRewrite.rewriting')
+          : t(preview.phase === 'submitting' ? 'contextRoom:tiptapSelectionRewrite.submitting' : preview.phase === 'ready' ? 'contextRoom:tiptapSelectionRewrite.suggestedEdit' : 'contextRoom:tiptapSelectionRewrite.rewriteFailed')}</span>
         <div>
           {preview.phase === 'error' ? (
-            <button type="button" aria-label={t('重新重写')} title={t('重新重写')} onClick={onRetry}><RotateCcw /></button>
+            <button type="button" aria-label={t('contextRoom:tiptapSelectionRewrite.rewriteAgain')} title={t('contextRoom:tiptapSelectionRewrite.rewriteAgain')} onClick={onRetry}><RotateCcw /></button>
           ) : null}
-          <button type="button" disabled={preview.phase === 'submitting'} aria-label={t('取消重写')} title={t('取消重写')} onClick={onCancel}><X /></button>
+          <button type="button" disabled={preview.phase === 'submitting'} aria-label={t('contextRoom:tiptapSelectionRewrite.cancelRewrite')} title={t('contextRoom:tiptapSelectionRewrite.cancelRewrite')} onClick={onCancel}><X /></button>
         </div>
       </header>
       {preview.phase === 'ready' || preview.phase === 'submitting' || preview.replacementText ? (
         <textarea
           className="context-room-tiptap-rewrite-text"
-          aria-label={t('编辑重写内容')}
+          aria-label={t('contextRoom:tiptapSelectionRewrite.editRewrittenText')}
           value={preview.replacementText}
           maxLength={65_536}
           disabled={preview.phase !== 'ready'}
@@ -660,8 +660,8 @@ export function TiptapSelectionRewritePreview({
         <footer>
           <button
             type="button"
-            aria-label={t('应用重写')}
-            title={t('应用重写')}
+            aria-label={t('contextRoom:tiptapSelectionRewrite.applyRewrite')}
+            title={t('contextRoom:tiptapSelectionRewrite.applyRewrite')}
             disabled={!preview.replacementText.trim()}
             onClick={onAccept}
           ><Check /></button>

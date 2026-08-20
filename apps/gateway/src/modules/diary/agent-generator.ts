@@ -2,7 +2,8 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { Logger } from "pino";
 import type { DiaryPayload } from "../../infrastructure/database/schema.js";
-import { localDateTime, type DiaryGenerationInput, type DiaryGenerator } from "./service.js";
+import type { DiaryGenerationInput, DiaryGenerator } from "./types.js";
+import { localDateTime } from "./utils.js";
 
 function jsonText(content: string): string {
   const trimmed = content.trim();
@@ -12,6 +13,13 @@ function jsonText(content: string): string {
 }
 
 export type DiaryOutputParseMode = "direct" | "embedded";
+
+export function resolveDiarySourceId(sourceId: string, allowedSourceIds: Iterable<string>): string | null {
+  const allowed = [...allowedSourceIds];
+  if (allowed.includes(sourceId)) return sourceId;
+  const suffixMatches = allowed.filter((candidate) => candidate.endsWith(`:${sourceId}`));
+  return suffixMatches.length === 1 ? suffixMatches[0]! : null;
+}
 
 function diaryPayloadCandidate(value: string): DiaryPayload | null {
   try {
@@ -96,10 +104,12 @@ export class DiaryAgentGenerator implements DiaryGenerator {
         const input = this.active.get(run.runId);
         if (!input) throw new Error("Diary source manifest is no longer active");
         const sourceId = typeof params.sourceId === "string" ? params.sourceId : "";
-        const content = await input.readSource(sourceId);
+        const canonicalSourceId = resolveDiarySourceId(sourceId, input.sources.map((source) => source.sourceId));
+        if (!canonicalSourceId) throw new Error("Source is outside this diary manifest");
+        const content = await input.readSource(canonicalSourceId);
         if (content === null) throw new Error("Source is outside this diary manifest");
-        this.logger?.debug({ event: "diary.agent.source_read", runId: run.runId, sourceId, contentBytes: Buffer.byteLength(content, "utf8") }, "diary Agent source read");
-        return { content, details: { sourceId } };
+        this.logger?.debug({ event: "diary.agent.source_read", runId: run.runId, sourceId: canonicalSourceId, contentBytes: Buffer.byteLength(content, "utf8") }, "diary Agent source read");
+        return { content, details: { sourceId: canonicalSourceId } };
       },
     }];
   }
@@ -196,6 +206,7 @@ function promptOf(input: DiaryGenerationInput): string {
     "先审阅完整元数据清单，只在确有必要时调用 diary_source_read。不要读取清单之外的数据。",
     "调用工具前后不要输出解释、计划或进度；所有工具调用完成后，最终消息必须只包含一个 JSON 对象。",
     "合并同一经历的多种来源，避免将视觉、录音、记忆或文档重复写成多个事件；不补写没有证据的事实。",
+    "优先复用来源清单中的 insightTags 和 keyPoints：entity 是实体候选，fact 是有证据的事实。knowledgeEntities 才是已经完成身份归并的 Knowledge 实体，写作时优先使用其规范名称，但不要补写证据未支持的关系。",
     "只输出 JSON 对象，不使用 Markdown。结构必须是 headline, summary, reflection, range, events, closing。",
     "events 每项必须包含 time, title, summary, sourceRefs，可选 endTime 和 tags。sourceRefs 至少一个且只能引用清单 sourceId。",
     "时间必须以来源清单为准，不要从标题、正文或截图文字中猜测时间。单一来源的 time 原样复制 occurredAt。合并多个来源时，time 使用最早的 occurredAt；若最早与最晚证据跨分钟，endTime 使用所有引用来源 endedAt（缺失时用 occurredAt）的最晚值。",

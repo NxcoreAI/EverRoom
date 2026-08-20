@@ -1,13 +1,14 @@
 import { RotateCcw, X } from 'lucide-react'
+import { useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
-import type { ContextRoomKind, ContextRoomRecord } from '../types'
+import type { ContextRoomRecord } from '../types'
+import { localizedUiText, uiText } from '../adapters'
 import { ActionConfirmDialog, ReferenceDialog } from './shared'
 
 export interface DraftRoom {
-  kind: ContextRoomKind
   name: string
-  summary: string
+  description: string
 }
 
 export function RoomForm({
@@ -23,9 +24,11 @@ export function RoomForm({
   submitLabel: string
   renameOnly?: boolean
   onCancel?: () => void
-  onSubmit: (draft: DraftRoom) => void
+  onSubmit: (draft: DraftRoom) => void | Promise<void>
 }) {
   const { t } = useLocale()
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   return (
     <form
       className="context-room-room-form"
@@ -33,48 +36,43 @@ export function RoomForm({
         event.preventDefault()
         const values = new FormData(event.currentTarget)
         const name = values.get('name')
-        const kind = values.get('kind')
-        const summary = values.get('summary')
-        onSubmit({
+        const description = values.get('description')
+        setSubmitting(true)
+        setError(null)
+        void Promise.resolve(onSubmit({
           name: typeof name === 'string' ? name.trim() : '',
-          kind: (typeof kind === 'string' ? kind : '项目') as ContextRoomKind,
-          summary: typeof summary === 'string' ? summary.trim() : '',
-        })
+          description: typeof description === 'string' ? description.trim() : '',
+        })).catch((cause: unknown) => {
+          setError(cause instanceof Error ? cause.message : t('contextRoom:roomDialogs.createFailed'))
+        }).finally(() => setSubmitting(false))
       }}
     >
       <h2>{t(title)}</h2>
       <label>
-        <span>{t('名称')}</span>
+        <span>{t('contextRoom:roomDialogs.name')}</span>
         <input name="name" defaultValue={initial?.name} required maxLength={40} autoFocus />
       </label>
       {renameOnly ? (
-        <input type="hidden" name="kind" value={initial?.kind ?? '项目'} />
+        <input type="hidden" name="description" value={initial?.description ?? ''} />
       ) : (
         <label>
-          <span>{t('类型')}</span>
-          <select name="kind" defaultValue={initial?.kind ?? '项目'}>
-            {(['项目', '主题', '人物', '长期目标', '议题', '事件'] as ContextRoomKind[]).map((kind) => (
-              <option key={kind}>{t(kind)}</option>
-            ))}
-          </select>
-        </label>
-      )}
-      {renameOnly ? (
-        <input type="hidden" name="summary" value={initial?.summary ?? ''} />
-      ) : (
-        <label>
-          <span>{t('初始说明')}</span>
+          <span>{t('contextRoom:roomDialogs.initialDescription')}</span>
           <textarea
-            name="summary"
+            name="description"
             rows={4}
-            defaultValue={initial?.summary}
-            placeholder={t('描述目标、范围或需要聚合的资料')}
+            defaultValue={initial?.description}
+            placeholder={t('contextRoom:roomDialogs.describeTheGoalScopeOrResourcesToCollect')}
+            required
+            maxLength={2_000}
           />
         </label>
       )}
+      {error ? <p className="context-room-form-error" role="alert">{error}</p> : null}
       <footer>
-        {onCancel ? <button type="button" className="context-room-ghost" onClick={onCancel}>{t('取消')}</button> : null}
-        <button type="submit" className="context-room-primary">{t(submitLabel)}</button>
+        {onCancel ? <button type="button" className="context-room-ghost" disabled={submitting} onClick={onCancel}>{t('contextRoom:roomDialogs.cancel')}</button> : null}
+        <button type="submit" className="context-room-primary" disabled={submitting}>
+          {submitting ? t('contextRoom:roomDialogs.creating') : t(submitLabel)}
+        </button>
       </footer>
     </form>
   )
@@ -107,15 +105,15 @@ export function RoomLifecycleDialogs({
       <ReferenceDialog
         open={Boolean(renameRoom)}
         onOpenChange={(open) => !open && onRenameRoomChange(null)}
-        title={t('重命名 Room')}
+        title={t('contextRoom:roomDialogs.renameRoom')}
       >
         {renameRoom ? (
           <RoomForm
-            title={t('为「{title}」设置新名称', { title: renameRoom.title })}
-            submitLabel={t('保存')}
+            title={t('contextRoom:roomDialogs.setANewNameForTitle', { title: renameRoom.title })}
+            submitLabel={t('contextRoom:roomDialogs.save')}
             renameOnly
             onCancel={() => onRenameRoomChange(null)}
-            initial={{ name: renameRoom.title, kind: renameRoom.kind, summary: renameRoom.brief.background }}
+            initial={{ name: renameRoom.title, description: localizedUiText(renameRoom.brief.background, t) }}
             onSubmit={(draft) => {
               onRenameRoom(renameRoom.id, draft.name)
               onRenameRoomChange(null)
@@ -126,18 +124,18 @@ export function RoomLifecycleDialogs({
       <ActionConfirmDialog
         open={Boolean(deleteRoom)}
         onOpenChange={(open) => !open && onDeleteRoomChange(null)}
-        title={t('删除 Context Room')}
-        summary={deleteRoom ? t('“{title}”将移至已删除 Room。', { title: deleteRoom.title }) : ''}
+        title={t('contextRoom:roomDialogs.deleteContextRoom')}
+        summary={deleteRoom ? t('contextRoom:roomDialogs.titleWillBeMovedToDeletedRooms', { title: deleteRoom.title }) : ''}
         rows={deleteRoom ? [
-          { label: t('Room 类型'), value: t(deleteRoom.kind) },
-          { label: t('资料范围'), value: t('文档 {docs} · 邮件 {mails} · 会议 {meetings}', {
+          { label: t('contextRoom:roomDialogs.roomType'), value: t(uiText(deleteRoom.kind)) },
+          { label: t('contextRoom:roomDialogs.resourceScope'), value: t('contextRoom:roomDialogs.documentsDocsEmailsMailsMeetingsMeetings', {
             docs: deleteRoom.stats.docs,
             mails: deleteRoom.stats.mails,
             meetings: deleteRoom.stats.meetings,
           }) },
         ] : []}
-        risk={t('资料本体不会被删除，但 Agent 不再以此 Room 作为上下文边界，可在已删除 Room 中恢复。')}
-        confirmLabel={t('删除')}
+        risk={t('contextRoom:roomDialogs.theResourcesWillRemainButAgentWillNo')}
+        confirmLabel={t('contextRoom:roomDialogs.delete')}
         danger
         onConfirm={() => {
           if (!deleteRoom) return
@@ -148,11 +146,11 @@ export function RoomLifecycleDialogs({
       />
       {recentlyDeleted ? (
         <div className="context-room-undo" role="status">
-          <span>{t('已删除“{title}”', { title: recentlyDeleted.title })}</span>
+          <span>{t('contextRoom:roomDialogs.deletedTitle', { title: recentlyDeleted.title })}</span>
           <button type="button" onClick={() => { onRestoreRoom(recentlyDeleted.id); onRecentlyDeletedChange(null) }}>
-            <RotateCcw aria-hidden="true" />{t('撤销')}
+            <RotateCcw aria-hidden="true" />{t('contextRoom:roomDialogs.undo')}
           </button>
-          <button type="button" aria-label={t('关闭撤销提示')} onClick={() => onRecentlyDeletedChange(null)}>
+          <button type="button" aria-label={t('contextRoom:roomDialogs.dismissUndoNotice')} onClick={() => onRecentlyDeletedChange(null)}>
             <X aria-hidden="true" />
           </button>
         </div>

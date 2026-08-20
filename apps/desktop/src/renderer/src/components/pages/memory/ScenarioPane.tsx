@@ -5,7 +5,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 import type { MemoryScenarioEntryDto } from '../../../../../shared/memory'
 import { MemoryMarkdown } from './MemoryMarkdown'
 import { MemoryEmptyView } from './MemoryStatusViews'
-import { formatDate, useAsyncData } from './useMemoryData'
+import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
 
 interface ScenarioNode {
   name: string
@@ -46,31 +46,33 @@ function buildTree(entries: MemoryScenarioEntryDto[]): ScenarioNode {
   return root
 }
 
-function ScenarioTree({ root, selectedPath, onSelect }: {
+function ScenarioTree({ root, selectedPath, onSelect, locale }: {
   root: ScenarioNode
   selectedPath: string
   onSelect: (node: ScenarioNode) => void
+  locale: string
 }) {
   const children = [...root.children.values()].sort((a, b) =>
-    Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name, 'zh-CN'))
+    Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name, locale))
   return (
     <ul>
       {children.map((child) => (
-        <ScenarioTreeItem key={child.path} node={child} depth={0} selectedPath={selectedPath} onSelect={onSelect} />
+        <ScenarioTreeItem key={child.path} node={child} depth={0} selectedPath={selectedPath} onSelect={onSelect} locale={locale} />
       ))}
     </ul>
   )
 }
 
-function ScenarioTreeItem({ node, depth, selectedPath, onSelect }: {
+function ScenarioTreeItem({ node, depth, selectedPath, onSelect, locale }: {
   node: ScenarioNode
   depth: number
   selectedPath: string
   onSelect: (node: ScenarioNode) => void
+  locale: string
 }) {
   const [open, setOpen] = useState(depth < 1)
   const children = [...node.children.values()].sort((a, b) =>
-    Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name, 'zh-CN'))
+    Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name, locale))
   return (
     <li>
       <button
@@ -100,7 +102,7 @@ function ScenarioTreeItem({ node, depth, selectedPath, onSelect }: {
       {node.isDirectory && open ? (
         <ul className="mem-scenario-children">
           {children.map((child) => (
-            <ScenarioTreeItem key={child.path} node={child} depth={depth + 1} selectedPath={selectedPath} onSelect={onSelect} />
+            <ScenarioTreeItem key={child.path} node={child} depth={depth + 1} selectedPath={selectedPath} onSelect={onSelect} locale={locale} />
           ))}
         </ul>
       ) : null}
@@ -126,40 +128,40 @@ export function ScenarioPane() {
   const root = useMemo(() => buildTree(data?.entries ?? []), [data])
   const selectedEntry = (data?.entries ?? []).find((entry) => entry.path === selectedPath)
 
-  if (failure) return <div className="mem-pane-error">{failure.message}</div>
+  if (failure) return <div className="mem-pane-error">{memoryFailureText(failure, t)}</div>
 
   return (
     <div className="mem-scenario">
       <aside className="mem-scenario-tree">
-        {loading ? <p className="mem-loading">{t('加载中…')}</p> : null}
+        {loading ? <p className="mem-loading">{t('memory:scenario.loading')}</p> : null}
         {!loading && (data?.entries.length ?? 0) === 0 ? (
-          <MemoryEmptyView title={t('暂无场景')} hint={t('MemoryCore 会把相关记忆按主题归档为场景文档。')} />
+          <MemoryEmptyView title={t('memory:scenario.noScenariosYet')} hint={t('memory:scenario.memorycoreOrganizesRelatedMemoriesIntoScenarioDocumentsBy')} />
         ) : (
-          <ScenarioTree root={root} selectedPath={selectedPath} onSelect={(node) => setSelectedPath(node.path)} />
+          <ScenarioTree root={root} selectedPath={selectedPath} onSelect={(node) => setSelectedPath(node.path)} locale={locale} />
         )}
       </aside>
       <section className="mem-scenario-viewer">
         {selectedPath ? (
           file.failure ? (
-            <div className="mem-pane-error">{file.failure.message}</div>
+            <div className="mem-pane-error">{memoryFailureText(file.failure, t)}</div>
           ) : file.loading ? (
-            <p className="mem-loading">{t('加载中…')}</p>
+            <p className="mem-loading">{t('memory:scenario.loading')}</p>
           ) : (
             <>
               <header>
                 <strong>{selectedPath}</strong>
                 {selectedEntry?.summary ? <small>{selectedEntry.summary}</small> : null}
-                <small>{t('更新于 {time}', { time: formatDate(file.data?.updatedAt || selectedEntry?.updatedAt, locale) })}</small>
+                <small>{t('memory:scenario.updatedTime', { time: formatDate(file.data?.updatedAt || selectedEntry?.updatedAt, locale) })}</small>
               </header>
               {file.data?.content ? (
                 <MemoryMarkdown markdown={stripMetaHeader(file.data.content)} />
               ) : (
-                <MemoryEmptyView title={t('文件为空')} />
+                <MemoryEmptyView title={t('memory:scenario.emptyFile')} />
               )}
             </>
           )
         ) : (
-          <MemoryEmptyView title={t('选择左侧的场景文件')} hint={t('场景（L2）是 MemoryCore 按主题归档的记忆文档。')} />
+          <MemoryEmptyView title={t('memory:scenario.selectAScenarioFileOnTheLeft')} hint={t('memory:scenario.scenariosL2AreMemoryDocumentsOrganizedByTopic')} />
         )}
       </section>
     </div>

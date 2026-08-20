@@ -20,6 +20,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
+import { pageLabelKey } from '@/data/navigation'
 import './AgentStatusPage.css'
 
 const PAGE_LABELS = ['首页', 'Context Room', '文档', '现实感知', '数据源', '文件', '记忆', 'Wiki', '任务', '日记', '设置']
@@ -38,25 +39,25 @@ interface AgentStatusData {
 const INITIAL_DATA: AgentStatusData = { state: 'loading', sessions: [], active: null, error: null }
 
 function elapsedLabel(date: string | null | undefined, locale: AppLocale, t: Translate): string {
-  if (!date) return t('刚刚')
+  if (!date) return t('surface:agentStatus.justNow')
   const elapsed = Math.max(0, Date.now() - new Date(date).getTime())
-  if (elapsed < 60_000) return t('刚刚')
-  if (elapsed < 3_600_000) return t('{count} 分钟前', { count: Math.floor(elapsed / 60_000).toLocaleString(locale) })
-  if (elapsed < 86_400_000) return t('{count} 小时前', { count: Math.floor(elapsed / 3_600_000).toLocaleString(locale) })
-  return t('{count} 天前', { count: Math.floor(elapsed / 86_400_000).toLocaleString(locale) })
+  if (elapsed < 60_000) return t('surface:agentStatus.justNow')
+  if (elapsed < 3_600_000) return t('surface:agentStatus.countMinutesAgo', { count: Math.floor(elapsed / 60_000).toLocaleString(locale) })
+  if (elapsed < 86_400_000) return t('surface:agentStatus.countHoursAgo', { count: Math.floor(elapsed / 3_600_000).toLocaleString(locale) })
+  return t('surface:agentStatus.countDaysAgo', { count: Math.floor(elapsed / 86_400_000).toLocaleString(locale) })
 }
 
 function stateCopy(state: ExecutionState, t: Translate): string {
-  if (state === 'running') return t('正在执行')
-  if (state === 'loading') return t('正在同步')
-  if (state === 'error') return t('连接异常')
-  return t('自由活动')
+  if (state === 'running') return t('surface:agentStatus.working')
+  if (state === 'loading') return t('surface:agentStatus.syncing')
+  if (state === 'error') return t('surface:agentStatus.connectionError')
+  return t('surface:agentStatus.freeToRoam')
 }
 
 function HorseMascot() {
   const { t } = useLocale()
   return (
-    <svg viewBox="0 0 132 112" role="img" aria-label={t('执行 Agent 马形角色')}>
+    <svg viewBox="0 0 132 112" role="img" aria-label={t('surface:agentStatus.executionAgentHorseCharacter')}>
       <ellipse className="horse-shadow" cx="67" cy="102" rx="39" ry="7" />
       <g className="horse-body">
         <path className="horse-leg horse-leg-a" d="M38 72c-2 10-4 18-3 27" />
@@ -100,7 +101,7 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
   const refresh = useCallback(async (quiet = false) => {
     const api = window.nxcore?.agent
     if (!api) {
-      setData({ state: 'error', sessions: [], active: null, error: t('Agent 服务仅在 Everroom 桌面端中可用。') })
+      setData({ state: 'error', sessions: [], active: null, error: t('surface:agentStatus.theAgentServiceIsOnlyAvailableInThe') })
       return
     }
     if (!quiet) setRefreshing(true)
@@ -114,7 +115,7 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
       setUpdatedAt(new Date())
       if (active?.activeRun) setHorseZone('desk')
     } catch (cause) {
-      setData((current) => ({ ...current, state: 'error', error: cause instanceof Error ? cause.message : t('无法读取 Agent 状态。') }))
+      setData((current) => ({ ...current, state: 'error', error: cause instanceof Error ? cause.message : t('surface:agentStatus.failedToLoadAgentStatus') }))
     } finally {
       setRefreshing(false)
     }
@@ -132,7 +133,7 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
   )
   const recentSessions = data.sessions.filter((session) => session.title).slice(0, 3)
   const activeRun = data.active?.activeRun
-  const currentTask = activeRun?.prompt || data.active?.session.title || t('等待下一项工作')
+  const currentTask = activeRun?.prompt || data.active?.session.title || t('surface:agentStatus.waitingForTheNextTask')
 
   const moveHorse = (zone: OfficeZone) => {
     if (data.state === 'running') return
@@ -143,12 +144,12 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
     <div className="page agent-office-page">
       <header className="agent-office-header">
         <div>
-          <span className="agent-office-eyebrow"><Activity aria-hidden="true" /> {t('Agent 办公室')}</span>
-          <h1>{t('Everroom 办公室')}</h1>
+          <span className="agent-office-eyebrow"><Activity aria-hidden="true" /> {t('surface:agentStatus.agentOffice')}</span>
+          <h1>{t('surface:agentStatus.everroomOffice')}</h1>
         </div>
         <div className="agent-office-actions">
-          <span>{updatedAt ? t('更新于 {time}', { time: updatedAt.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) }) : t('正在连接')}</span>
-          <button type="button" title={t('刷新 Agent 状态')} aria-label={t('刷新 Agent 状态')} onClick={() => void refresh()} disabled={refreshing}>
+          <span>{updatedAt ? t('surface:agentStatus.updatedTime', { time: updatedAt.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) }) : t('surface:agentStatus.connecting')}</span>
+          <button type="button" title={t('surface:agentStatus.refreshAgentStatus')} aria-label={t('surface:agentStatus.refreshAgentStatus')} onClick={() => void refresh()} disabled={refreshing}>
             <RefreshCw aria-hidden="true" className={refreshing ? 'agent-office-spin' : undefined} />
           </button>
         </div>
@@ -162,42 +163,42 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
           </div>
 
           <button className="office-zone office-kitchen" data-active={String(horseZone === 'kitchen')} type="button" onClick={() => moveHorse('kitchen')}>
-            <span><CookingPot aria-hidden="true" /> {t('厨房')}</span>
+            <span><CookingPot aria-hidden="true" /> {t('surface:agentStatus.kitchen')}</span>
             <div className="kitchen-counter"><i /><i /><i /></div>
             <div className="kitchen-fridge"><i /><i /></div>
           </button>
 
           <button className="office-zone office-coffee" data-active={String(horseZone === 'coffee')} type="button" onClick={() => moveHorse('coffee')}>
-            <span><Coffee aria-hidden="true" /> {t('咖啡厅')}</span>
+            <span><Coffee aria-hidden="true" /> {t('surface:agentStatus.cafe')}</span>
             <div className="coffee-table"><i /><i /><i /></div>
             <div className="coffee-sofa"><i /><i /></div>
           </button>
 
           <button className="office-zone office-restroom" data-active={String(horseZone === 'restroom')} type="button" onClick={() => moveHorse('restroom')}>
-            <span><Toilet aria-hidden="true" /> {t('洗手间')}</span>
+            <span><Toilet aria-hidden="true" /> {t('surface:agentStatus.restroom')}</span>
             <div className="restroom-stall"><i /></div>
             <div className="restroom-sink"><i /></div>
           </button>
 
           <button className="office-zone office-lounge" data-active={String(horseZone === 'lounge')} type="button" onClick={() => moveHorse('lounge')}>
-            <span><Armchair aria-hidden="true" /> {t('休息区')}</span>
+            <span><Armchair aria-hidden="true" /> {t('surface:agentStatus.lounge')}</span>
             <div className="lounge-rug" />
             <div className="lounge-chair"><i /></div>
             <div className="lounge-plant"><i /><i /><i /></div>
           </button>
 
           <button className="office-zone office-workstations" data-active={String(horseZone === 'desk')} type="button" onClick={() => moveHorse('desk')}>
-            <span><Monitor aria-hidden="true" /> {t('Agent 工位')}</span>
-            <DeskAgent kind="data" label={t('数据 Agent')} />
-            <DeskAgent kind="memory" label={t('记忆 Agent')} />
-            <DeskAgent kind="document" label={t('文档 Agent')} />
+            <span><Monitor aria-hidden="true" /> {t('surface:agentStatus.agentWorkstations')}</span>
+            <DeskAgent kind="data" label={t('surface:agentStatus.dataAgent')} />
+            <DeskAgent kind="memory" label={t('surface:agentStatus.memoryAgent')} />
+            <DeskAgent kind="document" label={t('surface:agentStatus.documentAgent')} />
             <div className="execution-desk">
-              <span>{t('执行 Agent')}</span><Monitor aria-hidden="true" /><i /><i />
+              <span>{t('surface:agentStatus.executionAgent')}</span><Monitor aria-hidden="true" /><i /><i />
             </div>
           </button>
 
           <div className="horse-agent" aria-live="polite">
-            <span>{t(data.state === 'running' ? '正在执行任务' : horseZone === 'desk' ? '准备开工' : '摸鱼巡游中')}</span>
+            <span>{t(data.state === 'running' ? 'surface:agentStatus.workingOnATask' : horseZone === 'desk' ? 'surface:agentStatus.readyToWork' : 'surface:agentStatus.takingABreak')}</span>
             <HorseMascot />
           </div>
           <div className="office-path" aria-hidden="true"><i /><i /><i /><i /><i /></div>
@@ -207,45 +208,45 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
           <section className="primary-agent-status" data-state={data.state}>
             <header>
               <div className="status-orb"><Sparkles aria-hidden="true" /></div>
-              <div><span>{t('主 Agent')}</span><h2>{t('执行 Agent')}</h2></div>
+              <div><span>{t('surface:agentStatus.primaryAgent')}</span><h2>{t('surface:agentStatus.executionAgent')}</h2></div>
               <strong>{data.state === 'running' || data.state === 'loading' ? <LoaderCircle aria-hidden="true" /> : <Circle aria-hidden="true" />}{stateCopy(data.state, t)}</strong>
             </header>
             <div className="primary-task">
-              <span>{t(data.state === 'running' ? '当前任务' : '工作就绪')}</span>
+              <span>{t(data.state === 'running' ? 'surface:agentStatus.currentMission' : 'surface:agentStatus.readyForWork')}</span>
               <h3>{currentTask}</h3>
-              <p>{data.state === 'running' ? t('正在 {page} 工作区处理任务。', { page: t(data.active?.session.pageLabel ?? 'Everroom') }) : t('点击办公室区域，可以让执行 Agent 在不同空间活动。')}</p>
+              <p>{data.state === 'running' ? t('surface:agentStatus.workingOnATaskInThePageWorkspace', { page: t(pageLabelKey(data.active?.session.pageLabel ?? 'Everroom')) }) : t('surface:agentStatus.selectAnOfficeAreaToMoveTheExecution')}</p>
             </div>
             <div className="primary-metrics">
-              <div><strong>{data.state === 'running' ? '1' : '0'}</strong><span>{t('进行中')}</span></div>
-              <div><strong>{completedCount.toLocaleString(locale)}</strong><span>{t('已完成')}</span></div>
-              <div><strong>{data.sessions.length.toLocaleString(locale)}</strong><span>{t('总会话')}</span></div>
+              <div><strong>{data.state === 'running' ? '1' : '0'}</strong><span>{t('surface:agentStatus.inProgress')}</span></div>
+              <div><strong>{completedCount.toLocaleString(locale)}</strong><span>{t('surface:agentStatus.completed')}</span></div>
+              <div><strong>{data.sessions.length.toLocaleString(locale)}</strong><span>{t('surface:agentStatus.totalSessions')}</span></div>
             </div>
-            <button type="button" onClick={onFocusAgent}><Sparkles aria-hidden="true" />{t('发起新任务')}</button>
+            <button type="button" onClick={onFocusAgent}><Sparkles aria-hidden="true" />{t('surface:agentStatus.startANewTask')}</button>
           </section>
 
           <section className="support-agent-status">
-            <header><h2>{t('Agent 状态')}</h2><span>{t('{count} 个在线', { count: 3 })}</span></header>
-            <div><i data-tone="data"><Database /></i><span><strong>{t('数据 Agent')}</strong><small>{t('数据源已就绪')}</small></span><Check /></div>
-            <div><i data-tone="memory"><Brain /></i><span><strong>{t('记忆 Agent')}</strong><small>{t('记忆服务已就绪')}</small></span><Check /></div>
-            <div><i data-tone="document"><FileText /></i><span><strong>{t('文档 Agent')}</strong><small>{t('文档能力已就绪')}</small></span><Check /></div>
+            <header><h2>{t('surface:agentStatus.agentStatus')}</h2><span>{t('surface:agentStatus.countOnline', { count: 3 })}</span></header>
+            <div><i data-tone="data"><Database /></i><span><strong>{t('surface:agentStatus.dataAgent')}</strong><small>{t('surface:agentStatus.sourcesReady')}</small></span><Check /></div>
+            <div><i data-tone="memory"><Brain /></i><span><strong>{t('surface:agentStatus.memoryAgent')}</strong><small>{t('surface:agentStatus.memoryServiceReady')}</small></span><Check /></div>
+            <div><i data-tone="document"><FileText /></i><span><strong>{t('surface:agentStatus.documentAgent')}</strong><small>{t('surface:agentStatus.documentToolsReady')}</small></span><Check /></div>
           </section>
         </aside>
       </div>
 
       <section className="agent-activity">
         <header>
-          <div><h2>{t('最近活动')}</h2><span>{data.error ?? t('执行记录保留在本地 Gateway')}</span></div>
-          <button type="button">{t('全部记录')} <ArrowUpRight aria-hidden="true" /></button>
+          <div><h2>{t('surface:agentStatus.recentActivity')}</h2><span>{data.error ?? t('surface:agentStatus.executionHistoryIsStoredInTheLocalGateway')}</span></div>
+          <button type="button">{t('surface:agentStatus.allActivity')} <ArrowUpRight aria-hidden="true" /></button>
         </header>
         <div className="agent-activity-list">
           {recentSessions.length ? recentSessions.map((session) => (
             <div className="agent-activity-row" key={session.id}>
               <i data-running={String(session.status === 'running')}>{session.status === 'running' ? <LoaderCircle /> : <Check />}</i>
-              <div><strong>{session.title}</strong><small>{t(session.pageLabel)} · {session.runtimeId}</small></div>
+              <div><strong>{session.title}</strong><small>{t(pageLabelKey(session.pageLabel))} · {session.runtimeId}</small></div>
               <time><Clock3 />{elapsedLabel(session.updatedAt, locale, t)}</time>
             </div>
           )) : (
-            <div className="agent-activity-empty"><Sparkles /><div><strong>{t('还没有执行记录')}</strong><span>{t('从右侧 Agent 面板发起第一个任务。')}</span></div></div>
+            <div className="agent-activity-empty"><Sparkles /><div><strong>{t('surface:agentStatus.noExecutionHistoryYet')}</strong><span>{t('surface:agentStatus.startTheFirstTaskFromTheAgentPanel')}</span></div></div>
           )}
         </div>
       </section>

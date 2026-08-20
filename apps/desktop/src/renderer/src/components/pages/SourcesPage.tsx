@@ -66,8 +66,8 @@ export function SourcesPage() {
       try {
         const next = await window.nxcore!.connectors.authorizationStatus(authorizationId)
         if (!active) return
-        if (next.status === 'connected') { setAuthorizationId(null); setMessage(t('连接已创建，同步范围正在初始化。')) }
-        else if (next.status !== 'pending') { setAuthorizationId(null); setMessage(next.error ?? t('授权未完成。')) }
+        if (next.status === 'connected') { setAuthorizationId(null); setMessage(t('surface:sources.connectionCreatedSyncScopesAreBeingInitialized')) }
+        else if (next.status !== 'pending') { setAuthorizationId(null); setMessage(next.error ?? t('surface:sources.authorizationWasNotCompleted')) }
       } catch { /* 网关暂不可达时继续等待 */ }
     }
     const timer = window.setInterval(() => void check(), 2_000)
@@ -82,10 +82,10 @@ export function SourcesPage() {
       const attempt = await window.nxcore?.connectors.startAuthorization(provider)
       if (attempt) {
         setAuthorizationId(attempt.id)
-        setMessage(t('已打开授权页面，请在浏览器中完成授权。'))
+        setMessage(t('surface:sources.theAuthorizationPageIsOpenCompleteAuthorizationIn'))
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t('无法打开授权页面。'))
+      setMessage(error instanceof Error ? error.message : t('surface:sources.failedToOpenTheAuthorizationPage'))
     }
   }
 
@@ -112,7 +112,7 @@ export function SourcesPage() {
       const files = await api.listFiles(sourceId)
       setFilesBySource((current) => ({ ...current, [sourceId]: files }))
     } catch (loadError) {
-      const nextError = loadError instanceof Error ? loadError.message : t('无法读取文件清单。')
+      const nextError = loadError instanceof Error ? loadError.message : t('surface:sources.failedToLoadTheFileList')
       if (nextError.includes('数据源不存在或已断开')) {
         setExpandedSourceId((current) => current === sourceId ? null : current)
         setFilesBySource((current) => {
@@ -156,7 +156,7 @@ export function SourcesPage() {
   }
 
   const addLocalFolder = async () => {
-    if (!api) return setMessage(t('网页版不读取本机文件夹。请在 {product} 桌面版中使用此功能。', { product: PRODUCT_NAME }))
+    if (!api) return setMessage(t('surface:sources.theWebVersionCannotReadLocalFoldersUse', { product: PRODUCT_NAME }))
     setBusyId('new')
     setMessage(null)
     try {
@@ -239,7 +239,7 @@ export function SourcesPage() {
   }
 
   const deleteSource = (source: DataSourceSummary) => {
-    if (!api || !window.confirm(t('要删除“{name}”吗？\n\n这会删除 {product} 保存的文件副本和版本记录，不会删除原文件。', { name: source.name, product: PRODUCT_NAME }))) return
+    if (!api || !window.confirm(t('surface:sources.deleteNameThisRemovesFileCopiesAndVersion', { name: source.name, product: PRODUCT_NAME }))) return
     if (expandedSourceId === source.id) setExpandedSourceId(null)
     void runAction(source.id, () => api.disconnect(source.id, true))
   }
@@ -254,22 +254,22 @@ export function SourcesPage() {
     try {
       setMarkdownPreview({ sourceId, fileId, data: await api.previewFile(sourceId, fileId) })
     } catch (error) {
-      setPreviewError(error instanceof Error ? error.message : t('无法预览 Markdown。'))
+      setPreviewError(error instanceof Error ? error.message : t('surface:sources.failedToPreviewMarkdown'))
     }
   }
 
   return (
     <div className="page">
-      <PageHeader title={t('数据源')} description={t('管理进入 {product} 的文件、应用和网页资料。', { product: PRODUCT_NAME })} action={t('连接数据源')} actionDisabled={busyId === 'new'} onAction={() => setConnectMenuOpen((open) => !open)} />
+      <PageHeader title={t('surface:sources.sources')} description={t('surface:sources.manageFilesAppsAndWebContentEnteringProduct', { product: PRODUCT_NAME })} action={t('surface:sources.connectSource')} actionDisabled={busyId === 'new'} onAction={() => setConnectMenuOpen((open) => !open)} />
       {api && connectMenuOpen ? <ConnectSourceMenu busy={busyId === 'new'} onLocalFolder={() => void addLocalFolder()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} /> : null}
-      {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('请在桌面版中连接本地文件夹')}</strong><span>{t('网页版不会请求或读取本机文件权限。')}</span></div></div> : null}
+      {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:sources.connectLocalFoldersInTheDesktopApp')}</strong><span>{t('surface:sources.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div> : null}
       {message ? <div className="source-feedback" role="status">{message}</div> : null}
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
       {api && sources.length > 0 ? <EvidenceSearch query={searchQuery} results={searchResults} searching={searching} onQueryChange={setSearchQuery} onSearch={(event) => void searchEvidence(event)} onClear={() => { setSearchQuery(''); setSearchResults(null) }} onOpen={(result) => void openEvidence(result.sourceId, result.fileId, result.id)} /> : null}
-      {api && !loading && sources.length === 0 ? <div className="sources-empty"><span className="sources-empty-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span><strong>{t('还没有连接数据源')}</strong><p>{t('连接一个数据源，{product} 会保存受支持内容的版本与同步状态。', { product: PRODUCT_NAME })}</p><button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><Plus aria-hidden="true" strokeWidth={1.8} />{t('连接文件夹')}</button></div> : null}
+      {api && !loading && sources.length === 0 ? <div className="sources-empty"><span className="sources-empty-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span><strong>{t('surface:sources.noSourcesConnectedYet')}</strong><p>{t('surface:sources.connectASourceAndProductWillTrackVersions', { product: PRODUCT_NAME })}</p><button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><Plus aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.connectFolder')}</button></div> : null}
       {api && (loading || sources.length > 0) ? <SourceTable sources={sources} loading={loading} busyId={busyId} expandedSourceId={expandedSourceId} filesBySource={filesBySource} filesLoadingId={filesLoadingId} onToggleFiles={(id) => setExpandedSourceId((current) => current === id ? null : id)} onSync={(source) => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={(source) => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onDelete={deleteSource} onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)} onPreviewFile={(sourceId, fileId) => void previewFile(sourceId, fileId)} onShowFile={showFile} /> : null}
       <div className="sources-connector-heading">
-        <h2>{t('连接器')}</h2>
+        <h2>{t('surface:sources.connectors')}</h2>
       </div>
       <ConnectorSection />
       {evidenceDocument ? <EvidenceViewer evidence={evidenceDocument} activeBlockId={activeEvidenceId} onClose={() => { setEvidenceDocument(null); setActiveEvidenceId(null) }} onShowFile={() => showFile(evidenceDocument.sourceId, evidenceDocument.fileId)} /> : null}

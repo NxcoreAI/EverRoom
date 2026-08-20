@@ -62,7 +62,7 @@ export function DocumentBlockReferencePicker({
       () => {
         if (!cancelled) {
           setBlocks([])
-          setError(t('无法读取文档内容块，请稍后重试'))
+          setError(t('contextRoom:documentBlockReferencePicker.unableToLoadDocumentBlocksTryAgainLater'))
         }
       },
     ).finally(() => {
@@ -84,15 +84,15 @@ export function DocumentBlockReferencePicker({
         className="context-room-reference-picker"
         role="dialog"
         aria-modal="true"
-        aria-label={t('引用文档块')}
+        aria-label={t('contextRoom:documentBlockReferencePicker.referenceDocumentBlock')}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
-          <span><Link2 aria-hidden="true" />{t('引用文档块')}</span>
-          <button type="button" aria-label={t('关闭')} title={t('关闭')} onClick={onClose}><X /></button>
+          <span><Link2 aria-hidden="true" />{t('contextRoom:documentBlockReferencePicker.referenceDocumentBlock')}</span>
+          <button type="button" aria-label={t('contextRoom:documentBlockReferencePicker.close')} title={t('contextRoom:documentBlockReferencePicker.close')} onClick={onClose}><X /></button>
         </header>
         <div className="context-room-reference-picker-body">
-          <nav aria-label={t('选择文档')}>
+          <nav aria-label={t('contextRoom:documentBlockReferencePicker.selectDocument')}>
             {availableDocuments.map((document) => (
               <button
                 type="button"
@@ -104,7 +104,7 @@ export function DocumentBlockReferencePicker({
                 <span>{document.title}</span>
               </button>
             ))}
-            {availableDocuments.length === 0 ? <p>{t('当前 Room 还没有可引用的文档')}</p> : null}
+            {availableDocuments.length === 0 ? <p>{t('contextRoom:documentBlockReferencePicker.thisRoomHasNoDocumentsAvailableToReference')}</p> : null}
           </nav>
           <main>
             <label>
@@ -112,12 +112,12 @@ export function DocumentBlockReferencePicker({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={t('搜索内容块')}
-                aria-label={t('搜索内容块')}
+                placeholder={t('contextRoom:documentBlockReferencePicker.searchBlocks')}
+                aria-label={t('contextRoom:documentBlockReferencePicker.searchBlocks')}
               />
             </label>
             <div className="context-room-reference-picker-blocks">
-              {loading ? <p><LoaderCircle className="is-spinning" />{t('正在读取内容块')}</p> : null}
+              {loading ? <p><LoaderCircle className="is-spinning" />{t('contextRoom:documentBlockReferencePicker.loadingBlocks')}</p> : null}
               {!loading && error ? <p data-error="true">{error}</p> : null}
               {!loading && !error && filteredBlocks.map((block) => (
                 <button
@@ -134,12 +134,12 @@ export function DocumentBlockReferencePicker({
                     })
                   }}
                 >
-                  <span>{block.textPreview || t('空内容块')}</span>
+                  <span>{block.textPreview || t('contextRoom:documentBlockReferencePicker.emptyBlock')}</span>
                   <small>{block.type}</small>
                 </button>
               ))}
               {!loading && !error && selectedDocument && filteredBlocks.length === 0 ? (
-                <p>{t(query ? '没有匹配的内容块' : '这个文档还没有可引用的内容块')}</p>
+                <p>{t(query ? 'contextRoom:documentBlockReferencePicker.noMatchingBlocks' : 'contextRoom:documentBlockReferencePicker.noReferenceBlocks')}</p>
               ) : null}
             </div>
           </main>

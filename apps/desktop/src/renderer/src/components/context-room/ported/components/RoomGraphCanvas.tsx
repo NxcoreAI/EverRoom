@@ -16,6 +16,8 @@ import {
 } from '../graph/PixiForceGraphCanvas'
 import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
 import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+import { useLocale } from '../../../../i18n/LocaleContext'
+import { uiText } from '../adapters'
 import { createRoomGraphData } from './roomGraphModel'
 
 export interface RoomGraphCanvasHandle {
@@ -54,6 +56,7 @@ function RoomGraphCanvasComponent(
   { compact = false, rooms, selectedId, onOpenRoom, onSelectRoom }: RoomGraphCanvasProps,
   ref: React.ForwardedRef<RoomGraphCanvasHandle>,
 ) {
+  const { t } = useLocale()
   const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
   const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const graph = useMemo(() => createRoomGraphData(rooms), [rooms])
@@ -126,7 +129,7 @@ function RoomGraphCanvasComponent(
     <div className="context-room-graph-shell">
       <PixiForceGraphCanvas
         ref={canvasRef}
-        ariaLabel="Room 关系图谱画布"
+        ariaLabel={t('contextRoom:graphs.roomRelationsCanvas')}
         className="context-room-graph-canvas"
         edges={edges}
         nodes={nodes}
@@ -139,17 +142,17 @@ function RoomGraphCanvasComponent(
         onOpenNode={onOpenRoom}
         onSelectNode={onSelectRoom}
       />
-      <div className="context-room-visually-hidden" aria-label="Room 图谱节点">
+      <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.roomNodes')}>
         {graph.nodes.map((room) => (
           <button
             type="button"
             key={room.id}
-            aria-label={`${room.kind} Room：${room.title}`}
+            aria-label={t('contextRoom:graphs.roomNode', { kind: t(uiText(room.kind)), title: room.title })}
             aria-pressed={selectedId === room.id}
             onClick={() => onSelectRoom(room.id)}
             onDoubleClick={() => onOpenRoom(room.id)}
           >
-            查看关系 {room.kind} Room {room.title}
+            {t('contextRoom:graphs.viewRelatedRoom', { kind: t(uiText(room.kind)), title: room.title })}
           </button>
         ))}
       </div>

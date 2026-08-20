@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, isNull, lt, lte, or } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
+import type { RealityTag } from "@nxcore/reality-contract";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   diaryVersionSources,
@@ -12,7 +13,13 @@ import {
   visualProcessingJobs,
 } from "../../infrastructure/database/schema.js";
 import type { FilesService } from "../files/service.js";
+import { insightEvidenceMarkdown, normalizeInsightTags } from "../reality/insight-tags.js";
 import type { VisualInferenceClient, VisualInferenceResult } from "./vlm-client.js";
+import {
+  screenshotContinuityMs,
+  shouldGroupScreenshot,
+  shouldRefreshRepresentative,
+} from "./visual-segmentation.js";
 
 const RETRY_DELAYS_MS = [60_000, 300_000, 1_800_000, 7_200_000, 43_200_000];
 const LEASE_MS = 90_000;
@@ -26,6 +33,14 @@ export interface VisualObservationInput {
   height?: number;
 }
 
+export interface VisualReadyEvidence {
+  sourceId: string;
+  sourceVersion: number;
+  title: string;
+  markdown: string;
+  occurredAt: string;
+}
+
 export interface PerceptionNodeDto {
   id: string;
   kind: "audio" | "screenshot" | "photo";
@@ -36,6 +51,8 @@ export interface PerceptionNodeDto {
   status: string;
   eventType: string | null;
   tags: string[];
+  keyPoints: string[];
+  insightTags: RealityTag[];
   confidence: number | null;
   model: string | null;
   error: string | null;
@@ -43,21 +60,11 @@ export interface PerceptionNodeDto {
   mediaFileId: string | null;
 }
 
-function hammingDistance(a: string, b: string): number {
-  if (!/^[0-9a-f]{16}$/i.test(a) || !/^[0-9a-f]{16}$/i.test(b)) return 65;
-  let value = BigInt(`0x${a}`) ^ BigInt(`0x${b}`);
-  let count = 0;
-  while (value) {
-    value &= value - 1n;
-    count += 1;
-  }
-  return count;
-}
-
 function nodeDto(
   node: typeof visualNodes.$inferSelect,
   representativeFileId: string | null,
 ): PerceptionNodeDto {
+  const insightTags = normalizeInsightTags(node.representativeTags);
   return {
     id: node.id,
     kind: node.kind,
@@ -67,7 +74,9 @@ function nodeDto(
     summary: node.summary ?? "等待视觉理解",
     status: node.vlmStatus,
     eventType: node.eventType ?? null,
-    tags: node.representativeTags,
+    tags: insightTags.map((tag) => tag.label),
+    keyPoints: node.keyPoints,
+    insightTags,
     confidence: node.confidence ?? null,
     model: node.model ?? null,
     error: node.error ?? null,
@@ -81,6 +90,7 @@ export class PerceptionService {
   private readonly instanceId = randomUUID();
   private readonly running = new Map<string, Promise<void>>();
   private readonly abortControllers = new Map<string, AbortController>();
+  private readySink: ((evidence: VisualReadyEvidence) => Promise<void>) | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -89,6 +99,10 @@ export class PerceptionService {
     private readonly logger: FastifyBaseLogger,
     private readonly markDiaryStale?: (at: Date) => void,
   ) {}
+
+  setReadySink(sink: ((evidence: VisualReadyEvidence) => Promise<void>) | null): void {
+    this.readySink = sink;
+  }
 
   initialize(): void {
     this.ensureSettings();
@@ -173,10 +187,7 @@ export class PerceptionService {
     }
 
     const settings = this.ensureSettings();
-    const continuityMs = Math.min(
-      7_200_000,
-      Math.max(settings.captureIntervalSeconds * 2_000, 600_000),
-    );
+    const continuityMs = screenshotContinuityMs(settings.captureIntervalSeconds);
     const latest = input.kind === "screenshot"
       ? this.db.select().from(visualNodes).where(and(
           eq(visualNodes.kind, "screenshot"),
@@ -185,12 +196,29 @@ export class PerceptionService {
           lte(visualNodes.endAt, input.capturedAt),
         )).orderBy(desc(visualNodes.endAt)).get()
       : undefined;
-    const grouped = Boolean(latest?.latestPerceptualHash
-      && input.perceptualHash
-      && hammingDistance(latest.latestPerceptualHash, input.perceptualHash) <= 6);
+    const grouped = Boolean(latest && input.perceptualHash && shouldGroupScreenshot({
+      nodeStartAt: latest.startAt,
+      nodeEndAt: latest.endAt,
+      capturedAt: input.capturedAt,
+      previousHash: latest.latestPerceptualHash,
+      currentHash: input.perceptualHash,
+      continuityMs,
+    }));
     const nodeId = grouped ? latest!.id : `visual-${randomUUID()}`;
     const observationId = `observation-${randomUUID()}`;
     const now = new Date();
+    const representative = grouped && latest!.representativeObservationId
+      ? this.db.select().from(visualObservations)
+          .where(eq(visualObservations.id, latest!.representativeObservationId)).get()
+      : null;
+    const refreshRepresentative = grouped && shouldRefreshRepresentative({
+      capturedAt: input.capturedAt,
+      representativeCapturedAt: representative?.capturedAt ?? null,
+    });
+    const shouldProcess = settings.onlineVlmEnabled && this.vlm !== null;
+    const existingJob = refreshRepresentative
+      ? this.db.select().from(visualProcessingJobs).where(eq(visualProcessingJobs.nodeId, nodeId)).get()
+      : null;
 
     this.db.transaction((tx) => {
       if (grouped) {
@@ -198,10 +226,29 @@ export class PerceptionService {
           endAt: input.capturedAt,
           sampleCount: latest!.sampleCount + 1,
           latestPerceptualHash: input.perceptualHash,
+          ...(refreshRepresentative ? {
+            representativeObservationId: observationId,
+            vlmStatus: shouldProcess ? "pending" as const : "disabled" as const,
+            error: null,
+          } : {}),
           updatedAt: now,
         }).where(eq(visualNodes.id, nodeId)).run();
+        if (refreshRepresentative && shouldProcess) {
+          if (!existingJob) {
+            tx.insert(visualProcessingJobs).values({
+              id: `visual-job-${randomUUID()}`,
+              nodeId,
+              status: "pending",
+              nextAttemptAt: now,
+            }).run();
+          } else if (existingJob.status !== "running") {
+            tx.update(visualProcessingJobs).set({
+              status: "pending", attempt: 0, nextAttemptAt: now,
+              leaseOwner: null, leaseExpiresAt: null, error: null, updatedAt: now,
+            }).where(eq(visualProcessingJobs.id, existingJob.id)).run();
+          }
+        }
       } else {
-        const shouldProcess = settings.onlineVlmEnabled && this.vlm !== null;
         tx.insert(visualNodes).values({
           id: nodeId,
           kind: input.kind,
@@ -241,7 +288,7 @@ export class PerceptionService {
     });
     this.markDiaryStale?.(input.capturedAt);
     const node = this.requireVisualNode(nodeId);
-    if (!grouped) void this.tick();
+    if (!grouped || (refreshRepresentative && shouldProcess)) void this.tick();
     return { observationId, node: this.dtoForVisual(node), grouped };
   }
 
@@ -269,7 +316,9 @@ export class PerceptionService {
           summary: event.currentTopic ?? event.insights.summary ?? event.transcript.slice(0, 240),
           status: event.processingState,
           eventType: event.insights.eventType ?? null,
-          tags: event.insights.keyPoints ?? [],
+          tags: normalizeInsightTags(event.insights.representativeTags).map((tag) => tag.label),
+          keyPoints: event.insights.keyPoints ?? [],
+          insightTags: normalizeInsightTags(event.insights.representativeTags),
           confidence: null,
           model: null,
           error: event.error,
@@ -317,6 +366,7 @@ export class PerceptionService {
     const node = this.requireVisualNode(id);
     const observations = this.db.select().from(visualObservations).where(eq(visualObservations.nodeId, id)).all();
     this.db.update(visualNodes).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(visualNodes.id, id)).run();
+    this.markDiaryStale?.(node.startAt);
     if (!deleteAssets) return { deleted: true, deletedAssets: [], retainedAssets: observations.map((item) => item.fileId) };
     const deletedAssets: string[] = [];
     const retainedAssets: string[] = [];
@@ -391,6 +441,7 @@ export class PerceptionService {
       const processing = this.process(job.id, controller.signal).finally(() => {
         this.running.delete(job.id);
         this.abortControllers.delete(job.id);
+        void this.tick();
       });
       this.running.set(job.id, processing);
     }
@@ -399,6 +450,7 @@ export class PerceptionService {
   private async process(jobId: string, signal: AbortSignal): Promise<void> {
     const job = this.db.select().from(visualProcessingJobs).where(eq(visualProcessingJobs.id, jobId)).get();
     if (!job || !this.vlm) return;
+    let processedObservationId: string | null = null;
     try {
       if (signal.aborted || !this.ensureSettings().onlineVlmEnabled) return this.pause(job);
       const node = this.requireVisualNode(job.nodeId);
@@ -406,6 +458,7 @@ export class PerceptionService {
       const observation = this.db.select().from(visualObservations)
         .where(eq(visualObservations.id, node.representativeObservationId)).get();
       if (!observation) throw new Error("representative observation is missing");
+      processedObservationId = observation.id;
       const image = await this.files.contentOf(observation.fileId);
       if (!image) throw new Error("representative image is missing");
       if (signal.aborted || !this.ensureSettings().onlineVlmEnabled) return this.pause(job);
@@ -413,10 +466,12 @@ export class PerceptionService {
         .where(eq(visualNodes.id, node.id)).run();
       const result = await this.vlm.infer({ buffer: image.buffer, mime: image.mime }, signal);
       if (signal.aborted || !this.ensureSettings().onlineVlmEnabled) return this.pause(job);
-      this.complete(job, result);
+      if (!this.complete(job, result, observation.id)) return;
       this.markDiaryStale?.(node.startAt);
+      this.notifyReady(node.id);
     } catch (error) {
       if (signal.aborted || !this.ensureSettings().onlineVlmEnabled) return this.pause(job);
+      if (processedObservationId && this.requeueSupersededJob(job, processedObservationId)) return;
       this.fail(job, error);
     }
   }
@@ -433,19 +488,44 @@ export class PerceptionService {
     });
   }
 
-  private complete(job: typeof visualProcessingJobs.$inferSelect, result: VisualInferenceResult): void {
+  private complete(
+    job: typeof visualProcessingJobs.$inferSelect,
+    result: VisualInferenceResult,
+    processedObservationId: string,
+  ): boolean {
     const now = new Date();
+    if (this.requeueSupersededJob(job, processedObservationId)) return false;
+    const node = this.requireVisualNode(job.nodeId);
     this.db.transaction((tx) => {
       tx.update(visualNodes).set({
         vlmStatus: "ready", eventType: result.eventType, title: result.title, summary: result.summary,
         keyPoints: result.keyPoints, representativeTags: result.representativeTags,
         confidence: result.confidence, model: this.vlm?.model ?? null,
-        resultVersion: 1, error: null, updatedAt: now,
+        resultVersion: node.resultVersion + 1, error: null, updatedAt: now,
       }).where(eq(visualNodes.id, job.nodeId)).run();
       tx.update(visualProcessingJobs).set({
         status: "completed", leaseOwner: null, leaseExpiresAt: null, error: null, updatedAt: now,
       }).where(eq(visualProcessingJobs.id, job.id)).run();
     });
+    return true;
+  }
+
+  private requeueSupersededJob(
+    job: typeof visualProcessingJobs.$inferSelect,
+    processedObservationId: string,
+  ): boolean {
+    const node = this.requireVisualNode(job.nodeId);
+    if (node.representativeObservationId === processedObservationId) return false;
+    const now = new Date();
+    this.db.transaction((tx) => {
+      tx.update(visualNodes).set({ vlmStatus: "pending", error: null, updatedAt: now })
+        .where(eq(visualNodes.id, job.nodeId)).run();
+      tx.update(visualProcessingJobs).set({
+        status: "pending", attempt: 0, nextAttemptAt: now,
+        leaseOwner: null, leaseExpiresAt: null, error: null, updatedAt: now,
+      }).where(eq(visualProcessingJobs.id, job.id)).run();
+    });
+    return true;
   }
 
   private fail(job: typeof visualProcessingJobs.$inferSelect, error: unknown): void {
@@ -464,5 +544,31 @@ export class PerceptionService {
         .where(eq(visualNodes.id, job.nodeId)).run();
     });
     this.logger.warn({ jobId: job.id, nodeId: job.nodeId, attempt, retrying, err: message }, "visual inference failed");
+  }
+
+  private notifyReady(nodeId: string): void {
+    if (!this.readySink) return;
+    const node = this.requireVisualNode(nodeId);
+    const title = node.title ?? (node.kind === "photo" ? "照片" : "屏幕活动");
+    const evidence: VisualReadyEvidence = {
+      sourceId: node.id,
+      sourceVersion: node.resultVersion,
+      title,
+      occurredAt: node.startAt.toISOString(),
+      markdown: insightEvidenceMarkdown({
+        title,
+        eventType: node.eventType,
+        summary: node.summary,
+        keyPoints: node.keyPoints,
+        tags: normalizeInsightTags(node.representativeTags),
+      }),
+    };
+    void this.readySink(evidence).catch((error: unknown) => {
+      this.logger.warn({
+        nodeId,
+        version: node.resultVersion,
+        err: error instanceof Error ? error.message : String(error),
+      }, "ready visual event downstream ingest failed");
+    });
   }
 }

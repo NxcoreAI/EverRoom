@@ -4,21 +4,21 @@ import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryAtomicItemDto, MemoryAtomicProvenanceDto, MemoryAtomicType } from '../../../../../shared/memory'
 import { MemoryEmptyView } from './MemoryStatusViews'
-import { formatDate, useAsyncData } from './useMemoryData'
+import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
 
 const PAGE_SIZE = 50
 
 const TYPE_FILTERS: Array<{ value: MemoryAtomicType | 'all'; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'episodic', label: '情景' },
-  { value: 'persona', label: '人格' },
-  { value: 'instruction', label: '指令' },
+  { value: 'all', label: 'memory:atomicMemory.all' },
+  { value: 'episodic', label: 'memory:atomicMemory.episodic' },
+  { value: 'persona', label: 'memory:atomicMemory.persona' },
+  { value: 'instruction', label: 'memory:atomicMemory.instruction' },
 ]
 
 const TYPE_LABELS: Record<string, string> = {
-  episodic: '情景',
-  persona: '人格',
-  instruction: '指令',
+  episodic: 'memory:atomicMemory.episodic',
+  persona: 'memory:atomicMemory.persona',
+  instruction: 'memory:atomicMemory.instruction',
 }
 
 function typeLabel(type: string): string {
@@ -43,7 +43,7 @@ function ProvenanceSection({ memoryId, onOpenDocument, onOpenConversation }: {
     try {
       setProvenance(await window.nxcore!.memory.atomicProvenance(memoryId))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('溯源查询失败。'))
+      setError(cause instanceof Error ? cause.message : t('memory:atomicMemory.unableToLoadProvenance'))
     } finally {
       setLoading(false)
     }
@@ -52,7 +52,7 @@ function ProvenanceSection({ memoryId, onOpenDocument, onOpenConversation }: {
   if (!open) {
     return (
       <button type="button" className="mem-provenance-toggle" onClick={() => { setOpen(true); void load() }}>
-        <Link2 aria-hidden="true" strokeWidth={1.7} />{t('溯源')}
+        <Link2 aria-hidden="true" strokeWidth={1.7} />{t('memory:atomicMemory.provenance')}
       </button>
     )
   }
@@ -62,33 +62,33 @@ function ProvenanceSection({ memoryId, onOpenDocument, onOpenConversation }: {
     <div className="mem-provenance" data-open={open}>
       <header>
         <span className="mem-source-badge" data-kind={provenance?.kind ?? ''}>
-          {t(isDocument ? '文档来源' : '会话来源')}
+          {t(isDocument ? 'memory:atomicMemory.documentSource' : 'memory:atomicMemory.sessionSource')}
         </span>
         <button type="button" className="mem-provenance-close" onClick={() => setOpen(false)}>
           <X aria-hidden="true" strokeWidth={1.7} size={14} />
         </button>
       </header>
-      {loading ? <p className="mem-loading">{t('溯源中…')}</p> : null}
+      {loading ? <p className="mem-loading">{t('memory:atomicMemory.loadingProvenance')}</p> : null}
       {error ? <p className="mem-inline-error">{error}</p> : null}
       {provenance ? (
         <>
           {isDocument && provenance.document ? (
             <p className="mem-provenance-source">
-              {t('文档「{title}」（v{version}）', { title: provenance.document.title, version: provenance.document.version ?? '—' })}
+              {t('memory:atomicMemory.documentTitleVVersion', { title: provenance.document.title, version: provenance.document.version ?? '—' })}
               {onOpenDocument ? (
-                <button type="button" onClick={() => onOpenDocument(provenance.document!.documentId)}>{t('查看文档')}</button>
+                <button type="button" onClick={() => onOpenDocument(provenance.document!.documentId)}>{t('memory:atomicMemory.viewDocument')}</button>
               ) : null}
             </p>
           ) : null}
           {!isDocument && provenance.session?.sessionId ? (
             <p className="mem-provenance-source">
-              {t('会话 {id}', { id: provenance.session.sessionId })}
+              {t('memory:atomicMemory.sessionId', { id: provenance.session.sessionId })}
               {onOpenConversation ? (
                 <button
                   type="button"
                   onClick={() => onOpenConversation(provenance.anchors[0]?.sessionId ?? provenance.session!.sessionId!)}
                 >
-                  {t('查看会话')}
+                  {t('memory:atomicMemory.viewSession')}
                 </button>
               ) : null}
             </p>
@@ -97,14 +97,14 @@ function ProvenanceSection({ memoryId, onOpenDocument, onOpenConversation }: {
             {provenance.anchors.map((anchor) => (
               <li key={anchor.messageId}>
                 <header>
-                  <span data-role={anchor.role}>{anchor.role === 'assistant' ? 'AI' : anchor.role === 'user' ? t('用户') : anchor.role}</span>
-                  {anchor.headingPath ? <em>{t('{path} · 第 {start}–{end} 行', { path: anchor.headingPath, start: anchor.lineStart ?? '—', end: anchor.lineEnd ?? '—' })}</em> : null}
+                  <span data-role={anchor.role}>{anchor.role === 'assistant' ? 'AI' : anchor.role === 'user' ? t('memory:atomicMemory.user') : anchor.role}</span>
+                  {anchor.headingPath ? <em>{t('memory:atomicMemory.pathLinesStartEnd', { path: anchor.headingPath, start: anchor.lineStart ?? '—', end: anchor.lineEnd ?? '—' })}</em> : null}
                 </header>
                 <p>{anchor.content}</p>
               </li>
             ))}
             {provenance.anchors.length === 0 ? (
-              <li className="mem-doc-hint">{t('锚点消息已清理（记忆保留，原文不可回溯）。')}</li>
+              <li className="mem-doc-hint">{t('memory:atomicMemory.anchorMessagesWereRemovedTheMemoryRemainsBut')}</li>
             ) : null}
           </ul>
         </>
@@ -137,7 +137,7 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
       setEditing(false)
       onSaved()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('保存失败。'))
+      setError(cause instanceof Error ? cause.message : t('memory:atomicMemory.saveFailed'))
     } finally {
       setBusy(false)
     }
@@ -150,7 +150,7 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
       await window.nxcore!.memory.deleteAtomic([item.id])
       onDeleted()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('删除失败。'))
+      setError(cause instanceof Error ? cause.message : t('memory:atomicMemory.deleteFailed'))
       setConfirming(false)
     } finally {
       setBusy(false)
@@ -161,22 +161,22 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
     <div className="mem-atomic-detail">
       <div className="mem-atomic-detail-meta">
         <span className="mem-type-badge" data-type={item.type}>{t(typeLabel(item.type))}</span>
-        {item.background ? <span className="mem-source">{t('来源场景：{scene}', { scene: item.background })}</span> : null}
-        <span className="mem-time">{t('创建 {created} · 更新 {updated}', { created: formatDate(item.createdAt, locale), updated: formatDate(item.updatedAt, locale) })}</span>
+        {item.background ? <span className="mem-source">{t('memory:atomicMemory.sourceScenarioScene', { scene: item.background })}</span> : null}
+        <span className="mem-time">{t('memory:atomicMemory.createdCreatedUpdatedUpdated', { created: formatDate(item.createdAt, locale), updated: formatDate(item.updatedAt, locale) })}</span>
         <span className="mem-atomic-detail-actions">
           {editing ? null : (
             <button type="button" onClick={() => { setDraft(item.content); setEditing(true) }}>
-              <Pencil aria-hidden="true" strokeWidth={1.7} />{t('编辑')}
+              <Pencil aria-hidden="true" strokeWidth={1.7} />{t('memory:atomicMemory.edit')}
             </button>
           )}
           {confirming ? (
             <>
-              <button type="button" className="mem-danger" disabled={busy} onClick={remove}>{t('确认删除')}</button>
-              <button type="button" onClick={() => setConfirming(false)}>{t('取消')}</button>
+              <button type="button" className="mem-danger" disabled={busy} onClick={remove}>{t('memory:atomicMemory.confirmDelete')}</button>
+              <button type="button" onClick={() => setConfirming(false)}>{t('memory:atomicMemory.cancel')}</button>
             </>
           ) : (
             <button type="button" onClick={() => setConfirming(true)} disabled={editing}>
-              <Trash2 aria-hidden="true" strokeWidth={1.7} />{t('删除')}
+              <Trash2 aria-hidden="true" strokeWidth={1.7} />{t('memory:atomicMemory.delete')}
             </button>
           )}
         </span>
@@ -185,8 +185,8 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
         <div className="mem-atomic-editor">
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={4} maxLength={8192} />
           <div className="mem-atomic-editor-actions">
-            <button type="button" className="mem-primary" disabled={busy || !draft.trim()} onClick={save}>{t('保存')}</button>
-            <button type="button" onClick={() => setEditing(false)} disabled={busy}>{t('取消')}</button>
+            <button type="button" className="mem-primary" disabled={busy || !draft.trim()} onClick={save}>{t('memory:atomicMemory.save')}</button>
+            <button type="button" onClick={() => setEditing(false)} disabled={busy}>{t('memory:atomicMemory.cancel')}</button>
           </div>
         </div>
       ) : (
@@ -228,13 +228,13 @@ export function AtomicMemoryPane({ onOpenDocument, onOpenConversation }: {
   const pageEnd = offset + items.length
 
   if (failure && !data) {
-    return <div className="mem-pane-error">{failure.message}</div>
+    return <div className="mem-pane-error">{memoryFailureText(failure, t)}</div>
   }
 
   return (
     <div className="mem-atomic">
       <div className="mem-toolbar">
-        <div className="mem-type-filters" role="tablist" aria-label={t('记忆类型')}>
+        <div className="mem-type-filters" role="tablist" aria-label={t('memory:atomicMemory.memoryType')}>
           {TYPE_FILTERS.map((filter) => (
             <button
               key={filter.value}
@@ -246,7 +246,7 @@ export function AtomicMemoryPane({ onOpenDocument, onOpenConversation }: {
             </button>
           ))}
         </div>
-        <span className="mem-count">{t('共 {count} 条', { count: total })}</span>
+        <span className="mem-count">{t('memory:atomicMemory.countItems', { count: total })}</span>
         <div className="mem-pager">
           <button type="button" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
             <ChevronLeft aria-hidden="true" strokeWidth={1.8} />
@@ -259,8 +259,8 @@ export function AtomicMemoryPane({ onOpenDocument, onOpenConversation }: {
       </div>
       {!loading && items.length === 0 ? (
         <MemoryEmptyView
-          title={t('暂无原子记忆')}
-          hint={t(type === 'all' ? '与 AI 助手多轮对话后，MemoryCore 会自动提炼原子记忆。' : '该类型下暂无记忆。')}
+          title={t('memory:atomicMemory.noAtomicMemoriesYet')}
+          hint={t(type === 'all' ? 'memory:atomicMemory.afterSeveralConversationsWithTheAiAssistantMemorycore' : 'memory:atomicMemory.noMemoriesOfThisType')}
         />
       ) : (
         <ul className="mem-atomic-list">

@@ -48,26 +48,26 @@ export function TopBar({
         <button
           className="icon-button no-drag nav-collapse"
           type="button"
-          title={t(navCollapsed ? '展开导航' : '收起导航')}
-          aria-label={t(navCollapsed ? '展开导航' : '收起导航')}
+          title={t(navCollapsed ? 'surface:topBar.expandNavigation' : 'surface:topBar.collapseNavigation')}
+          aria-label={t(navCollapsed ? 'surface:topBar.expandNavigation' : 'surface:topBar.collapseNavigation')}
           onClick={onToggleNav}
         >
           {navCollapsed ? <ChevronRight aria-hidden="true" strokeWidth={1.8} /> : <ChevronLeft aria-hidden="true" strokeWidth={1.8} />}
         </button>
       </div>
 
-      <div className="tabs" role="tablist" aria-label={t('打开的页面')}>
+      <div className="tabs" role="tablist" aria-label={t('surface:topBar.openPages')}>
         <div
           className="tab"
           data-active={String(activeContextRoomId === null)}
           data-page="home"
           role="tab"
-          aria-label={t('工作台')}
+          aria-label={t('surface:topBar.workspace')}
           aria-selected={activeContextRoomId === null}
         >
           <button type="button" onClick={onActivateWorkbench}>
             <LayoutGrid aria-hidden="true" strokeWidth={1.8} />
-            <span>{t('工作台')}</span>
+            <span>{t('surface:topBar.workspace')}</span>
             <LockKeyhole className="tab-lock" aria-hidden="true" strokeWidth={1.8} />
           </button>
         </div>
@@ -90,7 +90,7 @@ export function TopBar({
               <button
                 type="button"
                 className="tab-close"
-                aria-label={t('关闭 {title}', { title: room.title })}
+                aria-label={t('surface:topBar.closeTitle', { title: room.title })}
                 onClick={() => onCloseContextRoom(room.id)}
               >
                 <X aria-hidden="true" strokeWidth={1.8} />
@@ -101,14 +101,14 @@ export function TopBar({
       </div>
 
       <div className="top-actions no-drag">
-        <button type="button" className="icon-button" title={t('新建标签')} aria-label={t('新建标签')}>
+        <button type="button" className="icon-button" title={t('surface:topBar.newTab')} aria-label={t('surface:topBar.newTab')}>
           <Plus aria-hidden="true" strokeWidth={1.8} />
         </button>
         <button
           type="button"
           className="icon-button"
-          title={t('恢复已关闭')}
-          aria-label={t('恢复已关闭')}
+          title={t('surface:topBar.restoreClosedTab')}
+          aria-label={t('surface:topBar.restoreClosedTab')}
           disabled={!canRestoreContextRoom}
           onClick={onRestoreContextRoom}
         >
@@ -117,8 +117,8 @@ export function TopBar({
         <button
           type="button"
           className="icon-button"
-          title={t(agentOpen ? '收起 Agent' : '展开 Agent')}
-          aria-label={t(agentOpen ? '收起 Agent' : '展开 Agent')}
+          title={t(agentOpen ? 'surface:topBar.collapseAgent' : 'surface:topBar.expandAgent')}
+          aria-label={t(agentOpen ? 'surface:topBar.collapseAgent' : 'surface:topBar.expandAgent')}
           onClick={onToggleAgent}
         >
           {agentOpen ? <PanelRightClose aria-hidden="true" strokeWidth={1.8} /> : <PanelRightOpen aria-hidden="true" strokeWidth={1.8} />}

@@ -14,12 +14,12 @@ export function DocumentContinuationToolbar({
 }) {
   const { t } = useLocale()
   return (
-    <aside className="document-continuation-toolbar" aria-label={t('Agent 续写')}>
-      <span>{t('Agent 续写')}</span>
+    <aside className="document-continuation-toolbar" aria-label={t('contextRoom:documentContinuationToolbar.agentContinuation')}>
+      <span>{t('contextRoom:documentContinuationToolbar.agentContinuation')}</span>
       {error ? <small role="alert">{error}</small> : null}
       <button type="button" disabled={busy} onClick={onClose}>
         {busy ? <LoaderCircle className="document-patch-review-spinner" aria-hidden="true" /> : <X aria-hidden="true" />}
-        {t('关闭此次续写')}
+        {t('contextRoom:documentContinuationToolbar.closeThisContinuation')}
       </button>
     </aside>
   )

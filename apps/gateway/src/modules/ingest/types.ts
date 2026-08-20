@@ -40,6 +40,12 @@ export const DATA_TYPES: DataTypeDef[] = [
     defaults: { room: true, wiki: true, memory: true },
   },
   {
+    key: "perception-event",
+    label: "视觉感知事件",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: true },
+  },
+  {
     key: "office-doc",
     label: "Office 文档",
     matchExtensions: ["docx"],

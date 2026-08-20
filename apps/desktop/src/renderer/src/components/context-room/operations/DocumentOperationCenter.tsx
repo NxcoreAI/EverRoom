@@ -8,9 +8,9 @@ import './DocumentOperationCenter.css'
 
 const visibleStatuses = new Set(['awaiting_review', 'conflicted', 'failed'])
 const statusCopy: Record<string, string> = {
-  awaiting_review: '等待审阅',
-  conflicted: '存在冲突',
-  failed: '执行失败',
+  awaiting_review: 'contextRoom:documentOperationCenter.awaitingReview',
+  conflicted: 'contextRoom:documentOperationCenter.conflicted',
+  failed: 'contextRoom:documentOperationCenter.executionFailed',
 }
 
 export function DocumentOperationCenter({ activeRoomId }: { activeRoomId: string | null }) {
@@ -68,7 +68,7 @@ export function DocumentOperationCenter({ activeRoomId }: { activeRoomId: string
       <button
         type="button"
         className="document-operation-center-trigger"
-        aria-label={t('Agent 文档操作')}
+        aria-label={t('contextRoom:documentOperationCenter.agentDocumentOperations')}
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
@@ -76,29 +76,29 @@ export function DocumentOperationCenter({ activeRoomId }: { activeRoomId: string
         {active.length ? <span>{active.length}</span> : null}
       </button>
       {open ? (
-        <aside className="document-operation-center-panel" aria-label={t('Agent 文档操作中心')}>
+        <aside className="document-operation-center-panel" aria-label={t('contextRoom:documentOperationCenter.agentDocumentOperationsCenter')}>
           <header>
-            <div><strong>{t('文档操作')}</strong><span>{t('{count} 项待处理', { count: filtered.length })}</span></div>
-            <button type="button" aria-label={t('关闭操作中心')} onClick={() => setOpen(false)}><X aria-hidden="true" /></button>
+            <div><strong>{t('contextRoom:documentOperationCenter.documentOperations')}</strong><span>{t('contextRoom:documentOperationCenter.countPending', { count: filtered.length })}</span></div>
+            <button type="button" aria-label={t('contextRoom:documentOperationCenter.closeOperationsCenter')} onClick={() => setOpen(false)}><X aria-hidden="true" /></button>
           </header>
           <div className="document-operation-center-filters">
-            <select aria-label={t('按 Room 筛选')} value={roomFilter} onChange={(event) => { setRoomFilter(event.target.value); setDocumentFilter('') }}>
-              <option value="">{t('全部 Room')}</option>
+            <select aria-label={t('contextRoom:documentOperationCenter.filterByRoom')} value={roomFilter} onChange={(event) => { setRoomFilter(event.target.value); setDocumentFilter('') }}>
+              <option value="">{t('contextRoom:documentOperationCenter.allRooms')}</option>
               {rooms.map((roomId) => <option key={roomId} value={roomId}>{roomId}</option>)}
             </select>
-            <select aria-label={t('按文档筛选')} value={documentFilter} onChange={(event) => setDocumentFilter(event.target.value)}>
-              <option value="">{t('全部文档')}</option>
+            <select aria-label={t('contextRoom:documentOperationCenter.filterByDocument')} value={documentFilter} onChange={(event) => setDocumentFilter(event.target.value)}>
+              <option value="">{t('contextRoom:documentOperationCenter.allDocuments')}</option>
               {documents.map((entry) => <option key={entry.id} value={entry.summary.documentId ?? ''}>{entry.summary.documentTitle}</option>)}
             </select>
-            <select aria-label={t('按能力筛选')} value={capabilityFilter} onChange={(event) => setCapabilityFilter(event.target.value)}>
-              <option value="">{t('全部能力')}</option>
+            <select aria-label={t('contextRoom:documentOperationCenter.filterByCapability')} value={capabilityFilter} onChange={(event) => setCapabilityFilter(event.target.value)}>
+              <option value="">{t('contextRoom:documentOperationCenter.allCapabilities')}</option>
               {capabilities.map((capability) => <option key={capability} value={capability}>{capability}</option>)}
             </select>
-            <select aria-label={t('按会话筛选')} value={sessionFilter} onChange={(event) => setSessionFilter(event.target.value)}>
-              <option value="">{t('全部会话')}</option>
+            <select aria-label={t('contextRoom:documentOperationCenter.filterBySession')} value={sessionFilter} onChange={(event) => setSessionFilter(event.target.value)}>
+              <option value="">{t('contextRoom:documentOperationCenter.allSessions')}</option>
               {sessions.map((sessionId) => <option key={sessionId} value={sessionId}>{sessionId}</option>)}
             </select>
-            <button type="button" aria-label={t('刷新操作')} onClick={() => void refresh()}><RefreshCw aria-hidden="true" /></button>
+            <button type="button" aria-label={t('contextRoom:documentOperationCenter.refreshOperations')} onClick={() => void refresh()}><RefreshCw aria-hidden="true" /></button>
           </div>
           <div className="document-operation-center-list">
             {filtered.length ? filtered.map((entry) => (
@@ -107,13 +107,13 @@ export function DocumentOperationCenter({ activeRoomId }: { activeRoomId: string
                   <AlertCircle aria-hidden="true" />
                 </span>
                 <span className="document-operation-row-copy">
-                  <strong>{entry.summary.documentTitle || t('未命名文档')}</strong>
+                  <strong>{entry.summary.documentTitle || t('contextRoom:documentOperationCenter.untitledDocument')}</strong>
                   <span>{entry.summary.summary || entry.summary.capabilityId}</span>
                   <small>{t(statusCopy[entry.summary.status] ?? entry.summary.status)} · r{entry.revision}</small>
                 </span>
                 <ChevronRight aria-hidden="true" />
               </button>
-            )) : <p className="document-operation-center-empty">{t('没有待处理的文档操作')}</p>}
+            )) : <p className="document-operation-center-empty">{t('contextRoom:documentOperationCenter.noPendingDocumentOperations')}</p>}
           </div>
         </aside>
       ) : null}

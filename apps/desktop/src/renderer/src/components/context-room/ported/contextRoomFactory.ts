@@ -19,6 +19,7 @@ export function createEmptyContextRoom(input: EmptyContextRoomInput): ContextRoo
     tone: 'zinc',
     status: '进行中',
     starred: false,
+    updatedAt: new Date().toISOString(),
     lastViewed: '刚刚',
     roomCode: input.id.toUpperCase(),
     ...(input.origin ? { origin: input.origin } : {}),

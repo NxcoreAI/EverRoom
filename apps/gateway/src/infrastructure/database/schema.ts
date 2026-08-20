@@ -19,6 +19,7 @@ import type {
   RealityCaptureDevice,
   RealityInsights,
   RealityMarker,
+  RealityTag,
   RealityTranscriptSegment,
 } from "@nxcore/reality-contract";
 
@@ -820,7 +821,7 @@ export const entityDocLinks = sqliteTable(
     id: text("id").primaryKey(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -874,7 +875,7 @@ export const routeDecisions = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
     }).notNull().default("everroom-doc"),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1047,7 +1048,7 @@ export const visualNodes = sqliteTable(
     title: text("title"),
     summary: text("summary"),
     keyPoints: text("key_points", { mode: "json" }).$type<string[]>().notNull().default([]),
-    representativeTags: text("representative_tags", { mode: "json" }).$type<string[]>().notNull().default([]),
+    representativeTags: text("representative_tags", { mode: "json" }).$type<RealityTag[]>().notNull().default([]),
     confidence: real("confidence"),
     model: text("model"),
     promptVersion: integer("prompt_version").notNull().default(1),
@@ -1237,7 +1238,7 @@ export const ingestEvents = sqliteTable(
     /** ing-<uuid12> */
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),

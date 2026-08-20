@@ -15,7 +15,7 @@ import { ENTITY_KINDS, type EntityKind } from "./llm.js";
 
 export type EntityStatus = "weak" | "ready" | "promoting" | "room" | "archived";
 export type LinkRole = "primary" | "mention" | "manual";
-export type SourceKind = "everroom-doc" | "reality-event" | "mail" | "file" | "cloud-doc";
+export type SourceKind = "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc";
 
 /** 链接角色 → 证据分权重（plan §4.3）。 */
 export const EVIDENCE_WEIGHTS: Record<LinkRole, number> = {

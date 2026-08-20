@@ -412,6 +412,7 @@ describe("gateway server", () => {
     expect(initialized.statusCode).toBe(202);
     expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "context_room_list",
+      "context_room_create",
       "context_room_document_list",
       "context_room_document_read",
       "context_room_patch_begin",
@@ -468,6 +469,7 @@ describe("gateway server", () => {
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name)).toEqual([
         "context_room_list",
+        "context_room_create",
         "context_room_document_list",
         "context_room_document_read",
         "context_room_patch_begin",

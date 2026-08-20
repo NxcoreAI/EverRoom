@@ -1062,7 +1062,7 @@
 .diary-calendar-day[data-today='true'] span::after {
   margin-left: 4px;
   color: var(--diary-accent);
-  content: "今";
+  content: attr(data-today-label);
   font-size: 8px;
 }
 

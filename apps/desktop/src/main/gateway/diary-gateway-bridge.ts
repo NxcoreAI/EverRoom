@@ -1,5 +1,22 @@
 import type { DiaryDayDetails, DiaryRun, DiarySettings } from '../../shared/sources'
-import type { GatewaySupervisor } from './gateway-supervisor'
+import type { GatewayConnection, GatewaySupervisor } from './gateway-supervisor'
+
+const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'ERR_SOCKET_CLOSED',
+])
+
+function isRecoverableConnectionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const cause = error.cause
+  if (cause && typeof cause === 'object' && 'code' in cause) {
+    const code = (cause as { code?: unknown }).code
+    if (typeof code === 'string' && RECOVERABLE_CONNECTION_ERROR_CODES.has(code)) return true
+  }
+  return error instanceof TypeError && /fetch failed|network|socket/i.test(error.message)
+}
 
 export class DiaryGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
@@ -38,6 +55,21 @@ export class DiaryGatewayBridge {
 
   private async requestMaybe<T>(path: string, init: RequestInit | undefined, allowNotFound: boolean): Promise<T | null> {
     const connection = await this.supervisor.ensureConnection()
+    try {
+      return await this.requestWithConnection<T>(connection, path, init, allowNotFound)
+    } catch (error) {
+      if (!isRecoverableConnectionError(error)) throw error
+      const recoveredConnection = await this.supervisor.recoverConnection(connection)
+      return this.requestWithConnection<T>(recoveredConnection, path, init, allowNotFound)
+    }
+  }
+
+  private async requestWithConnection<T>(
+    connection: GatewayConnection,
+    path: string,
+    init: RequestInit | undefined,
+    allowNotFound: boolean,
+  ): Promise<T | null> {
     const response = await fetch(`${connection.baseUrl}${path}`, {
       ...init,
       headers: {

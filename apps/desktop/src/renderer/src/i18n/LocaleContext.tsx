@@ -1,19 +1,25 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { I18nextProvider } from 'react-i18next'
 
-import { contextRoomEnglishMessages } from './contextRoomMessages'
-import { contextRoomSurfaceEnglishMessages } from './contextRoomSurfaceMessages'
-import { diaryRealityEnglishMessages } from './diaryRealityMessages'
-import { finalSurfaceEnglishMessages } from './finalSurfaceMessages'
-import { memoryEnglishMessages } from './memoryMessages'
-import { englishMessages } from './messages'
+import i18n from './i18next'
+import { SUPPORTED_LOCALES, type AppLocale } from './resources'
 
-export type AppLocale = 'zh-CN' | 'en-US'
+export type { AppLocale } from './resources'
 
 const STORAGE_KEY = 'everroom:locale:v1'
 
+function localeFromBrowser(browserLanguage: string): AppLocale {
+  const normalized = browserLanguage.toLowerCase()
+  const exact = SUPPORTED_LOCALES.find((locale) => locale.toLowerCase() === normalized)
+  if (exact) return exact
+  const language = normalized.split('-')[0]
+  const match = SUPPORTED_LOCALES.find((locale) => locale.toLowerCase().split('-')[0] === language)
+  return match ?? 'en-US'
+}
+
 export function resolveLocale(stored: string | null, browserLanguage: string): AppLocale {
-  if (stored === 'zh-CN' || stored === 'en-US') return stored
-  return browserLanguage.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US'
+  if (stored && SUPPORTED_LOCALES.includes(stored as AppLocale)) return stored as AppLocale
+  return localeFromBrowser(browserLanguage)
 }
 
 function detectLocale(): AppLocale {
@@ -34,14 +40,9 @@ export function interpolate(message: string, values?: Record<string, string | nu
 }
 
 export function translate(locale: AppLocale, message: string, values?: Record<string, string | number>): string {
-  const translated = englishMessages[message]
-    ?? contextRoomEnglishMessages[message]
-    ?? contextRoomSurfaceEnglishMessages[message]
-    ?? diaryRealityEnglishMessages[message]
-    ?? finalSurfaceEnglishMessages[message]
-    ?? memoryEnglishMessages[message]
-    ?? message
-  return interpolate(locale === 'en-US' ? translated : message, values)
+  const fixedT = i18n.getFixedT(locale, 'common')
+  const translated = fixedT(message) as unknown as string
+  return interpolate(translated, values)
 }
 
 export type Translate = (message: string, values?: Record<string, string | number>) => string
@@ -57,10 +58,16 @@ interface LocaleContextValue {
 const LocaleContext = createContext<LocaleContextValue | null>(null)
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocale] = useState<AppLocale>(detectLocale)
+  const [locale, setLocaleState] = useState<AppLocale>(() => {
+    const detected = detectLocale()
+    void i18n.changeLanguage(detected)
+    return detected
+  })
 
   useEffect(() => {
+    void i18n.changeLanguage(locale)
     document.documentElement.lang = locale
+    window.nxcore?.locale.set(locale)
     try {
       window.localStorage.setItem(STORAGE_KEY, locale)
     } catch {
@@ -70,13 +77,17 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<LocaleContextValue>(() => ({
     locale,
-    setLocale,
+    setLocale: (nextLocale) => setLocaleState(nextLocale),
     t: (message, values) => translate(locale, message, values),
     formatNumber: (number) => number.toLocaleString(locale),
     formatDate: (input, options) => new Intl.DateTimeFormat(locale, options).format(new Date(input)),
   }), [locale])
 
-  return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>
+  return (
+    <I18nextProvider i18n={i18n}>
+      <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>
+    </I18nextProvider>
+  )
 }
 
 export function useLocale(): LocaleContextValue {

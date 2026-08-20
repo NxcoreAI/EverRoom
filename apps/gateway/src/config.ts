@@ -64,6 +64,7 @@ const RawConfigSchema = Type.Object(
     aiApi: AiApiSchema,
     aiMaxTokens: Type.Integer({ minimum: 1 }),
     aiBackgroundMaxTokens: Type.Integer({ minimum: 1 }),
+    diaryMaxTokens: Type.Integer({ minimum: 1 }),
     aiContextWindow: Type.Integer({ minimum: 1 }),
     aiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
     aiReasoning: AiReasoningSchema,
@@ -252,6 +253,7 @@ export interface GatewayConfig {
   logLevel: LogLevel;
   authToken: string;
   agentRuntime: AgentRuntimeMode;
+  demoDataEnabled?: boolean;
   connectorAgentMode?: ConnectorAgentMode;
   connectorSyncEnabled?: boolean;
   connectorSyncIntervalMs?: number;
@@ -262,6 +264,8 @@ export interface GatewayConfig {
   cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
   backgroundPi: PiRuntimeConfig | null;
+  /** 日记 Agent 的独立输出预算，避免被短任务的后台预算截断。 */
+  diaryMaxTokens?: number;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
   mcpConfigPath: string;
   /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
@@ -592,6 +596,10 @@ export function loadConfig(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
       env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "4096",
     ),
+    diaryMaxTokens: parsePositiveInteger(
+      "NXCORE_DIARY_MAX_TOKENS",
+      env.NXCORE_DIARY_MAX_TOKENS ?? "16384",
+    ),
     aiContextWindow: parsePositiveInteger(
       "NXCORE_AI_CONTEXT_WINDOW",
       env.NXCORE_AI_CONTEXT_WINDOW ?? "128000",
@@ -901,6 +909,7 @@ export function loadConfig(
     logLevel: rawConfig.logLevel,
     authToken: rawConfig.authToken,
     agentRuntime: rawConfig.agentRuntime,
+    demoDataEnabled: true,
     connectorAgentMode: rawConfig.connectorAgentMode,
     connectorSyncEnabled: rawConfig.connectorSyncEnabled,
     connectorSyncIntervalMs: rawConfig.connectorSyncIntervalMs,
@@ -975,6 +984,7 @@ export function loadConfig(
           maxTokens: rawConfig.aiBackgroundMaxTokens,
         }
       : null,
+    diaryMaxTokens: rawConfig.diaryMaxTokens,
     mcpConfigPath,
     webSearch: pi && rawConfig.webSearchEnabled && rawConfig.webSearchApiKey
       ? {

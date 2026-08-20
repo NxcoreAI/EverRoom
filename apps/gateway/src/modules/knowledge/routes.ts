@@ -50,6 +50,37 @@ const MaterialDto = Type.Object({
   ingested: Type.Boolean(),
 });
 
+const RoomContextDto = Type.Object({
+  roomId: Type.String(),
+  generatedAt: Type.String(),
+  sourceDocuments: Type.Array(Type.Object({
+    documentId: Type.String(),
+    title: Type.String(),
+    version: Type.Integer(),
+    updatedAt: Type.String(),
+  })),
+  overview: Type.String(),
+  status: Type.String(),
+  nextSteps: Type.Array(Type.String()),
+  entities: Type.Array(Type.Object({
+    name: Type.String(),
+    kind: Type.String(),
+    description: Type.String(),
+  })),
+  actionItems: Type.Array(Type.Object({
+    title: Type.String(),
+    owner: Type.Union([Type.String(), Type.Null()]),
+    dueDate: Type.Union([Type.String(), Type.Null()]),
+    sourceTitle: Type.String(),
+  })),
+  meetings: Type.Array(Type.Object({
+    title: Type.String(),
+    when: Type.String(),
+    participants: Type.Array(Type.String()),
+    sourceTitle: Type.String(),
+  })),
+});
+
 const EntrySignalsSchema = Type.Object({
   sourceTag: Type.Optional(Type.String({ maxLength: 200 })),
   threadId: Type.Optional(Type.String({ maxLength: 200 })),
@@ -66,6 +97,7 @@ const ManualRouteBody = Type.Union([
     /** 外部信封（连接器契约，plan §5.1）：非 everroom-doc 源必填。 */
     sourceKind: Type.Union([
       Type.Literal("reality-event"),
+      Type.Literal("visual-event"),
       Type.Literal("mail"),
       Type.Literal("file"),
       Type.Literal("cloud-doc"),
@@ -154,6 +186,7 @@ const DocSourceParams = Type.Object({
   sourceKind: Type.Union([
     Type.Literal("everroom-doc"),
     Type.Literal("reality-event"),
+    Type.Literal("visual-event"),
     Type.Literal("mail"),
     Type.Literal("file"),
     Type.Literal("cloud-doc"),
@@ -476,6 +509,18 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           updatedAt: iso(material.updatedAt),
         })),
       }),
+    );
+
+    app.get(
+      "/v1/knowledge/rooms/:id/context",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) }),
+          response: { 200: RoomContextDto },
+        },
+      },
+      async (request) => service.roomContext(request.params.id),
     );
 
     app.get(

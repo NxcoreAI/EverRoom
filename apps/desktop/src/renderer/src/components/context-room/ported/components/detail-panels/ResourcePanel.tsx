@@ -27,6 +27,7 @@ import type {
   ContextRoomRecord,
   ContextRoomResource,
 } from '../../types';
+import { uiText } from '../../adapters';
 import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/markdownImport';
 import { PanelEmptyState } from './PanelEmptyState';
 
@@ -41,11 +42,11 @@ export function OfficePreview({ resource }: { resource: ContextRoomOfficeResourc
         </span>
         <div>
           <h1>{preview.title}</h1>
-          <p>{resource.format.toUpperCase()} · {t('只读预览')} · {resource.updatedAt}</p>
+          <p>{resource.format.toUpperCase()} · {t('contextRoom:resource.readOnlyPreview')} · {resource.updatedAt}</p>
         </div>
       </header>
       <section className="context-room-preview-summary">
-        <span>{t('内容摘要')}</span>
+        <span>{t('contextRoom:resource.contentSummary')}</span>
         <p>{preview.summary}</p>
       </section>
       {preview.columns && preview.rows ? (
@@ -116,13 +117,13 @@ function HostFSOfficePicker({ onAdd, onClose }: { onAdd: (file: LocalOfficeFile)
     : [];
   const parent = path === '/' ? '/' : path.replace(/\/[^/]+$/, '') || '/';
   return (
-    <div className="context-room-hostfs-picker" role="dialog" aria-label={t('从文件系统添加 Office 文件')}>
-      <header><div><strong>{t('文件系统')}</strong><span>{path}</span></div><button type="button" aria-label={t('关闭文件系统选择器')} onClick={onClose}><X aria-hidden="true" /></button></header>
+    <div className="context-room-hostfs-picker" role="dialog" aria-label={t('contextRoom:resource.addOfficeFileFromFileSystem')}>
+      <header><div><strong>{t('contextRoom:resource.fileSystem')}</strong><span>{path}</span></div><button type="button" aria-label={t('contextRoom:resource.closeFileSystemPicker')} onClick={onClose}><X aria-hidden="true" /></button></header>
       <div className="context-room-hostfs-picker-list">
-        {path !== '/' ? <button type="button" onClick={() => setPath(parent)}><ChevronLeft aria-hidden="true" /> {t('返回上级')}</button> : null}
+        {path !== '/' ? <button type="button" onClick={() => setPath(parent)}><ChevronLeft aria-hidden="true" /> {t('contextRoom:resource.goUp')}</button> : null}
         {folders.map((folder) => <button type="button" key={folder.path} onClick={() => setPath(folder.path)}><Folder aria-hidden="true" /><span>{folder.name}</span><ChevronRight aria-hidden="true" /></button>)}
         {officeFiles.map((file) => <button type="button" key={file.path} onClick={() => onAdd(file)}><FileSpreadsheet aria-hidden="true" /><span>{file.name}</span><small>{getContextRoomOfficeFormat(file.name).toUpperCase()}</small></button>)}
-        {!folders.length && !officeFiles.length ? <div className="context-room-hostfs-picker-state">{t('当前目录没有可预览的 Office 文件')}</div> : null}
+        {!folders.length && !officeFiles.length ? <div className="context-room-hostfs-picker-state">{t('contextRoom:resource.noPreviewableOfficeFilesInThisFolder')}</div> : null}
       </div>
     </div>
   );
@@ -153,10 +154,10 @@ export function ResourceTree({
   onEmptyTrash: (roomId: string) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
 }) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   const library = useMemo(
-    () => createContextRoomResourceLibrary(room, backendDocuments, trashedDocuments),
-    [backendDocuments, room, trashedDocuments],
+    () => createContextRoomResourceLibrary(room, backendDocuments, trashedDocuments, locale),
+    [backendDocuments, locale, room, trashedDocuments],
   );
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(() => new Set(
@@ -193,14 +194,14 @@ export function ResourceTree({
       await onDeleteDocument(document);
       setDocumentToDelete(null);
     } catch (error: unknown) {
-      setDeleteError(error instanceof Error ? error.message : t('删除文档失败'));
+      setDeleteError(error instanceof Error ? error.message : t('contextRoom:resource.failedToDeleteDocument'));
     } finally {
       setDeletingDocumentId(null);
     }
   };
 
   const createDocument = async () => {
-    const title = newDocumentTitle.trim() || t('无标题文档');
+    const title = newDocumentTitle.trim() || t('contextRoom:resource.untitledDocument');
     setCreateError(null);
     setCreatingDocument(true);
     try {
@@ -208,7 +209,7 @@ export function ResourceTree({
       setCreatePopoverOpen(false);
       setNewDocumentTitle('');
     } catch (error: unknown) {
-      setCreateError(error instanceof Error ? error.message : t('创建文档失败'));
+      setCreateError(error instanceof Error ? error.message : t('contextRoom:resource.failedToCreateDocument'));
     } finally {
       setCreatingDocument(false);
     }
@@ -216,7 +217,7 @@ export function ResourceTree({
 
   const importMarkdownDocument = async (file: File) => {
     if (!/\.(?:md|markdown)$/i.test(file.name)) {
-      setCreateError(t('请选择 .md 或 .markdown 文件'));
+      setCreateError(t('contextRoom:resource.chooseAnMdOrMarkdownFile'));
       return;
     }
     setCreateError(null);
@@ -228,7 +229,7 @@ export function ResourceTree({
       setCreatePopoverOpen(false);
       setNewDocumentTitle('');
     } catch (error: unknown) {
-      setCreateError(error instanceof Error ? error.message : t('导入 Markdown 文档失败'));
+      setCreateError(error instanceof Error ? error.message : t('contextRoom:resource.failedToImportMarkdownDocument'));
     } finally {
       setCreatingDocument(false);
     }
@@ -241,7 +242,7 @@ export function ResourceTree({
       await onEmptyTrash(room.id);
       setClearTrashPopoverOpen(false);
     } catch (error: unknown) {
-      setClearTrashError(error instanceof Error ? error.message : t('清空回收站失败'));
+      setClearTrashError(error instanceof Error ? error.message : t('contextRoom:resource.failedToEmptyTrash'));
     } finally {
       setClearingTrash(false);
     }
@@ -253,7 +254,7 @@ export function ResourceTree({
     try {
       await onRestoreDocument(document);
     } catch (error: unknown) {
-      setActionError(error instanceof Error ? error.message : t('恢复文档失败'));
+      setActionError(error instanceof Error ? error.message : t('contextRoom:resource.failedToRestoreDocument'));
     } finally {
       setDeletingDocumentId(null);
     }
@@ -266,7 +267,7 @@ export function ResourceTree({
       await onDeleteDocumentPermanently(document);
       setDocumentToDeletePermanently(null);
     } catch (error: unknown) {
-      setDeleteError(error instanceof Error ? error.message : t('彻底删除文档失败'));
+      setDeleteError(error instanceof Error ? error.message : t('contextRoom:resource.failedToPermanentlyDeleteDocument'));
     } finally {
       setDeletingDocumentId(null);
     }
@@ -274,11 +275,11 @@ export function ResourceTree({
 
   return (
     <div className="context-room-resource-tree">
-      <label><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('搜索 Room 内文档…')} aria-label={t('搜索 Room 内文档')} /></label>
-      <button type="button" className="context-room-resource-add-file" onClick={() => setShowFilePicker((value) => !value)}><FolderOpen aria-hidden="true" />{t('从文件系统添加 Office 文件')}</button>
+      <label><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('contextRoom:resource.searchDocumentsInThisRoom')} aria-label={t('contextRoom:resource.searchDocumentsAriaLabel')} /></label>
+      <button type="button" className="context-room-resource-add-file" onClick={() => setShowFilePicker((value) => !value)}><FolderOpen aria-hidden="true" />{t('contextRoom:resource.addOfficeFileFromFileSystem')}</button>
       {showFilePicker ? <HostFSOfficePicker onAdd={(file) => { onAddFile(file); setShowFilePicker(false); }} onClose={() => setShowFilePicker(false)} /> : null}
       {actionError ? <div className="context-room-resource-error" role="alert">{actionError}</div> : null}
-      <div className="context-room-resource-scroll" role="tree" aria-label={t('Room 资源')}>
+      <div className="context-room-resource-scroll" role="tree" aria-label={t('contextRoom:resource.roomResources')}>
         {library.folders.map((folder) => {
           const resources = library.resources.filter((resource) => resource.folderId === folder.id && (!normalized || resource.name.toLowerCase().includes(normalized)));
           if (normalized && !resources.length) return null;
@@ -291,7 +292,7 @@ export function ResourceTree({
                 <button type="button" className="context-room-resource-folder" aria-expanded={open} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id); return next; })}>
                   <ChevronRight aria-hidden="true" className={open ? 'is-open' : ''} />
                   {trashFolder ? <Trash2 aria-hidden="true" /> : open ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}
-                  <span>{t(folder.name)}</span><small>{resources.length}</small>
+                  <span>{t(uiText(folder.name))}</span><small>{resources.length}</small>
                 </button>
                 {documentsFolder ? (
                   <Popover.Root
@@ -311,8 +312,8 @@ export function ResourceTree({
                       <button
                         type="button"
                         className="context-room-resource-folder-add"
-                        aria-label={t('新建文档')}
-                        title={t('新建文档')}
+                        aria-label={t('contextRoom:resource.newDocument')}
+                        title={t('contextRoom:resource.newDocument')}
                         disabled={creatingDocument}
                       >
                         {creatingDocument
@@ -327,16 +328,16 @@ export function ResourceTree({
                         align="start"
                         sideOffset={8}
                         collisionPadding={12}
-                        aria-label={t('新建文档')}
+                        aria-label={t('contextRoom:resource.newDocument')}
                       >
                         <form onSubmit={(event) => { event.preventDefault(); void createDocument(); }}>
-                          <label htmlFor="context-room-new-document-title">{t('文档名称')}</label>
+                          <label htmlFor="context-room-new-document-title">{t('contextRoom:resource.documentName')}</label>
                           <input
                             id="context-room-new-document-title"
                             autoFocus
                             maxLength={120}
                             value={newDocumentTitle}
-                            placeholder={t('无标题文档')}
+                            placeholder={t('contextRoom:resource.untitledDocument')}
                             onChange={(event) => setNewDocumentTitle(event.target.value)}
                             disabled={creatingDocument}
                           />
@@ -360,15 +361,15 @@ export function ResourceTree({
                             onClick={() => markdownInputRef.current?.click()}
                           >
                             <FileUp aria-hidden="true" />
-                            {t(creatingDocument ? '处理中…' : '导入本地 Markdown')}
+                            {t(creatingDocument ? 'contextRoom:resource.processing' : 'contextRoom:resource.importLocalMarkdown')}
                           </button>
                           {createError ? <small role="alert">{createError}</small> : null}
                           <footer>
                             <Popover.Close asChild>
-                              <button type="button" disabled={creatingDocument}>{t('取消')}</button>
+                              <button type="button" disabled={creatingDocument}>{t('contextRoom:resource.cancel')}</button>
                             </Popover.Close>
                             <button type="submit" className="is-primary" disabled={creatingDocument}>
-                              {t(creatingDocument ? '创建中…' : '创建')}
+                              {t(creatingDocument ? 'contextRoom:resource.creating' : 'contextRoom:resource.create')}
                             </button>
                           </footer>
                         </form>
@@ -390,8 +391,8 @@ export function ResourceTree({
                       <button
                         type="button"
                         className="context-room-resource-folder-add is-danger"
-                        aria-label={t('清空回收站')}
-                        title={t(trashDocumentCount ? '清空回收站' : '回收站为空')}
+                        aria-label={t('contextRoom:resource.emptyTrash')}
+                        title={t(trashDocumentCount ? 'contextRoom:resource.emptyTrash' : 'contextRoom:resource.trashIsEmpty')}
                         disabled={!trashDocumentCount || clearingTrash}
                       >
                         {clearingTrash
@@ -406,14 +407,14 @@ export function ResourceTree({
                         align="start"
                         sideOffset={8}
                         collisionPadding={12}
-                        aria-label={t('确认清空回收站')}
+                        aria-label={t('contextRoom:resource.confirmEmptyTrash')}
                       >
-                        <p>{t('清空回收站？')}</p>
-                        <span>{t('{count} 篇文档及其历史版本将无法恢复。', { count: trashDocumentCount })}</span>
+                        <p>{t('contextRoom:resource.emptyTrashQuestion')}</p>
+                        <span>{t('contextRoom:resource.countDocumentsAndTheirVersionHistoryCannotBe', { count: trashDocumentCount })}</span>
                         {clearTrashError ? <small role="alert">{clearTrashError}</small> : null}
                         <footer>
                           <Popover.Close asChild>
-                            <button type="button" disabled={clearingTrash}>{t('取消')}</button>
+                            <button type="button" disabled={clearingTrash}>{t('contextRoom:resource.cancel')}</button>
                           </Popover.Close>
                           <button
                             type="button"
@@ -421,7 +422,7 @@ export function ResourceTree({
                             disabled={clearingTrash}
                             onClick={() => void clearTrash()}
                           >
-                            {t(clearingTrash ? '清空中…' : '清空')}
+                            {t(clearingTrash ? 'contextRoom:resource.emptying' : 'contextRoom:resource.clear')}
                           </button>
                         </footer>
                         <Popover.Arrow className="context-room-document-delete-arrow" />
@@ -473,8 +474,8 @@ export function ResourceTree({
                           <button
                             type="button"
                             className="context-room-resource-delete"
-                            aria-label={t('将文档 {name} 移到回收站', { name: resource.name })}
-                            title={t(busy ? 'Agent 正在写入，暂时不能移动' : '移到回收站')}
+                            aria-label={t('contextRoom:resource.moveDocumentNameToTrash', { name: resource.name })}
+                            title={t(busy ? 'contextRoom:resource.agentIsWritingThisDocumentCannotBeMoved' : 'contextRoom:resource.moveToTrash')}
                             disabled={busy || deleting}
                           >
                             <Trash2 aria-hidden="true" />
@@ -487,14 +488,14 @@ export function ResourceTree({
                             align="center"
                             sideOffset={8}
                             collisionPadding={12}
-                            aria-label={t('确认将文档 {name} 移到回收站', { name: resource.name })}
+                            aria-label={t('contextRoom:resource.confirmMovingDocumentNameToTrash', { name: resource.name })}
                           >
-                            <p>{t('移到回收站？')}</p>
-                            <span>{t('“{name}”可在回收站恢复。', { name: resource.name })}</span>
+                            <p>{t('contextRoom:resource.confirmMoveToTrash')}</p>
+                            <span>{t('contextRoom:resource.nameCanBeRestoredFromTrash', { name: resource.name })}</span>
                             {deleteError ? <small role="alert">{deleteError}</small> : null}
                             <footer>
                               <Popover.Close asChild>
-                                <button type="button" disabled={deleting}>{t('取消')}</button>
+                                <button type="button" disabled={deleting}>{t('contextRoom:resource.cancel')}</button>
                               </Popover.Close>
                               <button
                                 type="button"
@@ -502,7 +503,7 @@ export function ResourceTree({
                                 disabled={deleting}
                                 onClick={() => void confirmDelete(backendDocument)}
                               >
-                                {t(deleting ? '移动中…' : '移入')}
+                                {t(deleting ? 'contextRoom:resource.moving' : 'contextRoom:resource.move')}
                               </button>
                             </footer>
                             <Popover.Arrow className="context-room-document-delete-arrow" />
@@ -513,8 +514,8 @@ export function ResourceTree({
                       <div className="context-room-resource-trash-actions">
                         <button
                           type="button"
-                          aria-label={t('恢复文档 {name}', { name: resource.name })}
-                          title={t('恢复文档')}
+                          aria-label={t('contextRoom:resource.restoreDocumentName', { name: resource.name })}
+                          title={t('contextRoom:resource.restoreDocument')}
                           disabled={deleting}
                           onClick={() => void restoreDocument(backendDocument)}
                         >
@@ -531,8 +532,8 @@ export function ResourceTree({
                           <Popover.Trigger asChild>
                             <button
                               type="button"
-                              aria-label={t('彻底删除文档 {name}', { name: resource.name })}
-                              title={t('彻底删除')}
+                              aria-label={t('contextRoom:resource.permanentlyDeleteDocumentName', { name: resource.name })}
+                              title={t('contextRoom:resource.deletePermanently')}
                               disabled={deleting}
                             >
                               <Trash2 aria-hidden="true" />
@@ -545,14 +546,14 @@ export function ResourceTree({
                               align="center"
                               sideOffset={8}
                               collisionPadding={12}
-                              aria-label={t('确认彻底删除文档 {name}', { name: resource.name })}
+                              aria-label={t('contextRoom:resource.confirmPermanentlyDeletingDocumentName', { name: resource.name })}
                             >
-                              <p>{t('彻底删除“{name}”？', { name: resource.name })}</p>
-                              <span>{t('正文和历史版本将无法恢复。')}</span>
+                              <p>{t('contextRoom:resource.permanentlyDeleteName', { name: resource.name })}</p>
+                              <span>{t('contextRoom:resource.theContentAndVersionHistoryCannotBeRestored')}</span>
                               {deleteError ? <small role="alert">{deleteError}</small> : null}
                               <footer>
                                 <Popover.Close asChild>
-                                  <button type="button" disabled={deleting}>{t('取消')}</button>
+                                  <button type="button" disabled={deleting}>{t('contextRoom:resource.cancel')}</button>
                                 </Popover.Close>
                                 <button
                                   type="button"
@@ -560,7 +561,7 @@ export function ResourceTree({
                                   disabled={deleting}
                                   onClick={() => void confirmPermanentDelete(backendDocument)}
                                 >
-                                  {t(deleting ? '删除中…' : '彻底删除')}
+                                  {t(deleting ? 'contextRoom:resource.deleting' : 'contextRoom:resource.deletePermanently')}
                                 </button>
                               </footer>
                               <Popover.Arrow className="context-room-document-delete-arrow" />
@@ -573,10 +574,10 @@ export function ResourceTree({
                 );
               }) : null}
               {open && library.resources.length > 0 && folder.id.endsWith(':folder:documents') && resources.length === 0 ? (
-                <p className="context-room-resource-folder-empty">{t('暂无文档')}</p>
+                <p className="context-room-resource-folder-empty">{t('contextRoom:resource.noDocuments')}</p>
               ) : null}
               {open && trashFolder && resources.length === 0 ? (
-                <p className="context-room-resource-folder-empty">{t('回收站为空')}</p>
+                <p className="context-room-resource-folder-empty">{t('contextRoom:resource.trashIsEmpty')}</p>
               ) : null}
             </section>
           );
@@ -585,16 +586,16 @@ export function ResourceTree({
           <PanelEmptyState
             compact
             icon={FileText}
-            title={t('还没有文档')}
-            description={t('新建文档或添加本地 Office 文件后会显示在这里。')}
+            title={t('contextRoom:resource.noDocumentsYet')}
+            description={t('contextRoom:resource.createADocumentOrAddALocalOffice')}
           />
         ) : null}
         {normalized && !matchingResourceCount ? (
           <PanelEmptyState
             compact
             icon={SearchX}
-            title={t('没有匹配的资源')}
-            description={t('换一个关键词试试。')}
+            title={t('contextRoom:resource.noMatchingResources')}
+            description={t('contextRoom:resource.tryAnotherSearchTerm')}
           />
         ) : null}
       </div>

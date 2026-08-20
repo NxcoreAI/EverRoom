@@ -15,6 +15,7 @@ import {
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
+import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import type { PageId } from '@/data/navigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
@@ -58,6 +59,7 @@ export function AgentPanel({
 }) {
   const { t } = useLocale()
   const [draft, setDraft] = useState('')
+  const { refreshFromBackend } = useContextRoomState()
   const [selectedText, setSelectedText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [pendingNavigationByRun, setPendingNavigationByRun] = useState<Record<string, AgentNavigationTarget>>({})
@@ -70,7 +72,7 @@ export function AgentPanel({
   const selectedTextSummary = selectedText.replace(/\s+/g, ' ').trim()
   const contextSummary = selectedTextSummary
     ? `${pageLabel} · “${selectedTextSummary}”`
-    : `${pageLabel} · ${t('未选择文本')}`
+    : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
   const session = useAgentSession(pageLabel, roomId, rooms)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
 
@@ -134,7 +136,7 @@ export function AgentPanel({
         continue
       }
       handledNavigationKeysRef.current.add(key)
-      onNavigate({
+      const request = {
         key,
         source: {
           sessionId: session.sessionId,
@@ -144,10 +146,17 @@ export function AgentPanel({
           runId: tool.runId,
         },
         target,
-      })
+      }
+      if (tool.name === 'context_room_create') {
+        void refreshFromBackend()
+          .catch(() => null)
+          .finally(() => onNavigate(request))
+      } else {
+        onNavigate(request)
+      }
       return
     }
-  }, [navigationRequest, onNavigate, pageId, pageLabel, roomId, session.sessionId, session.sessionLinks, session.toolCallsByRun])
+  }, [navigationRequest, onNavigate, pageId, pageLabel, refreshFromBackend, roomId, session.sessionId, session.sessionLinks, session.toolCallsByRun])
 
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
@@ -221,7 +230,7 @@ export function AgentPanel({
     setSubmitting(true)
     try {
       const documents = window.nxcore?.documents
-      if (!documents) throw new Error(t('文档服务不可用。'))
+      if (!documents) throw new Error(t('surface:agent.documentServiceUnavailable'))
       const snapshot = await documents.get(document.documentId)
       const request = buildAgentDocumentSelectionRunRequest(originalPrompt, snapshot)
       await session.sendPrompt(request.prompt, undefined, undefined, request.activeDocument)
@@ -241,7 +250,7 @@ export function AgentPanel({
     setSubmitting(true)
     try {
       const runId = await session.submitPendingIntent(intent.id, room.id, document?.documentId)
-      if (!runId) throw new Error(t('当前请求仍在处理中。'))
+      if (!runId) throw new Error(t('surface:agent.thisRequestIsStillBeingProcessed'))
       setPendingNavigationByRun((current) => ({
         ...current,
         [runId]: {

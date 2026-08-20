@@ -78,6 +78,20 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
   });
 }
 
+export function createContextRoomAgentRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !config.backgroundPi?.memory) return null;
+  const { knowledge: _knowledge, mcp: _mcp, ...pi } = config.backgroundPi;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 8,
+    sessionsDir: join(config.backgroundPi.sessionsDir, "context-room-create"),
+    workingDirectory: join(config.backgroundPi.workingDirectory, "context-room-create"),
+    agentDirectory: join(config.backgroundPi.agentDirectory, "context-room-create"),
+  });
+}
+
 /** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
 export function createDiaryAgentRuntime(
   config: GatewayConfig,
@@ -87,6 +101,7 @@ export function createDiaryAgentRuntime(
   const { memory: _memory, knowledge: _knowledge, ...pi } = config.backgroundPi;
   return new PiAgentRuntime({
     ...pi,
+    maxTokens: config.diaryMaxTokens ?? Math.max(pi.maxTokens, 16_384),
     includeBashTool: false,
     maxToolCallsPerRun: 128,
     sessionsDir: join(config.backgroundPi.sessionsDir, "diary"),

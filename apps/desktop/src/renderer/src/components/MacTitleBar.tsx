@@ -2,5 +2,5 @@ import { useLocale } from '@/i18n/LocaleContext'
 
 export function MacTitleBar() {
   const { t } = useLocale()
-  return <header className="mac-titlebar drag-region" aria-label={t('macOS 窗口栏')} />
+  return <header className="mac-titlebar drag-region" aria-label={t('surface:macTitleBar.macosWindowBar')} />
 }

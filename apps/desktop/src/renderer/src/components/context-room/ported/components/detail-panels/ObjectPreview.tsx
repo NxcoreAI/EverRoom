@@ -2,6 +2,7 @@ import { CheckSquare2, ChevronRight, Mail, Mic } from 'lucide-react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
+import { uiText } from '../../adapters';
 import { roomKindIcon, roomKindTone } from '../utils';
 
 function EmptyState({ children }: { children: string }) {
@@ -28,7 +29,7 @@ export function ObjectPreview({
   const { t } = useLocale();
   if (selection.kind === 'related-room') {
     const relatedRoom = rooms.find((item) => item.id === selection.id);
-    if (!relatedRoom) return <EmptyState>{t('关联 Room 不存在')}</EmptyState>;
+    if (!relatedRoom) return <EmptyState>{t('contextRoom:objectPreview.relatedRoomNotFound')}</EmptyState>;
     const people = new Set(room.people.map((person) => person.name));
     const sharedPeople = relatedRoom.people.filter((person) => people.has(person.name));
     const Icon = roomKindIcon(relatedRoom.kind);
@@ -37,26 +38,26 @@ export function ObjectPreview({
         <header data-icon-tone={roomKindTone(relatedRoom.kind)}>
           <Icon aria-hidden="true" />
           <div>
-            <span>{t('关联 Room')}</span>
+            <span>{t('contextRoom:objectPreview.relatedRoom')}</span>
             <h1>{relatedRoom.title}</h1>
           </div>
         </header>
         <dl>
           <div>
-            <dt>{t('关系依据')}</dt>
+            <dt>{t('contextRoom:objectPreview.relationshipBasis')}</dt>
             <dd>
               {sharedPeople.length
-                ? t('共同人物：{people}', { people: sharedPeople.map((person) => person.name).join('、') })
-                : t('同为{kind} Room', { kind: t(room.kind) })}
+                ? t('contextRoom:objectPreview.sharedPeoplePeople', { people: sharedPeople.map((person) => person.name).join('、') })
+                : t('contextRoom:objectPreview.bothAreKindRooms', { kind: t(uiText(room.kind)) })}
             </dd>
           </div>
           <div>
-            <dt>{t('当前状态')}</dt>
-            <dd>{t(relatedRoom.status)}</dd>
+            <dt>{t('contextRoom:objectPreview.currentStatus')}</dt>
+            <dd>{t(uiText(relatedRoom.status))}</dd>
           </div>
           <div>
-            <dt>{t('资料范围')}</dt>
-            <dd>{t('{count} 项', { count: relatedRoom.materials.length + relatedRoom.fileItems.length })}</dd>
+            <dt>{t('contextRoom:objectPreview.resourceScope')}</dt>
+            <dd>{t('contextRoom:objectPreview.countItems', { count: relatedRoom.materials.length + relatedRoom.fileItems.length })}</dd>
           </div>
         </dl>
         <button
@@ -64,7 +65,7 @@ export function ObjectPreview({
           className="context-room-primary context-room-object-preview-action"
           onClick={() => onOpenRoom(relatedRoom.id)}
         >
-          {t('打开 Room')}
+          {t('contextRoom:objectPreview.openRoom')}
           <ChevronRight aria-hidden="true" />
         </button>
       </article>
@@ -73,27 +74,27 @@ export function ObjectPreview({
 
   if (selection.kind === 'task') {
     const task = room.actionItems.find((item) => item.id === selection.id);
-    if (!task) return <EmptyState>{t('任务不存在或不属于当前 Room')}</EmptyState>;
+    if (!task) return <EmptyState>{t('contextRoom:objectPreview.taskNotFoundOrDoesNotBelongTo')}</EmptyState>;
     return (
       <article className="context-room-object-preview" data-testid="context-room-object-preview">
         <header>
           <CheckSquare2 aria-hidden="true" />
           <div>
-            <span>{t('任务详情')}</span>
+            <span>{t('contextRoom:objectPreview.taskDetails')}</span>
             <h1>{task.title}</h1>
           </div>
         </header>
         <dl>
           <div>
-            <dt>{t('执行状态')}</dt>
-            <dd>{t(task.status)}</dd>
+            <dt>{t('contextRoom:objectPreview.status')}</dt>
+            <dd>{t(uiText(task.status))}</dd>
           </div>
           <div>
-            <dt>{t('负责人')}</dt>
+            <dt>{t('contextRoom:objectPreview.owner')}</dt>
             <dd>{task.owner}</dd>
           </div>
           <div>
-            <dt>{t('截止时间')}</dt>
+            <dt>{t('contextRoom:objectPreview.dueDate')}</dt>
             <dd>{task.deadline}</dd>
           </div>
         </dl>
@@ -103,27 +104,27 @@ export function ObjectPreview({
 
   if (selection.kind === 'meeting') {
     const meeting = room.materials.find((item) => item.id === selection.id && item.type === '会议');
-    if (!meeting) return <EmptyState>{t('会议不存在或不属于当前 Room')}</EmptyState>;
+    if (!meeting) return <EmptyState>{t('contextRoom:objectPreview.meetingNotFoundOrDoesNotBelongTo')}</EmptyState>;
     return (
       <article className="context-room-object-preview" data-testid="context-room-object-preview">
         <header data-icon-tone="calendar">
           <Mic aria-hidden="true" />
           <div>
-            <span>{t('会议详情')}</span>
+            <span>{t('contextRoom:objectPreview.meetingDetails')}</span>
             <h1>{meeting.title}</h1>
           </div>
         </header>
         <dl>
           <div>
-            <dt>{t('时间')}</dt>
+            <dt>{t('contextRoom:objectPreview.time')}</dt>
             <dd>{meeting.time}</dd>
           </div>
           <div>
-            <dt>{t('参与人')}</dt>
-            <dd>{meeting.attendees?.join('、') || t('未记录')}</dd>
+            <dt>{t('contextRoom:objectPreview.attendees')}</dt>
+            <dd>{meeting.attendees?.join('、') || t('contextRoom:objectPreview.notRecorded')}</dd>
           </div>
           <div>
-            <dt>{t('会议纪要')}</dt>
+            <dt>{t('contextRoom:objectPreview.meetingNotes')}</dt>
             <dd>{meeting.summary}</dd>
           </div>
         </dl>
@@ -132,23 +133,23 @@ export function ObjectPreview({
   }
 
   const mail = room.materials.find((item) => item.id === selection.id && item.type === '邮件');
-  if (!mail) return <EmptyState>{t('邮件不存在或不属于当前 Room')}</EmptyState>;
+  if (!mail) return <EmptyState>{t('contextRoom:objectPreview.emailNotFoundOrDoesNotBelongTo')}</EmptyState>;
   return (
     <article className="context-room-object-preview" data-testid="context-room-object-preview">
       <header>
         <Mail aria-hidden="true" />
         <div>
-          <span>{t('邮件预览')}</span>
+          <span>{t('contextRoom:objectPreview.emailPreview')}</span>
           <h1>{mail.title}</h1>
         </div>
       </header>
       <dl>
         <div>
-          <dt>{t('更新时间')}</dt>
+          <dt>{t('contextRoom:objectPreview.updated')}</dt>
           <dd>{mail.time}</dd>
         </div>
         <div>
-          <dt>{t('邮件正文')}</dt>
+          <dt>{t('contextRoom:objectPreview.emailBody')}</dt>
           <dd>{mail.summary}</dd>
         </div>
       </dl>

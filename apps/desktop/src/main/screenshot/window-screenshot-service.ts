@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import { app, BrowserWindow, type NativeImage } from 'electron'
+import { desktopText } from '../desktop-locale'
 
 export const SCREENSHOT_DEFAULT_INTERVAL_MS = 300_000
 export const SCREENSHOT_MIN_INTERVAL_MS = 30_000
@@ -78,18 +79,18 @@ export async function captureCurrentWindow(
   window: BrowserWindow | null = BrowserWindow.getAllWindows()[0] ?? null,
 ): Promise<WindowScreenshotCaptureResult> {
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
-    return { ok: false, code: 'window-unavailable', message: '当前应用窗口不可用。' }
+    return { ok: false, code: 'window-unavailable', message: desktopText('error.screenshot.windowUnavailable') }
   }
 
   let image
   try {
     image = await window.webContents.capturePage()
   } catch {
-    return { ok: false, code: 'capture-failed', message: '应用窗口截图失败，请稍后重试。' }
+    return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.captureFailed') }
   }
 
   if (image.isEmpty()) {
-    return { ok: false, code: 'capture-failed', message: '应用窗口截图为空，请稍后重试。' }
+    return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.empty') }
   }
 
   const size = image.getSize()
@@ -98,10 +99,10 @@ export async function captureCurrentWindow(
   try {
     jpeg = image.toJPEG(82)
   } catch {
-    return { ok: false, code: 'capture-failed', message: '应用窗口截图编码失败，请稍后重试。' }
+    return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.encodingFailed') }
   }
   if (!jpeg.byteLength) {
-    return { ok: false, code: 'capture-failed', message: '应用窗口截图为空，请稍后重试。' }
+    return { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.empty') }
   }
 
   const capturedAt = new Date()
@@ -116,7 +117,7 @@ export async function captureCurrentWindow(
     await rename(temporaryPath, filePath)
   } catch {
     await unlink(temporaryPath).catch(() => undefined)
-    return { ok: false, code: 'save-failed', message: '截图无法保存，请检查目录权限和磁盘空间。' }
+    return { ok: false, code: 'save-failed', message: desktopText('error.screenshot.saveFailed') }
   }
 
   return {
@@ -163,7 +164,7 @@ export function createWindowScreenshotScheduler(
       lastResult = result
       if (result.ok) await Promise.resolve(onCaptured?.(result)).catch(() => undefined)
     }).catch(() => {
-      lastResult = { ok: false, code: 'capture-failed', message: '应用窗口截图失败，请稍后重试。' }
+      lastResult = { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.captureFailed') }
     })
     inFlight = current
     try {

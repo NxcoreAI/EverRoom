@@ -11,6 +11,33 @@ export interface KnowledgeRoomDto {
   updatedAt: string
 }
 
+export interface KnowledgeRoomContextDto {
+  roomId: string
+  generatedAt: string
+  sourceDocuments: Array<{
+    documentId: string
+    title: string
+    version: number
+    updatedAt: string
+  }>
+  overview: string
+  status: string
+  nextSteps: string[]
+  entities: Array<{ name: string; kind: string; description: string }>
+  actionItems: Array<{
+    title: string
+    owner: string | null
+    dueDate: string | null
+    sourceTitle: string
+  }>
+  meetings: Array<{
+    title: string
+    when: string
+    participants: string[]
+    sourceTitle: string
+  }>
+}
+
 export interface KnowledgeWikiPageDto {
   id: string
   title: string

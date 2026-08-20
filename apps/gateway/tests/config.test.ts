@@ -101,6 +101,7 @@ describe("loadConfig", () => {
       model: "deepseek-chat",
       maxTokens: 4096,
     });
+    expect(config.diaryMaxTokens).toBe(16384);
     expect(config.cursorCompletionPi).toMatchObject({
       provider: "deepseek",
       model: "deepseek-chat",
@@ -174,10 +175,12 @@ describe("loadConfig", () => {
       NXCORE_AI_API_KEY: "test-key",
       NXCORE_AI_MAX_TOKENS: "800",
       NXCORE_AI_BACKGROUND_MAX_TOKENS: "4096",
+      NXCORE_DIARY_MAX_TOKENS: "12288",
     });
 
     expect(config.pi).toMatchObject({ model: "qwen-turbo", maxTokens: 800 });
     expect(config.backgroundPi).toMatchObject({ model: "qwen-plus", maxTokens: 4096 });
+    expect(config.diaryMaxTokens).toBe(12288);
   });
 
   it("rejects incomplete or unsafe Pi endpoint configuration", () => {

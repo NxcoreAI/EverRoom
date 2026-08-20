@@ -1,17 +1,24 @@
 import { AlertCircle, LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { PerceptionNodeDetail } from '../../../../shared/sources'
-import { useLocale, type Translate } from '../../i18n/LocaleContext'
+import { useLocale } from '../../i18n/LocaleContext'
 
-const SYSTEM_PERCEPTION_TEXT = new Set(['屏幕活动', '照片', '等待视觉理解'])
+const SYSTEM_PERCEPTION_KEYS: Record<string, string> = {
+  '屏幕活动': 'perception.screenActivity',
+  '照片': 'perception.photo',
+  '等待视觉理解': 'perception.waiting',
+}
 
-export function perceptionDisplayText(value: string, t: Translate): string {
-  return SYSTEM_PERCEPTION_TEXT.has(value) ? t(value) : value
+export function perceptionDisplayText(value: string, t: (key: string) => string): string {
+  const key = SYSTEM_PERCEPTION_KEYS[value]
+  return key ? t(key) : value
 }
 
 export function VisualDetail({ node }: { node: PerceptionNodeDetail }) {
   const { t } = useLocale()
+  const { t: perceptionT } = useTranslation('diaryReality')
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [imageFailed, setImageFailed] = useState(false)
 
@@ -29,32 +36,40 @@ export function VisualDetail({ node }: { node: PerceptionNodeDetail }) {
   return (
     <div className="visual-perception-detail">
       <div className="visual-perception-evidence">
-        {imageUrl ? <img src={imageUrl} alt={t(node.kind === 'photo' ? '感知照片' : '窗口截图')} /> : (
+        {imageUrl ? <img src={imageUrl} alt={t(node.kind === 'photo' ? 'diaryReality:visualPerception.perceptionPhoto' : 'diaryReality:visualPerception.windowScreenshots')} /> : (
           <div className="visual-perception-image-state">
             {imageFailed ? <AlertCircle aria-hidden="true" /> : <LoaderCircle className="spin" aria-hidden="true" />}
-            <span>{t(imageFailed ? '代表图无法读取' : '正在读取本地代表图')}</span>
+            <span>{t(imageFailed ? 'diaryReality:visualPerception.unableToLoadRepresentativeImage' : 'diaryReality:visualPerception.loadingLocalRepresentativeImage')}</span>
           </div>
         )}
-        <span>{node.sampleCount > 1 ? t('连续画面 · {count} 帧', { count: node.sampleCount }) : t('单帧画面')}</span>
+        <span>{node.sampleCount > 1 ? t('diaryReality:visualPerception.sequenceCountFrames', { count: node.sampleCount }) : t('diaryReality:visualPerception.singleFrame')}</span>
       </div>
       <div className="visual-perception-reading">
         <section>
-          <span>{t('视觉总结')}</span>
-          <h3>{perceptionDisplayText(node.title, t)}</h3>
-          <p>{perceptionDisplayText(node.summary, t)}</p>
+          <span>{t('diaryReality:visualPerception.visualSummary')}</span>
+          <h3>{perceptionDisplayText(node.title, perceptionT)}</h3>
+          <p>{perceptionDisplayText(node.summary, perceptionT)}</p>
         </section>
         <section>
-          <span>{t('关键内容')}</span>
-          {node.tags.length > 0 ? (
+          <span>{t('diaryReality:visualPerception.keyPoints')}</span>
+          {node.keyPoints.length > 0 ? (
             <div className="visual-perception-tags">
-              {node.tags.map((tag) => <span key={tag}>{tag}</span>)}
+              {node.keyPoints.map((point) => <span key={point}>{point}</span>)}
             </div>
-          ) : <p className="visual-perception-muted">{t('暂无关键内容')}</p>}
+          ) : <p className="visual-perception-muted">{t('diaryReality:visualPerception.noKeyPoints')}</p>}
+        </section>
+        <section>
+          <span>{t('diaryReality:visualPerception.entitiesAndFacts')}</span>
+          {node.insightTags.length > 0 ? (
+            <div className="visual-perception-tags">
+              {node.insightTags.map((tag) => <span key={`${tag.kind}:${tag.label}`} data-kind={tag.kind}>{tag.label}</span>)}
+            </div>
+          ) : <p className="visual-perception-muted">{t('diaryReality:visualPerception.noRepresentativeTags')}</p>}
         </section>
         <dl>
-          <div><dt>{t('事件类型')}</dt><dd>{node.eventType ?? t('未分类')}</dd></div>
-          <div><dt>{t('置信度')}</dt><dd>{node.confidence === null ? t('未提供') : `${Math.round(node.confidence * 100)}%`}</dd></div>
-          <div><dt>{t('模型')}</dt><dd>{node.model ?? t('本地待处理')}</dd></div>
+          <div><dt>{t('diaryReality:visualPerception.eventType')}</dt><dd>{node.eventType ?? t('diaryReality:visualPerception.uncategorized')}</dd></div>
+          <div><dt>{t('diaryReality:visualPerception.confidence')}</dt><dd>{node.confidence === null ? t('diaryReality:visualPerception.notProvided') : `${Math.round(node.confidence * 100)}%`}</dd></div>
+          <div><dt>{t('diaryReality:visualPerception.model')}</dt><dd>{node.model ?? t('diaryReality:visualPerception.pendingLocalProcessing')}</dd></div>
         </dl>
       </div>
     </div>

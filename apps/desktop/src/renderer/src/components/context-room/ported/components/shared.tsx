@@ -113,8 +113,8 @@ export function ReferenceDialog({
         <Dialog.Overlay className="context-room-dialog-overlay" />
         <Dialog.Content className="context-room-dialog-content" aria-label={title}>
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
-          <Dialog.Description className="sr-only">{t('完成当前 Context Room 操作')}</Dialog.Description>
-          <Dialog.Close className="context-room-dialog-close" aria-label={t('关闭对话框')}>
+          <Dialog.Description className="sr-only">{t('contextRoom:shared.completeTheCurrentContextRoomAction')}</Dialog.Description>
+          <Dialog.Close className="context-room-dialog-close" aria-label={t('contextRoom:shared.closeDialog')}>
             <X className="size-4" aria-hidden="true" />
           </Dialog.Close>
           {children}
@@ -137,7 +137,7 @@ export function ActionConfirmDialog({
   rows = [],
   sources = [],
   risk,
-  confirmLabel = '确认执行',
+  confirmLabel = 'contextRoom:shared.confirmAction',
   danger = false,
   onConfirm,
 }: {
@@ -169,8 +169,8 @@ export function ActionConfirmDialog({
           ))}
           {sources.length ? (
             <div className="context-room-action-confirm-row">
-              <span>{t('来源')}</span>
-              <b>{sources.map((source) => `${t(source.type)} · ${source.name}`).join('；')}</b>
+              <span>{t('contextRoom:shared.sources')}</span>
+              <b>{sources.map((source) => `${t(uiText(source.type))} · ${source.name}`).join('；')}</b>
             </div>
           ) : null}
           {risk ? (
@@ -182,7 +182,7 @@ export function ActionConfirmDialog({
         </div>
         <footer>
           <button type="button" className="context-room-ghost" onClick={() => onOpenChange(false)}>
-            {t('取消')}
+            {t('contextRoom:shared.cancel')}
           </button>
           <button
             type="button"
@@ -242,7 +242,7 @@ export function ReferenceForm({
                 required={field.required}
               >
                 {field.options.map((option) => (
-                  <option key={option} value={option}>{t(option)}</option>
+                  <option key={option} value={option}>{t(uiText(option))}</option>
                 ))}
               </select>
             ) : field.multiline ? (

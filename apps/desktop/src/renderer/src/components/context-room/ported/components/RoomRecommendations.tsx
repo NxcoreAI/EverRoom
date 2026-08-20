@@ -1,7 +1,9 @@
 import { ArrowRight, Folder, Layers3, Mail, Mic } from 'lucide-react'
+import { useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
 import type { ContextRoomKind } from '../types'
+import { uiText } from '../adapters'
 import type { DraftRoom } from './RoomDialogs'
 import { roomKindIcon, roomKindTone } from './utils'
 
@@ -44,8 +46,8 @@ export function RoomRecommendations({ onSelect }: { onSelect: (item: RoomRecomme
   return (
     <section className="context-room-home-section" data-testid="context-room-recommendations">
       <div className="context-room-home-section-title">
-        <span>{t('推荐')}</span>
-        <h2>{t('推荐的 Room')}</h2>
+        <span>{t('contextRoom:roomRecommendations.recommended')}</span>
+        <h2>{t('contextRoom:roomRecommendations.recommendedRooms')}</h2>
       </div>
       <div className="context-room-home-grid context-room-recommendation-grid">
         {ROOM_RECOMMENDATIONS.map((item) => {
@@ -64,7 +66,7 @@ export function RoomRecommendations({ onSelect }: { onSelect: (item: RoomRecomme
                 <strong>{item.name}</strong>
                 <span className="context-room-home-card-brief">{item.reason}</span>
               </span>
-              <span className="context-room-recommendation-count" title={t('相关资料 {count} 份', { count: item.dataCount })}>
+              <span className="context-room-recommendation-count" title={t('contextRoom:roomRecommendations.countRelatedResources', { count: item.dataCount })}>
                 <Layers3 aria-hidden="true" />
                 <b>{item.dataCount}</b>
               </span>
@@ -84,25 +86,27 @@ export function RoomRecommendationDialog({
 }: {
   recommendation: RoomRecommendation
   onClose: () => void
-  onCreate: (draft: DraftRoom) => void
+  onCreate: (draft: DraftRoom) => void | Promise<void>
   onOpenSource: (source: RoomRecommendationSource) => void
 }) {
   const { t } = useLocale()
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   return (
     <div className="context-room-recommendation-dialog">
       <header>
         <div>
-          <span>{t('推荐创建 Room：{name}', { name: recommendation.name })}</span>
+          <span>{t('contextRoom:roomRecommendations.recommendedRoomName', { name: recommendation.name })}</span>
           <h2>{recommendation.anchorEntity.name}</h2>
         </div>
       </header>
       <p>{recommendation.anchorEntity.description}</p>
       <div className="context-room-recommendation-stats">
-        <div><b>{recommendation.factCount}</b><span>{t('事实数量')}</span></div>
-        <div><b>{recommendation.dataCount}</b><span>{t('资料数')}</span></div>
+        <div><b>{recommendation.factCount}</b><span>{t('contextRoom:roomRecommendations.facts')}</span></div>
+        <div><b>{recommendation.dataCount}</b><span>{t('contextRoom:roomRecommendations.resources')}</span></div>
       </div>
       <section>
-        <h3>{t('相关资料 ({count})', { count: recommendation.sources.length })}</h3>
+        <h3>{t('contextRoom:roomRecommendations.relatedResourcesCount', { count: recommendation.sources.length })}</h3>
         <div className="context-room-recommendation-source-list">
           {recommendation.sources.map((source) => {
             const Icon = sourceIcon(source.type)
@@ -110,29 +114,36 @@ export function RoomRecommendationDialog({
               <button
                 type="button"
                 disabled={!source.roomId || !source.objectId}
-                title={source.objectId ? t('打开{type}', { type: t(source.type) }) : t('该资料暂未接入当前工作区')}
+                title={source.objectId ? t('contextRoom:roomRecommendations.openType', { type: t(uiText(source.type)) }) : t('contextRoom:roomRecommendations.thisResourceIsNotAvailableInTheCurrent')}
                 key={`${source.type}-${source.name}`}
                 onClick={() => onOpenSource(source)}
               >
-                <span data-icon-tone={sourceTone(source.type)}><Icon aria-hidden="true" />{t(source.type)}</span>
+                <span data-icon-tone={sourceTone(source.type)}><Icon aria-hidden="true" />{t(uiText(source.type))}</span>
                 <b>{source.name}</b>
               </button>
             )
           })}
         </div>
       </section>
+      {error ? <p className="context-room-form-error" role="alert">{error}</p> : null}
       <footer>
-        <button type="button" className="context-room-secondary" onClick={onClose}>{t('取消')}</button>
+        <button type="button" className="context-room-secondary" disabled={creating} onClick={onClose}>{t('contextRoom:roomRecommendations.cancel')}</button>
         <button
           type="button"
           className="context-room-primary"
-          onClick={() => onCreate({
-            name: recommendation.name,
-            kind: recommendation.kind,
-            summary: recommendation.anchorEntity.description,
-          })}
+          disabled={creating}
+          onClick={() => {
+            setCreating(true)
+            setError(null)
+            void Promise.resolve(onCreate({
+              name: recommendation.name,
+              description: recommendation.anchorEntity.description,
+            })).catch((cause: unknown) => {
+              setError(cause instanceof Error ? cause.message : t('contextRoom:roomDialogs.createFailed'))
+            }).finally(() => setCreating(false))
+          }}
         >
-          {t('确认创建')}
+          {creating ? t('contextRoom:roomDialogs.creating') : t('contextRoom:roomRecommendations.create')}
           <ArrowRight aria-hidden="true" />
         </button>
       </footer>

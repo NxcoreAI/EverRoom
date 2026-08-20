@@ -22,19 +22,19 @@ interface FilePreview {
 }
 
 const PIPELINE_KEYS: { key: keyof IngestPipelines; label: string }[] = [
-  { key: 'room', label: 'Room' },
-  { key: 'wiki', label: 'Wiki' },
-  { key: 'memory', label: '记忆' },
+  { key: 'room', label: 'surface:files.room' },
+  { key: 'wiki', label: 'surface:files.wiki' },
+  { key: 'memory', label: 'surface:files.memory' },
 ]
 
 /** 展示用类型标签（策略本身在 gateway 代码注册表 + 部署期配置文件，桌面端只读展示）。 */
 const DATA_TYPE_LABELS: Record<string, string> = {
-  'document': '文档',
-  'meeting-minutes': '会议纪要',
-  'office-doc': 'Office 文档',
-  'spreadsheet': '表格',
-  'slides': '幻灯片',
-  'html': '网页',
+  'document': 'surface:files.document',
+  'meeting-minutes': 'surface:files.meetingMinutes',
+  'office-doc': 'surface:files.officeDocument',
+  'spreadsheet': 'surface:files.spreadsheet',
+  'slides': 'surface:files.slides',
+  'html': 'surface:files.webPage',
 }
 
 const dataTypeLabel = (key: string): string => DATA_TYPE_LABELS[key] ?? key
@@ -86,10 +86,10 @@ export function FilesPage() {
       if (result.length === 0) return
       setOutcomes(result)
       const entered = result.filter((outcome) => outcome.eventId).length
-      setMessage(t('导入完成：{entered}/{total} 份进入链路。', { entered, total: result.length }))
+      setMessage(t('surface:files.importCompleteEnteredTotalFilesEnteredThePipeline', { entered, total: result.length }))
       await Promise.all([loadFiles(), loadEvents()])
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t('导入失败，请稍后重试。'))
+      setMessage(error instanceof Error ? error.message : t('surface:files.importFailedTryAgainLater'))
     } finally {
       setImporting(false)
     }
@@ -118,54 +118,54 @@ export function FilesPage() {
         fileId: file.id,
         name: file.originalName,
         markdown: null,
-        error: error instanceof Error ? error.message : t('无法读取解析产物。'),
+        error: error instanceof Error ? error.message : t('surface:files.unableToReadParsedOutput'),
       })
     }
   }
 
   const renameFile = (file: FileDto) => {
     if (!filesApi) return
-    const nextName = window.prompt(t('文件显示名称'), file.originalName)
+    const nextName = window.prompt(t('surface:files.fileDisplayName'), file.originalName)
     if (nextName === null || !nextName.trim() || nextName.trim() === file.originalName) return
     void runFileAction(file.id, () => filesApi.rename(file.id, nextName.trim()))
   }
 
   const deleteFile = (file: FileDto) => {
     if (!filesApi) return
-    if (!window.confirm(t('要删除“{name}”吗？\n\n这会同时清理它进入的 Room 证据、wiki 链接与记忆文档。', { name: file.originalName }))) return
+    if (!window.confirm(t('surface:files.deleteNameThisAlsoRemovesItsRoomEvidence', { name: file.originalName }))) return
     void runFileAction(file.id, () => filesApi.delete(file.id))
   }
 
   return (
     <div className="page">
       <PageHeader
-        title={t('文件')}
-        description={t('统一入口导入的文件与它们进入的理解链路（Room / Wiki / 记忆）。')}
-        action={t('导入文件')}
+        title={t('surface:files.files')}
+        description={t('surface:files.importFilesAndTrackHowTheyFlowInto')}
+        action={t('surface:files.importFiles')}
         actionDisabled={!filesApi || importing}
         onAction={() => void importFiles()}
         extraAction={
-          <div className="segmented-control" aria-label={t('文件视图')}>
-            <button type="button" data-active={String(view === 'files')} onClick={() => setView('files')}>{t('文件')}</button>
-            <button type="button" data-active={String(view === 'events')} onClick={() => { setView('events'); void loadEvents() }}>{t('导入记录')}</button>
+          <div className="segmented-control" aria-label={t('surface:files.fileView')}>
+            <button type="button" data-active={String(view === 'files')} onClick={() => setView('files')}>{t('surface:files.files')}</button>
+            <button type="button" data-active={String(view === 'events')} onClick={() => { setView('events'); void loadEvents() }}>{t('surface:files.importHistory')}</button>
           </div>
         }
       />
       {!filesApi ? (
-        <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('请在桌面版中导入文件')}</strong><span>{t('网页版不会请求或读取本机文件权限。')}</span></div></div>
+        <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:files.importFilesInTheDesktopApp')}</strong><span>{t('surface:files.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div>
       ) : null}
       {message ? <div className="source-feedback" role="status">{message}</div> : null}
 
       {outcomes && outcomes.length > 0 ? (
         <div className="data-table files-outcomes">
-          <div className="table-head"><span>{t('本次导入')}</span><span>{t('类型')}</span><span>{t('链路')}</span><span>{t('记忆')}</span><span /></div>
+          <div className="table-head"><span>{t('surface:files.currentImport')}</span><span>{t('surface:files.type')}</span><span>{t('surface:files.pipeline')}</span><span>{t('surface:files.memory')}</span><span /></div>
           {outcomes.map((outcome, index) => (
             <div key={`${outcome.filename}-${index}`} className="table-row files-outcome-row">
               <span className="name-cell"><strong>{outcome.filename}</strong></span>
               <span>{outcome.dataType ? t(dataTypeLabel(outcome.dataType)) : '—'}</span>
               <span className="pipeline-badges">
-                {outcome.error ? <em className="pipeline-badge pipeline-error" title={outcome.error}>{t('失败')}</em> : null}
-                {outcome.deduped ? <em className="pipeline-badge">{t('已去重')}</em> : null}
+                {outcome.error ? <em className="pipeline-badge pipeline-error" title={outcome.error}>{t('surface:files.failed')}</em> : null}
+                {outcome.deduped ? <em className="pipeline-badge">{t('surface:files.deduplicated')}</em> : null}
                 {outcome.pipelines
                   ? PIPELINE_KEYS.filter(({ key }) => outcome.pipelines?.[key]).map(({ key, label }) => (
                     <em key={key} className="pipeline-badge">{t(label)}</em>
@@ -185,29 +185,29 @@ export function FilesPage() {
 
       {view === 'files' && filesApi ? (
         <div className="data-table files-table">
-          <div className="table-head"><span>{t('名称')}</span><span>{t('大小')}</span><span>{t('状态')}</span><span>{t('导入时间')}</span><span className="files-actions-column">{t('操作')}</span></div>
-          {loading ? <div className="source-loading">{t('正在读取文件清单...')}</div> : null}
-          {!loading && files.length === 0 ? <div className="source-files-empty">{t('还没有导入文件。点击右上角“导入文件”开始。')}</div> : null}
+          <div className="table-head"><span>{t('surface:files.name')}</span><span>{t('surface:files.size')}</span><span>{t('surface:files.status')}</span><span>{t('surface:files.imported')}</span><span className="files-actions-column">{t('surface:files.actions')}</span></div>
+          {loading ? <div className="source-loading">{t('surface:files.loadingFiles')}</div> : null}
+          {!loading && files.length === 0 ? <div className="source-files-empty">{t('surface:files.noFilesImportedYetSelectImportFilesTo')}</div> : null}
           {files.map((file) => (
             <div key={file.id} className="table-row">
               <span className="name-cell"><strong title={file.contentHash}>{file.originalName}</strong></span>
               <span>{formatBytes(file.bytes)}</span>
               <span className="status-cell">
                 <span className={`status-dot${file.parsed ? ' active' : ''}`} />
-                {t(file.parsed ? '已解析' : '未进链路')}
+                {t(file.parsed ? 'surface:files.parsed' : 'surface:files.notProcessed')}
               </span>
               <span>{formatDate(file.createdAt, locale, t)}</span>
               <span className="files-actions">
-                <button type="button" className="icon-button" aria-label={t('预览 {name}', { name: file.originalName })} title={t('预览解析产物')} disabled={!file.parsed || busyId === file.id} onClick={() => void openPreview(file)}>
+                <button type="button" className="icon-button" aria-label={t('surface:files.previewName', { name: file.originalName })} title={t('surface:files.previewParsedOutput')} disabled={!file.parsed || busyId === file.id} onClick={() => void openPreview(file)}>
                   <Eye aria-hidden="true" strokeWidth={1.8} />
                 </button>
-                <button type="button" className="icon-button" aria-label={t('重命名 {name}', { name: file.originalName })} title={t('重命名')} disabled={busyId === file.id} onClick={() => renameFile(file)}>
+                <button type="button" className="icon-button" aria-label={t('surface:files.renameName', { name: file.originalName })} title={t('surface:files.rename')} disabled={busyId === file.id} onClick={() => renameFile(file)}>
                   <Pencil aria-hidden="true" strokeWidth={1.8} />
                 </button>
-                <button type="button" className="icon-button" aria-label={t('定位 {name}', { name: file.originalName })} title={t('在文件管理器中显示')} disabled={busyId === file.id} onClick={() => void filesApi.reveal(file.id).catch(() => undefined)}>
+                <button type="button" className="icon-button" aria-label={t('surface:files.revealName', { name: file.originalName })} title={t('surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => void filesApi.reveal(file.id).catch(() => undefined)}>
                   <FolderOpen aria-hidden="true" strokeWidth={1.8} />
                 </button>
-                <button type="button" className="icon-button danger" aria-label={t('删除 {name}', { name: file.originalName })} title={t('删除并清理链路数据')} disabled={busyId === file.id} onClick={() => deleteFile(file)}>
+                <button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}>
                   <Trash2 aria-hidden="true" strokeWidth={1.8} />
                 </button>
               </span>
@@ -218,8 +218,8 @@ export function FilesPage() {
 
       {view === 'events' && ingestApi ? (
         <div className="data-table files-table ingest-table">
-          <div className="table-head"><span>{t('标题')}</span><span>{t('类型')}</span><span>{t('链路')}</span><span>{t('记忆')}</span><span>{t('时间')}</span></div>
-          {events.length === 0 ? <div className="source-files-empty">{t('暂无导入记录。')}</div> : null}
+          <div className="table-head"><span>{t('surface:files.title')}</span><span>{t('surface:files.type')}</span><span>{t('surface:files.pipeline')}</span><span>{t('surface:files.memory')}</span><span>{t('surface:files.time')}</span></div>
+          {events.length === 0 ? <div className="source-files-empty">{t('surface:files.noImportHistoryYet')}</div> : null}
           {events.map((event) => (
             <div key={event.id} className="table-row">
               <span className="name-cell"><strong>{event.title}</strong><small>{event.sourceKind} · {event.sourceId.slice(0, 8)}</small></span>
@@ -244,12 +244,12 @@ export function FilesPage() {
         }}>
           <section className="evidence-dialog files-preview" role="dialog" aria-modal="true" aria-labelledby="files-preview-title">
             <header className="evidence-dialog-head">
-              <div><span>{t('解析产物')}</span><h2 id="files-preview-title">{preview.name}</h2><small>{t('归一化 markdown · 消费端按需截断展示')}</small></div>
-              <button type="button" className="icon-button" title={t('关闭')} aria-label={t('关闭')} onClick={() => setPreview(null)}><X aria-hidden="true" strokeWidth={1.8} /></button>
+              <div><span>{t('surface:files.parsedOutput')}</span><h2 id="files-preview-title">{preview.name}</h2><small>{t('surface:files.normalizedMarkdownTruncatedByConsumersAsNeeded')}</small></div>
+              <button type="button" className="icon-button" title={t('surface:files.close')} aria-label={t('surface:files.close')} onClick={() => setPreview(null)}><X aria-hidden="true" strokeWidth={1.8} /></button>
             </header>
             <div className="evidence-dialog-body files-preview-body">
               {preview.error ? <div className="files-preview-error">{preview.error}</div> : null}
-              {!preview.error && preview.markdown === null ? <div className="files-preview-error">{t('正在读取...')}</div> : null}
+              {!preview.error && preview.markdown === null ? <div className="files-preview-error">{t('surface:files.loading')}</div> : null}
               {preview.markdown !== null ? <pre>{preview.markdown}</pre> : null}
             </div>
           </section>
@@ -261,6 +261,6 @@ export function FilesPage() {
 
 function describeMemory(memory: FileImportOutcome['memoryResult'], t: Translate): string {
   if (!memory) return '—'
-  if ('error' in memory) return t('失败')
-  return memory.deduplicated ? t('已登记（去重）') : t('{count} 块', { count: memory.chunkCount })
+  if ('error' in memory) return t('surface:files.failed')
+  return memory.deduplicated ? t('surface:files.registeredDeduplicated') : t('surface:files.countChunks', { count: memory.chunkCount })
 }

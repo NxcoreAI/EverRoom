@@ -1,6 +1,9 @@
+import { translateDesktopMessage, type DesktopLocale } from '../shared/i18n/desktop'
+
 export interface DocumentPdfHtmlInput {
   title: string
   contentHtml: string
+  locale?: DesktopLocale
 }
 
 function escapeHtml(value: string): string {
@@ -13,10 +16,10 @@ function escapeHtml(value: string): string {
   })[character] ?? character)
 }
 
-export function createDocumentPdfHtml({ title, contentHtml }: DocumentPdfHtmlInput): string {
-  const safeTitle = escapeHtml(title.trim() || '无标题文档')
+export function createDocumentPdfHtml({ title, contentHtml, locale = 'zh-CN' }: DocumentPdfHtmlInput): string {
+  const safeTitle = escapeHtml(title.trim() || translateDesktopMessage(locale, 'document.untitled'))
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${locale}">
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data: blob: https: http: nxcore-document-asset:">

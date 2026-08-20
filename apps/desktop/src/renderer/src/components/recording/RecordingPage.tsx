@@ -6,6 +6,7 @@ import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings, onRealitySettingsChanged } from '@/state/realitySettings'
 import { showToast } from '@/state/toast'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
+import i18n from '@/i18n/i18next'
 
 import type { AsrJob, AsrResult, NxcoreDesktopApi, RealityEvent } from '../../../../shared/sources'
 import './RecordingPage.css'
@@ -32,12 +33,12 @@ function formatTimestamp(milliseconds: number): string {
 }
 
 function errorMessage(error: unknown, t: Translate): string {
-  const message = error instanceof Error ? error.message : t('录音转写失败，请重试。')
+  const message = error instanceof Error ? error.message : t('diaryReality:recording.transcriptionFailedTryAgain')
   if (message === 'SERVER_ERROR') {
-    return t('阿里云未能读取或处理录音（SERVER_ERROR）。当前百炼临时存储链路不可用，请配置自有 OSS 后重试。')
+    return t('diaryReality:recording.alibabaCloudCouldNotReadOrProcessThe')
   }
   if (message.includes('own OSS is required')) {
-    return t('尚未配置阿里云 OSS。请配置 Bucket、Region 和访问凭证后再转写。')
+    return t('diaryReality:recording.alibabaCloudOssIsNotConfiguredConfigureThe')
   }
   return message
 }
@@ -52,22 +53,22 @@ function reportRecordingError(error: unknown, audioSource: AudioSource, t: Trans
   window.nxcore?.errors.report(audioSource === 'system'
     ? {
         channel: 'media:system-audio',
-        title: t('需要系统音频权限'),
-        message: t('请在 macOS 系统设置中允许 EverRoom 使用“屏幕与系统音频录制”，然后完全退出并重新打开 EverRoom。'),
+        title: t('diaryReality:recording.systemAudioPermissionRequired'),
+        message: t('diaryReality:recording.allowEverroomToUseScreenSystemAudioRecording'),
         action: 'open-system-audio-settings',
-        actionLabel: t('打开系统设置'),
+        actionLabel: t('diaryReality:recording.openSystemSettings'),
       }
     : {
         channel: 'media:microphone',
-        title: t('录音未开始'),
+        title: t('diaryReality:recording.recordingDidNotStart'),
         message,
         action: 'open-microphone-settings',
-        actionLabel: t('打开麦克风设置'),
+        actionLabel: t('diaryReality:recording.openMicrophoneSettings'),
       })
 }
 
 function desktopApi(t: Translate): NxcoreDesktopApi {
-  if (!window.nxcore) throw new Error(t('录音转写仅在 {product} 桌面版中可用。', { product: PRODUCT_NAME }))
+  if (!window.nxcore) throw new Error(t('diaryReality:recording.recordingTranscriptionIsOnlyAvailableInTheProduct', { product: PRODUCT_NAME }))
   return window.nxcore
 }
 
@@ -75,7 +76,7 @@ async function waitForStop(recorder: MediaRecorder, t: Translate): Promise<void>
   if (recorder.state === 'inactive') return
   await new Promise<void>((resolve, reject) => {
     recorder.addEventListener('stop', () => resolve(), { once: true })
-    recorder.addEventListener('error', () => reject(new Error(t('录音设备发生错误。'))), { once: true })
+    recorder.addEventListener('error', () => reject(new Error(t('diaryReality:recording.theRecordingDeviceEncounteredAnError'))), { once: true })
     recorder.stop()
   })
 }
@@ -98,7 +99,7 @@ const CassetteListeningControl = memo(function CassetteListeningControl({
       className="cassette-switch"
       role="switch"
       aria-checked={listening}
-      aria-label={t(listening ? '关闭聆听' : busy ? '正在处理录音' : '开启聆听')}
+      aria-label={t(listening ? 'diaryReality:recording.stopListening' : busy ? 'diaryReality:recording.processingRecording' : 'diaryReality:recording.startListening')}
       data-active={String(listening)}
       data-busy={String(busy)}
       disabled={busy}
@@ -132,7 +133,7 @@ export function RecordingPage({
   embedded?: boolean
   controlOnly?: boolean
 }) {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   const initialSettings = loadRealitySettings()
   const [state, setState] = useState<RecordingState>('idle')
   const [elapsed, setElapsed] = useState(0)
@@ -162,7 +163,7 @@ export function RecordingPage({
       if (id) {
         void window.nxcore?.asr.cancelRecording(id)
         if (realityEventIdRef.current) {
-          void window.nxcore?.reality.fail(realityEventIdRef.current, '采集已取消')
+          void window.nxcore?.reality.fail(realityEventIdRef.current, i18n.t('diaryReality:recording.captureCancelled'))
         }
       }
     }
@@ -196,13 +197,13 @@ export function RecordingPage({
     let job = initialJob
     const deadline = Date.now() + MAX_TRANSCRIPTION_WAIT_MS
     while (job.status === 'pending' || job.status === 'running') {
-      if (Date.now() >= deadline) throw new Error(t('转写等待超过 30 分钟，请稍后重试。'))
+      if (Date.now() >= deadline) throw new Error(t('diaryReality:recording.transcriptionHasBeenPendingForOver30Minutes'))
       await new Promise((resolve) => window.setTimeout(resolve, TRANSCRIPTION_POLL_INTERVAL_MS))
       if (!mountedRef.current) return
       job = await desktopApi(t).asr.getJob(job.id)
     }
     if (job.status !== 'completed' || !job.result) {
-      throw new Error(job.error ?? t('转写任务未能完成。'))
+      throw new Error(job.error ?? t('diaryReality:recording.theTranscriptionJobCouldNotBeCompleted'))
     }
     setResult(job.result)
     setState('completed')
@@ -215,8 +216,8 @@ export function RecordingPage({
     if (!window.nxcore?.asr) {
       window.nxcore?.errors.report({
         channel: 'media:recording',
-        title: t('录音不可用'),
-        message: t('录音转写仅在 {product} 桌面版中可用。', { product: PRODUCT_NAME }),
+        title: t('diaryReality:recording.recordingUnavailable'),
+        message: t('diaryReality:recording.recordingTranscriptionIsOnlyAvailableInTheProduct', { product: PRODUCT_NAME }),
       })
       setState('error')
       return
@@ -238,8 +239,8 @@ export function RecordingPage({
       if (audioTracks.length === 0) {
         stream.getTracks().forEach((track) => track.stop())
         throw new Error(audioSource === 'system'
-          ? t('未能获取电脑音频。请在 macOS 系统设置中允许 EverRoom 录制系统音频。')
-          : t('未能获取麦克风音频。'))
+          ? t('diaryReality:recording.couldNotCaptureComputerAudioAllowEverroomTo')
+          : t('diaryReality:recording.couldNotAccessMicrophoneAudio'))
       }
       const mimeType = supportedMimeType()
       const { id } = await desktopApi(t).asr.beginRecording(mimeType || 'audio/webm')
@@ -296,17 +297,19 @@ export function RecordingPage({
         setElapsed(0)
         setState('idle')
         showToast({
-          title: t('录音时间太短'),
-          message: t('少于 10 秒的录音不会转写，本次内容已丢弃。'),
+          title: t('diaryReality:recording.recordingTooShort'),
+          message: t('diaryReality:recording.recordingsShorterThan10SecondsAreNotTranscribed'),
         })
         return
       }
       const capturedEvent = await desktopApi(t).reality.createEvent({
         id,
-        title: `桌面感知 · ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`,
+        title: t('diaryReality:recording.desktopPerceptionTitle', {
+          time: new Date().toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }),
+        }),
         captureDevice: {
           id: 'desktop-local',
-          name: desktopApi(t).platform === 'darwin' ? '这台 Mac' : '这台电脑',
+          name: t(desktopApi(t).platform === 'darwin' ? 'diaryReality:recording.thisMac' : 'diaryReality:recording.thisComputer'),
           kind: 'desktop',
         },
         audioSource,
@@ -353,18 +356,18 @@ export function RecordingPage({
 
   const busy = state === 'requesting' || state === 'saving' || state === 'transcribing'
   const statusLabel = t(state === 'requesting'
-    ? audioSource === 'system' ? '正在请求电脑音频权限' : '正在请求麦克风权限'
+    ? audioSource === 'system' ? 'diaryReality:recording.requestingComputerAudioPermission' : 'diaryReality:recording.requestingMicrophonePermission'
     : state === 'saving'
-      ? '正在保存录音'
+      ? 'diaryReality:recording.savingRecording'
       : state === 'transcribing'
-        ? '正在上传并转写'
+        ? 'diaryReality:recording.uploadingAndTranscribing'
         : state === 'completed'
-          ? '转写完成'
+          ? 'diaryReality:recording.transcriptionComplete'
           : state === 'error'
-            ? '转写失败'
+            ? 'diaryReality:recording.transcriptionFailed'
           : state === 'recording'
-            ? '正在录音'
-            : '准备录音')
+            ? 'diaryReality:recording.recording'
+            : 'diaryReality:recording.readyToRecord')
 
   if (controlOnly) {
     const listening = state === 'recording'
@@ -379,7 +382,7 @@ export function RecordingPage({
         {listening || busy ? (
           <span className="cassette-recording-timer" data-recording={String(listening)} role="timer">
             <i aria-hidden="true" />
-            {listening ? formatDuration(elapsed) : t('处理中')}
+            {listening ? formatDuration(elapsed) : t('diaryReality:recording.processing')}
           </span>
         ) : null}
       </div>
@@ -390,8 +393,8 @@ export function RecordingPage({
     <div className={`recording-page${embedded ? ' recording-page-embedded' : ' page'}`}>
       <header className="recording-header">
         <div>
-          {embedded ? <h2>{t('本机采集')}</h2> : <h1>{t('录音转写')}</h1>}
-          <p>{t(mode === 'cloud' ? 'EverRoom SaaS · 订阅额度' : '本地 Gateway · 自有阿里云配置')}</p>
+          {embedded ? <h2>{t('diaryReality:recording.localCapture')}</h2> : <h1>{t('diaryReality:recording.recordingTranscription')}</h1>}
+          <p>{t(mode === 'cloud' ? 'diaryReality:recording.everroomSaasSubscriptionQuota' : 'diaryReality:recording.localGatewayYourAlibabaCloudConfiguration')}</p>
         </div>
         <span className="recording-status" data-state={state} aria-live="polite">
           {busy ? <LoaderCircle aria-hidden="true" /> : state === 'completed' ? <Check aria-hidden="true" /> : null}
@@ -399,69 +402,69 @@ export function RecordingPage({
         </span>
       </header>
 
-      <section className="asr-mode-bar" aria-label={t('转写服务')}>
-        <div className="segmented-control"><button type="button" data-active={String(mode==='cloud')} disabled={!account?.authenticated||busy||state==='recording'} onClick={()=>setMode('cloud')}><Cloud aria-hidden="true"/>{t('云端托管')}</button><button type="button" data-active={String(mode==='local')} disabled={busy||state==='recording'} onClick={()=>setMode('local')}><HardDrive aria-hidden="true"/>{t('本地配置')}</button></div>
-        {!account?.authenticated?<div className="asr-login-hint"><span>{t('未登录。请自行配置本地阿里云，或登录后使用订阅额度。')}</span><button type="button" className="secondary-button" onClick={onOpenSettings}><LogIn aria-hidden="true"/>{t('登录')}</button></div>:<span className="asr-account-name">{account.user?.name||account.user?.email||t('已登录')}</span>}
+      <section className="asr-mode-bar" aria-label={t('diaryReality:recording.transcriptionService')}>
+        <div className="segmented-control"><button type="button" data-active={String(mode==='cloud')} disabled={!account?.authenticated||busy||state==='recording'} onClick={()=>setMode('cloud')}><Cloud aria-hidden="true"/>{t('diaryReality:recording.cloudHosted')}</button><button type="button" data-active={String(mode==='local')} disabled={busy||state==='recording'} onClick={()=>setMode('local')}><HardDrive aria-hidden="true"/>{t('diaryReality:recording.localConfiguration')}</button></div>
+        {!account?.authenticated?<div className="asr-login-hint"><span>{t('diaryReality:recording.youAreSignedOutConfigureAlibabaCloudLocally')}</span><button type="button" className="secondary-button" onClick={onOpenSettings}><LogIn aria-hidden="true"/>{t('diaryReality:recording.signIn')}</button></div>:<span className="asr-account-name">{account.user?.name||account.user?.email||t('diaryReality:recording.signedIn')}</span>}
       </section>
 
-      <section className="recording-controls" aria-label={t('录音控制')}>
+      <section className="recording-controls" aria-label={t('diaryReality:recording.recordingControls')}>
         <button
           type="button"
           className="record-button"
           data-recording={String(state === 'recording')}
           disabled={busy}
           onClick={state === 'recording' ? stopRecording : startRecording}
-          aria-label={t(state === 'recording' ? '停止录音' : '开始录音')}
-          title={t(state === 'recording' ? '停止录音' : '开始录音')}
+          aria-label={t(state === 'recording' ? 'diaryReality:recording.stopRecording' : 'diaryReality:recording.startRecording')}
+          title={t(state === 'recording' ? 'diaryReality:recording.stopRecording' : 'diaryReality:recording.startRecording')}
         >
           {state === 'recording' ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
         </button>
         <strong className="recording-timer">{formatDuration(elapsed)}</strong>
-        <span>{t(state === 'recording' ? '点击停止' : '点击开始')}</span>
+        <span>{t(state === 'recording' ? 'diaryReality:recording.selectToStop' : 'diaryReality:recording.selectToStart')}</span>
       </section>
 
       <section className="recording-options">
         <div className="recording-option-row">
-          <span className="option-label">{t('录制来源')}</span>
-          <div className="segmented-control recording-source-control" aria-label={t('录制来源')}>
+          <span className="option-label">{t('diaryReality:recording.recordingSource')}</span>
+          <div className="segmented-control recording-source-control" aria-label={t('diaryReality:recording.recordingSource')}>
             <button
               type="button"
               data-active={String(audioSource === 'microphone')}
               disabled={busy || state === 'recording'}
               onClick={() => setAudioSource('microphone')}
             >
-              <Mic aria-hidden="true" />{t('麦克风')}
+              <Mic aria-hidden="true" />{t('diaryReality:recording.microphone')}
             </button>
             <button
               type="button"
               data-active={String(audioSource === 'system')}
               disabled={!isMacDesktop || busy || state === 'recording'}
-              title={t(isMacDesktop ? '录制这台 Mac 正在播放的音频' : '电脑音频录制目前仅支持 macOS 桌面版')}
+              title={t(isMacDesktop ? 'diaryReality:recording.recordAudioPlayingOnThisMac' : 'diaryReality:recording.computerAudioRecordingIsCurrentlySupportedOnlyOn')}
               onClick={() => setAudioSource('system')}
             >
-              <MonitorSpeaker aria-hidden="true" />{t('电脑音频')}
+              <MonitorSpeaker aria-hidden="true" />{t('diaryReality:recording.computerAudio')}
             </button>
           </div>
         </div>
         <div className="recording-option-row">
-          <span className="option-label">{t('语言')}</span>
-          <div className="segmented-control" aria-label={t('转写语言')}>
-            <button type="button" data-active={String(languages.includes('zh'))} onClick={() => toggleLanguage('zh')}>{t('中文')}</button>
-            <button type="button" data-active={String(languages.includes('en'))} onClick={() => toggleLanguage('en')}>English</button>
+          <span className="option-label">{t('diaryReality:recording.language')}</span>
+          <div className="segmented-control" aria-label={t('diaryReality:recording.transcriptionLanguages')}>
+            <button type="button" data-active={String(languages.includes('zh'))} onClick={() => toggleLanguage('zh')}>{t('diaryReality:recording.chinese')}</button>
+            <button type="button" data-active={String(languages.includes('en'))} onClick={() => toggleLanguage('en')}>{t('diaryReality:recording.english')}</button>
           </div>
         </div>
       </section>
 
       {result ? (
-        <section className="transcript-output" aria-label={t('转写结果')}>
-          <header><h2>{t('转写结果')}</h2><span>{t('{count} 段', { count: result.segments.length })}</span></header>
+        <section className="transcript-output" aria-label={t('diaryReality:recording.transcript')}>
+          <header><h2>{t('diaryReality:recording.transcript')}</h2><span>{t('diaryReality:recording.countBlocks', { count: result.segments.length })}</span></header>
           <div className="transcript-full">{result.transcript}</div>
           {result.segments.length > 0 ? (
             <div className="transcript-segments">
               {result.segments.map((segment, index) => (
                 <div className="transcript-segment" key={`${segment.beginTime}-${index}`}>
                   <time>{formatTimestamp(segment.beginTime)}</time>
-                  <strong>{segment.speakerId === null ? t('说话人') : t('说话人 {number}', { number: segment.speakerId + 1 })}</strong>
+                  <strong>{segment.speakerId === null ? t('diaryReality:recording.speaker') : t('diaryReality:recording.speakerNumber', { number: segment.speakerId + 1 })}</strong>
                   <p>{segment.text}</p>
                 </div>
               ))}

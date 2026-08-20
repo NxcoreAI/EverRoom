@@ -9,10 +9,10 @@ import { tiptapToMarkdown } from "./tiptap-markdown.js";
  */
 export interface DocEnvelope {
   ref: {
-    kind: "everroom-doc" | "reality-event" | "mail" | "file" | "cloud-doc";
+    kind: "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc";
     /** 对应资料表的主键。 */
     id: string;
-    /** 幂等与去重依据（documents.version / reality_events.resultVersion 等）。 */
+    /** 幂等与去重依据（documents.version / reality_events.version 等）。 */
     version: number;
   };
   title: string;

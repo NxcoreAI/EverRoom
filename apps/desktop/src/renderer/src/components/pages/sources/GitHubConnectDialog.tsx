@@ -29,17 +29,17 @@ export function GitHubConnectDialog({
     }}>
       <section className="source-connect-dialog" role="dialog" aria-modal="true" aria-labelledby="github-dialog-title">
         <header className="evidence-dialog-head">
-          <div><span>{t('连接数据源')}</span><h2 id="github-dialog-title">{t('GitHub 仓库')}</h2><small>{t('只读同步代码文件与 Issue')}</small></div>
-          <button type="button" className="icon-button" title={t('关闭')} aria-label={t('关闭')} onClick={onClose}><X aria-hidden="true" strokeWidth={1.8} /></button>
+          <div><span>{t('surface:gitHubConnectDialog.connectSource')}</span><h2 id="github-dialog-title">{t('surface:gitHubConnectDialog.githubRepository')}</h2><small>{t('surface:gitHubConnectDialog.readOnlySyncForCodeFilesAndIssues')}</small></div>
+          <button type="button" className="icon-button" title={t('surface:gitHubConnectDialog.close')} aria-label={t('surface:gitHubConnectDialog.close')} onClick={onClose}><X aria-hidden="true" strokeWidth={1.8} /></button>
         </header>
         <form className="source-connect-form" onSubmit={onSubmit}>
-          <label>{t('仓库地址')}<input required value={values.repository} placeholder={t('owner/repository 或 GitHub URL')} onChange={(event) => onChange({ ...values, repository: event.target.value })} /></label>
-          <label>{t('分支（可选）')}<input value={values.branch} placeholder={t('默认分支')} onChange={(event) => onChange({ ...values, branch: event.target.value })} /></label>
-          <label>{t('访问令牌（可选）')}<input type="password" value={values.token} placeholder={t('私有仓库或更高速率限制需要')} onChange={(event) => onChange({ ...values, token: event.target.value })} /></label>
-          <label className="source-connect-check"><input type="checkbox" checked={values.syncIssues} onChange={(event) => onChange({ ...values, syncIssues: event.target.checked })} />{t('同步 Issue 与评论')}</label>
+          <label>{t('surface:gitHubConnectDialog.repository')}<input required value={values.repository} placeholder={t('surface:gitHubConnectDialog.ownerRepositoryOrGithubUrl')} onChange={(event) => onChange({ ...values, repository: event.target.value })} /></label>
+          <label>{t('surface:gitHubConnectDialog.branchOptional')}<input value={values.branch} placeholder={t('surface:gitHubConnectDialog.defaultBranch')} onChange={(event) => onChange({ ...values, branch: event.target.value })} /></label>
+          <label>{t('surface:gitHubConnectDialog.accessTokenOptional')}<input type="password" value={values.token} placeholder={t('surface:gitHubConnectDialog.requiredForPrivateRepositoriesOrHigherRateLimits')} onChange={(event) => onChange({ ...values, token: event.target.value })} /></label>
+          <label className="source-connect-check"><input type="checkbox" checked={values.syncIssues} onChange={(event) => onChange({ ...values, syncIssues: event.target.checked })} />{t('surface:gitHubConnectDialog.syncIssuesAndComments')}</label>
           <footer>
-            <button type="button" className="secondary-button" onClick={onClose}>{t('取消')}</button>
-            <button type="submit" className="primary-button" disabled={busy}><Github aria-hidden="true" strokeWidth={1.8} />{t('开始连接')}</button>
+            <button type="button" className="secondary-button" onClick={onClose}>{t('surface:gitHubConnectDialog.cancel')}</button>
+            <button type="submit" className="primary-button" disabled={busy}><Github aria-hidden="true" strokeWidth={1.8} />{t('surface:gitHubConnectDialog.connect')}</button>
           </footer>
         </form>
       </section>

@@ -50,12 +50,12 @@ export function getContextRoomOfficeFormat(fileName: string): ContextRoomOfficeF
   return officeFormat(fileName.split('.').pop() ?? '');
 }
 
-export function createContextRoomFileItem(file: FileItem): ContextRoomFileItem {
+export function createContextRoomFileItem(file: FileItem, locale: string): ContextRoomFileItem {
   return {
     id: `hostfs:${file.path}`,
     name: file.name,
     extension: file.name.split('.').pop()?.toUpperCase() ?? 'FILE',
-    time: file.modifiedAt.toLocaleDateString('zh-CN'),
+    time: file.modifiedAt.toLocaleDateString(locale),
     summary: `来自 Everroom PC 文件系统：${file.path}`,
     size: `${String(Math.max(1, Math.round(file.size / 1024)))} KB`,
     source: `文件系统 ${file.path}`,
@@ -123,8 +123,9 @@ function previewFor(format: ContextRoomOfficeFormat, title: string, summary: str
 
 export function createContextRoomResourceLibrary(
   room: ContextRoomRecord,
-  backendDocuments: RoomDocument[] = [],
-  trashedDocuments: RoomDocument[] = [],
+  backendDocuments: RoomDocument[],
+  trashedDocuments: RoomDocument[],
+  locale: string,
 ): ContextRoomResourceLibrary {
   const documentsFolderId = `${room.id}:folder:documents`;
   const officeFolderId = `${room.id}:folder:office`;
@@ -163,7 +164,7 @@ export function createContextRoomResourceLibrary(
     roomId: room.id,
     folderId: documentsFolderId,
     name: document.title,
-    updatedAt: new Date(document.updatedAt).toLocaleString('zh-CN'),
+    updatedAt: new Date(document.updatedAt).toLocaleString(locale),
     kind: 'cloud-doc',
     binding: {
       workspaceId: 'gateway',
@@ -179,8 +180,8 @@ export function createContextRoomResourceLibrary(
     folderId: trashFolderId,
     name: document.title,
     updatedAt: document.deletedAt
-      ? new Date(document.deletedAt).toLocaleString('zh-CN')
-      : new Date(document.updatedAt).toLocaleString('zh-CN'),
+      ? new Date(document.deletedAt).toLocaleString(locale)
+      : new Date(document.updatedAt).toLocaleString(locale),
     kind: 'cloud-doc',
     binding: {
       workspaceId: 'gateway',

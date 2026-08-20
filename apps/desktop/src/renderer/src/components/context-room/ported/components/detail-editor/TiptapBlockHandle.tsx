@@ -102,8 +102,8 @@ export function TiptapBlockHandle({
         <button
           type="button"
           className="context-room-tiptap-add-block"
-          aria-label={t('在下方插入内容块')}
-          title={t('在下方插入内容块')}
+          aria-label={t('contextRoom:tiptapBlockHandle.insertBlockBelow')}
+          title={t('contextRoom:tiptapBlockHandle.insertBlockBelow')}
           draggable={false}
           onMouseDown={(event) => event.stopPropagation()}
           onClick={insertBlock}
@@ -113,27 +113,27 @@ export function TiptapBlockHandle({
         <button
           type="button"
           className="context-room-tiptap-grip"
-          aria-label={t('块选项和拖动排序')}
+          aria-label={t('contextRoom:tiptapBlockHandle.blockOptionsAndDragToReorder')}
           aria-expanded={menuOpen}
-          title={t('点击打开选项，按住拖动')}
+          title={t('contextRoom:tiptapBlockHandle.clickForOptionsOrDragToReorder')}
           onClick={() => setMenuOpen((open) => !open)}
         >
           <GripVertical strokeWidth={1.8} />
         </button>
         {menuOpen ? (
-          <div ref={menuRef} className="context-room-tiptap-block-menu" role="menu" aria-label={t('内容块选项')}>
-            <span>{t('转换为')}</span>
-            <button type="button" role="menuitem" onClick={() => transformBlock('paragraph')}><Pilcrow />{t('正文')}</button>
-            <button type="button" role="menuitem" onClick={() => transformBlock('heading-1')}><Heading1 />{t('一级标题')}</button>
-            <button type="button" role="menuitem" onClick={() => transformBlock('heading-2')}><Heading2 />{t('二级标题')}</button>
-            <button type="button" role="menuitem" onClick={() => transformBlock('bulletList')}><List />{t('项目列表')}</button>
-            <button type="button" role="menuitem" onClick={() => transformBlock('blockquote')}><Quote />{t('引用')}</button>
+          <div ref={menuRef} className="context-room-tiptap-block-menu" role="menu" aria-label={t('contextRoom:tiptapBlockHandle.blockOptions')}>
+            <span>{t('contextRoom:tiptapBlockHandle.turnInto')}</span>
+            <button type="button" role="menuitem" onClick={() => transformBlock('paragraph')}><Pilcrow />{t('contextRoom:tiptapBlockHandle.text')}</button>
+            <button type="button" role="menuitem" onClick={() => transformBlock('heading-1')}><Heading1 />{t('contextRoom:tiptapBlockHandle.heading1')}</button>
+            <button type="button" role="menuitem" onClick={() => transformBlock('heading-2')}><Heading2 />{t('contextRoom:tiptapBlockHandle.heading2')}</button>
+            <button type="button" role="menuitem" onClick={() => transformBlock('bulletList')}><List />{t('contextRoom:tiptapBlockHandle.bulletList')}</button>
+            <button type="button" role="menuitem" onClick={() => transformBlock('blockquote')}><Quote />{t('contextRoom:tiptapBlockHandle.quote')}</button>
             <i />
             {onCopyBlockReference ? (
-              <button type="button" role="menuitem" onClick={copyBlockReference}><Link2 />{t('复制块引用')}</button>
+              <button type="button" role="menuitem" onClick={copyBlockReference}><Link2 />{t('contextRoom:tiptapBlockHandle.copyBlockReference')}</button>
             ) : null}
-            <button type="button" role="menuitem" onClick={duplicateBlock}><Copy />{t('复制块')}</button>
-            <button type="button" role="menuitem" data-danger="true" onClick={deleteBlock}><Trash2 />{t('删除块')}</button>
+            <button type="button" role="menuitem" onClick={duplicateBlock}><Copy />{t('contextRoom:tiptapBlockHandle.duplicateBlock')}</button>
+            <button type="button" role="menuitem" data-danger="true" onClick={deleteBlock}><Trash2 />{t('contextRoom:tiptapBlockHandle.deleteBlock')}</button>
           </div>
         ) : null}
       </div>

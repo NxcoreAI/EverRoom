@@ -12,6 +12,8 @@ import { AppToast } from '@/components/AppToast'
 import { PageCanvas } from '@/components/PageCanvas'
 import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
+import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGate'
+import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
 import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
@@ -71,6 +73,7 @@ export function App() {
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
   const [theme] = useState<ThemeId>(readStoredTheme)
+  const enterOnboardingHome = useCallback(() => setActivePage('home'), [])
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
   const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
@@ -212,6 +215,9 @@ export function App() {
       if (target.pageId === 'rooms' && target.roomId) {
         const room = availableContextRooms.find((item) => item.id === target.roomId)
         if (room) openContextRoomTab(room)
+        else if (target.objectType === 'room') {
+          openContextRoomTab({ id: target.roomId, title: target.title })
+        }
         else {
           setActivePage('rooms')
           setActiveContextRoomId(target.roomId)
@@ -261,7 +267,10 @@ export function App() {
   }
 
   return (
-    <div
+    <MemoryOnboardingGate onEnterHome={enterOnboardingHome}>
+      {({ openMemoryOnboarding }) => (
+      <RoomOnboardingGate onOpenRoom={openContextRoomTab}>
+      <div
       className="app-shell"
       data-agent-open={String(agentOpen)}
       data-context-room-focused={String(isContextRoomFocused)}
@@ -311,6 +320,7 @@ export function App() {
           onNavigate={navigate}
           onFocusAgent={focusAgent}
           onOpenDocument={openDocumentTarget}
+          onStartMemoryOnboarding={openMemoryOnboarding}
         />
       </main>
       {agentOpen ? (
@@ -332,6 +342,9 @@ export function App() {
       ) : null}
       <AppToast />
       <AppErrorDialog />
-    </div>
+      </div>
+      </RoomOnboardingGate>
+      )}
+    </MemoryOnboardingGate>
   )
 }

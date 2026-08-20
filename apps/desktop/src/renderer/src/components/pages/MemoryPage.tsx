@@ -1,4 +1,4 @@
-import { RefreshCw, Search } from 'lucide-react'
+import { RefreshCw, Search, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 
 import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
@@ -16,15 +16,15 @@ import './memory/MemoryPage.css'
 import { useLocale } from '@/i18n/LocaleContext'
 
 const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
-  { id: 'overview', label: '总览', level: '' },
-  { id: 'conversation', label: '对话', level: 'L0' },
-  { id: 'documents', label: '文档', level: '' },
-  { id: 'atomic', label: '原子记忆', level: 'L1' },
-  { id: 'scenario', label: '场景', level: 'L2' },
-  { id: 'core', label: '画像', level: 'L3' },
+  { id: 'overview', label: 'memory:memory.overview', level: '' },
+  { id: 'conversation', label: 'memory:memory.conversations', level: 'L0' },
+  { id: 'documents', label: 'memory:memory.documents', level: '' },
+  { id: 'atomic', label: 'memory:memory.atomicMemory', level: 'L1' },
+  { id: 'scenario', label: 'memory:memory.scenarios', level: 'L2' },
+  { id: 'core', label: 'memory:memory.profile', level: 'L3' },
 ]
 
-export function MemoryPage() {
+export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => void }) {
   const { t } = useLocale()
   const overview = useMemoryOverview()
   const [tab, setTab] = useState<MemoryTabId>('overview')
@@ -59,7 +59,7 @@ export function MemoryPage() {
       ])
       setSearch({ query, result: { atomic: atomic.items, conversations: conversations.messages } })
     } catch (cause) {
-      setSearchError(cause instanceof Error ? cause.message : t('搜索失败。'))
+      setSearchError(cause instanceof Error ? cause.message : t('memory:memory.searchFailed'))
     } finally {
       setSearching(false)
     }
@@ -80,8 +80,8 @@ export function MemoryPage() {
     <div className="page mem-page">
       <header className="mem-header">
         <div>
-          <h1>{t('记忆')}</h1>
-          <p>{t('查看 AI 通过 MemoryCore 沉淀的长期记忆：对话（L0）、原子记忆（L1）、场景（L2）与画像（L3）。')}</p>
+          <h1>{t('memory:memory.memory')}</h1>
+          <p>{t('memory:memory.exploreLongTermMemoryCapturedByMemorycoreConversations')}</p>
         </div>
         <div className="mem-header-tools">
           <div className="mem-searchbox">
@@ -89,17 +89,28 @@ export function MemoryPage() {
             <input
               type="search"
               value={searchText}
-              placeholder={t('搜索记忆与历史对话')}
+              placeholder={t('memory:memory.searchMemoryAndConversations')}
               onChange={(event) => setSearchText(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void runSearch()
               }}
             />
           </div>
+          {onStartOnboarding ? (
+            <button
+              type="button"
+              className="mem-onboarding-button"
+              title={t('memory:onboarding.reopen')}
+              onClick={onStartOnboarding}
+            >
+              <Sparkles aria-hidden="true" strokeWidth={1.7} />
+              <span>{t('memory:onboarding.reopen')}</span>
+            </button>
+          ) : null}
           <button
             type="button"
             className="mem-icon-button"
-            title={t('刷新')}
+            title={t('memory:memory.refresh')}
             onClick={overview.refresh}
             disabled={overview.loading}
           >
@@ -107,7 +118,7 @@ export function MemoryPage() {
           </button>
         </div>
       </header>
-      <nav className="mem-tabs" role="tablist" aria-label={t('记忆层级')}>
+      <nav className="mem-tabs" role="tablist" aria-label={t('memory:memory.memoryLevels')}>
         {TABS.map((entry) => {
           const data = overview.data
           const count = !data ? null
@@ -140,13 +151,13 @@ export function MemoryPage() {
           onOpenAtomic={() => { setSearch(null); setTab('atomic') }}
         />
       ) : searching ? (
-        <p className="mem-loading">{t('搜索中…')}</p>
+        <p className="mem-loading">{t('memory:memory.searching')}</p>
       ) : (
         <div className="mem-content">
           {tab === 'overview' ? (
             overview.data
-              ? <MemoryOverviewPane overview={overview.data} onNavigate={setTab} />
-              : <p className="mem-loading">{t('加载中…')}</p>
+              ? <MemoryOverviewPane overview={overview.data} onNavigate={setTab} onStartOnboarding={onStartOnboarding} />
+              : <p className="mem-loading">{t('memory:memory.loading')}</p>
           ) : null}
           {tab === 'atomic' ? (
             <AtomicMemoryPane onOpenDocument={openDocument} onOpenConversation={openConversation} />

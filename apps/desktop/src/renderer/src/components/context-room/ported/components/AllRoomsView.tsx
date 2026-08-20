@@ -64,27 +64,27 @@ export function AllRoomsView({
       <main ref={scrollRootRef} className="context-room-all" data-testid="context-room-all-page">
         <div className="context-room-all-layout">
           <header className="context-room-all-header">
-            <button type="button" className="context-room-all-back" onClick={onBack} aria-label={t('返回 Context Room 首页')} title={t('返回')}>
+            <button type="button" className="context-room-all-back" onClick={onBack} aria-label={t('contextRoom:allRooms.backToContextRoomHome')} title={t('contextRoom:allRooms.back')}>
               <ArrowLeft aria-hidden="true" />
             </button>
             <div>
               <span>Context Room</span>
-              <h1>{t('全部 Room')}</h1>
-              <p>{t('{count} 个 Room', { count: rooms.length })}</p>
+              <h1>{t('contextRoom:allRooms.allRooms')}</h1>
+              <p>{t('contextRoom:allRooms.countRooms', { count: rooms.length })}</p>
             </div>
             <label className="context-room-home-search context-room-all-search">
               <Search aria-hidden="true" />
               <input
                 type="search"
-                aria-label={t('搜索全部 Room')}
-                placeholder={t('搜索全部 Room')}
+                aria-label={t('contextRoom:allRooms.searchAllRooms')}
+                placeholder={t('contextRoom:allRooms.searchAllRooms')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
           </header>
 
-          <section aria-label={t('全部 Room')}>
+          <section aria-label={t('contextRoom:allRooms.allRooms')}>
             <div className="context-room-home-grid context-room-all-grid" data-testid="context-room-all-grid">
               {renderedRooms.map((room) => (
                 <RoomCard
@@ -98,8 +98,8 @@ export function AllRoomsView({
               {!filteredRooms.length ? (
                 <div className="context-room-home-empty">
                   <Layers3 aria-hidden="true" />
-                  <h3>{t(rooms.length ? '没有匹配的 Room' : '还没有 Room')}</h3>
-                  <p>{t(rooms.length ? '调整搜索关键词后再试。' : '从 Context Room 首页创建第一个 Room。')}</p>
+                  <h3>{t(rooms.length ? 'contextRoom:allRooms.noMatchingRooms' : 'contextRoom:allRooms.noRoomsYet')}</h3>
+                  <p>{t(rooms.length ? 'contextRoom:allRooms.tryAnotherSearchTerm' : 'contextRoom:allRooms.createYourFirstRoomFromTheContextRoom')}</p>
                 </div>
               ) : null}
             </div>
@@ -109,9 +109,9 @@ export function AllRoomsView({
                   <span className="context-room-all-loading-card" aria-hidden="true" />
                   <span className="context-room-all-loading-card" aria-hidden="true" />
                   <span className="context-room-all-loading-card" aria-hidden="true" />
-                  <span className="context-room-visually-hidden">{t('正在加载更多 Room')}</span>
+                  <span className="context-room-visually-hidden">{t('contextRoom:allRooms.loadingMoreRooms')}</span>
                 </>
-              ) : filteredRooms.length ? <span>{t('已显示全部 {count} 个 Room', { count: filteredRooms.length })}</span> : null}
+              ) : filteredRooms.length ? <span>{t('contextRoom:allRooms.allCountRoomsDisplayed', { count: filteredRooms.length })}</span> : null}
             </div>
           </section>
         </div>

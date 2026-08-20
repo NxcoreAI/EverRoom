@@ -110,4 +110,14 @@ describe('window screenshot scheduler', () => {
     expect(stopped.enabled).toBe(false)
     expect(stopped.lastResult?.ok).toBe(true)
   })
+
+  it('remembers an interval configured while capture is disabled', async () => {
+    const scheduler = createWindowScreenshotScheduler(vi.fn().mockResolvedValue(success()))
+
+    const updated = scheduler.updateInterval(3_600_000)
+
+    expect(updated.enabled).toBe(false)
+    expect(updated.intervalMs).toBe(3_600_000)
+    expect(scheduler.getStatus().intervalMs).toBe(3_600_000)
+  })
 })

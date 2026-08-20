@@ -1,6 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { ContextRoomSnapshot, SaveContextRoomSnapshotInput } from '@nxcore/agent-contract'
+import type {
+  ContextRoomSnapshot,
+  CreateContextRoomResult,
+  SaveContextRoomSnapshotInput,
+} from '@nxcore/agent-contract'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { ContextRoomGatewayBridge } from '../src/main/gateway/context-room-gateway-bridge'
@@ -39,6 +43,19 @@ describe('ContextRoomGatewayBridge snapshots', () => {
         body: requestBody,
       })
       if (request.headers.authorization !== 'Bearer room-token') return json(response, 401, {})
+      if (request.method === 'POST') {
+        const input = JSON.parse(requestBody) as { title: string; description: string }
+        const result: CreateContextRoomResult = {
+          created: true,
+          room: {
+            id: 'room-created',
+            title: input.title,
+            kind: '主题',
+            data: { id: 'room-created', title: input.title, description: input.description },
+          },
+        }
+        return json(response, 200, result)
+      }
       if (request.method === 'PUT') {
         const input = JSON.parse(requestBody) as SaveContextRoomSnapshotInput
         stored = { ...input, updatedAt: '2026-08-16T08:00:00.000Z' }
@@ -59,6 +76,10 @@ describe('ContextRoomGatewayBridge snapshots', () => {
     const bridge = new ContextRoomGatewayBridge(supervisor)
 
     await expect(bridge.list()).resolves.toEqual(empty)
+    await expect(bridge.create({
+      title: 'Campus Life',
+      description: 'Campus activities and study notes',
+    })).resolves.toMatchObject({ created: true, room: { id: 'room-created', title: 'Campus Life' } })
     await expect(bridge.syncSnapshot({
       rooms: [{ id: 'room-1', title: '项目 A', kind: '项目', data: { id: 'room-1', title: '项目 A' } }],
       deletedRooms: [{ id: 'room-2', title: '归档主题', kind: '主题', data: { id: 'room-2' } }],
@@ -66,6 +87,15 @@ describe('ContextRoomGatewayBridge snapshots', () => {
 
     expect(requests).toEqual([
       { method: 'GET', path: '/v1/context-rooms', body: '' },
+      {
+        method: 'POST',
+        path: '/v1/context-rooms',
+        contentType: 'application/json',
+        body: JSON.stringify({
+          title: 'Campus Life',
+          description: 'Campus activities and study notes',
+        }),
+      },
       {
         method: 'PUT',
         path: '/v1/context-rooms/snapshot',

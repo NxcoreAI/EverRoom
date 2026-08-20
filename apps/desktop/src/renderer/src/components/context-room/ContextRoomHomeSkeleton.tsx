@@ -37,8 +37,8 @@ function SkeletonSectionTitle({ compact = false }: { compact?: boolean }) {
 export function ContextRoomHomeSkeleton() {
   const { t } = useLocale()
   return (
-    <div className="context-room-home-loading" role="status" aria-label={t('正在加载 Context Room')}>
-      <span className="context-room-skeleton-status">{t('正在加载 Context Room')}</span>
+    <div className="context-room-home-loading" role="status" aria-label={t('contextRoom:contextRoomHomeSkeleton.loadingContextRoom')}>
+      <span className="context-room-skeleton-status">{t('contextRoom:contextRoomHomeSkeleton.loadingContextRoom')}</span>
       <div className="context-room-home-loading-layout">
         <section>
           <SkeletonSectionTitle />

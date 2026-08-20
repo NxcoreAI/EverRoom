@@ -4,10 +4,11 @@ import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryConversationMessageDto } from '../../../../../shared/memory'
 import { MemoryEmptyView } from './MemoryStatusViews'
-import { formatDate, useAsyncData } from './useMemoryData'
+import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
 
 /** gateway /v1/memory/conversation 的 limit 上限是 100。 */
 const RECENT_LIMIT = 100
+const UNKNOWN_SESSION_ID = '__unknown_session__'
 
 interface ConversationGroup {
   sessionId: string
@@ -20,7 +21,7 @@ interface ConversationGroup {
 function groupBySession(messages: MemoryConversationMessageDto[]): ConversationGroup[] {
   const groups = new Map<string, ConversationGroup>()
   for (const message of messages) {
-    const key = message.sessionId ?? '（未知会话）'
+    const key = message.sessionId ?? UNKNOWN_SESSION_ID
     let group = groups.get(key)
     if (!group) {
       group = { sessionId: key, messages: [], latestAt: null, isDocument: false }
@@ -62,6 +63,9 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
   const visibleGroups = sessionFilter
     ? groups.filter((group) => group.sessionId === sessionFilter)
     : groups
+  const sessionLabel = (sessionId: string) => sessionId === UNKNOWN_SESSION_ID
+    ? t('memory:conversation.unknownSession')
+    : sessionId
 
   const removeSession = async (sessionId: string) => {
     setDeleting(true)
@@ -72,34 +76,34 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
       if (sessionFilter === sessionId) setSessionFilter('')
       setReloadTick((tick) => tick + 1)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('删除失败。'))
+      setError(cause instanceof Error ? cause.message : t('memory:conversation.deleteFailed'))
     } finally {
       setDeleting(false)
     }
   }
 
-  if (failure) return <div className="mem-pane-error">{failure.message}</div>
+  if (failure) return <div className="mem-pane-error">{memoryFailureText(failure, t)}</div>
 
   return (
     <div className="mem-conversation">
       <div className="mem-toolbar">
-        <span className="mem-count">{t('最近 {count} 条消息（上限 {limit}）', { count: data?.messages.length ?? 0, limit: RECENT_LIMIT })}</span>
-        <label className="mem-source-toggle" title={t('排除 md 文档导入生成的会话块')}>
+        <span className="mem-count">{t('memory:conversation.latestCountMessagesLimitLimit', { count: data?.messages.length ?? 0, limit: RECENT_LIMIT })}</span>
+        <label className="mem-source-toggle" title={t('memory:conversation.excludeSessionBlocksCreatedFromImportedMarkdownDocuments')}>
           <input
             type="checkbox"
             checked={conversationsOnly}
             onChange={(event) => { setConversationsOnly(event.target.checked); setSessionFilter('') }}
           />
-          {t('仅对话')}
+          {t('memory:conversation.conversationsOnly')}
         </label>
         {groups.length > 1 ? (
           <label className="mem-session-filter">
-            {t('会话')}
+            {t('memory:conversation.conversations')}
             <select value={sessionFilter} onChange={(event) => setSessionFilter(event.target.value)}>
-              <option value="">{t('全部（{count} 个）', { count: groups.length })}</option>
+              <option value="">{t('memory:conversation.allCount', { count: groups.length })}</option>
               {groups.map((group) => (
                 <option key={group.sessionId} value={group.sessionId}>
-                  {t('{id}（{count} 条）', { id: t(group.sessionId), count: group.messages.length })}
+                  {t('memory:conversation.idCountItems', { id: sessionLabel(group.sessionId), count: group.messages.length })}
                 </option>
               ))}
             </select>
@@ -107,15 +111,15 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
         ) : null}
         <span className="mem-toolbar-actions">
           <button type="button" onClick={() => setReloadTick((tick) => tick + 1)} disabled={loading}>
-            <RefreshCw aria-hidden="true" strokeWidth={1.7} className={loading ? 'mem-spin' : undefined} />{t('刷新')}
+            <RefreshCw aria-hidden="true" strokeWidth={1.7} className={loading ? 'mem-spin' : undefined} />{t('memory:conversation.refresh')}
           </button>
         </span>
       </div>
       {error ? <p className="mem-inline-error">{error}</p> : null}
       {!loading && visibleGroups.length === 0 ? (
         <MemoryEmptyView
-          title={t('暂无对话记录')}
-          hint={t('与 AI 助手的每轮对话都会自动写入记忆服务（L0），作为后续提炼的原料。')}
+          title={t('memory:conversation.noConversationHistoryYet')}
+          hint={t('memory:conversation.everyConversationWithTheAiAssistantIsWritten')}
         />
       ) : (
         visibleGroups.map((group) => (
@@ -126,23 +130,23 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
                 className="mem-session-title"
                 data-active={sessionFilter === group.sessionId}
                 onClick={() => setSessionFilter(sessionFilter === group.sessionId ? '' : group.sessionId)}
-                title={t('点击筛选该会话')}
+                title={t('memory:conversation.filterByThisSession')}
               >
-                {t(group.sessionId)}
-                {group.isDocument ? <span className="mem-doc-badge">{t('文档')}</span> : null}
+                {sessionLabel(group.sessionId)}
+                {group.isDocument ? <span className="mem-doc-badge">{t('memory:conversation.documents')}</span> : null}
               </button>
-              <small>{group.latestAt ? formatDate(group.latestAt, locale) : ''} · {t('{count} 条', { count: group.messages.length })}</small>
+              <small>{group.latestAt ? formatDate(group.latestAt, locale) : ''} · {t('memory:conversation.countItems', { count: group.messages.length })}</small>
               {confirmingId === group.sessionId ? (
                 <span className="mem-session-actions">
                   <button type="button" className="mem-danger" disabled={deleting} onClick={() => removeSession(group.sessionId)}>
-                    {t('确认删除整个会话')}
+                    {t('memory:conversation.deleteEntireSession')}
                   </button>
-                  <button type="button" disabled={deleting} onClick={() => setConfirmingId(null)}>{t('取消')}</button>
+                  <button type="button" disabled={deleting} onClick={() => setConfirmingId(null)}>{t('memory:conversation.cancel')}</button>
                 </span>
               ) : (
                 <span className="mem-session-actions">
-                  <button type="button" onClick={() => setConfirmingId(group.sessionId)} disabled={group.sessionId === '（未知会话）'}>
-                    <Trash2 aria-hidden="true" strokeWidth={1.7} />{t('删除会话')}
+                  <button type="button" onClick={() => setConfirmingId(group.sessionId)} disabled={group.sessionId === UNKNOWN_SESSION_ID}>
+                    <Trash2 aria-hidden="true" strokeWidth={1.7} />{t('memory:conversation.deleteSession')}
                   </button>
                 </span>
               )}

@@ -18,6 +18,8 @@ export interface StartRuntimeRunInput {
   runtimeSessionRef: string | null;
   /** Exact user-authored request before routing context is added. */
   originalPrompt?: string;
+  /** Current UI locale; injected into the runtime system prompt for this run. */
+  responseLanguage?: string;
   prompt: string;
   pageLabel: string;
   roomId: string | null;

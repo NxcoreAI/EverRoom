@@ -22,16 +22,16 @@ export function DocumentOperationReviewToolbar({
   const rejectable = (review.status === 'awaiting_review' || review.status === 'conflicted') && !busy
 
   return (
-    <aside className="document-patch-review-toolbar" aria-label={t('审阅文档改动')}>
+    <aside className="document-patch-review-toolbar" aria-label={t('contextRoom:documentOperationReviewToolbar.reviewDocumentChanges')}>
       <div className="document-patch-review-progress">
-        <strong>{review.summary || t('Agent 提议的改动')}</strong>
-        <span>{t('{accepted} 接受 · {rejected} 拒绝 · {undecided} 待决定', counts)}</span>
+        <strong>{review.summary || t('contextRoom:documentOperationReviewToolbar.changesProposedByAgent')}</strong>
+        <span>{t('contextRoom:documentOperationReviewToolbar.acceptedAcceptedRejectedRejectedUndecidedUndecided', counts)}</span>
       </div>
       <div className="document-patch-review-actions">
-        <button type="button" disabled={!rejectable} onClick={onClose}>{t('关闭此次修改')}</button>
+        <button type="button" disabled={!rejectable} onClick={onClose}>{t('contextRoom:documentOperationReviewToolbar.closeTheseChanges')}</button>
       </div>
       {review.status === 'conflicted' ? (
-        <p className="document-patch-review-error" role="alert">{t('文档版本已经变化。请关闭审阅后让 Agent 重新生成改动。')}</p>
+        <p className="document-patch-review-error" role="alert">{t('contextRoom:documentOperationReviewToolbar.theDocumentVersionHasChangedCloseTheReview')}</p>
       ) : error ? <p className="document-patch-review-error" role="alert">{error}</p> : null}
     </aside>
   )

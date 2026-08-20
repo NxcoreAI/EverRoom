@@ -59,20 +59,20 @@ function getSlashMatch(editor: Editor): SlashMatch | null {
 }
 
 const commands: SlashCommand[] = [
-  { label: '正文', description: '普通文本块', keywords: 'text paragraph 正文 文本', icon: Pilcrow, run: (editor, range) => editor.chain().focus().deleteRange(range).setParagraph().run() },
-  { label: '一级标题', description: '页面大标题', keywords: 'h1 heading title 一级 标题', icon: Heading1, run: (editor, range) => editor.chain().focus().deleteRange(range).setHeading({ level: 1 }).run() },
-  { label: '二级标题', description: '章节标题', keywords: 'h2 heading 二级 标题', icon: Heading2, run: (editor, range) => editor.chain().focus().deleteRange(range).setHeading({ level: 2 }).run() },
-  { label: '三级标题', description: '小节标题', keywords: 'h3 heading 三级 标题', icon: Heading3, run: (editor, range) => editor.chain().focus().deleteRange(range).setHeading({ level: 3 }).run() },
-  { label: '项目列表', description: '创建无序列表', keywords: 'bullet list 项目 无序 列表', icon: List, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleBulletList().run() },
-  { label: '编号列表', description: '创建有序列表', keywords: 'ordered number list 编号 有序 列表', icon: ListOrdered, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleOrderedList().run() },
-  { label: '待办事项', description: '可勾选的任务块', keywords: 'todo task check 待办 任务', icon: CheckSquare2, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleTaskList().run() },
-  { label: '引用', description: '突出一段引用', keywords: 'quote blockquote 引用', icon: Quote, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleBlockquote().run() },
-  { label: '代码块', description: '等宽代码区域', keywords: 'code block 代码', icon: Code2, run: (editor, range) => editor.chain().focus().deleteRange(range).setCodeBlock().run() },
-  { label: '分割线', description: '分隔内容区块', keywords: 'divider rule line 分割线', icon: Minus, run: (editor, range) => editor.chain().focus().deleteRange(range).setHorizontalRule().run() },
-  { label: '表格', description: '选择行列后插入', keywords: 'table grid 表格 网格', icon: Table2, run: (_editor, range, actions) => actions?.requestTable(range) },
+  { label: 'contextRoom:slashCommand.paragraph', description: 'contextRoom:slashCommand.paragraphDescription', keywords: 'text paragraph 正文 文本', icon: Pilcrow, run: (editor, range) => editor.chain().focus().deleteRange(range).setParagraph().run() },
+  { label: 'contextRoom:slashCommand.headingOne', description: 'contextRoom:slashCommand.headingOneDescription', keywords: 'h1 heading title 一级 标题', icon: Heading1, run: (editor, range) => editor.chain().focus().deleteRange(range).setHeading({ level: 1 }).run() },
+  { label: 'contextRoom:slashCommand.headingTwo', description: 'contextRoom:slashCommand.headingTwoDescription', keywords: 'h2 heading 二级 标题', icon: Heading2, run: (editor, range) => editor.chain().focus().deleteRange(range).setHeading({ level: 2 }).run() },
+  { label: 'contextRoom:slashCommand.headingThree', description: 'contextRoom:slashCommand.headingThreeDescription', keywords: 'h3 heading 三级 标题', icon: Heading3, run: (editor, range) => editor.chain().focus().deleteRange(range).setHeading({ level: 3 }).run() },
+  { label: 'contextRoom:slashCommand.bulletList', description: 'contextRoom:slashCommand.bulletListDescription', keywords: 'bullet list 项目 无序 列表', icon: List, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleBulletList().run() },
+  { label: 'contextRoom:slashCommand.numberedList', description: 'contextRoom:slashCommand.numberedListDescription', keywords: 'ordered number list 编号 有序 列表', icon: ListOrdered, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleOrderedList().run() },
+  { label: 'contextRoom:slashCommand.taskList', description: 'contextRoom:slashCommand.taskListDescription', keywords: 'todo task check 待办 任务', icon: CheckSquare2, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleTaskList().run() },
+  { label: 'contextRoom:slashCommand.quote', description: 'contextRoom:slashCommand.quoteDescription', keywords: 'quote blockquote 引用', icon: Quote, run: (editor, range) => editor.chain().focus().deleteRange(range).toggleBlockquote().run() },
+  { label: 'contextRoom:slashCommand.codeBlock', description: 'contextRoom:slashCommand.codeBlockDescription', keywords: 'code block 代码', icon: Code2, run: (editor, range) => editor.chain().focus().deleteRange(range).setCodeBlock().run() },
+  { label: 'contextRoom:slashCommand.divider', description: 'contextRoom:slashCommand.dividerDescription', keywords: 'divider rule line 分割线', icon: Minus, run: (editor, range) => editor.chain().focus().deleteRange(range).setHorizontalRule().run() },
+  { label: 'contextRoom:slashCommand.table', description: 'contextRoom:slashCommand.tableDescription', keywords: 'table grid 表格 网格', icon: Table2, run: (_editor, range, actions) => actions?.requestTable(range) },
   {
-    label: '图片',
-    description: '从本地选择图片',
+    label: 'contextRoom:slashCommand.image',
+    description: 'contextRoom:slashCommand.imageDescription',
     keywords: 'image picture 图片 图像',
     icon: ImagePlus,
     run: (_editor, range, actions) => actions?.requestImage(range),
@@ -128,8 +128,8 @@ export function TiptapSlashCommandMenu({
 
   const availableCommands = useMemo<SlashCommand[]>(() => onRequestBlockReference
     ? [...commands, {
-      label: '引用文档块',
-      description: '链接到当前 Room 的具体内容块',
+      label: 'contextRoom:slashCommand.documentBlockReference',
+      description: 'contextRoom:slashCommand.documentBlockReferenceDescription',
       keywords: 'reference link block 引用 文档 块',
       icon: Link2,
       run: (currentEditor, range) => {
@@ -141,8 +141,8 @@ export function TiptapSlashCommandMenu({
 
   const filteredCommands = useMemo(() => {
     const query = match?.query.toLocaleLowerCase() ?? ''
-    return availableCommands.filter((command) => `${command.label} ${command.keywords}`.toLocaleLowerCase().includes(query))
-  }, [availableCommands, match?.query])
+    return availableCommands.filter((command) => `${t(command.label)} ${command.keywords}`.toLocaleLowerCase().includes(query))
+  }, [availableCommands, match?.query, t])
 
   useEffect(() => {
     selectedIndexRef.current = 0
@@ -194,14 +194,14 @@ export function TiptapSlashCommandMenu({
       <div
         className="context-room-tiptap-slash-menu context-room-tiptap-table-grid-menu"
         role="dialog"
-        aria-label={t('选择表格尺寸')}
+        aria-label={t('contextRoom:tiptapSlashCommandMenu.chooseTableSize')}
         style={{ left, top }}
       >
         <div className="context-room-tiptap-table-grid-title">
-          <strong>{t('插入表格')}</strong>
+          <strong>{t('contextRoom:tiptapSlashCommandMenu.insertTable')}</strong>
           <span>{tableRequest.rows} × {tableRequest.cols}</span>
         </div>
-        <div className="context-room-tiptap-table-grid" role="grid" aria-label={t('表格尺寸')}>
+        <div className="context-room-tiptap-table-grid" role="grid" aria-label={t('contextRoom:tiptapSlashCommandMenu.tableSize')}>
           {Array.from({ length: 64 }, (_, index) => {
             const row = Math.floor(index / 8) + 1
             const col = index % 8 + 1
@@ -211,7 +211,7 @@ export function TiptapSlashCommandMenu({
                 type="button"
                 key={`${row}-${col}`}
                 role="gridcell"
-                aria-label={t('{row} 行 {col} 列', { row, col })}
+                aria-label={t('contextRoom:tiptapSlashCommandMenu.rowRowsColColumns', { row, col })}
                 aria-selected={selected}
                 data-selected={String(selected)}
                 onMouseEnter={() => setTableRequest((current) => current ? { ...current, rows: row, cols: col } : current)}
@@ -229,13 +229,13 @@ export function TiptapSlashCommandMenu({
             )
           })}
         </div>
-        <button type="button" className="context-room-tiptap-table-grid-cancel" onClick={() => setTableRequest(null)}>{t('取消')}</button>
+        <button type="button" className="context-room-tiptap-table-grid-cancel" onClick={() => setTableRequest(null)}>{t('contextRoom:tiptapSlashCommandMenu.cancel')}</button>
       </div>
     )
   }
 
   return (
-    <div className="context-room-tiptap-slash-menu" role="listbox" aria-label={t('插入内容')} style={{ left, top }}>
+    <div className="context-room-tiptap-slash-menu" role="listbox" aria-label={t('contextRoom:tiptapSlashCommandMenu.insertContent')} style={{ left, top }}>
       <input
         ref={imageInputRef}
         type="file"
@@ -253,7 +253,7 @@ export function TiptapSlashCommandMenu({
           imageRangeRef.current = null
           const documents = window.nxcore?.documents
           if (!documents) {
-            showToast({ title: t('无法插入图片'), message: t('本地图片服务不可用。') })
+            showToast({ title: t('contextRoom:tiptapSlashCommandMenu.unableToInsertImage'), message: t('contextRoom:tiptapSlashCommandMenu.theLocalImageServiceIsUnavailable') })
             return
           }
           void storeDocumentImageFile(file, documentId, documents.storeImage).then((stored) => {
@@ -264,14 +264,14 @@ export function TiptapSlashCommandMenu({
             setMatch(null)
           }).catch((error: unknown) => {
             showToast({
-              title: t('无法插入图片'),
-              message: error instanceof Error ? error.message : t('读取图片失败，请重试。'),
+              title: t('contextRoom:tiptapSlashCommandMenu.unableToInsertImage'),
+              message: error instanceof Error ? error.message : t('contextRoom:tiptapSlashCommandMenu.unableToReadTheImageTryAgain'),
             })
             console.error('Failed to store document image', error)
           })
         }}
       />
-      <div className="context-room-tiptap-slash-title">{t('基础块')}</div>
+      <div className="context-room-tiptap-slash-title">{t('contextRoom:tiptapSlashCommandMenu.basicBlocks')}</div>
       {filteredCommands.map((command, index) => {
         const Icon = command.icon
         return (

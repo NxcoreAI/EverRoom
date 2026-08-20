@@ -6,6 +6,7 @@ import {
 } from '../graph/PixiForceGraphCanvas'
 import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
 import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+import { useLocale } from '../../../../i18n/LocaleContext'
 import type { EntityFactGraphData, EntityFactGraphNode } from './entityFactGraphModel'
 
 interface EntityFactGraphCanvasProps {
@@ -31,6 +32,7 @@ const FACT_POSITIONS = [
 ] as const
 
 export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFactGraphCanvasProps) {
+  const { t } = useLocale()
   const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const nodeIndex = useMemo(
     () => new Map(data.nodes.map((node, index) => [node.id, index])),
@@ -98,7 +100,7 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
   return (
     <div className="context-room-entity-fact-graph-shell">
       <PixiForceGraphCanvas
-        ariaLabel="Room 实体与事实图谱画布"
+        ariaLabel={t('contextRoom:graphs.entityFactCanvas')}
         className="context-room-entity-fact-graph-canvas"
         edges={edges}
         nodes={nodes}
@@ -110,12 +112,15 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
         onReleaseNode={(nodeId) => layout?.release(nodeId)}
         onSelectNode={onSelect}
       />
-      <div className="context-room-visually-hidden" aria-label="实体与事实节点">
+      <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.entityFactNodes')}>
         {data.nodes.map((node: EntityFactGraphNode) => (
           <button
             type="button"
             key={node.id}
-            aria-label={`${node.kind === 'entity' ? '实体' : '事实'}：${node.label}`}
+            aria-label={t(
+              node.kind === 'entity' ? 'contextRoom:graphs.entityNode' : 'contextRoom:graphs.factNode',
+              { label: node.label },
+            )}
             aria-pressed={selectedId === node.id}
             onClick={() => onSelect(node.id)}
           >

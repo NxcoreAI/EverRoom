@@ -65,14 +65,14 @@ function durationMs(startedAt: string, completedAt: string | undefined, now: num
 }
 
 function formatDuration(duration: number, t: Translate): string {
-  if (duration < 1_000) return t('<1 秒')
+  if (duration < 1_000) return t('surface:agentExecutionTimeline.1Sec')
   const seconds = Math.max(1, Math.round(duration / 1_000))
-  if (seconds < 60) return t('{count} 秒', { count: seconds })
+  if (seconds < 60) return t('surface:agentExecutionTimeline.countSec', { count: seconds })
   const minutes = Math.floor(seconds / 60)
   const remainder = seconds % 60
   return remainder
-    ? t('{minutes} 分 {seconds} 秒', { minutes, seconds: remainder })
-    : t('{count} 分', { count: minutes })
+    ? t('surface:agentExecutionTimeline.minutesMinSecondsSec', { minutes, seconds: remainder })
+    : t('surface:agentExecutionTimeline.countMin', { count: minutes })
 }
 
 function ToolIcon({ kind }: { kind: ToolKind }) {
@@ -101,52 +101,20 @@ function StatusIcon({ status }: { status: DisplayAgentToolCall['status'] }) {
 }
 
 function statusLabel(status: DisplayAgentToolCall['status'], t: Translate): string {
-  if (status === 'completed') return t('已完成')
-  if (status === 'error') return t('失败')
-  if (status === 'stopped') return t('已停止')
-  if (status === 'running') return t('执行中')
-  return t('等待中')
+  if (status === 'completed') return t('surface:agentExecutionTimeline.completed')
+  if (status === 'error') return t('surface:agentExecutionTimeline.failed')
+  if (status === 'stopped') return t('surface:agentExecutionTimeline.stopped')
+  if (status === 'running') return t('surface:agentExecutionTimeline.running')
+  return t('surface:agentExecutionTimeline.waiting')
 }
 
 function localizeAgentActivityText(value: string | undefined, t: Translate): string | undefined {
   if (!value) return value
-  const trimmed = value.trim()
-  const punctuation = trimmed.match(/[。.!！?？…]+$/u)?.[0] ?? ''
-  const text = punctuation ? trimmed.slice(0, -punctuation.length).trimEnd() : trimmed
-  let localized = t(text)
-
-  let match = /^已执行\s+(.+)$/u.exec(text)
-  if (match) localized = t('已执行 {name}', { name: match[1] })
-  match = /^执行\s+(.+)$/u.exec(text)
-  if (match) localized = t('执行 {name}', { name: match[1] })
-  match = /^获得\s+(\d+)\s+条结果$/u.exec(text)
-  if (match) localized = t('获得 {count} 条结果', { count: match[1] })
-  match = /^《(.+)》当前有\s+(\d+)\s+个可编辑内容块，基于版本\s+(.+)\s+处理$/u.exec(text)
-  if (match) {
-    localized = t('《{title}》当前有 {count} 个可编辑内容块，基于版本 {version} 处理', {
-      title: match[1],
-      count: match[2],
-      version: match[3],
-    })
-  }
-  match = /^修改范围已确定：(.+)$/u.exec(text)
-  if (match) localized = t('修改范围已确定：{summary}', { summary: match[1] })
-  match = /^第\s+(\d+)\s+项为(新增内容|替换内容|删除内容|文档修改)，建议内容\s+(\d+)\s+字$/u.exec(text)
-  if (match) {
-    localized = t('第 {sequence} 项为{action}，建议内容 {count} 字', {
-      sequence: match[1],
-      action: t(match[2]),
-      count: match[3],
-    })
-  }
-  match = /^第\s+(\d+)\s+项为(新增内容|替换内容|删除内容|文档修改)$/u.exec(text)
-  if (match) localized = t('第 {sequence} 项为{action}', { sequence: match[1], action: t(match[2]) })
-
-  if (!punctuation) return localized
-  const localizedPunctuation = localized === text
-    ? punctuation
-    : punctuation.replaceAll('。', '.').replaceAll('！', '!').replaceAll('？', '?')
-  return `${localized}${localizedPunctuation}`
+  const executed = /^已执行\s+(.+)$/u.exec(value)
+  if (executed) return t('surface:agentExecutionTimeline.executedName', { name: executed[1]! })
+  const executing = /^执行\s+(.+)$/u.exec(value)
+  if (executing) return t('surface:agentExecutionTimeline.executingName', { name: executing[1]! })
+  return value
 }
 
 export function AgentExecutionTimeline({
@@ -154,7 +122,7 @@ export function AgentExecutionTimeline({
   runStartedAt,
   runCompletedAt,
   continuing = false,
-  continuationLabel = '正在继续处理',
+  continuationLabel = 'surface:agentExecutionTimeline.continuing',
 }: {
   activity: AgentRunActivity
   runStartedAt?: string
@@ -217,12 +185,12 @@ export function AgentExecutionTimeline({
   const summary = continuing && !running
     ? t(continuationLabel)
     : active
-      ? t('正在处理')
+      ? t('surface:agentExecutionTimeline.processing')
       : failed
-        ? t('处理失败')
+        ? t('surface:agentExecutionTimeline.processingFailed')
         : stopped
-          ? t('已停止')
-          : t('已处理')
+          ? t('surface:agentExecutionTimeline.stopped')
+          : t('surface:agentExecutionTimeline.processed')
 
   return (
     <section className="agent-execution" data-running={String(active)} data-expanded={String(expanded)}>
@@ -283,10 +251,10 @@ export function AgentExecutionTimeline({
                           <span>{statusLabel(tool.status, t)} · {formatDuration(duration, t)}</span>
                         </div>
                         {tool.error ? <p className="agent-tool-error">{tool.error}</p> : null}
-                        {command ? <><small>{t('命令')}</small><pre>{command}</pre></> : null}
-                        {!command && args ? <><small>{t('参数')}</small><pre>{args}</pre></> : null}
-                        {result ? <><small>{t('结果')}</small><pre>{result}</pre></> : null}
-                        {!command && !args && !result && !tool.error ? <p>{t('暂无更多详情')}</p> : null}
+                        {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
+                        {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
+                        {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}
+                        {!command && !args && !result && !tool.error ? <p>{t('surface:agentExecutionTimeline.noAdditionalDetails')}</p> : null}
                       </div>
                     </div>
                   </details>

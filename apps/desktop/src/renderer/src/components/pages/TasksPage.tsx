@@ -4,16 +4,16 @@ import { PageHeader } from './PageHeader'
 import { useLocale } from '@/i18n/LocaleContext'
 
 const TASKS = [
-  ['进行中', '搭建前端样式框架', 'Nex', '当前'],
-  ['待开始', '接入本地文件连接器', '未分配', 'P0'],
-  ['已完成', '确定开源版工程边界', 'Codex', '今天'],
+  ['surface:tasks.inProgress', 'surface:tasks.buildFrontendStyleFramework', 'Nex', 'surface:tasks.now'],
+  ['surface:tasks.notStarted', 'surface:tasks.connectLocalFileConnector', 'surface:tasks.unassigned', 'P0'],
+  ['surface:tasks.completed', 'surface:tasks.defineOpenSourceEditionBoundaries', 'Codex', 'surface:tasks.today'],
 ] as const
 
 export function TasksPage() {
   const { t } = useLocale()
   return (
     <div className="page">
-      <PageHeader title={t('任务')} description={t('查看 Agent 的执行范围、进度与产物。')} action={t('新建任务')} />
+      <PageHeader title={t('surface:tasks.tasks')} description={t('surface:tasks.trackAgentSScopeProgressAndOutput')} action={t('surface:tasks.newTask')} />
       <div className="task-board">
         {TASKS.map(([status, title, owner, time], index) => (
           <article key={title} className="task-row">

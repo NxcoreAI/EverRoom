@@ -334,10 +334,10 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
         ?? block.textPreview).join('\n\n')
     const documentId = continuationEntry.summary.documentId
     const api = window.nxcore?.agent
-    if (!documentId || !api) throw new Error('Agent 续写服务不可用。')
+    if (!documentId || !api) throw new Error(t('contextRoom:useDocumentEditorOperations.continuationUnavailable'))
 
     const closed = await operations.execute(continuationEntry.id, 'review.close')
-    if (!closed) throw new Error('暂时无法关闭当前续写，请稍后重试。')
+    if (!closed) throw new Error(t('contextRoom:useDocumentEditorOperations.unableToCloseContinuation'))
     try {
       await waitForContinuationSourceRun(
         api,
@@ -364,11 +364,11 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
           },
         },
       })
-      showToast({ title: t('Agent 正在重新续写'), message: t('已带上你的修改意见。') })
+      showToast({ title: t('contextRoom:useDocumentEditorOperations.agentIsRevisingTheContinuation'), message: t('contextRoom:useDocumentEditorOperations.yourFeedbackHasBeenIncluded') })
     } catch (error) {
       showToast({
-        title: t('无法重新续写'),
-        message: error instanceof Error ? error.message : t('请稍后重试。'),
+        title: t('contextRoom:useDocumentEditorOperations.unableToReviseTheContinuation'),
+        message: error instanceof Error ? error.message : t('contextRoom:useDocumentEditorOperations.tryAgainLater'),
       })
       throw error
     }
@@ -389,7 +389,7 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
       markdownDrafts: atomicMarkdownDrafts,
       currentItemId: atomicReview.items.find((item) => !atomicDecisions[item.id])?.id ?? atomicReview.items[0]?.id ?? null,
       busy: atomicEntry?.busy ?? false,
-      error: atomicEntry?.error?.message ?? null,
+      error: atomicEntry?.error ? t(atomicEntry.error.messageKey) : null,
     } : null
     const continuation = continuationReview && continuationItem ? {
       review: continuationReview,
@@ -398,7 +398,7 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
       decisions: continuationDecisions,
       markdownDrafts: continuationMarkdownDrafts,
       busy: continuationEntry?.busy ?? false,
-      error: continuationEntry?.error?.message ?? null,
+      error: continuationEntry?.error ? t(continuationEntry.error.messageKey) : null,
     } : null
     const streamingDocument = streamingEntry?.detail ? {
       operationId: streamingEntry.id,
@@ -411,7 +411,7 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
         .map((item) => ({ id: item.id, sequence: item.sequence, markdown: item.markdown })),
       active: activeStreamingStatuses.has(streamingEntry.summary.status),
       busy: streamingEntry.busy,
-      error: streamingEntry.error?.message ?? null,
+      error: streamingEntry.error ? t(streamingEntry.error.messageKey) : null,
     } : null
     return {
       atomicDiff,
@@ -449,6 +449,7 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
     markdownDrafts,
     requestContinuationRevision,
     streamingEntry,
+    t,
     updateAtomicDiffItemDraft,
     updateContinuationItemDraft,
   ])

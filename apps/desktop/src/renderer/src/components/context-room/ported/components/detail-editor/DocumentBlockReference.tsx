@@ -155,8 +155,8 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
   }, [reference.blockId, reference.documentId, reference.roomId, resolve])
 
   const available = resolution?.status === 'available'
-  const title = resolution?.title || reference.fallbackTitle || t('引用的文档')
-  const preview = resolution?.textPreview || reference.fallbackPreview || t('内容预览不可用')
+  const title = resolution?.title || reference.fallbackTitle || t('contextRoom:documentBlockReference.referencedDocument')
+  const preview = resolution?.textPreview || reference.fallbackPreview || t('contextRoom:documentBlockReference.previewUnavailable')
   const canNavigate = Boolean(options.onNavigate)
 
   return (
@@ -170,7 +170,7 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
         type="button"
         disabled={!canNavigate}
         onClick={() => options.onNavigate?.(reference, resolution)}
-        title={canNavigate ? t('打开引用位置') : undefined}
+        title={canNavigate ? t('contextRoom:documentBlockReference.openReferencedLocation') : undefined}
       >
         <span className="context-room-document-block-reference-icon" aria-hidden="true">
           {loading ? <LoaderCircle /> : available ? <Link2 /> : <FileWarning />}
@@ -179,7 +179,7 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
           <strong>{title}</strong>
           <small>{preview}</small>
         </span>
-        <em>{loading ? t('正在读取引用') : t(documentBlockResolutionLabel(resolution))}</em>
+        <em>{loading ? t('contextRoom:documentBlockReference.loadingReference') : t(documentBlockResolutionLabel(resolution))}</em>
       </button>
     </NodeViewWrapper>
   )

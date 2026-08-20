@@ -7,7 +7,7 @@ import { useLocale } from '../../i18n/LocaleContext'
 export function AllRoomsViewSkeleton() {
   const { t } = useLocale()
   return (
-    <div className="context-room-all-skeleton" role="status" aria-label={t('正在加载全部 Room')}>
+    <div className="context-room-all-skeleton" role="status" aria-label={t('contextRoom:allRoomsViewSkeleton.loadingAllRooms')}>
       <div className="context-room-all-skeleton-layout">
         <header>
           <span className="context-room-all-skeleton-back"><ArrowLeft aria-hidden="true" /></span>

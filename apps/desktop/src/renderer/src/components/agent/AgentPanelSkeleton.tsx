@@ -5,7 +5,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 export function AgentPanelSkeleton() {
   const { t } = useLocale()
   return (
-    <aside className="agent-panel" aria-busy="true" aria-label={t('Agent 服务启动中')}>
+    <aside className="agent-panel" aria-busy="true" aria-label={t('surface:agentPanelSkeleton.agentServiceIsStarting')}>
       <header className="agent-chat-toolbar">
         <div className="agent-skeleton-trigger">
           <span className="agent-skeleton-icon" />

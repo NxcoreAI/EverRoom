@@ -17,13 +17,13 @@ const INITIAL_GATEWAY_STATUS: GatewayStatus = {
 function gatewayStatusLabel(status: GatewayStatus, t: (message: string, values?: Record<string, string | number>) => string): string {
   switch (status.state) {
     case 'ready':
-      return status.pid ? t('运行中 · PID {pid}', { pid: status.pid }) : t('运行中')
+      return status.pid ? t('surface:sidebar.runningPidPid', { pid: status.pid }) : t('surface:sidebar.running')
     case 'starting':
-      return t('正在启动')
+      return t('surface:sidebar.starting')
     case 'error':
-      return t('连接异常')
+      return t('surface:sidebar.connectionError')
     case 'stopped':
-      return t('未运行')
+      return t('surface:sidebar.notRunning')
   }
 }
 
@@ -56,7 +56,7 @@ export function Sidebar({
             pid: null,
             baseUrl: null,
             version: null,
-            message: t('Gateway 仅在 Everroom 桌面版中运行'),
+            message: t('surface:sidebar.gatewayIsOnlyAvailableInTheEverroomDesktop'),
           })
         }
         return
@@ -71,7 +71,7 @@ export function Sidebar({
             pid: null,
             baseUrl: null,
             version: null,
-            message: error instanceof Error ? error.message : t('无法获取 Gateway 状态'),
+            message: error instanceof Error ? error.message : t('surface:sidebar.unableToReadGatewayStatus'),
           })
         }
       }
@@ -105,17 +105,17 @@ export function Sidebar({
   }
 
   const accountName = account?.authenticated
-    ? account.user?.email || account.user?.name || account.user?.phone || t('EverRoom 用户')
-    : account === null ? t('正在检查') : t('本地用户')
+    ? account.user?.email || account.user?.name || account.user?.phone || t('surface:sidebar.everroomUser')
+    : account === null ? t('surface:sidebar.checking') : t('surface:sidebar.localUser')
   const accountDescription = account?.authenticated
-    ? account.subscription?.planName ? t('{plan} 套餐', { plan: account.subscription.planName }) : t('EverRoom SaaS 已连接')
-    : account === null ? t('账号状态') : t('本地模式')
+    ? account.subscription?.planName ? t('surface:sidebar.planPlan', { plan: account.subscription.planName }) : t('surface:sidebar.everroomSaasConnected')
+    : account === null ? t('surface:sidebar.accountStatus') : t('surface:sidebar.localMode')
   const subscription = account?.authenticated ? account.subscription : undefined
   const remainingQuotaMinutes = subscription ? formatNumber(Math.ceil(Math.max(0, subscription.remainingSeconds) / 60)) : null
 
   return (
     <aside className="sidebar">
-      <nav className="sidebar-nav" aria-label={t('主导航')}>
+      <nav className="sidebar-nav" aria-label={t('surface:sidebar.mainNavigation')}>
         {navigationSections.map((section) => (
           <section
             key={section.id}
@@ -177,9 +177,9 @@ export function Sidebar({
           <small>{accountDescription}</small>
           {subscription ? (
             <span className="account-quota">
-              <span>{t('剩余 {minutes} 分钟', { minutes: remainingQuotaMinutes! })}</span>
+              <span>{t('surface:sidebar.minutesMinutesRemaining', { minutes: remainingQuotaMinutes! })}</span>
               <progress
-                aria-label={t('剩余转写额度 {minutes} 分钟', { minutes: remainingQuotaMinutes! })}
+                aria-label={t('surface:sidebar.minutesTranscriptionMinutesRemaining', { minutes: remainingQuotaMinutes! })}
                 max={Math.max(1, subscription.quotaSeconds)}
                 value={Math.min(Math.max(0, subscription.remainingSeconds), subscription.quotaSeconds)}
               />

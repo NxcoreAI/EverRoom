@@ -1,17 +1,17 @@
 import { PowerOff, RefreshCw, Unplug } from 'lucide-react'
 import { useLocale } from '@/i18n/LocaleContext'
 
-import type { MemoryFailure } from './useMemoryData'
+import { memoryFailureText, type MemoryFailure } from './useMemoryData'
 
 export function MemoryDisabledView() {
   const { t } = useLocale()
   return (
     <div className="mem-status" data-kind="disabled">
       <PowerOff aria-hidden="true" strokeWidth={1.6} />
-      <h2>{t('记忆服务未启用')}</h2>
+      <h2>{t('memory:memoryStatusViews.memoryServiceIsDisabled')}</h2>
       <p>
-        {t('EverRoom 通过 TencentDB Agent Memory（MemoryCore）沉淀长期记忆。')}
-        {t('在网关配置')} <code>NXCORE_MEMORY_ENABLED=true</code> {t('并指向运行中的 MemoryCore 实例后，与 AI 助手的对话将自动提炼为记忆。')}
+        {t('memory:memoryStatusViews.everroomUsesTencentdbAgentMemoryMemorycoreToBuild')}
+        {t('memory:memoryStatusViews.configure')} <code>NXCORE_MEMORY_ENABLED=true</code> {t('memory:memoryStatusViews.andPointItToARunningMemorycoreInstance')}
       </p>
     </div>
   )
@@ -25,10 +25,10 @@ export function MemoryUnreachableView({ failure, onRetry }: {
   return (
     <div className="mem-status" data-kind="unreachable">
       <Unplug aria-hidden="true" strokeWidth={1.6} />
-      <h2>{t('无法连接记忆服务')}</h2>
-      <p>{t(failure.message)} {t('MemoryCore 是独立进程，可能晚于 EverRoom 启动。')}</p>
+      <h2>{t('memory:memoryStatusViews.unableToConnect')}</h2>
+      <p>{memoryFailureText(failure, t)} {t('memory:memoryStatusViews.memorycoreRunsAsASeparateProcessAndMay')}</p>
       <button type="button" className="mem-retry" onClick={onRetry}>
-        <RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('重试')}
+        <RefreshCw aria-hidden="true" strokeWidth={1.8} />{t('memory:memoryStatusViews.retry')}
       </button>
     </div>
   )

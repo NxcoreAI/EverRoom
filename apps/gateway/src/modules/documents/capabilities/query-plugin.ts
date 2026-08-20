@@ -26,6 +26,41 @@ export function queryPlugins(
       selectedRoomId: context.roomId,
     }),
   };
+  const roomCreate: DocumentCapabilityTool = {
+    name: "context_room_create",
+    title: "创建 Context Room",
+    description: "当用户明确要求创建、新建或添加一个 EverRoom Context Room 时立即调用。title 必须使用用户指定的名称；description 应准确概括用户对 Room 的说明，用户只给名称时用该名称写一句中性的简短说明。Room 创建 Agent 会据此检索记忆、推断类型并补全信息。不要为普通聊天、文档创建、第三方服务页面或用户仅询问创建方法时调用。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 120 },
+        description: { type: "string", minLength: 1, maxLength: 2_000 },
+      },
+      required: ["title", "description"],
+    },
+    annotations: annotations(false),
+    execute: async (args) => {
+      if (!rooms) throw new Error("ROOM_SERVICE_UNAVAILABLE: Context Room service is unavailable");
+      const result = await rooms.createRoom({
+        title: stringArg(args, "title").trim(),
+        description: stringArg(args, "description").trim(),
+      });
+      const { data: _data, ...room } = result.room;
+      return success({
+        room,
+        created: result.created,
+        navigation: {
+          pageId: "rooms",
+          title: room.title,
+          action: result.created ? "created" : "opened",
+          roomId: room.id,
+          objectId: room.id,
+          objectType: "room",
+        },
+      });
+    },
+  };
   const documentList: DocumentCapabilityTool = {
     name: "context_room_document_list",
     title: "列出当前 Room 的文档",
@@ -102,6 +137,14 @@ export function queryPlugins(
   };
   return [
     { manifest: manifest("room.list", "query", null, null, false, false), promptGuidelines: [], tools: [roomList] },
+    {
+      manifest: manifest("room.create", "mutation", null, null, false, false),
+      promptGuidelines: [
+        "用户明确要求创建、新建或添加 Context Room 时，必须在当前回合调用 context_room_create；不要只说明步骤或声称已经创建。若用户给出了名称，直接创建，不要再次确认。description 使用用户原话；只有名称时写一句中性的简短说明，不要编造具体事实。",
+        "When the user explicitly asks to create, add, or make a Context Room, call context_room_create in the current turn. Use the exact requested title and the user's description. If only a title is given, provide a short neutral description without inventing facts.",
+      ],
+      tools: [roomCreate],
+    },
     { manifest: manifest("document.list", "query", null, null, true, false), promptGuidelines: [], tools: [documentList] },
     { manifest: manifest("document.read", "query", null, null, true, true), promptGuidelines: [], tools: [documentRead] },
   ];

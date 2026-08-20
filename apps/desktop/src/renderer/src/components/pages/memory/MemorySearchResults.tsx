@@ -5,9 +5,9 @@ import type { MemoryAtomicItemDto, MemoryConversationMessageDto } from '../../..
 import { formatDate } from './useMemoryData'
 
 const TYPE_LABELS: Record<string, string> = {
-  episodic: '情景',
-  persona: '人格',
-  instruction: '指令',
+  episodic: 'memory:memorySearchResults.episodic',
+  persona: 'memory:memorySearchResults.persona',
+  instruction: 'memory:memorySearchResults.instruction',
 }
 
 export interface MemorySearchResult {
@@ -53,16 +53,16 @@ export function MemorySearchResults({ query, result, onClear, onOpenAtomic }: {
     <div className="mem-search-results">
       <header className="mem-search-header">
         <Search aria-hidden="true" strokeWidth={1.7} />
-        <span>{t('“{query}” 的搜索结果', { query })}</span>
-        <button type="button" onClick={onClear}><X aria-hidden="true" strokeWidth={1.8} />{t('清除')}</button>
+        <span>{t('memory:memorySearchResults.resultsForQuery', { query })}</span>
+        <button type="button" onClick={onClear}><X aria-hidden="true" strokeWidth={1.8} />{t('memory:memorySearchResults.clear')}</button>
       </header>
       {empty ? (
-        <p className="mem-search-empty">{t('没有找到相关记忆或对话。')}</p>
+        <p className="mem-search-empty">{t('memory:memorySearchResults.noRelatedMemoriesOrConversationsFound')}</p>
       ) : (
         <>
           {result.atomic.length > 0 ? (
             <section>
-              <h3><Sparkles aria-hidden="true" strokeWidth={1.7} />{t('原子记忆（{count}）', { count: result.atomic.length })}</h3>
+              <h3><Sparkles aria-hidden="true" strokeWidth={1.7} />{t('memory:memorySearchResults.atomicMemoriesCount', { count: result.atomic.length })}</h3>
               <ul className="mem-search-list">
                 {result.atomic.map((item) => (
                   <li key={item.id}>
@@ -78,12 +78,12 @@ export function MemorySearchResults({ query, result, onClear, onOpenAtomic }: {
           ) : null}
           {result.conversations.length > 0 ? (
             <section>
-              <h3><MessagesSquare aria-hidden="true" strokeWidth={1.7} />{t('历史对话（{count}）', { count: result.conversations.length })}</h3>
+              <h3><MessagesSquare aria-hidden="true" strokeWidth={1.7} />{t('memory:memorySearchResults.conversationHistoryCount', { count: result.conversations.length })}</h3>
               <ul className="mem-search-list">
                 {result.conversations.map((message, index) => (
                   <li key={message.id || index}>
                     <div className="mem-search-item mem-search-message" data-role={message.role}>
-                      <span className="mem-role-tag">{t(message.role === 'user' ? '用户' : '助手')}</span>
+                      <span className="mem-role-tag">{t(message.role === 'user' ? 'memory:memorySearchResults.user' : 'memory:memorySearchResults.assistant')}</span>
                       <span className="mem-atomic-text"><Highlighted text={message.content} query={query} /></span>
                       <span className="mem-time">{formatDate(message.timestamp, locale)}</span>
                     </div>

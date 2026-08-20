@@ -7,6 +7,7 @@ import type {
   IngestResultDto,
 } from '../../shared/ingest'
 import type { GatewaySupervisor } from './gateway-supervisor'
+import { desktopText } from '../desktop-locale'
 
 /**
  * 文件中心桥（unified-ingest-plan §8-§9）：modules/files 的管理面 +
@@ -71,11 +72,11 @@ export class FilesGatewayBridge {
    */
   async pickAndImport(options?: { pipelines?: IngestPipelines }): Promise<FileImportOutcome[]> {
     const picked = await dialog.showOpenDialog({
-      title: '选择要导入的文件',
+      title: desktopText('dialog.importFiles.title'),
       properties: ['openFile', 'multiSelections'],
       filters: [
         {
-          name: '文档',
+          name: desktopText('dialog.importFiles.documents'),
           extensions: ['md', 'markdown', 'txt', 'json', 'docx', 'xlsx', 'pptx', 'csv', 'html', 'htm'],
         },
       ],

@@ -138,7 +138,7 @@ export function validatedDocumentCursorReplacement(
 interface StreamDocumentCursorCompletionOptions {
   signal: AbortSignal
   onSuggestion: (suggestion: DocumentCursorCompletionSuggestion) => void
-  responseLanguage?: 'zh-CN' | 'en-US'
+  responseLanguage?: StartAgentRunInput['responseLanguage']
   pollIntervalMs?: number
   timeoutMs?: number
 }

@@ -18,6 +18,12 @@ import {
   connectorSyncRuns,
 } from "../../infrastructure/database/schema.js";
 import { spawn } from "node:child_process";
+import {
+  calendarEvidence,
+  documentEvidence,
+  emailEvidence,
+  type ConnectorEvidence,
+} from "./evidence.js";
 
 const MIN_INTERVAL_MS = 5_000;
 const DEFAULT_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -271,9 +277,11 @@ export class ConnectorConfigVersionConflictError extends Error {
 export class ConnectorSyncService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly running = new Set<string>();
+  private readonly pendingEvidence = new Set<Promise<void>>();
   private readonly activeAgentRuns = new Map<string, AgentSyncRunState>();
   private readonly instanceId = randomUUID();
   private agentRuntime: AgentRuntime | null = null;
+  private evidenceSink: ((evidence: ConnectorEvidence) => Promise<void>) | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -285,6 +293,10 @@ export class ConnectorSyncService {
   attachAgentRuntime(runtime: AgentRuntime): void {
     if (this.agentRuntime) throw new Error("Connector sync Agent runtime is already attached");
     this.agentRuntime = runtime;
+  }
+
+  setEvidenceSink(sink: ((evidence: ConnectorEvidence) => Promise<void>) | null): void {
+    this.evidenceSink = sink;
   }
 
   async initialize(): Promise<void> {
@@ -314,6 +326,7 @@ export class ConnectorSyncService {
     this.close();
     await this.agentRuntime?.dispose();
     this.agentRuntime = null;
+    await Promise.allSettled(this.pendingEvidence);
   }
 
   authorizeAgentConnectorCall(
@@ -381,16 +394,38 @@ export class ConnectorSyncService {
 
     const result: AgentBatchWriteResult = { inserted: 0, updated: 0, unchanged: 0, rejected };
     const syncedAt = new Date();
+    const changedRecords: Array<{ resourceType: ConnectorResourceType; id: string }> = [];
     this.db.transaction((tx) => {
       for (const item of accepted) {
-        const outcome = upsertDomainRecord(tx, state, resourceType, item.record, syncedAt);
+        const { outcome, id } = upsertDomainRecord(tx, state, resourceType, item.record, syncedAt);
         result[outcome] += 1;
+        if (outcome !== "unchanged") changedRecords.push({ resourceType, id });
       }
     });
+    for (const changed of changedRecords) this.notifyEvidence(changed.resourceType, changed.id);
     state.stats.inserted += result.inserted;
     state.stats.updated += result.updated;
     state.stats.unchanged += result.unchanged;
     return result;
+  }
+
+  private notifyEvidence(resourceType: ConnectorResourceType, id: string): void {
+    const sink = this.evidenceSink;
+    if (!sink) return;
+    const evidence = resourceType === "email"
+      ? emailEvidence(this.db.select().from(connectorEmails).where(eq(connectorEmails.id, id)).get()!)
+      : resourceType === "document"
+        ? documentEvidence(this.db.select().from(connectorDocuments).where(eq(connectorDocuments.id, id)).get()!)
+        : calendarEvidence(this.db.select().from(connectorCalendarEvents).where(eq(connectorCalendarEvents.id, id)).get()!);
+    const delivery = Promise.resolve().then(() => sink(evidence)).catch((error: unknown) => {
+      this.logger.warn({
+        sourceId: evidence.sourceId,
+        dataType: evidence.dataType,
+        err: error instanceof Error ? error.message : String(error),
+      }, "connector evidence downstream ingest failed");
+    });
+    this.pendingEvidence.add(delivery);
+    void delivery.finally(() => this.pendingEvidence.delete(delivery));
   }
 
   quarantineAgentRecords(
@@ -1353,7 +1388,7 @@ function upsertDomainRecord(
   resourceType: ConnectorResourceType,
   record: Record<string, unknown>,
   syncedAt: Date,
-): "inserted" | "updated" | "unchanged" {
+): { outcome: "inserted" | "updated" | "unchanged"; id: string } {
   const common = commonDomainValues(state, record);
   if (resourceType === "email") {
     const existing = db.select({ id: connectorEmails.id, contentHash: connectorEmails.contentHash })
@@ -1388,7 +1423,7 @@ function upsertDomainRecord(
       target: [connectorEmails.ownerId, connectorEmails.service, connectorEmails.connectionName, connectorEmails.sourceRecordId],
       set: values,
     }).run();
-    return existing ? existing.contentHash === hash ? "unchanged" : "updated" : "inserted";
+    return { outcome: existing ? existing.contentHash === hash ? "unchanged" : "updated" : "inserted", id: values.id };
   }
   if (resourceType === "document") {
     const existing = db.select({ id: connectorDocuments.id, contentHash: connectorDocuments.contentHash })
@@ -1419,7 +1454,7 @@ function upsertDomainRecord(
       target: [connectorDocuments.ownerId, connectorDocuments.service, connectorDocuments.connectionName, connectorDocuments.sourceRecordId],
       set: values,
     }).run();
-    return existing ? existing.contentHash === hash ? "unchanged" : "updated" : "inserted";
+    return { outcome: existing ? existing.contentHash === hash ? "unchanged" : "updated" : "inserted", id: values.id };
   }
   const existing = db.select({ id: connectorCalendarEvents.id, contentHash: connectorCalendarEvents.contentHash })
     .from(connectorCalendarEvents).where(and(
@@ -1453,7 +1488,7 @@ function upsertDomainRecord(
     target: [connectorCalendarEvents.ownerId, connectorCalendarEvents.service, connectorCalendarEvents.connectionName, connectorCalendarEvents.sourceRecordId],
     set: values,
   }).run();
-  return existing ? existing.contentHash === hash ? "unchanged" : "updated" : "inserted";
+  return { outcome: existing ? existing.contentHash === hash ? "unchanged" : "updated" : "inserted", id: values.id };
 }
 
 function connectorSyncPrompt(job: typeof connectorSyncJobs.$inferSelect): string {

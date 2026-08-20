@@ -22,14 +22,14 @@ export type DetailPane =
   | 'mails';
 
 export const DETAIL_TABS = [
-  { id: 'overview', label: '概览', icon: BarChart3, tone: 'room' },
-  { id: 'documents', label: '文档', icon: FileText, tone: 'document' },
-  { id: 'relations', label: '关系', icon: Share2, tone: 'data' },
-  { id: 'memories', label: '记忆', icon: Bookmark, tone: 'memory' },
-  { id: 'wiki', label: '知识库', icon: BookOpen, tone: 'data' },
-  { id: 'schedule', label: '日程', icon: CalendarDays, tone: 'calendar' },
-  { id: 'tasks', label: '任务', icon: CheckSquare2, tone: 'task' },
-  { id: 'mails', label: '邮件', icon: Mail, tone: 'communication' },
+  { id: 'overview', label: 'contextRoom:roomSidebar.overview', icon: BarChart3, tone: 'room' },
+  { id: 'documents', label: 'contextRoom:roomSidebar.documents', icon: FileText, tone: 'document' },
+  { id: 'relations', label: 'contextRoom:roomSidebar.relations', icon: Share2, tone: 'data' },
+  { id: 'memories', label: 'contextRoom:roomSidebar.memories', icon: Bookmark, tone: 'memory' },
+  { id: 'wiki', label: 'contextRoom:roomSidebar.wiki', icon: BookOpen, tone: 'data' },
+  { id: 'schedule', label: 'contextRoom:roomSidebar.schedule', icon: CalendarDays, tone: 'calendar' },
+  { id: 'tasks', label: 'contextRoom:roomSidebar.tasks', icon: CheckSquare2, tone: 'task' },
+  { id: 'mails', label: 'contextRoom:roomSidebar.mail', icon: Mail, tone: 'communication' },
 ] as const;
 
 export function RoomIconSidebar({
@@ -47,7 +47,7 @@ export function RoomIconSidebar({
 }) {
   const { t } = useLocale();
   return (
-    <nav className="context-room-workspace-tabs" aria-label={t('Context room detail')}>
+    <nav className="context-room-workspace-tabs" aria-label={t('contextRoom:roomSidebar.contextRoomDetail')}>
       {DETAIL_TABS.map(({ id, label, icon: Icon, tone }) => (
         <button
           key={id}

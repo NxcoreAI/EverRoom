@@ -31,14 +31,14 @@ export function HomePage({
     <section className="workspace-home-surface" data-testid="workspace-home-surface">
       <div className="workspace-home-inner">
         <header className="workspace-home-heading">
-          <h1>{t('晚上好呀')}</h1>
-          <p>{t('继续今天的工作，或快速开始一项新任务。')}</p>
+          <h1>{t('surface:home.goodEvening')}</h1>
+          <p>{t('surface:home.continueWhereYouLeftOffOrStartSomething')}</p>
         </header>
 
         <div className="workspace-home-grid">
           {RECENT_ITEMS.length > 0 ? (
           <section className="workspace-home-panel">
-            <h2>{t('最近访问')}</h2>
+            <h2>{t('surface:home.recentlyOpened')}</h2>
             <div className="workspace-home-list">
               {RECENT_ITEMS.map((item) => (
                 <button
@@ -58,7 +58,7 @@ export function HomePage({
 
           {TODAY_ITEMS.length > 0 ? (
           <section className="workspace-home-panel">
-            <h2>{t('今日工作')}</h2>
+            <h2>{t('surface:home.todaySWork')}</h2>
             <div className="workspace-home-list">
               {TODAY_ITEMS.map((item) => (
                 <button key={item} type="button" className="workspace-home-list-item is-muted" disabled>
@@ -73,8 +73,8 @@ export function HomePage({
           {UPCOMING_ITEMS.length > 0 ? (
           <section className="workspace-home-panel workspace-home-upcoming">
             <div className="workspace-home-panel-heading">
-              <h2>{t('活动预告')}</h2>
-              <button type="button" onClick={() => onNavigate('tasks')}>{t('打开日历')}</button>
+              <h2>{t('surface:home.upcoming')}</h2>
+              <button type="button" onClick={() => onNavigate('tasks')}>{t('surface:home.openCalendar')}</button>
             </div>
             <div className="workspace-upcoming-grid">
               {UPCOMING_ITEMS.map((item) => (
@@ -93,15 +93,15 @@ export function HomePage({
           ) : null}
 
           <section className="workspace-home-quick-start">
-            <h2>{t('快速开始')}</h2>
+            <h2>{t('surface:home.quickStart')}</h2>
             <div className="workspace-quick-grid">
               <button type="button" className="workspace-quick-action" onClick={onFocusAgent}>
                 <Sparkles aria-hidden="true" strokeWidth={1.8} data-tone="blue" />
-                <span>{t('万事问 AI')}</span>
+                <span>{t('surface:home.askAi')}</span>
               </button>
               <button type="button" className="workspace-quick-action" onClick={() => onNavigate('docs')}>
                 <Mic2 aria-hidden="true" strokeWidth={1.8} data-tone="violet" />
-                <span>{t('AI 速记')}</span>
+                <span>{t('surface:home.aiNotes')}</span>
               </button>
               <button type="button" className="workspace-quick-action" onClick={() => onNavigate('rooms')}>
                 <BookOpenText aria-hidden="true" strokeWidth={1.8} data-tone="emerald" />

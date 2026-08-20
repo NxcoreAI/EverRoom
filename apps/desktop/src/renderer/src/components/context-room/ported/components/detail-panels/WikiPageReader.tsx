@@ -25,7 +25,7 @@ export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageReso
       })
       .catch((cause) => {
         if (cancelled) return;
-        showToast({ title: t('读取页面失败'), message: cause instanceof Error ? cause.message : undefined });
+        showToast({ title: t('contextRoom:wikiPageReader.failedToLoadPage'), message: cause instanceof Error ? cause.message : undefined });
       });
     return () => { cancelled = true; };
   }, [resource.roomId, resource.wikiPath, t]);
@@ -38,7 +38,7 @@ export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageReso
       </header>
       <div className="context-room-wiki-reader-body">
         {markdown === null ? (
-          <div className="context-room-workspace-empty">{t('加载中…')}</div>
+          <div className="context-room-workspace-empty">{t('contextRoom:wikiPageReader.loading')}</div>
         ) : (
           <MarkdownBody markdown={markdown} />
         )}

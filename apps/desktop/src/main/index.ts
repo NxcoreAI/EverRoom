@@ -33,6 +33,7 @@ import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
   MemoryDocumentRewriteInput,
+  MemoryOnboardingInput,
 } from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
@@ -67,6 +68,7 @@ import { ScreenshotOutbox } from './screenshot/screenshot-outbox'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
 import { registerSystemClipboardHandler } from './system-clipboard'
 import { installCrossOriginIsolation } from './cross-origin-isolation'
+import { desktopText, setDesktopLocale } from './desktop-locale'
 import {
   assertNoEmbeddedDocumentImages,
   DocumentAssetStore,
@@ -160,6 +162,7 @@ const CONNECTOR_SYNC_CHANNELS = {
 
 const CONTEXT_ROOM_CHANNELS = {
   list: 'context-rooms:list',
+  create: 'context-rooms:create',
   syncSnapshot: 'context-rooms:sync-snapshot',
 } as const
 
@@ -270,6 +273,7 @@ const TRANSCRIPTION_CHANNELS = {
 
 const MEMORY_CHANNELS = {
   overview: 'memory:overview',
+  startOnboarding: 'memory:onboarding:start',
   listAtomic: 'memory:list-atomic',
   searchAtomic: 'memory:search-atomic',
   updateAtomic: 'memory:update-atomic',
@@ -297,6 +301,7 @@ const MCP_CHANNELS = {
 
 const KNOWLEDGE_CHANNELS = {
   listRooms: 'knowledge:rooms:list',
+  getRoomContext: 'knowledge:rooms:context',
   upsertRoom: 'knowledge:rooms:upsert',
   deleteRoom: 'knowledge:rooms:delete',
   listWikiPages: 'knowledge:wiki:pages',
@@ -471,6 +476,7 @@ function logRendererRequestError(input: unknown): void {
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
+ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(locale))
 
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -572,8 +578,8 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
 
   handle(SOURCE_CHANNELS.addLocalFolder, async () => {
     const result = await dialog.showOpenDialog({
-      title: '选择要连接的文件夹',
-      buttonLabel: '连接文件夹',
+      title: desktopText('dialog.chooseFolder.title'),
+      buttonLabel: desktopText('dialog.chooseFolder.button'),
       properties: ['openDirectory', 'createDirectory'],
     })
     const rootPath = result.filePaths[0]
@@ -785,6 +791,7 @@ function registerOpenConnectorHandlers(): void {
 
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
+  handle(CONTEXT_ROOM_CHANNELS.create, (_event, input) => bridge.create(input))
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
 }
 
@@ -891,6 +898,7 @@ function registerMcpHandlers(bridge: McpGatewayBridge): void {
 
 function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listRooms, (_event, origin?: 'user' | 'auto') => bridge.listRooms(origin))
+  handle(KNOWLEDGE_CHANNELS.getRoomContext, (_event, roomId: string) => bridge.getRoomContext(roomId))
   handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
   handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
   handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
@@ -974,6 +982,8 @@ function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
 
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
   handle(MEMORY_CHANNELS.overview, () => bridge.overview())
+  handle(MEMORY_CHANNELS.startOnboarding, (_event, input: MemoryOnboardingInput) =>
+    bridge.startOnboarding(input))
   handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
     bridge.listAtomic(options))
   handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
@@ -1036,17 +1046,18 @@ function registerRealityHandlers(bridge: RealityGatewayBridge): void {
   handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
   handle(REALITY_CHANNELS.exportTranscript, async (event, input: unknown) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
-    if (!owner || owner.isDestroyed() || event.sender.isDestroyed()) throw new Error('无法验证导出请求来源。')
+    if (!owner || owner.isDestroyed() || event.sender.isDestroyed()) throw new Error(desktopText('error.transcript.invalidSource'))
     if (!input || typeof input !== 'object' || typeof (input as { content?: unknown }).content !== 'string') {
-      throw new Error('无效的逐字稿导出请求。')
+      throw new Error(desktopText('error.transcript.invalidRequest'))
     }
-    const rawName = typeof (input as { fileName?: unknown }).fileName === 'string' ? (input as { fileName: string }).fileName : '逐字稿.txt'
-    const fileName = rawName.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 180) || '逐字稿'
+    const defaultTranscriptName = desktopText('dialog.exportTranscript.defaultName')
+    const rawName = typeof (input as { fileName?: unknown }).fileName === 'string' ? (input as { fileName: string }).fileName : `${defaultTranscriptName}.txt`
+    const fileName = rawName.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 180) || defaultTranscriptName
     const selection = await dialog.showSaveDialog(owner, {
-      title: '导出逐字稿',
+      title: desktopText('dialog.exportTranscript.title'),
       defaultPath: fileName.toLowerCase().endsWith('.txt') ? fileName : `${fileName}.txt`,
-      buttonLabel: '导出',
-      filters: [{ name: '文本文件', extensions: ['txt'] }],
+      buttonLabel: desktopText('dialog.exportTranscript.button'),
+      filters: [{ name: desktopText('dialog.exportTranscript.textFile'), extensions: ['txt'] }],
       properties: ['showOverwriteConfirmation', 'createDirectory'],
     })
     if (selection.canceled || !selection.filePath) return { canceled: true }
@@ -1119,7 +1130,7 @@ function registerScreenCaptureHandlers(): void {
 
   handle(SCREEN_CAPTURE_CHANNELS.captureCurrentWindow, async (event) => {
     if (!isAuthorized(event)) {
-      return { ok: false, code: 'window-unavailable', message: '无法验证截图请求来源。' }
+      return { ok: false, code: 'window-unavailable', message: desktopText('error.screenshot.invalidSource') }
     }
     return captureAndQueueCurrentWindow()
   })
@@ -1408,6 +1419,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
     if (perceptionSettings?.captureEnabled) {
       await screenshotScheduler.start(perceptionSettings.captureIntervalSeconds * 1_000)
+    } else if (perceptionSettings) {
+      // Keep the local scheduler's interval in sync even while capture is off.
+      // Otherwise the settings page falls back to the five-minute default and
+      // enabling capture later overwrites a saved custom interval.
+      screenshotScheduler.updateInterval(perceptionSettings.captureIntervalSeconds * 1_000)
     }
     cursorCompletionSupervisor = new GatewaySupervisor(
       join(dataDirectory, 'cursor-completion-service'),

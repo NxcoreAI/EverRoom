@@ -59,11 +59,11 @@ export function TiptapDocumentActions({
   const exportMarkdown = () => {
     try {
       downloadMarkdown(editor, documentName)
-      showToast({ title: t('已导出 Markdown'), message: markdownExportFileName(documentName) })
+      showToast({ title: t('contextRoom:tiptapDocumentActions.markdownExported'), message: markdownExportFileName(documentName) })
     } catch (error: unknown) {
       showToast({
-        title: t('导出失败'),
-        message: error instanceof Error ? error.message : t('无法生成 Markdown 文件'),
+        title: t('contextRoom:tiptapDocumentActions.exportFailed'),
+        message: error instanceof Error ? error.message : t('contextRoom:tiptapDocumentActions.unableToCreateMarkdownFile'),
       })
     }
   }
@@ -73,11 +73,11 @@ export function TiptapDocumentActions({
       const fileName = docxExportFileName(documentName)
       const blob = await createDocxBlob(editor.getJSON(), documentName)
       downloadBlob(blob, fileName)
-      showToast({ title: t('已导出 Word 文档'), message: fileName })
+      showToast({ title: t('contextRoom:tiptapDocumentActions.wordDocumentExported'), message: fileName })
     } catch (error: unknown) {
       showToast({
-        title: t('导出失败'),
-        message: error instanceof Error ? error.message : t('无法生成 Word 文档'),
+        title: t('contextRoom:tiptapDocumentActions.exportFailed'),
+        message: error instanceof Error ? error.message : t('contextRoom:tiptapDocumentActions.unableToCreateWordDocument'),
       })
     }
   }
@@ -87,12 +87,12 @@ export function TiptapDocumentActions({
     try {
       const result = await exportEditorPdf(editor, documentName)
       if (!result.canceled) {
-        showToast({ title: t('已导出 PDF'), message: result.fileName })
+        showToast({ title: t('contextRoom:tiptapDocumentActions.pdfExported'), message: result.fileName })
       }
     } catch (error: unknown) {
       showToast({
-        title: t('导出失败'),
-        message: error instanceof Error ? error.message : t('无法生成 PDF 文件'),
+        title: t('contextRoom:tiptapDocumentActions.exportFailed'),
+        message: error instanceof Error ? error.message : t('contextRoom:tiptapDocumentActions.unableToCreatePdfFile'),
       })
     } finally {
       setExportingPdf(false)
@@ -103,11 +103,11 @@ export function TiptapDocumentActions({
     if (!backendDocument || !onDeleteDocument) return
     try {
       await onDeleteDocument(backendDocument)
-      showToast({ title: t('文档已移到回收站') })
+      showToast({ title: t('contextRoom:tiptapDocumentActions.documentMovedToTrash') })
     } catch (error: unknown) {
       showToast({
-        title: t('删除文档失败'),
-        message: error instanceof Error ? error.message : t('请稍后重试'),
+        title: t('contextRoom:tiptapDocumentActions.failedToDeleteDocument'),
+        message: error instanceof Error ? error.message : t('contextRoom:tiptapDocumentActions.tryAgainLater'),
       })
     }
   }
@@ -117,7 +117,7 @@ export function TiptapDocumentActions({
     <div className="context-room-document-actions">
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
-          <button type="button" aria-label={t('文档更多操作')} title={t('更多操作')}>
+          <button type="button" aria-label={t('contextRoom:tiptapDocumentActions.moreDocumentActions')} title={t('contextRoom:tiptapDocumentActions.moreActions')}>
             <Ellipsis aria-hidden="true" />
           </button>
         </DropdownMenu.Trigger>
@@ -130,7 +130,7 @@ export function TiptapDocumentActions({
             <DropdownMenu.Sub>
               <DropdownMenu.SubTrigger>
                 <Download aria-hidden="true" />
-                {t('导出')}
+                {t('contextRoom:tiptapDocumentActions.export')}
                 <ChevronRight className="context-room-document-actions-submenu-icon" aria-hidden="true" />
               </DropdownMenu.SubTrigger>
               <DropdownMenu.Portal>
@@ -144,11 +144,11 @@ export function TiptapDocumentActions({
                   </DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={() => void exportDocx()}>
                     <FileText aria-hidden="true" />
-                    {t('Word 文档 (.docx)')}
+                    {t('contextRoom:tiptapDocumentActions.wordDocumentDocx')}
                   </DropdownMenu.Item>
                   <DropdownMenu.Item disabled={exportingPdf} onSelect={() => void exportPdf()}>
                     <FileText aria-hidden="true" />
-                    {t('PDF 文档 (.pdf)')}
+                    {t('contextRoom:tiptapDocumentActions.pdfDocumentPdf')}
                   </DropdownMenu.Item>
                 </DropdownMenu.SubContent>
               </DropdownMenu.Portal>
@@ -158,14 +158,14 @@ export function TiptapDocumentActions({
               className="danger"
               disabled={deleteDisabled}
               title={writing
-                ? t('Agent 正在写入，暂时不能删除')
+                ? t('contextRoom:tiptapDocumentActions.agentIsWritingThisDocumentCannotBeDeleted')
                 : saving
-                  ? t('文档正在保存，稍后即可删除')
+                  ? t('contextRoom:tiptapDocumentActions.theDocumentIsSavingItCanBeDeleted')
                   : undefined}
               onSelect={() => setDeleteDialogOpen(true)}
             >
               <Trash2 aria-hidden="true" />
-              {t('删除文档')}
+              {t('contextRoom:tiptapDocumentActions.deleteDocument')}
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
@@ -173,9 +173,9 @@ export function TiptapDocumentActions({
       <ActionConfirmDialog
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
-        title={t('删除文档？')}
-        summary={t('“{name}”将移到回收站，你仍可以在回收站中恢复。', { name: documentName })}
-        confirmLabel={t('移到回收站')}
+        title={t('contextRoom:tiptapDocumentActions.confirmDeleteDocument')}
+        summary={t('contextRoom:tiptapDocumentActions.nameWillBeMovedToTrashYouCan', { name: documentName })}
+        confirmLabel={t('contextRoom:tiptapDocumentActions.moveToTrash')}
         danger
         onConfirm={() => void deleteDocument()}
       />

@@ -211,8 +211,8 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
         type="button"
         className="context-room-tiptap-table-handle"
         data-orientation="row"
-        aria-label={t('当前行菜单')}
-        title={t('当前行菜单')}
+        aria-label={t('contextRoom:tiptapTableControls.currentRowMenu')}
+        title={t('contextRoom:tiptapTableControls.currentRowMenu')}
         style={{ left: geometry.row.left - 28, top: geometry.row.top + geometry.row.height / 2 - 12 }}
         onMouseDown={(event) => event.preventDefault()}
         onClick={(event) => openMenu('row', event)}
@@ -223,8 +223,8 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
         type="button"
         className="context-room-tiptap-table-handle"
         data-orientation="column"
-        aria-label={t('当前列菜单')}
-        title={t('当前列菜单')}
+        aria-label={t('contextRoom:tiptapTableControls.currentColumnMenu')}
+        title={t('contextRoom:tiptapTableControls.currentColumnMenu')}
         style={{ left: geometry.cell.left + geometry.cell.width / 2 - 12, top: geometry.table.top - 28 }}
         onMouseDown={(event) => event.preventDefault()}
         onClick={(event) => openMenu('column', event)}
@@ -234,8 +234,8 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
       <button
         type="button"
         className="context-room-tiptap-table-handle context-room-tiptap-table-cell-menu-trigger"
-        aria-label={t('单元格菜单')}
-        title={t('单元格菜单')}
+        aria-label={t('contextRoom:tiptapTableControls.cellMenu')}
+        title={t('contextRoom:tiptapTableControls.cellMenu')}
         style={{ left: geometry.cell.right - 25, top: geometry.cell.top + 3 }}
         onMouseDown={(event) => event.preventDefault()}
         onClick={(event) => openMenu('cell', event)}
@@ -245,8 +245,8 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
       <button
         type="button"
         className="context-room-tiptap-table-handle context-room-tiptap-table-menu-trigger"
-        aria-label={t('表格菜单')}
-        title={t('表格菜单')}
+        aria-label={t('contextRoom:tiptapTableControls.tableMenu')}
+        title={t('contextRoom:tiptapTableControls.tableMenu')}
         style={{ left: geometry.table.left - 28, top: geometry.table.top - 28 }}
         onMouseDown={(event) => event.preventDefault()}
         onClick={(event) => openMenu('table', event)}
@@ -257,8 +257,8 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
         type="button"
         className="context-room-tiptap-table-extend"
         data-orientation="row"
-        aria-label={t('在底部添加行')}
-        title={t('在底部添加行')}
+        aria-label={t('contextRoom:tiptapTableControls.addRowBelow')}
+        title={t('contextRoom:tiptapTableControls.addRowBelow')}
         disabled={!commandState.canAddRow}
         style={{ left: geometry.table.left, top: geometry.table.bottom + 5, width: geometry.table.width }}
         onMouseDown={(event) => event.preventDefault()}
@@ -270,8 +270,8 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
         type="button"
         className="context-room-tiptap-table-extend"
         data-orientation="column"
-        aria-label={t('在右侧添加列')}
-        title={t('在右侧添加列')}
+        aria-label={t('contextRoom:tiptapTableControls.addColumnRight')}
+        title={t('contextRoom:tiptapTableControls.addColumnRight')}
         disabled={!commandState.canAddColumn}
         style={{ left: geometry.table.right + 5, top: geometry.table.top, height: geometry.table.height }}
         onMouseDown={(event) => event.preventDefault()}
@@ -285,40 +285,40 @@ export function TiptapTableControls({ editor }: { editor: Editor }) {
           ref={menuRef}
           className="context-room-tiptap-table-menu"
           role="menu"
-          aria-label={t('{kind} 操作', { kind: menu.kind })}
+          aria-label={t('contextRoom:tiptapTableControls.kindActions', { kind: menu.kind })}
           style={{ left: menu.left, top: menu.top }}
         >
           {menu.kind === 'row' ? (
             <>
-              <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addRowBefore().run() })}>{t('在上方插入行')}</MenuButton>
-              <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addRowAfter().run() })}>{t('在下方插入行')}</MenuButton>
-              <MenuButton icon={<PanelTop />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'row') })}>{t(commandState.rowIsHeader ? '取消表头行' : '设为表头行')}</MenuButton>
+              <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addRowBefore().run() })}>{t('contextRoom:tiptapTableControls.insertRowAbove')}</MenuButton>
+              <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addRowAfter().run() })}>{t('contextRoom:tiptapTableControls.insertRowBelow')}</MenuButton>
+              <MenuButton icon={<PanelTop />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'row') })}>{t(commandState.rowIsHeader ? 'contextRoom:tiptapTableControls.unsetHeaderRow' : 'contextRoom:tiptapTableControls.setHeaderRow')}</MenuButton>
               <span />
-              <MenuButton destructive disabled={!commandState.canDeleteRow} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteRow().run() })}>{t('删除当前行')}</MenuButton>
+              <MenuButton destructive disabled={!commandState.canDeleteRow} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteRow().run() })}>{t('contextRoom:tiptapTableControls.deleteCurrentRow')}</MenuButton>
             </>
           ) : null}
           {menu.kind === 'column' ? (
             <>
-              <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addColumnBefore().run() })}>{t('在左侧插入列')}</MenuButton>
-              <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addColumnAfter().run() })}>{t('在右侧插入列')}</MenuButton>
-              <MenuButton icon={<PanelLeft />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'column') })}>{t(commandState.columnIsHeader ? '取消表头列' : '设为表头列')}</MenuButton>
+              <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addColumnBefore().run() })}>{t('contextRoom:tiptapTableControls.insertColumnLeft')}</MenuButton>
+              <MenuButton icon={<Plus />} onClick={() => run(() => { editor.chain().focus().addColumnAfter().run() })}>{t('contextRoom:tiptapTableControls.insertColumnRight')}</MenuButton>
+              <MenuButton icon={<PanelLeft />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'column') })}>{t(commandState.columnIsHeader ? 'contextRoom:tiptapTableControls.unsetHeaderColumn' : 'contextRoom:tiptapTableControls.setHeaderColumn')}</MenuButton>
               <span />
-              <MenuButton destructive disabled={!commandState.canDeleteColumn} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteColumn().run() })}>{t('删除当前列')}</MenuButton>
+              <MenuButton destructive disabled={!commandState.canDeleteColumn} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteColumn().run() })}>{t('contextRoom:tiptapTableControls.deleteCurrentColumn')}</MenuButton>
             </>
           ) : null}
           {menu.kind === 'cell' ? (
             <>
-              <MenuButton disabled={!commandState.canMerge} icon={<Merge />} onClick={() => run(() => { editor.chain().focus().mergeCells().run() })}>{t('合并所选单元格')}</MenuButton>
-              <MenuButton disabled={!commandState.canSplit} icon={<Split />} onClick={() => run(() => { editor.chain().focus().splitCell().run() })}>{t('拆分单元格')}</MenuButton>
-              <MenuButton icon={<Rows3 />} onClick={() => run(() => { editor.chain().focus().toggleHeaderCell().run() })}>{t('切换表头单元格')}</MenuButton>
+              <MenuButton disabled={!commandState.canMerge} icon={<Merge />} onClick={() => run(() => { editor.chain().focus().mergeCells().run() })}>{t('contextRoom:tiptapTableControls.mergeSelectedCells')}</MenuButton>
+              <MenuButton disabled={!commandState.canSplit} icon={<Split />} onClick={() => run(() => { editor.chain().focus().splitCell().run() })}>{t('contextRoom:tiptapTableControls.splitCell')}</MenuButton>
+              <MenuButton icon={<Rows3 />} onClick={() => run(() => { editor.chain().focus().toggleHeaderCell().run() })}>{t('contextRoom:tiptapTableControls.toggleHeaderCell')}</MenuButton>
             </>
           ) : null}
           {menu.kind === 'table' ? (
             <>
-              <MenuButton icon={<Rows3 />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'row') })}>{t(commandState.rowIsHeader ? '取消表头行' : '设为表头行')}</MenuButton>
-              <MenuButton icon={<Columns3 />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'column') })}>{t(commandState.columnIsHeader ? '取消表头列' : '设为表头列')}</MenuButton>
+              <MenuButton icon={<Rows3 />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'row') })}>{t(commandState.rowIsHeader ? 'contextRoom:tiptapTableControls.unsetHeaderRow' : 'contextRoom:tiptapTableControls.setHeaderRow')}</MenuButton>
+              <MenuButton icon={<Columns3 />} onClick={() => run(() => { toggleTableHeaderAxis(editor, 'column') })}>{t(commandState.columnIsHeader ? 'contextRoom:tiptapTableControls.unsetHeaderColumn' : 'contextRoom:tiptapTableControls.setHeaderColumn')}</MenuButton>
               <span />
-              <MenuButton destructive disabled={!commandState.canDeleteTable} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteTable().run() })}>{t('删除表格')}</MenuButton>
+              <MenuButton destructive disabled={!commandState.canDeleteTable} icon={<Trash2 />} onClick={() => run(() => { editor.chain().focus().deleteTable().run() })}>{t('contextRoom:tiptapTableControls.deleteTable')}</MenuButton>
             </>
           ) : null}
         </div>

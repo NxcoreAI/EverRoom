@@ -4,31 +4,49 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
+  CreateContextRoomInput,
   SaveContextRoomSnapshotInput,
 } from '@nxcore/agent-contract'
 import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
   MemoryDocumentRewriteInput,
+  MemoryOnboardingInput,
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
+import {
+  isDesktopLocale,
+  translateDesktopMessage,
+  type DesktopLocale,
+} from '../shared/i18n/desktop'
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
 let pendingRequestError: DesktopRequestError | null = null
+let currentLocale: DesktopLocale = 'zh-CN'
+
+function desktopText(key: Parameters<typeof translateDesktopMessage>[1]): string {
+  return translateDesktopMessage(currentLocale, key)
+}
+
+function isRateLimitMessage(message: string): boolean {
+  return message === translateDesktopMessage('zh-CN', 'error.rateLimited.message')
+    || message === translateDesktopMessage('en-US', 'error.rateLimited.message')
+}
 
 function errorMessage(error: unknown): string {
-  if (!(error instanceof Error)) return '请求失败，请稍后重试。'
-  return error.message
+  if (!(error instanceof Error)) return desktopText('error.requestFailed')
+  const message = error.message
     .replace(/^Error invoking remote method '[^']+': (?:[A-Za-z][A-Za-z0-9]*Error|Error):\s*/, '')
     .replace(/^Error:\s*/, '')
+  return isRateLimitMessage(message) ? desktopText('error.rateLimited.message') : message
 }
 
 function requestError(channel: string, error: unknown): DesktopRequestError {
   const message = errorMessage(error)
-  if (message.includes('请求过于频繁')) {
-    return { channel, severity: 'notice', title: '操作稍后继续', message }
+  if (isRateLimitMessage(message)) {
+    return { channel, severity: 'notice', title: desktopText('error.rateLimited.title'), message }
   }
   return { channel, severity: 'error', message }
 }
@@ -43,7 +61,12 @@ function rateLimitNotice(value: unknown): DesktopRequestError | null {
   if (!value || typeof value !== 'object') return null
   const result = value as { __everroomRateLimited?: unknown; message?: unknown }
   if (result.__everroomRateLimited !== true || typeof result.message !== 'string') return null
-  return { channel: '', severity: 'notice', title: '操作稍后继续', message: result.message }
+  return {
+    channel: '',
+    severity: 'notice',
+    title: desktopText('error.rateLimited.title'),
+    message: desktopText('error.rateLimited.message'),
+  }
 }
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -55,7 +78,7 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
     reportRequestError(notice)
     throw new Error(notice.message)
   } catch (error) {
-    if (error instanceof Error && error.message === '请求过于频繁，请稍后重试。') throw error
+    if (error instanceof Error && isRateLimitMessage(error.message)) throw error
     const detail = requestError(channel, error)
     reportRequestError(detail)
     throw new Error(detail.message)
@@ -75,6 +98,13 @@ async function invokeQuietly<T>(channel: string, ...args: unknown[]): Promise<T>
 
 const api: NxcoreDesktopApi = {
   platform: process.platform,
+  locale: {
+    set: (locale) => {
+      if (!isDesktopLocale(locale)) return
+      currentLocale = locale
+      ipcRenderer.send('app:set-locale', locale)
+    },
+  },
   clipboard: {
     writeText: (text) => invokeQuietly('system-clipboard:write-text', text),
   },
@@ -168,6 +198,7 @@ const api: NxcoreDesktopApi = {
   },
   contextRooms: {
     list: () => invokeQuietly('context-rooms:list'),
+    create: (input: CreateContextRoomInput) => invokeQuietly('context-rooms:create', input),
     syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
       invokeQuietly('context-rooms:sync-snapshot', input),
   },
@@ -209,6 +240,7 @@ const api: NxcoreDesktopApi = {
   },
   memory: {
     overview: () => invoke('memory:overview'),
+    startOnboarding: (input: MemoryOnboardingInput) => invoke('memory:onboarding:start', input),
     listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
     searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
     updateAtomic: (id: string, content: string, background?: string) =>
@@ -358,6 +390,7 @@ const api: NxcoreDesktopApi = {
   },
   knowledge: {
     listRooms: (origin) => invoke('knowledge:rooms:list', origin),
+    getRoomContext: (roomId) => invoke('knowledge:rooms:context', roomId),
     upsertRoom: (input) => invoke('knowledge:rooms:upsert', input),
     deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
     listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),

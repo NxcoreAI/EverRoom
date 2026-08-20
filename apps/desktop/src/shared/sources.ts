@@ -20,6 +20,8 @@ import type {
   AgentSessionSnapshot,
   AgentSocketFrame,
   ContextRoomSnapshot,
+  CreateContextRoomInput,
+  CreateContextRoomResult,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   DocumentEventFrame,
@@ -73,6 +75,7 @@ import type {
   KnowledgeEntityStatus,
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
+  KnowledgeRoomContextDto,
   KnowledgeRoomDto,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
@@ -96,6 +99,7 @@ import type {
   ConnectorSyncRun,
   ConnectorSyncStatus,
 } from './connector-sync'
+import type { DesktopLocale } from './i18n/desktop'
 
 export interface EvidenceBlock {
   id: string
@@ -367,6 +371,8 @@ export interface PerceptionNode {
   status: string
   eventType: string | null
   tags: string[]
+  keyPoints: string[]
+  insightTags: RealityTag[]
   confidence: number | null
   model: string | null
   error: string | null
@@ -506,6 +512,9 @@ export interface DesktopDiagnosticLogInput {
 
 export interface NxcoreDesktopApi {
   platform: string
+  locale: {
+    set(locale: DesktopLocale): void
+  }
   clipboard: {
     writeText(text: string): Promise<void>
   }
@@ -589,6 +598,7 @@ export interface NxcoreDesktopApi {
   }
   contextRooms: {
     list(): Promise<ContextRoomSnapshot>
+    create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
     syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
   }
   account: {
@@ -629,6 +639,7 @@ export interface NxcoreDesktopApi {
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>
+    startOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResultDto>
     listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
     searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
     updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
@@ -749,6 +760,7 @@ export interface NxcoreDesktopApi {
   }
   knowledge: {
     listRooms(origin?: 'user' | 'auto'): Promise<{ items: KnowledgeRoomDto[] }>
+    getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto>
     upsertRoom(input: { id: string; title: string; kind?: string }): Promise<KnowledgeRoomDto>
     deleteRoom(roomId: string): Promise<void>
     listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
@@ -820,6 +832,8 @@ import type {
   MemoryDocumentDto,
   MemoryImportMarkdownResultDto,
   MemoryDocumentRewriteInput,
+  MemoryOnboardingInput,
+  MemoryOnboardingResultDto,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,

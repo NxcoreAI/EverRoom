@@ -23,7 +23,7 @@ export function AppToast() {
     <div className="app-toast" role="status" aria-live="polite">
       <span aria-hidden="true"><Info /></span>
       <div><strong>{toast.title}</strong>{toast.message ? <small>{toast.message}</small> : null}</div>
-      <button type="button" aria-label={t('关闭提示')} title={t('关闭提示')} onClick={() => setToast(null)}><X aria-hidden="true" /></button>
+      <button type="button" aria-label={t('surface:appToast.dismissNotification')} title={t('surface:appToast.dismissNotification')} onClick={() => setToast(null)}><X aria-hidden="true" /></button>
     </div>
   )
 }

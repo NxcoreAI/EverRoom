@@ -26,11 +26,13 @@ import {
   createAgentRuntime,
   createBackgroundAgentRuntime,
   createConnectorSyncAgentRuntime,
+  createContextRoomAgentRuntime,
   createDiaryAgentRuntime,
 } from "../modules/agent/runtime-factory.js";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
+import { ContextRoomAgentEnricher } from "../modules/context-rooms/agent-enricher.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
@@ -77,6 +79,10 @@ import { NangoExecutor } from "../modules/connectors/nango-executor.js";
 import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
 import { bootstrapNango } from "../modules/connectors/nango-bootstrap.js";
 import { ConnectorDocumentStore } from "../modules/connectors/document-store.js";
+import {
+  bootstrapKnowledgeSpaceDemo,
+  KNOWLEDGE_SPACE_ROOM_ID,
+} from "../modules/demo/context-room-demo.js";
 
 function swaggerAssetsDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -184,7 +190,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
   const memoryService = new MemoryService(config.pi?.memory ?? null, app.log, { db, dataDir: config.dataDir });
-  const contextRoomService = new ContextRoomService(db);
+  const contextRoomAgentEnricher = new ContextRoomAgentEnricher(
+    createContextRoomAgentRuntime(config),
+    app.log,
+  );
+  const contextRoomService = new ContextRoomService(db, contextRoomAgentEnricher);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
   const documentService = new DocumentService(db, documentEventBroker, (document) => {
@@ -207,6 +217,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ), (error, documentId, currentVersion) => {
     app.log.warn({ err: error, documentId, currentVersion }, "document after-commit observer failed");
   });
+  if (config.demoDataEnabled === true) {
+    try {
+      const created = await bootstrapKnowledgeSpaceDemo(db, documentService);
+      if (created) app.log.info({ roomId: KNOWLEDGE_SPACE_ROOM_ID }, "starter Knowledge Space created");
+    } catch (error) {
+      app.log.warn({ err: error }, "starter Knowledge Space could not be created");
+    }
+  }
   const recoveredDocumentOperations = documentOperationService.recoverInterrupted();
   if (recoveredDocumentOperations > 0) {
     app.log.info({ recoveredDocumentOperations }, "interrupted document operations recovered");
@@ -253,7 +271,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const connectorSyncService = new ConnectorSyncService(db, config, app.log);
   const connectorSyncAgentRuntime = createConnectorSyncAgentRuntime(config, connectorSyncService);
   if (connectorSyncAgentRuntime) connectorSyncService.attachAgentRuntime(connectorSyncAgentRuntime);
-  await connectorSyncService.initialize();
   const agentRuntime = createAgentRuntime(config, documentMcpHost, {
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
@@ -315,7 +332,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const filesService = new FilesService(db, config.dataDir);
   const diaryAgentGenerator = new DiaryAgentGenerator(config.backgroundPi?.model ?? "builtin", app.log);
   const diaryAgentRuntime = createDiaryAgentRuntime(config, diaryAgentGenerator);
-  if (diaryAgentRuntime) diaryAgentGenerator.attachRuntime(diaryAgentRuntime);
+  if (diaryAgentRuntime) {
+    diaryAgentGenerator.attachRuntime(diaryAgentRuntime);
+    app.log.info({
+      event: "diary.agent.runtime_configured",
+      model: config.backgroundPi?.model ?? "builtin",
+      maxTokens: config.diaryMaxTokens ?? Math.max(config.backgroundPi?.maxTokens ?? 0, 16_384),
+    }, "diary Agent runtime configured");
+  }
   const diaryMemoryQuery = async ({ start, end }: { start: Date; end: Date }): Promise<DiarySource[]> => {
     if (!memoryService.enabled) return [];
     const atomicItems: MemoryAtomicDto[] = [];
@@ -379,7 +403,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
     (at) => diaryService.markStaleAt(at),
   );
-  perceptionService.initialize();
   const realityService = new RealityService(db, config.asrInputDir, app.log);
   const recoveredCaptures = realityService.recoverInterruptedCaptures();
   if (recoveredCaptures > 0) {
@@ -410,6 +433,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await perceptionService.dispose();
     await diaryService.dispose();
     await diaryAgentGenerator.dispose();
+    await contextRoomAgentEnricher.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
     sqlite.close();
@@ -449,6 +473,45 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
     },
   );
+  realityService.setReadySink(async (event) => {
+    diaryService.markStaleAt(new Date(event.startedAt));
+    const roomEnabled = knowledgeService.routerEnabled;
+    const memoryEnabled = memoryService.enabled;
+    if (!roomEnabled && !memoryEnabled) return;
+    await ingestService.ingest({
+      source: { ref: { sourceKind: "reality-event", sourceId: event.id } },
+      dataType: "meeting-minutes",
+      occurredAt: event.endedAt ?? event.startedAt,
+      pipelines: { room: roomEnabled, wiki: roomEnabled, memory: memoryEnabled },
+      originChannel: "reality",
+    });
+  });
+  perceptionService.setReadySink(async (evidence) => {
+    const roomEnabled = knowledgeService.routerEnabled;
+    const memoryEnabled = memoryService.enabled;
+    if (!roomEnabled && !memoryEnabled) return;
+    await ingestService.ingestVisualEvent({
+      ...evidence,
+      pipelines: { room: roomEnabled, wiki: roomEnabled, memory: memoryEnabled },
+    });
+  });
+  perceptionService.initialize();
+  connectorSyncService.setEvidenceSink(async (evidence) => {
+    diaryService.markStaleAt(new Date(evidence.occurredAt));
+    const roomEnabled = knowledgeService.routerEnabled;
+    const memoryEnabled = memoryService.enabled;
+    if (!roomEnabled && !memoryEnabled) return;
+    await ingestService.ingestConnector({
+      kind: evidence.sourceKind,
+      sourceId: evidence.sourceId,
+      dataType: evidence.dataType,
+      title: evidence.title,
+      markdown: evidence.markdown,
+      occurredAt: evidence.occurredAt,
+      pipelines: { room: roomEnabled, wiki: roomEnabled, memory: memoryEnabled },
+    });
+  });
+  await connectorSyncService.initialize();
   // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
   // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
   connectorManager.setMemorySink((input) =>
