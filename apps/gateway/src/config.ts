@@ -125,6 +125,12 @@ const RawConfigSchema = Type.Object(
     knowledgeEmbeddingModel: Type.String(),
     knowledgeEmbeddingBaseUrl: Type.String(),
     knowledgeEmbeddingApiKey: Type.String(),
+    ingestFilterEnabled: Type.Boolean(),
+    ingestFilterMode: Type.Union([Type.Literal("observe"), Type.Literal("enforce")]),
+    ingestFilterConfidenceThreshold: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+    ingestFilterBatchSize: Type.Integer({ minimum: 1, maximum: 20 }),
+    ingestFilterBatchDelayMs: Type.Integer({ minimum: 0 }),
+    ingestFilterExemptSourceKinds: Type.String(),
   },
   { additionalProperties: false },
 );
@@ -218,6 +224,21 @@ export interface KnowledgeLlmConfig {
   model: string;
 }
 
+/** agent 过滤器（ingest 第一级闸门）：无价值资料不进下游链路。 */
+export interface IngestFilterConfig {
+  enabled: boolean;
+  /** observe = 只记 verdict 不拦截；enforce = 拦截。 */
+  mode: "observe" | "enforce";
+  /** 低于阈值的 filtered 判定放行（宁漏勿错杀）。 */
+  confidenceThreshold: number;
+  /** 去抖批大小（一次 agent run 批量判定条数上限）。 */
+  batchSize: number;
+  /** 去抖批等待窗口 ms。 */
+  batchDelayMs: number;
+  /** 豁免 sourceKind（用户手写/录音转写内容默认豁免，agent 不判生死）。 */
+  exemptSourceKinds: string[];
+}
+
 export interface OpenConnectorCliConfig {
   executable: string;
   baseUrl: string;
@@ -263,6 +284,8 @@ export interface GatewayConfig {
   pi: PiRuntimeConfig | null;
   cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
+  /** agent 过滤器（ingest 第一级闸门）配置；enabled=false 直通。 */
+  ingestFilter: IngestFilterConfig;
   backgroundPi: PiRuntimeConfig | null;
   /** 日记 Agent 的独立输出预算，避免被短任务的后台预算截断。 */
   diaryMaxTokens?: number;
@@ -727,6 +750,24 @@ export function loadConfig(
     knowledgeEmbeddingModel: env.NXCORE_KNOWLEDGE_EMBEDDING_MODEL?.trim() ?? "",
     knowledgeEmbeddingBaseUrl: env.NXCORE_KNOWLEDGE_EMBEDDING_BASE_URL?.trim() ?? "",
     knowledgeEmbeddingApiKey: env.NXCORE_KNOWLEDGE_EMBEDDING_API_KEY?.trim() ?? "",
+    ingestFilterEnabled: env.NXCORE_INGEST_FILTER_ENABLED == null
+      ? false
+      : parseBoolean("NXCORE_INGEST_FILTER_ENABLED", env.NXCORE_INGEST_FILTER_ENABLED.trim()),
+    ingestFilterMode: env.NXCORE_INGEST_FILTER_MODE?.trim() === "enforce" ? "enforce" : "observe",
+    ingestFilterConfidenceThreshold: parseFraction(
+      "NXCORE_INGEST_FILTER_CONFIDENCE_THRESHOLD",
+      env.NXCORE_INGEST_FILTER_CONFIDENCE_THRESHOLD ?? "0.7",
+    ),
+    ingestFilterBatchSize: parsePositiveInteger(
+      "NXCORE_INGEST_FILTER_BATCH_SIZE",
+      env.NXCORE_INGEST_FILTER_BATCH_SIZE ?? "5",
+    ),
+    ingestFilterBatchDelayMs: parseNonNegativeInteger(
+      "NXCORE_INGEST_FILTER_BATCH_DELAY_MS",
+      env.NXCORE_INGEST_FILTER_BATCH_DELAY_MS ?? "120000",
+    ),
+    ingestFilterExemptSourceKinds: env.NXCORE_INGEST_FILTER_EXEMPT_SOURCE_KINDS?.trim()
+      ?? "everroom-doc,reality-event",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -994,5 +1035,16 @@ export function loadConfig(
         }
       : null,
     knowledge: knowledgeGateway,
+    ingestFilter: {
+      enabled: rawConfig.ingestFilterEnabled,
+      mode: rawConfig.ingestFilterMode,
+      confidenceThreshold: rawConfig.ingestFilterConfidenceThreshold,
+      batchSize: Math.min(rawConfig.ingestFilterBatchSize, 20),
+      batchDelayMs: rawConfig.ingestFilterBatchDelayMs,
+      exemptSourceKinds: rawConfig.ingestFilterExemptSourceKinds
+        .split(",")
+        .map((kind) => kind.trim())
+        .filter(Boolean),
+    },
   };
 }
