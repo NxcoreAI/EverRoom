@@ -225,6 +225,23 @@ describe("loadConfig", () => {
     });
   });
 
+  it("uses Aliyun credentials for web search instead of an unrelated main model key", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_AI_PROVIDER: "openai",
+      NXCORE_AI_MODEL: "gpt-main",
+      NXCORE_AI_BASE_URL: "https://api.openai.com/v1",
+      NXCORE_AI_API_KEY: "main-model-key",
+      NXCORE_ASR_ALIYUN_API_KEY: "dashscope-key",
+    });
+
+    expect(config.webSearch).toMatchObject({
+      apiKey: "dashscope-key",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-plus",
+    });
+  });
+
   it("rejects incomplete or unsafe Aliyun ASR configuration", () => {
     expect(() => loadConfig(["--token", "0123456789abcdef"], {
       NXCORE_ASR_PROVIDER: "aliyun",

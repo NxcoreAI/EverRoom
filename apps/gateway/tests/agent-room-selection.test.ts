@@ -230,6 +230,37 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
+  it('requires Room selection for an English document creation request', async () => {
+    const { rooms: roomRegistry, runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: 'Home', roomId: null })
+    const rooms = [{ id: 'room-a', title: 'Java backend', kind: 'Project' }]
+    roomRegistry.saveSnapshot({
+      rooms: rooms.map((room) => ({ ...room, data: room })),
+      deletedRooms: [],
+    })
+
+    const run = await service.startRun(session.id, {
+      prompt: 'help me to draft a java back-end guide book doc in current room',
+      idempotencyKey: 'english-global-list-run',
+      context: { rooms },
+    })
+
+    expect(runtime.starts).toEqual([])
+    expect(run.status).toBe('completed')
+    expect(service.listEvents(session.id, run.id, 0)[3]?.payload).toMatchObject({
+      name: 'context_room_list',
+      result: {
+        rooms,
+        selectionRequired: true,
+        pendingIntent: expect.objectContaining({
+          originalPrompt: 'help me to draft a java back-end guide book doc in current room',
+          targetCapability: 'document.create',
+        }),
+      },
+    })
+    sqlite.close()
+  })
+
   it('keeps document discussion in the Agent instead of opening the Room picker', async () => {
     const { runtime, service, sqlite } = await createHarness()
     const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
