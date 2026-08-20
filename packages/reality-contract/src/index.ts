@@ -2,7 +2,6 @@ export const REALITY_PROTOCOL_VERSION = 1 as const;
 
 export type RealityEventStatus =
   | "ongoing"
-  | "pending_confirmation"
   | "completed"
   | "failed"
   | "pending_sync";

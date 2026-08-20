@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./everroom.svg" alt="Everroom logo" width="112" height="112">
+<img src="./everroom_logo/everroom_full.png" alt="Everroom logo" width="360">
 
 # Everroom
 

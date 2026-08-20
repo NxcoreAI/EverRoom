@@ -1,6 +1,16 @@
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/i18n/LocaleContext')>()
+  return {
+    ...actual,
+    useLocale: () => ({
+      t: (message: string, values?: Record<string, string | number>) => actual.translate('zh-CN', message, values),
+    }),
+  }
+})
+
 import { KnowledgePendingPanel } from '../src/renderer/src/components/context-room/ported/components/KnowledgePendingPanel'
 
 function entity(id: string, evidenceScore: number) {

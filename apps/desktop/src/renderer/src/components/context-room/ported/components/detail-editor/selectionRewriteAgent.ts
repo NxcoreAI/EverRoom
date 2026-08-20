@@ -164,6 +164,8 @@ export async function streamSelectionRewrite(
       idempotencyKey: crypto.randomUUID(),
       responseLanguage: options.responseLanguage,
       captureMemory: false,
+      recallMemory: false,
+      toolsEnabled: false,
     })
     runId = run.id
     if (options.signal.aborted) {

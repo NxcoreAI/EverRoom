@@ -10,7 +10,7 @@ import {
 import { eq } from "drizzle-orm";
 import { FilesService } from "../files/service.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { gatewayMetadata } from "../../infrastructure/database/schema.js";
+import { agentSessions, gatewayMetadata } from "../../infrastructure/database/schema.js";
 import { MemoryGatewayError } from "./errors.js";
 
 /** UI 浏览场景的超时：比 agent 注入流程（3s）宽松，但仍在交互可接受范围。 */
@@ -96,10 +96,18 @@ export interface MemoryScenarioEntryDto {
   updatedAt: string;
 }
 
-/** 渲染层 DTO：单个提炼层的运行状态（省略 session 明细）。 */
+export interface MemoryPipelineSessionDto {
+  sessionId: string;
+  title: string | null;
+  latestUserMessage: string | null;
+}
+
+/** 渲染层 DTO：单个提炼层的运行状态。 */
 export interface MemoryPipelineStageDto {
   queued: number;
   running: number;
+  queuedSessions: MemoryPipelineSessionDto[];
+  runningSessions: MemoryPipelineSessionDto[];
   idle: boolean;
 }
 
@@ -112,10 +120,23 @@ export interface MemoryOverviewDto {
   pipeline: { l1: MemoryPipelineStageDto; l2: MemoryPipelineStageDto; l3: MemoryPipelineStageDto } | null;
 }
 
-function toStageDto(stage: MemoryPipelineStatus["l1"]): MemoryPipelineStageDto {
+function toStageDto(
+  stage: MemoryPipelineStatus["l1"],
+  sessions: Map<string, MemoryPipelineSessionDto>,
+): MemoryPipelineStageDto {
   return {
     queued: stage.queued,
     running: stage.running,
+    queuedSessions: (stage.queued_sessions ?? []).map((sessionId) => sessions.get(sessionId) ?? {
+      sessionId,
+      title: null,
+      latestUserMessage: null,
+    }),
+    runningSessions: (stage.running_sessions ?? []).map((sessionId) => sessions.get(sessionId) ?? {
+      sessionId,
+      title: null,
+      latestUserMessage: null,
+    }),
     idle: stage.idle,
   };
 }
@@ -278,6 +299,10 @@ export class MemoryService {
       // L1 全部探测失败说明 MemoryCore 整体不可用，总览不应假装"未知"。
       this.mapFailure((l1All as PromiseRejectedResult).reason);
     }
+    const pipelineSessions = pipeline.status === "fulfilled"
+      ? await this.loadPipelineSessions(pipeline.value)
+      : new Map<string, MemoryPipelineSessionDto>();
+
     return {
       l1: {
         total: l1Total ?? (episodic ?? 0) + (persona ?? 0) + (instruction ?? 0),
@@ -294,12 +319,53 @@ export class MemoryService {
         : null,
       pipeline: pipeline.status === "fulfilled"
         ? {
-            l1: toStageDto(pipeline.value.l1),
-            l2: toStageDto(pipeline.value.l2),
-            l3: toStageDto(pipeline.value.l3),
+            l1: toStageDto(pipeline.value.l1, pipelineSessions),
+            l2: toStageDto(pipeline.value.l2, pipelineSessions),
+            l3: toStageDto(pipeline.value.l3, pipelineSessions),
           }
         : null,
     };
+  }
+
+  /** Pipeline status only carries session IDs; resolve a small active subset for the desktop. */
+  private async loadPipelineSessions(status: MemoryPipelineStatus): Promise<Map<string, MemoryPipelineSessionDto>> {
+    const ids = [...new Set([
+      ...(status.l1.queued_sessions ?? []),
+      ...(status.l1.running_sessions ?? []),
+      ...(status.l2.queued_sessions ?? []),
+      ...(status.l2.running_sessions ?? []),
+      ...(status.l3.queued_sessions ?? []),
+      ...(status.l3.running_sessions ?? []),
+    ])].slice(0, 6);
+    const resolved = await Promise.all(ids.map(async (sessionId) => {
+      const row = this.db
+        ?.select({ title: agentSessions.title })
+        .from(agentSessions)
+        .where(eq(agentSessions.id, sessionId))
+        .get();
+      let latestUserMessage: string | null = null;
+      try {
+        const page = await this.call(() => this.require().queryConversation({ sessionId, limit: 20, offset: 0 }));
+        const latest = page.messages
+          .filter((message) => message.role === "user")
+          .slice()
+          .sort((left, right) => {
+            const leftTime = Date.parse(left.timestamp ?? left.recorded_at ?? "");
+            const rightTime = Date.parse(right.timestamp ?? right.recorded_at ?? "");
+            return leftTime - rightTime;
+          })
+          .at(-1);
+        latestUserMessage = latest?.content?.trim().slice(0, 180) || null;
+      } catch {
+        // A pipeline session can disappear between status and conversation read.
+      }
+      return [sessionId, {
+        sessionId,
+        title: row?.title?.trim() || null,
+        latestUserMessage,
+      }] as const;
+    }));
+    return new Map(resolved);
   }
 
   async listAtomic(options: MemoryListOptions): Promise<{ items: MemoryAtomicDto[]; total: number }> {

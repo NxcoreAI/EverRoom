@@ -71,7 +71,6 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
       : value
     if (Object.is(current, next)) return
     stateRef.current = next
-    setBackendReady(false)
     setState(next)
   }, [])
 

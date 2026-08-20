@@ -1,10 +1,17 @@
-import everroomLogo from '@/assets/nxcore-logo.svg'
+import everroomAppIcon from '@/assets/everroom-app-icon.png'
+import everroomFullLogo from '@/assets/everroom-full.png'
 
-export function ProductLogo({ className }: { className?: string }) {
+export function ProductLogo({
+  className,
+  variant = 'icon',
+}: {
+  className?: string
+  variant?: 'full' | 'icon'
+}) {
   return (
     <img
       className={className}
-      src={everroomLogo}
+      src={variant === 'full' ? everroomFullLogo : everroomAppIcon}
       alt=""
       aria-hidden="true"
       draggable={false}

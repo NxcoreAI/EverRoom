@@ -233,6 +233,14 @@ const api: NxcoreDesktopApi = {
   },
   transcriptions: {
     syncPrivate: (options) => options?.quiet ? invokeQuietly('transcription:sync-private') : invoke('transcription:sync-private'),
+    onSyncCompleted: (listener) => {
+      const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        if (!value || typeof value !== 'object' || typeof (value as { completedAt?: unknown }).completedAt !== 'string') return
+        listener(value as { completedAt: string })
+      }
+      ipcRenderer.on('transcription:sync-completed', handle)
+      return () => ipcRenderer.removeListener('transcription:sync-completed', handle)
+    },
     listPrivate: () => invoke('transcription:list-private'),
     listTags: () => invoke('transcription:list-tags'),
     replaceSummaryTags: (summaryRecordId, tags) => invoke('transcription:replace-summary-tags', summaryRecordId, tags),

@@ -37,7 +37,10 @@ function toEvent(row: typeof realityEvents.$inferSelect): RealityEvent {
   return {
     id: row.id,
     title: row.title,
-    status: row.status,
+    // 兼容旧库遗留的 pending_confirmation（状态已废弃，语义等同完成）。
+    status: row.status === ("pending_confirmation" as typeof row.status)
+      ? ("completed" as const)
+      : row.status,
     processingState: row.processingState,
     captureDevice: row.captureDevice,
     processingDevice: row.processingDevice,

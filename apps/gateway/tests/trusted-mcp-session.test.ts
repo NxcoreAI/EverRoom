@@ -81,6 +81,7 @@ describe('trusted document MCP sessions', () => {
     const run = await agent.startRun(session.id, {
       prompt: '读取当前 Room 文档',
       idempotencyKey: 'trusted-mcp-run',
+      context: { selectedRoomId: 'room-a' },
     })
 
     expect(() => agent.createTrustedMcpSession(session.id, run.id, 'room-b'))

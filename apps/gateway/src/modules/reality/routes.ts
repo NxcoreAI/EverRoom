@@ -66,7 +66,6 @@ const AsrBody = Type.Object({
 
 const StatusSchema = Type.Union([
   Type.Literal("ongoing"),
-  Type.Literal("pending_confirmation"),
   Type.Literal("completed"),
   Type.Literal("failed"),
   Type.Literal("pending_sync"),

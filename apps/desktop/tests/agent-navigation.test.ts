@@ -31,11 +31,12 @@ describe('Agent navigation session handoff', () => {
     expect(navigationRequiresSessionHandoff(request('room-1', 'room-1'))).toBe(false)
   })
 
-  it('creates a linked conversation when navigation crosses Rooms', () => {
-    expect(navigationRequiresSessionHandoff(request('room-1', 'room-2'))).toBe(true)
+  it('keeps the current conversation when navigation crosses Rooms', () => {
+    // Agent conversation state is global and stays selected across Rooms.
+    expect(navigationRequiresSessionHandoff(request('room-1', 'room-2'))).toBe(false)
   })
 
-  it('creates a linked conversation when entering a Room from a global page', () => {
-    expect(navigationRequiresSessionHandoff(request(null, 'room-1'))).toBe(true)
+  it('keeps the current conversation when entering a Room from a global page', () => {
+    expect(navigationRequiresSessionHandoff(request(null, 'room-1'))).toBe(false)
   })
 })

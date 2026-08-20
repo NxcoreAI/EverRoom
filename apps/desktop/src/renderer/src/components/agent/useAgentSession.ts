@@ -39,38 +39,47 @@ export function mergePendingAgentMessages(
   pendingMessages: DisplayAgentMessage[],
 ): DisplayAgentMessage[] {
   if (pendingMessages.length === 0) return messages
-  const messageIds = new Set(messages.map((message) => message.id))
-  return [...messages, ...pendingMessages.filter((message) => !messageIds.has(message.id))]
+  return [...messages, ...pendingMessages.filter((message) => !messages.some((existing) => (
+    existing.id === message.id
+    || (existing.runId === message.runId && existing.role === message.role && existing.content === message.content)
+  )))]
 }
 
-const SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
+const SESSION_STORAGE_KEY = 'nxcore-ce:agent-session:v2'
+const LEGACY_SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
 const defaultSessionCreations = new Map<string, Promise<AgentSession>>()
 
-function sessionScope(pageLabel: string, roomId: string | null): string {
-  return `${pageLabel}:${roomId ?? 'global'}`
+function isUserSession(session: AgentSession): boolean {
+  return session.pageLabel !== 'Remote Agent'
+    && !session.pageLabel.startsWith('AI ')
 }
 
-function readStoredSession(pageLabel: string, roomId: string | null): string | null {
+function sessionScope(_pageLabel?: string, _roomId?: string | null): string {
+  return 'global'
+}
+
+function readStoredSession(): string | null {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}')
+    const stored = localStorage.getItem(SESSION_STORAGE_KEY)
+      ?? localStorage.getItem(LEGACY_SESSION_STORAGE_KEY)
+      ?? '{}'
+    const value: unknown = JSON.parse(stored)
+    if (typeof value === 'string') return value
     if (!value || typeof value !== 'object') return null
-    const sessionId = (value as Record<string, unknown>)[sessionScope(pageLabel, roomId)]
-    return typeof sessionId === 'string' ? sessionId : null
+    const record = value as Record<string, unknown>
+    if (typeof record.global === 'string') return record.global
+    // Migrate the old per-page/per-Room map by keeping one last selection.
+    const legacy = Object.values(record).find((sessionId): sessionId is string => typeof sessionId === 'string')
+    return legacy ?? null
   } catch {
     return null
   }
 }
 
-function storeSession(pageLabel: string, roomId: string | null, sessionId: string | null): void {
+function storeSession(sessionId: string | null): void {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}')
-    const sessions = value && typeof value === 'object'
-      ? { ...(value as Record<string, unknown>) }
-      : {}
-    const scope = sessionScope(pageLabel, roomId)
-    if (sessionId) sessions[scope] = sessionId
-    else delete sessions[scope]
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions))
+    if (sessionId) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionId))
+    else localStorage.removeItem(SESSION_STORAGE_KEY)
   } catch {
     // Session persistence is optional when browser storage is unavailable.
   }
@@ -130,6 +139,43 @@ export function useAgentSession(
     }))
 
     if (event.type === 'run.accepted' || event.type === 'run.started') {
+      if (event.type === 'run.accepted') {
+        const prompt = (event.payload as { prompt?: unknown }).prompt
+        if (typeof prompt === 'string' && prompt.trim()) {
+          setMessages((current) => {
+            const existing = current.find((message) =>
+              message.role === 'user'
+              && (
+                message.runId === event.runId
+                || (message.runId === 'pending' && message.content === prompt)
+              )
+            )
+
+            if (existing) {
+              return current
+                .filter((message) => message.id === existing.id || !(
+                  message.id !== existing.id
+                  && message.role === 'user'
+                  && message.content === prompt
+                  && (message.runId === 'pending' || message.runId === event.runId)
+                ))
+                .map((message) => message.id === existing.id
+                  ? { ...message, sessionId: event.sessionId, runId: event.runId }
+                  : message
+                )
+            }
+
+            return [...current, {
+              id: `user-${event.runId}`,
+              sessionId: event.sessionId,
+              runId: event.runId,
+              role: 'user',
+              content: prompt,
+              createdAt: event.occurredAt,
+            }]
+          })
+        }
+      }
       setActiveRunId(event.runId)
       setRunStartedAtByRun((current) => current[event.runId]
         ? current
@@ -336,9 +382,9 @@ export function useAgentSession(
       ? current.map((session) => session.id === snapshot.session.id ? snapshot.session : session)
       : [snapshot.session, ...current])
     sessionIdRef.current = snapshot.session.id
-    storeSession(pageLabel, roomId, snapshot.session.id)
+    storeSession(snapshot.session.id)
     return true
-  }, [api, pageLabel, roomId])
+  }, [api])
 
   const selectSession = useCallback(async (
     session: AgentSession,
@@ -358,7 +404,7 @@ export function useAgentSession(
       const snapshot = await api.getSession(session.id)
       const hydrated = await hydrateSnapshot(snapshot, pendingMessages, expectedScope)
       if (!hydrated || expectedScope !== activeScopeRef.current) return
-      storeSession(pageLabel, roomId, session.id)
+      storeSession(session.id)
       await api.subscribe(session.id)
     } catch (requestError) {
       if (expectedScope === activeScopeRef.current && session.id === sessionIdRef.current) {
@@ -369,7 +415,7 @@ export function useAgentSession(
     } finally {
       if (expectedScope === activeScopeRef.current && session.id === sessionIdRef.current) setLoading(false)
     }
-  }, [api, hydrateSnapshot, pageLabel, roomId])
+  }, [api, hydrateSnapshot])
 
   useLayoutEffect(() => {
     let alive = true
@@ -392,20 +438,21 @@ export function useAgentSession(
 
     if (api) {
       setLoading(true)
-      void api.listSessions(pageLabel, roomId)
+      void api.listSessions()
         .then(async (listedSessions) => {
           if (!alive) return
-          setSessions(listedSessions)
-          const storedSessionId = readStoredSession(pageLabel, roomId)
-          const selected = listedSessions.find((session) => session.id === storedSessionId)
-            ?? listedSessions[0]
+          const userSessions = listedSessions.filter(isUserSession)
+          setSessions(userSessions)
+          const storedSessionId = readStoredSession()
+          const selected = userSessions.find((session) => session.id === storedSessionId)
+            ?? userSessions[0]
           if (selected) await selectSession(selected)
           else if (alive) {
-            const scope = sessionScope(pageLabel, roomId)
+            const scope = sessionScope()
             setDisplayTitle(t('surface:useAgentSession.newConversation'))
             let creation = defaultSessionCreations.get(scope)
             if (!creation) {
-              creation = api.createSession({ pageLabel, roomId })
+              creation = api.createSession({ pageLabel: 'Agent', roomId: null })
               defaultSessionCreations.set(scope, creation)
               const clear = () => {
                 if (defaultSessionCreations.get(scope) === creation) {
@@ -454,7 +501,7 @@ export function useAgentSession(
       removeListener?.()
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, pageLabel, roomId, selectSession])
+  }, [api, applyEvent, hydrateSnapshot, selectSession])
 
   const createSession = async (
     pendingMessages: DisplayAgentMessage[] = [],
@@ -462,7 +509,7 @@ export function useAgentSession(
     if (!api) throw new Error(t('surface:useAgentSession.desktopOnly'))
     if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
-      const session = await api.createSession({ pageLabel, roomId })
+      const session = await api.createSession({ pageLabel: 'Agent', roomId: null })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
       return session
@@ -518,7 +565,7 @@ export function useAgentSession(
           eventsByRun.current.clear()
           sequenceByRun.current.clear()
           setConnected(false)
-          storeSession(pageLabel, roomId, null)
+          storeSession(null)
           try {
             await createSession()
           } catch {
@@ -599,7 +646,7 @@ export function useAgentSession(
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
         responseLanguage: locale,
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel),
       })
       const updatedAt = new Date().toISOString()
       const runCompleted = terminalRunIdsRef.current.has(run.id)

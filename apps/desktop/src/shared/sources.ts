@@ -315,6 +315,10 @@ export interface PrivateTranscriptionSyncResult {
   removed: number
   records: PrivateTranscriptionRecord[]
 }
+
+export interface PrivateTranscriptionSyncCompletedEvent {
+  completedAt: string
+}
 export interface SyncedPrivateAudioAsset {
   id: string
   recordingId: string
@@ -640,6 +644,7 @@ export interface NxcoreDesktopApi {
   }
   transcriptions: {
     syncPrivate(options?: { quiet?: boolean }): Promise<PrivateTranscriptionSyncResult>
+    onSyncCompleted(listener: (event: PrivateTranscriptionSyncCompletedEvent) => void): () => void
     listPrivate(): Promise<PrivateTranscriptionRecord[]>
     listTags(): Promise<RealityTag[]>
     replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void>

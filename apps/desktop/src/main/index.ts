@@ -10,6 +10,7 @@ import type {
 } from '@nxcore/agent-contract'
 
 import type { CloudAccountStatus } from '../shared/sources'
+import type { PrivateTranscriptionSyncCompletedEvent } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -48,6 +49,8 @@ import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
+import { AgentStatusReporter } from './cloud/agent-status-reporter'
+import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import {
   configureDesktopLogger,
@@ -58,6 +61,7 @@ import {
 } from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
 import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
+import { PrivateSyncScheduler } from './transcription/private-sync-scheduler'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
 import { PrivateAudioSyncService } from './transcription/private-audio-sync'
 import {
@@ -135,7 +139,7 @@ const GATEWAY_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', listDocuments: 'connector:list-documents', readDocument: 'connector:read-document', listRecords: 'connector:list-records', armFault: 'connector:arm-fault',
+  status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -452,7 +456,10 @@ let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
+let agentStatusReporter: AgentStatusReporter | null = null
+let remoteAgentCommandClient: RemoteAgentCommandClient | null = null
 let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
+let privateSyncScheduler: PrivateSyncScheduler | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
@@ -1072,8 +1079,12 @@ async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promi
   return account
 }
 
-function registerAccountHandlers(client: SaasClient): void {
-  handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(() => syncAccountMonitoring(client.status(refreshSubscription === true))))
+function registerAccountHandlers(client: SaasClient, onAccountChanged?: (account: CloudAccountStatus) => void): void {
+  handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(async () => {
+    const account = await syncAccountMonitoring(client.status(refreshSubscription === true))
+    onAccountChanged?.(account)
+    return account
+  }))
   handle(ACCOUNT_CHANNELS.devices, () => rateLimitAware(() => client.listDevices()))
   handle(ACCOUNT_CHANNELS.login, (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的登录信息。')
@@ -1083,17 +1094,32 @@ function registerAccountHandlers(client: SaasClient): void {
     }
     const identifier = value.identifier
     const password = value.password
-    return rateLimitAware(() => syncAccountMonitoring(client.login(identifier, password)))
+    return rateLimitAware(async () => {
+      const account = await syncAccountMonitoring(client.login(identifier, password))
+      onAccountChanged?.(account)
+      return account
+    })
   })
   handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
     if (provider !== 'apple' && provider !== 'google') throw new Error('不支持的登录方式。')
-    return rateLimitAware(() => syncAccountMonitoring(client.loginWithOidc(provider)))
+    return rateLimitAware(async () => {
+      const account = await syncAccountMonitoring(client.loginWithOidc(provider))
+      onAccountChanged?.(account)
+      return account
+    })
   })
   handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
-  handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(() => syncAccountMonitoring(client.logout())))
+  handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
+    const account = await syncAccountMonitoring(client.logout())
+    onAccountChanged?.(account)
+    return account
+  }))
 }
 
-function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncService): void {
+function registerPrivateTranscriptionHandlers(
+  sync: PrivateTranscriptionSyncService,
+  onCompleted?: (event: PrivateTranscriptionSyncCompletedEvent) => void,
+): void {
   handle(ACCOUNT_CHANNELS.keyringStatus, () => rateLimitAware(() => sync.keyringStatus()))
   handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(() => sync.createPairingSession()))
   handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
@@ -1104,7 +1130,11 @@ function registerPrivateTranscriptionHandlers(sync: PrivateTranscriptionSyncServ
     if (typeof id !== 'string') throw new Error('无效的配对会话。')
     return rateLimitAware(() => sync.approvePairingSession(id))
   })
-  handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => rateLimitAware(() => sync.sync()))
+  handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => rateLimitAware(async () => {
+    const result = await sync.sync()
+    onCompleted?.({ completedAt: new Date().toISOString() })
+    return result
+  }))
   handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
   handle(TRANSCRIPTION_CHANNELS.listTags, () => rateLimitAware(() => sync.listTags()))
   handle(TRANSCRIPTION_CHANNELS.replaceSummaryTags, (_event, summaryRecordId, tags) =>
@@ -1439,10 +1469,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
     registerConnectorHandlers(connectorGatewayBridge)
-    agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
-    registerAgentHandlers(agentGatewayBridge)
-    cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
-    registerCursorCompletionAgentHandlers(cursorCompletionAgentBridge)
+    // Agent status reporting is attached after the authenticated SaaS client is created below.
     registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge, documentAssets)
@@ -1457,6 +1484,19 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = new RecordingStore(recordingsDirectory)
     saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
     void saasClient.initialize()
+    agentStatusReporter = new AgentStatusReporter(saasClient)
+    agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor, agentStatusReporter)
+    agentStatusReporter.setSessionsProvider(async () => (await agentGatewayBridge!.listAllSessionSnapshots()).map((snapshot) => ({
+      ...snapshot.session,
+      activeRun: snapshot.activeRun,
+      lastEventSeq: snapshot.lastEventSeq,
+      messages: snapshot.messages.slice(-120),
+    })))
+    remoteAgentCommandClient = new RemoteAgentCommandClient(saasClient, agentGatewayBridge)
+    registerAgentHandlers(agentGatewayBridge)
+    cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
+    registerCursorCompletionAgentHandlers(cursorCompletionAgentBridge)
+    agentStatusReporter.start()
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'))
     privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'))
     void privateAudioSync.drainPending().catch(() => undefined)
@@ -1467,6 +1507,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       realityGatewayBridge,
     )
     await privateTranscriptionSync.initialize()
+    const publishSyncCompleted = () => {
+      const event: PrivateTranscriptionSyncCompletedEvent = { completedAt: new Date().toISOString() }
+      for (const target of BrowserWindow.getAllWindows()) {
+        if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
+          target.webContents.send('transcription:sync-completed', event)
+        }
+      }
+    }
+    privateSyncScheduler = new PrivateSyncScheduler(privateTranscriptionSync, 15_000, publishSyncCompleted)
+    const initialAccount = await saasClient.status().catch(() => null)
+    privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
+    if (initialAccount?.authenticated) remoteAgentCommandClient.start()
     privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
     void privateTranscriptionSync.materializeCached().catch((error) => {
       console.warn('Unable to import cached private transcriptions into Reality.', error)
@@ -1485,8 +1537,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
     }
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
-    registerAccountHandlers(saasClient)
-    registerPrivateTranscriptionHandlers(privateTranscriptionSync)
+    let lastAccountId = initialAccount?.user?.id ?? null
+    registerAccountHandlers(saasClient, (account) => {
+      privateSyncScheduler?.setAuthenticated(account.authenticated)
+      if (!account.authenticated) {
+        remoteAgentCommandClient?.stop()
+        agentStatusReporter?.reset()
+        lastAccountId = null
+      } else {
+        if (lastAccountId !== account.user?.id) agentStatusReporter?.reset()
+        lastAccountId = account.user?.id ?? null
+        remoteAgentCommandClient?.start()
+        agentStatusReporter?.reportNow()
+      }
+    })
+    registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
     registerPrivateAudioHandlers(privateAudioSync)
     registerScreenCaptureHandlers()
@@ -1502,11 +1567,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
+    privateSyncScheduler?.stop()
+    privateSyncScheduler = null
     const service = localDataService
     localDataService = null
     await service?.shutdown()
     agentGatewayBridge?.dispose()
     agentGatewayBridge = null
+    remoteAgentCommandClient?.stop()
+    remoteAgentCommandClient = null
+    agentStatusReporter?.stop()
+    agentStatusReporter = null
     cursorCompletionAgentBridge?.dispose()
     cursorCompletionAgentBridge = null
     documentGatewayBridge?.dispose()
@@ -1550,12 +1621,15 @@ app.on('before-quit', (event) => {
   const nango = nangoSupervisor
   const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
+  const statusReporter = agentStatusReporter
+  const remoteCommands = remoteAgentCommandClient
   const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
   const recordings = recordingStore
   const pendingScreenshots = screenshotOutbox
   const cloud = saasClient
+  const privateSync = privateSyncScheduler
   localDataService = null
   gatewaySupervisor = null
   ooCliBridge = null
@@ -1566,6 +1640,8 @@ app.on('before-quit', (event) => {
   nangoSupervisor = null
   knowledgeServiceSupervisor = null
   agentGatewayBridge = null
+  agentStatusReporter = null
+  remoteAgentCommandClient = null
   cursorCompletionAgentBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
@@ -1576,9 +1652,13 @@ app.on('before-quit', (event) => {
   saasClient = null
   screenshotOutbox = null
   screenshotScheduler.stop()
+  privateSyncScheduler = null
+  privateSync?.stop()
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
   agentBridge?.dispose()
+  statusReporter?.stop()
+  remoteCommands?.stop()
   cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
   realityBridge?.dispose()

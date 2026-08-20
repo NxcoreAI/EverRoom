@@ -19,7 +19,7 @@ import type { GatewaySupervisor } from './gateway-supervisor'
 import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 const REALITY_EVENT_CHANNEL = 'reality:event'
-const http = createLoggedHttpClient('gateway-reality')
+const http = createLoggedHttpClient('gateway-reality', {}, { quiet: true })
 const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
   'ECONNREFUSED',
   'ECONNRESET',

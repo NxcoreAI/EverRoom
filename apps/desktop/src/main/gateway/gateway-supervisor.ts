@@ -30,7 +30,7 @@ const SHUTDOWN_TIMEOUT_MS = 5_000
 // A dev hot reload may spend five seconds terminating the previous tsx process
 // before the replacement can publish its runtime manifest.
 const CONNECTION_RECOVERY_TIMEOUT_MS = 15_000
-const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 })
+const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 }, { quiet: true })
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))

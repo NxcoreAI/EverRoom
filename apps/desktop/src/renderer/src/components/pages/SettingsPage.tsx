@@ -4,7 +4,6 @@ import {
   Camera,
   CalendarClock,
   Cloud,
-  HardDrive,
   LoaderCircle,
   Languages,
   LockKeyhole,
@@ -14,12 +13,10 @@ import {
   Mic,
   MonitorSpeaker,
   RefreshCw,
-  Settings,
   ShieldCheck,
   Sparkles,
   Smartphone,
   WalletCards,
-  type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import QRCode from 'qrcode'
@@ -34,17 +31,20 @@ import {
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
-import type { AccountKeyringStatus, CloudDevice, WindowScreenshotStatus } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
+import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
 import './SettingsPage.css'
 
-const SETTINGS: Array<{ icon: LucideIcon; title: string; description: string }> = [
-  { icon: HardDrive, title: 'surface:settings.localData', description: 'surface:settings.localDataDescription' },
-  { icon: Brain, title: 'surface:settings.modelsAndMemory', description: 'surface:settings.modelsAndMemoryDescription' },
-  { icon: ShieldCheck, title: 'surface:settings.privacyAndPermissions', description: 'surface:settings.privacyAndPermissionsDescription' },
-  { icon: Settings, title: 'surface:settings.general', description: 'surface:settings.generalDescription' },
+const SETTINGS_NAV = [
+  { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
+  { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
+  { id: 'settings-memory', label: 'memory:settings.memorySetupTitle', description: 'memory:settings.memorySetupActionBody', icon: Sparkles },
+  { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
+  { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
+  { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
 ]
 
 type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
@@ -85,7 +85,14 @@ function subscriptionStatusLabel(status: string, t: Translate): string {
   return t(labels[status] ?? status)
 }
 
-export function SettingsPage() {
+function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): string {
+  if (!value) return t('surface:settings.notSyncedYet')
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return t('surface:settings.syncTimeUnknown')
+  return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
+}
+
+export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboarding?: () => void }) {
   const { locale, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [identifier, setIdentifier] = useState('')
@@ -97,6 +104,13 @@ export function SettingsPage() {
   const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
   const [syncedCount, setSyncedCount] = useState<number | null>(null)
   const [syncedAudioCount, setSyncedAudioCount] = useState<number | null>(null)
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem('everroom:last-private-sync-at')
+    } catch {
+      return null
+    }
+  })
   const [devices, setDevices] = useState<CloudDevice[]>([])
   const [pairing, setPairing] = useState<PairingSession | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
@@ -104,7 +118,10 @@ export function SettingsPage() {
   const [screenCaptureStatus, setScreenCaptureStatus] = useState<WindowScreenshotStatus | null>(null)
   const [screenCaptureInterval, setScreenCaptureInterval] = useState(5)
   const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
+  const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
+  const [perceptionBusy, setPerceptionBusy] = useState(false)
   const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
+  const [activeSetting, setActiveSetting] = useState(SETTINGS_NAV[0].id)
 
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -137,6 +154,18 @@ export function SettingsPage() {
       window.clearInterval(timer)
     }
   }, [account?.authenticated, account?.user?.id])
+
+  useEffect(() => {
+    const removeListener = window.nxcore?.transcriptions.onSyncCompleted(({ completedAt }) => {
+      setLastSyncAt(completedAt)
+      try {
+        window.localStorage.setItem('everroom:last-private-sync-at', completedAt)
+      } catch {
+        // Storage may be unavailable in a restricted renderer context.
+      }
+    })
+    return () => removeListener?.()
+  }, [])
 
   useEffect(() => {
     if (!pairing || !window.nxcore) return
@@ -192,10 +221,14 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (!window.nxcore) return
-    void window.nxcore.screenCapture.status()
-      .then((status) => {
+    void Promise.all([
+      window.nxcore.screenCapture.status(),
+      window.nxcore.screenCapture.perceptionSettings(),
+    ])
+      .then(([status, settings]) => {
         setScreenCaptureStatus(status)
         setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
+        setPerceptionSettings(settings)
       })
       .catch(() => undefined)
   }, [])
@@ -277,6 +310,13 @@ export function SettingsPage() {
       setKeyring(result.status)
       setSyncedCount(result.synced)
       setSyncedAudioCount(audio.assets.filter((asset) => asset.status === 'uploaded').length)
+      const syncedAt = new Date().toISOString()
+      setLastSyncAt(syncedAt)
+      try {
+        window.localStorage.setItem('everroom:last-private-sync-at', syncedAt)
+      } catch {
+        // Storage may be unavailable in a restricted renderer context.
+      }
     } catch {
       // The preload request interceptor reports the error globally.
     } finally {
@@ -296,6 +336,19 @@ export function SettingsPage() {
       // The preload request interceptor reports the error globally.
     } finally {
       setScreenCaptureBusy(false)
+    }
+  }
+
+  const updateOnlineVlm = async (enabled: boolean) => {
+    if (!window.nxcore || !perceptionSettings) return
+    setPerceptionBusy(true)
+    try {
+      const settings = await window.nxcore.screenCapture.updateOnlineVlm(enabled, perceptionSettings.configVersion)
+      setPerceptionSettings(settings)
+    } catch {
+      // The preload request interceptor reports configuration and provider errors globally.
+    } finally {
+      setPerceptionBusy(false)
     }
   }
 
@@ -358,7 +411,49 @@ export function SettingsPage() {
         </div>
       </section>
 
-      <section className="cloud-account-section" aria-labelledby="cloud-account-title">
+      <div className="settings-layout">
+        <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>
+          <div className="settings-navigation-heading">{t('surface:settings.settingsDirectory')}</div>
+          {SETTINGS_NAV.map(({ id, label, description, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className="settings-navigation-item"
+              data-active={String(activeSetting === id)}
+              aria-current={activeSetting === id ? 'location' : undefined}
+              onClick={() => setActiveSetting(id)}
+            >
+              <span className="settings-navigation-icon"><Icon aria-hidden="true" /></span>
+              <span>
+                <strong>{t(label)}</strong>
+                <small>{t(description)}</small>
+              </span>
+            </button>
+          ))}
+        </nav>
+
+        <main className="settings-content" data-active-setting={activeSetting}>
+
+      <section id="settings-memory" className="reality-settings-section settings-anchor-section" aria-labelledby="memory-settings-title">
+        <header>
+          <span><Sparkles aria-hidden="true" /></span>
+          <div>
+            <h2 id="memory-settings-title">{t('memory:settings.memorySetupTitle')}</h2>
+            <p>{t('memory:settings.memorySetupBody')}</p>
+          </div>
+        </header>
+        <div className="reality-setting-row">
+          <div>
+            <strong>{t('memory:settings.memorySetupActionTitle')}</strong>
+            <small>{t('memory:settings.memorySetupActionBody')}</small>
+          </div>
+          <button type="button" className="primary-button" onClick={onStartMemoryOnboarding} disabled={!onStartMemoryOnboarding}>
+            <Sparkles aria-hidden="true" />{t('memory:onboarding.reopen')}
+          </button>
+        </div>
+      </section>
+
+      <section id="settings-account" className="cloud-account-section settings-anchor-section" aria-labelledby="cloud-account-title">
         <header className="cloud-account-header">
           <span className="cloud-account-icon"><Cloud aria-hidden="true" /></span>
           <div>
@@ -475,23 +570,28 @@ export function SettingsPage() {
             </div>
 
             <div className="cloud-keyring" aria-label={t('surface:settings.cloudSync')}>
-              <div className="cloud-keyring-heading">
-                <span><ShieldCheck aria-hidden="true" /></span>
-                <div>
-                  <strong>{t('surface:settings.cloudSync')}</strong>
-                  <small>{t('surface:settings.syncRecordingsTranscriptsAndSummariesAcrossSignedIn')}</small>
+              <div className="cloud-keyring-main">
+                <div className="cloud-keyring-heading">
+                  <span><ShieldCheck aria-hidden="true" /></span>
+                  <div>
+                    <strong>{t('surface:settings.cloudSync')}</strong>
+                    <small>{t('surface:settings.syncRecordingsTranscriptsAndSummariesAcrossSignedIn')}</small>
+                  </div>
                 </div>
+                {syncedCount !== null ? <small className="cloud-keyring-result">{t('surface:settings.syncedCountTranscriptsAndFoundAudiocountAudioClips', { count: syncedCount, audioCount: syncedAudioCount ?? 0 })}</small> : null}
               </div>
-              <button
-                className="secondary-button cloud-keyring-sync"
-                type="button"
-                disabled={isBusy}
-                onClick={() => void syncPrivate()}
-              >
-                {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-                {t('surface:settings.syncDeviceData')}
-              </button>
-              {syncedCount !== null ? <small className="cloud-keyring-result">{t('surface:settings.syncedCountTranscriptsAndFoundAudiocountAudioClips', { count: syncedCount, audioCount: syncedAudioCount ?? 0 })}</small> : null}
+              <div className="cloud-keyring-actions">
+                <button
+                  className="secondary-button cloud-keyring-sync"
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => void syncPrivate()}
+                >
+                  {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+                  {t('surface:settings.syncDeviceData')}
+                </button>
+                <small className="cloud-keyring-last-sync">{formatSyncTime(lastSyncAt, locale, t)}</small>
+              </div>
             </div>
           </div>
         ) : (
@@ -569,7 +669,7 @@ export function SettingsPage() {
         )}
       </section>
 
-      <section className="reality-settings-section" aria-labelledby="document-editing-settings-title">
+      <section id="settings-editor" className="reality-settings-section settings-anchor-section" aria-labelledby="document-editing-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
           <div>
@@ -599,9 +699,13 @@ export function SettingsPage() {
         </div>
       </section>
 
-      <McpSettingsSection />
+      <div id="settings-models" className="settings-anchor-section settings-models-group">
+        <LocalModelSettingsSection />
 
-      <section className="reality-settings-section" aria-labelledby="reality-settings-title">
+        <McpSettingsSection />
+      </div>
+
+      <section id="settings-reality" className="reality-settings-section settings-anchor-section" aria-labelledby="reality-settings-title">
         <header>
           <span><AudioLines aria-hidden="true" /></span>
           <div>
@@ -635,7 +739,7 @@ export function SettingsPage() {
         </div>
       </section>
 
-      <section className="reality-settings-section" aria-labelledby="screen-capture-settings-title">
+      <section id="settings-capture" className="reality-settings-section settings-anchor-section" aria-labelledby="screen-capture-settings-title">
         <header>
           <span><Camera aria-hidden="true" /></span>
           <div>
@@ -656,6 +760,22 @@ export function SettingsPage() {
           >
             <span aria-hidden="true" />
             {t(screenCaptureStatus?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.visualUnderstanding')}</strong><small>{t('surface:settings.visualUnderstandingDescription')}</small></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.visualUnderstanding')}
+            aria-checked={Boolean(perceptionSettings?.onlineVlmEnabled)}
+            disabled={perceptionBusy || perceptionSettings === null}
+            data-active={String(Boolean(perceptionSettings?.onlineVlmEnabled))}
+            onClick={() => void updateOnlineVlm(!perceptionSettings?.onlineVlmEnabled)}
+          >
+            <span aria-hidden="true" />
+            {t(perceptionSettings?.onlineVlmEnabled ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
         <div className="reality-setting-row">
@@ -685,13 +805,7 @@ export function SettingsPage() {
         </div>
       </section>
 
-      <div className="settings-list">
-        {SETTINGS.map(({ icon: Icon, title, description }) => (
-          <button key={title} type="button" className="settings-row">
-            <span className="item-icon"><Icon aria-hidden="true" strokeWidth={1.8} /></span>
-            <span><strong>{t(title)}</strong><small>{t(description)}</small></span>
-          </button>
-        ))}
+        </main>
       </div>
     </div>
   )

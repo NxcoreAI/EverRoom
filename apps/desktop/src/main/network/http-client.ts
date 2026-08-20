@@ -53,12 +53,12 @@ function payloadSummary(data: unknown): string | undefined {
   return typeof data
 }
 
-function log(level: 'info' | 'warn' | 'error', event: Record<string, unknown>): void {
+function log(level: 'debug' | 'info' | 'warn' | 'error', event: Record<string, unknown>): void {
   logDesktop('axios', level, event)
 }
 
 function responseLog(
-  level: 'info' | 'warn',
+  level: 'debug' | 'info' | 'warn',
   client: string,
   response: AxiosResponse,
 ): void {
@@ -77,8 +77,11 @@ function responseLog(
 export function createLoggedHttpClient(
   client: string,
   defaults: CreateAxiosDefaults = {},
+  options: { quiet?: boolean } = {},
 ): AxiosInstance {
   const instance = axios.create(defaults)
+  // quiet：轮询类客户端，常规请求/响应降到 debug，避免刷屏；错误仍按原级别上报。
+  const routineLevel = options.quiet ? 'debug' : 'info'
 
   instance.interceptors.request.use((config) => {
     const request: RequestMetadata = {
@@ -89,7 +92,7 @@ export function createLoggedHttpClient(
       payload: payloadSummary(config.data),
     }
     metadata.set(config, request)
-    log('info', {
+    log(routineLevel, {
       event: 'http.request',
       client,
       requestId: request.requestId,
@@ -102,7 +105,7 @@ export function createLoggedHttpClient(
 
   instance.interceptors.response.use(
     (response) => {
-      responseLog(response.status >= 400 ? 'warn' : 'info', client, response)
+      responseLog(response.status >= 400 ? 'warn' : routineLevel, client, response)
       return response
     },
     (error: AxiosError) => {

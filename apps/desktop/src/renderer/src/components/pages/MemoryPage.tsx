@@ -1,6 +1,7 @@
-import { RefreshCw, Search, Sparkles } from 'lucide-react'
-import { useState } from 'react'
+import { RefreshCw, Search } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
+import { MEMORY_TAB_EVENT } from '../MemoryPipelineStatus'
 import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
 import { ConversationPane } from './memory/ConversationPane'
 import { CoreProfilePane } from './memory/CoreProfilePane'
@@ -24,7 +25,7 @@ const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'core', label: 'memory:memory.profile', level: 'L3' },
 ]
 
-export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => void }) {
+export function MemoryPage() {
   const { t } = useLocale()
   const overview = useMemoryOverview()
   const [tab, setTab] = useState<MemoryTabId>('overview')
@@ -35,6 +36,19 @@ export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => vo
   // 溯源跳转目标（原子记忆 → 文档详情 / 会话过滤），置位同时切 Tab。
   const [documentFocus, setDocumentFocus] = useState<string | null>(null)
   const [conversationFocus, setConversationFocus] = useState<string | null>(null)
+
+  // 侧边栏记忆管道点击跳转：按新增层级直接打开对应 tab。
+  useEffect(() => {
+    const openTab = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab: string }>).detail?.tab
+      if (tab && TABS.some((entry) => entry.id === tab)) {
+        setSearch(null)
+        setTab(tab as MemoryTabId)
+      }
+    }
+    window.addEventListener(MEMORY_TAB_EVENT, openTab)
+    return () => window.removeEventListener(MEMORY_TAB_EVENT, openTab)
+  }, [])
 
   const openDocument = (documentId: string) => {
     setDocumentFocus(documentId)
@@ -96,17 +110,6 @@ export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => vo
               }}
             />
           </div>
-          {onStartOnboarding ? (
-            <button
-              type="button"
-              className="mem-onboarding-button"
-              title={t('memory:onboarding.reopen')}
-              onClick={onStartOnboarding}
-            >
-              <Sparkles aria-hidden="true" strokeWidth={1.7} />
-              <span>{t('memory:onboarding.reopen')}</span>
-            </button>
-          ) : null}
           <button
             type="button"
             className="mem-icon-button"
@@ -156,7 +159,7 @@ export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => vo
         <div className="mem-content">
           {tab === 'overview' ? (
             overview.data
-              ? <MemoryOverviewPane overview={overview.data} onNavigate={setTab} onStartOnboarding={onStartOnboarding} />
+              ? <MemoryOverviewPane overview={overview.data} onNavigate={setTab} />
               : <p className="mem-loading">{t('memory:memory.loading')}</p>
           ) : null}
           {tab === 'atomic' ? (

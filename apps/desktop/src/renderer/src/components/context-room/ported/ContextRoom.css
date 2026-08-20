@@ -4871,6 +4871,7 @@
   --cr-blue-hover: #2f5de0;
   --cr-blue-soft: rgba(61, 111, 246, 0.1);
   --cr-danger: #c83232;
+  --cr-danger-soft: #fef2f2;
   position: fixed;
   z-index: 50;
   top: 50%;
@@ -4994,6 +4995,224 @@
 
 .context-room-action-confirm > footer button {
   min-width: 72px;
+}
+
+.context-room-dialog-content.context-room-delete-room-dialog-shell,
+.context-room-delete-room-dialog {
+  width: min(460px, calc(100vw - 34px));
+  max-width: 100%;
+}
+
+.context-room-delete-room-dialog {
+  background: var(--cr-surface);
+}
+
+.context-room-delete-room-dialog-shell .context-room-dialog-close:focus-visible {
+  outline: 2px solid var(--cr-blue);
+  outline-offset: -2px;
+}
+
+.context-room-delete-room-dialog > header {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 18px 52px 16px 18px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-delete-room-symbol {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--cr-danger) 18%, var(--cr-border));
+  border-radius: 7px;
+  background: var(--cr-danger-soft);
+  color: var(--cr-danger);
+}
+
+.context-room-delete-room-symbol svg {
+  width: 18px;
+  height: 18px;
+}
+
+.context-room-delete-room-dialog h2 {
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 21px;
+}
+
+.context-room-delete-room-dialog header p {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.context-room-delete-room-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.context-room-delete-room-target {
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+}
+
+.context-room-delete-room-identity {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-delete-room-identity > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cr-icon-tone) 11%, var(--cr-surface));
+  color: var(--cr-icon-tone);
+}
+
+.context-room-delete-room-identity svg {
+  width: 17px;
+  height: 17px;
+}
+
+.context-room-delete-room-identity > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.context-room-delete-room-identity strong {
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-delete-room-identity small {
+  color: var(--cr-muted);
+  font-size: 10.5px;
+}
+
+.context-room-delete-room-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-delete-room-stats > span {
+  display: grid;
+  grid-template-columns: 14px auto;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 6px;
+  min-width: 0;
+  padding: 10px 8px;
+}
+
+.context-room-delete-room-stats > span + span {
+  border-left: 1px solid var(--cr-border);
+}
+
+.context-room-delete-room-stats svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cr-tertiary);
+}
+
+.context-room-delete-room-stats b {
+  color: var(--cr-text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.context-room-delete-room-stats small {
+  grid-column: 1 / -1;
+  color: var(--cr-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.context-room-delete-room-recovery {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 10px 11px;
+  border-radius: 6px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue-hover);
+}
+
+.context-room-delete-room-recovery svg {
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+}
+
+.context-room-delete-room-recovery p {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.context-room-delete-room-dialog > footer {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--cr-border);
+}
+
+.context-room-delete-room-dialog > footer button {
+  min-width: 76px;
+}
+
+.context-room-delete-room-dialog .context-room-danger-button:hover {
+  background: color-mix(in srgb, var(--cr-danger) 86%, #000);
+}
+
+.context-room-delete-room-dialog .context-room-danger-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 460px) {
+  .context-room-delete-room-dialog > header {
+    padding-left: 14px;
+  }
+
+  .context-room-delete-room-body {
+    padding: 14px;
+  }
+
+  .context-room-delete-room-dialog > footer {
+    padding: 10px 14px;
+  }
+
+  .context-room-delete-room-dialog > footer button {
+    flex: 1;
+  }
 }
 
 .context-room-schedule-popover {
