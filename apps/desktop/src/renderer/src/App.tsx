@@ -114,7 +114,6 @@ export function App() {
       setContextRoomHomeRequest((request) => request + 1)
     }
     if (page === 'rooms') setActiveContextRoomId(null)
-    if (page === 'office') setAgentOpen(false)
     setActivePage(page)
   }
 

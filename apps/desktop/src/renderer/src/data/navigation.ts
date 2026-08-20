@@ -3,7 +3,6 @@ import {
   BookOpen,
   BookOpenText,
   Brain,
-  Building2,
   FileText,
   FolderOpen,
   FolderSync,
@@ -14,7 +13,7 @@ import {
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -55,7 +54,6 @@ export const navigationSections: NavigationSection[] = [
     id: 'execution',
     label: 'surface:navigation.execution',
     items: [
-      { id: 'office', label: 'surface:navigation.office', icon: Building2, tone: 'blue' },
       { id: 'diary', label: 'surface:navigation.diary', icon: NotebookPen, tone: 'blue' },
     ],
   },
@@ -93,10 +91,6 @@ const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
   'Wiki': 'surface:navigation.wiki',
   '连接器': 'surface:navigation.connectors',
   'Connectors': 'surface:navigation.connectors',
-  '办公室': 'surface:navigation.office',
-  'Office': 'surface:navigation.office',
-  'Agent 状态': 'surface:navigation.office',
-  'Agent status': 'surface:navigation.office',
   '日记': 'surface:navigation.diary',
   'Diary': 'surface:navigation.diary',
   '设置': 'surface:navigation.settings',

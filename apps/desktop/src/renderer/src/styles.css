@@ -64,10 +64,6 @@ summary:focus-visible {
   grid-template-columns: var(--nav-width) minmax(0, 1fr) 0;
 }
 
-.app-shell[data-agent-open='true']:has(.agent-office-page) {
-  transition: none;
-}
-
 .app-shell[data-nav-collapsed='true'] {
   grid-template-columns: 0 minmax(0, 1fr) var(--agent-width);
 }
