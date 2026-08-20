@@ -59,7 +59,7 @@ export function PageCanvas({
 }) {
   const { t } = useLocale()
   let content = null
-  if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
+  if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
   if (page === 'office') content = <AgentStatusPage />
   if (page === 'rooms') {
     content = (
