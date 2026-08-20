@@ -80,11 +80,13 @@ export function syncSentryAccount(account: CloudAccountStatus): void {
 
 export function captureSentryLog(
   module: string,
-  level: 'info' | 'warn' | 'error',
+  level: 'debug' | 'info' | 'warn' | 'error',
   event: Record<string, unknown>,
 ): void {
   if (!isSentryLogModuleAllowed(module)) return
   if (!configured || !Sentry || !Sentry.isInitialized() || !isRemoteDebugActive()) return
   const message = typeof event.event === 'string' ? event.event : `${module}.${level}`
+  // debug 本地已默认丢弃，远端同样不上报，避免轮询类日志刷屏。
+  if (level === 'debug') return
   Sentry.logger[level](message, { source: 'desktop', module, ...event })
 }

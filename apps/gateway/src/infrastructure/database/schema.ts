@@ -988,7 +988,7 @@ export const realityEvents = sqliteTable(
     id: text("id").primaryKey(),
     title: text("title").notNull(),
     status: text("status", {
-      enum: ["ongoing", "pending_confirmation", "completed", "failed", "pending_sync"],
+      enum: ["ongoing", "completed", "failed", "pending_sync"],
     }).notNull(),
     processingState: text("processing_state", {
       enum: ["capturing", "saving", "transcribing", "understanding", "ready", "failed"],

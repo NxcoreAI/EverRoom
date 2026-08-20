@@ -28,7 +28,7 @@ export interface GatewayConnection {
 const STARTUP_TIMEOUT_MS = 180_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 const CONNECTION_RECOVERY_TIMEOUT_MS = 5_000
-const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 })
+const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 }, { quiet: true })
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))

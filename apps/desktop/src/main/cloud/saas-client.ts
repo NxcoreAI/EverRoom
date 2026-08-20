@@ -16,6 +16,7 @@ import type {
   CreateAsrJobInput,
 } from '../../shared/sources'
 import type { RealityTag } from '@nxcore/reality-contract'
+import type { AgentSession, AgentSessionSnapshot } from '@nxcore/agent-contract'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
 
@@ -76,6 +77,12 @@ export interface KeyringDevicePackage {
   umkId: string
   umkVersion: number
   createdAt?: string
+}
+
+export interface AgentStreamCredentials {
+  url: string
+  accessToken: string
+  deviceId: string
 }
 
 export interface KeyringResponse {
@@ -304,6 +311,29 @@ export class SaasClient {
     await this.initialize()
     this.requireLogin()
     return this.request<CloudDevice[]>('/app/devices')
+  }
+
+  async reportAgentStatus(input: {
+    state: 'idle' | 'running' | 'error'
+    sessionId?: string
+    runId?: string
+    taskTitle?: string
+    activeSince?: string
+    sessions?: Array<AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>>
+  }): Promise<boolean> {
+    await this.initialize()
+    if (!this.account || !this.accessToken) return false
+    await this.request('/app/agent/status', { method: 'PUT', data: input })
+    return true
+  }
+
+  async agentStreamCredentials(): Promise<AgentStreamCredentials | null> {
+    await this.initialize()
+    if (!this.account || !this.accessToken) return null
+    const url = new URL(this.baseUrl)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/app/agent/stream`
+    return { url: url.toString(), accessToken: this.accessToken, deviceId: this.account.device.id }
   }
 
   async login(identifier: string, password: string): Promise<CloudAccountStatus> {
