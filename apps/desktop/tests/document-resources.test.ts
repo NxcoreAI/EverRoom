@@ -1,8 +1,13 @@
 import type { RoomDocument } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
+import type { KnowledgeFileDto } from '../src/shared/knowledge'
 
 import { consumeDocumentFocusRequest } from '../src/renderer/src/components/context-room/ported/documentFocus'
-import { createContextRoomResourceLibrary } from '../src/renderer/src/components/context-room/ported/resources'
+import {
+  createContextRoomResourceLibrary,
+  formatBytes,
+  knowledgeFileStatusLabel,
+} from '../src/renderer/src/components/context-room/ported/resources'
 import { createContextRoomFixture } from './context-room-fixture'
 
 const room = createContextRoomFixture()
@@ -19,6 +24,19 @@ function backendDocument(id: string, title: string): RoomDocument {
     deletedAt: null,
     createdAt: '2026-08-15T10:00:00.000Z',
     updatedAt: '2026-08-15T11:00:00.000Z',
+  }
+}
+
+function knowledgeFile(id: string, name: string): KnowledgeFileDto {
+  return {
+    id,
+    originalName: name,
+    bytes: 2048,
+    title: null,
+    status: 'confirmed',
+    decidedBy: 'entry',
+    confidence: 1,
+    uploadedAt: '2026-08-15T09:00:00.000Z',
   }
 }
 
@@ -65,6 +83,66 @@ describe('Context Room document resource mapping', () => {
       trashed: true,
       binding: expect.objectContaining({ docId: 'gateway-doc-trash' }),
     }))
+  })
+})
+
+describe('Context Room knowledge file merge into cloud document folder', () => {
+  it('merges knowledge uploaded files alongside cloud documents', () => {
+    const document = backendDocument('gateway-doc-1', '真实文档')
+    const file = knowledgeFile('file-abc', '笔记.md')
+    const library = createContextRoomResourceLibrary(room, [document], [], [file])
+    const documentFolder = library.folders.find((folder) => folder.name === '云文档')!
+
+    const cloudResources = library.resources.filter((resource) => resource.folderId === documentFolder.id)
+    expect(cloudResources).toHaveLength(2)
+    const knowledgeResource = cloudResources.find((resource) => resource.kind === 'knowledge-file')
+    expect(knowledgeResource).toMatchObject({
+      id: `${room.id}:kfile:file-abc`,
+      roomId: room.id,
+      folderId: documentFolder.id,
+      name: '笔记.md',
+      fileId: 'file-abc',
+      originalName: '笔记.md',
+      bytes: 2048,
+      statusLabel: '已沉淀',
+      sizeLabel: '2.0 KB',
+    })
+  })
+
+  it('keeps existing three-argument calls free of knowledge files (default parameter)', () => {
+    const library = createContextRoomResourceLibrary(room, [backendDocument('gateway-doc-1', '真实文档')])
+    expect(library.resources.filter((resource) => resource.kind === 'knowledge-file')).toEqual([])
+  })
+
+  it('namespaces resource ids so cloud docs and knowledge files never collide', () => {
+    const document = backendDocument('file-abc', '同名标题')
+    const file = knowledgeFile('file-abc', '同名标题.md')
+    const library = createContextRoomResourceLibrary(room, [document], [], [file])
+    const ids = library.resources.map((resource) => resource.id)
+    expect(ids).toContain(`${room.id}:cloud:file-abc`)
+    expect(ids).toContain(`${room.id}:kfile:file-abc`)
+  })
+
+  it('never routes knowledge files into the trash folder', () => {
+    const trashed = {
+      ...backendDocument('gateway-doc-trash', '已删除文档'),
+      deletedAt: '2026-08-15T12:00:00.000Z',
+    }
+    const library = createContextRoomResourceLibrary(room, [], [trashed], [knowledgeFile('file-abc', '笔记.md')])
+    const trashFolder = library.folders.find((folder) => folder.name === '回收站')!
+    const trashIds = library.resources.filter((resource) => resource.folderId === trashFolder.id).map((resource) => resource.id)
+    expect(trashIds).toEqual([`${room.id}:trash:gateway-doc-trash`])
+  })
+
+  it('derives status labels and size labels from decision state', () => {
+    expect(knowledgeFileStatusLabel({ status: 'confirmed', decidedBy: 'entry' })).toBe('已沉淀')
+    expect(knowledgeFileStatusLabel({ status: 'auto', decidedBy: null })).toBe('归类中')
+    expect(knowledgeFileStatusLabel({ status: 'auto', decidedBy: 'user' })).toBe('用户确认·入库中')
+    expect(knowledgeFileStatusLabel({ status: 'reverted', decidedBy: null })).toBe('已撤销')
+    expect(knowledgeFileStatusLabel({ status: 'pending', decidedBy: null })).toBe('处理中')
+    expect(formatBytes(512)).toBe('512 B')
+    expect(formatBytes(2048)).toBe('2.0 KB')
+    expect(formatBytes(3 * 1024 * 1024)).toBe('3.0 MB')
   })
 })
 

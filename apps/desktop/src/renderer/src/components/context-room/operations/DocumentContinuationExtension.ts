@@ -13,6 +13,7 @@ import { Check, CheckCheck, MessageSquareX, Send, X } from 'lucide-react'
 import { createElement, Fragment as ReactFragment, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import i18n from '@/i18n/i18next'
 import type { DocumentContinuationCandidate } from './presenterRegistry'
 import {
   continuationRevealScrollTop,
@@ -67,7 +68,7 @@ export function createContinuationMarkdownEditor({
     editorProps: {
       attributes: {
         class: 'document-continuation-markdown-editor',
-        'aria-label': '编辑 Agent 续写候选内容',
+        'aria-label': i18n.t('contextRoom:documentContinuation.editCandidate'),
         spellcheck: 'true',
       },
     },
@@ -163,25 +164,25 @@ export function DocumentContinuationActions({
       maxLength: 1000,
       autoFocus: true,
       disabled: busy || submitting,
-      placeholder: '告诉 Agent 接下来怎么改（可选）',
-      'aria-label': '续写修改意见',
+      placeholder: i18n.t('contextRoom:documentContinuation.feedbackPlaceholder'),
+      'aria-label': i18n.t('contextRoom:documentContinuation.feedback'),
       onChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => setFeedback(event.target.value),
     }),
     createElement('div', { className: 'document-continuation-feedback-actions' },
       createElement('button', {
         type: 'button',
-        title: '取消修改意见',
-        'aria-label': '取消修改意见',
+        title: i18n.t('contextRoom:documentContinuation.cancelFeedback'),
+        'aria-label': i18n.t('contextRoom:documentContinuation.cancelFeedback'),
         disabled: busy || submitting,
         onClick: () => setFeedbackOpen(false),
       }, createElement(X, { 'aria-hidden': true })),
       createElement('button', {
         type: 'submit',
         className: 'is-submit',
-        title: '按意见重新续写',
-        'aria-label': '按意见重新续写',
+        title: i18n.t('contextRoom:documentContinuation.reviseWithFeedback'),
+        'aria-label': i18n.t('contextRoom:documentContinuation.reviseWithFeedback'),
         disabled: busy || submitting,
-      }, createElement(Send, { 'aria-hidden': true }), '重新续写'),
+      }, createElement(Send, { 'aria-hidden': true }), i18n.t('contextRoom:documentContinuation.revise')),
     ))
   }
 
@@ -189,30 +190,30 @@ export function DocumentContinuationActions({
     createElement('button', {
       type: 'button',
       className: 'is-accept',
-      title: '同意当前这块',
-      'aria-label': '同意当前这块',
+      title: i18n.t('contextRoom:documentContinuation.acceptCurrentBlock'),
+      'aria-label': i18n.t('contextRoom:documentContinuation.acceptCurrentBlock'),
       disabled: busy,
       onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
       onClick: (event: ReactMouseEvent) => { event.stopPropagation(); void onAccept() },
-    }, createElement(Check, { 'aria-hidden': true }), '同意当前'),
+    }, createElement(Check, { 'aria-hidden': true }), i18n.t('contextRoom:documentContinuation.acceptCurrent')),
     createElement('button', {
       type: 'button',
       className: 'is-accept-all',
-      title: '同意后面所有续写',
-      'aria-label': '同意后面所有续写',
+      title: i18n.t('contextRoom:documentContinuation.acceptAllFollowing'),
+      'aria-label': i18n.t('contextRoom:documentContinuation.acceptAllFollowing'),
       disabled: busy,
       onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
       onClick: (event: ReactMouseEvent) => { event.stopPropagation(); void onAcceptAll() },
-    }, createElement(CheckCheck, { 'aria-hidden': true }), '同意后面所有'),
+    }, createElement(CheckCheck, { 'aria-hidden': true }), i18n.t('contextRoom:documentContinuation.acceptAllFollowingShort')),
     createElement('button', {
       type: 'button',
       className: 'is-reject',
-      title: '不同意并提出修改意见',
-      'aria-label': '不同意并提出修改意见',
+      title: i18n.t('contextRoom:documentContinuation.rejectAndGiveFeedback'),
+      'aria-label': i18n.t('contextRoom:documentContinuation.rejectAndGiveFeedback'),
       disabled: busy,
       onMouseDown: (event: ReactMouseEvent) => { event.preventDefault(); event.stopPropagation() },
       onClick: (event: ReactMouseEvent) => { event.stopPropagation(); setFeedbackOpen(true) },
-    }, createElement(MessageSquareX, { 'aria-hidden': true }), '不同意'),
+    }, createElement(MessageSquareX, { 'aria-hidden': true }), i18n.t('contextRoom:documentContinuation.reject')),
   )
 }
 
@@ -236,7 +237,7 @@ function continuationDecorations(
     candidate.tabIndex = 0
     candidate.contentEditable = 'false'
     candidate.setAttribute('role', 'region')
-    candidate.setAttribute('aria-label', 'Agent 续写候选内容')
+    candidate.setAttribute('aria-label', i18n.t('contextRoom:documentContinuation.candidate'))
     const blocksRoot = document.createElement('div')
     blocksRoot.className = 'document-continuation-blocks'
     const markdownEditors: Editor[] = []

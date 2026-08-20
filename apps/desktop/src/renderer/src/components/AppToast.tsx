@@ -2,9 +2,11 @@ import { Info, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { onToast, type AppToastDetail } from '@/state/toast'
+import { useLocale } from '@/i18n/LocaleContext'
 import './AppToast.css'
 
 export function AppToast() {
+  const { t } = useLocale()
   const [toast, setToast] = useState<AppToastDetail | null>(null)
 
   useEffect(() => onToast(setToast), [])
@@ -21,7 +23,7 @@ export function AppToast() {
     <div className="app-toast" role="status" aria-live="polite">
       <span aria-hidden="true"><Info /></span>
       <div><strong>{toast.title}</strong>{toast.message ? <small>{toast.message}</small> : null}</div>
-      <button type="button" aria-label="关闭提示" title="关闭提示" onClick={() => setToast(null)}><X aria-hidden="true" /></button>
+      <button type="button" aria-label={t('surface:appToast.dismissNotification')} title={t('surface:appToast.dismissNotification')} onClick={() => setToast(null)}><X aria-hidden="true" /></button>
     </div>
   )
 }

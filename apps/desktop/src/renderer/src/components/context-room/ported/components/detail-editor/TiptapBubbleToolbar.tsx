@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useLocale } from '../../../../../i18n/LocaleContext'
 
 import { showToast } from '../../../../../state/toast'
 import { EditorIconButton } from './EditorIconButton'
@@ -55,6 +56,7 @@ export function TiptapBubbleToolbar({
   documentId: string
   onAskAi: (instruction: string) => void
 }) {
+  const { t } = useLocale()
   const [linkOpen, setLinkOpen] = useState(false)
   const [linkValue, setLinkValue] = useState('')
   const [askAiOpen, setAskAiOpen] = useState(false)
@@ -115,7 +117,7 @@ export function TiptapBubbleToolbar({
 
   const replaceImage = async (file: File) => {
     const documents = window.nxcore?.documents
-    if (!documents) throw new Error('本地图片服务不可用。')
+    if (!documents) throw new Error(t('contextRoom:tiptapBubbleToolbar.theLocalImageServiceIsUnavailable'))
     const stored = await storeDocumentImageFile(file, documentId, documents.storeImage)
     updateSelectedImage({
       src: stored.src,
@@ -209,8 +211,8 @@ export function TiptapBubbleToolbar({
           if (!file) return
           void replaceImage(file).catch((error: unknown) => {
             showToast({
-              title: '无法替换图片',
-              message: error instanceof Error ? error.message : '请稍后重试。',
+              title: t('contextRoom:tiptapBubbleToolbar.unableToReplaceImage'),
+              message: error instanceof Error ? error.message : t('contextRoom:tiptapBubbleToolbar.tryAgainLater'),
             })
           })
         }}
@@ -219,8 +221,8 @@ export function TiptapBubbleToolbar({
         <form className="context-room-tiptap-bubble-link" onSubmit={(event) => { event.preventDefault(); applyImageAlt() }}>
           <input
             autoFocus
-            aria-label="图片替代文本"
-            placeholder="替代文本"
+            aria-label={t('contextRoom:tiptapBubbleToolbar.imageAltText')}
+            placeholder={t('contextRoom:tiptapBubbleToolbar.altText')}
             value={imageAltValue}
             onChange={(event) => setImageAltValue(event.target.value)}
             onKeyDown={(event) => {
@@ -230,19 +232,19 @@ export function TiptapBubbleToolbar({
               }
             }}
           />
-          <button type="submit">应用</button>
+          <button type="submit">{t('contextRoom:tiptapBubbleToolbar.apply')}</button>
         </form>
       ) : (
         <>
           <EditorIconButton
-            label="替换图片"
+            label={t('contextRoom:tiptapBubbleToolbar.replaceImage')}
             onClick={() => {
               imagePositionRef.current = editor.state.selection.from
               imageInputRef.current?.click()
             }}
           ><Replace /></EditorIconButton>
           <EditorIconButton
-            label="替代文本"
+            label={t('contextRoom:tiptapBubbleToolbar.altText')}
             onClick={() => {
               imagePositionRef.current = editor.state.selection.from
               setImageAltValue(String(editor.getAttributes('image').alt ?? ''))
@@ -250,7 +252,7 @@ export function TiptapBubbleToolbar({
             }}
           ><TextCursorInput /></EditorIconButton>
           <EditorIconButton
-            label="放大预览"
+            label={t('contextRoom:tiptapBubbleToolbar.openLargePreview')}
             disabled={!toolbarState.imageSrc}
             onClick={() => {
               const attributes = editor.getAttributes('image')
@@ -264,7 +266,7 @@ export function TiptapBubbleToolbar({
             }}
           ><Maximize2 /></EditorIconButton>
           <EditorIconButton
-            label="恢复原始尺寸"
+            label={t('contextRoom:tiptapBubbleToolbar.restoreOriginalSize')}
             disabled={toolbarState.imageWidth == null && toolbarState.imageHeight == null}
             onClick={() => {
               imagePositionRef.current = editor.state.selection.from
@@ -273,7 +275,7 @@ export function TiptapBubbleToolbar({
           ><RotateCcw /></EditorIconButton>
           <span className="context-room-tiptap-bubble-divider" />
           <EditorIconButton
-            label="删除图片"
+            label={t('contextRoom:tiptapBubbleToolbar.deleteImage')}
             onClick={() => editor.chain().focus().deleteSelection().run()}
           ><Trash2 /></EditorIconButton>
         </>
@@ -282,8 +284,8 @@ export function TiptapBubbleToolbar({
           <Sparkles aria-hidden="true" />
           <input
             autoFocus
-            aria-label="重写要求"
-            placeholder="如何重写？"
+            aria-label={t('contextRoom:tiptapBubbleToolbar.rewriteInstructions')}
+            placeholder={t('contextRoom:tiptapBubbleToolbar.howShouldThisBeRewritten')}
             value={askAiInstruction}
             onChange={(event) => setAskAiInstruction(event.target.value)}
             onKeyDown={(event) => {
@@ -293,38 +295,38 @@ export function TiptapBubbleToolbar({
               }
             }}
           />
-          <button type="submit" aria-label="开始重写" title="开始重写"><ArrowUp /></button>
-          <button type="button" aria-label="关闭" title="关闭" onClick={closeAskAi}><X /></button>
+          <button type="submit" aria-label={t('contextRoom:tiptapBubbleToolbar.startRewriting')} title={t('contextRoom:tiptapBubbleToolbar.startRewriting')}><ArrowUp /></button>
+          <button type="button" aria-label={t('contextRoom:tiptapBubbleToolbar.close')} title={t('contextRoom:tiptapBubbleToolbar.close')} onClick={closeAskAi}><X /></button>
         </form>
       ) : linkOpen ? (
         <form className="context-room-tiptap-bubble-link" onSubmit={(event) => { event.preventDefault(); applyLink() }}>
           <input
             autoFocus
-            aria-label="链接地址"
+            aria-label={t('contextRoom:tiptapBubbleToolbar.linkUrl')}
             placeholder="https://"
             value={linkValue}
             onChange={(event) => setLinkValue(event.target.value)}
           />
-          <button type="submit">应用</button>
+          <button type="submit">{t('contextRoom:tiptapBubbleToolbar.apply')}</button>
           </form>
       ) : (
         <>
-          <EditorIconButton label="粗体" active={toolbarState.boldActive} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></EditorIconButton>
-          <EditorIconButton label="斜体" active={toolbarState.italicActive} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></EditorIconButton>
-          <EditorIconButton label="下划线" active={toolbarState.underlineActive} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline /></EditorIconButton>
-          <EditorIconButton label="删除线" active={toolbarState.strikeActive} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></EditorIconButton>
-          <EditorIconButton label="行内代码" active={toolbarState.codeActive} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 /></EditorIconButton>
+          <EditorIconButton label={t('contextRoom:tiptapBubbleToolbar.bold')} active={toolbarState.boldActive} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></EditorIconButton>
+          <EditorIconButton label={t('contextRoom:tiptapBubbleToolbar.italic')} active={toolbarState.italicActive} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></EditorIconButton>
+          <EditorIconButton label={t('contextRoom:tiptapBubbleToolbar.underline')} active={toolbarState.underlineActive} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline /></EditorIconButton>
+          <EditorIconButton label={t('contextRoom:tiptapBubbleToolbar.strikethrough')} active={toolbarState.strikeActive} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></EditorIconButton>
+          <EditorIconButton label={t('contextRoom:tiptapBubbleToolbar.inlineCode')} active={toolbarState.codeActive} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 /></EditorIconButton>
           <span className="context-room-tiptap-bubble-divider" />
-          <EditorIconButton label="添加链接" active={toolbarState.linkActive} onClick={openLink}><Link2 /></EditorIconButton>
+          <EditorIconButton label={t('contextRoom:tiptapBubbleToolbar.addLink')} active={toolbarState.linkActive} onClick={openLink}><Link2 /></EditorIconButton>
           {toolbarState.linkActive ? (
-            <EditorIconButton label="移除链接" onClick={() => editor.chain().focus().unsetLink().run()}><Unlink2 /></EditorIconButton>
+            <EditorIconButton label={t('contextRoom:tiptapBubbleToolbar.removeLink')} onClick={() => editor.chain().focus().unsetLink().run()}><Unlink2 /></EditorIconButton>
           ) : null}
           <span className="context-room-tiptap-bubble-divider" />
           <button
             type="button"
             className="context-room-tiptap-ask-ai"
             aria-label="Ask AI"
-            title={toolbarState.askAiDisabled ? '请选择文本' : 'Ask AI'}
+            title={toolbarState.askAiDisabled ? t('contextRoom:tiptapBubbleToolbar.selectSomeText') : 'Ask AI'}
             disabled={toolbarState.askAiDisabled}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
@@ -344,7 +346,7 @@ export function TiptapBubbleToolbar({
           className="context-room-document-image-preview"
           role="dialog"
           aria-modal="true"
-          aria-label="图片预览"
+          aria-label={t('contextRoom:tiptapBubbleToolbar.imagePreview')}
           data-scale={imagePreviewScale}
           onMouseDown={(event) => {
             if (event.currentTarget === event.target) closeImagePreview()
@@ -353,8 +355,8 @@ export function TiptapBubbleToolbar({
           <button
             type="button"
             className="context-room-document-image-preview-close"
-            aria-label="关闭图片预览"
-            title="关闭"
+            aria-label={t('contextRoom:tiptapBubbleToolbar.closeImagePreview')}
+            title={t('contextRoom:tiptapBubbleToolbar.close')}
             autoFocus
             onClick={closeImagePreview}
           >
@@ -389,26 +391,26 @@ export function TiptapBubbleToolbar({
               />
             </div>
           </div>
-          <div className="context-room-document-image-preview-controls" aria-label="预览缩放">
+          <div className="context-room-document-image-preview-controls" aria-label={t('contextRoom:tiptapBubbleToolbar.previewZoom')}>
             <button
               type="button"
-              aria-label="缩小图片"
-              title="缩小"
+              aria-label={t('contextRoom:tiptapBubbleToolbar.zoomOutImage')}
+              title={t('contextRoom:tiptapBubbleToolbar.zoomOut')}
               disabled={imagePreviewScale <= IMAGE_PREVIEW_MIN_SCALE}
               onClick={() => changeImagePreviewScale(-IMAGE_PREVIEW_SCALE_STEP)}
             ><ZoomOut aria-hidden="true" /></button>
             <output aria-live="polite">{Math.round(imagePreviewScale * 100)}%</output>
             <button
               type="button"
-              aria-label="放大图片"
-              title="放大"
+              aria-label={t('contextRoom:tiptapBubbleToolbar.zoomInImage')}
+              title={t('contextRoom:tiptapBubbleToolbar.zoomIn')}
               disabled={imagePreviewScale >= IMAGE_PREVIEW_MAX_SCALE}
               onClick={() => changeImagePreviewScale(IMAGE_PREVIEW_SCALE_STEP)}
             ><ZoomIn aria-hidden="true" /></button>
             <button
               type="button"
-              aria-label="恢复适配大小"
-              title="恢复适配大小"
+              aria-label={t('contextRoom:tiptapBubbleToolbar.fitToView')}
+              title={t('contextRoom:tiptapBubbleToolbar.fitToView')}
               disabled={imagePreviewScale === 1}
               onClick={() => setImagePreviewScale(1)}
             ><RotateCcw aria-hidden="true" /></button>

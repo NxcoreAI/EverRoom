@@ -101,6 +101,7 @@ describe("loadConfig", () => {
       model: "deepseek-chat",
       maxTokens: 4096,
     });
+    expect(config.diaryMaxTokens).toBe(16384);
     expect(config.cursorCompletionPi).toMatchObject({
       provider: "deepseek",
       model: "deepseek-chat",
@@ -174,10 +175,12 @@ describe("loadConfig", () => {
       NXCORE_AI_API_KEY: "test-key",
       NXCORE_AI_MAX_TOKENS: "800",
       NXCORE_AI_BACKGROUND_MAX_TOKENS: "4096",
+      NXCORE_DIARY_MAX_TOKENS: "12288",
     });
 
     expect(config.pi).toMatchObject({ model: "qwen-turbo", maxTokens: 800 });
     expect(config.backgroundPi).toMatchObject({ model: "qwen-plus", maxTokens: 4096 });
+    expect(config.diaryMaxTokens).toBe(12288);
   });
 
   it("rejects incomplete or unsafe Pi endpoint configuration", () => {
@@ -191,6 +194,27 @@ describe("loadConfig", () => {
       NXCORE_AI_MODEL: "gpt-test",
       NXCORE_AI_BASE_URL: "file:///tmp/model",
       NXCORE_AI_API_KEY: "test-key",
+    })).toThrow("expected an absolute HTTP(S) URL");
+  });
+
+  it("loads VLM configuration only when all required values are present", () => {
+    expect(loadConfig(["--token", "0123456789abcdef"], {}).vlm).toBeNull();
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_VLM_BASE_URL: "https://vlm.example.test/v1",
+      NXCORE_VLM_API_KEY: "test-key",
+      NXCORE_VLM_MODEL: "vision-model",
+    }).vlm).toEqual({
+      baseUrl: "https://vlm.example.test/v1",
+      apiKey: "test-key",
+      model: "vision-model",
+    });
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_VLM_BASE_URL: "https://vlm.example.test/v1",
+    }).vlm).toBeNull();
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_VLM_BASE_URL: "file:///tmp/model",
+      NXCORE_VLM_API_KEY: "test-key",
+      NXCORE_VLM_MODEL: "vision-model",
     })).toThrow("expected an absolute HTTP(S) URL");
   });
 

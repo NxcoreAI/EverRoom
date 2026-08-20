@@ -92,6 +92,29 @@ function mergeStoredRoom(stored: ContextRoomRecord, fallback?: ContextRoomRecord
   };
 }
 
+function migrateLegacyUpdatedAt(room: ContextRoomRecord, fallbackUpdatedAt: string): ContextRoomRecord {
+  if (room.updatedAt || room.lastViewed !== '刚刚') return room;
+  return { ...room, updatedAt: fallbackUpdatedAt };
+}
+
+function migrateLegacyGeneratedContext(room: ContextRoomRecord): ContextRoomRecord {
+  if (!room.generatedContext || typeof room.generatedContext.overview === 'string') return room;
+  return {
+    ...room,
+    generatedContext: {
+      ...room.generatedContext,
+      overview: '',
+    },
+  };
+}
+
+function migrateContextRoomRecord(
+  room: ContextRoomRecord,
+  fallbackUpdatedAt: string,
+): ContextRoomRecord {
+  return migrateLegacyUpdatedAt(migrateLegacyGeneratedContext(room), fallbackUpdatedAt);
+}
+
 export function loadContextRoomLocalState(fallback: ContextRoomRecord[]): ContextRoomLocalState {
   if (typeof window === 'undefined') {
     return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
@@ -108,9 +131,16 @@ export function loadContextRoomLocalState(fallback: ContextRoomRecord[]): Contex
       ? parsed.deletedRooms.filter(isContextRoomRecord)
       : [];
     const fallbackById = new Map(fallback.map((room) => [room.id, room]));
+    const fallbackUpdatedAt = new Date().toISOString();
     return removeDemoContextRoomState({
-      rooms: parsed.rooms.map((room) => mergeStoredRoom(room, fallbackById.get(room.id))),
-      deletedRooms: deletedRooms.map((room) => mergeStoredRoom(room, fallbackById.get(room.id))),
+      rooms: parsed.rooms.map((room) => migrateContextRoomRecord(
+        mergeStoredRoom(room, fallbackById.get(room.id)),
+        fallbackUpdatedAt,
+      )),
+      deletedRooms: deletedRooms.map((room) => migrateContextRoomRecord(
+        mergeStoredRoom(room, fallbackById.get(room.id)),
+        fallbackUpdatedAt,
+      )),
     });
   } catch {
     return removeDemoContextRoomState({ rooms: fallback, deletedRooms: [] });
@@ -149,7 +179,7 @@ function roomFromSnapshotItem(
     ...(item.kind ? { kind: item.kind } : {}),
   };
   if (!isContextRoomRecord(value)) return null;
-  return value;
+  return migrateLegacyGeneratedContext(value);
 }
 
 export function restoreContextRoomSnapshot(
@@ -160,9 +190,16 @@ export function restoreContextRoomSnapshot(
   if (rooms.some((room) => room === null) || deletedRooms.some((room) => room === null)) return null;
   const allIds = [...rooms, ...deletedRooms].map((room) => room!.id);
   if (new Set(allIds).size !== allIds.length) return null;
+  if (!snapshot.updatedAt) {
+    return removeDemoContextRoomState({
+      rooms: rooms as ContextRoomRecord[],
+      deletedRooms: deletedRooms as ContextRoomRecord[],
+    });
+  }
+  const fallbackUpdatedAt = snapshot.updatedAt;
   return removeDemoContextRoomState({
-    rooms: rooms as ContextRoomRecord[],
-    deletedRooms: deletedRooms as ContextRoomRecord[],
+    rooms: (rooms as ContextRoomRecord[]).map((room) => migrateLegacyUpdatedAt(room, fallbackUpdatedAt)),
+    deletedRooms: (deletedRooms as ContextRoomRecord[]).map((room) => migrateLegacyUpdatedAt(room, fallbackUpdatedAt)),
   });
 }
 

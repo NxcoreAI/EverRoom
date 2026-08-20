@@ -1,0 +1,52 @@
+.room-onboarding { position: fixed; inset: 0; z-index: 1001; overflow: auto; background: #f6f7f9; color: #151a22; }
+.room-onboarding-header { display: flex; min-height: 64px; align-items: center; justify-content: space-between; padding: 0 clamp(22px, 4vw, 56px); border-bottom: 1px solid #e1e5eb; background: rgb(246 247 249 / 94%); backdrop-filter: blur(18px); }
+.room-onboarding-header strong { font-size: 15px; }
+.room-onboarding-actions, .room-onboarding-language, .room-onboarding-buttons { display: flex; align-items: center; }
+.room-onboarding-actions { gap: 18px; }
+.room-onboarding-language { height: 32px; gap: 2px; padding: 3px; border: 1px solid #e1e5eb; border-radius: 6px; background: #fff; }
+.room-onboarding-language svg { width: 15px; height: 15px; margin: 0 4px; color: #536070; }
+.room-onboarding-language button { min-width: 36px; height: 24px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: #536070; font-size: 11px; cursor: pointer; }
+.room-onboarding-language button[data-active='true'] { background: #e7edfc; color: #1e47c4; font-weight: 650; }
+.room-onboarding-skip { padding: 5px 0; border: 0; background: transparent; color: #536070; cursor: pointer; }
+.room-onboarding-main { display: grid; min-height: calc(100vh - 64px); place-items: center; padding: 54px 24px 72px; }
+.room-onboarding-card { display: grid; width: min(980px, 100%); grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr); overflow: hidden; border: 1px solid #d9dee6; border-radius: 8px; background: #fff; box-shadow: 0 18px 48px rgb(21 26 34 / 9%); }
+.room-onboarding-form { padding: 42px 44px 38px; }
+.room-onboarding-eyebrow, .room-onboarding-service > span { display: block; margin-bottom: 13px; color: #247247; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.room-onboarding h1 { margin: 0; font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif; font-size: clamp(30px, 4.2vh, 46px); line-height: 1.16; }
+.room-onboarding-intro, .room-onboarding-service p { max-width: 560px; margin: 16px 0 30px; color: #536070; font-size: 14px; line-height: 1.65; }
+.room-onboarding-field { position: relative; display: block; margin-top: 20px; }
+.room-onboarding-field > span, .room-onboarding-types legend { display: block; margin-bottom: 8px; color: #344052; font-size: 12px; font-weight: 650; }
+.room-onboarding-field em { margin-left: 5px; color: #8490a0; font-style: normal; font-weight: 400; }
+.room-onboarding-field input, .room-onboarding-field textarea { width: 100%; border: 1px solid #ccd3dd; border-radius: 6px; outline: none; background: #f9fafb; color: #151a22; font-size: 14px; }
+.room-onboarding-field input { height: 42px; padding: 0 13px; }
+.room-onboarding-field textarea { min-height: 82px; padding: 11px 13px; resize: vertical; line-height: 1.55; }
+.room-onboarding-field input:focus, .room-onboarding-field textarea:focus { border-color: #3d6ff6; box-shadow: 0 0 0 3px rgb(61 111 246 / 12%); }
+.room-onboarding-field small { position: absolute; right: 10px; bottom: 9px; color: #8490a0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.room-onboarding-types { margin: 20px 0 0; padding: 0; border: 0; }
+.room-onboarding-types > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.room-onboarding-types button { display: inline-flex; min-height: 34px; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid #d6dbe2; border-radius: 6px; background: #fff; color: #536070; cursor: pointer; }
+.room-onboarding-types button[data-active='true'] { border-color: #2c8b59; background: #eef8f1; color: #247247; }
+.room-onboarding-types svg { width: 14px; height: 14px; }
+.room-onboarding-error { min-height: 20px; margin: 8px 0 0; color: #c83232; font-size: 11px; }
+.room-onboarding-primary, .room-onboarding-secondary { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; border: 1px solid transparent; border-radius: 6px; font-weight: 650; cursor: pointer; }
+.room-onboarding-primary { background: #3d6ff6; color: #fff; }
+.room-onboarding-primary:hover { background: #315ed8; }
+.room-onboarding-secondary { border-color: #ccd3dd; background: #fff; color: #344052; }
+.room-onboarding-primary svg { width: 16px; height: 16px; }
+.room-onboarding-create { width: 100%; margin-top: 5px; }
+.room-onboarding-preview { display: flex; min-height: 470px; flex-direction: column; justify-content: center; padding: 40px; border-left: 1px solid #e1e5eb; background: #f8faf9; }
+.room-onboarding-preview-top { display: flex; justify-content: space-between; color: #2c8b59; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-transform: uppercase; }
+.room-onboarding-preview h2 { margin: 22px 0 10px; overflow-wrap: anywhere; font-size: 24px; }
+.room-onboarding-preview p { min-height: 48px; margin: 0; color: #536070; font-size: 13px; line-height: 1.6; }
+.room-onboarding-rails { display: grid; gap: 10px; margin-top: 30px; }
+.room-onboarding-rails span { padding: 13px 14px; border: 1px dashed #b8d4c2; border-radius: 6px; color: #687c70; font-size: 12px; }
+.room-onboarding-service { width: min(640px, 100%); }
+.room-onboarding-service h1 { margin-bottom: 12px; }
+.room-onboarding-buttons { gap: 10px; margin-top: 24px; }
+.room-onboarding-success-icon { width: 44px; height: 44px; margin-bottom: 24px; padding: 10px; border: 1px solid #b8d4c2; border-radius: 50%; color: #247247; background: #eef8f1; }
+.room-onboarding-result { display: flex; max-width: 520px; align-items: center; justify-content: space-between; gap: 16px; margin: 25px 0 24px; padding: 18px; border: 1px solid #b8d4c2; border-left: 3px solid #2c8b59; border-radius: 8px; background: #fff; }
+.room-onboarding-result strong { overflow-wrap: anywhere; }
+.room-onboarding-result span { color: #247247; font-size: 12px; }
+.room-onboarding-status { color: #536070; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (max-width: 760px) { .room-onboarding-main { min-height: auto; padding: 36px 18px 52px; } .room-onboarding-card { grid-template-columns: 1fr; } .room-onboarding-form { padding: 30px 22px 26px; } .room-onboarding-preview { min-height: 280px; padding: 28px 22px; border-top: 1px solid #e1e5eb; border-left: 0; } .room-onboarding-header { min-height: 58px; padding: 0 18px; } .room-onboarding-actions { gap: 12px; } .room-onboarding-language svg { display: none; } }
+@media (prefers-reduced-motion: reduce) { .room-onboarding * { scroll-behavior: auto !important; transition: none !important; } }

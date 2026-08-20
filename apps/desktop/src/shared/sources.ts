@@ -20,6 +20,8 @@ import type {
   AgentSessionSnapshot,
   AgentSocketFrame,
   ContextRoomSnapshot,
+  CreateContextRoomInput,
+  CreateContextRoomResult,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   DocumentEventFrame,
@@ -73,6 +75,7 @@ import type {
   KnowledgeEntityStatus,
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
+  KnowledgeRoomContextDto,
   KnowledgeRoomDto,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
@@ -96,6 +99,7 @@ import type {
   ConnectorSyncRun,
   ConnectorSyncStatus,
 } from './connector-sync'
+import type { DesktopLocale } from './i18n/desktop'
 
 export interface EvidenceBlock {
   id: string
@@ -332,6 +336,7 @@ export type WindowScreenshotResult =
       height: number
       bytes: number
       capturedAt: string
+      perceptualHash?: string
     }
   | {
       ok: false
@@ -343,6 +348,130 @@ export interface WindowScreenshotStatus {
   enabled: boolean
   intervalMs: number
   lastResult: WindowScreenshotResult | null
+}
+
+export interface PerceptionSettings {
+  captureEnabled: boolean
+  captureIntervalSeconds: number
+  onlineVlmEnabled: boolean
+  configVersion: number
+  updatedAt: string
+}
+
+export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo'
+export type VisualPerceptionStatus = 'disabled' | 'pending' | 'processing' | 'ready' | 'failed'
+
+export interface PerceptionNode {
+  id: string
+  kind: PerceptionNodeKind
+  startAt: string
+  endAt: string
+  title: string
+  summary: string
+  status: string
+  eventType: string | null
+  tags: string[]
+  keyPoints: string[]
+  insightTags: RealityTag[]
+  confidence: number | null
+  model: string | null
+  error: string | null
+  sampleCount: number
+  mediaFileId: string | null
+}
+
+export interface VisualObservation {
+  id: string
+  nodeId: string
+  fileId: string
+  kind: 'screenshot' | 'photo'
+  capturedAt: string
+  perceptualHash: string | null
+  width: number | null
+  height: number | null
+  createdAt: string
+}
+
+export interface PerceptionNodeDetail extends PerceptionNode {
+  observations?: VisualObservation[]
+}
+
+export interface PerceptionNodeQuery {
+  from?: string
+  to?: string
+  kind?: PerceptionNodeKind
+  status?: string
+}
+
+export interface DiarySettings {
+  ownerId: string
+  enabled: boolean
+  localTime: string
+  timezone: string
+  enabledFrom: string | null
+  nextRunAt: string | null
+  configVersion: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type DiaryRunStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface DiaryRun {
+  id: string
+  date: string
+  trigger: 'scheduled' | 'catch_up' | 'manual'
+  status: DiaryRunStatus
+  attempt: number
+  error: string | null
+  versionId: string | null
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export interface DiaryContent {
+  headline: string
+  summary: string
+  reflection: string
+  range: { start: string; end: string }
+  events: Array<{
+    time: string
+    endTime?: string
+    title: string
+    summary: string
+    sourceRefs: string[]
+    tags?: string[]
+  }>
+  closing: string
+}
+
+export interface DiaryDayDetails {
+  day: {
+    date: string
+    status: 'pending' | 'generating' | 'ready' | 'stale' | 'failed'
+    eventCount: number
+    lastError: string | null
+  }
+  currentVersion: {
+    id: string
+    date: string
+    version: number
+    content: DiaryContent
+    agentModel: string | null
+    createdAt: string
+  } | null
+  sources: Array<{
+    sourceId: string
+    sourceKind: string
+    occurredAt: string
+    endedAt: string | null
+    timeBasis: string
+    evidenceSummary: string
+    assetFileId: string | null
+    assetKind: 'document' | 'screenshot' | 'photo' | 'audio' | 'other' | null
+    mime: string | null
+  }>
 }
 
 export interface ExportDocumentPdfInput {
@@ -383,6 +512,9 @@ export interface DesktopDiagnosticLogInput {
 
 export interface NxcoreDesktopApi {
   platform: string
+  locale: {
+    set(locale: DesktopLocale): void
+  }
   clipboard: {
     writeText(text: string): Promise<void>
   }
@@ -444,9 +576,29 @@ export interface NxcoreDesktopApi {
     updateInterval(intervalMs: number): Promise<WindowScreenshotStatus>
     stop(): Promise<WindowScreenshotStatus>
     status(): Promise<WindowScreenshotStatus>
+    perceptionSettings(): Promise<PerceptionSettings>
+    updateOnlineVlm(enabled: boolean, configVersion: number): Promise<PerceptionSettings>
+    listPerceptionNodes(query?: PerceptionNodeQuery): Promise<{ items: PerceptionNode[] }>
+    getPerceptionNode(id: string): Promise<PerceptionNodeDetail>
+    retryPerceptionNode(id: string): Promise<{ accepted: boolean }>
+    deletePerceptionNode(id: string, deleteAssets?: boolean): Promise<{
+      deleted: boolean
+      deletedAssets: string[]
+      retainedAssets: string[]
+    }>
+  }
+  diary: {
+    settings(): Promise<DiarySettings>
+    updateSettings(input: Partial<Pick<DiarySettings, 'enabled' | 'localTime' | 'timezone'>> & { configVersion: number }): Promise<DiarySettings>
+    generate(date: string): Promise<{ runId: string }>
+    run(id: string): Promise<DiaryRun>
+    activeRun(): Promise<DiaryRun | null>
+    days(start: string, end: string): Promise<DiaryDayDetails['day'][]>
+    day(date: string): Promise<DiaryDayDetails | null>
   }
   contextRooms: {
     list(): Promise<ContextRoomSnapshot>
+    create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
     syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
   }
   account: {
@@ -487,6 +639,7 @@ export interface NxcoreDesktopApi {
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>
+    startOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResultDto>
     listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
     searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
     updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
@@ -607,6 +760,7 @@ export interface NxcoreDesktopApi {
   }
   knowledge: {
     listRooms(origin?: 'user' | 'auto'): Promise<{ items: KnowledgeRoomDto[] }>
+    getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto>
     upsertRoom(input: { id: string; title: string; kind?: string }): Promise<KnowledgeRoomDto>
     deleteRoom(roomId: string): Promise<void>
     listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
@@ -633,14 +787,13 @@ export interface NxcoreDesktopApi {
     attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<{ entityId: string }>
     listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
-    /** 系统文件选择框（仅 .md）→ 上传 gateway 走自动归类路由。 */
-    pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]>
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileDto[]; total: number }>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string): Promise<{ markdown: string }>
+    readDataUrl(fileId: string): Promise<{ dataUrl: string }>
     rename(fileId: string, displayName: string): Promise<FileDto>
     /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
     delete(fileId: string): Promise<{
@@ -651,8 +804,8 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
-    /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。 */
-    pickAndImport(options?: { pipelines?: IngestPipelines }): Promise<FileImportOutcome[]>
+    /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
+    pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
   }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
@@ -677,6 +830,8 @@ import type {
   MemoryDocumentDto,
   MemoryImportMarkdownResultDto,
   MemoryDocumentRewriteInput,
+  MemoryOnboardingInput,
+  MemoryOnboardingResultDto,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,

@@ -7,6 +7,7 @@ import {
 } from '../graph/PixiForceGraphCanvas'
 import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
 import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+import { useLocale } from '../../../../i18n/LocaleContext'
 
 function nodeRadius(node: KnowledgeWikiGraphDto['nodes'][number]) {
   return Math.min(28, 18 + node.inLinks * 2)
@@ -29,6 +30,7 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
   selectedPath: string | null
   onSelectPage: (path: string) => void
 }) {
+  const { t } = useLocale()
   const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const nodeIndex = useMemo(
     () => new Map(graph.nodes.map((node, index) => [node.id, index])),
@@ -81,7 +83,7 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
   return (
     <div className="context-room-graph-shell context-room-wiki-graph">
       <PixiForceGraphCanvas
-        ariaLabel="wiki 页面内链图谱画布"
+        ariaLabel={t('contextRoom:graphs.wikiCanvas')}
         className="context-room-graph-canvas"
         edges={edges}
         nodes={nodes}
@@ -97,16 +99,16 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
           if (path) onSelectPage(path)
         }}
       />
-      <div className="context-room-visually-hidden" aria-label="wiki 图谱节点">
+      <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.wikiNodes')}>
         {graph.nodes.map((node) => (
           <button
             type="button"
             key={node.id}
-            aria-label={`wiki 页面：${node.title}（被引 ${String(node.inLinks)} 次）`}
+            aria-label={t('contextRoom:graphs.wikiPageNode', { title: node.title, count: node.inLinks })}
             aria-pressed={node.path === selectedPath}
             onClick={() => onSelectPage(node.path)}
           >
-            查看 wiki 页面 {node.title}
+            {t('contextRoom:graphs.viewWikiPage', { title: node.title })}
           </button>
         ))}
       </div>

@@ -247,6 +247,24 @@ describe("引擎主流程：path 输入（U8 只读不拷贝）", () => {
     test.sqlite.close();
   });
 
+  it("roomId（Room 内上传）：透传 entryRoomId 进 knowledge 扇出；缺省不带", async () => {
+    const test = await engineForTest();
+    const path = await tempFile("项目X资料.md", "# 项目X资料\n\n正文");
+
+    await test.service.ingest({ source: { path }, roomId: "room-x" });
+    expect(test.knowledge.submitEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKind: "file",
+      entryRoomId: "room-x",
+    }));
+
+    (test.knowledge.submitEnvelope as ReturnType<typeof vi.fn>).mockClear();
+    const pathPlain = await tempFile("普通上传.md", "# 普通上传");
+    await test.service.ingest({ source: { path: pathPlain } });
+    const submitted = (test.knowledge.submitEnvelope as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect("entryRoomId" in submitted).toBe(false);
+    test.sqlite.close();
+  });
+
   it("json 会议纪要：结构嗅探 → meeting-minutes 模板组装", async () => {
     const test = await engineForTest();
     const path = await tempFile("周会.json", JSON.stringify({

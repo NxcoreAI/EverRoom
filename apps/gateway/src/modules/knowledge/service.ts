@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DocumentEvent, RoomDocument } from "@nxcore/agent-contract";
+import type { DocumentEvent, RoomDocument, TiptapJsonContent } from "@nxcore/agent-contract";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { KnowledgeLlmConfig } from "../../config.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -17,7 +17,6 @@ import {
   uploadedFiles,
 } from "../../infrastructure/database/schema.js";
 import { FilesService } from "../files/service.js";
-import { fileIdOf } from "../files/storage.js";
 import { EmbeddingClient } from "./embedding.js";
 import {
   EntityRegistry,
@@ -29,11 +28,13 @@ import {
 import { bestMatch } from "./entity-index.js";
 import { buildDocumentEnvelope, envelopeFilename, type DocEnvelope } from "./envelope.js";
 import { truncateUtf8 } from "../ingest/normalizers.js";
+import { fileIdOf } from "../files/storage.js";
 import { convertUploadedFile } from "./file-convert.js";
-import { KnowledgeLlm, type RegisterResult } from "./llm.js";
+import { KnowledgeLlm, type RegisterResult, type RoomContextResult } from "./llm.js";
 import { KsAdminClient, KsBusyError, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
 import { KnowledgeRouter } from "./router.js";
+import { tiptapToMarkdown } from "./tiptap-markdown.js";
 
 export interface KnowledgeServiceConfig {
   baseUrl: string;
@@ -105,6 +106,7 @@ interface RouteJobPayload {
     title: string;
     markdown: string;
     occurredAt?: string;
+    entryRoomId?: string;
     entrySignals?: DocEnvelope["entrySignals"];
   };
 }
@@ -315,6 +317,7 @@ export class KnowledgeService {
   private readonly entityRegistry: EntityRegistry;
   private readonly router: KnowledgeRouter;
   private readonly llm: KnowledgeLlm | null;
+  private readonly roomContextCache = new Map<string, { key: string; value: RoomContextSummary }>();
   /** 字节与登记表的唯一所有者是 modules/files（U9）；此处仅编排路由/ingest。 */
   private readonly files: FilesService;
   private readonly pendingSchedules = new Map<string, PendingSchedule>();
@@ -737,6 +740,7 @@ export class KnowledgeService {
     title: string;
     markdown: string;
     occurredAt?: string;
+    entryRoomId?: string;
     entrySignals?: DocEnvelope["entrySignals"];
     sourceId?: string;
     sourceVersion?: number;
@@ -749,73 +753,13 @@ export class KnowledgeService {
         title: input.title,
         markdown: input.markdown,
         ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
+        ...(input.entryRoomId ? { entryRoomId: input.entryRoomId } : {}),
         ...(input.entrySignals ? { entrySignals: input.entrySignals } : {}),
       },
     };
     const jobId = this.insertJob(ROUTE_JOB_TYPE, payload);
     this.wake();
     return { queued: true, jobId };
-  }
-
-  /**
-   * 上传文件入口（用户主路径：拖个文件进来 → 抽取实体 → 弱实体累积）。
-   * 四道判重闸门的前两道在此：闸1 同名同内容 → 全跳过（零成本）；
-   * 同名新内容 → 版本更新（同 sourceId，重新抽取解析——链接跟随实体走，
-   * plan §4.6，不再"永久锁死第一个 Room"）。
-   */
-  async submitFileUpload(input: {
-    filename: string;
-    buffer: Buffer;
-    occurredAt?: string;
-    entrySignals?: DocEnvelope["entrySignals"];
-  }): Promise<{ queued: boolean; sourceId: string; title: string; deduped: boolean }> {
-    const converted = convertUploadedFile(input.filename, input.buffer);
-    const sourceId = fileIdOf(input.filename);
-
-    // 资产段经 modules/files（U9）：闸1 同名同内容 → 全跳过；同名新内容 →
-    // 版本更新（身份不变）。存储完成后这里只做解析回填与路由入队。
-    const uploaded = await this.files.upload({ filename: input.filename, buffer: input.buffer });
-    if (uploaded.deduped) {
-      // 闸1：同名且内容未变——不存、不解析、不入队（链接与归属必然没变）
-      this.logger.info(
-        { event: "knowledge.file.deduped", sourceId, filename: input.filename },
-        "file re-upload with unchanged content skipped",
-      );
-      return { queued: false, sourceId, title: uploaded.originalName, deduped: true };
-    }
-    const parsedId = this.files.ensureParsed(uploaded.contentHash, converted.markdown);
-    this.files.touchParsed(sourceId, parsedId);
-
-    const sourceVersion = this.nextFileVersion(sourceId);
-    this.submitEnvelope({
-      sourceKind: "file",
-      sourceId,
-      sourceVersion,
-      title: converted.title,
-      markdown: converted.markdown,
-      ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
-      // 文件名进 ②b 规则信号（如 "发票-" 前缀规则）；用户显式传的字段优先
-      entrySignals: {
-        filenamePrefix: input.filename,
-        ...(input.entrySignals ?? {}),
-      },
-    });
-    this.logger.info(
-      { event: "knowledge.file.uploaded", sourceId, filename: input.filename, bytes: input.buffer.byteLength, version: sourceVersion },
-      uploaded.versionUpdated ? "file version updated for routing" : "file uploaded for routing",
-    );
-    return { queued: true, sourceId, title: converted.title, deduped: false };
-  }
-
-  /** file 的下一个版本号：取该源已有决策的最大 source_version + 1。 */
-  nextFileVersion(sourceId: string): number {
-    const rows = this.db.select({ sourceVersion: routeDecisions.sourceVersion })
-      .from(routeDecisions)
-      .where(and(eq(routeDecisions.sourceKind, "file"), eq(routeDecisions.sourceId, sourceId)))
-      .orderBy(desc(routeDecisions.sourceVersion))
-      .limit(1)
-      .all();
-    return (rows[0]?.sourceVersion ?? 0) + 1;
   }
 
   /**
@@ -1011,11 +955,12 @@ export class KnowledgeService {
   private async runRouteJob(payload: RouteJobPayload): Promise<void> {
     let envelope: DocEnvelope | null = null;
     if (payload.envelope) {
-      const { occurredAt, entrySignals, ...rest } = payload.envelope;
+      const { occurredAt, entryRoomId, entrySignals, ...rest } = payload.envelope;
       envelope = {
         ref: { kind: payload.sourceKind, id: payload.sourceId, version: payload.sourceVersion },
         ...rest,
         ...(occurredAt ? { occurredAt } : {}),
+        ...(entryRoomId ? { entryRoomId } : {}),
         ...(entrySignals ? { entrySignals } : {}),
       };
     } else if (payload.sourceKind === "everroom-doc") {
@@ -2018,4 +1963,81 @@ export class KnowledgeService {
       ingested: ingested.has(document.id),
     }));
   }
+
+  /** Room 详情投影：资料集合是事实源，LLM 只负责汇总，不直接改用户 Room 数据。 */
+  async roomContext(roomId: string): Promise<RoomContextSummary> {
+    const rows = this.db.select({ document: documents })
+      .from(roomDocumentLinks)
+      .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
+      .where(and(eq(roomDocumentLinks.roomId, roomId), isNull(documents.deletedAt)))
+      .orderBy(desc(documents.updatedAt))
+      .all()
+      .filter(({ document }) => document.status === "active");
+    const sourceDocuments = rows.map(({ document }) => ({
+      documentId: document.id,
+      title: document.title,
+      version: document.version,
+      updatedAt: document.updatedAt.toISOString(),
+    }));
+    const key = sourceDocuments.map((item) => `${item.documentId}:${item.version}`).join("\u0000");
+    const cached = this.roomContextCache.get(roomId);
+    if (cached?.key === key) return cached.value;
+
+    const fallbackStatus = sourceDocuments.length > 0
+      ? `已收录 ${sourceDocuments.length} 份文档，最新资料《${sourceDocuments[0]!.title}》已更新。`
+      : "";
+    let context: RoomContextResult = {
+      overview: fallbackStatus,
+      status: fallbackStatus,
+      nextSteps: [],
+      entities: [],
+      actionItems: [],
+      meetings: [],
+    };
+    let cacheable = !this.llm || rows.length === 0;
+    if (this.llm && rows.length > 0) {
+      const room = this.db.select({ title: rooms.title }).from(rooms).where(eq(rooms.id, roomId)).get();
+      try {
+        const generated = await this.llm.summarizeRoom(
+          room?.title ?? roomId,
+          rows.map(({ document }) => ({
+            title: document.title,
+            markdown: tiptapToMarkdown(document.contentJson as TiptapJsonContent),
+          })),
+        );
+        const sourceTitles = new Set(sourceDocuments.map((document) => document.title));
+        context = {
+          ...generated,
+          status: generated.status || fallbackStatus,
+          actionItems: generated.actionItems.filter((item) => sourceTitles.has(item.sourceTitle)),
+          meetings: generated.meetings.filter((item) => sourceTitles.has(item.sourceTitle)),
+        };
+        cacheable = true;
+      } catch (error) {
+        this.logger.warn(
+          { event: "knowledge.room_context.failed", roomId, error: error instanceof Error ? error.message : String(error) },
+          "Room context refresh failed; using document fallback",
+        );
+      }
+    }
+    const value: RoomContextSummary = {
+      roomId,
+      generatedAt: new Date().toISOString(),
+      sourceDocuments,
+      ...context,
+    };
+    if (cacheable) this.roomContextCache.set(roomId, { key, value });
+    return value;
+  }
+}
+
+export interface RoomContextSummary extends RoomContextResult {
+  roomId: string;
+  generatedAt: string;
+  sourceDocuments: Array<{
+    documentId: string;
+    title: string;
+    version: number;
+    updatedAt: string;
+  }>;
 }

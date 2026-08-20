@@ -127,6 +127,20 @@
       "when": 1787158500761,
       "tag": "0017_sour_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1787208413203,
+      "tag": "0018_living_secret_warriors",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1787218875498,
+      "tag": "0019_free_charles_xavier",
+      "breakpoints": true
     }
   ]
 }

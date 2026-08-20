@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { Application, Container, Graphics, ParticleContainer, Sprite, Text, Ticker } from 'pixi.js'
 import { Viewport } from 'pixi-viewport'
 
@@ -25,6 +25,10 @@ export interface PixiForceGraphCanvasNode extends PixiForceGraphNode {
   id: string
 }
 
+export interface PixiForceGraphCanvasHandle {
+  fitView(): void
+}
+
 interface PixiForceGraphCanvasProps {
   ariaLabel: string
   className: string
@@ -32,6 +36,7 @@ interface PixiForceGraphCanvasProps {
   nodes: readonly PixiForceGraphCanvasNode[]
   onResize?: (width: number, height: number) => void
   onDragNode?: (nodeId: string, x: number, y: number) => void
+  onOpenNode?: (nodeId: string) => void
   onReleaseNode?: (nodeId: string) => void
   onSelectNode: (nodeId: string | null) => void
   positions: Float32Array
@@ -40,23 +45,30 @@ interface PixiForceGraphCanvasProps {
 }
 
 /** React lifecycle shell for the PIXI force-graph renderer. */
-export function PixiForceGraphCanvas({
+export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiForceGraphCanvasProps>(function PixiForceGraphCanvas({
   ariaLabel,
   className,
   edges,
   nodes,
   onDragNode,
+  onOpenNode,
   onReleaseNode,
   onResize,
   onSelectNode,
   positions,
   revision,
   selectedId,
-}: PixiForceGraphCanvasProps) {
+}, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<PixiForceGraphRenderer | null>(null)
-  const propsRef = useRef({ nodes, onDragNode, onReleaseNode, onResize, onSelectNode })
-  propsRef.current = { nodes, onDragNode, onReleaseNode, onResize, onSelectNode }
+  const propsRef = useRef({ nodes, onDragNode, onOpenNode, onReleaseNode, onResize, onSelectNode })
+  propsRef.current = { nodes, onDragNode, onOpenNode, onReleaseNode, onResize, onSelectNode }
+
+  useImperativeHandle(ref, () => ({
+    fitView() {
+      rendererRef.current?.fitView()
+    },
+  }), [])
 
   useEffect(() => {
     const host = hostRef.current
@@ -77,6 +89,10 @@ export function PixiForceGraphCanvas({
         onNodeDrag: (index, x, y) => {
           const nodeId = propsRef.current.nodes[index]?.id
           if (nodeId) propsRef.current.onDragNode?.(nodeId, x, y)
+        },
+        onNodeOpen: (index) => {
+          const nodeId = propsRef.current.nodes[index]?.id
+          if (nodeId) propsRef.current.onOpenNode?.(nodeId)
         },
         onNodeRelease: (index) => {
           const nodeId = propsRef.current.nodes[index]?.id
@@ -119,4 +135,4 @@ export function PixiForceGraphCanvas({
   }, [nodes, selectedId])
 
   return <div ref={hostRef} className={className} />
-}
+})

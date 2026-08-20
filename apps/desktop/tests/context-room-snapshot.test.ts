@@ -45,7 +45,26 @@ describe('Context Room backend snapshots', () => {
 
     expect(restored?.rooms).toHaveLength(1)
     expect(restored?.rooms[0]).toMatchObject({ id: 'room-server', title: '服务端标题', kind: '项目' })
+    expect(restored?.rooms[0].updatedAt).toBe(snapshot.updatedAt)
     expect(restored?.deletedRooms[0].id).toBe(second.id)
+  })
+
+  it('migrates generated Room context saved before overview was introduced', () => {
+    const room = createContextRoomFixture()
+    room.generatedContext = {
+      roomId: room.id,
+      generatedAt: '2026-08-20T12:00:00.000Z',
+      sourceDocuments: [],
+      status: '资料已进入评审',
+      nextSteps: [],
+      entities: [],
+      actionItems: [],
+      meetings: [],
+    } as typeof room.generatedContext
+    const snapshot = createContextRoomSnapshotInput({ rooms: [room], deletedRooms: [] })
+
+    expect(restoreContextRoomSnapshot({ ...snapshot, updatedAt: null })?.rooms[0]
+      .generatedContext?.overview).toBe('')
   })
 
   it('recognizes first import and rejects corrupt or duplicate snapshots', () => {

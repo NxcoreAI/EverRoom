@@ -74,6 +74,20 @@ export interface MemoryOverviewDto {
   pipeline: MemoryPipelineDto | null
 }
 
+export interface MemoryOnboardingInput {
+  requestId: string
+  locale: 'zh-CN' | 'en-US'
+  workContext: string
+  currentFocus: string
+  collaborationPreference?: string
+}
+
+export interface MemoryOnboardingResultDto {
+  sessionId: string
+  capturedAt: string
+  accepted: true
+}
+
 export interface MemoryAtomicListOptions {
   type?: MemoryAtomicType
   limit?: number

@@ -9,6 +9,7 @@ import { createOpenConnectorPiTools } from './open-connector-tools.js';
 import { createConnectorDataPiTools } from "../connectors/pi-tools.js";
 import { createConnectorSyncAgentTools } from "../connectors/agent-tools.js";
 import type { ConnectorSyncService } from "../connectors/service.js";
+import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
 
 export interface AgentRuntimeIntegrationOptions {
@@ -75,6 +76,38 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
     workingDirectory: join(config.backgroundPi.workingDirectory, "background"),
     agentDirectory: join(config.backgroundPi.agentDirectory, "background"),
   });
+}
+
+export function createContextRoomAgentRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !config.backgroundPi?.memory) return null;
+  const { knowledge: _knowledge, mcp: _mcp, ...pi } = config.backgroundPi;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 8,
+    sessionsDir: join(config.backgroundPi.sessionsDir, "context-room-create"),
+    workingDirectory: join(config.backgroundPi.workingDirectory, "context-room-create"),
+    agentDirectory: join(config.backgroundPi.agentDirectory, "context-room-create"),
+  });
+}
+
+/** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
+export function createDiaryAgentRuntime(
+  config: GatewayConfig,
+  generator: DiaryAgentGenerator,
+): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !config.backgroundPi) return null;
+  const { memory: _memory, knowledge: _knowledge, ...pi } = config.backgroundPi;
+  return new PiAgentRuntime({
+    ...pi,
+    maxTokens: config.diaryMaxTokens ?? Math.max(pi.maxTokens, 16_384),
+    includeBashTool: false,
+    maxToolCallsPerRun: 128,
+    sessionsDir: join(config.backgroundPi.sessionsDir, "diary"),
+    workingDirectory: join(config.backgroundPi.workingDirectory, "diary"),
+    agentDirectory: join(config.backgroundPi.agentDirectory, "diary"),
+  }, { tools: generator.tools() });
 }
 
 export function createCursorCompletionRuntime(config: GatewayConfig): AgentRuntime {

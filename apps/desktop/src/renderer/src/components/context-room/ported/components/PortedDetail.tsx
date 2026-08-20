@@ -1,5 +1,6 @@
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocale } from '../../../../i18n/LocaleContext'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
 import {
@@ -9,6 +10,7 @@ import {
 } from '../resources'
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../types'
 import { useContextRoomLayout } from '../hooks/useContextRoomLayout'
+import { useRoomKnowledgeFiles } from '../hooks/useRoomKnowledgeFiles'
 import { ObjectDetailView } from './ObjectDetailView'
 import type { DetailObject } from './ObjectDetailView'
 import type { DetailPane } from './RoomIconSidebar'
@@ -58,6 +60,7 @@ export function PortedDetail({
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>
   onEmptyTrash: (roomId: string) => Promise<void>
 }) {
+  const { locale, t } = useLocale()
   const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
@@ -75,9 +78,10 @@ export function PortedDetail({
     const value = room.materials.find((item) => item.id === initialObject.id)
     return value ? { kind: initialObject.kind, value } : null
   })
+  const { files: knowledgeFiles } = useRoomKnowledgeFiles(room.id)
   const library = useMemo(
-    () => createContextRoomResourceLibrary(room, backendDocuments),
-    [backendDocuments, room],
+    () => createContextRoomResourceLibrary(room, backendDocuments, [], knowledgeFiles, locale),
+    [backendDocuments, knowledgeFiles, locale, room],
   )
   const setActivePane = useCallback((pane: DetailPane) => {
     setActivePaneState(pane)
@@ -124,13 +128,13 @@ export function PortedDetail({
 
   const createDocument = useCallback(async (title: string, contentJson?: TiptapJsonContent) => {
     const document = await onCreateDocument(room.id, title, contentJson)
-    const resource = createContextRoomResourceLibrary(room, [document]).resources.find((candidate) =>
+    const resource = createContextRoomResourceLibrary(room, [document], [], locale).resources.find((candidate) =>
       candidate.kind === 'cloud-doc' && candidate.binding.docId === document.id)
     if (resource) openResource(resource)
-  }, [onCreateDocument, openResource, room])
+  }, [locale, onCreateDocument, openResource, room])
 
   const addLocalFile = useCallback((file: LocalOfficeFile) => {
-    const item = createContextRoomFileItem(file)
+    const item = createContextRoomFileItem(file, locale)
     onUpdateRoom((current) => {
       if (current.fileItems.some((candidate) => candidate.hostfsPath === file.path)) return current
       return {
@@ -147,7 +151,7 @@ export function PortedDetail({
     layout.setMiddleHidden(false)
     layout.setMobileContent(true)
     setActivePane('documents')
-  }, [layout, onUpdateRoom, room.id, setActivePane])
+  }, [layout, locale, onUpdateRoom, room.id, setActivePane])
 
   useEffect(() => {
     const resource = library.resources.find((candidate) =>
@@ -228,6 +232,7 @@ export function PortedDetail({
           selectedResource={selectedResource}
           backendDocuments={backendDocuments}
           trashedDocuments={trashedDocuments}
+          knowledgeFiles={knowledgeFiles}
           focusedDocumentId={focusedDocumentId}
           focusedBlockId={focusedBlockId}
           documentFocusRequestId={documentFocusRequestId}
@@ -258,10 +263,10 @@ export function PortedDetail({
         <button
           type="button"
           className="context-room-visually-hidden"
-          aria-label="Back to Context Room home"
+          aria-label={t('contextRoom:portedDetail.backToContextRoomHome')}
           onClick={onBack}
         >
-          返回 Context Room
+          {t('contextRoom:portedDetail.backToContextRoom')}
         </button>
       </main>
     </div>

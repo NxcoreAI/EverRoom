@@ -9,6 +9,7 @@ import {
   Share2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useLocale } from '../../../../i18n/LocaleContext';
 
 export type DetailPane =
   | 'overview'
@@ -21,14 +22,14 @@ export type DetailPane =
   | 'mails';
 
 export const DETAIL_TABS = [
-  { id: 'overview', label: '概览', icon: BarChart3, tone: 'room' },
-  { id: 'documents', label: '文档', icon: FileText, tone: 'document' },
-  { id: 'relations', label: '关系', icon: Share2, tone: 'data' },
-  { id: 'memories', label: '记忆', icon: Bookmark, tone: 'memory' },
-  { id: 'wiki', label: '知识库', icon: BookOpen, tone: 'data' },
-  { id: 'schedule', label: '日程', icon: CalendarDays, tone: 'calendar' },
-  { id: 'tasks', label: '任务', icon: CheckSquare2, tone: 'task' },
-  { id: 'mails', label: '邮件', icon: Mail, tone: 'communication' },
+  { id: 'overview', label: 'contextRoom:roomSidebar.overview', icon: BarChart3, tone: 'room' },
+  { id: 'documents', label: 'contextRoom:roomSidebar.documents', icon: FileText, tone: 'document' },
+  { id: 'relations', label: 'contextRoom:roomSidebar.relations', icon: Share2, tone: 'data' },
+  { id: 'memories', label: 'contextRoom:roomSidebar.memories', icon: Bookmark, tone: 'memory' },
+  { id: 'wiki', label: 'contextRoom:roomSidebar.wiki', icon: BookOpen, tone: 'data' },
+  { id: 'schedule', label: 'contextRoom:roomSidebar.schedule', icon: CalendarDays, tone: 'calendar' },
+  { id: 'tasks', label: 'contextRoom:roomSidebar.tasks', icon: CheckSquare2, tone: 'task' },
+  { id: 'mails', label: 'contextRoom:roomSidebar.mail', icon: Mail, tone: 'communication' },
 ] as const;
 
 export function RoomIconSidebar({
@@ -44,17 +45,18 @@ export function RoomIconSidebar({
     onSelect: () => void;
   };
 }) {
+  const { t } = useLocale();
   return (
-    <nav className="context-room-workspace-tabs" aria-label="Context room detail">
+    <nav className="context-room-workspace-tabs" aria-label={t('contextRoom:roomSidebar.contextRoomDetail')}>
       {DETAIL_TABS.map(({ id, label, icon: Icon, tone }) => (
         <button
           key={id}
           type="button"
           data-pane-id={id}
           data-icon-tone={tone}
-          aria-label={label}
+          aria-label={t(label)}
           aria-pressed={activePane === id}
-          title={label}
+          title={t(label)}
           onClick={() => onSelectPane(id)}
         >
           <Icon aria-hidden="true" />
@@ -64,8 +66,8 @@ export function RoomIconSidebar({
         <button
           type="button"
           className="context-room-workspace-tabs-footer"
-          aria-label={footerAction.label}
-          title={footerAction.label}
+          aria-label={t(footerAction.label)}
+          title={t(footerAction.label)}
           onClick={footerAction.onSelect}
         >
           <footerAction.icon aria-hidden="true" />

@@ -7,8 +7,10 @@ import {
   type MemoryPipelineStatus,
   type MemoryRuntimeConfig,
 } from "@nxcore/agent-runtime-pi";
+import { eq } from "drizzle-orm";
 import { FilesService } from "../files/service.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import { gatewayMetadata } from "../../infrastructure/database/schema.js";
 import { MemoryGatewayError } from "./errors.js";
 
 /** UI 浏览场景的超时：比 agent 注入流程（3s）宽松，但仍在交互可接受范围。 */
@@ -61,6 +63,29 @@ export interface SourceDocumentMemoryInput {
   uri?: string;
   contentHash?: string;
 }
+
+export interface MemoryOnboardingInput {
+  requestId: string;
+  locale: "zh-CN" | "en-US";
+  workContext: string;
+  currentFocus: string;
+  collaborationPreference?: string;
+}
+
+export interface MemoryOnboardingResult {
+  sessionId: string;
+  capturedAt: string;
+  accepted: true;
+}
+
+interface MemoryOnboardingRecord extends MemoryOnboardingResult {
+  status: "pending" | "accepted";
+  profileUpdated: boolean;
+}
+
+const ONBOARDING_PROFILE_START = "<!-- everroom:onboarding-profile:start -->";
+const ONBOARDING_PROFILE_END = "<!-- everroom:onboarding-profile:end -->";
+const SCENE_NAVIGATION_HEADER = "---\n## 🗺️ Scene Navigation (Scene Index)";
 
 /** 渲染层 DTO：L2 场景目录项。 */
 export interface MemoryScenarioEntryDto {
@@ -212,6 +237,8 @@ export class MemoryService {
   private readonly client: MemoryCoreClient | null;
   /** md 导入的资产化通道（modules/files，U9 唯一字节入口）；未配置记忆时为 null。 */
   private readonly files: FilesService | null;
+  private readonly db: GatewayDatabase | null;
+  private readonly onboardingRequests = new Map<string, Promise<MemoryOnboardingResult>>();
 
   constructor(
     config: MemoryRuntimeConfig | null,
@@ -221,6 +248,7 @@ export class MemoryService {
   ) {
     this.client = config ? new MemoryClientWithTimeout(config) : null;
     this.files = assets ? new FilesService(assets.db, assets.dataDir) : null;
+    this.db = assets?.db ?? null;
   }
 
   get enabled(): boolean {
@@ -433,7 +461,7 @@ export class MemoryService {
   /**
    * md 一等来源导入（docs/memory-md-source-plan.md §6）：
    * ① 资产化——file-storage 原语落对象库 + uploaded_files/parsed_contents
-   *   （与知识上传同一套确定性身份，但**不走** submitFileUpload 的 wiki 路由）；
+   *   （与文件上传同一套确定性身份，但不触发 knowledge 的 wiki 路由）；
    * ② 代理 MemoryCore /v3/document/import，caller_ref = file id。
    * 原文字节只落资产层；MemoryCore 仅存 caller_ref 与内容指纹。
    */
@@ -707,6 +735,239 @@ export class MemoryService {
       { role: "assistant", content: input.markdown, timestamp },
     ]));
     return true;
+  }
+
+  /**
+   * 首次记忆引导不经过 Agent runtime，确保 Fake Agent 模式也能把回答交给
+   * MemoryCore。requestId 同时决定固定 session，并在 gateway_metadata 中持久判重。
+   */
+  async captureOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResult> {
+    this.require();
+    if (!input.workContext.trim() || !input.currentFocus.trim()) {
+      throw new MemoryGatewayError(
+        "memory_error",
+        "workContext and currentFocus must contain non-whitespace text",
+        400,
+      );
+    }
+    const existing = this.readOnboardingRecord(input.requestId);
+    if (existing?.status === "accepted" && existing.profileUpdated) {
+      return this.toOnboardingResult(existing);
+    }
+
+    const running = this.onboardingRequests.get(input.requestId);
+    if (running) return running;
+
+    const operation = this.performOnboardingCapture(input, existing).finally(() => {
+      this.onboardingRequests.delete(input.requestId);
+    });
+    this.onboardingRequests.set(input.requestId, operation);
+    return operation;
+  }
+
+  private async performOnboardingCapture(
+    input: MemoryOnboardingInput,
+    existing: MemoryOnboardingRecord | null,
+  ): Promise<MemoryOnboardingResult> {
+    const client = this.require();
+    const sessionId = `onboarding:${input.requestId}`;
+    const capturedAt = existing?.capturedAt ?? new Date().toISOString();
+    const pending: MemoryOnboardingRecord = {
+      sessionId,
+      capturedAt,
+      accepted: true,
+      status: "pending",
+      profileUpdated: existing?.profileUpdated ?? false,
+    };
+    this.writeOnboardingRecord(input.requestId, pending);
+
+    // 旧版本已完成 L0 写入但尚未同步画像时，只补齐 L3，不重复追加对话。
+    if (existing?.status === "accepted") {
+      await this.updateOnboardingProfile(input, capturedAt);
+      const accepted = { ...pending, status: "accepted" as const, profileUpdated: true };
+      this.writeOnboardingRecord(input.requestId, accepted);
+      return this.toOnboardingResult(accepted);
+    }
+
+    // 上次可能已写入 MemoryCore、但尚未来得及把本地状态改成 accepted。
+    // 固定 session 下发现消息即可完成本地恢复，不再次追加同一轮对话。
+    if (existing?.status === "pending") {
+      const page = await this.call(() => client.queryConversation({
+        sessionId,
+        limit: 1,
+        offset: 0,
+      }));
+      if (page.total > 0 || page.messages.length > 0) {
+        await this.updateOnboardingProfile(input, capturedAt);
+        const accepted = { ...pending, status: "accepted" as const, profileUpdated: true };
+        this.writeOnboardingRecord(input.requestId, accepted);
+        return this.toOnboardingResult(accepted);
+      }
+    }
+
+    await this.call(() => client.addConversation(
+      sessionId,
+      this.onboardingMessages(input, capturedAt),
+    ));
+    await this.updateOnboardingProfile(input, capturedAt);
+
+    const accepted = { ...pending, status: "accepted" as const, profileUpdated: true };
+    this.writeOnboardingRecord(input.requestId, accepted);
+    return this.toOnboardingResult(accepted);
+  }
+
+  private async updateOnboardingProfile(
+    input: MemoryOnboardingInput,
+    capturedAt: string,
+  ): Promise<void> {
+    const client = this.require();
+    const current = await this.call(() => client.readCoreFile());
+    const block = this.onboardingProfileBlock(input, capturedAt);
+    const content = this.mergeOnboardingProfile(current.content ?? "", block);
+    await this.call(() => client.writeCore(content));
+  }
+
+  private onboardingProfileBlock(input: MemoryOnboardingInput, capturedAt: string): string {
+    const quote = (value: string) => value
+      .trim()
+      .replaceAll("<!--", "&lt;!--")
+      .replaceAll("-->", "--&gt;")
+      .split(/\r?\n/)
+      .map((line) => `> ${line}`)
+      .join("\n");
+    const preference = input.collaborationPreference?.trim();
+    if (input.locale === "en-US") {
+      return [
+        ONBOARDING_PROFILE_START,
+        "## Initial collaboration profile",
+        "### Main work",
+        quote(input.workContext),
+        "### Current focus",
+        quote(input.currentFocus),
+        ...(preference ? ["### Collaboration preference", quote(preference)] : []),
+        `_Captured during first setup at ${capturedAt}_`,
+        ONBOARDING_PROFILE_END,
+      ].join("\n\n");
+    }
+    return [
+      ONBOARDING_PROFILE_START,
+      "## 首次协作画像",
+      "### 主要工作",
+      quote(input.workContext),
+      "### 当前重点",
+      quote(input.currentFocus),
+      ...(preference ? ["### 协作偏好", quote(preference)] : []),
+      `_首次设置记录于 ${capturedAt}_`,
+      ONBOARDING_PROFILE_END,
+    ].join("\n\n");
+  }
+
+  private mergeOnboardingProfile(current: string, block: string): string {
+    const start = current.indexOf(ONBOARDING_PROFILE_START);
+    const end = start >= 0 ? current.indexOf(ONBOARDING_PROFILE_END, start) : -1;
+    if (start >= 0 && end >= 0) {
+      const after = end + ONBOARDING_PROFILE_END.length;
+      return `${current.slice(0, start).trimEnd()}\n\n${block}\n\n${current.slice(after).trimStart()}`.trim();
+    }
+    const navigationStart = current.indexOf(SCENE_NAVIGATION_HEADER);
+    if (navigationStart >= 0) {
+      return [
+        current.slice(0, navigationStart).trim(),
+        block,
+        current.slice(navigationStart).trim(),
+      ].filter(Boolean).join("\n\n");
+    }
+    return [current.trim(), block].filter(Boolean).join("\n\n");
+  }
+
+  private onboardingMessages(
+    input: MemoryOnboardingInput,
+    timestamp: string,
+  ): Array<{ role: "user" | "assistant"; content: string; timestamp: string }> {
+    const preference = input.collaborationPreference?.trim();
+    if (input.locale === "en-US") {
+      return [
+        {
+          role: "user",
+          content: [
+            "[everroom:onboarding] This is my first memory setup. Extract the information I directly provided below into durable atomic memories.",
+            `My main work: ${input.workContext.trim()}`,
+            `My current focus: ${input.currentFocus.trim()}`,
+            ...(preference ? [`How I want the Agent to collaborate with me: ${preference}`] : []),
+          ].join("\n"),
+          timestamp,
+        },
+        {
+          role: "assistant",
+          content: "[everroom:onboarding:accepted] I have read your answers and will retain your work context, current focus, and any collaboration preference as long-term working memory.",
+          timestamp,
+        },
+      ];
+    }
+    return [
+      {
+        role: "user",
+        content: [
+          "[everroom:onboarding] 这是我的首次记忆设置。请将以下由我直接提供的信息提炼为长期原子记忆。",
+          `我的主要工作：${input.workContext.trim()}`,
+          `我当前最想推进：${input.currentFocus.trim()}`,
+          ...(preference ? [`我希望 Agent 这样与我协作：${preference}`] : []),
+        ].join("\n"),
+        timestamp,
+      },
+      {
+        role: "assistant",
+        content: "[everroom:onboarding:accepted] 我已读取这些回答，并会将你的工作背景、当前重点和已填写的协作偏好作为长期协作记忆。",
+        timestamp,
+      },
+    ];
+  }
+
+  private onboardingMetadataKey(requestId: string): string {
+    return `memory.onboarding.v1:${requestId}`;
+  }
+
+  private readOnboardingRecord(requestId: string): MemoryOnboardingRecord | null {
+    if (!this.db) return null;
+    const row = this.db.select({ value: gatewayMetadata.value }).from(gatewayMetadata)
+      .where(eq(gatewayMetadata.key, this.onboardingMetadataKey(requestId))).get();
+    if (!row) return null;
+    try {
+      const value = JSON.parse(row.value) as Partial<MemoryOnboardingRecord>;
+      if ((value.status !== "pending" && value.status !== "accepted")
+        || typeof value.sessionId !== "string"
+        || typeof value.capturedAt !== "string") return null;
+      return {
+        status: value.status,
+        sessionId: value.sessionId,
+        capturedAt: value.capturedAt,
+        accepted: true,
+        profileUpdated: value.profileUpdated === true,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private writeOnboardingRecord(requestId: string, record: MemoryOnboardingRecord): void {
+    if (!this.db) return;
+    const updatedAt = new Date();
+    this.db.insert(gatewayMetadata).values({
+      key: this.onboardingMetadataKey(requestId),
+      value: JSON.stringify(record),
+      updatedAt,
+    }).onConflictDoUpdate({
+      target: gatewayMetadata.key,
+      set: { value: JSON.stringify(record), updatedAt },
+    }).run();
+  }
+
+  private toOnboardingResult(record: MemoryOnboardingRecord): MemoryOnboardingResult {
+    return {
+      sessionId: record.sessionId,
+      capturedAt: record.capturedAt,
+      accepted: true,
+    };
   }
 
   private require(): MemoryCoreClient {

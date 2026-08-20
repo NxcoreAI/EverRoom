@@ -18,6 +18,35 @@ export function contextRoomRoutes(service: ContextRoomService): FastifyPluginAsy
       async () => service.getSnapshot(),
     );
 
+    app.post(
+      "/v1/context-rooms",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          body: Type.Object({
+            title: Type.String({ minLength: 1, maxLength: 120 }),
+            description: Type.String({ minLength: 1, maxLength: 2_000 }),
+          }, { additionalProperties: false }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.createRoom(request.body);
+        } catch (error) {
+          if (error instanceof Error && (
+            error.message === "context_room_title_required"
+            || error.message === "context_room_description_required"
+          )) {
+            return reply.code(400).send({
+              error: "invalid_room",
+              message: "Context Room title and description cannot be blank",
+            });
+          }
+          throw error;
+        }
+      },
+    );
+
     app.put(
       "/v1/context-rooms/snapshot",
       {

@@ -7,6 +7,7 @@ import type {
   IngestResultDto,
 } from '../../shared/ingest'
 import type { GatewaySupervisor } from './gateway-supervisor'
+import { desktopText } from '../desktop-locale'
 
 /**
  * 文件中心桥（unified-ingest-plan §8-§9）：modules/files 的管理面 +
@@ -28,6 +29,17 @@ export class FilesGatewayBridge {
   /** 文件当前解析产物的 markdown（渲染器预览用；未进过链路 404）。 */
   readMarkdown(fileId: string): Promise<{ markdown: string }> {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}/markdown`)
+  }
+
+  async readDataUrl(fileId: string): Promise<{ dataUrl: string }> {
+    const connection = this.supervisor.getConnection()
+    const response = await fetch(`${connection.baseUrl}/v1/files/${encodeURIComponent(fileId)}/content`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+    })
+    if (!response.ok) throw new Error(`图片读取失败（${response.status}）`)
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+    const bytes = Buffer.from(await response.arrayBuffer())
+    return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
   }
 
   rename(fileId: string, displayName: string): Promise<FileDto> {
@@ -57,14 +69,18 @@ export class FilesGatewayBridge {
   /**
    * 统一导入（用户主路径）：系统选择框 → 逐文件 multipart 上传（唯一字节
    * 入口）→ ref 形态进引擎。失败互不影响，逐行回报。
+   * roomId（Room 内上传）→ /v1/ingest 的显式归属：入口直达该 Room。
    */
-  async pickAndImport(options?: { pipelines?: IngestPipelines }): Promise<FileImportOutcome[]> {
+  async pickAndImport(options?: {
+    pipelines?: IngestPipelines
+    roomId?: string
+  }): Promise<FileImportOutcome[]> {
     const picked = await dialog.showOpenDialog({
-      title: '选择要导入的文件',
+      title: desktopText('dialog.importFiles.title'),
       properties: ['openFile', 'multiSelections'],
       filters: [
         {
-          name: '文档',
+          name: desktopText('dialog.importFiles.documents'),
           extensions: ['md', 'markdown', 'txt', 'json', 'docx', 'xlsx', 'pptx', 'csv', 'html', 'htm'],
         },
       ],
@@ -77,7 +93,7 @@ export class FilesGatewayBridge {
       try {
         const buffer = await readFile(filePath)
         const uploaded = await this.uploadBytes(filename, buffer)
-        const ingested = await this.ingestRef(uploaded.id, options?.pipelines)
+        const ingested = await this.ingestRef(uploaded.id, options?.pipelines, options?.roomId)
         outcomes.push({
           filename,
           fileId: uploaded.id,
@@ -122,12 +138,13 @@ export class FilesGatewayBridge {
     return response.json() as Promise<{ id: string; contentHash: string; deduped: boolean; bytes: number }>
   }
 
-  private async ingestRef(fileId: string, pipelines?: IngestPipelines) {
+  private async ingestRef(fileId: string, pipelines?: IngestPipelines, roomId?: string) {
     return this.request<IngestResultDto>('/v1/ingest', {
       method: 'POST',
       body: JSON.stringify({
         source: { ref: { sourceKind: 'file', sourceId: fileId } },
         ...(pipelines ? { pipelines } : {}),
+        ...(roomId ? { roomId } : {}),
       }),
     })
   }

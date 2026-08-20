@@ -28,6 +28,7 @@ export class TranscriptionSummaryService {
         runId,
         sessionId,
         runtimeSessionRef: null,
+        ...(input.language ? { responseLanguage: input.language } : {}),
         pageLabel: "后台转写总结",
         roomId: null,
         captureMemory: false,
