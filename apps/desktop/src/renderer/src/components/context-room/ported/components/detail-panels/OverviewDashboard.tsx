@@ -13,6 +13,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useLocale, type Translate } from '../../../../../i18n/LocaleContext';
 
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
@@ -64,7 +65,7 @@ function inTimelineRange(value: Date | null, view: TimelineView, cursor: Date) {
   return value.getFullYear() === cursor.getFullYear() && value.getMonth() === cursor.getMonth();
 }
 
-function timelineRangeLabel(view: TimelineView, cursor: Date) {
+function timelineRangeLabel(view: TimelineView, cursor: Date, t: Translate) {
   if (view === 'day') {
     return `${String(cursor.getFullYear())}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
   }
@@ -74,7 +75,7 @@ function timelineRangeLabel(view: TimelineView, cursor: Date) {
     end.setDate(end.getDate() + 6);
     return `${String(start.getMonth() + 1)}/${String(start.getDate()).padStart(2, '0')} ~ ${String(end.getMonth() + 1)}/${String(end.getDate()).padStart(2, '0')}`;
   }
-  return `${String(cursor.getFullYear())} 年 ${String(cursor.getMonth() + 1)} 月`;
+  return t('{year} 年 {month} 月', { year: cursor.getFullYear(), month: cursor.getMonth() + 1 });
 }
 
 export function OverviewDashboard({
@@ -88,6 +89,7 @@ export function OverviewDashboard({
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   onToggleTask: (taskId: string) => void;
 }) {
+  const { t } = useLocale();
   const [timelineView, setTimelineView] = useState<TimelineView>('month');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date(REFERENCE_TODAY));
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
@@ -119,74 +121,74 @@ export function OverviewDashboard({
         <span data-icon-tone={roomKindTone(room.kind)}><Icon aria-hidden="true" /></span>
         <div>
           <h1>{room.title}</h1>
-          <p><CalendarDays aria-hidden="true" />更新于 {room.lastViewed} <i /> {room.materials.length + room.fileItems.length} 条资料</p>
+          <p><CalendarDays aria-hidden="true" />{t('更新于 {time}', { time: room.lastViewed })} <i /> {t('{count} 条资料', { count: room.materials.length + room.fileItems.length })}</p>
         </div>
         <b>{room.status}</b>
       </header>
 
       <div className="context-room-dashboard-grid">
         <article>
-          <header data-icon-tone="document"><FileText aria-hidden="true" />Room 简介</header>
+          <header data-icon-tone="document"><FileText aria-hidden="true" />{t('Room 简介')}</header>
           {hasBrief ? (
-            <><p>{room.brief.background || '暂无背景说明'}</p><small><b>目标：</b>{room.brief.goal || '暂未设置'}</small></>
+            <><p>{room.brief.background || t('暂无背景说明')}</p><small><b>{t('目标：')}</b>{room.brief.goal || t('暂未设置')}</small></>
           ) : (
-            <PanelEmptyState compact icon={FileText} title="还没有简介" description="Room 的背景和目标会显示在这里。" />
+            <PanelEmptyState compact icon={FileText} title={t('还没有简介')} description={t('Room 的背景和目标会显示在这里。')} />
           )}
         </article>
         <article>
-          <header data-icon-tone="room"><BarChart3 aria-hidden="true" />当前状态 <em>AI</em></header>
-          {dashboard.aiStatus.trim() ? <p>{dashboard.aiStatus}</p> : <PanelEmptyState compact icon={Info} title="尚未形成状态摘要" description="有新的资料和活动后，状态会在这里更新。" />}
+          <header data-icon-tone="room"><BarChart3 aria-hidden="true" />{t('当前状态')} <em>AI</em></header>
+          {dashboard.aiStatus.trim() ? <p>{dashboard.aiStatus}</p> : <PanelEmptyState compact icon={Info} title={t('尚未形成状态摘要')} description={t('有新的资料和活动后，状态会在这里更新。')} />}
         </article>
         <article>
-          <header data-icon-tone="ai"><Zap aria-hidden="true" />建议下一步 <em>AI</em></header>
-          {dashboard.nextSteps.length ? <ul>{dashboard.nextSteps.map((item) => <li key={item}><CornerDownRight aria-hidden="true" />{item}</li>)}</ul> : <PanelEmptyState compact icon={Zap} title="暂时没有下一步建议" description="新的上下文进入 Room 后会重新生成建议。" />}
+          <header data-icon-tone="ai"><Zap aria-hidden="true" />{t('建议下一步')} <em>AI</em></header>
+          {dashboard.nextSteps.length ? <ul>{dashboard.nextSteps.map((item) => <li key={item}><CornerDownRight aria-hidden="true" />{item}</li>)}</ul> : <PanelEmptyState compact icon={Zap} title={t('暂时没有下一步建议')} description={t('新的上下文进入 Room 后会重新生成建议。')} />}
         </article>
         <article>
-          <header data-icon-tone="memory"><Bookmark aria-hidden="true" />关联记忆实体</header>
+          <header data-icon-tone="memory"><Bookmark aria-hidden="true" />{t('关联记忆实体')}</header>
           {dashboard.entities.length ? (
             <div className="context-room-dashboard-entities">
               {dashboard.entities.map((entity) => <span key={entity.label} title={entity.description}>{entity.label}</span>)}
             </div>
-          ) : <PanelEmptyState compact icon={Network} title="还没有关联实体" description="识别到的人物、项目和主题会显示在这里。" />}
+          ) : <PanelEmptyState compact icon={Network} title={t('还没有关联实体')} description={t('识别到的人物、项目和主题会显示在这里。')} />}
         </article>
       </div>
 
       <div className="context-room-dashboard-bottom">
         <article>
-          <header data-icon-tone="document"><FileText aria-hidden="true" />最新资料</header>
+          <header data-icon-tone="document"><FileText aria-hidden="true" />{t('最新资料')}</header>
           {recentMaterials.map((material) => {
             const resource = library.resources.find((item) => item.name === material.title);
             return <button type="button" key={material.id} onClick={() => resource && onSelectResource(resource)}><span>{material.type}</span><b>{material.title}</b><time>{material.time}</time></button>;
           })}
-          {!recentMaterials.length ? <PanelEmptyState compact icon={FileText} title="还没有资料" description="Room 收集的文档、邮件和会议会显示在这里。" /> : null}
+          {!recentMaterials.length ? <PanelEmptyState compact icon={FileText} title={t('还没有资料')} description={t('Room 收集的文档、邮件和会议会显示在这里。')} /> : null}
         </article>
         <article>
-          <header data-icon-tone="calendar"><CalendarDays aria-hidden="true" />今日日程</header>
-          {todayMeeting ? <button type="button" onClick={() => onOpenObject({ kind: 'meeting', id: todayMeeting.id })}><time>10:30</time><b>{todayMeeting.title}</b></button> : <PanelEmptyState compact icon={CalendarDays} title="今天没有日程" description="今天的会议和到期任务会显示在这里。" />}
+          <header data-icon-tone="calendar"><CalendarDays aria-hidden="true" />{t('今日日程')}</header>
+          {todayMeeting ? <button type="button" onClick={() => onOpenObject({ kind: 'meeting', id: todayMeeting.id })}><time>10:30</time><b>{todayMeeting.title}</b></button> : <PanelEmptyState compact icon={CalendarDays} title={t('今天没有日程')} description={t('今天的会议和到期任务会显示在这里。')} />}
         </article>
         <article>
-          <header data-icon-tone="task"><CheckSquare2 aria-hidden="true" />待办任务</header>
-          {openTasks.map((task) => <div className="context-room-dashboard-task" key={task.id}><button type="button" aria-label={`完成 ${task.title}`} onClick={() => onToggleTask(task.id)}><i /></button><button type="button" onClick={() => onOpenObject({ kind: 'task', id: task.id })}><b>{task.title}</b><time>{task.deadline}</time></button></div>)}
-          {!openTasks.length ? <PanelEmptyState compact icon={CheckSquare2} title="没有待办任务" description="未完成的 Room 任务会显示在这里。" /> : null}
+          <header data-icon-tone="task"><CheckSquare2 aria-hidden="true" />{t('待办任务')}</header>
+          {openTasks.map((task) => <div className="context-room-dashboard-task" key={task.id}><button type="button" aria-label={t('完成 {title}', { title: task.title })} onClick={() => onToggleTask(task.id)}><i /></button><button type="button" onClick={() => onOpenObject({ kind: 'task', id: task.id })}><b>{task.title}</b><time>{task.deadline}</time></button></div>)}
+          {!openTasks.length ? <PanelEmptyState compact icon={CheckSquare2} title={t('没有待办任务')} description={t('未完成的 Room 任务会显示在这里。')} /> : null}
         </article>
       </div>
 
       <article className="context-room-dashboard-timeline">
-        <header data-icon-tone="data"><GitBranch aria-hidden="true" />Room 时间轴 <span>{visibleTimeline.length} 个事件</span></header>
+        <header data-icon-tone="data"><GitBranch aria-hidden="true" />{t('Room 时间轴')} <span>{t('{count} 个事件', { count: visibleTimeline.length })}</span></header>
         <div className="context-room-timeline-toolbar">
-          <div>{(['day', 'week', 'month'] as const).map((view) => <button type="button" key={view} aria-pressed={timelineView === view} onClick={() => setTimelineView(view)}>{view === 'day' ? '日' : view === 'week' ? '周' : '月'}</button>)}</div>
-          <nav aria-label="时间轴范围">
-            <button type="button" aria-label="上一周期" onClick={() => moveTimeline(-1)}><ChevronLeft aria-hidden="true" /></button>
-            <span>{timelineRangeLabel(timelineView, timelineCursor)}</span>
-            <button type="button" aria-label="下一周期" onClick={() => moveTimeline(1)}><ChevronRight aria-hidden="true" /></button>
-            <button type="button" disabled={timelineCursor.toDateString() === REFERENCE_TODAY.toDateString()} onClick={() => setTimelineCursor(new Date(REFERENCE_TODAY))}>今天</button>
+          <div>{(['day', 'week', 'month'] as const).map((view) => <button type="button" key={view} aria-pressed={timelineView === view} onClick={() => setTimelineView(view)}>{t(view === 'day' ? '日' : view === 'week' ? '周' : '月')}</button>)}</div>
+          <nav aria-label={t('时间轴范围')}>
+            <button type="button" aria-label={t('上一周期')} onClick={() => moveTimeline(-1)}><ChevronLeft aria-hidden="true" /></button>
+            <span>{timelineRangeLabel(timelineView, timelineCursor, t)}</span>
+            <button type="button" aria-label={t('下一周期')} onClick={() => moveTimeline(1)}><ChevronRight aria-hidden="true" /></button>
+            <button type="button" disabled={timelineCursor.toDateString() === REFERENCE_TODAY.toDateString()} onClick={() => setTimelineCursor(new Date(REFERENCE_TODAY))}>{t('今天')}</button>
           </nav>
         </div>
         {visibleTimeline.length ? <ol>{visibleTimeline.map((item, index) => {
           const material = recentMaterials[index] as (typeof recentMaterials)[number] | undefined;
           const resource = material ? library.resources.find((candidate) => candidate.name === material.title) : null;
-          return <li key={`${item.time}-${item.title}`}><i data-kind={item.kind} /><div><div><b>{item.title}</b><time>{item.time}</time></div><p>{item.description}</p>{resource ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />相关资料 <span>1</span></button>{expanded.has(index) ? <button type="button" className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{resource.name}</button> : null}</> : null}</div></li>;
-        })}</ol> : <PanelEmptyState compact icon={GitBranch} title="当前范围没有事件" description="可切换时间范围查看 Room 的其他活动。" />}
+          return <li key={`${item.time}-${item.title}`}><i data-kind={item.kind} /><div><div><b>{item.title}</b><time>{item.time}</time></div><p>{item.description}</p>{resource ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />{t('相关资料')} <span>1</span></button>{expanded.has(index) ? <button type="button" className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{resource.name}</button> : null}</> : null}</div></li>;
+        })}</ol> : <PanelEmptyState compact icon={GitBranch} title={t('当前范围没有事件')} description={t('可切换时间范围查看 Room 的其他活动。')} />}
       </article>
     </section>
   );

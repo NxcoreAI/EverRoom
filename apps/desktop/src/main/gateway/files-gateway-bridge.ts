@@ -30,6 +30,17 @@ export class FilesGatewayBridge {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}/markdown`)
   }
 
+  async readDataUrl(fileId: string): Promise<{ dataUrl: string }> {
+    const connection = this.supervisor.getConnection()
+    const response = await fetch(`${connection.baseUrl}/v1/files/${encodeURIComponent(fileId)}/content`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+    })
+    if (!response.ok) throw new Error(`图片读取失败（${response.status}）`)
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+    const bytes = Buffer.from(await response.arrayBuffer())
+    return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
+  }
+
   rename(fileId: string, displayName: string): Promise<FileDto> {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}/meta`, {
       method: 'PATCH',

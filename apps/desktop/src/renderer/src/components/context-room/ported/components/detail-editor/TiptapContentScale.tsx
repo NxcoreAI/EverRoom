@@ -1,17 +1,19 @@
 import type { TableOfContentData } from '@tiptap/extension-table-of-contents'
+import { useLocale } from '../../../../../i18n/LocaleContext'
 
 export function TiptapContentScale({ items }: { items: TableOfContentData }) {
+  const { t } = useLocale()
   if (items.length === 0) return null
 
   return (
-    <nav className="context-room-tiptap-content-scale" aria-label="文档内容刻度">
+    <nav className="context-room-tiptap-content-scale" aria-label={t('文档内容刻度')}>
       <div className="context-room-tiptap-scale-markers">
         <span className="context-room-tiptap-scale-track" />
         {items.map((item) => (
           <button
             type="button"
             key={item.id}
-            aria-label={`定位到：${item.textContent}`}
+            aria-label={t('定位到：{title}', { title: item.textContent })}
             data-level={item.level}
             data-active={String(item.isActive)}
             data-scrolled={String(item.isScrolledOver)}

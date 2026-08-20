@@ -18,6 +18,7 @@ import { useContextRoomState } from '@/components/context-room/ContextRoomStateP
 import { pageLabels, type PageId } from '@/data/navigation'
 import { onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
+import { useLocale } from '@/i18n/LocaleContext'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
 const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nxcore'])
@@ -46,6 +47,7 @@ function readInitialPage(): PageId {
 }
 
 export function App() {
+  const { t } = useLocale()
   const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
   const [activePage, setActivePage] = useState<PageId>(readInitialPage)
@@ -314,7 +316,7 @@ export function App() {
       {agentOpen ? (
         <AgentPanel
           pageId={activePage}
-          pageLabel={pageLabels[activePage]}
+          pageLabel={t(pageLabels[activePage])}
           roomId={activePage === 'rooms' ? activeContextRoomId : null}
           rooms={availableContextRooms}
           roomBackendReady={contextRoomBackendReady}

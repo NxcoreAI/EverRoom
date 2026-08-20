@@ -17,6 +17,7 @@ import { useRoomDocumentsState } from '../../../RoomDocumentsProvider'
 import { cursorAnchorCandidateFromEditorState } from '@/components/agent/activeDocumentContext'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
+import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { ContextRoomRecord, ContextRoomResource } from '../../types'
 import { TiptapBlockHandle } from './TiptapBlockHandle'
 import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
@@ -237,6 +238,7 @@ export function TiptapDocumentEditor({
   focusedBlockId?: string | null
   documentFocusRequestId?: number | null
 }) {
+  const { t } = useLocale()
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const persistedName = backendDocument?.title ?? resource?.name ?? room.cloudDoc.title ?? room.title
   const initialDraft = useState(() => readDocumentDraftRecord(documentId))[0]
@@ -450,7 +452,7 @@ export function TiptapDocumentEditor({
         },
         onNavigate: (target, resolution) => {
           if (resolution && resolution.status !== 'available' && resolution.status !== 'block_missing') {
-            showToast({ title: '引用暂时不可用', message: resolution.status === 'document_trashed' ? '目标文档在回收站中。' : '目标文档已不可用。' })
+            showToast({ title: t('引用暂时不可用'), message: t(resolution.status === 'document_trashed' ? '目标文档在回收站中。' : '目标文档已不可用。') })
             return
           }
           requestDocumentBlockNavigation(target)
@@ -492,7 +494,7 @@ export function TiptapDocumentEditor({
           }
           if (parseEverroomBlockReferenceUrl(href)) {
             event.preventDefault()
-            showToast({ title: '无法打开块链接', message: '块链接只能在同一个 Room 内跳转。' })
+            showToast({ title: t('无法打开块链接'), message: t('块链接只能在同一个 Room 内跳转。') })
             return true
           }
           return false
@@ -664,9 +666,9 @@ export function TiptapDocumentEditor({
     })
     try {
       await writeTextToClipboard(url)
-      showToast({ title: '已复制块引用', message: '可粘贴到同一 Room 的文档中。' })
+      showToast({ title: t('已复制块引用'), message: t('可粘贴到同一 Room 的文档中。') })
     } catch {
-      showToast({ title: '复制失败', message: '请检查剪贴板权限。' })
+      showToast({ title: t('复制失败'), message: t('请检查剪贴板权限。') })
     }
   }, [documentId, documentName, room.id])
 
@@ -870,7 +872,7 @@ export function TiptapDocumentEditor({
           queueDocumentSave(localized.content, 0)
         }
         if (localized.unsupported > 0) {
-          showToast({ title: '部分旧图片无法迁移', message: '请重新插入不受支持的图片。' })
+          showToast({ title: t('部分旧图片无法迁移'), message: t('请重新插入不受支持的图片。') })
         }
         return
       }
@@ -907,7 +909,7 @@ export function TiptapDocumentEditor({
       if (!resolution || resolution.status !== 'available') {
         handledBlockFocusKey.current = requestKey
         if (resolution?.status === 'block_missing') {
-          showToast({ title: '引用块已失效', message: '原引用块已被删除或合并。' })
+          showToast({ title: t('引用块已失效'), message: t('原引用块已被删除或合并。') })
         }
         return
       }
@@ -923,7 +925,7 @@ export function TiptapDocumentEditor({
       if (cancelled) return
       if (resolution?.status === 'block_missing') {
         handledBlockFocusKey.current = requestKey
-        showToast({ title: '引用块已失效', message: '原引用块已被删除或合并。' })
+        showToast({ title: t('引用块已失效'), message: t('原引用块已被删除或合并。') })
       }
     }
     void focus().catch(() => undefined)
@@ -988,7 +990,7 @@ export function TiptapDocumentEditor({
       data-continuation-active={String(Boolean(visibleContinuationOperation))}
     >
       <div className="context-room-embedded-doc-status">
-        <b>{saveState}</b>
+        <b>{t(saveState)}</b>
         {cursorCompletionRunning ? (
           <div
             className="context-room-cursor-completion-banner"
@@ -1042,7 +1044,7 @@ export function TiptapDocumentEditor({
           <textarea
             ref={titleInputRef}
             className="context-room-document-title-input"
-            aria-label="文档标题"
+            aria-label={t('文档标题')}
             value={documentName}
             disabled={editorLocked}
             maxLength={120}

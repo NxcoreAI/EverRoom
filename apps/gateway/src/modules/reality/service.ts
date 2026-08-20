@@ -345,7 +345,7 @@ export class RealityService {
     return this.update(this.requireRow(id), {
       status: "failed",
       processingState: "failed",
-      error: error.trim().slice(0, 2_000) || "智能感知处理失败",
+      error: error.trim().slice(0, 2_000) || "现实感知处理失败",
       endedAt: new Date(),
     }, "reality event failed");
   }

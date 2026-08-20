@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import {
   createContextRoomResourceLibrary,
@@ -30,6 +31,7 @@ import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/m
 import { PanelEmptyState } from './PanelEmptyState';
 
 export function OfficePreview({ resource }: { resource: ContextRoomOfficeResource }) {
+  const { t } = useLocale();
   const preview = resource.preview;
   return (
     <div className="context-room-office-preview" data-testid="context-room-office-preview">
@@ -39,11 +41,11 @@ export function OfficePreview({ resource }: { resource: ContextRoomOfficeResourc
         </span>
         <div>
           <h1>{preview.title}</h1>
-          <p>{resource.format.toUpperCase()} · 只读预览 · {resource.updatedAt}</p>
+          <p>{resource.format.toUpperCase()} · {t('只读预览')} · {resource.updatedAt}</p>
         </div>
       </header>
       <section className="context-room-preview-summary">
-        <span>内容摘要</span>
+        <span>{t('内容摘要')}</span>
         <p>{preview.summary}</p>
       </section>
       {preview.columns && preview.rows ? (
@@ -106,6 +108,7 @@ export interface LocalOfficeFile {
 const LOCAL_OFFICE_FILES: LocalOfficeFile[] = [];
 
 function HostFSOfficePicker({ onAdd, onClose }: { onAdd: (file: LocalOfficeFile) => void; onClose: () => void }) {
+  const { t } = useLocale();
   const [path, setPath] = useState('/');
   const folders: { name: string; path: string }[] = [];
   const officeFiles = path === '/演示文件'
@@ -113,13 +116,13 @@ function HostFSOfficePicker({ onAdd, onClose }: { onAdd: (file: LocalOfficeFile)
     : [];
   const parent = path === '/' ? '/' : path.replace(/\/[^/]+$/, '') || '/';
   return (
-    <div className="context-room-hostfs-picker" role="dialog" aria-label="从文件系统添加 Office 文件">
-      <header><div><strong>文件系统</strong><span>{path}</span></div><button type="button" aria-label="关闭文件系统选择器" onClick={onClose}><X aria-hidden="true" /></button></header>
+    <div className="context-room-hostfs-picker" role="dialog" aria-label={t('从文件系统添加 Office 文件')}>
+      <header><div><strong>{t('文件系统')}</strong><span>{path}</span></div><button type="button" aria-label={t('关闭文件系统选择器')} onClick={onClose}><X aria-hidden="true" /></button></header>
       <div className="context-room-hostfs-picker-list">
-        {path !== '/' ? <button type="button" onClick={() => setPath(parent)}><ChevronLeft aria-hidden="true" /> 返回上级</button> : null}
+        {path !== '/' ? <button type="button" onClick={() => setPath(parent)}><ChevronLeft aria-hidden="true" /> {t('返回上级')}</button> : null}
         {folders.map((folder) => <button type="button" key={folder.path} onClick={() => setPath(folder.path)}><Folder aria-hidden="true" /><span>{folder.name}</span><ChevronRight aria-hidden="true" /></button>)}
         {officeFiles.map((file) => <button type="button" key={file.path} onClick={() => onAdd(file)}><FileSpreadsheet aria-hidden="true" /><span>{file.name}</span><small>{getContextRoomOfficeFormat(file.name).toUpperCase()}</small></button>)}
-        {!folders.length && !officeFiles.length ? <div className="context-room-hostfs-picker-state">当前目录没有可预览的 Office 文件</div> : null}
+        {!folders.length && !officeFiles.length ? <div className="context-room-hostfs-picker-state">{t('当前目录没有可预览的 Office 文件')}</div> : null}
       </div>
     </div>
   );
@@ -150,6 +153,7 @@ export function ResourceTree({
   onEmptyTrash: (roomId: string) => Promise<void>;
   onAddFile: (file: LocalOfficeFile) => void;
 }) {
+  const { t } = useLocale();
   const library = useMemo(
     () => createContextRoomResourceLibrary(room, backendDocuments, trashedDocuments),
     [backendDocuments, room, trashedDocuments],
@@ -189,14 +193,14 @@ export function ResourceTree({
       await onDeleteDocument(document);
       setDocumentToDelete(null);
     } catch (error: unknown) {
-      setDeleteError(error instanceof Error ? error.message : '删除文档失败');
+      setDeleteError(error instanceof Error ? error.message : t('删除文档失败'));
     } finally {
       setDeletingDocumentId(null);
     }
   };
 
   const createDocument = async () => {
-    const title = newDocumentTitle.trim() || '无标题文档';
+    const title = newDocumentTitle.trim() || t('无标题文档');
     setCreateError(null);
     setCreatingDocument(true);
     try {
@@ -204,7 +208,7 @@ export function ResourceTree({
       setCreatePopoverOpen(false);
       setNewDocumentTitle('');
     } catch (error: unknown) {
-      setCreateError(error instanceof Error ? error.message : '创建文档失败');
+      setCreateError(error instanceof Error ? error.message : t('创建文档失败'));
     } finally {
       setCreatingDocument(false);
     }
@@ -212,7 +216,7 @@ export function ResourceTree({
 
   const importMarkdownDocument = async (file: File) => {
     if (!/\.(?:md|markdown)$/i.test(file.name)) {
-      setCreateError('请选择 .md 或 .markdown 文件');
+      setCreateError(t('请选择 .md 或 .markdown 文件'));
       return;
     }
     setCreateError(null);
@@ -224,7 +228,7 @@ export function ResourceTree({
       setCreatePopoverOpen(false);
       setNewDocumentTitle('');
     } catch (error: unknown) {
-      setCreateError(error instanceof Error ? error.message : '导入 Markdown 文档失败');
+      setCreateError(error instanceof Error ? error.message : t('导入 Markdown 文档失败'));
     } finally {
       setCreatingDocument(false);
     }
@@ -237,7 +241,7 @@ export function ResourceTree({
       await onEmptyTrash(room.id);
       setClearTrashPopoverOpen(false);
     } catch (error: unknown) {
-      setClearTrashError(error instanceof Error ? error.message : '清空回收站失败');
+      setClearTrashError(error instanceof Error ? error.message : t('清空回收站失败'));
     } finally {
       setClearingTrash(false);
     }
@@ -249,7 +253,7 @@ export function ResourceTree({
     try {
       await onRestoreDocument(document);
     } catch (error: unknown) {
-      setActionError(error instanceof Error ? error.message : '恢复文档失败');
+      setActionError(error instanceof Error ? error.message : t('恢复文档失败'));
     } finally {
       setDeletingDocumentId(null);
     }
@@ -262,7 +266,7 @@ export function ResourceTree({
       await onDeleteDocumentPermanently(document);
       setDocumentToDeletePermanently(null);
     } catch (error: unknown) {
-      setDeleteError(error instanceof Error ? error.message : '彻底删除文档失败');
+      setDeleteError(error instanceof Error ? error.message : t('彻底删除文档失败'));
     } finally {
       setDeletingDocumentId(null);
     }
@@ -270,11 +274,11 @@ export function ResourceTree({
 
   return (
     <div className="context-room-resource-tree">
-      <label><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Room 内文档…" aria-label="搜索 Room 内文档" /></label>
-      <button type="button" className="context-room-resource-add-file" onClick={() => setShowFilePicker((value) => !value)}><FolderOpen aria-hidden="true" />从文件系统添加 Office 文件</button>
+      <label><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('搜索 Room 内文档…')} aria-label={t('搜索 Room 内文档')} /></label>
+      <button type="button" className="context-room-resource-add-file" onClick={() => setShowFilePicker((value) => !value)}><FolderOpen aria-hidden="true" />{t('从文件系统添加 Office 文件')}</button>
       {showFilePicker ? <HostFSOfficePicker onAdd={(file) => { onAddFile(file); setShowFilePicker(false); }} onClose={() => setShowFilePicker(false)} /> : null}
       {actionError ? <div className="context-room-resource-error" role="alert">{actionError}</div> : null}
-      <div className="context-room-resource-scroll" role="tree" aria-label="Room 资源">
+      <div className="context-room-resource-scroll" role="tree" aria-label={t('Room 资源')}>
         {library.folders.map((folder) => {
           const resources = library.resources.filter((resource) => resource.folderId === folder.id && (!normalized || resource.name.toLowerCase().includes(normalized)));
           if (normalized && !resources.length) return null;
@@ -287,7 +291,7 @@ export function ResourceTree({
                 <button type="button" className="context-room-resource-folder" aria-expanded={open} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id); return next; })}>
                   <ChevronRight aria-hidden="true" className={open ? 'is-open' : ''} />
                   {trashFolder ? <Trash2 aria-hidden="true" /> : open ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}
-                  <span>{folder.name}</span><small>{resources.length}</small>
+                  <span>{t(folder.name)}</span><small>{resources.length}</small>
                 </button>
                 {documentsFolder ? (
                   <Popover.Root
@@ -307,8 +311,8 @@ export function ResourceTree({
                       <button
                         type="button"
                         className="context-room-resource-folder-add"
-                        aria-label="新建文档"
-                        title="新建文档"
+                        aria-label={t('新建文档')}
+                        title={t('新建文档')}
                         disabled={creatingDocument}
                       >
                         {creatingDocument
@@ -323,16 +327,16 @@ export function ResourceTree({
                         align="start"
                         sideOffset={8}
                         collisionPadding={12}
-                        aria-label="新建文档"
+                        aria-label={t('新建文档')}
                       >
                         <form onSubmit={(event) => { event.preventDefault(); void createDocument(); }}>
-                          <label htmlFor="context-room-new-document-title">文档名称</label>
+                          <label htmlFor="context-room-new-document-title">{t('文档名称')}</label>
                           <input
                             id="context-room-new-document-title"
                             autoFocus
                             maxLength={120}
                             value={newDocumentTitle}
-                            placeholder="无标题文档"
+                            placeholder={t('无标题文档')}
                             onChange={(event) => setNewDocumentTitle(event.target.value)}
                             disabled={creatingDocument}
                           />
@@ -356,15 +360,15 @@ export function ResourceTree({
                             onClick={() => markdownInputRef.current?.click()}
                           >
                             <FileUp aria-hidden="true" />
-                            {creatingDocument ? '处理中…' : '导入本地 Markdown'}
+                            {t(creatingDocument ? '处理中…' : '导入本地 Markdown')}
                           </button>
                           {createError ? <small role="alert">{createError}</small> : null}
                           <footer>
                             <Popover.Close asChild>
-                              <button type="button" disabled={creatingDocument}>取消</button>
+                              <button type="button" disabled={creatingDocument}>{t('取消')}</button>
                             </Popover.Close>
                             <button type="submit" className="is-primary" disabled={creatingDocument}>
-                              {creatingDocument ? '创建中…' : '创建'}
+                              {t(creatingDocument ? '创建中…' : '创建')}
                             </button>
                           </footer>
                         </form>
@@ -386,8 +390,8 @@ export function ResourceTree({
                       <button
                         type="button"
                         className="context-room-resource-folder-add is-danger"
-                        aria-label="清空回收站"
-                        title={trashDocumentCount ? '清空回收站' : '回收站为空'}
+                        aria-label={t('清空回收站')}
+                        title={t(trashDocumentCount ? '清空回收站' : '回收站为空')}
                         disabled={!trashDocumentCount || clearingTrash}
                       >
                         {clearingTrash
@@ -402,14 +406,14 @@ export function ResourceTree({
                         align="start"
                         sideOffset={8}
                         collisionPadding={12}
-                        aria-label="确认清空回收站"
+                        aria-label={t('确认清空回收站')}
                       >
-                        <p>清空回收站？</p>
-                        <span>{trashDocumentCount} 篇文档及其历史版本将无法恢复。</span>
+                        <p>{t('清空回收站？')}</p>
+                        <span>{t('{count} 篇文档及其历史版本将无法恢复。', { count: trashDocumentCount })}</span>
                         {clearTrashError ? <small role="alert">{clearTrashError}</small> : null}
                         <footer>
                           <Popover.Close asChild>
-                            <button type="button" disabled={clearingTrash}>取消</button>
+                            <button type="button" disabled={clearingTrash}>{t('取消')}</button>
                           </Popover.Close>
                           <button
                             type="button"
@@ -417,7 +421,7 @@ export function ResourceTree({
                             disabled={clearingTrash}
                             onClick={() => void clearTrash()}
                           >
-                            {clearingTrash ? '清空中…' : '清空'}
+                            {t(clearingTrash ? '清空中…' : '清空')}
                           </button>
                         </footer>
                         <Popover.Arrow className="context-room-document-delete-arrow" />
@@ -469,8 +473,8 @@ export function ResourceTree({
                           <button
                             type="button"
                             className="context-room-resource-delete"
-                            aria-label={`将文档 ${resource.name} 移到回收站`}
-                            title={busy ? 'Agent 正在写入，暂时不能移动' : '移到回收站'}
+                            aria-label={t('将文档 {name} 移到回收站', { name: resource.name })}
+                            title={t(busy ? 'Agent 正在写入，暂时不能移动' : '移到回收站')}
                             disabled={busy || deleting}
                           >
                             <Trash2 aria-hidden="true" />
@@ -483,14 +487,14 @@ export function ResourceTree({
                             align="center"
                             sideOffset={8}
                             collisionPadding={12}
-                            aria-label={`确认将文档 ${resource.name} 移到回收站`}
+                            aria-label={t('确认将文档 {name} 移到回收站', { name: resource.name })}
                           >
-                            <p>移到回收站？</p>
-                            <span>“{resource.name}”可在回收站恢复。</span>
+                            <p>{t('移到回收站？')}</p>
+                            <span>{t('“{name}”可在回收站恢复。', { name: resource.name })}</span>
                             {deleteError ? <small role="alert">{deleteError}</small> : null}
                             <footer>
                               <Popover.Close asChild>
-                                <button type="button" disabled={deleting}>取消</button>
+                                <button type="button" disabled={deleting}>{t('取消')}</button>
                               </Popover.Close>
                               <button
                                 type="button"
@@ -498,7 +502,7 @@ export function ResourceTree({
                                 disabled={deleting}
                                 onClick={() => void confirmDelete(backendDocument)}
                               >
-                                {deleting ? '移动中…' : '移入'}
+                                {t(deleting ? '移动中…' : '移入')}
                               </button>
                             </footer>
                             <Popover.Arrow className="context-room-document-delete-arrow" />
@@ -509,8 +513,8 @@ export function ResourceTree({
                       <div className="context-room-resource-trash-actions">
                         <button
                           type="button"
-                          aria-label={`恢复文档 ${resource.name}`}
-                          title="恢复文档"
+                          aria-label={t('恢复文档 {name}', { name: resource.name })}
+                          title={t('恢复文档')}
                           disabled={deleting}
                           onClick={() => void restoreDocument(backendDocument)}
                         >
@@ -527,8 +531,8 @@ export function ResourceTree({
                           <Popover.Trigger asChild>
                             <button
                               type="button"
-                              aria-label={`彻底删除文档 ${resource.name}`}
-                              title="彻底删除"
+                              aria-label={t('彻底删除文档 {name}', { name: resource.name })}
+                              title={t('彻底删除')}
                               disabled={deleting}
                             >
                               <Trash2 aria-hidden="true" />
@@ -541,14 +545,14 @@ export function ResourceTree({
                               align="center"
                               sideOffset={8}
                               collisionPadding={12}
-                              aria-label={`确认彻底删除文档 ${resource.name}`}
+                              aria-label={t('确认彻底删除文档 {name}', { name: resource.name })}
                             >
-                              <p>彻底删除“{resource.name}”？</p>
-                              <span>正文和历史版本将无法恢复。</span>
+                              <p>{t('彻底删除“{name}”？', { name: resource.name })}</p>
+                              <span>{t('正文和历史版本将无法恢复。')}</span>
                               {deleteError ? <small role="alert">{deleteError}</small> : null}
                               <footer>
                                 <Popover.Close asChild>
-                                  <button type="button" disabled={deleting}>取消</button>
+                                  <button type="button" disabled={deleting}>{t('取消')}</button>
                                 </Popover.Close>
                                 <button
                                   type="button"
@@ -556,7 +560,7 @@ export function ResourceTree({
                                   disabled={deleting}
                                   onClick={() => void confirmPermanentDelete(backendDocument)}
                                 >
-                                  {deleting ? '删除中…' : '彻底删除'}
+                                  {t(deleting ? '删除中…' : '彻底删除')}
                                 </button>
                               </footer>
                               <Popover.Arrow className="context-room-document-delete-arrow" />
@@ -569,10 +573,10 @@ export function ResourceTree({
                 );
               }) : null}
               {open && library.resources.length > 0 && folder.id.endsWith(':folder:documents') && resources.length === 0 ? (
-                <p className="context-room-resource-folder-empty">暂无文档</p>
+                <p className="context-room-resource-folder-empty">{t('暂无文档')}</p>
               ) : null}
               {open && trashFolder && resources.length === 0 ? (
-                <p className="context-room-resource-folder-empty">回收站为空</p>
+                <p className="context-room-resource-folder-empty">{t('回收站为空')}</p>
               ) : null}
             </section>
           );
@@ -581,16 +585,16 @@ export function ResourceTree({
           <PanelEmptyState
             compact
             icon={FileText}
-            title="还没有文档"
-            description="新建文档或添加本地 Office 文件后会显示在这里。"
+            title={t('还没有文档')}
+            description={t('新建文档或添加本地 Office 文件后会显示在这里。')}
           />
         ) : null}
         {normalized && !matchingResourceCount ? (
           <PanelEmptyState
             compact
             icon={SearchX}
-            title="没有匹配的资源"
-            description="换一个关键词试试。"
+            title={t('没有匹配的资源')}
+            description={t('换一个关键词试试。')}
           />
         ) : null}
       </div>

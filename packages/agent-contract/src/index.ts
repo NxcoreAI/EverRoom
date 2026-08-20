@@ -143,6 +143,8 @@ export interface SaveContextRoomSnapshotInput {
 export interface StartAgentRunInput {
   prompt: string;
   idempotencyKey: string;
+  /** Preferred language for assistant-generated text. */
+  responseLanguage?: "zh-CN" | "en-US";
   /** Defaults to true. Temporary preview runs can defer capture until user confirmation. */
   captureMemory?: boolean;
   /** Defaults to true. Lightweight runs can skip automatic memory recall. */

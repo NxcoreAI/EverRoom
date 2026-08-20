@@ -14,6 +14,7 @@ import {
   Link2,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useLocale } from '../../../../../i18n/LocaleContext'
 import { useTiptapBlockHandleVisibility } from './useTiptapBlockHandleVisibility'
 
 const BLOCK_HANDLE_POSITION = { placement: 'left-start' } as const
@@ -27,6 +28,7 @@ export function TiptapBlockHandle({
   onDraggingChange: (dragging: boolean) => void
   onCopyBlockReference?: (blockId: string, textPreview: string) => void | Promise<void>
 }) {
+  const { t } = useLocale()
   const [activeNode, setActiveNode] = useState<Node | null>(null)
   const [activePos, setActivePos] = useState(-1)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -100,8 +102,8 @@ export function TiptapBlockHandle({
         <button
           type="button"
           className="context-room-tiptap-add-block"
-          aria-label="在下方插入内容块"
-          title="在下方插入内容块"
+          aria-label={t('在下方插入内容块')}
+          title={t('在下方插入内容块')}
           draggable={false}
           onMouseDown={(event) => event.stopPropagation()}
           onClick={insertBlock}
@@ -111,27 +113,27 @@ export function TiptapBlockHandle({
         <button
           type="button"
           className="context-room-tiptap-grip"
-          aria-label="块选项和拖动排序"
+          aria-label={t('块选项和拖动排序')}
           aria-expanded={menuOpen}
-          title="点击打开选项，按住拖动"
+          title={t('点击打开选项，按住拖动')}
           onClick={() => setMenuOpen((open) => !open)}
         >
           <GripVertical strokeWidth={1.8} />
         </button>
         {menuOpen ? (
-          <div ref={menuRef} className="context-room-tiptap-block-menu" role="menu" aria-label="内容块选项">
-            <span>转换为</span>
-            <button type="button" role="menuitem" onClick={() => transformBlock('paragraph')}><Pilcrow />正文</button>
-            <button type="button" role="menuitem" onClick={() => transformBlock('heading-1')}><Heading1 />一级标题</button>
-            <button type="button" role="menuitem" onClick={() => transformBlock('heading-2')}><Heading2 />二级标题</button>
-            <button type="button" role="menuitem" onClick={() => transformBlock('bulletList')}><List />项目列表</button>
-            <button type="button" role="menuitem" onClick={() => transformBlock('blockquote')}><Quote />引用</button>
+          <div ref={menuRef} className="context-room-tiptap-block-menu" role="menu" aria-label={t('内容块选项')}>
+            <span>{t('转换为')}</span>
+            <button type="button" role="menuitem" onClick={() => transformBlock('paragraph')}><Pilcrow />{t('正文')}</button>
+            <button type="button" role="menuitem" onClick={() => transformBlock('heading-1')}><Heading1 />{t('一级标题')}</button>
+            <button type="button" role="menuitem" onClick={() => transformBlock('heading-2')}><Heading2 />{t('二级标题')}</button>
+            <button type="button" role="menuitem" onClick={() => transformBlock('bulletList')}><List />{t('项目列表')}</button>
+            <button type="button" role="menuitem" onClick={() => transformBlock('blockquote')}><Quote />{t('引用')}</button>
             <i />
             {onCopyBlockReference ? (
-              <button type="button" role="menuitem" onClick={copyBlockReference}><Link2 />复制块引用</button>
+              <button type="button" role="menuitem" onClick={copyBlockReference}><Link2 />{t('复制块引用')}</button>
             ) : null}
-            <button type="button" role="menuitem" onClick={duplicateBlock}><Copy />复制块</button>
-            <button type="button" role="menuitem" data-danger="true" onClick={deleteBlock}><Trash2 />删除块</button>
+            <button type="button" role="menuitem" onClick={duplicateBlock}><Copy />{t('复制块')}</button>
+            <button type="button" role="menuitem" data-danger="true" onClick={deleteBlock}><Trash2 />{t('删除块')}</button>
           </div>
         ) : null}
       </div>

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +22,12 @@ import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
-import { createAgentRuntime, createBackgroundAgentRuntime, createConnectorSyncAgentRuntime } from "../modules/agent/runtime-factory.js";
+import {
+  createAgentRuntime,
+  createBackgroundAgentRuntime,
+  createConnectorSyncAgentRuntime,
+  createDiaryAgentRuntime,
+} from "../modules/agent/runtime-factory.js";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
@@ -32,7 +38,11 @@ import { AsrService } from "../modules/asr/service.js";
 import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
-import { MemoryService } from "../modules/memory/service.js";
+import {
+  MemoryService,
+  type MemoryAtomicDto,
+  type MemoryConversationMessageDto,
+} from "../modules/memory/service.js";
 import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
@@ -48,6 +58,15 @@ import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { RealityError } from "../modules/reality/errors.js";
 import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
+import { DiaryAgentGenerator } from "../modules/diary/agent-generator.js";
+import { diaryRoutes } from "../modules/diary/routes.js";
+import { DiaryService, type DiarySource } from "../modules/diary/service.js";
+import { perceptionRoutes } from "../modules/perception/routes.js";
+import { PerceptionService } from "../modules/perception/service.js";
+import {
+  OpenAiCompatibleVlmClient,
+  type VisualInferenceClient,
+} from "../modules/perception/vlm-client.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -70,6 +89,7 @@ function swaggerAssetsDirectory(): string {
 
 export interface ServerOverrides {
   asrProvider?: AsrProvider | null;
+  vlmClient?: VisualInferenceClient | null;
 }
 
 export async function createServer(config: GatewayConfig, overrides: ServerOverrides = {}) {
@@ -293,6 +313,73 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
+  const diaryAgentGenerator = new DiaryAgentGenerator(config.backgroundPi?.model ?? "builtin", app.log);
+  const diaryAgentRuntime = createDiaryAgentRuntime(config, diaryAgentGenerator);
+  if (diaryAgentRuntime) diaryAgentGenerator.attachRuntime(diaryAgentRuntime);
+  const diaryMemoryQuery = async ({ start, end }: { start: Date; end: Date }): Promise<DiarySource[]> => {
+    if (!memoryService.enabled) return [];
+    const atomicItems: MemoryAtomicDto[] = [];
+    const conversationItems: MemoryConversationMessageDto[] = [];
+    for (let offset = 0; offset < 5_000; offset += 200) {
+      const page = await memoryService.listAtomic({
+        limit: 200,
+        offset,
+        timeStart: start.toISOString(),
+        timeEnd: end.toISOString(),
+      });
+      atomicItems.push(...page.items);
+      if (atomicItems.length >= page.total || page.items.length === 0) break;
+    }
+    for (let offset = 0; offset < 5_000; offset += 200) {
+      const page = await memoryService.listConversations({
+        limit: 200,
+        offset,
+        timeStart: start.toISOString(),
+        timeEnd: end.toISOString(),
+        sourceKind: "conversation",
+      });
+      conversationItems.push(...page.messages);
+      if (conversationItems.length >= page.total || page.messages.length === 0) break;
+    }
+    const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
+    return [
+      ...atomicItems.map((item): DiarySource => ({
+        sourceId: `memory:atomic:${item.id}`,
+        kind: "memory",
+        version: item.updatedAt,
+        occurredAt: item.createdAt,
+        fingerprint: fingerprint(`${item.updatedAt}:${item.content}`),
+        evidenceSummary: item.content.slice(0, 240),
+        content: item.content,
+      })),
+      ...conversationItems.flatMap((item): DiarySource[] => item.timestamp ? [{
+        sourceId: `memory:conversation:${item.id}`,
+        kind: "memory",
+        version: item.timestamp,
+        occurredAt: item.timestamp,
+        fingerprint: fingerprint(`${item.role}:${item.content}:${item.timestamp}`),
+        evidenceSummary: item.content.slice(0, 240),
+        content: item.content,
+      }] : []),
+    ];
+  };
+  const diaryService = new DiaryService(db, {
+    ...(diaryAgentRuntime ? { generator: diaryAgentGenerator } : {}),
+    memory: { query: diaryMemoryQuery },
+    logger: app.log,
+  });
+  diaryService.initialize();
+  const vlmClient = Object.hasOwn(overrides, "vlmClient")
+    ? overrides.vlmClient ?? null
+    : config.vlm ? new OpenAiCompatibleVlmClient(config.vlm) : null;
+  const perceptionService = new PerceptionService(
+    db,
+    filesService,
+    vlmClient,
+    app.log,
+    (at) => diaryService.markStaleAt(at),
+  );
+  perceptionService.initialize();
   const realityService = new RealityService(db, config.asrInputDir, app.log);
   const recoveredCaptures = realityService.recoverInterruptedCaptures();
   if (recoveredCaptures > 0) {
@@ -320,6 +407,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
     await connectorSyncService.dispose();
+    await perceptionService.dispose();
+    await diaryService.dispose();
+    await diaryAgentGenerator.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
     sqlite.close();
@@ -384,6 +474,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(ingestRoutes(ingestService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
+  await app.register(perceptionRoutes(perceptionService));
+  await app.register(diaryRoutes(diaryService));
   await app.register(connectorRoutes(connectorManager, connectorConfig.enabled, connectorAuthorization));
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   await app.register(connectorSyncRoutes(connectorSyncService));

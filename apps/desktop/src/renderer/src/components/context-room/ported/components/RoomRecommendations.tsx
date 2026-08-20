@@ -1,4 +1,5 @@
 import { ArrowRight, Folder, Layers3, Mail, Mic } from 'lucide-react'
+import { useLocale } from '../../../../i18n/LocaleContext'
 
 import type { ContextRoomKind } from '../types'
 import type { DraftRoom } from './RoomDialogs'
@@ -38,12 +39,13 @@ function sourceTone(type: RoomRecommendationSource['type']) {
 }
 
 export function RoomRecommendations({ onSelect }: { onSelect: (item: RoomRecommendation) => void }) {
+  const { t } = useLocale()
   if (!ROOM_RECOMMENDATIONS.length) return null;
   return (
     <section className="context-room-home-section" data-testid="context-room-recommendations">
       <div className="context-room-home-section-title">
-        <span>推荐</span>
-        <h2>推荐的 Room</h2>
+        <span>{t('推荐')}</span>
+        <h2>{t('推荐的 Room')}</h2>
       </div>
       <div className="context-room-home-grid context-room-recommendation-grid">
         {ROOM_RECOMMENDATIONS.map((item) => {
@@ -62,7 +64,7 @@ export function RoomRecommendations({ onSelect }: { onSelect: (item: RoomRecomme
                 <strong>{item.name}</strong>
                 <span className="context-room-home-card-brief">{item.reason}</span>
               </span>
-              <span className="context-room-recommendation-count" title={`相关资料 ${String(item.dataCount)} 份`}>
+              <span className="context-room-recommendation-count" title={t('相关资料 {count} 份', { count: item.dataCount })}>
                 <Layers3 aria-hidden="true" />
                 <b>{item.dataCount}</b>
               </span>
@@ -85,21 +87,22 @@ export function RoomRecommendationDialog({
   onCreate: (draft: DraftRoom) => void
   onOpenSource: (source: RoomRecommendationSource) => void
 }) {
+  const { t } = useLocale()
   return (
     <div className="context-room-recommendation-dialog">
       <header>
         <div>
-          <span>推荐创建 Room：{recommendation.name}</span>
+          <span>{t('推荐创建 Room：{name}', { name: recommendation.name })}</span>
           <h2>{recommendation.anchorEntity.name}</h2>
         </div>
       </header>
       <p>{recommendation.anchorEntity.description}</p>
       <div className="context-room-recommendation-stats">
-        <div><b>{recommendation.factCount}</b><span>事实数量</span></div>
-        <div><b>{recommendation.dataCount}</b><span>资料数</span></div>
+        <div><b>{recommendation.factCount}</b><span>{t('事实数量')}</span></div>
+        <div><b>{recommendation.dataCount}</b><span>{t('资料数')}</span></div>
       </div>
       <section>
-        <h3>相关资料 ({recommendation.sources.length})</h3>
+        <h3>{t('相关资料 ({count})', { count: recommendation.sources.length })}</h3>
         <div className="context-room-recommendation-source-list">
           {recommendation.sources.map((source) => {
             const Icon = sourceIcon(source.type)
@@ -107,11 +110,11 @@ export function RoomRecommendationDialog({
               <button
                 type="button"
                 disabled={!source.roomId || !source.objectId}
-                title={source.objectId ? `打开${source.type}` : '该资料暂未接入当前工作区'}
+                title={source.objectId ? t('打开{type}', { type: t(source.type) }) : t('该资料暂未接入当前工作区')}
                 key={`${source.type}-${source.name}`}
                 onClick={() => onOpenSource(source)}
               >
-                <span data-icon-tone={sourceTone(source.type)}><Icon aria-hidden="true" />{source.type}</span>
+                <span data-icon-tone={sourceTone(source.type)}><Icon aria-hidden="true" />{t(source.type)}</span>
                 <b>{source.name}</b>
               </button>
             )
@@ -119,7 +122,7 @@ export function RoomRecommendationDialog({
         </div>
       </section>
       <footer>
-        <button type="button" className="context-room-secondary" onClick={onClose}>取消</button>
+        <button type="button" className="context-room-secondary" onClick={onClose}>{t('取消')}</button>
         <button
           type="button"
           className="context-room-primary"
@@ -129,7 +132,7 @@ export function RoomRecommendationDialog({
             summary: recommendation.anchorEntity.description,
           })}
         >
-          确认创建
+          {t('确认创建')}
           <ArrowRight aria-hidden="true" />
         </button>
       </footer>

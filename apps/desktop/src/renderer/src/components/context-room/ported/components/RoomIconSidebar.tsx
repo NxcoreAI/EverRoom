@@ -9,6 +9,7 @@ import {
   Share2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useLocale } from '../../../../i18n/LocaleContext';
 
 export type DetailPane =
   | 'overview'
@@ -44,17 +45,18 @@ export function RoomIconSidebar({
     onSelect: () => void;
   };
 }) {
+  const { t } = useLocale();
   return (
-    <nav className="context-room-workspace-tabs" aria-label="Context room detail">
+    <nav className="context-room-workspace-tabs" aria-label={t('Context room detail')}>
       {DETAIL_TABS.map(({ id, label, icon: Icon, tone }) => (
         <button
           key={id}
           type="button"
           data-pane-id={id}
           data-icon-tone={tone}
-          aria-label={label}
+          aria-label={t(label)}
           aria-pressed={activePane === id}
-          title={label}
+          title={t(label)}
           onClick={() => onSelectPane(id)}
         >
           <Icon aria-hidden="true" />
@@ -64,8 +66,8 @@ export function RoomIconSidebar({
         <button
           type="button"
           className="context-room-workspace-tabs-footer"
-          aria-label={footerAction.label}
-          title={footerAction.label}
+          aria-label={t(footerAction.label)}
+          title={t(footerAction.label)}
           onClick={footerAction.onSelect}
         >
           <footerAction.icon aria-hidden="true" />

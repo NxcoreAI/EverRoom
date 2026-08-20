@@ -168,6 +168,10 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
           body: Type.Object({
             prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            responseLanguage: Type.Optional(Type.Union([
+              Type.Literal("zh-CN"),
+              Type.Literal("en-US"),
+            ])),
             captureMemory: Type.Optional(Type.Boolean()),
             recallMemory: Type.Optional(Type.Boolean()),
             toolsEnabled: Type.Optional(Type.Boolean()),

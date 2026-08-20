@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { navigationSections, type PageId } from '@/data/navigation'
 import { useAccount } from '@/state/AccountContext'
 import type { GatewayState, GatewayStatus } from '../../../shared/sources'
+import { useLocale } from '@/i18n/LocaleContext'
 
 const INITIAL_GATEWAY_STATUS: GatewayStatus = {
   state: 'starting',
@@ -13,21 +14,17 @@ const INITIAL_GATEWAY_STATUS: GatewayStatus = {
   message: null,
 }
 
-function gatewayStatusLabel(status: GatewayStatus): string {
+function gatewayStatusLabel(status: GatewayStatus, t: (message: string, values?: Record<string, string | number>) => string): string {
   switch (status.state) {
     case 'ready':
-      return status.pid ? `运行中 · PID ${status.pid}` : '运行中'
+      return status.pid ? t('运行中 · PID {pid}', { pid: status.pid }) : t('运行中')
     case 'starting':
-      return '正在启动'
+      return t('正在启动')
     case 'error':
-      return '连接异常'
+      return t('连接异常')
     case 'stopped':
-      return '未运行'
+      return t('未运行')
   }
-}
-
-function remainingMinutes(seconds: number): string {
-  return Math.ceil(Math.max(0, seconds) / 60).toLocaleString('zh-CN')
 }
 
 export function Sidebar({
@@ -37,6 +34,7 @@ export function Sidebar({
   activePage: PageId
   onNavigate: (page: PageId) => void
 }) {
+  const { t, formatNumber } = useLocale()
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>(INITIAL_GATEWAY_STATUS)
   const gatewayStateRef = useRef<GatewayState>(INITIAL_GATEWAY_STATUS.state)
@@ -58,7 +56,7 @@ export function Sidebar({
             pid: null,
             baseUrl: null,
             version: null,
-            message: 'Gateway 仅在 Everroom 桌面版中运行',
+            message: t('Gateway 仅在 Everroom 桌面版中运行'),
           })
         }
         return
@@ -73,7 +71,7 @@ export function Sidebar({
             pid: null,
             baseUrl: null,
             version: null,
-            message: error instanceof Error ? error.message : '无法获取 Gateway 状态',
+            message: error instanceof Error ? error.message : t('无法获取 Gateway 状态'),
           })
         }
       }
@@ -95,7 +93,7 @@ export function Sidebar({
       disposed = true
       window.clearTimeout(timeout)
     }
-  }, [])
+  }, [t])
 
   const toggleSection = (sectionId: string) => {
     setCollapsedSections((current) => {
@@ -107,17 +105,17 @@ export function Sidebar({
   }
 
   const accountName = account?.authenticated
-    ? account.user?.email || account.user?.name || account.user?.phone || 'EverRoom 用户'
-    : account === null ? '正在检查' : '本地用户'
+    ? account.user?.email || account.user?.name || account.user?.phone || t('EverRoom 用户')
+    : account === null ? t('正在检查') : t('本地用户')
   const accountDescription = account?.authenticated
-    ? account.subscription?.planName ? `${account.subscription.planName} 套餐` : 'EverRoom SaaS 已连接'
-    : account === null ? '账号状态' : '本地模式'
+    ? account.subscription?.planName ? t('{plan} 套餐', { plan: account.subscription.planName }) : t('EverRoom SaaS 已连接')
+    : account === null ? t('账号状态') : t('本地模式')
   const subscription = account?.authenticated ? account.subscription : undefined
-  const remainingQuotaMinutes = subscription ? remainingMinutes(subscription.remainingSeconds) : null
+  const remainingQuotaMinutes = subscription ? formatNumber(Math.ceil(Math.max(0, subscription.remainingSeconds) / 60)) : null
 
   return (
     <aside className="sidebar">
-      <nav className="sidebar-nav" aria-label="主导航">
+      <nav className="sidebar-nav" aria-label={t('主导航')}>
         {navigationSections.map((section) => (
           <section
             key={section.id}
@@ -131,7 +129,7 @@ export function Sidebar({
               onClick={() => toggleSection(section.id)}
             >
               <ChevronDown aria-hidden="true" />
-              <span>{section.label}</span>
+              <span>{t(section.label)}</span>
             </button>
             <div className="nav-items" hidden={collapsedSections.has(section.id)}>
               {section.items.map((item) => {
@@ -149,7 +147,7 @@ export function Sidebar({
                     <span className="nav-item-icon" aria-hidden="true">
                       <Icon strokeWidth={1.8} />
                     </span>
-                    <span className="nav-item-label">{item.label}</span>
+                    <span className="nav-item-label">{t(item.label)}</span>
                   </button>
                 )
               })}
@@ -168,7 +166,7 @@ export function Sidebar({
         <Server aria-hidden="true" />
         <span>
           <strong>Gateway</strong>
-          <small>{gatewayStatusLabel(gatewayStatus)}</small>
+          <small>{gatewayStatusLabel(gatewayStatus, t)}</small>
         </span>
         <i className="gateway-status-dot" aria-hidden="true" />
       </div>
@@ -179,9 +177,9 @@ export function Sidebar({
           <small>{accountDescription}</small>
           {subscription ? (
             <span className="account-quota">
-              <span>剩余 {remainingQuotaMinutes} 分钟</span>
+              <span>{t('剩余 {minutes} 分钟', { minutes: remainingQuotaMinutes! })}</span>
               <progress
-                aria-label={`剩余转写额度 ${remainingQuotaMinutes} 分钟`}
+                aria-label={t('剩余转写额度 {minutes} 分钟', { minutes: remainingQuotaMinutes! })}
                 max={Math.max(1, subscription.quotaSeconds)}
                 value={Math.min(Math.max(0, subscription.remainingSeconds), subscription.quotaSeconds)}
               />

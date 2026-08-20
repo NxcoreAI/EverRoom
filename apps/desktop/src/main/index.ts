@@ -42,6 +42,8 @@ import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
+import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
+import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
@@ -50,6 +52,7 @@ import {
   configureDesktopLogger,
   flushDesktopLogs,
   logDesktop,
+  logLocalDesktop,
   logDocumentCursorCompletion,
 } from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
@@ -60,6 +63,7 @@ import {
   captureCurrentWindow,
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
+import { ScreenshotOutbox } from './screenshot/screenshot-outbox'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
 import { registerSystemClipboardHandler } from './system-clipboard'
 import { installCrossOriginIsolation } from './cross-origin-isolation'
@@ -317,6 +321,7 @@ const FILES_CHANNELS = {
   list: 'files:list',
   get: 'files:get',
   readMarkdown: 'files:read-markdown',
+  readDataUrl: 'files:read-data-url',
   rename: 'files:rename',
   delete: 'files:delete',
   reveal: 'files:reveal',
@@ -333,6 +338,25 @@ const SCREEN_CAPTURE_CHANNELS = {
   updateInterval: 'screen-capture:update-interval',
   stop: 'screen-capture:stop',
   status: 'screen-capture:status',
+} as const
+
+const PERCEPTION_CHANNELS = {
+  settings: 'perception:settings',
+  updateOnlineVlm: 'perception:update-online-vlm',
+  nodes: 'perception:nodes',
+  node: 'perception:node',
+  retry: 'perception:retry',
+  delete: 'perception:delete',
+} as const
+
+const DIARY_CHANNELS = {
+  settings: 'diary:settings',
+  updateSettings: 'diary:update-settings',
+  generate: 'diary:generate',
+  run: 'diary:run',
+  activeRun: 'diary:active-run',
+  days: 'diary:days',
+  day: 'diary:day',
 } as const
 
 // 窗口先显示、服务后台初始化:所有 IPC 通道提前挂上路由,处理器注册前先等待就绪。
@@ -387,6 +411,8 @@ function installIpcRouters(): void {
     FILES_CHANNELS,
     INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
+    PERCEPTION_CHANNELS,
+    DIARY_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -416,6 +442,8 @@ let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
+let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
+let diaryGatewayBridge: DiaryGatewayBridge | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
@@ -424,7 +452,13 @@ let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
-const screenshotScheduler = createWindowScreenshotScheduler()
+let screenshotOutbox: ScreenshotOutbox | null = null
+const captureAndQueueCurrentWindow = async () => {
+  const result = await captureCurrentWindow()
+  if (result.ok) await screenshotOutbox?.enqueue(result).catch(() => undefined)
+  return result
+}
+const screenshotScheduler = createWindowScreenshotScheduler(captureAndQueueCurrentWindow)
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -885,6 +919,7 @@ function registerFilesHandlers(bridge: FilesGatewayBridge): void {
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
   handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
   handle(FILES_CHANNELS.readMarkdown, (_event, fileId: string) => bridge.readMarkdown(fileId))
+  handle(FILES_CHANNELS.readDataUrl, (_event, fileId: string) => bridge.readDataUrl(fileId))
   handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
     bridge.rename(fileId, displayName))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
@@ -1086,23 +1121,107 @@ function registerScreenCaptureHandlers(): void {
     if (!isAuthorized(event)) {
       return { ok: false, code: 'window-unavailable', message: '无法验证截图请求来源。' }
     }
-    return captureCurrentWindow()
+    return captureAndQueueCurrentWindow()
   })
   handle(SCREEN_CAPTURE_CHANNELS.start, async (event, intervalMs: unknown) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    return screenshotScheduler.start(typeof intervalMs === 'number' ? intervalMs : NaN)
+    const status = await screenshotScheduler.start(typeof intervalMs === 'number' ? intervalMs : NaN)
+    await perceptionGatewayBridge?.updateCapture({ enabled: true, intervalMs: status.intervalMs }).catch(() => undefined)
+    return status
   })
   handle(SCREEN_CAPTURE_CHANNELS.updateInterval, async (event, intervalMs: unknown) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    return screenshotScheduler.updateInterval(typeof intervalMs === 'number' ? intervalMs : NaN)
+    const status = screenshotScheduler.updateInterval(typeof intervalMs === 'number' ? intervalMs : NaN)
+    await perceptionGatewayBridge?.updateCapture({ intervalMs: status.intervalMs }).catch(() => undefined)
+    return status
   })
-  handle(SCREEN_CAPTURE_CHANNELS.stop, (event) => {
+  handle(SCREEN_CAPTURE_CHANNELS.stop, async (event) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    return screenshotScheduler.stop()
+    const status = screenshotScheduler.stop()
+    await perceptionGatewayBridge?.updateCapture({ enabled: false }).catch(() => undefined)
+    return status
   })
   handle(SCREEN_CAPTURE_CHANNELS.status, (event) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
     return screenshotScheduler.getStatus()
+  })
+}
+
+function registerPerceptionAndDiaryHandlers(): void {
+  handle(PERCEPTION_CHANNELS.settings, () => {
+    if (!perceptionGatewayBridge) throw new Error('现实感知服务尚未就绪。')
+    return perceptionGatewayBridge.getSettings()
+  })
+  handle(PERCEPTION_CHANNELS.updateOnlineVlm, (_event, enabled: unknown, configVersion: unknown) => {
+    if (!perceptionGatewayBridge || typeof enabled !== 'boolean' || typeof configVersion !== 'number') {
+      throw new Error('感知设置参数无效。')
+    }
+    return perceptionGatewayBridge.updateOnlineVlm(enabled, configVersion)
+  })
+  handle(PERCEPTION_CHANNELS.nodes, (_event, query: unknown) => {
+    if (!perceptionGatewayBridge) throw new Error('现实感知服务尚未就绪。')
+    return perceptionGatewayBridge.listNodes(query && typeof query === 'object' ? query as never : {})
+  })
+  handle(PERCEPTION_CHANNELS.node, (_event, id: unknown) => {
+    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
+    return perceptionGatewayBridge.getNode(id)
+  })
+  handle(PERCEPTION_CHANNELS.retry, (_event, id: unknown) => {
+    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
+    return perceptionGatewayBridge.retryNode(id)
+  })
+  handle(PERCEPTION_CHANNELS.delete, (_event, id: unknown, deleteAssets: unknown) => {
+    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
+    return perceptionGatewayBridge.deleteNode(id, deleteAssets === true)
+  })
+  handle(DIARY_CHANNELS.settings, () => {
+    if (!diaryGatewayBridge) throw new Error('日记服务尚未就绪。')
+    return diaryGatewayBridge.settings()
+  })
+  handle(DIARY_CHANNELS.updateSettings, (_event, input: unknown) => {
+    if (!diaryGatewayBridge || !input || typeof input !== 'object') throw new Error('日记设置参数无效。')
+    return diaryGatewayBridge.updateSettings(input as Parameters<DiaryGatewayBridge['updateSettings']>[0])
+  })
+  handle(DIARY_CHANNELS.generate, async (_event, date: unknown) => {
+    if (!diaryGatewayBridge || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error('日记日期参数无效。')
+    }
+    logLocalDesktop('diary', 'info', { event: 'diary.generate.requested', date })
+    try {
+      const result = await diaryGatewayBridge.generate(date)
+      logLocalDesktop('diary', 'info', { event: 'diary.generate.accepted', date, runId: result.runId })
+      return result
+    } catch (error) {
+      logLocalDesktop('diary', 'error', {
+        event: 'diary.generate.rejected',
+        date,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+  })
+  handle(DIARY_CHANNELS.run, (_event, id: unknown) => {
+    if (!diaryGatewayBridge || typeof id !== 'string' || id.length < 1 || id.length > 100) {
+      throw new Error('日记运行参数无效。')
+    }
+    return diaryGatewayBridge.run(id)
+  })
+  handle(DIARY_CHANNELS.activeRun, () => {
+    if (!diaryGatewayBridge) throw new Error('日记服务尚未就绪。')
+    return diaryGatewayBridge.activeRun()
+  })
+  handle(DIARY_CHANNELS.days, (_event, start: unknown, end: unknown) => {
+    if (!diaryGatewayBridge || typeof start !== 'string' || typeof end !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      throw new Error('日记日期范围参数无效。')
+    }
+    return diaryGatewayBridge.days(start, end)
+  })
+  handle(DIARY_CHANNELS.day, (_event, date: unknown) => {
+    if (!diaryGatewayBridge || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error('日记日期参数无效。')
+    }
+    return diaryGatewayBridge.day(date)
   })
 }
 
@@ -1210,6 +1329,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   await documentAssets.initialize().catch((error) => {
     console.error('Failed to initialize local document assets', error)
   })
+  screenshotOutbox = new ScreenshotOutbox(
+    join(dataDirectory, 'perception', 'screenshot-outbox.json'),
+    () => gatewaySupervisor,
+  )
+  await screenshotOutbox.initialize()
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   installIpcRouters()
   registerSystemClipboardHandler()
@@ -1277,6 +1401,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
+    void screenshotOutbox.flush()
+    perceptionGatewayBridge = new PerceptionGatewayBridge(gatewaySupervisor)
+    diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
+    registerPerceptionAndDiaryHandlers()
+    const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
+    if (perceptionSettings?.captureEnabled) {
+      await screenshotScheduler.start(perceptionSettings.captureIntervalSeconds * 1_000)
+    }
     cursorCompletionSupervisor = new GatewaySupervisor(
       join(dataDirectory, 'cursor-completion-service'),
       { NXCORE_MEMORY_ENABLED: 'false' },
@@ -1367,6 +1499,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
     realityGatewayBridge = null
+    perceptionGatewayBridge = null
+    diaryGatewayBridge = null
     connectorGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
@@ -1406,6 +1540,7 @@ app.on('before-quit', (event) => {
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
   const recordings = recordingStore
+  const pendingScreenshots = screenshotOutbox
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
@@ -1420,9 +1555,12 @@ app.on('before-quit', (event) => {
   cursorCompletionAgentBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
+  perceptionGatewayBridge = null
+  diaryGatewayBridge = null
   connectorGatewayBridge = null
   recordingStore = null
   saasClient = null
+  screenshotOutbox = null
   screenshotScheduler.stop()
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
@@ -1434,6 +1572,7 @@ app.on('before-quit', (event) => {
   void Promise.allSettled([
     service?.shutdown(),
     recordings?.dispose(),
+    pendingScreenshots?.dispose(),
     gateway?.shutdown(),
     connectorRuntime?.shutdown(),
     cursorCompletion?.shutdown(),

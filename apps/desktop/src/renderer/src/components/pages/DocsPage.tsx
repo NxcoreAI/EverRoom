@@ -4,18 +4,19 @@ import { useMemo, useState } from 'react'
 import type { PageId } from '@/data/navigation'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
+import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { PageHeader } from './PageHeader'
 
-function formatDocumentTime(iso: string): string {
+function formatDocumentTime(iso: string, locale: AppLocale, t: Translate): string {
   const time = new Date(iso).getTime()
   if (!Number.isFinite(time)) return ''
   const diffMs = Date.now() - time
   const diffMinutes = Math.floor(diffMs / 60_000)
-  if (diffMinutes < 1) return '刚刚'
-  if (diffMinutes < 60) return `${diffMinutes} 分钟前`
-  if (diffMinutes < 60 * 24) return `${Math.floor(diffMinutes / 60)} 小时前`
-  if (diffMinutes < 60 * 24 * 2) return '昨天'
-  return new Date(time).toLocaleString('zh-CN', {
+  if (diffMinutes < 1) return t('刚刚')
+  if (diffMinutes < 60) return t('{count} 分钟前', { count: diffMinutes })
+  if (diffMinutes < 60 * 24) return t('{count} 小时前', { count: Math.floor(diffMinutes / 60) })
+  if (diffMinutes < 60 * 24 * 2) return t('昨天')
+  return new Date(time).toLocaleString(locale, {
     year: diffMs > 365 * 24 * 3600_000 ? 'numeric' : undefined,
     month: 'numeric',
     day: 'numeric',
@@ -37,6 +38,7 @@ export function DocsPage({
   onNavigate: (page: PageId) => void
   onOpenDocument: (target: { roomId: string; documentId: string }) => void
 }) {
+  const { locale, t } = useLocale()
   const { state, backendReady } = useContextRoomState()
   const { documentsByRoom } = useRoomDocumentsState()
   const [search, setSearch] = useState('')
@@ -51,19 +53,19 @@ export function DocsPage({
   const rows = useMemo<DocumentRow[]>(() => {
     const collected: DocumentRow[] = []
     for (const [roomId, documents] of Object.entries(documentsByRoom)) {
-      const roomTitle = roomTitleById.get(roomId) ?? '未知 Room'
+      const roomTitle = roomTitleById.get(roomId) ?? t('未知 Room')
       for (const document of documents) {
         collected.push({
           documentId: document.id,
           roomId,
           roomTitle,
-          title: document.title || '无标题文档',
+          title: document.title || t('无标题文档'),
           updatedAt: document.updatedAt,
         })
       }
     }
     return collected.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-  }, [documentsByRoom, roomTitleById])
+  }, [documentsByRoom, roomTitleById, t])
 
   // 筛选选项只列出真实存在文档的 Room,避免演示 Room 干扰。
   const roomOptions = useMemo(() => {
@@ -83,7 +85,7 @@ export function DocsPage({
   )), [keyword, roomFilter, rows])
 
   const groupedRows = useMemo(() => {
-    if (roomFilter !== 'all') return visibleRows.length ? [{ roomTitle: roomTitleById.get(roomFilter) ?? '未知 Room', rows: visibleRows }] : []
+    if (roomFilter !== 'all') return visibleRows.length ? [{ roomTitle: roomTitleById.get(roomFilter) ?? t('未知 Room'), rows: visibleRows }] : []
     const groups: { roomTitle: string; rows: DocumentRow[] }[] = []
     for (const row of visibleRows) {
       const group = groups.find((item) => item.roomTitle === row.roomTitle)
@@ -91,14 +93,14 @@ export function DocsPage({
       else groups.push({ roomTitle: row.roomTitle, rows: [row] })
     }
     return groups
-  }, [roomFilter, roomTitleById, visibleRows])
+  }, [roomFilter, roomTitleById, t, visibleRows])
 
   return (
     <div className="page doc-page">
       <PageHeader
-        title="文档"
-        description="在原生写作空间中使用 Room、来源与 Agent。"
-        action="新建文档"
+        title={t('文档')}
+        description={t('在原生写作空间中使用 Room、来源与 Agent。')}
+        action={t('新建文档')}
         onAction={() => onNavigate('rooms')}
       />
       <div className="doc-toolbar">
@@ -107,17 +109,17 @@ export function DocsPage({
           <input
             type="search"
             value={search}
-            placeholder="搜索文档标题…"
+            placeholder={t('搜索文档标题…')}
             onChange={(event) => setSearch(event.target.value)}
           />
         </label>
-        <div className="doc-filter" role="group" aria-label="按 Room 筛选">
+        <div className="doc-filter" role="group" aria-label={t('按 Room 筛选')}>
           <button
             type="button"
             data-active={String(roomFilter === 'all')}
             onClick={() => setRoomFilter('all')}
           >
-            全部 <small>{rows.length}</small>
+            {t('全部')} <small>{rows.length}</small>
           </button>
           {roomOptions.map((option) => (
             <button
@@ -133,7 +135,7 @@ export function DocsPage({
       </div>
 
       {!backendReady ? (
-        <div className="doc-list" aria-busy="true" aria-label="正在载入文档">
+        <div className="doc-list" aria-busy="true" aria-label={t('正在载入文档')}>
           {Array.from({ length: 5 }, (_, index) => (
             <div key={index} className="doc-row doc-row-skeleton" aria-hidden="true">
               <span className="item-icon"><FileText strokeWidth={1.8} /></span>
@@ -147,12 +149,12 @@ export function DocsPage({
       ) : visibleRows.length === 0 ? (
         <div className="doc-empty">
           <FolderKanban aria-hidden="true" strokeWidth={1.6} />
-          <strong>{keyword || roomFilter !== 'all' ? '没有匹配的文档' : '还没有任何文档'}</strong>
-          <small>{keyword || roomFilter !== 'all'
+          <strong>{t(keyword || roomFilter !== 'all' ? '没有匹配的文档' : '还没有任何文档')}</strong>
+          <small>{t(keyword || roomFilter !== 'all'
             ? '换个关键词或清除筛选试试。'
-            : '文档保存在 Context Room 中,先创建或让 Agent 生成一篇。'}</small>
+            : '文档保存在 Context Room 中,先创建或让 Agent 生成一篇。')}</small>
           <button type="button" className="primary-button" onClick={() => onNavigate('rooms')}>
-            前往 Context Room
+            {t('前往 Context Room')}
           </button>
         </div>
       ) : (
@@ -161,7 +163,7 @@ export function DocsPage({
             <header>
               <FolderKanban aria-hidden="true" strokeWidth={1.6} />
               <strong>{group.roomTitle}</strong>
-              <small>{group.rows.length} 篇</small>
+              <small>{t('{count} 篇', { count: group.rows.length })}</small>
             </header>
             <div className="doc-list">
               {group.rows.map((row) => (
@@ -173,7 +175,7 @@ export function DocsPage({
                 >
                   <span className="item-icon"><FileText aria-hidden="true" strokeWidth={1.8} /></span>
                   <span><strong>{row.title}</strong><small>{row.roomTitle}</small></span>
-                  <time>{formatDocumentTime(row.updatedAt)}</time>
+                  <time>{formatDocumentTime(row.updatedAt, locale, t)}</time>
                   <ChevronRight aria-hidden="true" strokeWidth={1.8} />
                 </button>
               ))}

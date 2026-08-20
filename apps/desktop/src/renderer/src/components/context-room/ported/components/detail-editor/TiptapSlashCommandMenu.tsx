@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocale } from '../../../../../i18n/LocaleContext'
 
 import { showToast } from '../../../../../state/toast'
 import {
@@ -87,6 +88,7 @@ export function TiptapSlashCommandMenu({
   documentId: string
   onRequestBlockReference?: () => void
 }) {
+  const { t } = useLocale()
   const [match, setMatch] = useState<SlashMatch | null>(() => getSlashMatch(editor))
   const [selectedIndex, setSelectedIndex] = useState(0)
   const selectedIndexRef = useRef(0)
@@ -192,14 +194,14 @@ export function TiptapSlashCommandMenu({
       <div
         className="context-room-tiptap-slash-menu context-room-tiptap-table-grid-menu"
         role="dialog"
-        aria-label="选择表格尺寸"
+        aria-label={t('选择表格尺寸')}
         style={{ left, top }}
       >
         <div className="context-room-tiptap-table-grid-title">
-          <strong>插入表格</strong>
+          <strong>{t('插入表格')}</strong>
           <span>{tableRequest.rows} × {tableRequest.cols}</span>
         </div>
-        <div className="context-room-tiptap-table-grid" role="grid" aria-label="表格尺寸">
+        <div className="context-room-tiptap-table-grid" role="grid" aria-label={t('表格尺寸')}>
           {Array.from({ length: 64 }, (_, index) => {
             const row = Math.floor(index / 8) + 1
             const col = index % 8 + 1
@@ -209,7 +211,7 @@ export function TiptapSlashCommandMenu({
                 type="button"
                 key={`${row}-${col}`}
                 role="gridcell"
-                aria-label={`${row} 行 ${col} 列`}
+                aria-label={t('{row} 行 {col} 列', { row, col })}
                 aria-selected={selected}
                 data-selected={String(selected)}
                 onMouseEnter={() => setTableRequest((current) => current ? { ...current, rows: row, cols: col } : current)}
@@ -227,13 +229,13 @@ export function TiptapSlashCommandMenu({
             )
           })}
         </div>
-        <button type="button" className="context-room-tiptap-table-grid-cancel" onClick={() => setTableRequest(null)}>取消</button>
+        <button type="button" className="context-room-tiptap-table-grid-cancel" onClick={() => setTableRequest(null)}>{t('取消')}</button>
       </div>
     )
   }
 
   return (
-    <div className="context-room-tiptap-slash-menu" role="listbox" aria-label="插入内容" style={{ left, top }}>
+    <div className="context-room-tiptap-slash-menu" role="listbox" aria-label={t('插入内容')} style={{ left, top }}>
       <input
         ref={imageInputRef}
         type="file"
@@ -251,7 +253,7 @@ export function TiptapSlashCommandMenu({
           imageRangeRef.current = null
           const documents = window.nxcore?.documents
           if (!documents) {
-            showToast({ title: '无法插入图片', message: '本地图片服务不可用。' })
+            showToast({ title: t('无法插入图片'), message: t('本地图片服务不可用。') })
             return
           }
           void storeDocumentImageFile(file, documentId, documents.storeImage).then((stored) => {
@@ -262,14 +264,14 @@ export function TiptapSlashCommandMenu({
             setMatch(null)
           }).catch((error: unknown) => {
             showToast({
-              title: '无法插入图片',
-              message: error instanceof Error ? error.message : '读取图片失败，请重试。',
+              title: t('无法插入图片'),
+              message: error instanceof Error ? error.message : t('读取图片失败，请重试。'),
             })
             console.error('Failed to store document image', error)
           })
         }}
       />
-      <div className="context-room-tiptap-slash-title">基础块</div>
+      <div className="context-room-tiptap-slash-title">{t('基础块')}</div>
       {filteredCommands.map((command, index) => {
         const Icon = command.icon
         return (
@@ -287,7 +289,7 @@ export function TiptapSlashCommandMenu({
             onClick={() => command.run(editor, match, { requestImage, requestTable })}
           >
             <span><Icon strokeWidth={1.8} /></span>
-            <span><b>{command.label}</b><small>{command.description}</small></span>
+            <span><b>{t(command.label)}</b><small>{t(command.description)}</small></span>
           </button>
         )
       })}

@@ -10,6 +10,7 @@ import type {
   StartAgentRunInput,
 } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import {
   mergeAgentToolEvent,
@@ -102,6 +103,7 @@ export function useAgentSession(
   roomId: string | null,
   rooms: AgentRoomReference[],
 ) {
+  const { locale, t } = useLocale()
   const api = window.nxcore?.agent
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
@@ -267,7 +269,7 @@ export function useAgentSession(
         : current)
       if (event.type === 'run.failed') {
         const message = (event.payload as { message?: unknown }).message
-        setError(typeof message === 'string' ? message : 'Agent 运行失败。')
+        setError(typeof message === 'string' ? message : t('Agent 运行失败。'))
       }
     }
   }, [updateToolCall])
@@ -345,7 +347,7 @@ export function useAgentSession(
     setActiveRunId(snapshot.activeRun?.id ?? null)
     setSessionId(snapshot.session.id)
     setCurrentSession(snapshot.session)
-    const title = snapshot.session.title?.trim() || '新对话'
+    const title = snapshot.session.title?.trim() || t('新对话')
     setDisplayTitle(title)
     setScopeReady(true)
     setSessions((current) => current.some((session) => session.id === snapshot.session.id)
@@ -367,7 +369,7 @@ export function useAgentSession(
     setError(null)
     setSessionId(session.id)
     setCurrentSession(session)
-    setDisplayTitle(session.title?.trim() || '新对话')
+    setDisplayTitle(session.title?.trim() || t('新对话'))
     sessionIdRef.current = session.id
     try {
       await api.unsubscribe()
@@ -380,7 +382,7 @@ export function useAgentSession(
       if (expectedScope === activeScopeRef.current && session.id === sessionIdRef.current) {
         setConnected(false)
         setScopeReady(true)
-        setError(requestErrorMessage(requestError, '切换会话失败。'))
+        setError(requestErrorMessage(requestError, t('切换会话失败。')))
       }
     } finally {
       if (expectedScope === activeScopeRef.current && session.id === sessionIdRef.current) setLoading(false)
@@ -418,7 +420,7 @@ export function useAgentSession(
           if (selected) await selectSession(selected)
           else if (alive) {
             const scope = sessionScope(pageLabel, roomId)
-            setDisplayTitle('新对话')
+            setDisplayTitle(t('新对话'))
             let creation = defaultSessionCreations.get(scope)
             if (!creation) {
               creation = api.createSession({ pageLabel, roomId })
@@ -441,7 +443,7 @@ export function useAgentSession(
             setConnected(false)
             setScopeReady(true)
           }
-          if (alive) setError(requestError instanceof Error ? requestError.message : '会话加载失败。')
+          if (alive) setError(requestError instanceof Error ? requestError.message : t('会话加载失败。'))
         })
         .finally(() => {
           if (alive) setLoading(false)
@@ -457,7 +459,7 @@ export function useAgentSession(
         setConnected(true)
         if (frame.lastEventSeq > 0) {
           void api.getSession(frame.sessionId).then(hydrateSnapshot).catch((requestError) => {
-            setError(requestError instanceof Error ? requestError.message : '会话恢复失败。')
+            setError(requestError instanceof Error ? requestError.message : t('会话恢复失败。'))
           })
         }
       } else {
@@ -475,15 +477,15 @@ export function useAgentSession(
   const createSession = async (
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<AgentSession> => {
-    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
-    if (activeRunId) throw new Error('请先停止当前运行，再新建会话。')
+    if (!api) throw new Error(t('Agent 服务仅在桌面应用中可用。'))
+    if (activeRunId) throw new Error(t('请先停止当前运行，再新建会话。'))
     try {
       const session = await api.createSession({ pageLabel, roomId })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
       return session
     } catch (createError) {
-      setError(requestErrorMessage(createError, '新建会话失败。'))
+      setError(requestErrorMessage(createError, t('新建会话失败。')))
       throw createError
     }
   }
@@ -503,7 +505,7 @@ export function useAgentSession(
         setDisplayTitle(updated.title?.trim() ?? '')
       }
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '重命名会话失败。'))
+      setError(requestErrorMessage(requestError, t('重命名会话失败。')))
       throw requestError
     }
   }
@@ -522,7 +524,7 @@ export function useAgentSession(
           sessionIdRef.current = null
           setSessionId(null)
           setCurrentSession(null)
-          setDisplayTitle('新对话')
+          setDisplayTitle(t('新对话'))
           setScopeReady(false)
           setSessionLinks([])
           setMessages([])
@@ -543,7 +545,7 @@ export function useAgentSession(
         }
       }
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '删除会话失败。'))
+      setError(requestErrorMessage(requestError, t('删除会话失败。')))
       throw requestError
     }
   }
@@ -560,7 +562,7 @@ export function useAgentSession(
   }
 
   const createSessionLink = async (input: CreateAgentSessionLinkInput): Promise<AgentSessionLink> => {
-    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
+    if (!api) throw new Error(t('Agent 服务仅在桌面应用中可用。'))
     try {
       const link = await api.createSessionLink(input)
       if (link.sourceSessionId === sessionIdRef.current || link.targetSessionId === sessionIdRef.current) {
@@ -568,19 +570,19 @@ export function useAgentSession(
       }
       return link
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '创建会话引用失败。'))
+      setError(requestErrorMessage(requestError, t('创建会话引用失败。')))
       throw requestError
     }
   }
 
   const markSessionLinkReturned = async (linkId: string): Promise<AgentSessionLink> => {
-    if (!api) throw new Error('Agent 服务仅在桌面应用中可用。')
+    if (!api) throw new Error(t('Agent 服务仅在桌面应用中可用。'))
     try {
       const link = await api.markSessionLinkReturned(linkId)
       setSessionLinks((current) => current.map((item) => item.id === link.id ? link : item))
       return link
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '返回原会话失败。'))
+      setError(requestErrorMessage(requestError, t('返回原会话失败。')))
       throw requestError
     }
   }
@@ -614,6 +616,7 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
+        responseLanguage: locale,
         context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument),
       })
       const updatedAt = new Date().toISOString()
@@ -650,7 +653,7 @@ export function useAgentSession(
       if (optimisticId) {
         setMessages((current) => current.filter((message) => message.id !== optimisticId))
       }
-      setError(requestErrorMessage(requestError, '发送消息失败。'))
+      setError(requestErrorMessage(requestError, t('发送消息失败。')))
       throw requestError
     } finally {
       setSending(false)
@@ -702,7 +705,7 @@ export function useAgentSession(
     try {
       await api.cancelRun(activeRunId)
     } catch (requestError) {
-      setError(requestErrorMessage(requestError, '停止 Agent 失败。'))
+      setError(requestErrorMessage(requestError, t('停止 Agent 失败。')))
     }
   }
 

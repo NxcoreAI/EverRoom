@@ -10,6 +10,7 @@ import type {
 import { PageHeader } from './PageHeader'
 import { formatBytes, formatDate } from './sources/sourceFormatters'
 import { PRODUCT_NAME } from '@/components/ui/brand'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 type FilesView = 'files' | 'events'
 
@@ -39,6 +40,7 @@ const DATA_TYPE_LABELS: Record<string, string> = {
 const dataTypeLabel = (key: string): string => DATA_TYPE_LABELS[key] ?? key
 
 export function FilesPage() {
+  const { locale, t } = useLocale()
   const filesApi = window.nxcore?.files
   const ingestApi = window.nxcore?.ingest
   const [view, setView] = useState<FilesView>('files')
@@ -84,10 +86,10 @@ export function FilesPage() {
       if (result.length === 0) return
       setOutcomes(result)
       const entered = result.filter((outcome) => outcome.eventId).length
-      setMessage(`导入完成：${entered}/${result.length} 份进入链路。`)
+      setMessage(t('导入完成：{entered}/{total} 份进入链路。', { entered, total: result.length }))
       await Promise.all([loadFiles(), loadEvents()])
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '导入失败，请稍后重试。')
+      setMessage(error instanceof Error ? error.message : t('导入失败，请稍后重试。'))
     } finally {
       setImporting(false)
     }
@@ -116,62 +118,62 @@ export function FilesPage() {
         fileId: file.id,
         name: file.originalName,
         markdown: null,
-        error: error instanceof Error ? error.message : '无法读取解析产物。',
+        error: error instanceof Error ? error.message : t('无法读取解析产物。'),
       })
     }
   }
 
   const renameFile = (file: FileDto) => {
     if (!filesApi) return
-    const nextName = window.prompt('文件显示名称', file.originalName)
+    const nextName = window.prompt(t('文件显示名称'), file.originalName)
     if (nextName === null || !nextName.trim() || nextName.trim() === file.originalName) return
     void runFileAction(file.id, () => filesApi.rename(file.id, nextName.trim()))
   }
 
   const deleteFile = (file: FileDto) => {
     if (!filesApi) return
-    if (!window.confirm(`要删除“${file.originalName}”吗？\n\n这会同时清理它进入的 Room 证据、wiki 链接与记忆文档。`)) return
+    if (!window.confirm(t('要删除“{name}”吗？\n\n这会同时清理它进入的 Room 证据、wiki 链接与记忆文档。', { name: file.originalName }))) return
     void runFileAction(file.id, () => filesApi.delete(file.id))
   }
 
   return (
     <div className="page">
       <PageHeader
-        title="文件"
-        description={`统一入口导入的文件与它们进入的理解链路（Room / Wiki / 记忆）。`}
-        action="导入文件"
+        title={t('文件')}
+        description={t('统一入口导入的文件与它们进入的理解链路（Room / Wiki / 记忆）。')}
+        action={t('导入文件')}
         actionDisabled={!filesApi || importing}
         onAction={() => void importFiles()}
         extraAction={
-          <div className="segmented-control" aria-label="文件视图">
-            <button type="button" data-active={String(view === 'files')} onClick={() => setView('files')}>文件</button>
-            <button type="button" data-active={String(view === 'events')} onClick={() => { setView('events'); void loadEvents() }}>导入记录</button>
+          <div className="segmented-control" aria-label={t('文件视图')}>
+            <button type="button" data-active={String(view === 'files')} onClick={() => setView('files')}>{t('文件')}</button>
+            <button type="button" data-active={String(view === 'events')} onClick={() => { setView('events'); void loadEvents() }}>{t('导入记录')}</button>
           </div>
         }
       />
       {!filesApi ? (
-        <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>请在桌面版中导入文件</strong><span>网页版不会请求或读取本机文件权限。</span></div></div>
+        <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('请在桌面版中导入文件')}</strong><span>{t('网页版不会请求或读取本机文件权限。')}</span></div></div>
       ) : null}
       {message ? <div className="source-feedback" role="status">{message}</div> : null}
 
       {outcomes && outcomes.length > 0 ? (
         <div className="data-table files-outcomes">
-          <div className="table-head"><span>本次导入</span><span>类型</span><span>链路</span><span>记忆</span><span /></div>
+          <div className="table-head"><span>{t('本次导入')}</span><span>{t('类型')}</span><span>{t('链路')}</span><span>{t('记忆')}</span><span /></div>
           {outcomes.map((outcome, index) => (
             <div key={`${outcome.filename}-${index}`} className="table-row files-outcome-row">
               <span className="name-cell"><strong>{outcome.filename}</strong></span>
-              <span>{outcome.dataType ? dataTypeLabel(outcome.dataType) : '—'}</span>
+              <span>{outcome.dataType ? t(dataTypeLabel(outcome.dataType)) : '—'}</span>
               <span className="pipeline-badges">
-                {outcome.error ? <em className="pipeline-badge pipeline-error" title={outcome.error}>失败</em> : null}
-                {outcome.deduped ? <em className="pipeline-badge">已去重</em> : null}
+                {outcome.error ? <em className="pipeline-badge pipeline-error" title={outcome.error}>{t('失败')}</em> : null}
+                {outcome.deduped ? <em className="pipeline-badge">{t('已去重')}</em> : null}
                 {outcome.pipelines
                   ? PIPELINE_KEYS.filter(({ key }) => outcome.pipelines?.[key]).map(({ key, label }) => (
-                    <em key={key} className="pipeline-badge">{label}</em>
+                    <em key={key} className="pipeline-badge">{t(label)}</em>
                   ))
                   : null}
               </span>
               <span title={outcome.memoryResult && 'error' in outcome.memoryResult ? outcome.memoryResult.error : undefined}>
-                {describeMemory(outcome.memoryResult)}
+                {describeMemory(outcome.memoryResult, t)}
               </span>
               <span className="files-actions">
                 {outcome.error ? <small className="files-error" title={outcome.error}>{outcome.error}</small> : null}
@@ -183,29 +185,29 @@ export function FilesPage() {
 
       {view === 'files' && filesApi ? (
         <div className="data-table files-table">
-          <div className="table-head"><span>名称</span><span>大小</span><span>状态</span><span>导入时间</span><span className="files-actions-column">操作</span></div>
-          {loading ? <div className="source-loading">正在读取文件清单...</div> : null}
-          {!loading && files.length === 0 ? <div className="source-files-empty">还没有导入文件。点击右上角“导入文件”开始。</div> : null}
+          <div className="table-head"><span>{t('名称')}</span><span>{t('大小')}</span><span>{t('状态')}</span><span>{t('导入时间')}</span><span className="files-actions-column">{t('操作')}</span></div>
+          {loading ? <div className="source-loading">{t('正在读取文件清单...')}</div> : null}
+          {!loading && files.length === 0 ? <div className="source-files-empty">{t('还没有导入文件。点击右上角“导入文件”开始。')}</div> : null}
           {files.map((file) => (
             <div key={file.id} className="table-row">
               <span className="name-cell"><strong title={file.contentHash}>{file.originalName}</strong></span>
               <span>{formatBytes(file.bytes)}</span>
               <span className="status-cell">
                 <span className={`status-dot${file.parsed ? ' active' : ''}`} />
-                {file.parsed ? '已解析' : '未进链路'}
+                {t(file.parsed ? '已解析' : '未进链路')}
               </span>
-              <span>{formatDate(file.createdAt)}</span>
+              <span>{formatDate(file.createdAt, locale, t)}</span>
               <span className="files-actions">
-                <button type="button" className="icon-button" aria-label={`预览 ${file.originalName}`} title="预览解析产物" disabled={!file.parsed || busyId === file.id} onClick={() => void openPreview(file)}>
+                <button type="button" className="icon-button" aria-label={t('预览 {name}', { name: file.originalName })} title={t('预览解析产物')} disabled={!file.parsed || busyId === file.id} onClick={() => void openPreview(file)}>
                   <Eye aria-hidden="true" strokeWidth={1.8} />
                 </button>
-                <button type="button" className="icon-button" aria-label={`重命名 ${file.originalName}`} title="重命名" disabled={busyId === file.id} onClick={() => renameFile(file)}>
+                <button type="button" className="icon-button" aria-label={t('重命名 {name}', { name: file.originalName })} title={t('重命名')} disabled={busyId === file.id} onClick={() => renameFile(file)}>
                   <Pencil aria-hidden="true" strokeWidth={1.8} />
                 </button>
-                <button type="button" className="icon-button" aria-label={`定位 ${file.originalName}`} title="在文件管理器中显示" disabled={busyId === file.id} onClick={() => void filesApi.reveal(file.id).catch(() => undefined)}>
+                <button type="button" className="icon-button" aria-label={t('定位 {name}', { name: file.originalName })} title={t('在文件管理器中显示')} disabled={busyId === file.id} onClick={() => void filesApi.reveal(file.id).catch(() => undefined)}>
                   <FolderOpen aria-hidden="true" strokeWidth={1.8} />
                 </button>
-                <button type="button" className="icon-button danger" aria-label={`删除 ${file.originalName}`} title="删除并清理链路数据" disabled={busyId === file.id} onClick={() => deleteFile(file)}>
+                <button type="button" className="icon-button danger" aria-label={t('删除 {name}', { name: file.originalName })} title={t('删除并清理链路数据')} disabled={busyId === file.id} onClick={() => deleteFile(file)}>
                   <Trash2 aria-hidden="true" strokeWidth={1.8} />
                 </button>
               </span>
@@ -216,21 +218,21 @@ export function FilesPage() {
 
       {view === 'events' && ingestApi ? (
         <div className="data-table files-table ingest-table">
-          <div className="table-head"><span>标题</span><span>类型</span><span>链路</span><span>记忆</span><span>时间</span></div>
-          {events.length === 0 ? <div className="source-files-empty">暂无导入记录。</div> : null}
+          <div className="table-head"><span>{t('标题')}</span><span>{t('类型')}</span><span>{t('链路')}</span><span>{t('记忆')}</span><span>{t('时间')}</span></div>
+          {events.length === 0 ? <div className="source-files-empty">{t('暂无导入记录。')}</div> : null}
           {events.map((event) => (
             <div key={event.id} className="table-row">
               <span className="name-cell"><strong>{event.title}</strong><small>{event.sourceKind} · {event.sourceId.slice(0, 8)}</small></span>
-              <span>{dataTypeLabel(event.dataType)}</span>
+              <span>{t(dataTypeLabel(event.dataType))}</span>
               <span className="pipeline-badges">
                 {PIPELINE_KEYS.filter(({ key }) => event.pipelines[key]).map(({ key, label }) => (
-                  <em key={key} className="pipeline-badge">{label}</em>
+                  <em key={key} className="pipeline-badge">{t(label)}</em>
                 ))}
               </span>
               <span title={'error' in (event.memoryResult ?? {}) ? String((event.memoryResult as { error: string }).error) : undefined}>
-                {describeMemory(event.memoryResult)}
+                {describeMemory(event.memoryResult, t)}
               </span>
-              <span>{formatDate(event.createdAt)}</span>
+              <span>{formatDate(event.createdAt, locale, t)}</span>
             </div>
           ))}
         </div>
@@ -242,12 +244,12 @@ export function FilesPage() {
         }}>
           <section className="evidence-dialog files-preview" role="dialog" aria-modal="true" aria-labelledby="files-preview-title">
             <header className="evidence-dialog-head">
-              <div><span>解析产物</span><h2 id="files-preview-title">{preview.name}</h2><small>归一化 markdown · 消费端按需截断展示</small></div>
-              <button type="button" className="icon-button" title="关闭" aria-label="关闭" onClick={() => setPreview(null)}><X aria-hidden="true" strokeWidth={1.8} /></button>
+              <div><span>{t('解析产物')}</span><h2 id="files-preview-title">{preview.name}</h2><small>{t('归一化 markdown · 消费端按需截断展示')}</small></div>
+              <button type="button" className="icon-button" title={t('关闭')} aria-label={t('关闭')} onClick={() => setPreview(null)}><X aria-hidden="true" strokeWidth={1.8} /></button>
             </header>
             <div className="evidence-dialog-body files-preview-body">
               {preview.error ? <div className="files-preview-error">{preview.error}</div> : null}
-              {!preview.error && preview.markdown === null ? <div className="files-preview-error">正在读取...</div> : null}
+              {!preview.error && preview.markdown === null ? <div className="files-preview-error">{t('正在读取...')}</div> : null}
               {preview.markdown !== null ? <pre>{preview.markdown}</pre> : null}
             </div>
           </section>
@@ -257,8 +259,8 @@ export function FilesPage() {
   )
 }
 
-function describeMemory(memory: FileImportOutcome['memoryResult']): string {
+function describeMemory(memory: FileImportOutcome['memoryResult'], t: Translate): string {
   if (!memory) return '—'
-  if ('error' in memory) return '失败'
-  return memory.deduplicated ? '已登记（去重）' : `${memory.chunkCount} 块`
+  if ('error' in memory) return t('失败')
+  return memory.deduplicated ? t('已登记（去重）') : t('{count} 块', { count: memory.chunkCount })
 }

@@ -4,6 +4,7 @@ import type {
   SourceFileStatus,
   SyncResult,
 } from '../../../../../shared/sources'
+import type { AppLocale, Translate } from '@/i18n/LocaleContext'
 
 export const SOURCE_STATUS_LABELS: Record<DataSourceSummary['status'], string> = {
   connected: '已同步',
@@ -32,9 +33,9 @@ export const EVIDENCE_STATUS_LABELS: Record<EvidenceParseStatus, string> = {
   unsupported: '暂不支持',
 }
 
-export function formatDate(value: string | null): string {
-  if (!value) return '尚未同步'
-  return new Intl.DateTimeFormat('zh-CN', {
+export function formatDate(value: string | null, locale: AppLocale = 'zh-CN', t: Translate = (message) => message): string {
+  if (!value) return t('尚未同步')
+  return new Intl.DateTimeFormat(locale, {
     month: 'numeric',
     day: 'numeric',
     hour: '2-digit',
@@ -49,6 +50,12 @@ export function formatBytes(value: number): string {
   return `${(value / 1024 ** 3).toFixed(1)} GB`
 }
 
-export function describeSync(result: SyncResult): string {
-  return `发现 ${result.discovered} 个文件，新增 ${result.added}，更新 ${result.updated}，移动 ${result.moved}，未变化 ${result.unchanged}。`
+export function describeSync(result: SyncResult, t: Translate = (message) => message): string {
+  return t('发现 {discovered} 个文件，新增 {added}，更新 {updated}，移动 {moved}，未变化 {unchanged}。', {
+    discovered: result.discovered,
+    added: result.added,
+    updated: result.updated,
+    moved: result.moved,
+    unchanged: result.unchanged,
+  })
 }

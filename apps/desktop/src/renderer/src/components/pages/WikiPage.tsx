@@ -13,6 +13,7 @@ import type {
   KnowledgeWikiPageDto,
 } from '../../../../shared/knowledge'
 import './WikiPage.css'
+import { useLocale } from '@/i18n/LocaleContext'
 
 type WikiView = 'tree' | 'graph'
 
@@ -34,6 +35,7 @@ function statusLabel(status: string): string {
  * 只对选中 Room 拉页面，防 N+1。
  */
 export function WikiPage() {
+  const { t } = useLocale()
   const knowledge = window.nxcore?.knowledge
   const [wikis, setWikis] = useState<KnowledgeWikiDto[]>([])
   const [roomsById, setRoomsById] = useState<Map<string, KnowledgeRoomDto>>(new Map())
@@ -152,7 +154,7 @@ export function WikiPage() {
       <header className="page-header">
         <div>
           <h1>Wiki</h1>
-          <p>浏览各 Room 沉淀的知识库：目录树阅读，或看页面内链图谱。</p>
+          <p>{t('浏览各 Room 沉淀的知识库：目录树阅读，或看页面内链图谱。')}</p>
         </div>
         <span className="page-header-actions">
           <button
@@ -162,23 +164,23 @@ export function WikiPage() {
             disabled={!knowledge}
           >
             <RefreshCw aria-hidden="true" strokeWidth={1.8} />
-            刷新
+            {t('刷新')}
           </button>
         </span>
       </header>
 
       {!loaded ? (
-        <div className="wiki-empty">加载中…</div>
+        <div className="wiki-empty">{t('加载中…')}</div>
       ) : !knowledge ? (
-        <div className="wiki-empty">知识服务不可用。</div>
+        <div className="wiki-empty">{t('知识服务不可用。')}</div>
       ) : wikis.length === 0 ? (
         <div className="wiki-empty">
           <BookOpenText aria-hidden="true" strokeWidth={1.6} />
-          还没有 wiki：Room 里沉淀资料后自动生成。
+          {t('还没有 wiki：Room 里沉淀资料后自动生成。')}
         </div>
       ) : (
         <div className="wiki-body">
-          <aside className="wiki-room-list" aria-label="Room wiki 清单">
+          <aside className="wiki-room-list" aria-label={t('Room wiki 清单')}>
             {wikis.map((wiki) => {
               const room = roomsById.get(wiki.roomId)
               return (
@@ -189,7 +191,7 @@ export function WikiPage() {
                   onClick={() => setSelectedRoomId(wiki.roomId)}
                 >
                   <strong>{room?.title ?? wiki.roomId}</strong>
-                  <span>{room?.kind ?? 'Room'} · {statusLabel(wiki.status)}</span>
+                  <span>{room?.kind ?? 'Room'} · {t(statusLabel(wiki.status))}</span>
                 </button>
               )
             })}
@@ -201,10 +203,10 @@ export function WikiPage() {
                 <BookOpenText aria-hidden="true" strokeWidth={1.7} />
                 <span>
                   {selectedRoomTitle ?? selectedRoomId ?? ''}
-                  {selectedWiki ? `（${statusLabel(selectedWiki.status)}）` : ''}
+                  {selectedWiki ? ` (${t(statusLabel(selectedWiki.status))})` : ''}
                 </span>
               </div>
-              <div className="wiki-toggle" role="tablist" aria-label="wiki 视图">
+              <div className="wiki-toggle" role="tablist" aria-label={t('wiki 视图')}>
                 <button
                   type="button"
                   role="tab"
@@ -213,7 +215,7 @@ export function WikiPage() {
                   onClick={() => setView('tree')}
                 >
                   <ListTree aria-hidden="true" />
-                  目录
+                  {t('目录')}
                 </button>
                 <button
                   type="button"
@@ -223,7 +225,7 @@ export function WikiPage() {
                   onClick={() => setView('graph')}
                 >
                   <Network aria-hidden="true" />
-                  图谱
+                  {t('图谱')}
                 </button>
               </div>
             </div>
@@ -233,15 +235,15 @@ export function WikiPage() {
                 <>
                   <div className="wiki-tree-pane">
                     {pagesLoading ? (
-                      <div className="wiki-empty">加载中…</div>
+                      <div className="wiki-empty">{t('加载中…')}</div>
                     ) : pageStatus === 'error' ? (
-                      <div className="wiki-empty">知识服务不可用。</div>
+                      <div className="wiki-empty">{t('知识服务不可用。')}</div>
                     ) : pageStatus === 'none' ? (
-                      <div className="wiki-empty">该 Room 还没有知识沉淀。</div>
+                      <div className="wiki-empty">{t('该 Room 还没有知识沉淀。')}</div>
                     ) : pageStatus === 'processing' || pageStatus === 'pending' ? (
-                      <div className="wiki-empty">知识库正在构建中，稍后刷新查看。</div>
+                      <div className="wiki-empty">{t('知识库正在构建中，稍后刷新查看。')}</div>
                     ) : pages.length === 0 ? (
-                      <div className="wiki-empty">还没有页面。</div>
+                      <div className="wiki-empty">{t('还没有页面。')}</div>
                     ) : (
                       <WikiTree pages={pages} selectedPath={selectedPage?.path ?? null} onSelect={openPage} />
                     )}
@@ -253,17 +255,17 @@ export function WikiPage() {
                           <strong title={selectedPage.title}>{selectedPage.title}</strong>
                           <span title={selectedPage.path}>{selectedPage.path}</span>
                         </header>
-                        {markdown === null ? '加载中…' : <MarkdownBody markdown={markdown} />}
+                        {markdown === null ? t('加载中…') : <MarkdownBody markdown={markdown} />}
                       </>
                     ) : (
-                      <div className="wiki-empty">从目录选择一个页面阅读。</div>
+                      <div className="wiki-empty">{t('从目录选择一个页面阅读。')}</div>
                     )}
                   </div>
                 </>
               ) : (
                 <div className="wiki-graph-pane">
                   {graphLoading ? (
-                    <div className="wiki-empty">图谱构建中…</div>
+                    <div className="wiki-empty">{t('图谱构建中…')}</div>
                   ) : graph && graph.nodes.length > 0 ? (
                     <>
                       <WikiGraphCanvas
@@ -274,12 +276,12 @@ export function WikiPage() {
                           if (page) openPage(page)
                         }}
                       />
-                      <div className="wiki-graph-stats" aria-label="图谱统计">
-                        <span>{graph.nodes.length} 个页面</span>
-                        <span>{graph.edges.length} 条内链</span>
+                      <div className="wiki-graph-stats" aria-label={t('图谱统计')}>
+                        <span>{t('{count} 个页面', { count: graph.nodes.length })}</span>
+                        <span>{t('{count} 条内链', { count: graph.edges.length })}</span>
                       </div>
                       {selectedPage ? (
-                        <aside className="wiki-node-drawer" aria-label="Wiki 节点详情">
+                        <aside className="wiki-node-drawer" aria-label={t('Wiki 节点详情')}>
                           <header>
                             <div className="wiki-node-drawer-title">
                               <span className="wiki-node-drawer-icon">
@@ -293,8 +295,8 @@ export function WikiPage() {
                             <button
                               type="button"
                               className="wiki-node-drawer-close"
-                              aria-label="关闭节点详情"
-                              title="关闭"
+                              aria-label={t('关闭节点详情')}
+                              title={t('关闭')}
                               onClick={closePage}
                             >
                               <X aria-hidden="true" />
@@ -305,7 +307,7 @@ export function WikiPage() {
                           ) : null}
                           <div className="wiki-node-drawer-body">
                             {markdown === null ? (
-                              <div className="wiki-node-drawer-loading">加载中…</div>
+                              <div className="wiki-node-drawer-loading">{t('加载中…')}</div>
                             ) : (
                               <MarkdownBody markdown={markdown} />
                             )}
@@ -314,7 +316,7 @@ export function WikiPage() {
                       ) : null}
                     </>
                   ) : (
-                    <div className="wiki-empty">页面之间还没有内链，图谱为空。</div>
+                    <div className="wiki-empty">{t('页面之间还没有内链，图谱为空。')}</div>
                   )}
                 </div>
               )}

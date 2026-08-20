@@ -15,6 +15,7 @@ import {
 } from '@tiptap/react'
 import { FileWarning, Link2, LoaderCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocale } from '../../../../../i18n/LocaleContext'
 
 import {
   DOCUMENT_BLOCK_REFERENCE_NODE,
@@ -82,6 +83,7 @@ function attrsFromNodeView(node: NodeViewProps['node']): DocumentBlockReferenceA
 }
 
 function DocumentBlockReferenceView(props: NodeViewProps) {
+  const { t } = useLocale()
   const reference = attrsFromNodeView(props.node)
   const options = props.extension.options as DocumentBlockReferenceOptions
   const [resolution, setResolution] = useState<DocumentBlockResolution | null>(null)
@@ -153,8 +155,8 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
   }, [reference.blockId, reference.documentId, reference.roomId, resolve])
 
   const available = resolution?.status === 'available'
-  const title = resolution?.title || reference.fallbackTitle || '引用的文档'
-  const preview = resolution?.textPreview || reference.fallbackPreview || '内容预览不可用'
+  const title = resolution?.title || reference.fallbackTitle || t('引用的文档')
+  const preview = resolution?.textPreview || reference.fallbackPreview || t('内容预览不可用')
   const canNavigate = Boolean(options.onNavigate)
 
   return (
@@ -168,7 +170,7 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
         type="button"
         disabled={!canNavigate}
         onClick={() => options.onNavigate?.(reference, resolution)}
-        title={canNavigate ? '打开引用位置' : undefined}
+        title={canNavigate ? t('打开引用位置') : undefined}
       >
         <span className="context-room-document-block-reference-icon" aria-hidden="true">
           {loading ? <LoaderCircle /> : available ? <Link2 /> : <FileWarning />}
@@ -177,7 +179,7 @@ function DocumentBlockReferenceView(props: NodeViewProps) {
           <strong>{title}</strong>
           <small>{preview}</small>
         </span>
-        <em>{loading ? '正在读取引用' : documentBlockResolutionLabel(resolution)}</em>
+        <em>{loading ? t('正在读取引用') : t(documentBlockResolutionLabel(resolution))}</em>
       </button>
     </NodeViewWrapper>
   )

@@ -24,6 +24,48 @@ describe("database migrations", () => {
     expect(indexes.map((index) => index.name)).toContain("jobs_type_status_created_idx");
   });
 
+  it("adopts the document outbox index created by the previous feature migration", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-outbox-index-upgrade-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const currentMigrationsDir = resolve("drizzle");
+    const previousMigrationsDir = join(dataDir, "previous-migrations");
+    await mkdir(join(previousMigrationsDir, "meta"), { recursive: true });
+
+    const journal = JSON.parse(
+      await readFile(join(currentMigrationsDir, "meta", "_journal.json"), "utf8"),
+    ) as {
+      version: string;
+      dialect: string;
+      entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+    };
+    const previousEntries = journal.entries.filter((entry) => entry.idx <= 16);
+    await Promise.all(previousEntries.map((entry) => copyFile(
+      join(currentMigrationsDir, `${entry.tag}.sql`),
+      join(previousMigrationsDir, `${entry.tag}.sql`),
+    )));
+    await writeFile(join(previousMigrationsDir, "meta", "_journal.json"), JSON.stringify({
+      ...journal,
+      entries: previousEntries,
+    }));
+
+    const previous = createDatabase(databasePath, previousMigrationsDir);
+    previous.sqlite.exec(
+      "CREATE INDEX jobs_type_status_created_idx ON jobs (type, status, created_at)",
+    );
+    previous.sqlite.close();
+
+    const upgraded = createDatabase(databasePath, currentMigrationsDir);
+    const indexes = upgraded.sqlite.prepare("PRAGMA index_list(jobs)").all() as Array<{ name: string }>;
+    const latestMigration = upgraded.sqlite.prepare(
+      "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
+    ).get();
+    upgraded.sqlite.close();
+
+    expect(indexes.map((index) => index.name)).toContain("jobs_type_status_created_idx");
+    expect(latestMigration).toEqual({ created_at: journal.entries.at(-1)?.when });
+  });
+
   it("adopts the complete pre-release connector configuration migration", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-connector-config-migration-test-"));
     temporaryDirectories.push(dataDir);
@@ -71,7 +113,7 @@ describe("database migrations", () => {
     ).get("gmail-email-v1")).toEqual({ id: "gmail-email-v1", template: "prompt" });
     expect(upgraded.sqlite.prepare(
       "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
-    ).get()).toEqual({ created_at: 1787150345690 });
+    ).get()).toEqual({ created_at: journal.entries.at(-1)?.when });
     upgraded.sqlite.close();
   });
 
@@ -265,5 +307,25 @@ describe("database migrations", () => {
       { id: "session-1", room_id: "room-1" },
     ]);
     upgraded.sqlite.close();
+  });
+
+  it("creates local perception and diary persistence without cloud media columns", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-perception-diary-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const tables = database.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    ).all() as Array<{ name: string }>;
+    const fileColumns = database.sqlite.prepare("PRAGMA table_info(uploaded_files)")
+      .all() as Array<{ name: string }>;
+    database.sqlite.close();
+
+    expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "perception_settings", "visual_observations", "visual_nodes", "visual_processing_jobs",
+      "diary_schedules", "diary_days", "diary_versions", "diary_version_sources", "diary_runs",
+    ]));
+    expect(fileColumns.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "asset_kind", "origin_channel", "visibility", "captured_at",
+    ]));
   });
 });

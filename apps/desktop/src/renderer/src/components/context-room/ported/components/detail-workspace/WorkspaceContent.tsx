@@ -1,5 +1,6 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
 import { BookOpen, BrainCircuit, CalendarDays, CheckSquare2, ChevronLeft, FileText, Mail, Network } from 'lucide-react';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
@@ -44,6 +45,7 @@ export function WorkspaceContent({
   onCloseObject: () => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
 }) {
+  const { t } = useLocale();
   const selectedObjectOwner = selectedObject?.kind === 'meeting'
     ? 'schedule'
     : selectedObject?.kind === 'task'
@@ -70,26 +72,26 @@ export function WorkspaceContent({
     .some((resource) => !('trashed' in resource) || !resource.trashed);
   const emptySelection = panels.includes('documents')
     ? hasAvailableResources
-      ? { icon: FileText, title: '选择一份资料', description: '从左侧资源列表中选择要查看的文档。' }
-      : { icon: FileText, title: '还没有文档', description: '新建文档或添加本地 Office 文件后，可在这里查看内容。' }
+      ? { icon: FileText, title: t('选择一份资料'), description: t('从左侧资源列表中选择要查看的文档。') }
+      : { icon: FileText, title: t('还没有文档'), description: t('新建文档或添加本地 Office 文件后，可在这里查看内容。') }
     : panels.includes('tasks')
-      ? { icon: CheckSquare2, title: '选择一项任务', description: '从左侧任务列表中选择要查看的任务。' }
+      ? { icon: CheckSquare2, title: t('选择一项任务'), description: t('从左侧任务列表中选择要查看的任务。') }
       : panels.includes('schedule')
-        ? { icon: CalendarDays, title: '选择一个日程', description: '从左侧日程列表中选择要查看的会议或任务。' }
+        ? { icon: CalendarDays, title: t('选择一个日程'), description: t('从左侧日程列表中选择要查看的会议或任务。') }
         : panels.includes('relations')
-          ? { icon: Network, title: '选择一个关联 Room', description: '从左侧关系图中选择要查看的 Room。' }
+          ? { icon: Network, title: t('选择一个关联 Room'), description: t('从左侧关系图中选择要查看的 Room。') }
           : panels.includes('memories')
-            ? { icon: BrainCircuit, title: '选择一条记忆', description: '从左侧图谱中选择要查看的实体或事实。' }
+            ? { icon: BrainCircuit, title: t('选择一条记忆'), description: t('从左侧图谱中选择要查看的实体或事实。') }
             : panels.includes('wiki')
-              ? { icon: BookOpen, title: '选择一个知识页面', description: '从左侧目录或图谱中选择要查看的页面。' }
-              : { icon: Mail, title: '选择一封邮件', description: '从左侧邮件列表中选择要查看的邮件。' };
+              ? { icon: BookOpen, title: t('选择一个知识页面'), description: t('从左侧目录或图谱中选择要查看的页面。') }
+              : { icon: Mail, title: t('选择一封邮件'), description: t('从左侧邮件列表中选择要查看的邮件。') };
 
   return (
     <section className="context-room-workspace-content">
       {!selectedTask && !selectedMeeting ? (
         <button type="button" className="context-room-mobile-back" onClick={onMobileBack}>
           <ChevronLeft aria-hidden="true" />
-          返回资源
+          {t('返回资源')}
         </button>
       ) : null}
       {selectedTask ? (

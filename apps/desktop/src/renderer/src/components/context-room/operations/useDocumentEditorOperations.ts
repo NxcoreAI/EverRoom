@@ -1,6 +1,7 @@
 import type { DocumentOperationStatus } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { showToast } from '../../../state/toast'
+import { useLocale } from '../../../i18n/LocaleContext'
 
 import {
   buildContinuationRevisionPrompt,
@@ -174,6 +175,7 @@ function operationDecisions(entry: DocumentOperationEntry): DocumentReviewDecisi
 }
 
 export function useDocumentEditorOperations(documentId: string): DocumentEditorOperationViewModel {
+  const { locale, t } = useLocale()
   const operations = useDocumentOperations()
   const [focusedOperationId, setFocusedOperationId] = useState<string | null>(null)
   const [markdownDrafts, setMarkdownDrafts] = useState<DocumentOperationMarkdownDraftMap>({})
@@ -350,6 +352,7 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
           feedback: normalizedFeedback,
         }),
         idempotencyKey: `continuation-revision:${continuationEntry.id}:${crypto.randomUUID()}`,
+        responseLanguage: locale,
         context: {
           selectedRoomId: continuationEntry.summary.roomId,
           activeDocument: {
@@ -361,15 +364,15 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
           },
         },
       })
-      showToast({ title: 'Agent 正在重新续写', message: '已带上你的修改意见。' })
+      showToast({ title: t('Agent 正在重新续写'), message: t('已带上你的修改意见。') })
     } catch (error) {
       showToast({
-        title: '无法重新续写',
-        message: error instanceof Error ? error.message : '请稍后重试。',
+        title: t('无法重新续写'),
+        message: error instanceof Error ? error.message : t('请稍后重试。'),
       })
       throw error
     }
-  }, [continuationEntry, continuationReview, operations])
+  }, [continuationEntry, continuationReview, locale, operations, t])
 
   const closeContinuation = useCallback(() => {
     if (continuationEntry) void operations.execute(continuationEntry.id, 'review.close')

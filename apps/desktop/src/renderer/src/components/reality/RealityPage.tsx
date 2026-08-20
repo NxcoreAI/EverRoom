@@ -2,10 +2,12 @@ import {
   AlertCircle,
   Bookmark,
   CalendarDays,
+  Camera,
   ChevronDown,
   CircleDot,
   Download,
   FileText,
+  Image as ImageIcon,
   LoaderCircle,
   Pause,
   Play,
@@ -22,14 +24,26 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings } from '@/state/realitySettings'
 import { showToast } from '@/state/toast'
-import type { RealityEvent, RealityEventStatus, RealityEventType, RealityTag } from '../../../../shared/sources'
+import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
+import type {
+  PerceptionNode,
+  PerceptionNodeDetail,
+  RealityEvent,
+  RealityEventStatus,
+  RealityEventType,
+  RealityTag,
+} from '../../../../shared/sources'
 import { RecordingPage } from '../recording/RecordingPage'
 import { mergeRealityEvent, mergeRealitySnapshot } from './reality-event-state'
+import { perceptionDisplayText, VisualDetail } from './VisualPerceptionPanel'
 import './RealityPage.css'
 
 type DetailTab = 'insights' | 'transcript'
 type StatusFilter = 'all' | RealityEventStatus
 type ActivityRange = '1w' | '1m' | '3m' | '6m' | '1y'
+type TimelineItem =
+  | { kind: 'audio'; id: string; startedAt: string; event: RealityEvent }
+  | { kind: 'visual'; id: string; startedAt: string; node: PerceptionNode }
 
 const STATUS_LABELS: Record<RealityEventStatus, string> = {
   ongoing: '进行中',
@@ -45,6 +59,14 @@ const PROCESSING_LABELS: Record<RealityEvent['processingState'], string> = {
   transcribing: 'SaaS 正在转写',
   understanding: '正在整理',
   ready: '处理完成',
+  failed: '处理失败',
+}
+
+const VISUAL_STATUS_LABELS: Record<string, string> = {
+  disabled: '等待开启',
+  pending: '排队中',
+  processing: '理解中',
+  ready: '已理解',
   failed: '处理失败',
 }
 
@@ -75,7 +97,7 @@ const ACTIVITY_RANGES: readonly [ActivityRange, string][] = [
 ]
 
 /** 自动选择能覆盖全部使用历史的最大时间范围:尽可能把所有活跃都展示出来。 */
-function preferredActivityRange(events: RealityEvent[]): ActivityRange {
+function preferredActivityRange(events: Array<{ startedAt: string }>): ActivityRange {
   if (events.length === 0) return '1m'
   const now = Date.now()
   const earliest = Math.min(...events.map((event) => Date.parse(event.startedAt)))
@@ -99,18 +121,18 @@ function formatDuration(milliseconds: number): string {
     : `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
 }
 
-function timeLabel(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+function timeLabel(value: string, locale: AppLocale): string {
+  return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
 }
 
-function dateGroup(value: string): string {
+function dateGroup(value: string, locale: AppLocale, t: Translate): string {
   const date = new Date(value)
   const today = new Date()
   const yesterday = new Date(today)
   yesterday.setDate(today.getDate() - 1)
-  if (date.toDateString() === today.toDateString()) return '今天'
-  if (date.toDateString() === yesterday.toDateString()) return '昨天'
-  return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(date)
+  if (date.toDateString() === today.toDateString()) return t('今天')
+  if (date.toDateString() === yesterday.toDateString()) return t('昨天')
+  return new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric', weekday: 'short' }).format(date)
 }
 
 function dayKey(value: string | Date): string {
@@ -118,16 +140,16 @@ function dayKey(value: string | Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-function dayChipLabel(key: string): string {
+function dayChipLabel(key: string, locale: AppLocale): string {
   const [year, month, day] = key.split('-').map(Number)
-  return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(year!, month! - 1, day!))
+  return new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(year!, month! - 1, day!))
 }
 
 function eventType(event: RealityEvent): RealityEventType {
   return event.insights.eventType ?? 'OTHER'
 }
 
-function buildActivity(events: RealityEvent[], range: ActivityRange) {
+function buildActivity(events: Array<{ startedAt: string }>, range: ActivityRange, locale: AppLocale) {
   const weekCount = RANGE_WEEKS[range]
   const counts = new Map<string, number>()
   for (const event of events) counts.set(dayKey(event.startedAt), (counts.get(dayKey(event.startedAt)) ?? 0) + 1)
@@ -149,7 +171,7 @@ function buildActivity(events: RealityEvent[], range: ActivityRange) {
     const date = week[0]!.date
     const previous = index > 0 ? weeks[index - 1]![0]!.date : null
     return !previous || previous.getMonth() !== date.getMonth()
-      ? { column: index + 1, label: new Intl.DateTimeFormat('zh-CN', { month: 'short' }).format(date) }
+      ? { column: index + 1, label: new Intl.DateTimeFormat(locale, { month: 'short' }).format(date) }
       : null
   }).filter(Boolean) as { column: number; label: string }[]
   const past = weeks.flat().filter((cell) => cell.date <= today)
@@ -162,14 +184,18 @@ function buildActivity(events: RealityEvent[], range: ActivityRange) {
 }
 
 export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { locale, t } = useLocale()
   const { account } = useAccount()
   const [events, setEvents] = useState<RealityEvent[]>([])
+  const [visualNodes, setVisualNodes] = useState<PerceptionNode[]>([])
+  const [visualDetail, setVisualDetail] = useState<PerceptionNodeDetail | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
   const [activityRange, setActivityRange] = useState<ActivityRange>('3m')
   const [rangeTouched, setRangeTouched] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [visualLoading, setVisualLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab>('insights')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -183,6 +209,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [savingTags, setSavingTags] = useState(false)
   const [exportingTranscript, setExportingTranscript] = useState(false)
+  const [retryingVisualId, setRetryingVisualId] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const activeSegmentRef = useRef<HTMLButtonElement | null>(null)
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
@@ -200,11 +227,27 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
         : next.find((event) => event.status === 'ongoing')?.id ?? null)
       setError(null)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '现实感知事件加载失败。')
+      setError(caught instanceof Error ? caught.message : t('现实感知事件加载失败。'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
+
+  const loadVisualNodes = useCallback(async (quiet = false) => {
+    if (!window.nxcore) {
+      setVisualLoading(false)
+      return
+    }
+    try {
+      const result = await window.nxcore.screenCapture.listPerceptionNodes()
+      setVisualNodes(result.items.filter((node) => node.kind === 'screenshot' || node.kind === 'photo'))
+      if (!quiet) setError(null)
+    } catch (caught) {
+      if (!quiet) setError(caught instanceof Error ? caught.message : t('视觉感知加载失败。'))
+    } finally {
+      setVisualLoading(false)
+    }
+  }, [t])
 
   useEffect(() => {
     void loadEvents()
@@ -223,6 +266,12 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   }, [loadEvents])
 
   useEffect(() => {
+    void loadVisualNodes()
+    const timer = window.setInterval(() => void loadVisualNodes(true), 5_000)
+    return () => window.clearInterval(timer)
+  }, [loadVisualNodes])
+
+  useEffect(() => {
     if (!account?.authenticated || !window.nxcore) return
     const sync = async () => {
       await window.nxcore!.transcriptions.syncPrivate({ quiet: true })
@@ -234,29 +283,70 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   }, [account?.authenticated, loadEvents])
 
   const selected = events.find((event) => event.id === expandedId) ?? null
-  const visibleEvents = useMemo(() => events.filter((event) => {
-    if (filter !== 'all' && event.status !== filter) return false
-    if (selectedDay && dayKey(event.startedAt) !== selectedDay) return false
+  const timelineItems = useMemo<TimelineItem[]>(() => [
+    ...events.map((event): TimelineItem => ({ kind: 'audio', id: event.id, startedAt: event.startedAt, event })),
+    ...visualNodes.map((node): TimelineItem => ({ kind: 'visual', id: node.id, startedAt: node.startAt, node })),
+  ].sort((left, right) => right.startedAt.localeCompare(left.startedAt)), [events, visualNodes])
+  const visibleEvents = useMemo(() => timelineItems.filter((item) => {
+    if (filter !== 'all') {
+      const matches = item.kind === 'audio'
+        ? filter === 'completed'
+          ? item.event.status === 'completed' || item.event.status === 'pending_confirmation'
+          : item.event.status === filter
+        : filter === 'ongoing'
+          ? item.node.status === 'pending' || item.node.status === 'processing'
+          : filter === 'completed'
+            ? item.node.status === 'ready'
+            : filter === 'failed' && item.node.status === 'failed'
+      if (!matches) return false
+    }
+    if (selectedDay && dayKey(item.startedAt) !== selectedDay) return false
     const query = search.trim().toLocaleLowerCase()
-    return !query || [event.title, event.transcript, event.currentTopic ?? '', event.insights.summary ?? '', ...(event.insights.representativeTags ?? []).map((tag) => tag.label)]
-      .some((value) => value.toLocaleLowerCase().includes(query))
-  }), [events, filter, search, selectedDay])
+    if (!query) return true
+    const values = item.kind === 'audio'
+      ? [item.event.title, item.event.transcript, item.event.currentTopic ?? '', item.event.insights.summary ?? '', ...(item.event.insights.representativeTags ?? []).map((tag) => tag.label)]
+      : [
+          item.node.title,
+          perceptionDisplayText(item.node.title, t),
+          item.node.summary,
+          perceptionDisplayText(item.node.summary, t),
+          item.node.eventType ?? '',
+          ...item.node.tags,
+        ]
+    return values.some((value) => value.toLocaleLowerCase().includes(query))
+  }), [filter, search, selectedDay, t, timelineItems])
   const grouped = useMemo(() => {
-    const groups = new Map<string, RealityEvent[]>()
-    for (const event of visibleEvents) {
-      const key = dateGroup(event.startedAt)
-      groups.set(key, [...(groups.get(key) ?? []), event])
+    const groups = new Map<string, TimelineItem[]>()
+    for (const item of visibleEvents) {
+      const key = dateGroup(item.startedAt, locale, t)
+      groups.set(key, [...(groups.get(key) ?? []), item])
     }
     return [...groups.entries()]
-  }, [visibleEvents])
-  const activity = useMemo(() => buildActivity(events, activityRange), [events, activityRange])
+  }, [locale, t, visibleEvents])
+  const activity = useMemo(() => buildActivity(timelineItems, activityRange, locale), [activityRange, locale, timelineItems])
+
+  const expandedVisualNode = visualNodes.find((node) => node.id === expandedId) ?? null
+
+  useEffect(() => {
+    if (!expandedVisualNode || !window.nxcore) {
+      setVisualDetail(null)
+      return
+    }
+    let cancelled = false
+    void window.nxcore.screenCapture.getPerceptionNode(expandedVisualNode.id)
+      .then((detail) => { if (!cancelled) setVisualDetail(detail) })
+      .catch((caught) => {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : t('感知详情加载失败。'))
+      })
+    return () => { cancelled = true }
+  }, [expandedVisualNode?.id, expandedVisualNode?.status, t])
 
   // 首次加载后按活跃量自动选择范围;用户手动切换后不再覆盖。
   useEffect(() => {
-    if (rangeTouched || loading) return
-    setActivityRange(preferredActivityRange(events))
+    if (rangeTouched || loading || visualLoading) return
+    setActivityRange(preferredActivityRange(timelineItems))
     setRangeTouched(true)
-  }, [loading, events, rangeTouched])
+  }, [loading, rangeTouched, timelineItems, visualLoading])
 
   useEffect(() => {
     setDetailTab('insights')
@@ -271,7 +361,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       await window.nxcore.transcriptions.replaceSummaryTags(summaryRecordId, (event.insights.representativeTags ?? []).filter((item) => item.id ? item.id !== tag.id : item.label !== tag.label))
       await loadEvents()
     } catch (caught) {
-      showToast({ title: '标签移除失败', message: caught instanceof Error ? caught.message : undefined })
+      showToast({ title: t('标签移除失败'), message: caught instanceof Error ? caught.message : undefined })
     } finally {
       setSavingTags(false)
     }
@@ -308,13 +398,13 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       objectUrl = URL.createObjectURL(new Blob([copy.buffer], { type: mimeType }))
       setAudioUrl(objectUrl)
     }).catch((caught) => {
-      if (!cancelled) showToast({ title: '录音读取失败', message: caught instanceof Error ? caught.message : undefined })
+      if (!cancelled) showToast({ title: t('录音读取失败'), message: caught instanceof Error ? caught.message : undefined })
     })
     return () => {
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [selected?.id, selected?.audioFileName, selected?.audioMimeType, selected?.durationMs])
+  }, [selected?.id, selected?.audioFileName, selected?.audioMimeType, selected?.durationMs, t])
 
   const playNextCloudSegment = async () => {
     if (!window.nxcore || cloudAudioIndex + 1 >= cloudAudioAssetIds.length) { setIsPlaying(false); return }
@@ -371,7 +461,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     }
     if (typeof window.nxcore.reality.discard !== 'function') {
       setDeleteConfirmId(null)
-      showToast({ title: '需要重启 EverRoom', message: '重启后即可删除已有事件。' })
+      showToast({ title: t('需要重启 EverRoom'), message: t('重启后即可删除已有事件。') })
       return
     }
     try {
@@ -379,9 +469,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       setEvents((current) => current.filter((item) => item.id !== event.id))
       setExpandedId((current) => current === event.id ? null : current)
       setDeleteConfirmId(null)
-      showToast({ title: '事件已删除' })
+      showToast({ title: t('事件已删除') })
     } catch (caught) {
-      showToast({ title: '事件删除失败', message: caught instanceof Error ? caught.message : undefined })
+      showToast({ title: t('事件删除失败'), message: caught instanceof Error ? caught.message : undefined })
     }
   }
 
@@ -404,17 +494,30 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       })
       const deadline = Date.now() + REPROCESS_TIMEOUT_MS
       while (job.status === 'pending' || job.status === 'running') {
-        if (Date.now() >= deadline) throw new Error('重新处理超过 30 分钟，请稍后再试。')
+        if (Date.now() >= deadline) throw new Error(t('重新处理超过 30 分钟，请稍后再试。'))
         await new Promise((resolve) => window.setTimeout(resolve, REPROCESS_POLL_INTERVAL_MS))
         job = await window.nxcore.asr.getJob(job.id)
       }
-      if (job.status !== 'completed') throw new Error(job.error ?? '重新处理失败。')
+      if (job.status !== 'completed') throw new Error(job.error ?? t('重新处理失败。'))
       replaceEvent(await window.nxcore.reality.getEvent(event.id))
-      showToast({ title: '重新处理完成' })
+      showToast({ title: t('重新处理完成') })
     } catch (caught) {
-      showToast({ title: '重新处理失败', message: caught instanceof Error ? caught.message : undefined })
+      showToast({ title: t('重新处理失败'), message: caught instanceof Error ? caught.message : undefined })
     } finally {
       setReprocessingId(null)
+    }
+  }
+
+  const retryVisualNode = async (node: PerceptionNode) => {
+    if (!window.nxcore || retryingVisualId) return
+    setRetryingVisualId(node.id)
+    try {
+      await window.nxcore.screenCapture.retryPerceptionNode(node.id)
+      await loadVisualNodes(true)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t('视觉理解重试失败。'))
+    } finally {
+      setRetryingVisualId(null)
     }
   }
 
@@ -424,19 +527,19 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     try {
       const lines = [
         event.title,
-        `${new Date(event.startedAt).toLocaleString('zh-CN')} · ${formatDuration(event.durationMs)} · ${event.captureDevice.name}`,
+        `${new Date(event.startedAt).toLocaleString(locale)} · ${formatDuration(event.durationMs)} · ${event.captureDevice.name}`,
         '',
         ...(event.transcriptSegments.length > 0
-          ? event.transcriptSegments.map((segment) => `[${formatDuration(segment.beginTime)}] ${segment.speakerId === null ? '说话人' : `说话人 ${segment.speakerId + 1}`}: ${segment.text}`)
+          ? event.transcriptSegments.map((segment) => `[${formatDuration(segment.beginTime)}] ${segment.speakerId === null ? t('说话人') : t('说话人 {number}', { number: segment.speakerId + 1 })}: ${segment.text}`)
           : [event.transcript]),
       ]
       const result = await window.nxcore.reality.exportTranscript({
         fileName: `${event.title}.txt`,
         content: `${lines.join('\n')}\n`,
       })
-      if (!result.canceled) showToast({ title: '逐字稿已导出', message: result.filePath })
+      if (!result.canceled) showToast({ title: t('逐字稿已导出'), message: result.filePath })
     } catch (caught) {
-      showToast({ title: '导出失败', message: caught instanceof Error ? caught.message : undefined })
+      showToast({ title: t('导出失败'), message: caught instanceof Error ? caught.message : undefined })
     } finally {
       setExportingTranscript(false)
     }
@@ -467,7 +570,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     <div className="reality-page">
       <header className="reality-header">
         <div>
-          <h1>现实感知</h1>
+          <h1>{t('现实感知')}</h1>
         </div>
         <RecordingPage
           embedded
@@ -483,12 +586,12 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       <section className="reality-activity" aria-labelledby="activity-title">
         <header>
           <div>
-            <h2 id="activity-title">感知活跃度</h2>
-            <span>{activity.total} 个事件 · 连续 {activity.streak} 天</span>
+            <h2 id="activity-title">{t('感知活跃度')}</h2>
+            <span>{t('{count} 个事件 · 连续 {days} 天', { count: activity.total, days: activity.streak })}</span>
           </div>
-          <div className="reality-range" aria-label="活跃度时间范围">
+          <div className="reality-range" aria-label={t('活跃度时间范围')}>
             {ACTIVITY_RANGES.map(([value, label]) => (
-              <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => { setRangeTouched(true); setActivityRange(value) }}>{label}</button>
+              <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => { setRangeTouched(true); setActivityRange(value) }}>{t(label)}</button>
             ))}
           </div>
         </header>
@@ -496,7 +599,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
           <div className="activity-months">{activity.monthLabels.map((item) => (
             <span key={item.column} style={{ gridColumn: item.column }}>{item.label}</span>
           ))}</div>
-          <div className="activity-weekdays"><span>一</span><span>三</span><span>五</span></div>
+          <div className="activity-weekdays"><span>{t('一')}</span><span>{t('三')}</span><span>{t('五')}</span></div>
           <div className="activity-cells">
             {activity.weeks.flatMap((week, weekIndex) => week.map((cell, dayIndex) => {
               const key = dayKey(cell.date)
@@ -513,8 +616,8 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                   data-selected={String(selectedDay === key)}
                   disabled={isFuture}
                   aria-pressed={selectedDay === key}
-                  aria-label={isFuture ? undefined : `${key} · ${cell.count} 个事件`}
-                  title={isFuture ? undefined : `${key} · ${cell.count} 个事件`}
+                  aria-label={isFuture ? undefined : t('{date} · {count} 个事件', { date: key, count: cell.count })}
+                  title={isFuture ? undefined : t('{date} · {count} 个事件', { date: key, count: cell.count })}
                   style={{ animationDelay: `${Math.min((weekIndex * 7 + dayIndex) * 2, 600)}ms` }}
                   onClick={() => setSelectedDay(selectedDay === key ? null : key)}
                 />
@@ -524,9 +627,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
         </div>
         <div className="activity-footer">
           <div className="activity-legend" aria-hidden="true">
-            <span>少</span>
+            <span>{t('少')}</span>
             {[0, 1, 2, 3, 4].map((level) => <i key={level} data-level={level} />)}
-            <span>多</span>
+            <span>{t('多')}</span>
           </div>
         </div>
       </section>
@@ -534,23 +637,23 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       <div className="reality-toolbar">
         <div>
           <CalendarDays aria-hidden="true" />
-          <strong>时间线</strong>
+          <strong>{t('时间线')}</strong>
           {selectedDay ? (
             <button type="button" className="reality-day-chip" onClick={() => setSelectedDay(null)}>
-              {dayChipLabel(selectedDay)}
+              {dayChipLabel(selectedDay, locale)}
               <X aria-hidden="true" />
             </button>
           ) : (
-            <span>{visibleEvents.length} / {events.length} 个事件</span>
+            <span>{t('{visible} / {total} 个事件', { visible: visibleEvents.length, total: timelineItems.length })}</span>
           )}
         </div>
-        <label className="reality-search"><Search aria-hidden="true" /><input value={search} placeholder="搜索主题或逐字稿" onChange={(event) => setSearch(event.target.value)} /></label>
-        <select value={filter} aria-label="事件状态筛选" onChange={(event) => setFilter(event.target.value as StatusFilter)}>
-          <option value="all">全部状态</option>
-          <option value="ongoing">进行中</option>
-          <option value="completed">已完成</option>
-          <option value="failed">失败</option>
-          <option value="pending_sync">待同步</option>
+        <label className="reality-search"><Search aria-hidden="true" /><input value={search} placeholder={t('搜索主题、逐字稿或视觉总结')} onChange={(event) => setSearch(event.target.value)} /></label>
+        <select value={filter} aria-label={t('事件状态筛选')} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
+          <option value="all">{t('全部状态')}</option>
+          <option value="ongoing">{t('进行中')}</option>
+          <option value="completed">{t('已完成')}</option>
+          <option value="failed">{t('失败')}</option>
+          <option value="pending_sync">{t('待同步')}</option>
         </select>
       </div>
 
@@ -558,36 +661,80 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
         <div className="reality-error" role="alert">
           <AlertCircle aria-hidden="true" />
           <span>{error}</span>
-          <button type="button" className="icon-button" title="关闭" aria-label="关闭错误提示" onClick={() => setError(null)}><X aria-hidden="true" /></button>
+          <button type="button" className="icon-button" title={t('关闭')} aria-label={t('关闭错误提示')} onClick={() => setError(null)}><X aria-hidden="true" /></button>
         </div>
       ) : null}
 
       <main className="reality-timeline">
-        {loading ? <div className="reality-empty"><LoaderCircle className="spin" />正在读取时间线</div> : null}
-        {!loading && grouped.length === 0 ? (
-          <div className="reality-empty"><div className="empty-signal"><i /><i /><i /><i /><i /></div><strong>今天还很安静</strong><span>打开右上角的聆听开关，第一段感知会出现在这里。</span></div>
+        {loading || visualLoading ? <div className="reality-empty"><LoaderCircle className="spin" />{t('正在读取时间线')}</div> : null}
+        {!loading && !visualLoading && grouped.length === 0 ? (
+          <div className="reality-empty"><div className="empty-signal"><i /><i /><i /><i /><i /></div><strong>{t('今天还很安静')}</strong><span>{t('开启聆听或自动截图后，感知节点会按时间出现在这里。')}</span></div>
         ) : null}
         {grouped.map(([label, items]) => (
           <section className="reality-day" key={label}>
-            <header><h2>{label}</h2><span>{items.length} 段</span></header>
+            <header><h2>{label}</h2><span>{t('{count} 段', { count: items.length })}</span></header>
             <div className="reality-schedule">
-              {items.map((event) => {
+              {items.map((item) => {
+                if (item.kind === 'visual') {
+                  const node = item.node
+                  const expanded = node.id === expandedId
+                  const KindIcon = node.kind === 'photo' ? ImageIcon : Camera
+                  const statusLabel = VISUAL_STATUS_LABELS[node.status] ?? node.status
+                  return (
+                    <article className="schedule-event visual-schedule-event" key={node.id} data-expanded={String(expanded)} data-type={node.kind} data-status={node.status}>
+                      <div className="schedule-time">
+                        <time>{timeLabel(node.startAt, locale)}</time>
+                        <span />
+                        <small>{node.endAt !== node.startAt ? timeLabel(node.endAt, locale) : t('{count} 帧', { count: node.sampleCount })}</small>
+                      </div>
+                      <div className="schedule-block">
+                        <button type="button" className="schedule-trigger" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : node.id)}>
+                          <span className="event-type"><KindIcon aria-hidden="true" />{t(node.kind === 'photo' ? '照片' : '屏幕')}</span>
+                          <span className="event-status" data-status={node.status}>{t(statusLabel)}</span>
+                          <strong>{perceptionDisplayText(node.title, t)}</strong>
+                          <p>{perceptionDisplayText(node.summary, t)}</p>
+                          {node.tags.length > 0 ? <span className="schedule-tags">{node.tags.slice(0, 6).map((tag) => <span key={tag}>{tag}</span>)}</span> : null}
+                          <small>{t(node.kind === 'photo' ? '本地照片' : 'EverRoom 窗口')}{node.sampleCount > 1 ? ` · ${t('{count} 帧', { count: node.sampleCount })}` : ''}{node.confidence === null ? '' : t(' · 置信度 {confidence}%', { confidence: Math.round(node.confidence * 100) })}</small>
+                          <ChevronDown aria-hidden="true" />
+                        </button>
+                        {expanded ? (
+                          <div className="schedule-detail">
+                            <div className="schedule-detail-bar">
+                              <div className="visual-perception-detail-label"><Sparkles aria-hidden="true" />{t('视觉理解')}</div>
+                              <div className="detail-actions">
+                                {node.status === 'failed' || node.status === 'disabled' ? (
+                                  <button type="button" className="secondary-button" disabled={retryingVisualId !== null} onClick={() => void retryVisualNode(node)}>
+                                    {retryingVisualId === node.id ? <LoaderCircle className="spin" /> : <RefreshCw />}{t('重新理解')}
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                            {visualDetail?.id === node.id
+                              ? <VisualDetail node={visualDetail} />
+                              : <div className="visual-perception-detail-loading"><LoaderCircle className="spin" />{t('正在读取详情')}</div>}
+                          </div>
+                        ) : null}
+                      </div>
+                    </article>
+                  )
+                }
+                const event = item.event
                 const expanded = event.id === expandedId
                 const type = eventType(event)
                 return (
                   <article className="schedule-event" key={event.id} data-expanded={String(expanded)} data-type={type.toLowerCase()}>
-                    <div className="schedule-time"><time>{timeLabel(event.startedAt)}</time><span /><small>{event.endedAt ? timeLabel(event.endedAt) : 'NOW'}</small></div>
+                    <div className="schedule-time"><time>{timeLabel(event.startedAt, locale)}</time><span /><small>{event.endedAt ? timeLabel(event.endedAt, locale) : t('现在')}</small></div>
                     <div className="schedule-block">
                       <button type="button" className="schedule-trigger" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : event.id)}>
                         <span className="event-type">{EVENT_TYPE_LABELS[type]}</span>
-                        <span className="event-status" data-status={event.status}>{STATUS_LABELS[event.status]}</span>
+                        <span className="event-status" data-status={event.status}>{t(STATUS_LABELS[event.status])}</span>
                         <strong>{event.currentTopic || event.insights.currentTopic || event.title}</strong>
-                        <p>{event.insights.summary || (event.transcript ? event.transcript.slice(0, 120) : PROCESSING_LABELS[event.processingState])}</p>
+                        <p>{event.insights.summary || (event.transcript ? event.transcript.slice(0, 120) : t(PROCESSING_LABELS[event.processingState]))}</p>
                         {(event.insights.representativeTags?.length ?? 0) > 0 ? <span className="schedule-tags">{event.insights.representativeTags!.slice(0, 5).map((tag) => <span key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind}>{tag.label}{(tag.occurrenceCount ?? 0) > 1 ? <small>{tag.occurrenceCount}</small> : null}</span>)}</span> : null}
-                        <small>{event.captureDevice.name} · <LiveDuration durationMs={event.durationMs} startedAt={event.startedAt} ongoing={event.status === 'ongoing'} /> · {PROCESSING_LABELS[event.processingState]}</small>
+                        <small>{event.captureDevice.name} · <LiveDuration durationMs={event.durationMs} startedAt={event.startedAt} ongoing={event.status === 'ongoing'} /> · {t(PROCESSING_LABELS[event.processingState])}</small>
                         <span className="trigger-actions" onClick={(click) => click.stopPropagation()}>
-                          <button type="button" className="icon-button" title={event.important ? '取消重要' : '标记重要'} aria-label={event.important ? '取消重要标记' : '标记重要'} aria-pressed={event.important} onClick={() => void toggleImportant(event)}><Bookmark fill={event.important ? 'currentColor' : 'none'} /></button>
-                          <button type="button" className={deleteConfirmId === event.id ? 'danger-button' : 'icon-button'} title={deleteConfirmId === event.id ? '再次点击确认删除' : '删除事件'} aria-label={deleteConfirmId === event.id ? '确认删除事件' : '删除事件'} onClick={() => void discardEvent(event)}><Trash2 />{deleteConfirmId === event.id ? '确认删除' : null}</button>
+                          <button type="button" className="icon-button" title={t(event.important ? '取消重要' : '标记重要')} aria-label={t(event.important ? '取消重要标记' : '标记重要')} aria-pressed={event.important} onClick={() => void toggleImportant(event)}><Bookmark fill={event.important ? 'currentColor' : 'none'} /></button>
+                          <button type="button" className={deleteConfirmId === event.id ? 'danger-button' : 'icon-button'} title={t(deleteConfirmId === event.id ? '再次点击确认删除' : '删除事件')} aria-label={t(deleteConfirmId === event.id ? '确认删除事件' : '删除事件')} onClick={() => void discardEvent(event)}><Trash2 />{deleteConfirmId === event.id ? t('确认删除') : null}</button>
                         </span>
                         <ChevronDown aria-hidden="true" />
                       </button>
@@ -596,13 +743,13 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                         <div className="schedule-detail">
                           <div className="schedule-detail-bar">
                             <div className="reality-detail-tabs" role="tablist">
-                              <button type="button" role="tab" aria-selected={detailTab === 'insights'} onClick={() => setDetailTab('insights')}><Sparkles aria-hidden="true" />智能总结</button>
-                              <button type="button" role="tab" aria-selected={detailTab === 'transcript'} onClick={() => setDetailTab('transcript')}><FileText aria-hidden="true" />逐字稿</button>
+                              <button type="button" role="tab" aria-selected={detailTab === 'insights'} onClick={() => setDetailTab('insights')}><Sparkles aria-hidden="true" />{t('智能总结')}</button>
+                              <button type="button" role="tab" aria-selected={detailTab === 'transcript'} onClick={() => setDetailTab('transcript')}><FileText aria-hidden="true" />{t('逐字稿')}</button>
                             </div>
                             <div className="detail-actions">
                               {event.insights.source === 'mock' ? <span className="mock-badge">MOCK</span> : null}
-                              {event.status === 'failed' && event.audioFileName ? <button type="button" className="secondary-button" disabled={reprocessingId !== null} onClick={() => void reprocessEvent(event)}>{reprocessingId === event.id ? <LoaderCircle className="spin" /> : <RefreshCw />}重新处理</button> : null}
-                              <button type="button" className="secondary-button" disabled={!event.transcript || exportingTranscript} onClick={() => void exportTranscript(event)}>{exportingTranscript ? <LoaderCircle className="spin" /> : <Download />}导出逐字稿</button>
+                              {event.status === 'failed' && event.audioFileName ? <button type="button" className="secondary-button" disabled={reprocessingId !== null} onClick={() => void reprocessEvent(event)}>{reprocessingId === event.id ? <LoaderCircle className="spin" /> : <RefreshCw />}{t('重新处理')}</button> : null}
+                              <button type="button" className="secondary-button" disabled={!event.transcript || exportingTranscript} onClick={() => void exportTranscript(event)}>{exportingTranscript ? <LoaderCircle className="spin" /> : <Download />}{t('导出逐字稿')}</button>
                             </div>
                           </div>
 
@@ -615,10 +762,10 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                 </>
                               ) : (
                                 <>
-                                  <section className="reality-topic"><span>主题</span><strong>{event.insights.currentTopic || event.currentTopic || '等待转写结果'}</strong><p>{event.insights.summary || '转写完成后将自动生成总结。'}</p></section>
+                                  <section className="reality-topic"><span>{t('主题')}</span><strong>{event.insights.currentTopic || event.currentTopic || t('等待转写结果')}</strong><p>{event.insights.summary || t('转写完成后将自动生成总结。')}</p></section>
                                   <section className="reality-tags-section">
-                                    <div className="reality-tags-heading"><h3><Tag aria-hidden="true" />代表标签</h3></div>
-                                    {(event.insights.representativeTags?.length ?? 0) > 0 ? <div className="reality-tag-list">{event.insights.representativeTags!.map((tag) => <div className="reality-tag" key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind} title={tag.evidence || undefined}><span>{tag.kind === 'entity' ? '实体' : '事实'}</span><strong>{tag.label}</strong>{(tag.occurrenceCount ?? 0) > 1 ? <small>出现 {tag.occurrenceCount} 次</small> : null}{tag.id && event.insights.summaryRecordId ? <div><button type="button" title="从本条总结移除" aria-label={`移除 ${tag.label}`} disabled={savingTags} onClick={() => void removeTag(event, tag)}><X /></button></div> : null}</div>)}</div> : <p className="reality-tags-empty">暂无代表标签</p>}
+                                    <div className="reality-tags-heading"><h3><Tag aria-hidden="true" />{t('代表标签')}</h3></div>
+                                    {(event.insights.representativeTags?.length ?? 0) > 0 ? <div className="reality-tag-list">{event.insights.representativeTags!.map((tag) => <div className="reality-tag" key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind} title={tag.evidence || undefined}><span>{t(tag.kind === 'entity' ? '实体' : '事实')}</span><strong>{tag.label}</strong>{(tag.occurrenceCount ?? 0) > 1 ? <small>{t('出现 {count} 次', { count: tag.occurrenceCount ?? 0 })}</small> : null}{tag.id && event.insights.summaryRecordId ? <div><button type="button" title={t('从本条总结移除')} aria-label={t('移除 {label}', { label: tag.label })} disabled={savingTags} onClick={() => void removeTag(event, tag)}><X /></button></div> : null}</div>)}</div> : <p className="reality-tags-empty">{t('暂无代表标签')}</p>}
                                   </section>
                                   <InsightList title="关键内容" items={event.insights.keyPoints} empty="暂无关键内容" />
                                   <div className="reality-insight-columns">
@@ -646,9 +793,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                     onPlay={() => setIsPlaying(true)}
                                     onPause={() => setIsPlaying(false)}
                                     onEnded={() => void playNextCloudSegment()}
-                                    onError={() => showToast({ title: '录音无法播放', message: '请确认音频文件仍然存在。' })}
+                                    onError={() => showToast({ title: t('录音无法播放'), message: t('请确认音频文件仍然存在。') })}
                                   />
-                                  <button type="button" className="player-toggle" disabled={!audioUrl} onClick={togglePlayback} aria-label={isPlaying ? '暂停录音' : '播放录音'}>
+                                  <button type="button" className="player-toggle" disabled={!audioUrl} onClick={togglePlayback} aria-label={t(isPlaying ? '暂停录音' : '播放录音')}>
                                     {isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                                   </button>
                                   <time>{formatDuration(playbackPositionMs)}</time>
@@ -658,7 +805,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                     max={Math.max(playbackDurationMs, 1)}
                                     step={100}
                                     value={Math.min(playbackPositionMs, Math.max(playbackDurationMs, 1))}
-                                    aria-label="录音播放进度"
+                                    aria-label={t('录音播放进度')}
                                     disabled={!audioUrl || playbackDurationMs <= 0}
                                     style={{ '--player-progress': `${playbackDurationMs > 0 ? playbackPositionMs / playbackDurationMs * 100 : 0}%` } as CSSProperties}
                                     onChange={(change) => seekTo(Number(change.target.value), false)}
@@ -672,16 +819,16 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                   <DetailSkeleton lines={6} />
                                 </>
                               ) : event.transcriptSegments.length === 0 ? (
-                                <p className="reality-tags-empty" style={{ padding: '14px 0' }}>{event.transcript ? event.transcript : '暂无逐字稿'}</p>
+                                <p className="reality-tags-empty" style={{ padding: '14px 0' }}>{event.transcript ? event.transcript : t('暂无逐字稿')}</p>
                               ) : (
                                 <>
                                   <div className="reality-editor-heading">
-                                    <h3>逐字稿</h3>
-                                    <span className="reality-editor-meta">{event.transcriptSegments.length} 个句段</span>
+                                    <h3>{t('逐字稿')}</h3>
+                                    <span className="reality-editor-meta">{t('{count} 个句段', { count: event.transcriptSegments.length })}</span>
                                   </div>
-                                  <div ref={transcriptScrollRef} className="reality-segments" aria-label="逐字稿句段">{event.transcriptSegments.map((segment) => {
+                                  <div ref={transcriptScrollRef} className="reality-segments" aria-label={t('逐字稿句段')}>{event.transcriptSegments.map((segment) => {
                                     const active = segment.id === activeSegmentId
-                                    return <button ref={active ? activeSegmentRef : undefined} type="button" key={segment.id} data-active={String(active)} aria-current={active ? 'true' : undefined} onClick={() => seekTo(segment.beginTime)}><time>{formatDuration(segment.beginTime)}</time><strong>{segment.speakerId === null ? '说话人' : `说话人 ${segment.speakerId + 1}`}</strong><span>{segment.text}</span></button>
+                                    return <button ref={active ? activeSegmentRef : undefined} type="button" key={segment.id} data-active={String(active)} aria-current={active ? 'true' : undefined} onClick={() => seekTo(segment.beginTime)}><time>{formatDuration(segment.beginTime)}</time><strong>{segment.speakerId === null ? t('说话人') : t('说话人 {number}', { number: segment.speakerId + 1 })}</strong><span>{segment.text}</span></button>
                                   })}</div>
                                 </>
                               )}
@@ -702,18 +849,20 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
 }
 
 function InsightList({ title, items, empty, icon }: { title: string; items: string[]; empty: string; icon?: ReactNode }) {
-  return <section className="reality-insight-list"><h3>{icon}{title}</h3>{items.length > 0 ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{empty}</p>}</section>
+  const { t } = useLocale()
+  return <section className="reality-insight-list"><h3>{icon}{t(title)}</h3>{items.length > 0 ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{t(empty)}</p>}</section>
 }
 
 /** 处理中/失败的状态条:给用户明确的当前阶段与预期。 */
 function ProcessingStatus({ event }: { event: RealityEvent }) {
+  const { t } = useLocale()
   const failed = event.processingState === 'failed'
   return (
     <div className="reality-processing" data-state={event.processingState} role="status">
       {failed ? <AlertCircle aria-hidden="true" /> : <LoaderCircle className="spin" aria-hidden="true" />}
       <div>
-        <strong>{PROCESSING_LABELS[event.processingState]}</strong>
-        {PROCESSING_HINTS[event.processingState] ? <span>{PROCESSING_HINTS[event.processingState]}</span> : null}
+        <strong>{t(PROCESSING_LABELS[event.processingState])}</strong>
+        {PROCESSING_HINTS[event.processingState] ? <span>{t(PROCESSING_HINTS[event.processingState])}</span> : null}
         {failed && event.error ? <p>{event.error}</p> : null}
       </div>
     </div>

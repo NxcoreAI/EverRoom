@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, FileText, Folder } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryScenarioEntryDto } from '../../../../../shared/memory'
 import { MemoryMarkdown } from './MemoryMarkdown'
@@ -114,6 +115,7 @@ function stripMetaHeader(content: string): string {
 }
 
 export function ScenarioPane() {
+  const { locale, t } = useLocale()
   const { data, failure, loading } = useAsyncData(() => window.nxcore!.memory.listScenarios())
   const [selectedPath, setSelectedPath] = useState('')
   const file = useAsyncData(
@@ -129,9 +131,9 @@ export function ScenarioPane() {
   return (
     <div className="mem-scenario">
       <aside className="mem-scenario-tree">
-        {loading ? <p className="mem-loading">加载中…</p> : null}
+        {loading ? <p className="mem-loading">{t('加载中…')}</p> : null}
         {!loading && (data?.entries.length ?? 0) === 0 ? (
-          <MemoryEmptyView title="暂无场景" hint="MemoryCore 会把相关记忆按主题归档为场景文档。" />
+          <MemoryEmptyView title={t('暂无场景')} hint={t('MemoryCore 会把相关记忆按主题归档为场景文档。')} />
         ) : (
           <ScenarioTree root={root} selectedPath={selectedPath} onSelect={(node) => setSelectedPath(node.path)} />
         )}
@@ -141,23 +143,23 @@ export function ScenarioPane() {
           file.failure ? (
             <div className="mem-pane-error">{file.failure.message}</div>
           ) : file.loading ? (
-            <p className="mem-loading">加载中…</p>
+            <p className="mem-loading">{t('加载中…')}</p>
           ) : (
             <>
               <header>
                 <strong>{selectedPath}</strong>
                 {selectedEntry?.summary ? <small>{selectedEntry.summary}</small> : null}
-                <small>更新于 {formatDate(file.data?.updatedAt || selectedEntry?.updatedAt)}</small>
+                <small>{t('更新于 {time}', { time: formatDate(file.data?.updatedAt || selectedEntry?.updatedAt, locale) })}</small>
               </header>
               {file.data?.content ? (
                 <MemoryMarkdown markdown={stripMetaHeader(file.data.content)} />
               ) : (
-                <MemoryEmptyView title="文件为空" />
+                <MemoryEmptyView title={t('文件为空')} />
               )}
             </>
           )
         ) : (
-          <MemoryEmptyView title="选择左侧的场景文件" hint="场景（L2）是 MemoryCore 按主题归档的记忆文档。" />
+          <MemoryEmptyView title={t('选择左侧的场景文件')} hint={t('场景（L2）是 MemoryCore 按主题归档的记忆文档。')} />
         )}
       </section>
     </div>

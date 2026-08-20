@@ -9,6 +9,7 @@ import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsPr
 import { desktopOperationBridge, DocumentOperationProvider } from '@/components/context-room/operations'
 import { AccountProvider } from '@/state/AccountContext'
 import { ActiveDocumentProvider } from '@/state/ActiveDocumentContext'
+import { LocaleProvider } from '@/i18n/LocaleContext'
 import '@/styles/tokens.css'
 import '@/styles.css'
 
@@ -28,12 +29,14 @@ function DocumentOperationRoot() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <AccountProvider>
-      <ContextRoomStateProvider>
-        <RoomDocumentsProvider>
-          <DocumentOperationRoot />
-        </RoomDocumentsProvider>
-      </ContextRoomStateProvider>
-    </AccountProvider>
+    <LocaleProvider>
+      <AccountProvider>
+        <ContextRoomStateProvider>
+          <RoomDocumentsProvider>
+            <DocumentOperationRoot />
+          </RoomDocumentsProvider>
+        </ContextRoomStateProvider>
+      </AccountProvider>
+    </LocaleProvider>
   </React.StrictMode>
 )

@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
 import { roomKindTone } from '../utils';
@@ -44,6 +45,7 @@ function dateInView(date: Date, cursor: Date, view: ScheduleView) {
 }
 
 export function SchedulePane({ room, onOpen }: { room: ContextRoomRecord; onOpen: (target: { kind: 'meeting' | 'task'; id: string }) => void }) {
+  const { t } = useLocale();
   const [view, setView] = useState<ScheduleView>('month');
   const [cursor, setCursor] = useState(new Date(SCHEDULE_TODAY));
   const scheduleItems = useMemo(() => [
@@ -54,10 +56,10 @@ export function SchedulePane({ room, onOpen }: { room: ContextRoomRecord; onOpen
     })),
     ...room.actionItems.filter((task) => !task.completed && task.status !== '已完成').map((task) => ({
       id: task.id, kind: 'task' as const, date: parseScheduleDate(task.deadline), time: '', title: task.title,
-      subtitle: `负责人 ${task.owner}`, description: '来源和状态会同步到 Room。', location: undefined,
+      subtitle: t('负责人 {owner}', { owner: task.owner }), description: t('来源和状态会同步到 Room。'), location: undefined,
       attachments: [] as Array<{ name: string; size?: string }>,
     })),
-  ], [room]);
+  ], [room, t]);
   const visibleItems = scheduleItems.filter((item) => dateInView(item.date, cursor, view));
   const groups = visibleItems.reduce<Map<string, typeof visibleItems>>((result, item) => {
     const key = item.date.toISOString().slice(0, 10);
@@ -65,37 +67,38 @@ export function SchedulePane({ room, onOpen }: { room: ContextRoomRecord; onOpen
     return result;
   }, new Map());
   const month = String(cursor.getMonth() + 1);
-  const cursorLabel = view === 'month' ? `${String(cursor.getFullYear())} 年 ${month} 月` : view === 'week' ? `${month} 月第 ${String(Math.ceil(cursor.getDate() / 7))} 周` : `${month} 月 ${String(cursor.getDate())} 日`;
+  const cursorLabel = view === 'month' ? t('{year} 年 {month} 月', { year: cursor.getFullYear(), month }) : view === 'week' ? t('{month} 月第 {week} 周', { month, week: Math.ceil(cursor.getDate() / 7) }) : t('{month} 月 {day} 日', { month, day: cursor.getDate() });
   const moveCursor = (delta: number) => setCursor((current) => { const next = new Date(current); if (view === 'month') next.setMonth(next.getMonth() + delta); else next.setDate(next.getDate() + delta * (view === 'week' ? 7 : 1)); return next; });
 
   return <div className="context-room-schedule-pane">
-    <header><h2>Room 日程</h2><div>{(['day', 'week', 'month'] as const).map((item) => <button type="button" key={item} aria-pressed={view === item} onClick={() => setView(item)}>{item === 'day' ? '日' : item === 'week' ? '周' : '月'}</button>)}</div></header>
+    <header><h2>{t('Room 日程')}</h2><div>{(['day', 'week', 'month'] as const).map((item) => <button type="button" key={item} aria-pressed={view === item} onClick={() => setView(item)}>{t(item === 'day' ? '日' : item === 'week' ? '周' : '月')}</button>)}</div></header>
     {scheduleItems.length ? (
       <>
-        <div className="context-room-schedule-date"><button type="button" aria-label="上一周期" onClick={() => moveCursor(-1)}><ChevronLeft aria-hidden="true" /></button><span>{cursorLabel}</span><button type="button" aria-label="下一周期" onClick={() => moveCursor(1)}><ChevronRight aria-hidden="true" /></button><button type="button" disabled={cursor.toDateString() === SCHEDULE_TODAY.toDateString()} onClick={() => setCursor(new Date(SCHEDULE_TODAY))}>今天</button></div>
+        <div className="context-room-schedule-date"><button type="button" aria-label={t('上一周期')} onClick={() => moveCursor(-1)}><ChevronLeft aria-hidden="true" /></button><span>{cursorLabel}</span><button type="button" aria-label={t('下一周期')} onClick={() => moveCursor(1)}><ChevronRight aria-hidden="true" /></button><button type="button" disabled={cursor.toDateString() === SCHEDULE_TODAY.toDateString()} onClick={() => setCursor(new Date(SCHEDULE_TODAY))}>{t('今天')}</button></div>
         {[...groups.entries()].map(([date, items]) => <section className="context-room-schedule-group" key={date}>
-          <header><span>{date === '2026-07-09' ? '今天' : date}</span><b>{items.length}</b></header>
-          {items.map((item) => <Popover.Root key={`${item.kind}-${item.id}`}><Popover.Trigger asChild><button type="button" className="context-room-schedule-item" data-icon-tone={item.kind === 'meeting' ? 'calendar' : 'task'}><span className="context-room-schedule-item-icon">{item.kind === 'meeting' ? <Mic aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}</span><span><b>{item.title}</b><small>{item.subtitle}{item.location ? ` · ${item.location}` : ''}</small></span><time>{item.time}</time></button></Popover.Trigger><Popover.Portal><Popover.Content className="context-room-schedule-popover" side="right" align="start" sideOffset={8} collisionPadding={12}><header><h3>{item.title}</h3><Popover.Close aria-label="关闭日程详情"><X aria-hidden="true" /></Popover.Close></header><p><CalendarDays aria-hidden="true" />{item.kind === 'meeting' ? '会议时间' : '截止时间'}：{date} {item.time}</p><dl><div><dt>{item.kind === 'meeting' ? '参与对象' : '负责人'}</dt><dd>{item.subtitle}</dd></div><div><dt>说明</dt><dd>{item.description}</dd></div></dl>{item.attachments.length ? <section className="context-room-schedule-attachments"><span>附件</span>{item.attachments.map((attachment) => <div key={attachment.name}><Paperclip aria-hidden="true" /><b>{attachment.name}</b><small>{attachment.size}</small></div>)}</section> : null}<Popover.Close asChild><button type="button" className="context-room-secondary" onClick={() => onOpen({ kind: item.kind, id: item.id })}>打开{item.kind === 'meeting' ? '会议详情' : '任务详情'}</button></Popover.Close></Popover.Content></Popover.Portal></Popover.Root>)}
+          <header><span>{date === '2026-07-09' ? t('今天') : date}</span><b>{items.length}</b></header>
+          {items.map((item) => <Popover.Root key={`${item.kind}-${item.id}`}><Popover.Trigger asChild><button type="button" className="context-room-schedule-item" data-icon-tone={item.kind === 'meeting' ? 'calendar' : 'task'}><span className="context-room-schedule-item-icon">{item.kind === 'meeting' ? <Mic aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}</span><span><b>{item.title}</b><small>{item.subtitle}{item.location ? ` · ${item.location}` : ''}</small></span><time>{item.time}</time></button></Popover.Trigger><Popover.Portal><Popover.Content className="context-room-schedule-popover" side="right" align="start" sideOffset={8} collisionPadding={12}><header><h3>{item.title}</h3><Popover.Close aria-label={t('关闭日程详情')}><X aria-hidden="true" /></Popover.Close></header><p><CalendarDays aria-hidden="true" />{t(item.kind === 'meeting' ? '会议时间' : '截止时间')}：{date} {item.time}</p><dl><div><dt>{t(item.kind === 'meeting' ? '参与对象' : '负责人')}</dt><dd>{item.subtitle}</dd></div><div><dt>{t('说明')}</dt><dd>{item.description}</dd></div></dl>{item.attachments.length ? <section className="context-room-schedule-attachments"><span>{t('附件')}</span>{item.attachments.map((attachment) => <div key={attachment.name}><Paperclip aria-hidden="true" /><b>{attachment.name}</b><small>{attachment.size}</small></div>)}</section> : null}<Popover.Close asChild><button type="button" className="context-room-secondary" onClick={() => onOpen({ kind: item.kind, id: item.id })}>{t('打开{detail}', { detail: t(item.kind === 'meeting' ? '会议详情' : '任务详情') })}</button></Popover.Close></Popover.Content></Popover.Portal></Popover.Root>)}
         </section>)}
         {!visibleItems.length ? (
           <PanelEmptyState
             icon={CalendarDays}
-            title="当前范围没有日程"
-            description="可切换日期范围查看其他会议和任务。"
+            title={t('当前范围没有日程')}
+            description={t('可切换日期范围查看其他会议和任务。')}
           />
         ) : null}
       </>
     ) : (
       <PanelEmptyState
         icon={CalendarDays}
-        title="还没有日程"
-        description="Room 中的会议和未完成任务会汇总在这里。"
+        title={t('还没有日程')}
+        description={t('Room 中的会议和未完成任务会汇总在这里。')}
       />
     )}
   </div>;
 }
 
 export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecord; onSelect: (id: string) => void; onToggle: (id: string) => void }) {
+  const { t } = useLocale();
   const [completedOpen, setCompletedOpen] = useState(false);
   const completed = room.actionItems.filter((item) => item.completed || item.status === '已完成');
   const pending = room.actionItems.filter((item) => !item.completed && item.status !== '已完成');
@@ -104,7 +107,7 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
       <button
         type="button"
         className="context-room-task-check"
-        aria-label={`${done ? '取消完成' : '完成'} ${task.title}`}
+        aria-label={t('{action} {title}', { action: t(done ? '取消完成' : '完成'), title: task.title })}
         onClick={() => onToggle(task.id)}
       >
         <span>{done ? <Check aria-hidden="true" /> : null}</span>
@@ -116,11 +119,11 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
       >
         <b>{task.title}</b>
         <span className="context-room-task-source">
-          {task.source?.name ?? `负责人 ${task.owner}`}
+          {task.source?.name ?? t('负责人 {owner}', { owner: task.owner })}
         </span>
         <span className="context-room-task-meta">
           <span>{task.owner}</span>
-          <span><CalendarDays aria-hidden="true" />截止 {task.deadline}</span>
+          <span><CalendarDays aria-hidden="true" />{t('截止 {deadline}', { deadline: task.deadline })}</span>
         </span>
       </button>
     </div>
@@ -129,7 +132,7 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
   return (
     <div className="context-room-task-pane">
       <header>
-        <h2>Room 任务</h2>
+        <h2>{t('Room 任务')}</h2>
         <span className="context-room-task-progress" data-icon-tone={roomKindTone(room.kind)}>
           {completed.length}/{room.actionItems.length}
         </span>
@@ -137,7 +140,7 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
       {room.actionItems.length ? (
         <>
           <section className="context-room-task-section">
-            <h3>未完成 <span>{pending.length}</span></h3>
+            <h3>{t('未完成')} <span>{pending.length}</span></h3>
             {pending.map((task) => renderTask(task, false))}
           </section>
           <section className="context-room-task-section context-room-task-completed">
@@ -148,7 +151,7 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
               onClick={() => setCompletedOpen((value) => !value)}
             >
               <ChevronDown aria-hidden="true" />
-              已完成
+              {t('已完成')}
               <span>{completed.length}</span>
             </button>
             {completedOpen ? completed.map((task) => renderTask(task, true)) : null}
@@ -157,8 +160,8 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
       ) : (
         <PanelEmptyState
           icon={CheckSquare2}
-          title="还没有任务"
-          description="Agent 提取的行动项和 Room 任务会显示在这里。"
+          title={t('还没有任务')}
+          description={t('Agent 提取的行动项和 Room 任务会显示在这里。')}
         />
       )}
     </div>
@@ -166,6 +169,7 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
 }
 
 export function MailsPane({ room, onSelect }: { room: ContextRoomRecord; onSelect: (id: string) => void }) {
+  const { t } = useLocale();
   const mails = room.materials.filter((material) => material.type === '邮件');
-  return <div className="context-room-mail-pane"><header><h2>Room 邮件</h2><span>{mails.length}</span></header>{mails.length ? mails.map((mail) => <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}><Mail aria-hidden="true" /><span><span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? '收件人' : mail.sender ?? '张总 · 星港科技'}</b><time>{mail.time}</time></span><strong>{mail.title}</strong><small>{mail.summary}</small></span></button>) : <PanelEmptyState icon={Mail} title="还没有邮件" description="与这个 Room 相关的往来邮件会显示在这里。" />}</div>;
+  return <div className="context-room-mail-pane"><header><h2>{t('Room 邮件')}</h2><span>{mails.length}</span></header>{mails.length ? mails.map((mail) => <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}><Mail aria-hidden="true" /><span><span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? t('收件人') : mail.sender ?? '张总 · 星港科技'}</b><time>{mail.time}</time></span><strong>{mail.title}</strong><small>{mail.summary}</small></span></button>) : <PanelEmptyState icon={Mail} title={t('还没有邮件')} description={t('与这个 Room 相关的往来邮件会显示在这里。')} />}</div>;
 }

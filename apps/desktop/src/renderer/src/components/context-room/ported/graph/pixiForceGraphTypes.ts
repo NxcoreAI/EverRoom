@@ -31,6 +31,8 @@ export interface PixiSprite {
 }
 
 export interface PixiText extends PixiSprite {
+  resolution?: number
+  roundPixels?: boolean
   text: string
 }
 
@@ -55,7 +57,7 @@ export interface PixiParticleContainer extends PixiContainer {
 
 export interface PixiRenderer {
   events?: unknown
-  generateTexture(graphics: PixiGraphics): PixiTexture
+  generateTexture(graphics: PixiGraphics, options?: { resolution?: number }): PixiTexture
   resize?(width: number, height: number): void
 }
 
@@ -90,6 +92,8 @@ export interface PixiViewport extends PixiContainer {
   pinch(): PixiViewport
   resize?(screenWidth: number, screenHeight: number, worldWidth?: number, worldHeight?: number): PixiViewport
   getVisibleBounds?(): { x: number; y: number; width: number; height: number }
+  moveCenter?(x: number, y: number): PixiViewport
+  setZoom?(scale: number, center?: boolean): PixiViewport
   toWorld?(x: number, y: number): { x: number; y: number }
   on?(event: string, callback: (event: PixiPointerEvent) => void): void
   off?(event: string, callback: (event: PixiPointerEvent) => void): void
@@ -155,6 +159,7 @@ export interface PixiForceGraphRendererOptions {
   selectedIndex?: number | null
   onNodeDrag?: (index: number, x: number, y: number) => void
   onNodeHover?: (index: number | null) => void
+  onNodeOpen?: (index: number) => void
   onNodeRelease?: (index: number) => void
   onNodeSelect?: (index: number) => void
 }
@@ -168,6 +173,7 @@ export interface PixiForceGraphRenderer {
   readonly sprites: readonly PixiSprite[]
   activeLabelCount(): number
   createdLabelCount(): number
+  fitView(): void
   hitTest(x: number, y: number): number | null | undefined
   resize(width: number, height: number): void
   setHoveredIndex(index: number | null): void

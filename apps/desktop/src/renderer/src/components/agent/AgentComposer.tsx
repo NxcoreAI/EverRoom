@@ -13,6 +13,7 @@ import {
 
 import { loadRealitySettings } from '@/state/realitySettings'
 import { showToast } from '@/state/toast'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.json,.pdf,.docx,.xlsx,.pptx'
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
@@ -48,8 +49,8 @@ function formatFileSize(size: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '录音转写失败，请重试。'
+function errorMessage(error: unknown, t: Translate): string {
+  return error instanceof Error ? error.message : t('录音转写失败，请重试。')
 }
 
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
@@ -77,6 +78,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onStop,
   onSubmit,
 }, ref) {
+  const { t } = useLocale()
   const [attachments, setAttachments] = useState<LocalAttachment[]>([])
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [elapsed, setElapsed] = useState(0)
@@ -208,10 +210,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     const rejected = files.length - accepted.length
     setAttachments((current) => [...current, ...accepted])
     showToast({
-      title: rejected ? '部分附件未添加' : '附件已添加到输入区',
+      title: t(rejected ? '部分附件未添加' : '附件已添加到输入区'),
       message: rejected
-        ? '仅支持指定文档格式且单个文件不超过 10 MB。当前 Agent 链路不会上传附件。'
-        : '当前 Agent 链路不会上传附件，文件仅保留在本次输入区。',
+        ? t('仅支持指定文档格式且单个文件不超过 10 MB。当前 Agent 链路不会上传附件。')
+        : t('当前 Agent 链路不会上传附件，文件仅保留在本次输入区。'),
     })
     event.target.value = ''
   }
@@ -236,7 +238,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   const startRecording = async () => {
     if (!window.nxcore?.asr) {
-      showToast({ title: '录音不可用', message: '录音转写仅在 EverRoom 桌面版中可用。' })
+      showToast({ title: t('录音不可用'), message: t('录音转写仅在 EverRoom 桌面版中可用。') })
       return
     }
     setVoiceState('requesting')
@@ -275,7 +277,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       if (voiceOperationRef.current !== operation || !mountedRef.current) return
       cancelRecording()
       setVoiceState('idle')
-      showToast({ title: '无法开始录音', message: errorMessage(error) })
+      showToast({ title: t('无法开始录音'), message: errorMessage(error, t) })
     }
   }
 
@@ -306,7 +308,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         await window.nxcore.asr.cancelRecording(id)
         setVoiceState('idle')
         setElapsed(0)
-        showToast({ title: '录音时间太短', message: '录音至少需要 10 秒才能转写。' })
+        showToast({ title: t('录音时间太短'), message: t('录音至少需要 10 秒才能转写。') })
         return
       }
 
@@ -338,7 +340,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       if (voiceOperationRef.current !== operation || !mountedRef.current) return
       cancelRecording()
       setVoiceState('idle')
-      showToast({ title: '录音转写失败', message: errorMessage(error) })
+      showToast({ title: t('录音转写失败'), message: errorMessage(error, t) })
     }
   }
 
@@ -346,13 +348,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   // 会话快照加载时保留本地附件和录音状态。
   const controlsDisabled = active || !available
   const voiceLabel = voiceState === 'recording'
-    ? `录音 ${formatDuration(elapsed)}`
+    ? t('录音 {duration}', { duration: formatDuration(elapsed) })
     : voiceState === 'requesting'
-      ? '请求麦克风'
+      ? t('请求麦克风')
       : voiceState === 'saving'
-        ? '保存录音'
+        ? t('保存录音')
         : voiceState === 'transcribing'
-          ? '正在转写'
+          ? t('正在转写')
           : ''
 
   return (
@@ -360,12 +362,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         <textarea
           ref={textareaRef}
-          aria-label="桌面 AI 工作台输入框"
+          aria-label={t('桌面 AI 工作台输入框')}
           placeholder={active
-            ? 'Agent 正在处理...'
+            ? t('Agent 正在处理...')
             : available
-              ? '基于当前页面提问，或描述需要执行的操作'
-              : '正在同步 Room 数据...'}
+              ? t('基于当前页面提问，或描述需要执行的操作')
+              : t('正在同步 Room 数据...')}
           rows={2}
           value={value}
           disabled={!available || active || voiceState === 'saving' || voiceState === 'transcribing'}
@@ -375,7 +377,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           onKeyDown={handleKeyDown}
         />
         {attachments.length > 0 ? (
-          <div className="agent-attachments" aria-label="本地附件">
+          <div className="agent-attachments" aria-label={t('本地附件')}>
             {attachments.map((file) => (
               <span key={file.id} className="agent-attachment">
                 <FileText aria-hidden="true" />
@@ -383,8 +385,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                 <small>{formatFileSize(file.size)}</small>
                 <button
                   type="button"
-                  aria-label={`移除 ${file.name}`}
-                  title="移除附件"
+                  aria-label={t('移除 {name}', { name: file.name })}
+                  title={t('移除附件')}
                   onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))}
                 >
                   <X aria-hidden="true" />
@@ -406,8 +408,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           <button
             type="button"
             className="agent-prompt-tool"
-            title="添加附件"
-            aria-label="添加附件"
+            title={t('添加附件')}
+            aria-label={t('添加附件')}
             disabled={controlsDisabled || voiceBusy}
             onClick={() => fileInputRef.current?.click()}
           >
@@ -417,8 +419,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             type="button"
             className="agent-prompt-tool agent-prompt-voice"
             data-recording={String(voiceState === 'recording')}
-            title={voiceState === 'recording' ? '停止录音' : '语音输入'}
-            aria-label={voiceState === 'recording' ? '停止录音' : '语音输入'}
+            title={t(voiceState === 'recording' ? '停止录音' : '语音输入')}
+            aria-label={t(voiceState === 'recording' ? '停止录音' : '语音输入')}
             disabled={controlsDisabled || (voiceBusy && voiceState !== 'recording')}
             onClick={voiceState === 'recording' ? stopRecording : startRecording}
           >
@@ -432,17 +434,17 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           <span className="agent-composer-context" title={contextSummary}>
             <span>{contextSummary}</span>
             {hasSelectedText ? (
-              <button type="button" aria-label="移除选中文字" title="移除选中文字" onClick={onClearContext}>
+              <button type="button" aria-label={t('移除选中文字')} title={t('移除选中文字')} onClick={onClearContext}>
                 <X aria-hidden="true" />
               </button>
             ) : null}
           </span>
           {active ? (
-            <button type="button" className="agent-prompt-submit is-stop" title="停止" aria-label="停止" onClick={onStop}>
+            <button type="button" className="agent-prompt-submit is-stop" title={t('停止')} aria-label={t('停止')} onClick={onStop}>
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title="发送" aria-label="发送" disabled={!available || !value.trim() || loading || voiceBusy}>
+            <button type="submit" className="agent-prompt-submit" title={t('发送')} aria-label={t('发送')} disabled={!available || !value.trim() || loading || voiceBusy}>
               <ArrowUp aria-hidden="true" />
             </button>
           )}

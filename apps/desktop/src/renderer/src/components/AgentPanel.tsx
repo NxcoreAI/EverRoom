@@ -16,6 +16,7 @@ import {
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { PageId } from '@/data/navigation'
+import { useLocale } from '@/i18n/LocaleContext'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import {
   buildAgentDocumentSelectionRunRequest,
@@ -55,6 +56,7 @@ export function AgentPanel({
   onSessionRouteConsumed: (key: string) => void
   focusRequest?: number
 }) {
+  const { t } = useLocale()
   const [draft, setDraft] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -68,7 +70,7 @@ export function AgentPanel({
   const selectedTextSummary = selectedText.replace(/\s+/g, ' ').trim()
   const contextSummary = selectedTextSummary
     ? `${pageLabel} · “${selectedTextSummary}”`
-    : `${pageLabel} · 未选择文本`
+    : `${pageLabel} · ${t('未选择文本')}`
   const session = useAgentSession(pageLabel, roomId, rooms)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
 
@@ -219,7 +221,7 @@ export function AgentPanel({
     setSubmitting(true)
     try {
       const documents = window.nxcore?.documents
-      if (!documents) throw new Error('文档服务不可用。')
+      if (!documents) throw new Error(t('文档服务不可用。'))
       const snapshot = await documents.get(document.documentId)
       const request = buildAgentDocumentSelectionRunRequest(originalPrompt, snapshot)
       await session.sendPrompt(request.prompt, undefined, undefined, request.activeDocument)
@@ -239,7 +241,7 @@ export function AgentPanel({
     setSubmitting(true)
     try {
       const runId = await session.submitPendingIntent(intent.id, room.id, document?.documentId)
-      if (!runId) throw new Error('当前请求仍在处理中。')
+      if (!runId) throw new Error(t('当前请求仍在处理中。'))
       setPendingNavigationByRun((current) => ({
         ...current,
         [runId]: {

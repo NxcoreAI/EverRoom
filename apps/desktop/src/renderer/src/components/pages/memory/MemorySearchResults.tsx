@@ -1,4 +1,5 @@
 import { MessagesSquare, Search, Sparkles, X } from 'lucide-react'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryAtomicItemDto, MemoryConversationMessageDto } from '../../../../../shared/memory'
 import { formatDate } from './useMemoryData'
@@ -46,28 +47,29 @@ export function MemorySearchResults({ query, result, onClear, onOpenAtomic }: {
   onClear: () => void
   onOpenAtomic: () => void
 }) {
+  const { locale, t } = useLocale()
   const empty = result.atomic.length === 0 && result.conversations.length === 0
   return (
     <div className="mem-search-results">
       <header className="mem-search-header">
         <Search aria-hidden="true" strokeWidth={1.7} />
-        <span>“{query}” 的搜索结果</span>
-        <button type="button" onClick={onClear}><X aria-hidden="true" strokeWidth={1.8} />清除</button>
+        <span>{t('“{query}” 的搜索结果', { query })}</span>
+        <button type="button" onClick={onClear}><X aria-hidden="true" strokeWidth={1.8} />{t('清除')}</button>
       </header>
       {empty ? (
-        <p className="mem-search-empty">没有找到相关记忆或对话。</p>
+        <p className="mem-search-empty">{t('没有找到相关记忆或对话。')}</p>
       ) : (
         <>
           {result.atomic.length > 0 ? (
             <section>
-              <h3><Sparkles aria-hidden="true" strokeWidth={1.7} />原子记忆（{result.atomic.length}）</h3>
+              <h3><Sparkles aria-hidden="true" strokeWidth={1.7} />{t('原子记忆（{count}）', { count: result.atomic.length })}</h3>
               <ul className="mem-search-list">
                 {result.atomic.map((item) => (
                   <li key={item.id}>
                     <button type="button" className="mem-search-item" onClick={onOpenAtomic}>
-                      <span className="mem-type-badge" data-type={item.type}>{TYPE_LABELS[item.type] ?? item.type}</span>
+                      <span className="mem-type-badge" data-type={item.type}>{t(TYPE_LABELS[item.type] ?? item.type)}</span>
                       <span className="mem-atomic-text"><Highlighted text={item.content} query={query} /></span>
-                      <span className="mem-time">{formatDate(item.updatedAt)}</span>
+                      <span className="mem-time">{formatDate(item.updatedAt, locale)}</span>
                     </button>
                   </li>
                 ))}
@@ -76,14 +78,14 @@ export function MemorySearchResults({ query, result, onClear, onOpenAtomic }: {
           ) : null}
           {result.conversations.length > 0 ? (
             <section>
-              <h3><MessagesSquare aria-hidden="true" strokeWidth={1.7} />历史对话（{result.conversations.length}）</h3>
+              <h3><MessagesSquare aria-hidden="true" strokeWidth={1.7} />{t('历史对话（{count}）', { count: result.conversations.length })}</h3>
               <ul className="mem-search-list">
                 {result.conversations.map((message, index) => (
                   <li key={message.id || index}>
                     <div className="mem-search-item mem-search-message" data-role={message.role}>
-                      <span className="mem-role-tag">{message.role === 'user' ? '用户' : '助手'}</span>
+                      <span className="mem-role-tag">{t(message.role === 'user' ? '用户' : '助手')}</span>
                       <span className="mem-atomic-text"><Highlighted text={message.content} query={query} /></span>
-                      <span className="mem-time">{formatDate(message.timestamp)}</span>
+                      <span className="mem-time">{formatDate(message.timestamp, locale)}</span>
                     </div>
                   </li>
                 ))}

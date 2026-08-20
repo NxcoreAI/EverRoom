@@ -9,6 +9,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
 import { EntityFactGraphCanvas } from '../EntityFactGraphCanvas';
@@ -25,6 +26,7 @@ export function MemoryPane({
   onOpenMemory: (id: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
 }) {
+  const { t } = useLocale();
   const graphData = useMemo(() => createEntityFactGraphData(room), [room]);
   const [showFullGraph, setShowFullGraph] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(() => graphData.rootId);
@@ -42,10 +44,10 @@ export function MemoryPane({
     return (
       <div className="context-room-memory-pane">
         <header>
-          <h2>Room 记忆</h2>
+          <h2>{t('Room 记忆')}</h2>
           <button type="button" onClick={() => setShowFullGraph(false)}>
             <ChevronLeft aria-hidden="true" />
-            返回实体与事实
+            {t('返回实体与事实')}
           </button>
         </header>
         <div className="context-room-memory-graph-stage context-room-memory-full-graph">
@@ -63,8 +65,8 @@ export function MemoryPane({
   const selectedMemory = selectedNode.kind === 'fact' ? selectedNode.memory : null;
   const selectedMeta =
     selectedNode.kind === 'fact'
-      ? `${selectedNode.memory.status} · 仅 Room：${room.title}`
-      : `${selectedNode.entityType} · 实体`;
+      ? t('{status} · 仅 Room：{room}', { status: t(selectedNode.memory.status), room: room.title })
+      : t('{type} · 实体', { type: t(selectedNode.entityType) });
   const isRootEntity = selectedNode.id === graphData.rootId;
   const isPerson = selectedNode.kind === 'entity' && selectedNode.entityType === '人物';
   const DetailIcon = selectedMemory
@@ -90,11 +92,11 @@ export function MemoryPane({
   return (
     <div className="context-room-memory-pane">
       <header>
-        <h2>实体与事实</h2>
+        <h2>{t('实体与事实')}</h2>
         {hasGraphContent ? (
           <button type="button" onClick={() => setShowFullGraph(true)}>
             <Maximize2 aria-hidden="true" />
-            完整图谱
+            {t('完整图谱')}
           </button>
         ) : null}
       </header>
@@ -116,14 +118,14 @@ export function MemoryPane({
                 <DetailIcon aria-hidden="true" />
               </span>
               <span>
-                <h3>{selectedMemory ? selectedMemory.type : selectedNode.label}</h3>
+                <h3>{selectedMemory ? t(selectedMemory.type) : selectedNode.label}</h3>
                 <small>{selectedMeta}</small>
               </span>
             </header>
             <p>{selectedNode.description}</p>
             <section>
               <div className="context-room-memory-detail-section-head">
-                <span>{selectedMemory ? '来源' : '关联记忆'}</span>
+                <span>{t(selectedMemory ? '来源' : '关联记忆')}</span>
                 <small>
                   {selectedMemory ? (selectedMemory.sources?.length ?? 0) : linkedFacts.length}
                 </small>
@@ -141,7 +143,7 @@ export function MemoryPane({
                         </span>
                         <span>
                           <b>{source.name}</b>
-                          <small>{source.type}</small>
+                          <small>{t(source.type)}</small>
                         </span>
                       </button>
                     ))
@@ -157,10 +159,10 @@ export function MemoryPane({
                       </button>
                     ))}
                 {selectedMemory && !selectedMemory.sources?.length ? (
-                  <span className="context-room-memory-detail-empty">暂无来源</span>
+                  <span className="context-room-memory-detail-empty">{t('暂无来源')}</span>
                 ) : null}
                 {!selectedMemory && !linkedFacts.length ? (
-                  <span className="context-room-memory-detail-empty">暂无关联记忆</span>
+                  <span className="context-room-memory-detail-empty">{t('暂无关联记忆')}</span>
                 ) : null}
               </div>
             </section>
@@ -172,7 +174,7 @@ export function MemoryPane({
                   disabled={selectedMemory.status === '已禁用'}
                   onClick={() => setDisableConfirmOpen(true)}
                 >
-                  {selectedMemory.status === '已禁用' ? '已禁用' : '禁用'}
+                  {t(selectedMemory.status === '已禁用' ? '已禁用' : '禁用')}
                 </button>
               </footer>
             ) : null}
@@ -181,23 +183,23 @@ export function MemoryPane({
       ) : (
         <PanelEmptyState
           icon={Network}
-          title="还没有实体与事实"
-          description="Room 中提取的人物、关系和记忆事实会形成图谱。"
+          title={t('还没有实体与事实')}
+          description={t('Room 中提取的人物、关系和记忆事实会形成图谱。')}
         />
       )}
       {selectedMemory ? (
         <ActionConfirmDialog
           open={disableConfirmOpen}
           onOpenChange={setDisableConfirmOpen}
-          title="禁用记忆"
-          summary="Agent 将不再使用这条记忆参与回答和执行。"
+          title={t('禁用记忆')}
+          summary={t('Agent 将不再使用这条记忆参与回答和执行。')}
           rows={[
-            { label: '记忆类型', value: selectedMemory.type },
-            { label: '作用范围', value: room.title },
+            { label: t('记忆类型'), value: t(selectedMemory.type) },
+            { label: t('作用范围'), value: room.title },
           ]}
           sources={selectedMemory.sources ?? []}
-          risk="禁用不会删除原始资料，可稍后重新启用或继续编辑。"
-          confirmLabel="确认禁用"
+          risk={t('禁用不会删除原始资料，可稍后重新启用或继续编辑。')}
+          confirmLabel={t('确认禁用')}
           danger
           onConfirm={() =>
             onUpdateRoom((current) => ({

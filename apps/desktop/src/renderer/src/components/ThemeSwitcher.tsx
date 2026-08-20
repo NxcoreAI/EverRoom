@@ -2,6 +2,7 @@ import { Check, Palette } from 'lucide-react'
 import { useRef } from 'react'
 
 import { PRODUCT_NAME } from '@/components/ui/brand'
+import { useLocale } from '@/i18n/LocaleContext'
 
 export type ThemeId = 'soft' | 'mono' | 'crimson' | 'nxcore'
 
@@ -44,17 +45,18 @@ export function ThemeSwitcher({
   theme: ThemeId
   onChange: (theme: ThemeId) => void
 }) {
+  const { t } = useLocale()
   const detailsRef = useRef<HTMLDetailsElement>(null)
 
   return (
     <details ref={detailsRef} className="theme-switcher no-drag">
-      <summary className="icon-button" aria-label="切换界面配色" title="切换界面配色">
+      <summary className="icon-button" aria-label={t('切换界面配色')} title={t('切换界面配色')}>
         <Palette aria-hidden="true" />
       </summary>
       <div className="theme-menu">
         <div className="theme-menu-heading">
-          <strong>界面配色</strong>
-          <span>即时预览</span>
+          <strong>{t('界面配色')}</strong>
+          <span>{t('即时预览')}</span>
         </div>
         {themes.map((item) => (
           <button
@@ -74,7 +76,7 @@ export function ThemeSwitcher({
             </span>
             <span className="theme-option-copy">
               <strong>{item.label}</strong>
-              <small>{item.description}</small>
+              <small>{t(item.description)}</small>
             </span>
             {theme === item.id ? <Check className="theme-check" aria-hidden="true" /> : null}
           </button>

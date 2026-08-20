@@ -1,4 +1,5 @@
 import { RotateCcw, X } from 'lucide-react'
+import { useLocale } from '../../../../i18n/LocaleContext'
 
 import type { ContextRoomKind, ContextRoomRecord } from '../types'
 import { ActionConfirmDialog, ReferenceDialog } from './shared'
@@ -24,6 +25,7 @@ export function RoomForm({
   onCancel?: () => void
   onSubmit: (draft: DraftRoom) => void
 }) {
+  const { t } = useLocale()
   return (
     <form
       className="context-room-room-form"
@@ -40,19 +42,19 @@ export function RoomForm({
         })
       }}
     >
-      <h2>{title}</h2>
+      <h2>{t(title)}</h2>
       <label>
-        <span>名称</span>
+        <span>{t('名称')}</span>
         <input name="name" defaultValue={initial?.name} required maxLength={40} autoFocus />
       </label>
       {renameOnly ? (
         <input type="hidden" name="kind" value={initial?.kind ?? '项目'} />
       ) : (
         <label>
-          <span>类型</span>
+          <span>{t('类型')}</span>
           <select name="kind" defaultValue={initial?.kind ?? '项目'}>
             {(['项目', '主题', '人物', '长期目标', '议题', '事件'] as ContextRoomKind[]).map((kind) => (
-              <option key={kind}>{kind}</option>
+              <option key={kind}>{t(kind)}</option>
             ))}
           </select>
         </label>
@@ -61,18 +63,18 @@ export function RoomForm({
         <input type="hidden" name="summary" value={initial?.summary ?? ''} />
       ) : (
         <label>
-          <span>初始说明</span>
+          <span>{t('初始说明')}</span>
           <textarea
             name="summary"
             rows={4}
             defaultValue={initial?.summary}
-            placeholder="描述目标、范围或需要聚合的资料"
+            placeholder={t('描述目标、范围或需要聚合的资料')}
           />
         </label>
       )}
       <footer>
-        {onCancel ? <button type="button" className="context-room-ghost" onClick={onCancel}>取消</button> : null}
-        <button type="submit" className="context-room-primary">{submitLabel}</button>
+        {onCancel ? <button type="button" className="context-room-ghost" onClick={onCancel}>{t('取消')}</button> : null}
+        <button type="submit" className="context-room-primary">{t(submitLabel)}</button>
       </footer>
     </form>
   )
@@ -99,17 +101,18 @@ export function RoomLifecycleDialogs({
   onDeleteRoom: (roomId: string) => void
   onRestoreRoom: (roomId: string) => void
 }) {
+  const { t } = useLocale()
   return (
     <>
       <ReferenceDialog
         open={Boolean(renameRoom)}
         onOpenChange={(open) => !open && onRenameRoomChange(null)}
-        title="重命名 Room"
+        title={t('重命名 Room')}
       >
         {renameRoom ? (
           <RoomForm
-            title={`为「${renameRoom.title}」设置新名称`}
-            submitLabel="保存"
+            title={t('为「{title}」设置新名称', { title: renameRoom.title })}
+            submitLabel={t('保存')}
             renameOnly
             onCancel={() => onRenameRoomChange(null)}
             initial={{ name: renameRoom.title, kind: renameRoom.kind, summary: renameRoom.brief.background }}
@@ -123,14 +126,18 @@ export function RoomLifecycleDialogs({
       <ActionConfirmDialog
         open={Boolean(deleteRoom)}
         onOpenChange={(open) => !open && onDeleteRoomChange(null)}
-        title="删除 Context Room"
-        summary={deleteRoom ? `“${deleteRoom.title}”将移至已删除 Room。` : ''}
+        title={t('删除 Context Room')}
+        summary={deleteRoom ? t('“{title}”将移至已删除 Room。', { title: deleteRoom.title }) : ''}
         rows={deleteRoom ? [
-          { label: 'Room 类型', value: deleteRoom.kind },
-          { label: '资料范围', value: `文档 ${String(deleteRoom.stats.docs)} · 邮件 ${String(deleteRoom.stats.mails)} · 会议 ${String(deleteRoom.stats.meetings)}` },
+          { label: t('Room 类型'), value: t(deleteRoom.kind) },
+          { label: t('资料范围'), value: t('文档 {docs} · 邮件 {mails} · 会议 {meetings}', {
+            docs: deleteRoom.stats.docs,
+            mails: deleteRoom.stats.mails,
+            meetings: deleteRoom.stats.meetings,
+          }) },
         ] : []}
-        risk="资料本体不会被删除，但 Agent 不再以此 Room 作为上下文边界，可在已删除 Room 中恢复。"
-        confirmLabel="删除"
+        risk={t('资料本体不会被删除，但 Agent 不再以此 Room 作为上下文边界，可在已删除 Room 中恢复。')}
+        confirmLabel={t('删除')}
         danger
         onConfirm={() => {
           if (!deleteRoom) return
@@ -141,11 +148,11 @@ export function RoomLifecycleDialogs({
       />
       {recentlyDeleted ? (
         <div className="context-room-undo" role="status">
-          <span>已删除“{recentlyDeleted.title}”</span>
+          <span>{t('已删除“{title}”', { title: recentlyDeleted.title })}</span>
           <button type="button" onClick={() => { onRestoreRoom(recentlyDeleted.id); onRecentlyDeletedChange(null) }}>
-            <RotateCcw aria-hidden="true" />撤销
+            <RotateCcw aria-hidden="true" />{t('撤销')}
           </button>
-          <button type="button" aria-label="关闭撤销提示" onClick={() => onRecentlyDeletedChange(null)}>
+          <button type="button" aria-label={t('关闭撤销提示')} onClick={() => onRecentlyDeletedChange(null)}>
             <X aria-hidden="true" />
           </button>
         </div>

@@ -1,9 +1,11 @@
 // Gateway 启动期间 Agent 服务不可用,整个面板(会话栏/对话/输入框)先用骨架屏占位。
 import './AgentPanelSkeleton.css'
+import { useLocale } from '@/i18n/LocaleContext'
 
 export function AgentPanelSkeleton() {
+  const { t } = useLocale()
   return (
-    <aside className="agent-panel" aria-busy="true" aria-label="Agent 服务启动中">
+    <aside className="agent-panel" aria-busy="true" aria-label={t('Agent 服务启动中')}>
       <header className="agent-chat-toolbar">
         <div className="agent-skeleton-trigger">
           <span className="agent-skeleton-icon" />

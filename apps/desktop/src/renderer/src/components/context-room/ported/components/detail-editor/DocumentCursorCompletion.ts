@@ -4,6 +4,7 @@ import { Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/s
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { useEffect, useRef, useState } from 'react'
+import { useLocale } from '../../../../../i18n/LocaleContext'
 
 import {
   streamDocumentCursorCompletion,
@@ -540,6 +541,7 @@ export function useDocumentCursorCompletion({
   documentName: string
   enabled: boolean
 }): boolean {
+  const { locale } = useLocale()
   const [running, setRunning] = useState(false)
   const enabledRef = useRef(enabled)
   const requestRef = useRef<ActiveCompletionRequest | null>(null)
@@ -647,6 +649,7 @@ export function useDocumentCursorCompletion({
         nearbyBlocks: context.nearbyBlocks,
       }, {
         signal: controller.signal,
+        responseLanguage: locale,
         onSuggestion: (suggestion) => {
           const active = requestRef.current
           const currentContext = documentCursorCompletionContext(editor)
@@ -1013,7 +1016,7 @@ export function useDocumentCursorCompletion({
       editorElement.removeEventListener('focusout', handleFocusOut)
       editor.off('transaction', handleTransaction)
     }
-  }, [documentName, editor, roomId])
+  }, [documentName, editor, locale, roomId])
 
   useEffect(() => {
     if (enabled || !editor) return

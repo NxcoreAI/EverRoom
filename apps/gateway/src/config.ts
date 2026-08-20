@@ -67,6 +67,9 @@ const RawConfigSchema = Type.Object(
     aiContextWindow: Type.Integer({ minimum: 1 }),
     aiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
     aiReasoning: AiReasoningSchema,
+    vlmBaseUrl: Type.String(),
+    vlmApiKey: Type.String(),
+    vlmModel: Type.String(),
     cursorCompletionAiProvider: Type.String(),
     cursorCompletionAiModel: Type.String(),
     cursorCompletionAiBaseUrl: Type.String(),
@@ -149,6 +152,13 @@ export interface AliyunOssConfig {
 
 /** 百炼（DashScope compatible-mode）联网搜索配置，注入 agent 的 web_search 工具。 */
 export interface WebSearchConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+/** 在线视觉理解配置；图片与推理结果仍只持久化在本地。 */
+export interface VlmConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -256,6 +266,8 @@ export interface GatewayConfig {
   mcpConfigPath: string;
   /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
   webSearch: WebSearchConfig | null;
+  /** OpenAI-compatible 在线视觉模型；配置不完整时关闭。 */
+  vlm?: VlmConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
   connectors?: {
@@ -586,6 +598,9 @@ export function loadConfig(
     ),
     aiTemperature: parseTemperature(env.NXCORE_AI_TEMPERATURE ?? "0.3"),
     aiReasoning: env.NXCORE_AI_REASONING ?? "medium",
+    vlmBaseUrl: env.NXCORE_VLM_BASE_URL?.trim() ?? "",
+    vlmApiKey: env.NXCORE_VLM_API_KEY?.trim() ?? "",
+    vlmModel: env.NXCORE_VLM_MODEL?.trim() ?? "",
     cursorCompletionAiProvider: env.NXCORE_CURSOR_COMPLETION_AI_PROVIDER?.trim()
       || env.NXCORE_AI_PROVIDER?.trim() || "",
     cursorCompletionAiModel: env.NXCORE_CURSOR_COMPLETION_AI_MODEL?.trim()
@@ -735,6 +750,9 @@ export function loadConfig(
       const missing = ossFields.filter(([, value]) => !value).map(([name]) => name);
       throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
     }
+  }
+  if (rawConfig.vlmBaseUrl) {
+    validateAiEndpoint(rawConfig.vlmBaseUrl, "NXCORE_VLM_BASE_URL");
   }
   if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_URL and NXCORE_NANGO_SECRET");
   if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_URL must use HTTPS except for loopback development"); }
@@ -906,6 +924,13 @@ export function loadConfig(
                 prefix: rawConfig.asrAliyunOssPrefix.replace(/^\/+|\/+$/g, ""),
               }
             : null,
+        }
+      : null,
+    vlm: rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel
+      ? {
+          baseUrl: rawConfig.vlmBaseUrl,
+          apiKey: rawConfig.vlmApiKey,
+          model: rawConfig.vlmModel,
         }
       : null,
     connectors: {

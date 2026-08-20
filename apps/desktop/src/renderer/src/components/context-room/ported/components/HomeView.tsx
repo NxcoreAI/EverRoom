@@ -9,6 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
+import { useLocale } from '../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../types';
 import { ReferenceDialog } from './shared';
@@ -31,6 +32,7 @@ function RoomGraph({
   rooms: ContextRoomRecord[];
   onOpen: (id: string) => void;
 }) {
+  const { t } = useLocale();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const graphRef = useRef<RoomGraphCanvasHandle>(null);
   const selected = rooms.find((room) => room.id === selectedId);
@@ -38,8 +40,8 @@ function RoomGraph({
   return (
     <section className="context-room-home-section context-room-home-graph-section">
       <div className="context-room-home-section-title">
-        <span>关系</span>
-        <h2>Room 关系图谱</h2>
+        <span>{t('关系')}</span>
+        <h2>{t('Room 关系图谱')}</h2>
       </div>
       <div className={`context-room-room-graph-layout${selected ? ' is-selected' : ''}`}>
         <div className="context-room-room-graph-canvas">
@@ -55,14 +57,14 @@ function RoomGraph({
             className="context-room-graph-fit-button"
             onClick={() => void graphRef.current?.fitView()}
           >
-            适应画布
+            {t('适应画布')}
           </button>
         </div>
         {selected ? (
           <aside className="context-room-room-graph-drawer">
             <button
               type="button"
-              aria-label="关闭 Room 关系详情"
+              aria-label={t('关闭 Room 关系详情')}
               onClick={() => setSelectedId(null)}
             >
               <X aria-hidden="true" />
@@ -84,7 +86,7 @@ function RoomGraph({
             </div>
             <div className="context-room-graph-materials">
               <header>
-                <span>相关资料</span>
+                <span>{t('相关资料')}</span>
                 <b>{selected.materials.length + selected.fileItems.length}</b>
               </header>
               {[...selected.materials.slice(0, 3), ...selected.fileItems.slice(0, 2)].map(
@@ -108,7 +110,7 @@ function RoomGraph({
               className="context-room-primary"
               onClick={() => onOpen(selected.id)}
             >
-              打开 Room
+              {t('打开 Room')}
             </button>
           </aside>
         ) : null}
@@ -138,6 +140,7 @@ export function HomeView({
   onOpenDetail: (roomId: string) => void;
   onShowAll: () => void;
 }) {
+  const { t } = useLocale();
   const [query, setQuery] = useState('');
   const [recommendation, setRecommendation] = useState<RoomRecommendation | null>(null);
   const [newRoomOpen, setNewRoomOpen] = useState(false);
@@ -163,14 +166,14 @@ export function HomeView({
             <div className="context-room-my-toolbar" data-testid="context-room-list-toolbar">
               <div className="context-room-my-title">
                 <div className="context-room-home-section-title">
-                  <span>我的</span>
-                  <h2>我的 Room</h2>
+                  <span>{t('我的')}</span>
+                  <h2>{t('我的 Room')}</h2>
                 </div>
-                <div className="context-room-my-actions" aria-label="Room 操作">
+                <div className="context-room-my-actions" aria-label={t('Room 操作')}>
                   <button
                     type="button"
-                    aria-label="新建 Room"
-                    title="新建 Room"
+                    aria-label={t('新建 Room')}
+                    title={t('新建 Room')}
                     className="context-room-add-room"
                     onClick={() => setNewRoomOpen(true)}
                   >
@@ -179,8 +182,8 @@ export function HomeView({
                   {deletedRooms.length ? (
                     <button
                       type="button"
-                      aria-label={`已删除 Room ${String(deletedRooms.length)} 项`}
-                      title="已删除 Room"
+                      aria-label={t('已删除 Room {count} 项', { count: deletedRooms.length })}
+                      title={t('已删除 Room')}
                       className="context-room-add-room"
                       onClick={() => setDeletedRoomsOpen(true)}
                     >
@@ -193,8 +196,8 @@ export function HomeView({
                 <Search aria-hidden="true" />
                 <input
                   type="search"
-                  aria-label="搜索我的 Room"
-                  placeholder="搜索我的 Room"
+                  aria-label={t('搜索我的 Room')}
+                  placeholder={t('搜索我的 Room')}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
@@ -213,14 +216,14 @@ export function HomeView({
               {!visibleRooms.length ? (
                 <div className="context-room-home-empty">
                   <Layers3 aria-hidden="true" />
-                  <h3>没有匹配的 Room</h3>
-                  <p>调整搜索关键词，或创建一个新的 Context Room。</p>
+                  <h3>{t('没有匹配的 Room')}</h3>
+                  <p>{t('调整搜索关键词，或创建一个新的 Context Room。')}</p>
                 </div>
               ) : null}
             </div>
             {!query.trim() && rooms.length ? (
               <button type="button" className="context-room-show-all" onClick={onShowAll}>
-                <span>显示全部 Room</span>
+                <span>{t('显示全部 Room')}</span>
                 <small>{rooms.length}</small>
                 <ArrowRight aria-hidden="true" />
               </button>
@@ -236,7 +239,7 @@ export function HomeView({
       <ReferenceDialog
         open={Boolean(recommendation)}
         onOpenChange={(open) => !open && setRecommendation(null)}
-        title="推荐 Room 详情"
+        title={t('推荐 Room 详情')}
       >
         {recommendation ? (
           <RoomRecommendationDialog
@@ -254,10 +257,10 @@ export function HomeView({
         ) : null}
       </ReferenceDialog>
 
-      <ReferenceDialog open={newRoomOpen} onOpenChange={setNewRoomOpen} title="新建 Context Room">
+      <ReferenceDialog open={newRoomOpen} onOpenChange={setNewRoomOpen} title={t('新建 Context Room')}>
         <RoomForm
-          title="新建 Context Room"
-          submitLabel="创建 Room"
+          title={t('新建 Context Room')}
+          submitLabel={t('创建 Room')}
           onCancel={() => setNewRoomOpen(false)}
           onSubmit={(draft) => {
             onCreateRoom(draft);
@@ -268,13 +271,13 @@ export function HomeView({
       <ReferenceDialog
         open={deletedRoomsOpen}
         onOpenChange={setDeletedRoomsOpen}
-        title="已删除 Room"
+        title={t('已删除 Room')}
       >
         <div className="context-room-deleted-dialog">
           <header>
             <div>
-              <span>管理</span>
-              <h2>已删除 Room</h2>
+              <span>{t('管理')}</span>
+              <h2>{t('已删除 Room')}</h2>
             </div>
           </header>
           <div className="context-room-deleted-list">
@@ -292,7 +295,7 @@ export function HomeView({
                 <span>
                   <b>{room.title}</b>
                   <small>
-                    {room.kind} · {room.materials.length + room.fileItems.length} 项资料
+                    {t(room.kind)} · {t('{count} 项资料', { count: room.materials.length + room.fileItems.length })}
                   </small>
                 </span>
                 <button
@@ -301,7 +304,7 @@ export function HomeView({
                   onClick={() => onRestoreRoom(room.id)}
                 >
                   <RotateCcw aria-hidden="true" />
-                  恢复
+                  {t('恢复')}
                 </button>
               </article>
             ))}

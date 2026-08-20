@@ -1,5 +1,6 @@
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocale } from '../../../../i18n/LocaleContext'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
 import {
@@ -58,6 +59,7 @@ export function PortedDetail({
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>
   onEmptyTrash: (roomId: string) => Promise<void>
 }) {
+  const { t } = useLocale()
   const [activePane, setActivePaneState] = useState<DetailPane>(initialActivePane)
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null)
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
@@ -258,10 +260,10 @@ export function PortedDetail({
         <button
           type="button"
           className="context-room-visually-hidden"
-          aria-label="Back to Context Room home"
+          aria-label={t('返回 Context Room 首页')}
           onClick={onBack}
         >
-          返回 Context Room
+          {t('返回 Context Room')}
         </button>
       </main>
     </div>

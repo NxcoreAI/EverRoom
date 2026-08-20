@@ -13,6 +13,7 @@ import {
 
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { ProductBrand } from '@/components/ui/ProductBrand'
+import { useLocale } from '@/i18n/LocaleContext'
 
 export function TopBar({
   contextRoomTabs,
@@ -39,6 +40,7 @@ export function TopBar({
   onToggleAgent: () => void
   onToggleNav: () => void
 }) {
+  const { t } = useLocale()
   return (
     <header className="topbar">
       <div className="brand-area">
@@ -46,26 +48,26 @@ export function TopBar({
         <button
           className="icon-button no-drag nav-collapse"
           type="button"
-          title={navCollapsed ? '展开导航' : '收起导航'}
-          aria-label={navCollapsed ? '展开导航' : '收起导航'}
+          title={t(navCollapsed ? '展开导航' : '收起导航')}
+          aria-label={t(navCollapsed ? '展开导航' : '收起导航')}
           onClick={onToggleNav}
         >
           {navCollapsed ? <ChevronRight aria-hidden="true" strokeWidth={1.8} /> : <ChevronLeft aria-hidden="true" strokeWidth={1.8} />}
         </button>
       </div>
 
-      <div className="tabs" role="tablist" aria-label="打开的页面">
+      <div className="tabs" role="tablist" aria-label={t('打开的页面')}>
         <div
           className="tab"
           data-active={String(activeContextRoomId === null)}
           data-page="home"
           role="tab"
-          aria-label="工作台"
+          aria-label={t('工作台')}
           aria-selected={activeContextRoomId === null}
         >
           <button type="button" onClick={onActivateWorkbench}>
             <LayoutGrid aria-hidden="true" strokeWidth={1.8} />
-            <span>工作台</span>
+            <span>{t('工作台')}</span>
             <LockKeyhole className="tab-lock" aria-hidden="true" strokeWidth={1.8} />
           </button>
         </div>
@@ -88,7 +90,7 @@ export function TopBar({
               <button
                 type="button"
                 className="tab-close"
-                aria-label={`关闭 ${room.title}`}
+                aria-label={t('关闭 {title}', { title: room.title })}
                 onClick={() => onCloseContextRoom(room.id)}
               >
                 <X aria-hidden="true" strokeWidth={1.8} />
@@ -99,14 +101,14 @@ export function TopBar({
       </div>
 
       <div className="top-actions no-drag">
-        <button type="button" className="icon-button" title="新建标签" aria-label="新建标签">
+        <button type="button" className="icon-button" title={t('新建标签')} aria-label={t('新建标签')}>
           <Plus aria-hidden="true" strokeWidth={1.8} />
         </button>
         <button
           type="button"
           className="icon-button"
-          title="恢复已关闭"
-          aria-label="恢复已关闭"
+          title={t('恢复已关闭')}
+          aria-label={t('恢复已关闭')}
           disabled={!canRestoreContextRoom}
           onClick={onRestoreContextRoom}
         >
@@ -115,8 +117,8 @@ export function TopBar({
         <button
           type="button"
           className="icon-button"
-          title={agentOpen ? '收起 Agent' : '展开 Agent'}
-          aria-label={agentOpen ? '收起 Agent' : '展开 Agent'}
+          title={t(agentOpen ? '收起 Agent' : '展开 Agent')}
+          aria-label={t(agentOpen ? '收起 Agent' : '展开 Agent')}
           onClick={onToggleAgent}
         >
           {agentOpen ? <PanelRightClose aria-hidden="true" strokeWidth={1.8} /> : <PanelRightOpen aria-hidden="true" strokeWidth={1.8} />}

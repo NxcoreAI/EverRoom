@@ -5,6 +5,7 @@ import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useAccount } from '@/state/AccountContext'
 import { loadRealitySettings, onRealitySettingsChanged } from '@/state/realitySettings'
 import { showToast } from '@/state/toast'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 import type { AsrJob, AsrResult, NxcoreDesktopApi, RealityEvent } from '../../../../shared/sources'
 import './RecordingPage.css'
@@ -30,13 +31,13 @@ function formatTimestamp(milliseconds: number): string {
   return formatDuration(Math.max(0, Math.floor(milliseconds / 1000)))
 }
 
-function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : '录音转写失败，请重试。'
+function errorMessage(error: unknown, t: Translate): string {
+  const message = error instanceof Error ? error.message : t('录音转写失败，请重试。')
   if (message === 'SERVER_ERROR') {
-    return '阿里云未能读取或处理录音（SERVER_ERROR）。当前百炼临时存储链路不可用，请配置自有 OSS 后重试。'
+    return t('阿里云未能读取或处理录音（SERVER_ERROR）。当前百炼临时存储链路不可用，请配置自有 OSS 后重试。')
   }
   if (message.includes('own OSS is required')) {
-    return '尚未配置阿里云 OSS。请配置 Bucket、Region 和访问凭证后再转写。'
+    return t('尚未配置阿里云 OSS。请配置 Bucket、Region 和访问凭证后再转写。')
   }
   return message
 }
@@ -45,36 +46,36 @@ function isDesktopRequestError(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith('Error invoking remote method')
 }
 
-function reportRecordingError(error: unknown, audioSource: AudioSource): void {
+function reportRecordingError(error: unknown, audioSource: AudioSource, t: Translate): void {
   if (isDesktopRequestError(error)) return
-  const message = errorMessage(error)
+  const message = errorMessage(error, t)
   window.nxcore?.errors.report(audioSource === 'system'
     ? {
         channel: 'media:system-audio',
-        title: '需要系统音频权限',
-        message: '请在 macOS 系统设置中允许 EverRoom 使用“屏幕与系统音频录制”，然后完全退出并重新打开 EverRoom。',
+        title: t('需要系统音频权限'),
+        message: t('请在 macOS 系统设置中允许 EverRoom 使用“屏幕与系统音频录制”，然后完全退出并重新打开 EverRoom。'),
         action: 'open-system-audio-settings',
-        actionLabel: '打开系统设置',
+        actionLabel: t('打开系统设置'),
       }
     : {
         channel: 'media:microphone',
-        title: '录音未开始',
+        title: t('录音未开始'),
         message,
         action: 'open-microphone-settings',
-        actionLabel: '打开麦克风设置',
+        actionLabel: t('打开麦克风设置'),
       })
 }
 
-function desktopApi(): NxcoreDesktopApi {
-  if (!window.nxcore) throw new Error(`录音转写仅在 ${PRODUCT_NAME} 桌面版中可用。`)
+function desktopApi(t: Translate): NxcoreDesktopApi {
+  if (!window.nxcore) throw new Error(t('录音转写仅在 {product} 桌面版中可用。', { product: PRODUCT_NAME }))
   return window.nxcore
 }
 
-async function waitForStop(recorder: MediaRecorder): Promise<void> {
+async function waitForStop(recorder: MediaRecorder, t: Translate): Promise<void> {
   if (recorder.state === 'inactive') return
   await new Promise<void>((resolve, reject) => {
     recorder.addEventListener('stop', () => resolve(), { once: true })
-    recorder.addEventListener('error', () => reject(new Error('录音设备发生错误。')), { once: true })
+    recorder.addEventListener('error', () => reject(new Error(t('录音设备发生错误。'))), { once: true })
     recorder.stop()
   })
 }
@@ -90,13 +91,14 @@ const CassetteListeningControl = memo(function CassetteListeningControl({
   elapsed: number
   onToggle: () => void
 }) {
+  const { t } = useLocale()
   return (
     <button
       type="button"
       className="cassette-switch"
       role="switch"
       aria-checked={listening}
-      aria-label={listening ? '关闭聆听' : busy ? '正在处理录音' : '开启聆听'}
+      aria-label={t(listening ? '关闭聆听' : busy ? '正在处理录音' : '开启聆听')}
       data-active={String(listening)}
       data-busy={String(busy)}
       disabled={busy}
@@ -130,6 +132,7 @@ export function RecordingPage({
   embedded?: boolean
   controlOnly?: boolean
 }) {
+  const { t } = useLocale()
   const initialSettings = loadRealitySettings()
   const [state, setState] = useState<RecordingState>('idle')
   const [elapsed, setElapsed] = useState(0)
@@ -193,17 +196,17 @@ export function RecordingPage({
     let job = initialJob
     const deadline = Date.now() + MAX_TRANSCRIPTION_WAIT_MS
     while (job.status === 'pending' || job.status === 'running') {
-      if (Date.now() >= deadline) throw new Error('转写等待超过 30 分钟，请稍后重试。')
+      if (Date.now() >= deadline) throw new Error(t('转写等待超过 30 分钟，请稍后重试。'))
       await new Promise((resolve) => window.setTimeout(resolve, TRANSCRIPTION_POLL_INTERVAL_MS))
       if (!mountedRef.current) return
-      job = await desktopApi().asr.getJob(job.id)
+      job = await desktopApi(t).asr.getJob(job.id)
     }
     if (job.status !== 'completed' || !job.result) {
-      throw new Error(job.error ?? '转写任务未能完成。')
+      throw new Error(job.error ?? t('转写任务未能完成。'))
     }
     setResult(job.result)
     setState('completed')
-    const event = await desktopApi().reality.getEvent(eventId)
+    const event = await desktopApi(t).reality.getEvent(eventId)
     onEventChanged?.(event)
     realityEventIdRef.current = null
   }
@@ -212,8 +215,8 @@ export function RecordingPage({
     if (!window.nxcore?.asr) {
       window.nxcore?.errors.report({
         channel: 'media:recording',
-        title: '录音不可用',
-        message: `录音转写仅在 ${PRODUCT_NAME} 桌面版中可用。`,
+        title: t('录音不可用'),
+        message: t('录音转写仅在 {product} 桌面版中可用。', { product: PRODUCT_NAME }),
       })
       setState('error')
       return
@@ -223,7 +226,7 @@ export function RecordingPage({
     setElapsed(0)
     try {
       if (audioSource === 'microphone') {
-        const microphoneAllowed = await desktopApi().asr.requestMicrophoneAccess()
+        const microphoneAllowed = await desktopApi(t).asr.requestMicrophoneAccess()
         if (!microphoneAllowed) {
           throw new DOMException('Microphone access was denied.', 'NotAllowedError')
         }
@@ -235,11 +238,11 @@ export function RecordingPage({
       if (audioTracks.length === 0) {
         stream.getTracks().forEach((track) => track.stop())
         throw new Error(audioSource === 'system'
-          ? '未能获取电脑音频。请在 macOS 系统设置中允许 EverRoom 录制系统音频。'
-          : '未能获取麦克风音频。')
+          ? t('未能获取电脑音频。请在 macOS 系统设置中允许 EverRoom 录制系统音频。')
+          : t('未能获取麦克风音频。'))
       }
       const mimeType = supportedMimeType()
-      const { id } = await desktopApi().asr.beginRecording(mimeType || 'audio/webm')
+      const { id } = await desktopApi(t).asr.beginRecording(mimeType || 'audio/webm')
       const audioStream = new MediaStream(audioTracks)
       const recorder = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream)
       streamRef.current = stream
@@ -250,7 +253,7 @@ export function RecordingPage({
         if (!event.data.size) return
         writeQueueRef.current = writeQueueRef.current.then(async () => {
           const chunk = new Uint8Array(await event.data.arrayBuffer())
-          await desktopApi().asr.appendRecording(id, chunk)
+          await desktopApi(t).asr.appendRecording(id, chunk)
         })
       })
       recorder.start(1000)
@@ -258,18 +261,18 @@ export function RecordingPage({
       setState('recording')
     } catch (caught) {
       const recorder = recorderRef.current
-      if (recorder?.state === 'recording') await waitForStop(recorder).catch(() => undefined)
+      if (recorder?.state === 'recording') await waitForStop(recorder, t).catch(() => undefined)
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       recorderRef.current = null
       recordingStartedAtRef.current = null
       const id = recordingIdRef.current
       recordingIdRef.current = null
-      if (id) await desktopApi().asr.cancelRecording(id).catch(() => undefined)
+      if (id) await desktopApi(t).asr.cancelRecording(id).catch(() => undefined)
       const eventId = realityEventIdRef.current
       realityEventIdRef.current = null
-      if (eventId) await desktopApi().reality.fail(eventId, errorMessage(caught)).catch(() => undefined)
-      reportRecordingError(caught, audioSource)
+      if (eventId) await desktopApi(t).reality.fail(eventId, errorMessage(caught, t)).catch(() => undefined)
+      reportRecordingError(caught, audioSource, t)
       setState('error')
     }
   }
@@ -280,7 +283,7 @@ export function RecordingPage({
     if (!recorder || !id) return
     setState('saving')
     try {
-      await waitForStop(recorder)
+      await waitForStop(recorder, t)
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       recorderRef.current = null
@@ -289,21 +292,21 @@ export function RecordingPage({
       recordingStartedAtRef.current = null
       if (durationMs < MIN_TRANSCRIPTION_DURATION_MS) {
         recordingIdRef.current = null
-        await desktopApi().asr.cancelRecording(id)
+        await desktopApi(t).asr.cancelRecording(id)
         setElapsed(0)
         setState('idle')
         showToast({
-          title: '录音时间太短',
-          message: '少于 10 秒的录音不会转写，本次内容已丢弃。',
+          title: t('录音时间太短'),
+          message: t('少于 10 秒的录音不会转写，本次内容已丢弃。'),
         })
         return
       }
-      const capturedEvent = await desktopApi().reality.createEvent({
+      const capturedEvent = await desktopApi(t).reality.createEvent({
         id,
         title: `桌面感知 · ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`,
         captureDevice: {
           id: 'desktop-local',
-          name: desktopApi().platform === 'darwin' ? '这台 Mac' : '这台电脑',
+          name: desktopApi(t).platform === 'darwin' ? '这台 Mac' : '这台电脑',
           kind: 'desktop',
         },
         audioSource,
@@ -311,15 +314,15 @@ export function RecordingPage({
       })
       realityEventIdRef.current = id
       onEventChanged?.(capturedEvent)
-      const { filePath } = await desktopApi().asr.finishRecording(id)
+      const { filePath } = await desktopApi(t).asr.finishRecording(id)
       recordingIdRef.current = null
-      const finishedEvent = await desktopApi().reality.finishCapture(id, {
+      const finishedEvent = await desktopApi(t).reality.finishCapture(id, {
         durationMs,
         audioFileName: filePath,
       })
       onEventChanged?.(finishedEvent)
       setState('transcribing')
-      const job = await desktopApi().asr.createJob({
+      const job = await desktopApi(t).asr.createJob({
         filePath,
         mode,
         recordingId:id,
@@ -334,22 +337,22 @@ export function RecordingPage({
       recorderRef.current = null
       recordingStartedAtRef.current = null
       if (recordingIdRef.current) {
-        await desktopApi().asr.cancelRecording(recordingIdRef.current).catch(() => undefined)
+        await desktopApi(t).asr.cancelRecording(recordingIdRef.current).catch(() => undefined)
         recordingIdRef.current = null
       }
       const eventId = realityEventIdRef.current
       realityEventIdRef.current = null
       if (eventId) {
-        const failed = await desktopApi().reality.fail(eventId, errorMessage(caught)).catch(() => null)
+        const failed = await desktopApi(t).reality.fail(eventId, errorMessage(caught, t)).catch(() => null)
         if (failed) onEventChanged?.(failed)
       }
-      reportRecordingError(caught, audioSource)
+      reportRecordingError(caught, audioSource, t)
       setState('error')
     }
   }
 
   const busy = state === 'requesting' || state === 'saving' || state === 'transcribing'
-  const statusLabel = state === 'requesting'
+  const statusLabel = t(state === 'requesting'
     ? audioSource === 'system' ? '正在请求电脑音频权限' : '正在请求麦克风权限'
     : state === 'saving'
       ? '正在保存录音'
@@ -361,7 +364,7 @@ export function RecordingPage({
             ? '转写失败'
           : state === 'recording'
             ? '正在录音'
-            : '准备录音'
+            : '准备录音')
 
   if (controlOnly) {
     const listening = state === 'recording'
@@ -376,7 +379,7 @@ export function RecordingPage({
         {listening || busy ? (
           <span className="cassette-recording-timer" data-recording={String(listening)} role="timer">
             <i aria-hidden="true" />
-            {listening ? formatDuration(elapsed) : '处理中'}
+            {listening ? formatDuration(elapsed) : t('处理中')}
           </span>
         ) : null}
       </div>
@@ -387,8 +390,8 @@ export function RecordingPage({
     <div className={`recording-page${embedded ? ' recording-page-embedded' : ' page'}`}>
       <header className="recording-header">
         <div>
-          {embedded ? <h2>本机采集</h2> : <h1>录音转写</h1>}
-          <p>{mode==='cloud'?'EverRoom SaaS · 订阅额度':'本地 Gateway · 自有阿里云配置'}</p>
+          {embedded ? <h2>{t('本机采集')}</h2> : <h1>{t('录音转写')}</h1>}
+          <p>{t(mode === 'cloud' ? 'EverRoom SaaS · 订阅额度' : '本地 Gateway · 自有阿里云配置')}</p>
         </div>
         <span className="recording-status" data-state={state} aria-live="polite">
           {busy ? <LoaderCircle aria-hidden="true" /> : state === 'completed' ? <Check aria-hidden="true" /> : null}
@@ -396,69 +399,69 @@ export function RecordingPage({
         </span>
       </header>
 
-      <section className="asr-mode-bar" aria-label="转写服务">
-        <div className="segmented-control"><button type="button" data-active={String(mode==='cloud')} disabled={!account?.authenticated||busy||state==='recording'} onClick={()=>setMode('cloud')}><Cloud aria-hidden="true"/>云端托管</button><button type="button" data-active={String(mode==='local')} disabled={busy||state==='recording'} onClick={()=>setMode('local')}><HardDrive aria-hidden="true"/>本地配置</button></div>
-        {!account?.authenticated?<div className="asr-login-hint"><span>未登录。请自行配置本地阿里云，或登录后使用订阅额度。</span><button type="button" className="secondary-button" onClick={onOpenSettings}><LogIn aria-hidden="true"/>登录</button></div>:<span className="asr-account-name">{account.user?.name||account.user?.email||'已登录'}</span>}
+      <section className="asr-mode-bar" aria-label={t('转写服务')}>
+        <div className="segmented-control"><button type="button" data-active={String(mode==='cloud')} disabled={!account?.authenticated||busy||state==='recording'} onClick={()=>setMode('cloud')}><Cloud aria-hidden="true"/>{t('云端托管')}</button><button type="button" data-active={String(mode==='local')} disabled={busy||state==='recording'} onClick={()=>setMode('local')}><HardDrive aria-hidden="true"/>{t('本地配置')}</button></div>
+        {!account?.authenticated?<div className="asr-login-hint"><span>{t('未登录。请自行配置本地阿里云，或登录后使用订阅额度。')}</span><button type="button" className="secondary-button" onClick={onOpenSettings}><LogIn aria-hidden="true"/>{t('登录')}</button></div>:<span className="asr-account-name">{account.user?.name||account.user?.email||t('已登录')}</span>}
       </section>
 
-      <section className="recording-controls" aria-label="录音控制">
+      <section className="recording-controls" aria-label={t('录音控制')}>
         <button
           type="button"
           className="record-button"
           data-recording={String(state === 'recording')}
           disabled={busy}
           onClick={state === 'recording' ? stopRecording : startRecording}
-          aria-label={state === 'recording' ? '停止录音' : '开始录音'}
-          title={state === 'recording' ? '停止录音' : '开始录音'}
+          aria-label={t(state === 'recording' ? '停止录音' : '开始录音')}
+          title={t(state === 'recording' ? '停止录音' : '开始录音')}
         >
           {state === 'recording' ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
         </button>
         <strong className="recording-timer">{formatDuration(elapsed)}</strong>
-        <span>{state === 'recording' ? '点击停止' : '点击开始'}</span>
+        <span>{t(state === 'recording' ? '点击停止' : '点击开始')}</span>
       </section>
 
       <section className="recording-options">
         <div className="recording-option-row">
-          <span className="option-label">录制来源</span>
-          <div className="segmented-control recording-source-control" aria-label="录制来源">
+          <span className="option-label">{t('录制来源')}</span>
+          <div className="segmented-control recording-source-control" aria-label={t('录制来源')}>
             <button
               type="button"
               data-active={String(audioSource === 'microphone')}
               disabled={busy || state === 'recording'}
               onClick={() => setAudioSource('microphone')}
             >
-              <Mic aria-hidden="true" />麦克风
+              <Mic aria-hidden="true" />{t('麦克风')}
             </button>
             <button
               type="button"
               data-active={String(audioSource === 'system')}
               disabled={!isMacDesktop || busy || state === 'recording'}
-              title={isMacDesktop ? '录制这台 Mac 正在播放的音频' : '电脑音频录制目前仅支持 macOS 桌面版'}
+              title={t(isMacDesktop ? '录制这台 Mac 正在播放的音频' : '电脑音频录制目前仅支持 macOS 桌面版')}
               onClick={() => setAudioSource('system')}
             >
-              <MonitorSpeaker aria-hidden="true" />电脑音频
+              <MonitorSpeaker aria-hidden="true" />{t('电脑音频')}
             </button>
           </div>
         </div>
         <div className="recording-option-row">
-          <span className="option-label">语言</span>
-          <div className="segmented-control" aria-label="转写语言">
-            <button type="button" data-active={String(languages.includes('zh'))} onClick={() => toggleLanguage('zh')}>中文</button>
+          <span className="option-label">{t('语言')}</span>
+          <div className="segmented-control" aria-label={t('转写语言')}>
+            <button type="button" data-active={String(languages.includes('zh'))} onClick={() => toggleLanguage('zh')}>{t('中文')}</button>
             <button type="button" data-active={String(languages.includes('en'))} onClick={() => toggleLanguage('en')}>English</button>
           </div>
         </div>
       </section>
 
       {result ? (
-        <section className="transcript-output" aria-label="转写结果">
-          <header><h2>转写结果</h2><span>{result.segments.length} 段</span></header>
+        <section className="transcript-output" aria-label={t('转写结果')}>
+          <header><h2>{t('转写结果')}</h2><span>{t('{count} 段', { count: result.segments.length })}</span></header>
           <div className="transcript-full">{result.transcript}</div>
           {result.segments.length > 0 ? (
             <div className="transcript-segments">
               {result.segments.map((segment, index) => (
                 <div className="transcript-segment" key={`${segment.beginTime}-${index}`}>
                   <time>{formatTimestamp(segment.beginTime)}</time>
-                  <strong>{segment.speakerId === null ? '说话人' : `说话人 ${segment.speakerId + 1}`}</strong>
+                  <strong>{segment.speakerId === null ? t('说话人') : t('说话人 {number}', { number: segment.speakerId + 1 })}</strong>
                   <p>{segment.text}</p>
                 </div>
               ))}

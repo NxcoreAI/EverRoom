@@ -194,6 +194,27 @@ describe("loadConfig", () => {
     })).toThrow("expected an absolute HTTP(S) URL");
   });
 
+  it("loads VLM configuration only when all required values are present", () => {
+    expect(loadConfig(["--token", "0123456789abcdef"], {}).vlm).toBeNull();
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_VLM_BASE_URL: "https://vlm.example.test/v1",
+      NXCORE_VLM_API_KEY: "test-key",
+      NXCORE_VLM_MODEL: "vision-model",
+    }).vlm).toEqual({
+      baseUrl: "https://vlm.example.test/v1",
+      apiKey: "test-key",
+      model: "vision-model",
+    });
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_VLM_BASE_URL: "https://vlm.example.test/v1",
+    }).vlm).toBeNull();
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_VLM_BASE_URL: "file:///tmp/model",
+      NXCORE_VLM_API_KEY: "test-key",
+      NXCORE_VLM_MODEL: "vision-model",
+    })).toThrow("expected an absolute HTTP(S) URL");
+  });
+
   it("loads Aliyun ASR only when explicitly enabled", () => {
     const disabled = loadConfig(["--token", "0123456789abcdef"], {});
     expect(disabled.asr).toBeNull();
