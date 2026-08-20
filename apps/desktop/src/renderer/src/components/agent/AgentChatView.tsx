@@ -304,7 +304,7 @@ export function AgentChatView({
   error: string | null
   loading: boolean
   messages: DisplayAgentMessage[]
-  onRetryPrompt: (prompt: string) => void
+  onRetryPrompt: (prompt: string, runId: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (
@@ -623,7 +623,7 @@ export function AgentChatView({
                       aria-label={t('surface:agentChat.regenerate')}
                       title={t('surface:agentChat.regenerate')}
                       disabled={!previousUserMessage}
-                      onClick={() => previousUserMessage && onRetryPrompt(previousUserMessage.content)}
+                      onClick={() => previousUserMessage && onRetryPrompt(previousUserMessage.content, message.runId)}
                     >
                       <RotateCcw aria-hidden="true" />
                     </button>

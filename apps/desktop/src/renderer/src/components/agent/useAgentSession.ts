@@ -45,6 +45,13 @@ export function mergePendingAgentMessages(
   )))]
 }
 
+export function removeAgentRunMessages(
+  messages: DisplayAgentMessage[],
+  runId: string,
+): DisplayAgentMessage[] {
+  return messages.filter((message) => message.runId !== runId)
+}
+
 const SESSION_STORAGE_KEY = 'nxcore-ce:agent-session:v2'
 const LEGACY_SESSION_STORAGE_KEY = 'nxcore-ce:agent-sessions:v1'
 const defaultSessionCreations = new Map<string, Promise<AgentSession>>()
@@ -621,9 +628,46 @@ export function useAgentSession(
     selectedText?: string,
     selectedRoomId?: string,
     activeDocument?: AgentActiveDocumentContext | null,
+    replaceRunId?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
     if (!message || activeRunId || loading || sending) return null
+    if (replaceRunId) {
+      setMessages((current) => removeAgentRunMessages(current, replaceRunId))
+      setToolCallsByRun((current) => {
+        if (!(replaceRunId in current)) return current
+        const next = { ...current }
+        delete next[replaceRunId]
+        return next
+      })
+      setActivityByRun((current) => {
+        if (!(replaceRunId in current)) return current
+        const next = { ...current }
+        delete next[replaceRunId]
+        return next
+      })
+      setRunStartedAtByRun((current) => {
+        if (!(replaceRunId in current)) return current
+        const next = { ...current }
+        delete next[replaceRunId]
+        return next
+      })
+      setRunCompletedAtByRun((current) => {
+        if (!(replaceRunId in current)) return current
+        const next = { ...current }
+        delete next[replaceRunId]
+        return next
+      })
+      setReasoningByRun((current) => {
+        if (!(replaceRunId in current)) return current
+        const next = { ...current }
+        delete next[replaceRunId]
+        return next
+      })
+      eventsByRun.current.delete(replaceRunId)
+      sequenceByRun.current.delete(replaceRunId)
+      terminalRunIdsRef.current.delete(replaceRunId)
+    }
     const optimisticId = `user-${crypto.randomUUID()}`
     const optimisticMessage: DisplayAgentMessage = {
       id: optimisticId,

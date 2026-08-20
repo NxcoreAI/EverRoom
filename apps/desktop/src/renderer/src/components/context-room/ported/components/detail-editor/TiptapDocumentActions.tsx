@@ -10,12 +10,12 @@ import { ActionConfirmDialog } from '../../components/shared'
 import { createDocxBlob, docxExportFileName } from './tiptapDocxExport'
 import { exportEditorPdf } from './tiptapPdfExport'
 
-export function markdownExportFileName(documentName: string): string {
+export function markdownExportFileName(documentName: string, untitled = '无标题文档'): string {
   const safeName = documentName
     .replace(/[\\/:*?"<>|]/g, '-')
     .replace(/[.\s]+$/g, '')
     .trim()
-  return `${safeName || '无标题文档'}.md`
+  return `${safeName || untitled}.md`
 }
 
 function downloadBlob(blob: Blob, fileName: string): void {
@@ -30,10 +30,10 @@ function downloadBlob(blob: Blob, fileName: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000)
 }
 
-function downloadMarkdown(editor: Editor, documentName: string): void {
+function downloadMarkdown(editor: Editor, documentName: string, untitled: string): void {
   downloadBlob(
     new Blob([editor.getMarkdown()], { type: 'text/markdown;charset=utf-8' }),
-    markdownExportFileName(documentName),
+    markdownExportFileName(documentName, untitled),
   )
 }
 
@@ -57,9 +57,10 @@ export function TiptapDocumentActions({
   const [exportingPdf, setExportingPdf] = useState(false)
 
   const exportMarkdown = () => {
+    const untitled = t('contextRoom:documentOperationCenter.untitledDocument')
     try {
-      downloadMarkdown(editor, documentName)
-      showToast({ title: t('contextRoom:tiptapDocumentActions.markdownExported'), message: markdownExportFileName(documentName) })
+      downloadMarkdown(editor, documentName, untitled)
+      showToast({ title: t('contextRoom:tiptapDocumentActions.markdownExported'), message: markdownExportFileName(documentName, untitled) })
     } catch (error: unknown) {
       showToast({
         title: t('contextRoom:tiptapDocumentActions.exportFailed'),
@@ -69,8 +70,9 @@ export function TiptapDocumentActions({
   }
 
   const exportDocx = async () => {
+    const untitled = t('contextRoom:documentOperationCenter.untitledDocument')
     try {
-      const fileName = docxExportFileName(documentName)
+      const fileName = docxExportFileName(documentName, untitled)
       const blob = await createDocxBlob(editor.getJSON(), documentName)
       downloadBlob(blob, fileName)
       showToast({ title: t('contextRoom:tiptapDocumentActions.wordDocumentExported'), message: fileName })
@@ -85,7 +87,7 @@ export function TiptapDocumentActions({
   const exportPdf = async () => {
     setExportingPdf(true)
     try {
-      const result = await exportEditorPdf(editor, documentName)
+      const result = await exportEditorPdf(editor, documentName, t('contextRoom:documentOperationCenter.untitledDocument'))
       if (!result.canceled) {
         showToast({ title: t('contextRoom:tiptapDocumentActions.pdfExported'), message: result.fileName })
       }

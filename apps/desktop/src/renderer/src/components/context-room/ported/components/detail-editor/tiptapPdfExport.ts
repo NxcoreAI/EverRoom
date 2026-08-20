@@ -3,12 +3,12 @@ import type { Editor } from '@tiptap/react'
 
 import type { ExportDocumentPdfResult } from '../../../../../../../shared/sources'
 
-export function pdfExportFileName(documentName: string): string {
+export function pdfExportFileName(documentName: string, untitled = '无标题文档'): string {
   const safeName = documentName
     .replace(/[\\/:*?"<>|]/g, '-')
     .replace(/[.\s]+$/g, '')
     .trim()
-  return `${safeName || '无标题文档'}.pdf`
+  return `${safeName || untitled}.pdf`
 }
 
 function staticDocumentHtml(editor: Editor): string {
@@ -29,12 +29,13 @@ function staticDocumentHtml(editor: Editor): string {
 export async function exportEditorPdf(
   editor: Editor,
   documentName: string,
+  untitled = '无标题文档',
 ): Promise<ExportDocumentPdfResult> {
   const api = window.nxcore?.documents
   if (!api) throw new Error('PDF 导出仅在桌面版中可用。')
   return api.exportPdf({
-    fileName: pdfExportFileName(documentName),
-    title: documentName.trim() || '无标题文档',
+    fileName: pdfExportFileName(documentName, untitled),
+    title: documentName.trim() || untitled,
     html: staticDocumentHtml(editor),
   })
 }

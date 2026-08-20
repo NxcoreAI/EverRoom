@@ -289,12 +289,12 @@ function renderBlocks(nodes: JSONContent[] | undefined): Array<Paragraph | Table
   return result
 }
 
-export function docxExportFileName(documentName: string): string {
+export function docxExportFileName(documentName: string, untitled = '无标题文档'): string {
   const safeName = documentName
     .replace(/[\\/:*?"<>|]/g, '-')
     .replace(/[.\s]+$/g, '')
     .trim()
-  return `${safeName || '无标题文档'}.docx`
+  return `${safeName || untitled}.docx`
 }
 
 export async function createDocxBlob(content: JSONContent, documentName: string): Promise<Blob> {
