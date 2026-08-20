@@ -1164,6 +1164,183 @@ summary:focus-visible {
   color: var(--subtle);
 }
 
+/* 文档页工具栏:搜索 + Room 筛选。 */
+.doc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.doc-search {
+  display: inline-flex;
+  width: min(260px, 40%);
+  min-width: 180px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--subtle);
+}
+
+.doc-search svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+.doc-search input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+
+.doc-search:focus-within {
+  border-color: var(--accent);
+}
+
+.doc-filter {
+  display: flex;
+  max-width: 60%;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.doc-filter::-webkit-scrollbar {
+  display: none;
+}
+
+.doc-filter button {
+  display: inline-flex;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.doc-filter button:hover {
+  background: var(--surface-alt);
+}
+
+.doc-filter button[data-active='true'] {
+  border-color: color-mix(in srgb, var(--accent) 46%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.doc-filter button small {
+  font-size: 10px;
+  opacity: 0.72;
+}
+
+/* 按 Room 分组。 */
+.doc-group {
+  margin-bottom: 18px;
+}
+
+.doc-group > header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.doc-group > header svg {
+  width: 15px;
+  height: 15px;
+  color: var(--subtle);
+}
+
+.doc-group > header strong {
+  font-size: 13px;
+}
+
+.doc-group > header small {
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+/* 骨架行与空状态。 */
+.doc-row-skeleton {
+  cursor: default;
+}
+
+.doc-skeleton-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.doc-skeleton-line {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--surface-alt) 40%, var(--border) 55%);
+  background-size: 300% 100%;
+  animation: doc-skeleton-shimmer 1.4s ease infinite;
+}
+
+.doc-skeleton-line.short {
+  width: 32%;
+}
+
+@keyframes doc-skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+.doc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 56px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  text-align: center;
+}
+
+.doc-empty svg {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 4px;
+  color: var(--subtle);
+}
+
+.doc-empty strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.doc-empty small {
+  font-size: 12px;
+}
+
+.doc-empty .primary-button {
+  margin-top: 12px;
+}
+
 .table-head,
 .table-row {
   display: grid;

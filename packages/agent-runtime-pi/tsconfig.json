@@ -11,6 +11,8 @@
     "verbatimModuleSyntax": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "declaration": true,
     "sourceMap": true,
     "outDir": "dist"

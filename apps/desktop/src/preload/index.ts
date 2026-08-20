@@ -12,6 +12,7 @@ import type {
   MemoryDocumentRewriteInput,
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
+import type { McpServersSnapshot } from '../shared/mcp'
 import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
@@ -139,6 +140,10 @@ const api: NxcoreDesktopApi = {
     data: (query) => invokeQuietly('connector-sync:data', query),
     record: (id) => invokeQuietly('connector-sync:record', id),
   },
+  mcp: {
+    listServers: () => invoke('mcp:servers:list'),
+    saveServers: (servers) => invoke('mcp:servers:save', servers),
+  },
   screenCapture: {
     captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
     start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),
@@ -222,10 +227,12 @@ const api: NxcoreDesktopApi = {
     finishCapture: (id, input) => invoke('reality:finish-capture', id, input),
     updateTranscript: (id, input) => invoke('reality:update-transcript', id, input),
     addMarker: (id, input) => invoke('reality:add-marker', id, input),
+    setImportant: (id, important) => invoke('reality:set-important', id, important),
     confirm: (id) => invoke('reality:confirm', id),
     discard: (id) => invoke('reality:discard', id),
     fail: (id, error) => invoke('reality:fail', id, error),
     readAudio: (id) => invoke('reality:read-audio', id),
+    exportTranscript: (input) => invoke('reality:export-transcript', input),
     subscribe: () => invoke('reality:subscribe'),
     unsubscribe: () => invoke('reality:unsubscribe'),
     onEvent: (listener) => {

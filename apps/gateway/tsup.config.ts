@@ -11,7 +11,7 @@ export default defineConfig({
   platform: "node",
   sourcemap: true,
   clean: true,
-  splitting: false,
+  splitting: true,
   banner: {
     js: [
       "import { createRequire as __nxcoreCreateRequire } from 'node:module';",

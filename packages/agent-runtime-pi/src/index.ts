@@ -11,6 +11,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { createMcpAdapter } from "pi-mcp-adapter";
 import { Type } from "typebox";
 import {
   AsyncEventQueue,
@@ -73,6 +74,19 @@ export type PiApi =
 
 export type PiReasoningLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
+/** Pi 内置工具全集（core/tools ToolName），与自定义工具区分开。 */
+export type PiBuiltinToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
+
+export const DEFAULT_PI_BUILTIN_TOOLS: PiBuiltinToolName[] = [
+  "read",
+  "bash",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+];
+
 export interface PiAgentRuntimeConfig {
   provider: string;
   model: string;
@@ -88,10 +102,16 @@ export interface PiAgentRuntimeConfig {
   agentDirectory: string;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
+  /** Pi 内置工具白名单；缺省启用全部（read/bash/edit/write/grep/find/ls），可经 NXCORE_PI_TOOLS 收窄。 */
+  builtinTools?: string[];
   /** MemoryCore 记忆服务配置；缺省时记忆能力完全不启用。 */
   memory?: MemoryRuntimeConfig;
   /** Knowledge Service（wiki）配置；缺省时知识库工具不启用。 */
   knowledge?: KnowledgeRuntimeConfig;
+  /** MCP 服务器注入配置（pi-mcp-adapter）；mcpServers 为空时不挂载适配器。 */
+  mcp?: {
+    mcpServers: Record<string, unknown>;
+  };
   retry?: {
     enabled?: boolean;
     maxRetries?: number;
@@ -451,6 +471,9 @@ export class PiAgentRuntime implements AgentRuntime {
       },
     }));
     const toolNames = customTools.map((tool) => tool.name);
+    const builtinTools = (this.config.builtinTools ?? DEFAULT_PI_BUILTIN_TOOLS).filter((name) =>
+      DEFAULT_PI_BUILTIN_TOOLS.includes(name as PiBuiltinToolName),
+    ) as PiBuiltinToolName[];
 
     const settingsManager = SettingsManager.inMemory({
       defaultProvider: this.config.provider,
@@ -467,6 +490,28 @@ export class PiAgentRuntime implements AgentRuntime {
     const knowledge = this.config.knowledge;
     const knowledgeClient = this.knowledgeClient;
     let knowledgeWikiIds: string[] = knowledgeClient ? knowledgeClient.defaultWikiIds : [];
+    // 扩展工厂：memory + MCP 适配器（pi-mcp-adapter，注入式隔离配置）。
+    const mcpServers = this.config.mcp?.mcpServers;
+    const extensionFactories = [
+      ...(memory && memoryClient
+        ? [
+            createMemoryExtension({
+              client: memoryClient,
+              config: memory,
+              getRunContext: () => memoryRunContext,
+            }),
+          ]
+        : []),
+      ...(mcpServers && Object.keys(mcpServers).length > 0
+        ? [
+            createMcpAdapter({
+              config: { mcpServers } as NonNullable<
+                NonNullable<Parameters<typeof createMcpAdapter>[0]>["config"]
+              >,
+            }),
+          ]
+        : []),
+    ];
     const resourceLoader = new DefaultResourceLoader({
       cwd: this.config.workingDirectory,
       agentDir: this.config.agentDirectory,
@@ -476,17 +521,7 @@ export class PiAgentRuntime implements AgentRuntime {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      ...(memory && memoryClient
-        ? {
-            extensionFactories: [
-              createMemoryExtension({
-                client: memoryClient,
-                config: memory,
-                getRunContext: () => memoryRunContext,
-              }),
-            ],
-          }
-        : {}),
+      ...(extensionFactories.length > 0 ? { extensionFactories } : {}),
       systemPromptOverride: () => {
         const lines = [
           "你是 NxCore 桌面工作区中的 AI 助手。",
@@ -535,6 +570,7 @@ export class PiAgentRuntime implements AgentRuntime {
       thinkingLevel: this.config.reasoning,
       tools: [
         ...(this.config.includeBashTool === false ? [] : ["bash"]),
+        ...builtinTools,
         ...toolNames,
         ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
         ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
@@ -560,6 +596,7 @@ export class PiAgentRuntime implements AgentRuntime {
       session,
       toolNames: [
         ...(this.config.includeBashTool === false ? [] : ["bash"]),
+        ...builtinTools,
         ...toolNames,
         ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
         ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),

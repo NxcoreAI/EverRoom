@@ -2,11 +2,10 @@ import {
   AlertCircle,
   Bookmark,
   CalendarDays,
-  Check,
   ChevronDown,
   CircleDot,
-  FilePenLine,
-  Merge,
+  Download,
+  FileText,
   LoaderCircle,
   Pause,
   Play,
@@ -30,12 +29,11 @@ import './RealityPage.css'
 
 type DetailTab = 'insights' | 'transcript'
 type StatusFilter = 'all' | RealityEventStatus
-type ActivityRange = '1m' | '3m' | '6m' | '1y'
-type TagAction = { mode: 'rename' | 'merge'; tag: RealityTag }
+type ActivityRange = '1w' | '1m' | '3m' | '6m' | '1y'
 
 const STATUS_LABELS: Record<RealityEventStatus, string> = {
   ongoing: '进行中',
-  pending_confirmation: '待确认',
+  pending_confirmation: '已完成',
   completed: '已完成',
   failed: '失败',
   pending_sync: '待同步',
@@ -50,6 +48,15 @@ const PROCESSING_LABELS: Record<RealityEvent['processingState'], string> = {
   failed: '处理失败',
 }
 
+const PROCESSING_HINTS: Record<RealityEvent['processingState'], string> = {
+  capturing: '正在录制现场音频,结束后会自动进入转写。',
+  saving: '正在保存录音文件,马上开始转写。',
+  transcribing: '转写进行中,逐字稿和智能总结完成后会自动出现。',
+  understanding: 'AI 正在从转写中提炼总结、标签和关键内容。',
+  ready: '',
+  failed: '处理失败,可尝试重新处理。',
+}
+
 const EVENT_TYPE_LABELS: Record<RealityEventType, string> = {
   MEETING: 'MEETING',
   MEAL: 'MEAL',
@@ -62,7 +69,23 @@ const EVENT_TYPE_LABELS: Record<RealityEventType, string> = {
   OTHER: 'OTHER',
 }
 
-const RANGE_WEEKS: Record<ActivityRange, number> = { '1m': 5, '3m': 13, '6m': 26, '1y': 53 }
+const RANGE_WEEKS: Record<ActivityRange, number> = { '1w': 1, '1m': 5, '3m': 13, '6m': 26, '1y': 53 }
+const ACTIVITY_RANGES: readonly [ActivityRange, string][] = [
+  ['1w', '1 周'], ['1m', '1 月'], ['3m', '3 月'], ['6m', '半年'], ['1y', '1 年'],
+]
+
+/** 自动选择能覆盖全部使用历史的最大时间范围:尽可能把所有活跃都展示出来。 */
+function preferredActivityRange(events: RealityEvent[]): ActivityRange {
+  if (events.length === 0) return '1m'
+  const now = Date.now()
+  const earliest = Math.min(...events.map((event) => Date.parse(event.startedAt)))
+  const weeks = Math.max(1, Math.ceil((now - earliest) / (7 * 24 * 60 * 60 * 1000)))
+  if (weeks <= RANGE_WEEKS['1w']) return '1w'
+  if (weeks <= RANGE_WEEKS['1m']) return '1m'
+  if (weeks <= RANGE_WEEKS['3m']) return '3m'
+  if (weeks <= RANGE_WEEKS['6m']) return '6m'
+  return '1y'
+}
 const REPROCESS_POLL_INTERVAL_MS = 6_000
 const REPROCESS_TIMEOUT_MS = 30 * 60 * 1000
 
@@ -95,6 +118,11 @@ function dayKey(value: string | Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+function dayChipLabel(key: string): string {
+  const [year, month, day] = key.split('-').map(Number)
+  return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(year!, month! - 1, day!))
+}
+
 function eventType(event: RealityEvent): RealityEventType {
   return event.insights.eventType ?? 'OTHER'
 }
@@ -121,10 +149,16 @@ function buildActivity(events: RealityEvent[], range: ActivityRange) {
     const date = week[0]!.date
     const previous = index > 0 ? weeks[index - 1]![0]!.date : null
     return !previous || previous.getMonth() !== date.getMonth()
-      ? new Intl.DateTimeFormat('zh-CN', { month: 'short' }).format(date)
-      : ''
-  })
-  return { weeks, max, monthLabels }
+      ? { column: index + 1, label: new Intl.DateTimeFormat('zh-CN', { month: 'short' }).format(date) }
+      : null
+  }).filter(Boolean) as { column: number; label: string }[]
+  const past = weeks.flat().filter((cell) => cell.date <= today)
+  const total = past.reduce((sum, cell) => sum + Math.max(0, cell.count), 0)
+  let streak = 0
+  let cursor = past.length - 1
+  if (past[cursor]?.count === 0) cursor -= 1
+  while (cursor >= 0 && past[cursor]!.count > 0) { streak += 1; cursor -= 1 }
+  return { weeks, max, monthLabels, total, streak }
 }
 
 export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) {
@@ -134,11 +168,10 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
   const [activityRange, setActivityRange] = useState<ActivityRange>('3m')
+  const [rangeTouched, setRangeTouched] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab>('insights')
-  const [transcriptDraft, setTranscriptDraft] = useState('')
-  const [savingTranscript, setSavingTranscript] = useState(false)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [cloudAudioAssetIds, setCloudAudioAssetIds] = useState<string[]>([])
   const [cloudAudioIndex, setCloudAudioIndex] = useState(0)
@@ -147,18 +180,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [isPlaying, setIsPlaying] = useState(false)
   const [reprocessingId, setReprocessingId] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
-  const [allTags, setAllTags] = useState<RealityTag[]>([])
-  const [tagEditorOpen, setTagEditorOpen] = useState(false)
-  const [tagKind, setTagKind] = useState<'entity' | 'fact'>('entity')
-  const [tagLabel, setTagLabel] = useState('')
-  const [entityType, setEntityType] = useState<NonNullable<RealityTag['entityType']>>('other')
-  const [factSubject, setFactSubject] = useState('')
-  const [factPredicate, setFactPredicate] = useState('')
-  const [factObject, setFactObject] = useState('')
+  const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [savingTags, setSavingTags] = useState(false)
-  const [tagAction, setTagAction] = useState<TagAction | null>(null)
-  const [tagActionValue, setTagActionValue] = useState('')
-  const [now, setNow] = useState(() => Date.now())
+  const [exportingTranscript, setExportingTranscript] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const activeSegmentRef = useRef<HTMLButtonElement | null>(null)
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
@@ -176,16 +200,11 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
         : next.find((event) => event.status === 'ongoing')?.id ?? null)
       setError(null)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '智能感知事件加载失败。')
+      setError(caught instanceof Error ? caught.message : '现实感知事件加载失败。')
     } finally {
       setLoading(false)
     }
   }, [])
-
-  const loadTags = useCallback(async () => {
-    if (!window.nxcore || !account?.authenticated) return
-    setAllTags(await window.nxcore.transcriptions.listTags())
-  }, [account?.authenticated])
 
   useEffect(() => {
     void loadEvents()
@@ -207,25 +226,21 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     if (!account?.authenticated || !window.nxcore) return
     const sync = async () => {
       await window.nxcore!.transcriptions.syncPrivate({ quiet: true })
-      await Promise.all([loadEvents(), loadTags()])
+      await loadEvents()
     }
     void sync().catch(() => undefined)
     const timer = window.setInterval(() => void sync().catch(() => undefined), 15_000)
     return () => window.clearInterval(timer)
-  }, [account?.authenticated, loadEvents, loadTags])
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [])
+  }, [account?.authenticated, loadEvents])
 
   const selected = events.find((event) => event.id === expandedId) ?? null
   const visibleEvents = useMemo(() => events.filter((event) => {
     if (filter !== 'all' && event.status !== filter) return false
+    if (selectedDay && dayKey(event.startedAt) !== selectedDay) return false
     const query = search.trim().toLocaleLowerCase()
     return !query || [event.title, event.transcript, event.currentTopic ?? '', event.insights.summary ?? '', ...(event.insights.representativeTags ?? []).map((tag) => tag.label)]
       .some((value) => value.toLocaleLowerCase().includes(query))
-  }), [events, filter, search])
+  }), [events, filter, search, selectedDay])
   const grouped = useMemo(() => {
     const groups = new Map<string, RealityEvent[]>()
     for (const event of visibleEvents) {
@@ -236,78 +251,30 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   }, [visibleEvents])
   const activity = useMemo(() => buildActivity(events, activityRange), [events, activityRange])
 
+  // 首次加载后按活跃量自动选择范围;用户手动切换后不再覆盖。
   useEffect(() => {
-    setTranscriptDraft(selected?.transcript ?? '')
+    if (rangeTouched || loading) return
+    setActivityRange(preferredActivityRange(events))
+    setRangeTouched(true)
+  }, [loading, events, rangeTouched])
+
+  useEffect(() => {
     setDetailTab('insights')
     setDeleteConfirmId(null)
-    setTagEditorOpen(false)
-    setTagAction(null)
-    setTagActionValue('')
-  }, [selected?.id, selected?.transcript])
+  }, [selected?.id])
 
-  const saveSummaryTags = async (event: RealityEvent, tags: RealityTag[]) => {
+  const removeTag = async (event: RealityEvent, tag: RealityTag) => {
     const summaryRecordId = event.insights.summaryRecordId
-    if (!window.nxcore || !summaryRecordId) throw new Error('当前总结尚未同步，暂时不能编辑标签。')
+    if (!window.nxcore || !summaryRecordId) return
     setSavingTags(true)
     try {
-      await window.nxcore.transcriptions.replaceSummaryTags(summaryRecordId, tags)
-      await Promise.all([loadEvents(), loadTags()])
+      await window.nxcore.transcriptions.replaceSummaryTags(summaryRecordId, (event.insights.representativeTags ?? []).filter((item) => item.id ? item.id !== tag.id : item.label !== tag.label))
+      await loadEvents()
+    } catch (caught) {
+      showToast({ title: '标签移除失败', message: caught instanceof Error ? caught.message : undefined })
     } finally {
       setSavingTags(false)
     }
-  }
-
-  const addTag = async (event: RealityEvent) => {
-    const label = tagLabel.trim()
-    if (!label) return
-    const tag: RealityTag = tagKind === 'entity'
-      ? { kind: 'entity', label, entityType, confidence: 1, evidence: '用户添加' }
-      : { kind: 'fact', label, subject: factSubject.trim(), predicate: factPredicate.trim(), object: factObject.trim(), confidence: 1, evidence: '用户添加' }
-    if (tag.kind === 'fact' && (!tag.subject || !tag.predicate || !tag.object)) {
-      setError('事实标签需要填写主体、关系和客体。')
-      return
-    }
-    try {
-      await saveSummaryTags(event, [...(event.insights.representativeTags ?? []), tag])
-      setTagLabel(''); setFactSubject(''); setFactPredicate(''); setFactObject(''); setTagEditorOpen(false)
-    } catch (caught) { setError(caught instanceof Error ? caught.message : '标签保存失败。') }
-  }
-
-  const attachExistingTag = async (event: RealityEvent, tagId: string) => {
-    const tag = allTags.find((item) => item.id === tagId)
-    if (!tag || (event.insights.representativeTags ?? []).some((item) => item.id === tag.id)) return
-    try { await saveSummaryTags(event, [...(event.insights.representativeTags ?? []), tag]) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : '标签保存失败。') }
-  }
-
-  const removeTag = async (event: RealityEvent, tag: RealityTag) => {
-    try { await saveSummaryTags(event, (event.insights.representativeTags ?? []).filter((item) => item.id ? item.id !== tag.id : item.label !== tag.label)) }
-    catch (caught) { setError(caught instanceof Error ? caught.message : '标签移除失败。') }
-  }
-
-  const renameTag = async (tag: RealityTag, label: string) => {
-    if (!window.nxcore || !tag.id) return
-    const nextLabel = label.trim()
-    if (!nextLabel || nextLabel === tag.label) { setTagAction(null); return }
-    setSavingTags(true)
-    try { await window.nxcore.transcriptions.renameTag(tag.id, nextLabel); await Promise.all([loadEvents(), loadTags()]); setTagAction(null); setTagActionValue('') }
-    catch (caught) { setError(caught instanceof Error ? caught.message : '标签重命名失败。') }
-    finally { setSavingTags(false) }
-  }
-
-  const mergeTag = async (target: RealityTag, sourceTagId: string) => {
-    if (!window.nxcore || !target.id) return
-    const source = allTags.find((tag) => tag.id === sourceTagId && tag.kind === target.kind)
-    if (!source?.id) return
-    setSavingTags(true)
-    try { await window.nxcore.transcriptions.mergeTag(target.id, source.id); await Promise.all([loadEvents(), loadTags()]); setTagAction(null); setTagActionValue('') }
-    catch (caught) { setError(caught instanceof Error ? caught.message : '标签合并失败。') }
-    finally { setSavingTags(false) }
-  }
-
-  const openTagAction = (mode: TagAction['mode'], tag: RealityTag) => {
-    setTagAction({ mode, tag })
-    setTagActionValue(mode === 'rename' ? tag.label : '')
   }
 
   useEffect(() => {
@@ -341,7 +308,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       objectUrl = URL.createObjectURL(new Blob([copy.buffer], { type: mimeType }))
       setAudioUrl(objectUrl)
     }).catch((caught) => {
-      if (!cancelled) setError(caught instanceof Error ? caught.message : '本地录音读取失败。')
+      if (!cancelled) showToast({ title: '录音读取失败', message: caught instanceof Error ? caught.message : undefined })
     })
     return () => {
       cancelled = true
@@ -386,9 +353,13 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     setEvents((current) => mergeRealityEvent(current, updated))
   }
 
-  const markImportant = async (event: RealityEvent) => {
+  const toggleImportant = async (event: RealityEvent) => {
     if (!window.nxcore) return
-    const atMs = event.status === 'ongoing' ? Math.max(0, now - Date.parse(event.startedAt)) : event.durationMs
+    if (event.important) {
+      replaceEvent(await window.nxcore.reality.setImportant(event.id, false))
+      return
+    }
+    const atMs = event.status === 'ongoing' ? Math.max(0, Date.now() - Date.parse(event.startedAt)) : event.durationMs
     replaceEvent(await window.nxcore.reality.addMarker(event.id, { atMs }))
   }
 
@@ -410,7 +381,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       setDeleteConfirmId(null)
       showToast({ title: '事件已删除' })
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '事件删除失败。')
+      showToast({ title: '事件删除失败', message: caught instanceof Error ? caught.message : undefined })
     }
   }
 
@@ -441,25 +412,33 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       replaceEvent(await window.nxcore.reality.getEvent(event.id))
       showToast({ title: '重新处理完成' })
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '重新处理失败。')
+      showToast({ title: '重新处理失败', message: caught instanceof Error ? caught.message : undefined })
     } finally {
       setReprocessingId(null)
     }
   }
 
-  const saveTranscript = async () => {
-    if (!selected || !window.nxcore) return
-    setSavingTranscript(true)
+  const exportTranscript = async (event: RealityEvent) => {
+    if (!window.nxcore || exportingTranscript) return
+    setExportingTranscript(true)
     try {
-      replaceEvent(await window.nxcore.reality.updateTranscript(selected.id, {
-        transcript: transcriptDraft,
-        expectedVersion: selected.version,
-      }))
+      const lines = [
+        event.title,
+        `${new Date(event.startedAt).toLocaleString('zh-CN')} · ${formatDuration(event.durationMs)} · ${event.captureDevice.name}`,
+        '',
+        ...(event.transcriptSegments.length > 0
+          ? event.transcriptSegments.map((segment) => `[${formatDuration(segment.beginTime)}] ${segment.speakerId === null ? '说话人' : `说话人 ${segment.speakerId + 1}`}: ${segment.text}`)
+          : [event.transcript]),
+      ]
+      const result = await window.nxcore.reality.exportTranscript({
+        fileName: `${event.title}.txt`,
+        content: `${lines.join('\n')}\n`,
+      })
+      if (!result.canceled) showToast({ title: '逐字稿已导出', message: result.filePath })
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '转写保存失败。')
-      await loadEvents()
+      showToast({ title: '导出失败', message: caught instanceof Error ? caught.message : undefined })
     } finally {
-      setSavingTranscript(false)
+      setExportingTranscript(false)
     }
   }
 
@@ -488,9 +467,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     <div className="reality-page">
       <header className="reality-header">
         <div>
-          <span className="reality-eyebrow">REALITY STREAM</span>
-          <h1>智能感知</h1>
-          <p>每段声音都会在转写后归入今天的时间线。</p>
+          <h1>现实感知</h1>
         </div>
         <RecordingPage
           embedded
@@ -505,39 +482,85 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
 
       <section className="reality-activity" aria-labelledby="activity-title">
         <header>
-          <div><h2 id="activity-title">感知活跃度</h2><span>{events.length} 个事件</span></div>
+          <div>
+            <h2 id="activity-title">感知活跃度</h2>
+            <span>{activity.total} 个事件 · 连续 {activity.streak} 天</span>
+          </div>
           <div className="reality-range" aria-label="活跃度时间范围">
-            {([['1m', '1 月'], ['3m', '3 月'], ['6m', '半年'], ['1y', '1 年']] as const).map(([value, label]) => (
-              <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => setActivityRange(value)}>{label}</button>
+            {ACTIVITY_RANGES.map(([value, label]) => (
+              <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => { setRangeTouched(true); setActivityRange(value) }}>{label}</button>
             ))}
           </div>
         </header>
         <div className="activity-chart" style={{ '--activity-weeks': activity.weeks.length } as CSSProperties}>
-          <div className="activity-months">{activity.monthLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}</div>
+          <div className="activity-months">{activity.monthLabels.map((item) => (
+            <span key={item.column} style={{ gridColumn: item.column }}>{item.label}</span>
+          ))}</div>
           <div className="activity-weekdays"><span>一</span><span>三</span><span>五</span></div>
           <div className="activity-cells">
             {activity.weeks.flatMap((week, weekIndex) => week.map((cell, dayIndex) => {
-              const level = cell.count < 0 ? -1 : cell.count === 0 ? 0 : Math.max(1, Math.ceil(cell.count / activity.max * 4))
-              return <span key={`${weekIndex}-${dayIndex}`} data-level={level} title={cell.count < 0 ? '' : `${dayKey(cell.date)} · ${cell.count} 个事件`} />
+              const key = dayKey(cell.date)
+              const isFuture = cell.count < 0
+              const level = isFuture ? -1 : cell.count === 0 ? 0 : Math.max(1, Math.ceil(cell.count / activity.max * 4))
+              const isToday = key === dayKey(new Date())
+              return (
+                <button
+                  type="button"
+                  key={`${weekIndex}-${dayIndex}`}
+                  className="activity-cell"
+                  data-level={level}
+                  data-today={String(isToday)}
+                  data-selected={String(selectedDay === key)}
+                  disabled={isFuture}
+                  aria-pressed={selectedDay === key}
+                  aria-label={isFuture ? undefined : `${key} · ${cell.count} 个事件`}
+                  title={isFuture ? undefined : `${key} · ${cell.count} 个事件`}
+                  style={{ animationDelay: `${Math.min((weekIndex * 7 + dayIndex) * 2, 600)}ms` }}
+                  onClick={() => setSelectedDay(selectedDay === key ? null : key)}
+                />
+              )
             }))}
+          </div>
+        </div>
+        <div className="activity-footer">
+          <div className="activity-legend" aria-hidden="true">
+            <span>少</span>
+            {[0, 1, 2, 3, 4].map((level) => <i key={level} data-level={level} />)}
+            <span>多</span>
           </div>
         </div>
       </section>
 
       <div className="reality-toolbar">
-        <div><CalendarDays aria-hidden="true" /><strong>时间线</strong><span>{visibleEvents.length} 个事件</span></div>
+        <div>
+          <CalendarDays aria-hidden="true" />
+          <strong>时间线</strong>
+          {selectedDay ? (
+            <button type="button" className="reality-day-chip" onClick={() => setSelectedDay(null)}>
+              {dayChipLabel(selectedDay)}
+              <X aria-hidden="true" />
+            </button>
+          ) : (
+            <span>{visibleEvents.length} / {events.length} 个事件</span>
+          )}
+        </div>
         <label className="reality-search"><Search aria-hidden="true" /><input value={search} placeholder="搜索主题或逐字稿" onChange={(event) => setSearch(event.target.value)} /></label>
         <select value={filter} aria-label="事件状态筛选" onChange={(event) => setFilter(event.target.value as StatusFilter)}>
           <option value="all">全部状态</option>
           <option value="ongoing">进行中</option>
-          <option value="pending_confirmation">待确认</option>
           <option value="completed">已完成</option>
           <option value="failed">失败</option>
           <option value="pending_sync">待同步</option>
         </select>
       </div>
 
-      {error ? <div className="reality-error" role="alert"><AlertCircle aria-hidden="true" />{error}</div> : null}
+      {error ? (
+        <div className="reality-error" role="alert">
+          <AlertCircle aria-hidden="true" />
+          <span>{error}</span>
+          <button type="button" className="icon-button" title="关闭" aria-label="关闭错误提示" onClick={() => setError(null)}><X aria-hidden="true" /></button>
+        </div>
+      ) : null}
 
       <main className="reality-timeline">
         {loading ? <div className="reality-empty"><LoaderCircle className="spin" />正在读取时间线</div> : null}
@@ -550,7 +573,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
             <div className="reality-schedule">
               {items.map((event) => {
                 const expanded = event.id === expandedId
-                const duration = event.durationMs || (event.status === 'ongoing' ? now - Date.parse(event.startedAt) : 0)
                 const type = eventType(event)
                 return (
                   <article className="schedule-event" key={event.id} data-expanded={String(expanded)} data-type={type.toLowerCase()}>
@@ -562,7 +584,11 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                         <strong>{event.currentTopic || event.insights.currentTopic || event.title}</strong>
                         <p>{event.insights.summary || (event.transcript ? event.transcript.slice(0, 120) : PROCESSING_LABELS[event.processingState])}</p>
                         {(event.insights.representativeTags?.length ?? 0) > 0 ? <span className="schedule-tags">{event.insights.representativeTags!.slice(0, 5).map((tag) => <span key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind}>{tag.label}{(tag.occurrenceCount ?? 0) > 1 ? <small>{tag.occurrenceCount}</small> : null}</span>)}</span> : null}
-                        <small>{event.captureDevice.name} · {formatDuration(duration)} · {PROCESSING_LABELS[event.processingState]}</small>
+                        <small>{event.captureDevice.name} · <LiveDuration durationMs={event.durationMs} startedAt={event.startedAt} ongoing={event.status === 'ongoing'} /> · {PROCESSING_LABELS[event.processingState]}</small>
+                        <span className="trigger-actions" onClick={(click) => click.stopPropagation()}>
+                          <button type="button" className="icon-button" title={event.important ? '取消重要' : '标记重要'} aria-label={event.important ? '取消重要标记' : '标记重要'} aria-pressed={event.important} onClick={() => void toggleImportant(event)}><Bookmark fill={event.important ? 'currentColor' : 'none'} /></button>
+                          <button type="button" className={deleteConfirmId === event.id ? 'danger-button' : 'icon-button'} title={deleteConfirmId === event.id ? '再次点击确认删除' : '删除事件'} aria-label={deleteConfirmId === event.id ? '确认删除事件' : '删除事件'} onClick={() => void discardEvent(event)}><Trash2 />{deleteConfirmId === event.id ? '确认删除' : null}</button>
+                        </span>
                         <ChevronDown aria-hidden="true" />
                       </button>
 
@@ -570,47 +596,41 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                         <div className="schedule-detail">
                           <div className="schedule-detail-bar">
                             <div className="reality-detail-tabs" role="tablist">
-                              <button type="button" role="tab" aria-selected={detailTab === 'insights'} onClick={() => setDetailTab('insights')}><Sparkles aria-hidden="true" />关键总结</button>
-                              <button type="button" role="tab" aria-selected={detailTab === 'transcript'} onClick={() => setDetailTab('transcript')}><FilePenLine aria-hidden="true" />逐字稿</button>
+                              <button type="button" role="tab" aria-selected={detailTab === 'insights'} onClick={() => setDetailTab('insights')}><Sparkles aria-hidden="true" />智能总结</button>
+                              <button type="button" role="tab" aria-selected={detailTab === 'transcript'} onClick={() => setDetailTab('transcript')}><FileText aria-hidden="true" />逐字稿</button>
                             </div>
                             <div className="detail-actions">
                               {event.insights.source === 'mock' ? <span className="mock-badge">MOCK</span> : null}
                               {event.status === 'failed' && event.audioFileName ? <button type="button" className="secondary-button" disabled={reprocessingId !== null} onClick={() => void reprocessEvent(event)}>{reprocessingId === event.id ? <LoaderCircle className="spin" /> : <RefreshCw />}重新处理</button> : null}
-                              <button type="button" className="icon-button" title="标记重要" aria-label="标记重要" onClick={() => markImportant(event)}><Bookmark fill={event.important ? 'currentColor' : 'none'} /></button>
-                              <button type="button" className={deleteConfirmId === event.id ? 'danger-button' : 'icon-button'} title={deleteConfirmId === event.id ? '再次点击确认删除' : '删除事件'} aria-label={deleteConfirmId === event.id ? '确认删除事件' : '删除事件'} onClick={() => void discardEvent(event)}><Trash2 />{deleteConfirmId === event.id ? '确认删除' : null}</button>
-                              {event.status === 'pending_confirmation' ? <button type="button" className="primary-button" onClick={async () => window.nxcore && replaceEvent(await window.nxcore.reality.confirm(event.id))}><Check />确认归档</button> : null}
+                              <button type="button" className="secondary-button" disabled={!event.transcript || exportingTranscript} onClick={() => void exportTranscript(event)}>{exportingTranscript ? <LoaderCircle className="spin" /> : <Download />}导出逐字稿</button>
                             </div>
                           </div>
 
                           {detailTab === 'insights' ? (
                             <div className="reality-insights">
-                              <section className="reality-topic"><span>主题</span><strong>{event.insights.currentTopic || event.currentTopic || '等待转写结果'}</strong><p>{event.insights.summary || '转写完成后将自动生成总结。'}</p></section>
-                              <section className="reality-tags-section">
-                                <div className="reality-tags-heading"><h3><Tag aria-hidden="true" />代表标签</h3>{event.insights.summaryRecordId ? <button type="button" className="secondary-button" disabled={savingTags} onClick={() => setTagEditorOpen((open) => !open)}>{tagEditorOpen ? <X /> : <Tag />}{tagEditorOpen ? '关闭' : '编辑标签'}</button> : null}</div>
-                                {(event.insights.representativeTags?.length ?? 0) > 0 ? <div className="reality-tag-list">{event.insights.representativeTags!.map((tag) => <div className="reality-tag" key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind} title={tag.evidence || undefined}><span>{tag.kind === 'entity' ? '实体' : '事实'}</span><strong>{tag.label}</strong>{(tag.occurrenceCount ?? 0) > 1 ? <small>出现 {tag.occurrenceCount} 次</small> : null}{tag.id ? <div><button type="button" title="全局重命名" aria-label={`重命名 ${tag.label}`} disabled={savingTags} onClick={() => openTagAction('rename', tag)}><FilePenLine /></button><button type="button" title="合并标签" aria-label={`合并 ${tag.label}`} disabled={savingTags} onClick={() => openTagAction('merge', tag)}><Merge /></button><button type="button" title="从本条总结移除" aria-label={`移除 ${tag.label}`} disabled={savingTags} onClick={() => void removeTag(event, tag)}><X /></button></div> : null}</div>)}</div> : <p className="reality-tags-empty">暂无代表标签</p>}
-                                {tagAction ? <div className="tag-action-editor">
-                                  <span>{tagAction.mode === 'rename' ? '全局重命名' : `合并到“${tagAction.tag.label}”`}</span>
-                                  {tagAction.mode === 'rename' ? <input autoFocus value={tagActionValue} maxLength={200} aria-label="新的标签名称" onChange={(change) => setTagActionValue(change.target.value)} onKeyDown={(key) => { if (key.key === 'Enter') void renameTag(tagAction.tag, tagActionValue); if (key.key === 'Escape') setTagAction(null) }} /> : <select autoFocus value={tagActionValue} aria-label="要合并的源标签" onChange={(change) => setTagActionValue(change.target.value)}><option value="">选择同类标签</option>{allTags.filter((tag) => tag.kind === tagAction.tag.kind && tag.id !== tagAction.tag.id).map((tag) => <option key={tag.id} value={tag.id}>{tag.label} · {tag.occurrenceCount ?? 0} 次</option>)}</select>}
-                                  <button type="button" className="primary-button" title="确认" aria-label="确认标签操作" disabled={savingTags || !tagActionValue.trim()} onClick={() => tagAction.mode === 'rename' ? void renameTag(tagAction.tag, tagActionValue) : void mergeTag(tagAction.tag, tagActionValue)}>{savingTags ? <LoaderCircle className="spin" /> : <Check />}</button>
-                                  <button type="button" className="icon-button" title="取消" aria-label="取消标签操作" disabled={savingTags} onClick={() => { setTagAction(null); setTagActionValue('') }}><X /></button>
-                                </div> : null}
-                                {tagEditorOpen ? <div className="reality-tag-editor">
-                                  <div className="tag-mode" role="group" aria-label="标签类型"><button type="button" aria-pressed={tagKind === 'entity'} onClick={() => setTagKind('entity')}>实体</button><button type="button" aria-pressed={tagKind === 'fact'} onClick={() => setTagKind('fact')}>事实</button></div>
-                                  <input value={tagLabel} onChange={(change) => setTagLabel(change.target.value)} placeholder="标签显示名称" maxLength={200} />
-                                  {tagKind === 'entity' ? <select value={entityType} onChange={(change) => setEntityType(change.target.value as NonNullable<RealityTag['entityType']>)} aria-label="实体类型"><option value="person">人物</option><option value="organization">组织</option><option value="project">项目</option><option value="product">产品</option><option value="place">地点</option><option value="other">其他</option></select> : <div className="fact-fields"><input value={factSubject} onChange={(change) => setFactSubject(change.target.value)} placeholder="主体" /><input value={factPredicate} onChange={(change) => setFactPredicate(change.target.value)} placeholder="关系" /><input value={factObject} onChange={(change) => setFactObject(change.target.value)} placeholder="客体" /></div>}
-                                  <button type="button" className="primary-button" disabled={savingTags || !tagLabel.trim()} onClick={() => void addTag(event)}>{savingTags ? <LoaderCircle className="spin" /> : <Check />}添加</button>
-                                  {allTags.some((tag) => !(event.insights.representativeTags ?? []).some((linked) => linked.id === tag.id)) ? <label className="attach-tag"><span>关联已有标签</span><select defaultValue="" onChange={(change) => { if (change.target.value) void attachExistingTag(event, change.target.value); change.target.value = '' }}><option value="">选择标签</option>{allTags.filter((tag) => !(event.insights.representativeTags ?? []).some((linked) => linked.id === tag.id)).map((tag) => <option key={tag.id} value={tag.id}>{tag.label} · {tag.kind === 'entity' ? '实体' : '事实'} · {tag.occurrenceCount ?? 0} 次</option>)}</select></label> : null}
-                                </div> : null}
-                              </section>
-                              <InsightList title="关键内容" items={event.insights.keyPoints} empty="暂无关键内容" />
-                              <div className="reality-insight-columns">
-                                <InsightList title="决策" items={event.insights.decisions} empty="暂无决策" />
-                                <InsightList title="行动项" items={event.insights.actionItems} empty="暂无行动项" />
-                              </div>
-                              <div className="reality-insight-columns">
-                                <InsightList title="人物与项目" icon={<UserRound aria-hidden="true" />} items={[...event.insights.people, ...event.insights.projects]} empty="暂无关联" />
-                                <InsightList title="未解决问题" icon={<CircleDot aria-hidden="true" />} items={event.insights.unresolvedQuestions} empty="暂无未解决问题" />
-                              </div>
+                              {event.processingState !== 'ready' && !event.insights.summary ? (
+                                <>
+                                  <ProcessingStatus event={event} />
+                                  <DetailSkeleton lines={5} />
+                                </>
+                              ) : (
+                                <>
+                                  <section className="reality-topic"><span>主题</span><strong>{event.insights.currentTopic || event.currentTopic || '等待转写结果'}</strong><p>{event.insights.summary || '转写完成后将自动生成总结。'}</p></section>
+                                  <section className="reality-tags-section">
+                                    <div className="reality-tags-heading"><h3><Tag aria-hidden="true" />代表标签</h3></div>
+                                    {(event.insights.representativeTags?.length ?? 0) > 0 ? <div className="reality-tag-list">{event.insights.representativeTags!.map((tag) => <div className="reality-tag" key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind} title={tag.evidence || undefined}><span>{tag.kind === 'entity' ? '实体' : '事实'}</span><strong>{tag.label}</strong>{(tag.occurrenceCount ?? 0) > 1 ? <small>出现 {tag.occurrenceCount} 次</small> : null}{tag.id && event.insights.summaryRecordId ? <div><button type="button" title="从本条总结移除" aria-label={`移除 ${tag.label}`} disabled={savingTags} onClick={() => void removeTag(event, tag)}><X /></button></div> : null}</div>)}</div> : <p className="reality-tags-empty">暂无代表标签</p>}
+                                  </section>
+                                  <InsightList title="关键内容" items={event.insights.keyPoints} empty="暂无关键内容" />
+                                  <div className="reality-insight-columns">
+                                    <InsightList title="决策" items={event.insights.decisions} empty="暂无决策" />
+                                    <InsightList title="行动项" items={event.insights.actionItems} empty="暂无行动项" />
+                                  </div>
+                                  <div className="reality-insight-columns">
+                                    <InsightList title="人物与项目" icon={<UserRound aria-hidden="true" />} items={[...event.insights.people, ...event.insights.projects]} empty="暂无关联" />
+                                    <InsightList title="未解决问题" icon={<CircleDot aria-hidden="true" />} items={event.insights.unresolvedQuestions} empty="暂无未解决问题" />
+                                  </div>
+                                </>
+                              )}
                             </div>
                           ) : (
                             <div className="reality-transcript-editor">
@@ -626,7 +646,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                     onPlay={() => setIsPlaying(true)}
                                     onPause={() => setIsPlaying(false)}
                                     onEnded={() => void playNextCloudSegment()}
-                                    onError={() => setError('本地录音无法播放，请确认音频文件仍然存在。')}
+                                    onError={() => showToast({ title: '录音无法播放', message: '请确认音频文件仍然存在。' })}
                                   />
                                   <button type="button" className="player-toggle" disabled={!audioUrl} onClick={togglePlayback} aria-label={isPlaying ? '暂停录音' : '播放录音'}>
                                     {isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
@@ -646,12 +666,25 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                   <time>{formatDuration(playbackDurationMs)}</time>
                                 </div>
                               ) : null}
-                              <div className="reality-editor-heading"><div><h3>完整逐字稿</h3><span>{event.transcriptEditedAt ? '人工修改已锁定' : '来自 SaaS 转写结果'}</span></div><button type="button" className="secondary-button" disabled={savingTranscript || transcriptDraft === event.transcript} onClick={saveTranscript}>{savingTranscript ? <LoaderCircle className="spin" /> : <Check />}保存修改</button></div>
-                              <textarea value={transcriptDraft} onChange={(change) => setTranscriptDraft(change.target.value)} placeholder="等待 SaaS 返回转写结果" />
-                              <div ref={transcriptScrollRef} className="reality-segments" aria-label="逐字稿句段">{event.transcriptSegments.map((segment) => {
-                                const active = segment.id === activeSegmentId
-                                return <button ref={active ? activeSegmentRef : undefined} type="button" key={segment.id} data-active={String(active)} aria-current={active ? 'true' : undefined} onClick={() => seekTo(segment.beginTime)}><time>{formatDuration(segment.beginTime)}</time><strong>{segment.speakerId === null ? '说话人' : `说话人 ${segment.speakerId + 1}`}</strong><span>{segment.text}</span></button>
-                              })}</div>
+                              {event.transcriptSegments.length === 0 && event.processingState !== 'ready' ? (
+                                <>
+                                  <ProcessingStatus event={event} />
+                                  <DetailSkeleton lines={6} />
+                                </>
+                              ) : event.transcriptSegments.length === 0 ? (
+                                <p className="reality-tags-empty" style={{ padding: '14px 0' }}>{event.transcript ? event.transcript : '暂无逐字稿'}</p>
+                              ) : (
+                                <>
+                                  <div className="reality-editor-heading">
+                                    <h3>逐字稿</h3>
+                                    <span className="reality-editor-meta">{event.transcriptSegments.length} 个句段</span>
+                                  </div>
+                                  <div ref={transcriptScrollRef} className="reality-segments" aria-label="逐字稿句段">{event.transcriptSegments.map((segment) => {
+                                    const active = segment.id === activeSegmentId
+                                    return <button ref={active ? activeSegmentRef : undefined} type="button" key={segment.id} data-active={String(active)} aria-current={active ? 'true' : undefined} onClick={() => seekTo(segment.beginTime)}><time>{formatDuration(segment.beginTime)}</time><strong>{segment.speakerId === null ? '说话人' : `说话人 ${segment.speakerId + 1}`}</strong><span>{segment.text}</span></button>
+                                  })}</div>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
@@ -670,4 +703,42 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
 
 function InsightList({ title, items, empty, icon }: { title: string; items: string[]; empty: string; icon?: ReactNode }) {
   return <section className="reality-insight-list"><h3>{icon}{title}</h3>{items.length > 0 ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{empty}</p>}</section>
+}
+
+/** 处理中/失败的状态条:给用户明确的当前阶段与预期。 */
+function ProcessingStatus({ event }: { event: RealityEvent }) {
+  const failed = event.processingState === 'failed'
+  return (
+    <div className="reality-processing" data-state={event.processingState} role="status">
+      {failed ? <AlertCircle aria-hidden="true" /> : <LoaderCircle className="spin" aria-hidden="true" />}
+      <div>
+        <strong>{PROCESSING_LABELS[event.processingState]}</strong>
+        {PROCESSING_HINTS[event.processingState] ? <span>{PROCESSING_HINTS[event.processingState]}</span> : null}
+        {failed && event.error ? <p>{event.error}</p> : null}
+      </div>
+    </div>
+  )
+}
+
+/** 总结/逐字稿生成前的占位骨架。 */
+function DetailSkeleton({ lines = 5 }: { lines?: number }) {
+  return (
+    <div className="reality-skeleton" aria-hidden="true">
+      {Array.from({ length: lines }, (_, index) => (
+        <i key={index} style={{ width: `${90 - index * 12}%`, animationDelay: `${index * 130}ms` }} />
+      ))}
+    </div>
+  )
+}
+
+/** 进行中事件的时长需要每秒走秒;隔离在小组件里避免整页跟着重渲染。 */
+function LiveDuration({ durationMs, startedAt, ongoing }: { durationMs: number; startedAt: string; ongoing: boolean }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!ongoing) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [ongoing])
+  const milliseconds = durationMs || (ongoing ? Math.max(0, now - Date.parse(startedAt)) : 0)
+  return <>{formatDuration(milliseconds)}</>
 }

@@ -12,6 +12,7 @@ import { createDatabase } from "../infrastructure/database/client.js";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
+import { mcpRoutes } from "../modules/agent/mcp-routes.js";
 import { AgentService } from "../modules/agent/service.js";
 import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
@@ -325,6 +326,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await gatewayLogger.close();
   });
   await app.register(agentRoutes(agentService));
+  await app.register(mcpRoutes(config));
   await app.register(contextRoomRoutes(contextRoomService));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));

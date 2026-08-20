@@ -9,6 +9,7 @@ import { createOpenConnectorPiTools } from './open-connector-tools.js';
 import { createConnectorDataPiTools } from "../connectors/pi-tools.js";
 import { createConnectorSyncAgentTools } from "../connectors/agent-tools.js";
 import type { ConnectorSyncService } from "../connectors/service.js";
+import { createWebSearchPiTools } from "./web-search-tools.js";
 
 export interface AgentRuntimeIntegrationOptions {
   /** 会话级 Room wiki 解析（plan §6.1 resolveKnowledge），knowledge 模块注入。 */
@@ -36,6 +37,7 @@ export function createAgentRuntime(
       ...(config.connectorAgentMode === "local" && connectorSync
         ? createConnectorDataPiTools(connectorSync, config.connectorSyncOwnerId ?? "local-user")
         : config.openConnector ? createOpenConnectorPiTools(config.openConnector) : []),
+      ...(config.webSearch ? createWebSearchPiTools(config.webSearch) : []),
     ],
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),
     ...(knowledge?.resolveKnowledgeWikiIds

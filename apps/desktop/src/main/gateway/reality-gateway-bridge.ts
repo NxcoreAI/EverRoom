@@ -10,6 +10,7 @@ import {
   type UpdateRealityTranscriptInput,
 } from '@nxcore/reality-contract'
 import type { AxiosRequestConfig } from 'axios'
+import { isAxiosError } from 'axios'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import type { AsrJob } from '../../shared/sources'
@@ -18,6 +19,18 @@ import type { GatewaySupervisor } from './gateway-supervisor'
 
 const REALITY_EVENT_CHANNEL = 'reality:event'
 const http = createLoggedHttpClient('gateway-reality')
+const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'ERR_SOCKET_CLOSED',
+])
+
+function isRecoverableConnectionError(error: unknown): boolean {
+  if (!isAxiosError(error)) return false
+  if (error.code && RECOVERABLE_CONNECTION_ERROR_CODES.has(error.code)) return true
+  return typeof error.message === 'string' && /socket hang up/i.test(error.message)
+}
 
 interface Subscription {
   socket: WebSocket
@@ -81,6 +94,13 @@ export class RealityGatewayBridge {
     return this.request(`/v1/reality/events/${this.id(id)}/markers`, {
       method: 'POST',
       data: input,
+    })
+  }
+
+  setImportant(id: string, important: boolean): Promise<RealityEvent> {
+    return this.request(`/v1/reality/events/${this.id(id)}/important`, {
+      method: 'PATCH',
+      data: { important },
     })
   }
 
@@ -175,6 +195,20 @@ export class RealityGatewayBridge {
 
   private async rawRequest<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
     const connection = this.supervisor.getConnection()
+    try {
+      return await this.requestWithConnection<T>(connection, path, config)
+    } catch (error) {
+      if (!isRecoverableConnectionError(error)) throw error
+      const recoveredConnection = await this.supervisor.recoverConnection(connection)
+      return this.requestWithConnection<T>(recoveredConnection, path, config)
+    }
+  }
+
+  private async requestWithConnection<T>(
+    connection: ReturnType<GatewaySupervisor['getConnection']>,
+    path: string,
+    config: AxiosRequestConfig,
+  ): Promise<T> {
     const response = await http.request<T & { message?: unknown }>({
       url: `${connection.baseUrl}${path}`,
       ...config,

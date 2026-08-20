@@ -151,3 +151,76 @@
 @media (prefers-reduced-motion: reduce) {
   .cassette-switch,.cassette-key > i,.cassette-switch[data-active='true'] .cassette-state > i,.cassette-switch[data-active='true'] .cassette-reel,.cassette-switch[data-active='true'] .cassette-tape > i,.cassette-switch[data-active='true'] .cassette-levels > i,.cassette-switch[data-busy='true'] .cassette-reel { animation: none; transition: none; }
 }
+
+/* 录制时长计数器:叠在磁带窗口下沿,录音中实时走秒。 */
+.cassette-timer {
+  position: absolute;
+  z-index: 4;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #4c3f2e;
+  font: 650 7px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.06em;
+  opacity: 0.45;
+}
+
+.cassette-switch[data-active='true'] .cassette-timer {
+  color: #3a2e20;
+  opacity: 0.92;
+}
+
+/* 录音开始后,磁带卡下方的计时条,宽度与磁带卡一致。 */
+.cassette-control-column {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.cassette-control-column .cassette-switch {
+  width: 100%;
+}
+
+.cassette-recording-timer {
+  display: inline-flex;
+  width: 112px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, #c14452 42%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, #c14452 8%, #fff);
+  color: #a13641;
+  font: 650 14px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  animation: cassette-timer-enter 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cassette-recording-timer > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d65449;
+  animation: cassette-rec-light 1.4s ease-in-out infinite;
+}
+
+.cassette-recording-timer[data-recording='false'] {
+  border-color: color-mix(in srgb, #ad7628 42%, transparent);
+  background: color-mix(in srgb, #ad7628 8%, #fff);
+  color: #8a5c1c;
+  font-size: 13px;
+}
+
+.cassette-recording-timer[data-recording='false'] > i {
+  background: #ad7628;
+}
+
+@keyframes cassette-timer-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}

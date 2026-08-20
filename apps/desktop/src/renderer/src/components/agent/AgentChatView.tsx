@@ -8,13 +8,13 @@ import { parseAgentNavigationTarget } from './agentNavigation'
 import { formatAgentOutput } from './agentOutputFormat'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
+import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
 import {
   findPendingAgentDocumentSelection,
   type AgentDocumentSelectionItem,
   type AgentDocumentSelectionSubmission,
 } from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
-import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'

@@ -108,6 +108,7 @@ export function App() {
       setContextRoomHomeRequest((request) => request + 1)
     }
     if (page === 'rooms') setActiveContextRoomId(null)
+    if (page === 'agents') setAgentOpen(false)
     setActivePage(page)
   }
 
@@ -307,6 +308,7 @@ export function App() {
           onContextRoomShowHome={showContextRoomHome}
           onNavigate={navigate}
           onFocusAgent={focusAgent}
+          onOpenDocument={openDocumentTarget}
         />
       </main>
       {agentOpen ? (

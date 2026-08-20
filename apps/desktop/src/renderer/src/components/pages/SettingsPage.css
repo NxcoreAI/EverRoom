@@ -515,3 +515,103 @@
 .developer-settings-section header svg, .developer-settings-section button svg { width: 15px; height: 15px; }
 .developer-settings-section h2 { margin: 0; font-size: 13px; }
 .developer-settings-section p { margin: 3px 0 0; color: var(--subtle); font-size: 10px; }
+
+
+/* MCP 服务器管理 */
+.mcp-settings-section header {
+  align-items: flex-start;
+}
+
+.mcp-server-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border, #e5e3dd);
+  border-radius: 12px;
+  background: var(--surface, #faf9f6);
+}
+
+.mcp-form-field {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.mcp-form-field > span {
+  color: var(--muted, #6f6a60);
+}
+
+.mcp-form-field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e5e3dd);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.mcp-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mcp-server-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border, #e5e3dd);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.mcp-server-row[data-disabled='true'] .mcp-server-info {
+  opacity: 0.55;
+}
+
+.mcp-server-info {
+  display: grid;
+  min-width: 0;
+}
+
+.mcp-server-info small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+  color: var(--muted, #6f6a60);
+}
+
+.mcp-server-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.mcp-delete-button {
+  padding: 6px 8px;
+  color: #b3261e;
+}
+
+.mcp-server-empty {
+  display: grid;
+  gap: 4px;
+  padding: 18px 16px;
+  border: 1px dashed var(--border, #e5e3dd);
+  border-radius: 10px;
+  color: var(--muted, #6f6a60);
+  text-align: center;
+}
+
+.mcp-config-path {
+  display: block;
+  color: var(--muted, #6f6a60);
+  word-break: break-all;
+}

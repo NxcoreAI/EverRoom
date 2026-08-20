@@ -9,12 +9,13 @@ import {
   Home,
   ListChecks,
   AudioLines,
+  Bot,
   NotebookPen,
   PlugZap,
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'tasks' | 'diary' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'agents' | 'tasks' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -37,7 +38,7 @@ export const navigationSections: NavigationSection[] = [
       { id: 'home', label: '首页', icon: Home, tone: 'slate' },
       { id: 'rooms', label: 'Context Room', icon: BookOpen, tone: 'blue' },
       { id: 'docs', label: '文档', icon: FileText, tone: 'indigo' },
-      { id: 'recording', label: '智能感知', icon: AudioLines, tone: 'cyan' },
+      { id: 'recording', label: '现实感知', icon: AudioLines, tone: 'cyan' },
     ],
   },
   {
@@ -54,7 +55,10 @@ export const navigationSections: NavigationSection[] = [
   {
     id: 'execution',
     label: '执行',
-    items: [{ id: 'tasks', label: '任务', icon: ListChecks, tone: 'green' }],
+    items: [
+      { id: 'agents', label: 'Agent 状态', icon: Bot, tone: 'blue' },
+      { id: 'tasks', label: '任务', icon: ListChecks, tone: 'green' },
+    ],
   },
   {
     id: 'system',
