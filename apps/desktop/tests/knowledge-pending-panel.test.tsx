@@ -1,0 +1,61 @@
+import React from 'react'
+import TestRenderer, { act } from 'react-test-renderer'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/state/toast', () => ({ showToast: vi.fn() }))
+
+import { KnowledgePendingPanel } from '../src/renderer/src/components/context-room/ported/components/KnowledgePendingPanel'
+
+function installKnowledge({ recommended = [], recent = [] }: { recommended?: unknown[]; recent?: unknown[] }) {
+  vi.stubGlobal('window', {
+    addEventListener: vi.fn(),
+    clearInterval: vi.fn(),
+    nxcore: {
+      knowledge: {
+        listEntities: vi.fn((status: string) => Promise.resolve({ items: status === 'ready' ? recommended : [] })),
+        listRecentDecisions: vi.fn(() => Promise.resolve({ items: recent })),
+        listUnmatched: vi.fn(() => Promise.resolve({ items: [] })),
+      },
+    },
+    removeEventListener: vi.fn(),
+    setInterval: vi.fn(() => 1),
+  })
+}
+
+describe('KnowledgePendingPanel', () => {
+  let renderer: TestRenderer.ReactTestRenderer | null = null
+
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps recent classifications in collapsed history while the recommendation empty state opens Agent', async () => {
+    installKnowledge({
+      recent: [{
+        decisionId: 'decision-1',
+        title: '已归类资料',
+        roomId: 'room-1',
+        roomTitle: '产品 Room',
+      }],
+    })
+    const onFocusAgent = vi.fn()
+
+    await act(async () => {
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={onFocusAgent} />)
+      await Promise.resolve()
+    })
+
+    expect(renderer!.root.findByType('h3').children).toContain('正在理解资料中')
+    const history = renderer!.root.findByType('details')
+    expect(history.props.open).toBeUndefined()
+    expect(history.findByType('summary').findByType('span').children).toContain('历史记录')
+
+    const agentButton = renderer!.root.findAllByType('button')
+      .find((button) => button.props.className === 'context-room-knowledge-empty-cta')
+    expect(agentButton).toBeDefined()
+    act(() => agentButton!.props.onClick())
+    expect(onFocusAgent).toHaveBeenCalledTimes(1)
+  })
+})

@@ -1,4 +1,4 @@
-import { Inbox, Link2, RefreshCw, Sparkles, Undo2, Upload } from 'lucide-react';
+import { ChevronDown, Inbox, Link2, MessageCircle, RefreshCw, Sparkles, Undo2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showToast } from '@/state/toast';
@@ -31,7 +31,7 @@ const RECOMMEND_LIMIT = 3;
  * 推荐 Room 面板（entity-room-plan 推荐确认制）：达阈值实体进 ready
  * 推荐池，用户确认后才创建 Room；未识别栏/最近归类保持人工治理入口。
  */
-export function KnowledgePendingPanel() {
+export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => void }) {
   const [recommended, setRecommended] = useState<KnowledgeEntityDto[]>([]);
   const [attachPool, setAttachPool] = useState<KnowledgeEntityDto[]>([]);
   const [unmatched, setUnmatched] = useState<KnowledgeUnmatchedItemDto[]>([]);
@@ -193,8 +193,6 @@ export function KnowledgePendingPanel() {
 
   if (!loaded) return null;
 
-  const empty = recommended.length === 0 && unmatched.length === 0 && recent.length === 0;
-
   return (
     <section className="context-room-knowledge-panel" data-testid="context-room-knowledge-pending">
       <div className="context-room-my-title">
@@ -225,14 +223,21 @@ export function KnowledgePendingPanel() {
         </div>
       </div>
 
-      {empty ? (
+      {recommended.length === 0 ? (
         <div className="context-room-knowledge-empty">
           <Inbox aria-hidden="true" />
-          <p>暂无推荐 Room。上传资料后系统会自动抽取实体并累积证据，达到阈值即在此推荐。</p>
+          <h3>正在理解资料中</h3>
+          <p>你也可以告诉 Agent 想创建什么 Room。</p>
+          <button type="button" className="context-room-knowledge-empty-cta" onClick={onFocusAgent}>
+            <span className="context-room-knowledge-empty-cta-icon">
+              <MessageCircle aria-hidden="true" />
+            </span>
+            <span>和 Agent 说</span>
+          </button>
         </div>
       ) : (
         <div className="context-room-knowledge-list">
-          {recommended.length > 0 ? <h3 className="context-room-knowledge-group">推荐（按证据分排序，前 3）</h3> : null}
+          <h3 className="context-room-knowledge-group">推荐（按证据分排序，前 3）</h3>
           {recommended.map((entity) => {
             const scoreRatio = Math.min(1, entity.evidenceScore / entity.promoteScore);
             return (
@@ -266,8 +271,12 @@ export function KnowledgePendingPanel() {
               </article>
             );
           })}
+        </div>
+      )}
 
-          {unmatched.length > 0 ? <h3 className="context-room-knowledge-group">未识别资料（等待挂载）</h3> : null}
+      {unmatched.length > 0 ? (
+        <div className="context-room-knowledge-list">
+          <h3 className="context-room-knowledge-group">未识别资料（等待挂载）</h3>
           {unmatched.map((item) => {
             const selection = attachSelection[item.decisionId] ?? '';
             const draft = attachDrafts[item.decisionId];
@@ -337,10 +346,18 @@ export function KnowledgePendingPanel() {
               </article>
             );
           })}
+        </div>
+      ) : null}
 
-          {recent.length > 0 ? (
+      {recent.length > 0 ? (
+        <details className="context-room-knowledge-history">
+          <summary>
+            <span>历史记录</span>
+            <small>{recent.length}</small>
+            <ChevronDown aria-hidden="true" />
+          </summary>
+          <div className="context-room-knowledge-history-content">
             <div className="context-room-knowledge-recent">
-              <h3>最近归类（可撤销）</h3>
               {recent.map((item) => (
                 <div key={item.decisionId} className="context-room-knowledge-recent-row">
                   <span className="context-room-knowledge-recent-title">{item.title}</span>
@@ -358,9 +375,9 @@ export function KnowledgePendingPanel() {
                 </div>
               ))}
             </div>
-          ) : null}
-        </div>
-      )}
+          </div>
+        </details>
+      ) : null}
     </section>
   );
 }

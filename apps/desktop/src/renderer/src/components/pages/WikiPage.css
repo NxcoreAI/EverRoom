@@ -179,6 +179,68 @@
   background: var(--surface);
 }
 
+/* Keep the top-level Wiki usable before the lazy Context Room stylesheet loads. */
+.wiki-tree-pane .context-room-wiki-tree,
+.wiki-tree-pane .context-room-wiki-tree-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wiki-tree-pane .context-room-wiki-tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.wiki-tree-pane .context-room-wiki-tree-node {
+  display: flex;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.wiki-tree-pane .context-room-wiki-tree-node:hover {
+  background: var(--hover);
+}
+
+.wiki-tree-pane .context-room-wiki-tree-node[data-selected='true'] {
+  background: var(--accent-soft, rgba(64, 140, 240, 0.12));
+  font-weight: 600;
+}
+
+.wiki-tree-pane .context-room-wiki-tree-node[data-directory='true'] {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.wiki-tree-pane .context-room-wiki-tree-node svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.wiki-tree-pane .context-room-wiki-tree-caret {
+  width: 13px !important;
+  height: 13px !important;
+  color: var(--muted);
+}
+
+.wiki-tree-pane .context-room-wiki-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .wiki-tree-pane ul {
   margin: 0;
   padding: 0;
