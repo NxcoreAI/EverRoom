@@ -5,19 +5,20 @@ import type { MemoryDocumentDto } from '../../../../../shared/memory'
 import { MarkdownBody } from '../../context-room/ported/components/detail-panels/MarkdownBody'
 import { MemoryMarkdown } from './MemoryMarkdown'
 import { MemoryEmptyView } from './MemoryStatusViews'
-import { formatDate, useAsyncData } from './useMemoryData'
+import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
+import { useLocale } from '@/i18n/LocaleContext'
 
 /** 粘贴导入的字符上限（与 gateway / MemoryCore 的 2MB 一致）。 */
 const MAX_IMPORT_CHARS = 2 * 1024 * 1024
 
 const TYPE_LABELS: Record<string, string> = {
-  episodic: '情景',
-  persona: '人格',
-  instruction: '指令',
-  work_fact: '事实',
-  work_task: '任务',
-  work_method: '方法',
-  work_artifact: '产物',
+  episodic: 'memory:document.episodic',
+  persona: 'memory:document.persona',
+  instruction: 'memory:document.instruction',
+  work_fact: 'memory:document.fact',
+  work_task: 'memory:document.task',
+  work_method: 'memory:document.method',
+  work_artifact: 'memory:document.artifact',
 }
 
 function typeLabel(type: string): string {
@@ -34,6 +35,7 @@ function DocumentDetail({ document, onBack, onDeleted }: {
   onBack: () => void
   onDeleted: () => void
 }) {
+  const { locale, t } = useLocale()
   const detail = useAsyncData(() => window.nxcore!.memory.getDocument(document.id), [document.id])
   const callerRef = detail.data?.document.callerRef
   // 原文预览经 caller_ref（= 知识资产 file id）走 knowledge 既有链路。
@@ -57,7 +59,7 @@ function DocumentDetail({ document, onBack, onDeleted }: {
       await window.nxcore!.memory.deleteDocument(document.id)
       onDeleted()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '删除失败。')
+      setError(cause instanceof Error ? cause.message : t('memory:document.deleteFailed'))
       setConfirming(false)
     } finally {
       setDeleting(false)
@@ -68,22 +70,22 @@ function DocumentDetail({ document, onBack, onDeleted }: {
     <div className="mem-doc-detail">
       <div className="mem-toolbar">
         <button type="button" className="mem-doc-back" onClick={onBack}>
-          <ChevronLeft aria-hidden="true" strokeWidth={1.7} />返回列表
+          <ChevronLeft aria-hidden="true" strokeWidth={1.7} />{t('memory:document.backToList')}
         </button>
         <span className="mem-doc-title">{document.title}</span>
         <span className="mem-doc-meta">
-          v{document.version} · {document.chunkCount} 块 · 派生 {detail.data?.document.derivedMemoryCount ?? '…'} 条
-          · {formatDate(document.updatedAt)}
+          {t('memory:document.versionChunksDerived', { version: document.version, chunks: document.chunkCount, count: detail.data?.document.derivedMemoryCount ?? '…' })}
+          · {formatDate(document.updatedAt, locale)}
         </span>
         <span className="mem-toolbar-actions">
           {confirming ? (
             <>
-              <button type="button" className="mem-danger" disabled={deleting} onClick={remove}>确认删除</button>
-              <button type="button" disabled={deleting} onClick={() => setConfirming(false)}>取消</button>
+              <button type="button" className="mem-danger" disabled={deleting} onClick={remove}>{t('memory:document.confirmDelete')}</button>
+              <button type="button" disabled={deleting} onClick={() => setConfirming(false)}>{t('memory:document.cancel')}</button>
             </>
           ) : (
             <button type="button" onClick={() => setConfirming(true)}>
-              <Trash2 aria-hidden="true" strokeWidth={1.7} />删除文档
+              <Trash2 aria-hidden="true" strokeWidth={1.7} />{t('memory:document.deleteDocument')}
             </button>
           )}
         </span>
@@ -91,7 +93,7 @@ function DocumentDetail({ document, onBack, onDeleted }: {
       {error ? <p className="mem-inline-error">{error}</p> : null}
 
       <section className="mem-doc-section">
-        <h3>原文预览</h3>
+        <h3>{t('memory:document.sourcePreview')}</h3>
         {preview.data ? (
           <div className="mem-doc-preview">
             <MemoryMarkdown markdown={preview.data.markdown} />
@@ -104,21 +106,21 @@ function DocumentDetail({ document, onBack, onDeleted }: {
               <MarkdownBody markdown={detail.data.chunks.map((chunk) => chunk.content).join('\n\n')} />
             </div>
           ) : (
-            <p className="mem-inline-error">原文预览不可用（{preview.failure.message}）</p>
+            <p className="mem-inline-error">{t('memory:document.sourcePreviewUnavailable', { error: memoryFailureText(preview.failure, t) })}</p>
           )
         ) : (
-          <p className="mem-loading">加载中…</p>
+          <p className="mem-loading">{t('memory:document.loading')}</p>
         )}
       </section>
 
       <section className="mem-doc-section">
-        <h3>分块锚点（{detail.data?.chunks.length ?? 0}）</h3>
+        <h3>{t('memory:document.chunkAnchors', { count: detail.data?.chunks.length ?? 0 })}</h3>
         <ul className="mem-doc-chunks">
           {(detail.data?.chunks ?? []).map((chunk) => (
             <li key={chunk.messageId} className="mem-doc-chunk">
               <header>
-                <span className="mem-doc-chunk-path">{chunk.headingPath || '（无标题小节）'}</span>
-                <small>第 {chunk.chunkIndex + 1} 块 · 原文第 {chunk.lineStart}–{chunk.lineEnd} 行</small>
+                <span className="mem-doc-chunk-path">{chunk.headingPath || t('memory:document.untitledSection')}</span>
+                <small>{t('memory:document.chunkSourceLines', { chunk: chunk.chunkIndex + 1, start: chunk.lineStart, end: chunk.lineEnd })}</small>
               </header>
               <MemoryMarkdown markdown={chunk.content} compact />
             </li>
@@ -127,16 +129,16 @@ function DocumentDetail({ document, onBack, onDeleted }: {
       </section>
 
       <section className="mem-doc-section">
-        <h3>派生原子记忆（{detail.data?.memories.length ?? 0}）</h3>
+        <h3>{t('memory:document.derivedAtomicMemories', { count: detail.data?.memories.length ?? 0 })}</h3>
         {!detail.loading && (detail.data?.memories.length ?? 0) === 0 ? (
-          <p className="mem-doc-hint">尚未提炼出原子记忆——首次导入后异步提炼需要一点时间，稍后刷新可见。</p>
+          <p className="mem-doc-hint">{t('memory:document.noDerivedMemoriesYet')}</p>
         ) : (
           <ul className="mem-doc-memories">
             {(detail.data?.memories ?? []).map((memory) => (
               <li key={memory.id}>
-                <span className="mem-type-badge" data-type={memory.type}>{typeLabel(memory.type)}</span>
+                <span className="mem-type-badge" data-type={memory.type}>{t(typeLabel(memory.type))}</span>
                 <span className="mem-atomic-text">{memory.content}</span>
-                <span className="mem-time">{formatDate(memory.updatedAt)}</span>
+                <span className="mem-time">{formatDate(memory.updatedAt, locale)}</span>
               </li>
             ))}
           </ul>
@@ -147,6 +149,7 @@ function DocumentDetail({ document, onBack, onDeleted }: {
 }
 
 export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | null }) {
+  const { locale, t } = useLocale()
   const [reloadTick, setReloadTick] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [pasting, setPasting] = useState(false)
@@ -169,9 +172,9 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
   const documents = data?.documents ?? []
 
   const reportImport = (filename: string, result: { deduplicated: boolean; replacedVersions: number; version: string }) => {
-    if (result.deduplicated) setNotice(`「${filename}」内容未变化，已导入版本保持 ${result.version}。`)
-    else if (result.replacedVersions > 0) setNotice(`「${filename}」已升版至 ${result.version}，旧版记忆已级联清除。`)
-    else setNotice(`「${filename}」已导入（${result.version}）。`)
+    if (result.deduplicated) setNotice(t('memory:document.contentUnchanged', { filename, version: result.version }))
+    else if (result.replacedVersions > 0) setNotice(t('memory:document.versionUpgraded', { filename, version: result.version }))
+    else setNotice(t('memory:document.imported', { filename, version: result.version }))
   }
 
   const importEntry = async (title: string, markdown: string, filename?: string) => {
@@ -193,7 +196,7 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
         try {
           await importEntry(titleFromFilename(entry.filename), entry.markdown, entry.filename)
         } catch (cause) {
-          const message = cause instanceof Error ? cause.message : '导入失败。'
+          const message = cause instanceof Error ? cause.message : t('memory:document.importFailed')
           setError((prev) => (prev ? `${prev}\n${entry.filename}：${message}` : `${entry.filename}：${message}`))
         }
       }
@@ -205,10 +208,10 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
 
   const importPaste = async () => {
     const markdown = pasteText.trim()
-    const title = pasteTitle.trim() || '未命名文档'
+    const title = pasteTitle.trim() || t('memory:document.untitledDocument')
     if (!markdown) return
     if (markdown.length > MAX_IMPORT_CHARS) {
-      setError(`内容超过 2MB 上限（当前 ${(markdown.length / 1024 / 1024).toFixed(1)}MB）。`)
+      setError(t('memory:document.contentExceedsLimit', { size: (markdown.length / 1024 / 1024).toFixed(1) }))
       return
     }
     setImporting(true)
@@ -221,13 +224,13 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
       setPasteText('')
       setReloadTick((tick) => tick + 1)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '导入失败。')
+      setError(cause instanceof Error ? cause.message : t('memory:document.importFailed'))
     } finally {
       setImporting(false)
     }
   }
 
-  if (failure) return <div className="mem-pane-error">{failure.message}</div>
+  if (failure) return <div className="mem-pane-error">{memoryFailureText(failure, t)}</div>
 
   // 列表里找不到的 selectedId（换版/已删）自然落回列表渲染
   const selected = selectedId ? documents.find((doc) => doc.id === selectedId) ?? null : null
@@ -244,16 +247,16 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
   return (
     <div className="mem-documents">
       <div className="mem-toolbar">
-        <span className="mem-count">共 {data?.total ?? 0} 份文档（同名重导自动升版）</span>
+        <span className="mem-count">{t('memory:document.documentCount', { count: data?.total ?? 0 })}</span>
         <span className="mem-toolbar-actions">
           <button type="button" onClick={() => setPasting((value) => !value)} disabled={importing}>
-            <FilePlus2 aria-hidden="true" strokeWidth={1.7} />粘贴 md
+            <FilePlus2 aria-hidden="true" strokeWidth={1.7} />{t('memory:document.pasteMarkdown')}
           </button>
           <button type="button" onClick={importPicked} disabled={importing}>
-            <Upload aria-hidden="true" strokeWidth={1.7} />选择 .md 文件
+            <Upload aria-hidden="true" strokeWidth={1.7} />{t('memory:document.selectMarkdownFiles')}
           </button>
           <button type="button" onClick={() => setReloadTick((tick) => tick + 1)} disabled={loading}>
-            <RefreshCw aria-hidden="true" strokeWidth={1.7} className={loading ? 'mem-spin' : undefined} />刷新
+            <RefreshCw aria-hidden="true" strokeWidth={1.7} className={loading ? 'mem-spin' : undefined} />{t('memory:document.refresh')}
           </button>
         </span>
       </div>
@@ -263,13 +266,13 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
           <input
             type="text"
             value={pasteTitle}
-            placeholder="文档标题（用于记忆场景命名与判重）"
+            placeholder={t('memory:document.titlePlaceholder')}
             maxLength={512}
             onChange={(event) => setPasteTitle(event.target.value)}
           />
           <textarea
             value={pasteText}
-            placeholder="粘贴 Markdown 全文（≤2MB）……"
+            placeholder={t('memory:document.markdownPlaceholder')}
             rows={8}
             onChange={(event) => setPasteText(event.target.value)}
           />
@@ -280,9 +283,9 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
               disabled={importing || !pasteText.trim()}
               onClick={importPaste}
             >
-              导入为记忆文档
+              {t('memory:document.importAsMemoryDocument')}
             </button>
-            <button type="button" disabled={importing} onClick={() => setPasting(false)}>取消</button>
+            <button type="button" disabled={importing} onClick={() => setPasting(false)}>{t('memory:document.cancel')}</button>
           </div>
         </div>
       ) : null}
@@ -292,8 +295,8 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
 
       {!loading && documents.length === 0 ? (
         <MemoryEmptyView
-          title="暂无导入文档"
-          hint="把 md 文档导入为记忆来源：MemoryCore 会按标题切块、提炼原子记忆，并支持双向溯源。"
+          title={t('memory:document.noImportedDocuments')}
+          hint={t('memory:document.importHint')}
         />
       ) : (
         <ul className="mem-doc-list">
@@ -304,7 +307,7 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
                 <span className="mem-doc-card-body">
                   <span className="mem-doc-card-title">{doc.title}</span>
                   <small>
-                    v{doc.version} · {doc.chunkCount} 块 · 派生 {doc.derivedMemoryCount ?? '—'} 条 · {formatDate(doc.updatedAt)}
+                    {t('memory:document.versionChunksDerived', { version: doc.version, chunks: doc.chunkCount, count: doc.derivedMemoryCount ?? '—' })} · {formatDate(doc.updatedAt, locale)}
                   </small>
                 </span>
               </button>

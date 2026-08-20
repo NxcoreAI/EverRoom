@@ -225,6 +225,22 @@ export interface AgentRoomReference {
   id: string;
   title: string;
   kind?: string;
+  /** User-authored Room background, kept concise for Agent context. */
+  background?: string;
+  /** User-authored outcome or purpose for the Room. */
+  goal?: string;
+  /** Current Room status summary. */
+  status?: string;
+  /** Generated, read-only details derived from the Room's current source documents. */
+  contextSummary?: {
+    generatedAt?: string;
+    overview: string;
+    nextSteps: string[];
+    entities: Array<{ name: string; kind: string; description: string }>;
+    actionItems: Array<{ title: string; owner: string | null; dueDate: string | null; sourceTitle: string }>;
+    meetings: Array<{ title: string; when: string; participants: string[]; sourceTitle: string }>;
+    sourceDocuments: Array<{ documentId: string; title: string; version: number; updatedAt: string }>;
+  };
 }
 
 export interface ContextRoomSnapshotItem extends AgentRoomReference {
@@ -242,9 +258,21 @@ export interface SaveContextRoomSnapshotInput {
   deletedRooms: ContextRoomSnapshotItem[];
 }
 
+export interface CreateContextRoomInput {
+  title: string;
+  description: string;
+}
+
+export interface CreateContextRoomResult {
+  room: ContextRoomSnapshotItem;
+  created: boolean;
+}
+
 export interface StartAgentRunInput {
   prompt: string;
   idempotencyKey: string;
+  /** Current UI locale used for assistant-generated summaries and documents. */
+  responseLanguage?: string;
   /** Defaults to true. Temporary preview runs can defer capture until user confirmation. */
   captureMemory?: boolean;
   /** Defaults to true. Lightweight runs can skip automatic memory recall. */
@@ -283,6 +311,8 @@ export interface SubmitPendingAgentIntentInput {
   roomId: string;
   documentId?: string;
   idempotencyKey: string;
+  /** Current UI locale to carry into the resumed Agent run. */
+  responseLanguage?: string;
 }
 
 export interface TrustedMcpSession {

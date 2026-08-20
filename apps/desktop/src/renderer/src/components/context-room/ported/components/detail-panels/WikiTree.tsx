@@ -1,5 +1,6 @@
 import { BookOpen, ChevronDown, ChevronRight, Folder } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { KnowledgeWikiPageDto } from '../../../../../../../shared/knowledge';
 
@@ -39,19 +40,20 @@ function buildWikiTree(pages: KnowledgeWikiPageDto[]): WikiTreeNode {
   return root;
 }
 
-function sortNodes(nodes: WikiTreeNode[]): WikiTreeNode[] {
+function sortNodes(nodes: WikiTreeNode[], locale: string): WikiTreeNode[] {
   return [...nodes.values()].sort((a, b) =>
-    Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name, 'zh-CN'));
+    Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name, locale));
 }
 
-function WikiTreeItem({ node, depth, selectedPath, onSelect }: {
+function WikiTreeItem({ node, depth, selectedPath, onSelect, locale }: {
   node: WikiTreeNode;
   depth: number;
   selectedPath: string | null;
   onSelect: (page: KnowledgeWikiPageDto) => void;
+  locale: string;
 }) {
   const [open, setOpen] = useState(depth < 1);
-  const children = sortNodes([...node.children.values()]);
+  const children = sortNodes([...node.children.values()], locale);
   return (
     <li>
       <button
@@ -87,6 +89,7 @@ function WikiTreeItem({ node, depth, selectedPath, onSelect }: {
               depth={depth + 1}
               selectedPath={selectedPath}
               onSelect={onSelect}
+              locale={locale}
             />
           ))}
         </ul>
@@ -101,16 +104,18 @@ export function WikiTree({ pages, selectedPath, onSelect }: {
   selectedPath: string | null;
   onSelect: (page: KnowledgeWikiPageDto) => void;
 }) {
+  const { locale } = useLocale();
   const root = useMemo(() => buildWikiTree(pages), [pages]);
   return (
     <ul className="context-room-wiki-tree">
-      {sortNodes([...root.children.values()]).map((child) => (
+      {sortNodes([...root.children.values()], locale).map((child) => (
         <WikiTreeItem
           key={child.path}
           node={child}
           depth={0}
           selectedPath={selectedPath}
           onSelect={onSelect}
+          locale={locale}
         />
       ))}
     </ul>

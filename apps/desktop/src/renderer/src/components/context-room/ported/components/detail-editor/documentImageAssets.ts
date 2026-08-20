@@ -16,10 +16,10 @@ export const DOCUMENT_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set(
 )
 export const DOCUMENT_IMAGE_RESIZE_OPTIONS: Exclude<ImageOptions['resize'], false> = {
   enabled: true,
-  directions: ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
+  directions: ['top', 'right', 'bottom', 'left', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
   minWidth: 96,
   minHeight: 48,
-  alwaysPreserveAspectRatio: true,
+  alwaysPreserveAspectRatio: false,
 }
 
 export type StoreDocumentImage = (

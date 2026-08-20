@@ -33,6 +33,7 @@ import type {
   MemoryAtomicListOptions,
   MemoryConversationListOptions,
   MemoryDocumentRewriteInput,
+  MemoryOnboardingInput,
 } from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
@@ -40,9 +41,11 @@ import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
-import { CliConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
+import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
-import { NangoConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
+import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
+import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
+import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -50,6 +53,7 @@ import {
   configureDesktopLogger,
   flushDesktopLogs,
   logDesktop,
+  logLocalDesktop,
   logDocumentCursorCompletion,
 } from './logging/desktop-logger'
 import { configureSentry, syncSentryAccount } from './monitoring/sentry'
@@ -60,9 +64,11 @@ import {
   captureCurrentWindow,
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
+import { ScreenshotOutbox } from './screenshot/screenshot-outbox'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
 import { registerSystemClipboardHandler } from './system-clipboard'
 import { installCrossOriginIsolation } from './cross-origin-isolation'
+import { desktopText, setDesktopLocale } from './desktop-locale'
 import {
   assertNoEmbeddedDocumentImages,
   DocumentAssetStore,
@@ -128,40 +134,39 @@ const GATEWAY_CHANNELS = {
   status: 'gateway:status',
 } as const
 
-const NANGO_CONNECTOR_CHANNELS = {
-  status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
+const CONNECTOR_CHANNELS = {
+  status: 'connector:status', startAuthorization: 'connector:start-authorization', authorizationStatus: 'connector:authorization-status', registerConnection: 'connector:register-connection', disableConnection: 'connector:disable-connection', purgeConnection: 'connector:purge-connection', triggerSync: 'connector:trigger-sync', cancelRun: 'connector:cancel-run', listScopes: 'connector:list-scopes', listRuns: 'connector:list-runs', listMail: 'connector:list-mail', listFailures: 'connector:list-failures', listDocuments: 'connector:list-documents', readDocument: 'connector:read-document', listRecords: 'connector:list-records', armFault: 'connector:arm-fault',
 } as const
-const CLI_CONNECTOR_CHANNELS = {
-  status: 'cli-connector:status',
-  execute: 'cli-connector:execute',
-  cancel: 'cli-connector:cancel',
-  openConsole: 'cli-connector:open-console',
+const OPEN_CONNECTOR_CHANNELS = {
+  status: 'open-connector:status',
+  execute: 'open-connector:execute',
+  cancel: 'open-connector:cancel',
+  openConsole: 'open-connector:open-console',
 } as const
 
-const CLI_CONNECTOR_SYNC_CHANNELS = {
-  status: 'cli-connector-sync:status',
-  accounts: 'cli-connector-sync:accounts',
-  promptProfiles: 'cli-connector-sync:prompt-profiles',
-  jobs: 'cli-connector-sync:jobs',
-  createJob: 'cli-connector-sync:create-job',
-  updateJob: 'cli-connector-sync:update-job',
-  runJob: 'cli-connector-sync:run-job',
-  setJobPaused: 'cli-connector-sync:set-job-paused',
-  archiveJob: 'cli-connector-sync:archive-job',
-  runs: 'cli-connector-sync:runs',
-  quarantine: 'cli-connector-sync:quarantine',
-  data: 'cli-connector-sync:data',
-  record: 'cli-connector-sync:record',
-  ingestRecords: 'cli-connector-sync:ingest-records',
+const CONNECTOR_SYNC_CHANNELS = {
+  status: 'connector-sync:status',
+  accounts: 'connector-sync:accounts',
+  promptProfiles: 'connector-sync:prompt-profiles',
+  jobs: 'connector-sync:jobs',
+  createJob: 'connector-sync:create-job',
+  updateJob: 'connector-sync:update-job',
+  runJob: 'connector-sync:run-job',
+  setJobPaused: 'connector-sync:set-job-paused',
+  archiveJob: 'connector-sync:archive-job',
+  runs: 'connector-sync:runs',
+  quarantine: 'connector-sync:quarantine',
+  data: 'connector-sync:data',
+  record: 'connector-sync:record',
 } as const
 
 const CONTEXT_ROOM_CHANNELS = {
   list: 'context-rooms:list',
+  create: 'context-rooms:create',
   syncSnapshot: 'context-rooms:sync-snapshot',
 } as const
 
 const AGENT_CHANNELS = {
-  getStatus: 'agent:get-status',
   listSessions: 'agent:list-sessions',
   createSession: 'agent:create-session',
   createSessionLink: 'agent:create-session-link',
@@ -268,6 +273,7 @@ const TRANSCRIPTION_CHANNELS = {
 
 const MEMORY_CHANNELS = {
   overview: 'memory:overview',
+  startOnboarding: 'memory:onboarding:start',
   listAtomic: 'memory:list-atomic',
   searchAtomic: 'memory:search-atomic',
   updateAtomic: 'memory:update-atomic',
@@ -295,6 +301,7 @@ const MCP_CHANNELS = {
 
 const KNOWLEDGE_CHANNELS = {
   listRooms: 'knowledge:rooms:list',
+  getRoomContext: 'knowledge:rooms:context',
   upsertRoom: 'knowledge:rooms:upsert',
   deleteRoom: 'knowledge:rooms:delete',
   listWikiPages: 'knowledge:wiki:pages',
@@ -309,7 +316,6 @@ const KNOWLEDGE_CHANNELS = {
   attachDoc: 'knowledge:docs:attach',
   listRecentDecisions: 'knowledge:decisions:list',
   revertDecision: 'knowledge:route:revert',
-  pickAndUploadFiles: 'knowledge:files:pick-and-upload',
   listRoomFiles: 'knowledge:files:list',
   readFileMarkdown: 'knowledge:files:markdown',
   revealFile: 'knowledge:files:reveal',
@@ -319,6 +325,7 @@ const FILES_CHANNELS = {
   list: 'files:list',
   get: 'files:get',
   readMarkdown: 'files:read-markdown',
+  readDataUrl: 'files:read-data-url',
   rename: 'files:rename',
   delete: 'files:delete',
   reveal: 'files:reveal',
@@ -335,6 +342,25 @@ const SCREEN_CAPTURE_CHANNELS = {
   updateInterval: 'screen-capture:update-interval',
   stop: 'screen-capture:stop',
   status: 'screen-capture:status',
+} as const
+
+const PERCEPTION_CHANNELS = {
+  settings: 'perception:settings',
+  updateOnlineVlm: 'perception:update-online-vlm',
+  nodes: 'perception:nodes',
+  node: 'perception:node',
+  retry: 'perception:retry',
+  delete: 'perception:delete',
+} as const
+
+const DIARY_CHANNELS = {
+  settings: 'diary:settings',
+  updateSettings: 'diary:update-settings',
+  generate: 'diary:generate',
+  run: 'diary:run',
+  activeRun: 'diary:active-run',
+  days: 'diary:days',
+  day: 'diary:day',
 } as const
 
 // 窗口先显示、服务后台初始化:所有 IPC 通道提前挂上路由,处理器注册前先等待就绪。
@@ -372,8 +398,8 @@ function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
-    CLI_CONNECTOR_CHANNELS,
-    CLI_CONNECTOR_SYNC_CHANNELS,
+    OPEN_CONNECTOR_CHANNELS,
+    CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
     AGENT_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
@@ -389,6 +415,8 @@ function installIpcRouters(): void {
     FILES_CHANNELS,
     INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
+    PERCEPTION_CHANNELS,
+    DIARY_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -418,7 +446,9 @@ let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
-let nangoConnectorGatewayBridge: NangoConnectorGatewayBridge | null = null
+let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
+let diaryGatewayBridge: DiaryGatewayBridge | null = null
+let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
@@ -426,7 +456,13 @@ let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 const queuedProtocolUrls: string[] = []
-const screenshotScheduler = createWindowScreenshotScheduler()
+let screenshotOutbox: ScreenshotOutbox | null = null
+const captureAndQueueCurrentWindow = async () => {
+  const result = await captureCurrentWindow()
+  if (result.ok) await screenshotOutbox?.enqueue(result).catch(() => undefined)
+  return result
+}
+const screenshotScheduler = createWindowScreenshotScheduler(captureAndQueueCurrentWindow)
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -439,6 +475,7 @@ function logRendererRequestError(input: unknown): void {
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
+ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(locale))
 
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -540,8 +577,8 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
 
   handle(SOURCE_CHANNELS.addLocalFolder, async () => {
     const result = await dialog.showOpenDialog({
-      title: '选择要连接的文件夹',
-      buttonLabel: '连接文件夹',
+      title: desktopText('dialog.chooseFolder.title'),
+      buttonLabel: desktopText('dialog.chooseFolder.button'),
       properties: ['openDirectory', 'createDirectory'],
     })
     const rootPath = result.filePaths[0]
@@ -605,29 +642,29 @@ function registerGatewayHandlers(): void {
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
 }
 
-function registerNangoConnectorHandlers(bridge: NangoConnectorGatewayBridge): void {
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.status, () => bridge.status())
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listRuns, (_event, connectionId) => bridge.runs(connectionId))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listMail, (_event, query) => bridge.mail(query))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listFailures, (_event, query) => bridge.failures(query))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
-  ipcMain.handle(NANGO_CONNECTOR_CHANNELS.armFault, (_event, point) => {
-    if (process.env.NXCORE_NANGO_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
+function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
+  ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
+  ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
+  ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
+  ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
+  ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listRuns, (_event, connectionId) => bridge.runs(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listMail, (_event, query) => bridge.mail(query))
+  ipcMain.handle(CONNECTOR_CHANNELS.listFailures, (_event, query) => bridge.failures(query))
+  ipcMain.handle(CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
+  ipcMain.handle(CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
+  ipcMain.handle(CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
+  ipcMain.handle(CONNECTOR_CHANNELS.armFault, (_event, point) => {
+    if (process.env.NXCORE_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
     return bridge.armFault(point)
   })
 }
 function resolveOoCliExecutable(): string {
-  const configured = process.env.NXCORE_CLI_CONNECTOR_CLI_PATH?.trim()
+  const configured = process.env.NXCORE_OO_CLI_PATH?.trim()
   if (configured) return configured
   const executableName = process.platform === 'win32' ? 'oo.exe' : 'oo'
   const packagedCandidates = [
@@ -655,7 +692,7 @@ function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
 function attachOpenConnectorBridge(bridge: OoCliBridge): void {
   bridge.onCommand((frame) => {
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send('cli-connector:event', frame)
+      if (!window.isDestroyed()) window.webContents.send('open-connector:event', frame)
     }
   })
 }
@@ -671,7 +708,7 @@ function openConnectorExternalUrl(value: string): void {
 
 async function openConnectorManagementConsole(): Promise<void> {
   const connection = openConnectorSupervisor?.getConnection()
-  if (!connection) throw new Error('EverRoom 连接器尚未就绪。')
+  if (!connection) throw new Error('OpenConnector 尚未就绪。')
   if (!connection.managed || !connection.adminToken) {
     await shell.openExternal(`${connection.baseUrl}/`)
     return
@@ -688,7 +725,7 @@ async function openConnectorManagementConsole(): Promise<void> {
     minWidth: 900,
     minHeight: 640,
     show: false,
-    title: 'EverRoom 连接器管理台',
+    title: 'OpenConnector 管理台',
     backgroundColor: '#ffffff',
     webPreferences: {
       partition: 'persist:everroom-open-connector-console',
@@ -704,18 +741,6 @@ async function openConnectorManagementConsole(): Promise<void> {
       requestHeaders: { ...details.requestHeaders, Authorization: `Bearer ${connection.adminToken}` },
     }),
   )
-  window.webContents.session.webRequest.onHeadersReceived(
-    { urls: [`${origin}/*`] },
-    (details, callback) => callback({
-      responseHeaders: details.resourceType === 'mainFrame'
-        ? {
-            ...details.responseHeaders,
-            'Cache-Control': ['no-store, no-cache, must-revalidate'],
-            Pragma: ['no-cache'],
-          }
-        : details.responseHeaders,
-    }),
-  )
   window.webContents.setWindowOpenHandler(({ url }) => {
     openConnectorExternalUrl(url)
     return { action: 'deny' }
@@ -729,13 +754,11 @@ async function openConnectorManagementConsole(): Promise<void> {
   window.once('closed', () => {
     if (openConnectorConsoleWindow === window) openConnectorConsoleWindow = null
   })
-  const consoleUrl = new URL('/', connection.baseUrl)
-  consoleUrl.searchParams.set('everroom-opened-at', String(Date.now()))
-  await window.loadURL(consoleUrl.toString())
+  await window.loadURL(`${connection.baseUrl}/`)
 }
 
-function registerCliConnectorHandlers(): void {
-  handle(CLI_CONNECTOR_CHANNELS.status, () => {
+function registerOpenConnectorHandlers(): void {
+  handle(OPEN_CONNECTOR_CHANNELS.status, () => {
     if (ooCliBridge) return ooCliBridge.status()
     const status = openConnectorSupervisor?.getStatus()
     return {
@@ -752,44 +775,43 @@ function registerCliConnectorHandlers(): void {
       cliMessage: null,
     }
   })
-  handle(CLI_CONNECTOR_CHANNELS.execute, (_event, input: unknown) => {
-    if (!ooCliBridge) throw new Error('EverRoom 连接器尚未就绪。')
-    if (!input || typeof input !== 'object') throw new Error('无效的 EverRoom 连接器命令。')
+  handle(OPEN_CONNECTOR_CHANNELS.execute, (_event, input: unknown) => {
+    if (!ooCliBridge) throw new Error('OpenConnector 尚未就绪。')
+    if (!input || typeof input !== 'object') throw new Error('无效的 OpenConnector 命令。')
     return ooCliBridge.execute(input as OpenConnectorExecutionInput)
   })
-  handle(CLI_CONNECTOR_CHANNELS.cancel, (_event, requestId: unknown) => {
+  handle(OPEN_CONNECTOR_CHANNELS.cancel, (_event, requestId: unknown) => {
     if (!ooCliBridge) return false
     if (typeof requestId !== 'string') throw new Error('无效的命令请求标识。')
     return ooCliBridge.cancel(requestId)
   })
-  handle(CLI_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
+  handle(OPEN_CONNECTOR_CHANNELS.openConsole, () => openConnectorManagementConsole())
 }
 
 function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
+  handle(CONTEXT_ROOM_CHANNELS.create, (_event, input) => bridge.create(input))
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
 }
 
-function registerCliConnectorSyncHandlers(bridge: CliConnectorSyncGatewayBridge): void {
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.promptProfiles, () => bridge.promptProfiles())
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.jobs, () => bridge.jobs())
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.updateJob, (_event, id, input) => bridge.updateJob(id, input))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.runJob, (_event, id) => bridge.runJob(id))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.setJobPaused, (_event, id, paused, configVersion) =>
+function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
+  handle(CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
+  handle(CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
+  handle(CONNECTOR_SYNC_CHANNELS.promptProfiles, () => bridge.promptProfiles())
+  handle(CONNECTOR_SYNC_CHANNELS.jobs, () => bridge.jobs())
+  handle(CONNECTOR_SYNC_CHANNELS.createJob, (_event, input) => bridge.createJob(input))
+  handle(CONNECTOR_SYNC_CHANNELS.updateJob, (_event, id, input) => bridge.updateJob(id, input))
+  handle(CONNECTOR_SYNC_CHANNELS.runJob, (_event, id) => bridge.runJob(id))
+  handle(CONNECTOR_SYNC_CHANNELS.setJobPaused, (_event, id, paused, configVersion) =>
     bridge.setJobPaused(id, paused, configVersion))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.archiveJob, (_event, id, configVersion) => bridge.archiveJob(id, configVersion))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.runs, (_event, jobId) => bridge.runs(jobId))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
-  handle(CLI_CONNECTOR_SYNC_CHANNELS.ingestRecords, (_event, recordIds) => bridge.ingestRecords(recordIds))
+  handle(CONNECTOR_SYNC_CHANNELS.archiveJob, (_event, id, configVersion) => bridge.archiveJob(id, configVersion))
+  handle(CONNECTOR_SYNC_CHANNELS.runs, (_event, jobId) => bridge.runs(jobId))
+  handle(CONNECTOR_SYNC_CHANNELS.quarantine, (_event, runId) => bridge.quarantine(runId))
+  handle(CONNECTOR_SYNC_CHANNELS.data, (_event, query) => bridge.data(query))
+  handle(CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
-  handle(AGENT_CHANNELS.getStatus, () => bridge.getStatus())
   handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
   handle(AGENT_CHANNELS.createSessionLink, (_event, input) => bridge.createSessionLink(input))
@@ -875,6 +897,7 @@ function registerMcpHandlers(bridge: McpGatewayBridge): void {
 
 function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listRooms, (_event, origin?: 'user' | 'auto') => bridge.listRooms(origin))
+  handle(KNOWLEDGE_CHANNELS.getRoomContext, (_event, roomId: string) => bridge.getRoomContext(roomId))
   handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
   handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
   handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
@@ -893,7 +916,6 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
     bridge.listRecentDecisions(limit))
   handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
-  handle(KNOWLEDGE_CHANNELS.pickAndUploadFiles, () => bridge.pickAndUploadFiles())
   handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
   handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
   handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
@@ -903,6 +925,7 @@ function registerFilesHandlers(bridge: FilesGatewayBridge): void {
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
   handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
   handle(FILES_CHANNELS.readMarkdown, (_event, fileId: string) => bridge.readMarkdown(fileId))
+  handle(FILES_CHANNELS.readDataUrl, (_event, fileId: string) => bridge.readDataUrl(fileId))
   handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
     bridge.rename(fileId, displayName))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
@@ -957,6 +980,8 @@ function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
 
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
   handle(MEMORY_CHANNELS.overview, () => bridge.overview())
+  handle(MEMORY_CHANNELS.startOnboarding, (_event, input: MemoryOnboardingInput) =>
+    bridge.startOnboarding(input))
   handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
     bridge.listAtomic(options))
   handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
@@ -1019,17 +1044,18 @@ function registerRealityHandlers(bridge: RealityGatewayBridge): void {
   handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
   handle(REALITY_CHANNELS.exportTranscript, async (event, input: unknown) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
-    if (!owner || owner.isDestroyed() || event.sender.isDestroyed()) throw new Error('无法验证导出请求来源。')
+    if (!owner || owner.isDestroyed() || event.sender.isDestroyed()) throw new Error(desktopText('error.transcript.invalidSource'))
     if (!input || typeof input !== 'object' || typeof (input as { content?: unknown }).content !== 'string') {
-      throw new Error('无效的逐字稿导出请求。')
+      throw new Error(desktopText('error.transcript.invalidRequest'))
     }
-    const rawName = typeof (input as { fileName?: unknown }).fileName === 'string' ? (input as { fileName: string }).fileName : '逐字稿.txt'
-    const fileName = rawName.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 180) || '逐字稿'
+    const defaultTranscriptName = desktopText('dialog.exportTranscript.defaultName')
+    const rawName = typeof (input as { fileName?: unknown }).fileName === 'string' ? (input as { fileName: string }).fileName : `${defaultTranscriptName}.txt`
+    const fileName = rawName.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 180) || defaultTranscriptName
     const selection = await dialog.showSaveDialog(owner, {
-      title: '导出逐字稿',
+      title: desktopText('dialog.exportTranscript.title'),
       defaultPath: fileName.toLowerCase().endsWith('.txt') ? fileName : `${fileName}.txt`,
-      buttonLabel: '导出',
-      filters: [{ name: '文本文件', extensions: ['txt'] }],
+      buttonLabel: desktopText('dialog.exportTranscript.button'),
+      filters: [{ name: desktopText('dialog.exportTranscript.textFile'), extensions: ['txt'] }],
       properties: ['showOverwriteConfirmation', 'createDirectory'],
     })
     if (selection.canceled || !selection.filePath) return { canceled: true }
@@ -1102,25 +1128,109 @@ function registerScreenCaptureHandlers(): void {
 
   handle(SCREEN_CAPTURE_CHANNELS.captureCurrentWindow, async (event) => {
     if (!isAuthorized(event)) {
-      return { ok: false, code: 'window-unavailable', message: '无法验证截图请求来源。' }
+      return { ok: false, code: 'window-unavailable', message: desktopText('error.screenshot.invalidSource') }
     }
-    return captureCurrentWindow()
+    return captureAndQueueCurrentWindow()
   })
   handle(SCREEN_CAPTURE_CHANNELS.start, async (event, intervalMs: unknown) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    return screenshotScheduler.start(typeof intervalMs === 'number' ? intervalMs : NaN)
+    const status = await screenshotScheduler.start(typeof intervalMs === 'number' ? intervalMs : NaN)
+    await perceptionGatewayBridge?.updateCapture({ enabled: true, intervalMs: status.intervalMs }).catch(() => undefined)
+    return status
   })
   handle(SCREEN_CAPTURE_CHANNELS.updateInterval, async (event, intervalMs: unknown) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    return screenshotScheduler.updateInterval(typeof intervalMs === 'number' ? intervalMs : NaN)
+    const status = screenshotScheduler.updateInterval(typeof intervalMs === 'number' ? intervalMs : NaN)
+    await perceptionGatewayBridge?.updateCapture({ intervalMs: status.intervalMs }).catch(() => undefined)
+    return status
   })
-  handle(SCREEN_CAPTURE_CHANNELS.stop, (event) => {
+  handle(SCREEN_CAPTURE_CHANNELS.stop, async (event) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    return screenshotScheduler.stop()
+    const status = screenshotScheduler.stop()
+    await perceptionGatewayBridge?.updateCapture({ enabled: false }).catch(() => undefined)
+    return status
   })
   handle(SCREEN_CAPTURE_CHANNELS.status, (event) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
     return screenshotScheduler.getStatus()
+  })
+}
+
+function registerPerceptionAndDiaryHandlers(): void {
+  handle(PERCEPTION_CHANNELS.settings, () => {
+    if (!perceptionGatewayBridge) throw new Error('现实感知服务尚未就绪。')
+    return perceptionGatewayBridge.getSettings()
+  })
+  handle(PERCEPTION_CHANNELS.updateOnlineVlm, (_event, enabled: unknown, configVersion: unknown) => {
+    if (!perceptionGatewayBridge || typeof enabled !== 'boolean' || typeof configVersion !== 'number') {
+      throw new Error('感知设置参数无效。')
+    }
+    return perceptionGatewayBridge.updateOnlineVlm(enabled, configVersion)
+  })
+  handle(PERCEPTION_CHANNELS.nodes, (_event, query: unknown) => {
+    if (!perceptionGatewayBridge) throw new Error('现实感知服务尚未就绪。')
+    return perceptionGatewayBridge.listNodes(query && typeof query === 'object' ? query as never : {})
+  })
+  handle(PERCEPTION_CHANNELS.node, (_event, id: unknown) => {
+    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
+    return perceptionGatewayBridge.getNode(id)
+  })
+  handle(PERCEPTION_CHANNELS.retry, (_event, id: unknown) => {
+    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
+    return perceptionGatewayBridge.retryNode(id)
+  })
+  handle(PERCEPTION_CHANNELS.delete, (_event, id: unknown, deleteAssets: unknown) => {
+    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
+    return perceptionGatewayBridge.deleteNode(id, deleteAssets === true)
+  })
+  handle(DIARY_CHANNELS.settings, () => {
+    if (!diaryGatewayBridge) throw new Error('日记服务尚未就绪。')
+    return diaryGatewayBridge.settings()
+  })
+  handle(DIARY_CHANNELS.updateSettings, (_event, input: unknown) => {
+    if (!diaryGatewayBridge || !input || typeof input !== 'object') throw new Error('日记设置参数无效。')
+    return diaryGatewayBridge.updateSettings(input as Parameters<DiaryGatewayBridge['updateSettings']>[0])
+  })
+  handle(DIARY_CHANNELS.generate, async (_event, date: unknown) => {
+    if (!diaryGatewayBridge || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error('日记日期参数无效。')
+    }
+    logLocalDesktop('diary', 'info', { event: 'diary.generate.requested', date })
+    try {
+      const result = await diaryGatewayBridge.generate(date)
+      logLocalDesktop('diary', 'info', { event: 'diary.generate.accepted', date, runId: result.runId })
+      return result
+    } catch (error) {
+      logLocalDesktop('diary', 'error', {
+        event: 'diary.generate.rejected',
+        date,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+  })
+  handle(DIARY_CHANNELS.run, (_event, id: unknown) => {
+    if (!diaryGatewayBridge || typeof id !== 'string' || id.length < 1 || id.length > 100) {
+      throw new Error('日记运行参数无效。')
+    }
+    return diaryGatewayBridge.run(id)
+  })
+  handle(DIARY_CHANNELS.activeRun, () => {
+    if (!diaryGatewayBridge) throw new Error('日记服务尚未就绪。')
+    return diaryGatewayBridge.activeRun()
+  })
+  handle(DIARY_CHANNELS.days, (_event, start: unknown, end: unknown) => {
+    if (!diaryGatewayBridge || typeof start !== 'string' || typeof end !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      throw new Error('日记日期范围参数无效。')
+    }
+    return diaryGatewayBridge.days(start, end)
+  })
+  handle(DIARY_CHANNELS.day, (_event, date: unknown) => {
+    if (!diaryGatewayBridge || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error('日记日期参数无效。')
+    }
+    return diaryGatewayBridge.day(date)
   })
 }
 
@@ -1228,11 +1338,16 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   await documentAssets.initialize().catch((error) => {
     console.error('Failed to initialize local document assets', error)
   })
+  screenshotOutbox = new ScreenshotOutbox(
+    join(dataDirectory, 'perception', 'screenshot-outbox.json'),
+    () => gatewaySupervisor,
+  )
+  await screenshotOutbox.initialize()
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   installIpcRouters()
   registerSystemClipboardHandler()
   registerGatewayHandlers()
-  registerCliConnectorHandlers()
+  registerOpenConnectorHandlers()
   createWindow()
   try {
     openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
@@ -1266,9 +1381,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
-        ...(ooCliBridge ? ooCliBridge.gatewayEnvironment() : {}),
-        ...(ooCliBridge ? { NXCORE_CLI_CONNECTOR_AGENT_MODE: 'local' } : {}),
-        ...(ooCliBridge ? { NXCORE_CLI_CONNECTOR_SYNC_ENABLED: 'true' } : {}),
+        ...(ooCliBridge ? ooCliBridge.environment() : {}),
+        ...(ooCliBridge ? { NXCORE_CONNECTOR_AGENT_MODE: 'local' } : {}),
+        ...(ooCliBridge ? { NXCORE_CONNECTOR_SYNC_ENABLED: 'true' } : {}),
         ...(memoryCore
           ? {
             NXCORE_MEMORY_ENABLED: 'true',
@@ -1276,9 +1391,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
           }
           : {}),
-        // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_CONNECTOR_SECRET。
-        ...((nango && process.env.NXCORE_NANGO_CONNECTOR_SECRET?.trim())
-          ? { NXCORE_NANGO_CONNECTOR_URL: nango.baseUrl }
+        // gateway 配置要求 URL 和 SECRET 成对出现;secret 沿用工作区 .env 里的 NXCORE_NANGO_SECRET。
+        ...((nango && process.env.NXCORE_NANGO_SECRET?.trim())
+          ? { NXCORE_NANGO_URL: nango.baseUrl }
           : {}),
         ...(knowledge
           ? {
@@ -1295,6 +1410,19 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
+    void screenshotOutbox.flush()
+    perceptionGatewayBridge = new PerceptionGatewayBridge(gatewaySupervisor)
+    diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
+    registerPerceptionAndDiaryHandlers()
+    const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
+    if (perceptionSettings?.captureEnabled) {
+      await screenshotScheduler.start(perceptionSettings.captureIntervalSeconds * 1_000)
+    } else if (perceptionSettings) {
+      // Keep the local scheduler's interval in sync even while capture is off.
+      // Otherwise the settings page falls back to the five-minute default and
+      // enabling capture later overwrites a saved custom interval.
+      screenshotScheduler.updateInterval(perceptionSettings.captureIntervalSeconds * 1_000)
+    }
     cursorCompletionSupervisor = new GatewaySupervisor(
       join(dataDirectory, 'cursor-completion-service'),
       { NXCORE_MEMORY_ENABLED: 'false' },
@@ -1306,11 +1434,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
-    registerCliConnectorSyncHandlers(new CliConnectorSyncGatewayBridge(gatewaySupervisor))
+    registerConnectorSyncHandlers(new ConnectorSyncGatewayBridge(gatewaySupervisor))
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
-    nangoConnectorGatewayBridge = new NangoConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
-    registerNangoConnectorHandlers(nangoConnectorGatewayBridge)
+    connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
+    registerConnectorHandlers(connectorGatewayBridge)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor)
     registerAgentHandlers(agentGatewayBridge)
     cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
@@ -1372,17 +1500,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
     resolveServicesReady?.()
-    if (process.platform === 'darwin') {
-      const defaultFolderNames: Array<'desktop' | 'documents' | 'downloads'> = [
-        'desktop',
-        'documents',
-        'downloads',
-      ]
-      const defaultLocalFolders = defaultFolderNames.map((name) => app.getPath(name))
-      void localDataService.bootstrapDefaultLocalFolders(defaultLocalFolders).catch((error) => {
-        console.warn('Unable to initialize default local folders.', error)
-      })
-    }
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
     const service = localDataService
@@ -1396,7 +1513,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = null
     realityGatewayBridge?.dispose()
     realityGatewayBridge = null
-    nangoConnectorGatewayBridge = null
+    perceptionGatewayBridge = null
+    diaryGatewayBridge = null
+    connectorGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -1435,6 +1554,7 @@ app.on('before-quit', (event) => {
   const documentBridge = documentGatewayBridge
   const realityBridge = realityGatewayBridge
   const recordings = recordingStore
+  const pendingScreenshots = screenshotOutbox
   const cloud = saasClient
   localDataService = null
   gatewaySupervisor = null
@@ -1449,9 +1569,12 @@ app.on('before-quit', (event) => {
   cursorCompletionAgentBridge = null
   documentGatewayBridge = null
   realityGatewayBridge = null
-  nangoConnectorGatewayBridge = null
+  perceptionGatewayBridge = null
+  diaryGatewayBridge = null
+  connectorGatewayBridge = null
   recordingStore = null
   saasClient = null
+  screenshotOutbox = null
   screenshotScheduler.stop()
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
@@ -1463,6 +1586,7 @@ app.on('before-quit', (event) => {
   void Promise.allSettled([
     service?.shutdown(),
     recordings?.dispose(),
+    pendingScreenshots?.dispose(),
     gateway?.shutdown(),
     connectorRuntime?.shutdown(),
     cursorCompletion?.shutdown(),

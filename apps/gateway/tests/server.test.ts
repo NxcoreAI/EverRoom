@@ -65,44 +65,53 @@ describe("gateway server", () => {
     expect(authorized.statusCode).toBe(200);
   });
 
-  it("loads the bundled project Agent directory used by Desktop", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/subagents",
-      headers: { authorization: `Bearer ${config.authToken}` },
-    });
-    await app.close();
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toContainEqual(expect.objectContaining({
-      id: "content-analyst",
-      name: "Content Analyst",
-      enabled: true,
-    }));
-  });
-
-  it("keeps Nango and CLI connector routes in disjoint namespaces", async () => {
+  it("serves persisted perception and diary settings with local visual nodes", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
-
-    const nango = await app.inject({ method: "GET", url: "/v1/nango-connectors/status", headers });
-    const cli = await app.inject({ method: "GET", url: "/v1/cli-connectors/sync/status", headers });
-    const legacy = await app.inject({ method: "GET", url: "/v1/connectors/status", headers });
-    const crossed = await app.inject({ method: "GET", url: "/v1/cli-connectors/connections", headers });
+    const perceptionSettings = await app.inject({ method: "GET", url: "/v1/perception/settings", headers });
+    const initialPerception = perceptionSettings.json<{ configVersion: number }>();
+    const updatedPerception = await app.inject({
+      method: "PATCH", url: "/v1/perception/settings", headers,
+      payload: { configVersion: initialPerception.configVersion, captureEnabled: true, captureIntervalSeconds: 60 },
+    });
+    const capturedAt = new Date().toISOString();
+    const uploaded = await app.inject({
+      method: "POST", url: "/v1/files", headers,
+      payload: {
+        filename: "api-photo.jpg", contentBase64: Buffer.from("local photo").toString("base64"),
+        mime: "image/jpeg", assetKind: "photo", capturedAt,
+      },
+    });
+    const fileId = uploaded.json<{ id: string }>().id;
+    const observed = await app.inject({
+      method: "POST", url: "/v1/perception/visual-observations", headers,
+      payload: { fileId, kind: "photo", capturedAt, width: 100, height: 80 },
+    });
+    const nodes = await app.inject({ method: "GET", url: "/v1/perception/nodes?kind=photo", headers });
+    const diarySettings = await app.inject({ method: "GET", url: "/v1/diary/settings", headers });
+    const initialDiary = diarySettings.json<{ configVersion: number }>();
+    const updatedDiary = await app.inject({
+      method: "PATCH", url: "/v1/diary/settings", headers,
+      payload: { configVersion: initialDiary.configVersion, enabled: true, localTime: "23:30", timezone: "UTC" },
+    });
+    const diaryConflict = await app.inject({
+      method: "PATCH", url: "/v1/diary/settings", headers,
+      payload: { configVersion: initialDiary.configVersion, localTime: "22:00" },
+    });
     await app.close();
 
-    expect(nango.statusCode).toBe(200);
-    expect(cli.statusCode).toBe(200);
-    expect(legacy.statusCode).toBe(404);
-    expect(crossed.statusCode).toBe(404);
+    expect(updatedPerception.json()).toMatchObject({ captureEnabled: true, captureIntervalSeconds: 60 });
+    expect(uploaded.statusCode).toBe(201);
+    expect(observed.statusCode).toBe(200);
+    expect(nodes.json<{ items: unknown[] }>().items).toHaveLength(1);
+    expect(updatedDiary.json()).toMatchObject({ enabled: true, localTime: "23:30", timezone: "UTC" });
+    expect(diaryConflict.statusCode).toBe(409);
   });
 
   it("manages connector sync jobs without accepting a client owner id", async () => {
     const config = await testConfig();
-    config.cliConnectorSyncOwnerId = "bound-owner";
+    config.connectorSyncOwnerId = "bound-owner";
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
     const payload = {
@@ -112,16 +121,16 @@ describe("gateway server", () => {
       scheduleType: "interval", intervalMs: 900_000, timezone: "Asia/Shanghai", status: "active",
     };
     const created = await app.inject({
-      method: "POST", url: "/v1/cli-connectors/sync/jobs", headers,
+      method: "POST", url: "/v1/connectors/sync/jobs", headers,
       payload: { ...payload, ownerId: "other-owner" },
     });
     const createdJob = created.json<{ id: string; ownerId: string; configVersion: number }>();
     const paused = await app.inject({
-      method: "POST", url: `/v1/cli-connectors/sync/jobs/${createdJob.id}/pause`, headers,
+      method: "POST", url: `/v1/connectors/sync/jobs/${createdJob.id}/pause`, headers,
       payload: { configVersion: createdJob.configVersion },
     });
     const conflict = await app.inject({
-      method: "PATCH", url: `/v1/cli-connectors/sync/jobs/${createdJob.id}`, headers,
+      method: "PATCH", url: `/v1/connectors/sync/jobs/${createdJob.id}`, headers,
       payload: { configVersion: createdJob.configVersion, name: "过期修改" },
     });
     await app.close();
@@ -403,6 +412,7 @@ describe("gateway server", () => {
     expect(initialized.statusCode).toBe(202);
     expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "context_room_list",
+      "context_room_create",
       "context_room_document_list",
       "context_room_document_read",
       "context_room_patch_begin",
@@ -459,6 +469,7 @@ describe("gateway server", () => {
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name)).toEqual([
         "context_room_list",
+        "context_room_create",
         "context_room_document_list",
         "context_room_document_read",
         "context_room_patch_begin",

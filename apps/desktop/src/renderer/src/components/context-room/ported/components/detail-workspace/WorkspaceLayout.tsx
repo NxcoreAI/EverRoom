@@ -2,8 +2,10 @@ import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
+import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { DETAIL_TABS as TABS, type DetailPane } from '../RoomIconSidebar';
 import { OverviewDashboard, type WorkspaceObjectPreview } from '../detail-panels';
 import type { LocalOfficeFile } from '../detail-panels/ResourcePanel';
@@ -53,6 +55,7 @@ export function WorkspaceLayout({
   selectedResource,
   backendDocuments,
   trashedDocuments,
+  knowledgeFiles,
   focusedDocumentId,
   focusedBlockId,
   documentFocusRequestId,
@@ -112,6 +115,7 @@ export function WorkspaceLayout({
   selectedResource: ContextRoomResource | null;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
+  knowledgeFiles: KnowledgeFileDto[];
   focusedDocumentId: string | null;
   focusedBlockId: string | null;
   documentFocusRequestId: number | null;
@@ -131,6 +135,7 @@ export function WorkspaceLayout({
   onToggleTask: (taskId: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
 }) {
+  const { t } = useLocale();
   const overview = panels.length === 1 && panels[0] === 'overview';
   const orderedTabs = tabOrder
     .map((pane) => TABS.find((tab) => tab.id === pane))
@@ -159,14 +164,14 @@ export function WorkspaceLayout({
         className={`context-room-workspace-layout${overview ? ' is-overview' : ''}${middleHidden ? ' is-middle-hidden' : ''}${mobileContent ? ' is-mobile-content' : ''}${panels.includes('tasks') ? ' has-task-pane' : ''}`}
         style={{ '--context-room-middle-width': `${String(middleWidth)}px` } as React.CSSProperties}
       >
-        <nav className="context-room-workspace-tabs" aria-label="Context room detail">
+        <nav className="context-room-workspace-tabs" aria-label={t('contextRoom:roomSidebar.contextRoomDetail')}>
           {orderedTabs.map(({ id, label, icon: Icon, tone }) => (
             <ContextMenu.Root key={id}>
               <ContextMenu.Trigger asChild>
                 <button
                   type="button"
-                  aria-label={label}
-                  title={label}
+                  aria-label={t(label)}
+                  title={t(label)}
                   data-pane-id={id}
                   data-icon-tone={tone}
                   aria-pressed={panels.includes(id) && !middleHidden}
@@ -212,16 +217,16 @@ export function WorkspaceLayout({
               {id !== 'overview' ? (
                 <ContextMenu.Portal>
                   <ContextMenu.Content className="context-room-tab-menu">
-                    <ContextMenu.Label>“{label}”</ContextMenu.Label>
+                    <ContextMenu.Label>“{t(label)}”</ContextMenu.Label>
                     {panels.includes(id) ? (
                       <ContextMenu.Item onSelect={() => { setActivePanelIndex(panels.indexOf(id)); setMiddleHidden(false); }}>
-                        聚焦此面板
+                        {t('contextRoom:workspaceLayout.focusThisPanel')}
                       </ContextMenu.Item>
                     ) : (
                       <>
-                        <ContextMenu.Item onSelect={() => addSplit(id, 'replace')}>替换当前面板</ContextMenu.Item>
-                        <ContextMenu.Item disabled={panels.length >= 2} onSelect={() => addSplit(id, 'above')}>在上方分栏</ContextMenu.Item>
-                        <ContextMenu.Item disabled={panels.length >= 2} onSelect={() => addSplit(id, 'below')}>在下方分栏</ContextMenu.Item>
+                        <ContextMenu.Item onSelect={() => addSplit(id, 'replace')}>{t('contextRoom:workspaceLayout.replaceCurrentPanel')}</ContextMenu.Item>
+                        <ContextMenu.Item disabled={panels.length >= 2} onSelect={() => addSplit(id, 'above')}>{t('contextRoom:workspaceLayout.splitAbove')}</ContextMenu.Item>
+                        <ContextMenu.Item disabled={panels.length >= 2} onSelect={() => addSplit(id, 'below')}>{t('contextRoom:workspaceLayout.splitBelow')}</ContextMenu.Item>
                       </>
                     )}
                   </ContextMenu.Content>
@@ -234,6 +239,7 @@ export function WorkspaceLayout({
         {overview ? (
           <OverviewDashboard
             room={room}
+            backendDocuments={backendDocuments}
             onSelectResource={onSelectResource}
             onOpenObject={onOpenObject}
             onToggleTask={onToggleTask}
@@ -276,10 +282,10 @@ export function WorkspaceLayout({
                   >
                     {panels.length > 1 ? (
                       <header>
-                        <span>{paneLabel}</span>
+                        <span>{t(paneLabel)}</span>
                         <button
                           type="button"
-                          aria-label={`关闭${paneLabel}面板`}
+                          aria-label={t('contextRoom:workspaceLayout.closePanePanel', { pane: t(paneLabel) })}
                           onClick={(event) => {
                             event.stopPropagation();
                             setPanels((current) => current.filter((_, currentIndex) => currentIndex !== index));
@@ -298,6 +304,7 @@ export function WorkspaceLayout({
                         selectedResourceId={selectedResourceId}
                         backendDocuments={backendDocuments}
                         trashedDocuments={trashedDocuments}
+                        knowledgeFiles={knowledgeFiles}
                         rooms={rooms}
                         onOpenRoom={onOpenRoom}
                         onSelectResource={onSelectResource}
@@ -317,7 +324,7 @@ export function WorkspaceLayout({
                     {index < panels.length - 1 ? (
                       <div
                         role="separator"
-                        aria-label="调整面板高度"
+                        aria-label={t('contextRoom:workspaceLayout.resizePanelHeight')}
                         aria-orientation="horizontal"
                         aria-valuemin={20}
                         aria-valuemax={80}
@@ -335,7 +342,7 @@ export function WorkspaceLayout({
             <div
               role="separator"
               tabIndex={0}
-              aria-label="调整资源面板宽度"
+              aria-label={t('contextRoom:workspaceLayout.resizeResourcePanel')}
               aria-orientation="vertical"
               className="context-room-middle-divider"
               onPointerDown={startMiddleResize}
@@ -348,6 +355,7 @@ export function WorkspaceLayout({
               selectedObject={selectedObject}
               selectedResource={selectedResource}
               backendDocuments={backendDocuments}
+              knowledgeFiles={knowledgeFiles}
               focusedDocumentId={focusedDocumentId}
               focusedBlockId={focusedBlockId}
               documentFocusRequestId={documentFocusRequestId}

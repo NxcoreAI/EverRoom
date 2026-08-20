@@ -17,13 +17,19 @@ export interface PixiForceGraphLabelManager {
 const LABEL_STYLE: Record<string, unknown> = {
   fill: 0x374151,
   fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  fontSize: 11,
+  fontSize: 12,
   fontWeight: '500',
   padding: 2,
 }
 
+function textResolution(baseResolution: number, scale: number): number {
+  const scaled = baseResolution * Math.max(1, scale)
+  return Math.min(4, Math.ceil(scaled * 2) / 2)
+}
+
 export function createPixiForceGraphLabelManager({
   dependencies,
+  baseResolution,
   maxLabels,
   nodes,
   positions,
@@ -31,6 +37,7 @@ export function createPixiForceGraphLabelManager({
   viewport,
 }: {
   dependencies: PixiForceGraphDependencies
+  baseResolution: number
   maxLabels: number
   nodes: readonly PixiForceGraphNode[]
   positions: Float32Array
@@ -45,6 +52,7 @@ export function createPixiForceGraphLabelManager({
   const desiredMarks = new Uint32Array(nodes.length)
   let mark = 0
   let created = 0
+  let currentResolution = textResolution(baseResolution, viewport.scale?.x ?? 1)
 
   const addDesired = (index: number) => {
     if (!nodes[index]?.label || desiredMarks[index] === mark || desired.length >= maxLabels) return
@@ -57,6 +65,8 @@ export function createPixiForceGraphLabelManager({
     if (!label) {
       if (created >= maxLabels) return null
       label = new dependencies.Text('', LABEL_STYLE)
+      label.resolution = currentResolution
+      label.roundPixels = true
       label.anchor?.set(0.5, 0)
       layer.addChild(label)
       created += 1
@@ -82,6 +92,11 @@ export function createPixiForceGraphLabelManager({
       if (hoveredIndex !== null) addDesired(hoveredIndex)
 
       const scale = viewport.scale?.x ?? 1
+      const nextResolution = textResolution(baseResolution, scale)
+      if (nextResolution !== currentResolution) {
+        currentResolution = nextResolution
+        for (const label of active.values()) label.resolution = currentResolution
+      }
       const bounds = viewport.getVisibleBounds?.()
       if (scale >= scaleThreshold && bounds) {
         const right = bounds.x + bounds.width

@@ -12,12 +12,15 @@ import { AppToast } from '@/components/AppToast'
 import { PageCanvas } from '@/components/PageCanvas'
 import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
+import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGate'
+import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
 import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
 import { onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
+import { useLocale } from '@/i18n/LocaleContext'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
 const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nxcore'])
@@ -46,6 +49,7 @@ function readInitialPage(): PageId {
 }
 
 export function App() {
+  const { t } = useLocale()
   const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
   const [activePage, setActivePage] = useState<PageId>(readInitialPage)
@@ -69,6 +73,7 @@ export function App() {
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
   const [theme] = useState<ThemeId>(readStoredTheme)
+  const enterOnboardingHome = useCallback(() => setActivePage('home'), [])
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
   const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
@@ -210,6 +215,9 @@ export function App() {
       if (target.pageId === 'rooms' && target.roomId) {
         const room = availableContextRooms.find((item) => item.id === target.roomId)
         if (room) openContextRoomTab(room)
+        else if (target.objectType === 'room') {
+          openContextRoomTab({ id: target.roomId, title: target.title })
+        }
         else {
           setActivePage('rooms')
           setActiveContextRoomId(target.roomId)
@@ -259,7 +267,10 @@ export function App() {
   }
 
   return (
-    <div
+    <MemoryOnboardingGate onEnterHome={enterOnboardingHome}>
+      {({ openMemoryOnboarding }) => (
+      <RoomOnboardingGate onOpenRoom={openContextRoomTab}>
+      <div
       className="app-shell"
       data-agent-open={String(agentOpen)}
       data-context-room-focused={String(isContextRoomFocused)}
@@ -309,12 +320,13 @@ export function App() {
           onNavigate={navigate}
           onFocusAgent={focusAgent}
           onOpenDocument={openDocumentTarget}
+          onStartMemoryOnboarding={openMemoryOnboarding}
         />
       </main>
       {agentOpen ? (
         <AgentPanel
           pageId={activePage}
-          pageLabel={pageLabels[activePage]}
+          pageLabel={t(pageLabels[activePage])}
           roomId={activePage === 'rooms' ? activeContextRoomId : null}
           rooms={availableContextRooms}
           roomBackendReady={contextRoomBackendReady}
@@ -330,6 +342,9 @@ export function App() {
       ) : null}
       <AppToast />
       <AppErrorDialog />
-    </div>
+      </div>
+      </RoomOnboardingGate>
+      )}
+    </MemoryOnboardingGate>
   )
 }

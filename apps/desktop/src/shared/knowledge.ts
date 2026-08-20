@@ -11,6 +11,45 @@ export interface KnowledgeRoomDto {
   updatedAt: string
 }
 
+export interface KnowledgeRoomContextDto {
+  roomId: string
+  generatedAt: string
+  sourceDocuments: Array<{ documentId: string; title: string; version: number; updatedAt: string }>
+  overview: string
+  status: string
+  nextSteps: string[]
+  entities: Array<{ name: string; kind: string; description: string }>
+  actionItems: Array<{ title: string; owner: string | null; dueDate: string | null; sourceTitle: string }>
+  meetings: Array<{ title: string; when: string; participants: string[]; sourceTitle: string }>
+}
+
+export interface KnowledgeRoomContextDto {
+  roomId: string
+  generatedAt: string
+  sourceDocuments: Array<{
+    documentId: string
+    title: string
+    version: number
+    updatedAt: string
+  }>
+  overview: string
+  status: string
+  nextSteps: string[]
+  entities: Array<{ name: string; kind: string; description: string }>
+  actionItems: Array<{
+    title: string
+    owner: string | null
+    dueDate: string | null
+    sourceTitle: string
+  }>
+  meetings: Array<{
+    title: string
+    when: string
+    participants: string[]
+    sourceTitle: string
+  }>
+}
+
 export interface KnowledgeWikiPageDto {
   id: string
   title: string
@@ -125,7 +164,6 @@ export interface KnowledgeFileUploadResult {
   filename: string
   title: string
   sourceId?: string
-  /** true = 判重闸 1 命中：同名同内容已入库，全链路跳过（零成本）。 */
   deduped?: boolean
   error?: string
 }

@@ -76,7 +76,13 @@ function formatConsoleLine(now: Date, module: string, level: LogLevel, event: Re
   return `${ANSI.dim}${plainTimestamp}${ANSI.reset} ${levelColor} ${plainLevel} ${ANSI.reset} ${ANSI.magenta}${scope}${ANSI.reset} ${eventName}${suffix}`
 }
 
-function appendLogFile(now: Date, module: string, level: LogLevel, event: Record<string, unknown>): void {
+function appendLogFile(
+  now: Date,
+  module: string,
+  level: LogLevel,
+  event: Record<string, unknown>,
+  filePrefix = 'desktop',
+): void {
   const directory = logsDirectory
   if (!directory) return
   const entry = {
@@ -87,7 +93,7 @@ function appendLogFile(now: Date, module: string, level: LogLevel, event: Record
     ...event,
   }
   enqueue(() => appendFile(
-    join(directory, `desktop-${localDate(now)}.log`),
+    join(directory, `${filePrefix}-${localDate(now)}.log`),
     `${JSON.stringify(entry)}\n`,
     'utf8',
   ))
@@ -154,6 +160,14 @@ export function logDesktop(
   writeDesktopLog(module, level, event, true)
 }
 
+export function logLocalDesktop(
+  module: string,
+  level: LogLevel,
+  event: Record<string, unknown>,
+): void {
+  writeDesktopLog(module, level, event, false)
+}
+
 export function logDocumentCursorCompletion(
   level: LogLevel,
   event: Record<string, unknown>,
@@ -170,8 +184,8 @@ function writeDesktopLog(
 ): void {
   const now = new Date()
   writeToOriginalConsole(level, formatConsoleLine(now, module, level, event))
-  captureSentryLog(module, level, event)
-  appendLogFile(now, module, level, event)
+  if (captureRemote) captureSentryLog(module, level, event)
+  appendLogFile(now, module, level, event, filePrefix)
 }
 
 export function flushDesktopLogs(): Promise<void> {

@@ -22,6 +22,7 @@ import type {
   OpenConnectorStatus,
 } from '../../../../shared/open-connector'
 import { PageHeader } from './PageHeader'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 import './ConnectorConsolePage.css'
 
 type ConsoleEntry = OpenConnectorCommandEvent & { key: string }
@@ -66,15 +67,16 @@ function asConnections(value: unknown): OpenConnectorConnectionSummary[] {
   return Array.isArray(value) ? value as OpenConnectorConnectionSummary[] : []
 }
 
-function statusText(status: OpenConnectorStatus | null): string {
-  if (!status) return '正在检测'
-  if (status.gatewayState === 'starting') return '正在启动本地网关'
-  if (status.gatewayState !== 'ready') return '网关不可用'
-  if (status.cliState !== 'ready') return 'CLI 不可用'
-  return '运行就绪'
+function statusText(status: OpenConnectorStatus | null, t: Translate): string {
+  if (!status) return t('surface:connectorConsole.detecting')
+  if (status.gatewayState === 'starting') return t('surface:connectorConsole.startingLocalGateway')
+  if (status.gatewayState !== 'ready') return t('surface:connectorConsole.gatewayUnavailable')
+  if (status.cliState !== 'ready') return t('surface:connectorConsole.cliUnavailable')
+  return t('surface:connectorConsole.ready')
 }
 
 export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean } = {}) {
+  const { locale, t } = useLocale()
   const [status, setStatus] = useState<OpenConnectorStatus | null>(null)
   const [query, setQuery] = useState('')
   const [actions, setActions] = useState<OpenConnectorActionSummary[]>([])
@@ -96,16 +98,16 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     if (!window.nxcore) return
     setError(null)
     try {
-      setStatus(await window.nxcore.cliConnector.status())
+      setStatus(await window.nxcore.openConnector.status())
     } catch (statusError) {
-      setError(statusError instanceof Error ? statusError.message : '无法获取连接器状态。')
+      setError(statusError instanceof Error ? statusError.message : t('surface:connectorConsole.unableToReadConnectorStatus'))
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     void refreshStatus()
     if (!window.nxcore) return
-    return window.nxcore.cliConnector.onEvent((event) => {
+    return window.nxcore.openConnector.onEvent((event) => {
       setEntries((current) => [
         ...current.slice(-199),
         { ...event, key: `${event.requestId}:${event.type}:${event.timestamp}:${current.length}` },
@@ -119,15 +121,15 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     return () => window.clearInterval(interval)
   }, [ready, refreshStatus])
 
-  const execute = async <T,>(command: Parameters<NonNullable<typeof window.nxcore>['cliConnector']['execute']>[0]['command']) => {
-    if (!window.nxcore) throw new Error('连接器控制台仅在桌面端可用。')
+  const execute = async <T,>(command: Parameters<NonNullable<typeof window.nxcore>['openConnector']['execute']>[0]['command']) => {
+    if (!window.nxcore) throw new Error(t('surface:connectorConsole.theConnectorConsoleIsAvailableOnlyInThe'))
     const requestId = crypto.randomUUID()
     setBusyRequestId(requestId)
     setError(null)
     try {
-      return await window.nxcore.cliConnector.execute({ requestId, command }) as OpenConnectorCommandResult<T>
+      return await window.nxcore.openConnector.execute({ requestId, command }) as OpenConnectorCommandResult<T>
     } catch (commandError) {
-      setError(commandError instanceof Error ? commandError.message : 'EverRoom CLI 执行失败。')
+      setError(commandError instanceof Error ? commandError.message : t('surface:connectorConsole.ooCliExecutionFailed'))
       throw commandError
     } finally {
       setBusyRequestId(null)
@@ -171,11 +173,11 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     try {
       parsed = JSON.parse(input)
     } catch {
-      setError('输入参数不是有效的 JSON。')
+      setError(t('surface:connectorConsole.inputIsNotValidJson'))
       return
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      setError('Action 输入必须是 JSON 对象。')
+      setError(t('surface:connectorConsole.actionInputMustBeAJsonObject'))
       return
     }
     const response = await execute({
@@ -192,11 +194,11 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
   return (
     <div className={embedded ? 'connector-console-page connector-console-embedded' : 'page connector-console-page'}>
       {!embedded ? <PageHeader
-        title="连接器控制台"
-        description="通过 EverRoom CLI 安全衔接 Agent 与连接器网关"
+        title={t('surface:connectorConsole.connectorConsole')}
+        description={t('surface:connectorConsole.securelyConnectAgentToTheOpenconnectorGatewayThrough')}
         extraAction={(
           <button type="button" className="secondary-button" onClick={() => void refreshStatus()}>
-            <RefreshCw aria-hidden="true" />刷新状态
+            <RefreshCw aria-hidden="true" />{t('surface:connectorConsole.refreshStatus')}
           </button>
         )}
       /> : null}
@@ -204,19 +206,19 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
       <section className="connector-runtime-card" data-ready={String(ready)}>
         <div className="connector-runtime-icon"><PlugZap aria-hidden="true" /></div>
         <div className="connector-runtime-copy">
-          <strong>{statusText(status)}</strong>
+          <strong>{statusText(status, t)}</strong>
           <span>
-            {status?.baseUrl ?? '正在读取网关地址'}
-            {status ? ` · ${status.managed ? '本地托管' : '外部服务'}${status.gatewayPid ? ` · PID ${status.gatewayPid}` : ''}` : ''}
+            {status?.baseUrl ?? t('surface:connectorConsole.readingGatewayAddress')}
+            {status ? ` · ${t(status.managed ? 'surface:connectorConsole.locallyManaged' : 'surface:connectorConsole.externalService')}${status.gatewayPid ? ` · PID ${status.gatewayPid}` : ''}` : ''}
           </span>
         </div>
         <div className="connector-runtime-facts">
           <span>{status?.gatewayState === 'ready' ? <CheckCircle2 /> : status?.gatewayState === 'starting' ? <LoaderCircle className="spin" /> : <CircleAlert />} Gateway {status?.gatewayVersion ?? ''}</span>
-          <span>{status?.cliState === 'ready' ? <CheckCircle2 /> : <CircleAlert />} EverRoom CLI {status?.cliVersion ?? '未检测'}</span>
-          <span><TerminalSquare /> Token {status?.runtimeTokenConfigured ? '已隔离' : '未配置'}</span>
+          <span>{status?.cliState === 'ready' ? <CheckCircle2 /> : <CircleAlert />} oo {status?.cliVersion ?? t('surface:connectorConsole.notDetected')}</span>
+          <span><TerminalSquare /> Token {t(status?.runtimeTokenConfigured ? 'surface:connectorConsole.isolated' : 'surface:connectorConsole.notConfigured')}</span>
         </div>
-        <button type="button" className="secondary-button" onClick={() => void window.nxcore?.cliConnector.openConsole()}>
-          EverRoom 管理台<ExternalLink aria-hidden="true" />
+        <button type="button" className="secondary-button" onClick={() => void window.nxcore?.openConnector.openConsole()}>
+          {t('surface:connectorConsole.webConsole')}<ExternalLink aria-hidden="true" />
         </button>
       </section>
 
@@ -229,19 +231,19 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
 
       <div className="connector-console-grid">
         <section className="connector-pane connector-discovery-pane">
-          <header><div><Search /><span><strong>Action 发现</strong><small>搜索网关 Catalog</small></span></div></header>
+          <header><div><Search /><span><strong>{t('surface:connectorConsole.actionDiscovery')}</strong><small>{t('surface:connectorConsole.searchTheGatewayCatalog')}</small></span></div></header>
           <form className="connector-search" onSubmit={(event) => {
             event.preventDefault()
             void searchActions().catch(() => undefined)
           }}>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例如：发送邮件、创建日程" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('surface:connectorConsole.forExampleSendEmailCreateAnEvent')} />
             <button type="submit" className="primary-button" disabled={!ready || Boolean(busyRequestId) || !query.trim()}>
-              {busyRequestId ? <LoaderCircle className="spin" /> : <Search />}搜索
+              {busyRequestId ? <LoaderCircle className="spin" /> : <Search />}{t('surface:connectorConsole.search')}
             </button>
           </form>
           <div className="connector-action-list">
             {actions.length === 0 ? (
-              <div className="connector-empty">输入自然语言，查找 Agent 可调用的 Action。</div>
+              <div className="connector-empty">{t('surface:connectorConsole.useNaturalLanguageToFindActionsAgentCan')}</div>
             ) : actions.map((action) => (
               <button
                 type="button"
@@ -250,8 +252,8 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
                 disabled={Boolean(busyRequestId)}
                 onClick={() => void inspectAction(action).catch(() => undefined)}
               >
-                <span><strong>{action.name}</strong><small>{action.description || '暂无描述'}</small></span>
-                <i data-authenticated={String(action.authenticated)}>{action.authenticated ? '已连接' : '需连接'}</i>
+                <span><strong>{action.name}</strong><small>{action.description || t('surface:connectorConsole.noDescription')}</small></span>
+                <i data-authenticated={String(action.authenticated)}>{t(action.authenticated ? 'surface:connectorConsole.connected' : 'surface:connectorConsole.connectionRequired')}</i>
                 <code>{action.service}</code>
               </button>
             ))}
@@ -259,44 +261,44 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
         </section>
 
         <section className="connector-pane connector-execution-pane">
-          <header><div><Braces /><span><strong>Schema 与执行</strong><small>{activeActionId ?? '选择一个 Action'}</small></span></div></header>
-          {!schema || !selected ? <div className="connector-empty">选择 Action 后检查契约并填写 JSON 参数。</div> : (
+          <header><div><Braces /><span><strong>{t('surface:connectorConsole.schemaExecution')}</strong><small>{activeActionId ?? t('surface:connectorConsole.chooseAnAction')}</small></span></div></header>
+          {!schema || !selected ? <div className="connector-empty">{t('surface:connectorConsole.chooseAnActionInspectItsContractAndEnter')}</div> : (
             <div className="connector-action-workbench">
-              <p>{schema.description || '该 Action 暂无描述。'}</p>
-              <details open><summary>Input Schema</summary><pre>{JSON.stringify(schema.inputSchema, null, 2)}</pre></details>
+              <p>{schema.description || t('surface:connectorConsole.thisActionHasNoDescription')}</p>
+              <details open><summary>{t('surface:connectorConsole.inputSchema')}</summary><pre>{JSON.stringify(schema.inputSchema, null, 2)}</pre></details>
               <label>
-                <span>连接账号</span>
+                <span>{t('surface:connectorConsole.connectedAccount')}</span>
                 <select value={connectionName} onChange={(event) => setConnectionName(event.target.value)}>
-                  <option value="">默认连接</option>
+                  <option value="">{t('surface:connectorConsole.defaultConnection')}</option>
                   {connections.filter((connection) => connection.connectionName).map((connection) => (
                     <option key={connection.connectionName!} value={connection.connectionName!}>{connection.displayName}</option>
                   ))}
                 </select>
               </label>
-              <label><span>JSON 输入</span><textarea spellCheck={false} value={input} onChange={(event) => setInput(event.target.value)} /></label>
+              <label><span>{t('surface:connectorConsole.jsonInput')}</span><textarea spellCheck={false} value={input} onChange={(event) => setInput(event.target.value)} /></label>
               <div className="connector-run-actions">
                 <button type="button" className="secondary-button" disabled={Boolean(busyRequestId)} onClick={() => void runAction(true).catch(() => undefined)}>
-                  <CheckCircle2 />仅校验
+                  <CheckCircle2 />{t('surface:connectorConsole.validateOnly')}
                 </button>
                 {busyRequestId ? (
-                  <button type="button" className="danger-button" onClick={() => void window.nxcore?.cliConnector.cancel(busyRequestId)}><Square />终止</button>
+                  <button type="button" className="danger-button" onClick={() => void window.nxcore?.openConnector.cancel(busyRequestId)}><Square />{t('surface:connectorConsole.cancel')}</button>
                 ) : (
-                  <button type="button" className="primary-button" onClick={() => void runAction(false).catch(() => undefined)}><Play />执行 Action</button>
+                  <button type="button" className="primary-button" onClick={() => void runAction(false).catch(() => undefined)}><Play />{t('surface:connectorConsole.runAction')}</button>
                 )}
               </div>
-              {formattedResult ? <><h3>执行结果</h3><pre className="connector-result">{formattedResult}</pre></> : null}
+              {formattedResult ? <><h3>{t('surface:connectorConsole.result')}</h3><pre className="connector-result">{formattedResult}</pre></> : null}
             </div>
           )}
         </section>
       </div>
 
       <section className="connector-log-pane">
-        <header><div><TerminalSquare /><span><strong>CLI 会话日志</strong><small>Token 与 Action 输入不会显示在命令行摘要中</small></span></div><button type="button" onClick={() => setEntries([])}>清空</button></header>
+        <header><div><TerminalSquare /><span><strong>{t('surface:connectorConsole.cliSessionLog')}</strong><small>{t('surface:connectorConsole.tokensAndActionInputsAreHiddenFromCommand')}</small></span></div><button type="button" onClick={() => setEntries([])}>{t('surface:connectorConsole.clear')}</button></header>
         <div className="connector-log-output">
-          {entries.length === 0 ? <span className="connector-log-empty">等待命令执行...</span> : entries.map((entry) => (
+          {entries.length === 0 ? <span className="connector-log-empty">{t('surface:connectorConsole.waitingForACommand')}</span> : entries.map((entry) => (
             <div key={entry.key} data-stream={entry.type === 'output' ? entry.stream : entry.type}>
-              <time>{new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}</time>
-              <code>{entry.type === 'started' ? `$ ${entry.command}` : entry.type === 'finished' ? `进程结束 · exit ${entry.exitCode} · ${entry.durationMs}ms` : entry.text.trimEnd()}</code>
+              <time>{new Date(entry.timestamp).toLocaleTimeString(locale, { hour12: false })}</time>
+              <code>{entry.type === 'started' ? `$ ${entry.command}` : entry.type === 'finished' ? t('surface:connectorConsole.processEndedExitCodeDurationMs', { code: entry.exitCode, duration: entry.durationMs }) : entry.text.trimEnd()}</code>
             </div>
           ))}
         </div>

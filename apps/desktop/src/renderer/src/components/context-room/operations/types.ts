@@ -23,7 +23,7 @@ export type DocumentOperationActionErrorKind = 'conflict' | 'not-found' | 'netwo
 
 export interface DocumentOperationActionError {
   kind: DocumentOperationActionErrorKind
-  message: string
+  messageKey: string
 }
 
 export function classifyDocumentOperationError(error: unknown): DocumentOperationActionError {
@@ -46,11 +46,11 @@ export function classifyDocumentOperationError(error: unknown): DocumentOperatio
     || signature.includes('VERSION HAS CHANGED')
     || signature.includes('版本已经变化')
     || signature.includes('版本已变化')
-  ) return { kind: 'conflict', message: '文档已经发生变化，当前操作不能直接应用。' }
+  ) return { kind: 'conflict', messageKey: 'contextRoom:documentOperationErrors.conflict' }
   if (status === 404 || signature.includes('NOT_FOUND') || signature.includes('NOT FOUND')) {
-    return { kind: 'not-found', message: '这份文档操作已不可用。' }
+    return { kind: 'not-found', messageKey: 'contextRoom:documentOperationErrors.notFound' }
   }
-  return { kind: 'network', message: '暂时无法同步文档操作，请稍后重试。' }
+  return { kind: 'network', messageKey: 'contextRoom:documentOperationErrors.network' }
 }
 
 export interface DocumentOperationListFilters {

@@ -1,5 +1,6 @@
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
+import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import type { DetailPane } from '../RoomIconSidebar';
 import {
   MailsPane,
@@ -18,6 +19,7 @@ export function WorkspacePaneBody({
   selectedResourceId,
   backendDocuments,
   trashedDocuments,
+  knowledgeFiles,
   onSelectResource,
   onOpenWikiPage,
   onCreateDocument,
@@ -38,6 +40,7 @@ export function WorkspacePaneBody({
   selectedResourceId: string | null;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
+  knowledgeFiles: KnowledgeFileDto[];
   onSelectResource: (resource: ContextRoomResource) => void;
   onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
@@ -60,6 +63,7 @@ export function WorkspacePaneBody({
         selectedId={selectedResourceId}
         backendDocuments={backendDocuments}
         trashedDocuments={trashedDocuments}
+        knowledgeFiles={knowledgeFiles}
         onSelect={onSelectResource}
         onCreateDocument={onCreateDocument}
         onDeleteDocument={onDeleteDocument}

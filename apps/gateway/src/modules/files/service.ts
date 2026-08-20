@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { ingestEvents, parsedContents, uploadedFiles } from "../../infrastructure/database/schema.js";
+import { parsedContents, uploadedFiles } from "../../infrastructure/database/schema.js";
 import {
   contentHashOf,
   fileIdOf,
@@ -13,22 +13,6 @@ import {
 } from "./storage.js";
 
 export type UploadedFileRow = typeof uploadedFiles.$inferSelect;
-
-/** 文件中心允许的原始文件格式；JSON 不是文件入口格式。 */
-export const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
-  ".csv", ".docx", ".html", ".htm", ".md", ".markdown", ".pptx", ".txt", ".xlsx",
-]);
-
-export function isSupportedUploadFilename(filename: string): boolean {
-  const basename = filename.split(/[\\/]/).pop() ?? filename;
-  const dot = basename.lastIndexOf(".");
-  return dot > 0 && SUPPORTED_UPLOAD_EXTENSIONS.has(basename.slice(dot).toLowerCase());
-}
-
-export function isJsonFilename(filename: string): boolean {
-  const basename = filename.split(/[\\/]/).pop() ?? filename;
-  return basename.toLowerCase().endsWith(".json");
-}
 
 /** 统一上传结果：deduped = 判重闸 1 命中（同名同内容，零写入）。 */
 export interface FileUploadResult {
@@ -82,15 +66,29 @@ export class FilesService {
     filename: string;
     buffer: Buffer;
     mime?: string | undefined;
+    assetKind?: "document" | "screenshot" | "photo" | "audio" | "other" | undefined;
+    originChannel?: string | undefined;
+    visibility?: "private" | "shared" | undefined;
+    capturedAt?: Date | undefined;
   }): Promise<FileUploadResult> {
-    if (!isSupportedUploadFilename(input.filename)) {
-      throw new Error("不支持的文件格式：JSON 文件不会进入文件库。");
-    }
-    const fileId = fileIdOf(input.filename);
     const contentHash = contentHashOf(input.buffer);
+    const visualIdentity = input.assetKind === "screenshot" || input.assetKind === "photo"
+      ? `${input.assetKind}-${contentHash}-${input.filename}`
+      : input.filename;
+    const fileId = fileIdOf(visualIdentity);
 
     const existing = this.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get();
     if (existing?.contentHash === contentHash) {
+      if (input.mime || input.assetKind || input.originChannel || input.visibility || input.capturedAt) {
+        this.db.update(uploadedFiles).set({
+          ...(input.mime ? { mime: input.mime } : {}),
+          ...(input.assetKind ? { assetKind: input.assetKind } : {}),
+          ...(input.originChannel ? { originChannel: input.originChannel } : {}),
+          ...(input.visibility ? { visibility: input.visibility } : {}),
+          ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
+          updatedAt: new Date(),
+        }).where(eq(uploadedFiles.id, fileId)).run();
+      }
       return {
         fileId,
         contentHash,
@@ -109,6 +107,10 @@ export class FilesService {
         originalName: input.filename,
         bytes: input.buffer.byteLength,
         ...(input.mime ? { mime: input.mime } : {}),
+        ...(input.assetKind ? { assetKind: input.assetKind } : {}),
+        ...(input.originChannel ? { originChannel: input.originChannel } : {}),
+        ...(input.visibility ? { visibility: input.visibility } : {}),
+        ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
         updatedAt: new Date(),
       }).where(eq(uploadedFiles.id, fileId)).run();
     } else {
@@ -119,6 +121,10 @@ export class FilesService {
         originalName: input.filename,
         bytes: input.buffer.byteLength,
         ...(input.mime ? { mime: input.mime } : {}),
+        ...(input.assetKind ? { assetKind: input.assetKind } : {}),
+        ...(input.originChannel ? { originChannel: input.originChannel } : {}),
+        ...(input.visibility ? { visibility: input.visibility } : {}),
+        ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
       }).onConflictDoNothing().run();
     }
     return {
@@ -132,34 +138,17 @@ export class FilesService {
   }
 
   get(fileId: string): UploadedFileRow | null {
-    const row = this.getRaw(fileId);
-    return row && !isJsonFilename(row.originalName) ? row : null;
-  }
-
-  private getRaw(fileId: string): UploadedFileRow | null {
     return this.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get() ?? null;
   }
 
   list(limit = 50, offset = 0): { items: UploadedFileRow[]; total: number } {
     const rows = this.db.select().from(uploadedFiles)
       .orderBy(desc(uploadedFiles.updatedAt))
-      .all()
-      .filter((row) => !isJsonFilename(row.originalName));
-    return { items: rows.slice(offset, offset + limit), total: rows.length };
-  }
-
-  /** 启动时清除旧版本错误写入的 JSON 文件及其文件台账事件。 */
-  async purgeUnsupportedFiles(): Promise<number> {
-    const rows = this.db.select().from(uploadedFiles).all()
-      .filter((row) => isJsonFilename(row.originalName));
-    for (const row of rows) {
-      this.db.delete(ingestEvents).where(and(
-        eq(ingestEvents.sourceKind, "file"),
-        eq(ingestEvents.sourceId, row.id),
-      )).run();
-      await this.deleteFile(row.id);
-    }
-    return rows.length;
+      .limit(limit)
+      .offset(offset)
+      .all();
+    const total = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles).all().length;
+    return { items: rows, total };
   }
 
   /** 文件当前解析产物的 markdown（预览用）；无文件或未解析返回 null。 */
@@ -177,10 +166,20 @@ export class FilesService {
     return file ? join(this.dataDir, file.storagePath) : null;
   }
 
+  async contentOf(fileId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null> {
+    const file = this.get(fileId);
+    if (!file) return null;
+    return {
+      buffer: await readFile(join(this.dataDir, file.storagePath)),
+      mime: file.mime,
+      filename: file.originalName,
+    };
+  }
+
   /** 改显示名（身份 ID 不变——确定性身份在首次上传时定死，aliases 语义）。 */
   rename(fileId: string, displayName: string): UploadedFileRow | null {
     const name = displayName.trim().slice(0, 300);
-    if (!name || isJsonFilename(name)) return null;
+    if (!name) return null;
     this.db.update(uploadedFiles).set({ originalName: name, updatedAt: new Date() })
       .where(eq(uploadedFiles.id, fileId)).run();
     return this.get(fileId);
@@ -223,7 +222,6 @@ export class FilesService {
     originalName: string;
     markdown: string;
   }): Promise<{ fileId: string; contentHash: string } | null> {
-    if (isJsonFilename(input.originalName)) return null;
     const buffer = Buffer.from(input.markdown, "utf8");
     const contentHash = contentHashOf(buffer);
     const fileId = fileIdOf(input.originalName);
@@ -251,7 +249,7 @@ export class FilesService {
    * （内容寻址天然共享）。
    */
   async deleteFile(fileId: string, hooks?: FileDeletionHooks): Promise<FileDeletionResult | null> {
-    const file = this.getRaw(fileId);
+    const file = this.get(fileId);
     if (!file) return null;
 
     hooks?.requestKnowledgeCleanup?.(fileId);

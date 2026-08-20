@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { showToast } from '@/state/toast';
 
@@ -10,6 +11,7 @@ import { MarkdownBody } from './MarkdownBody';
  * 不复用 TiptapDocumentEditor（那会触发 documents.import 副作用）。
  */
 export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageResource }) {
+  const { t } = useLocale();
   const [markdown, setMarkdown] = useState<string | null>(null);
 
   useEffect(() => {
@@ -23,10 +25,10 @@ export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageReso
       })
       .catch((cause) => {
         if (cancelled) return;
-        showToast({ title: '读取页面失败', message: cause instanceof Error ? cause.message : undefined });
+        showToast({ title: t('contextRoom:wikiPageReader.failedToLoadPage'), message: cause instanceof Error ? cause.message : undefined });
       });
     return () => { cancelled = true; };
-  }, [resource.roomId, resource.wikiPath]);
+  }, [resource.roomId, resource.wikiPath, t]);
 
   return (
     <div className="context-room-wiki-reader-pane">
@@ -36,7 +38,7 @@ export function WikiPageReader({ resource }: { resource: ContextRoomWikiPageReso
       </header>
       <div className="context-room-wiki-reader-body">
         {markdown === null ? (
-          <div className="context-room-workspace-empty">加载中…</div>
+          <div className="context-room-workspace-empty">{t('contextRoom:wikiPageReader.loading')}</div>
         ) : (
           <MarkdownBody markdown={markdown} />
         )}

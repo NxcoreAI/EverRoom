@@ -4,15 +4,17 @@ import type { ReactNode } from 'react';
 
 import type { ToolbarAction } from '../types';
 import { cn, uiText } from '../adapters';
+import { useLocale } from '../../../../i18n/LocaleContext';
 export function ToolbarButton({ action }: { action: ToolbarAction }) {
+  const { t } = useLocale();
   const Icon = action.icon;
 
   return (
     <button
       type="button"
-      aria-label={uiText(action.label)}
+      aria-label={t(uiText(action.label))}
       aria-pressed={action.isActive ?? false}
-      title={uiText(action.label)}
+      title={t(uiText(action.label))}
       className={cn(
         'flex size-8 items-center justify-center rounded-md border border-transparent text-zinc-600 transition-colors',
         'hover:border-zinc-200 hover:bg-white hover:text-zinc-950',
@@ -28,9 +30,10 @@ export function ToolbarButton({ action }: { action: ToolbarAction }) {
 }
 
 export function Metric({ label, value }: { label: string; value: string }) {
+  const { t } = useLocale();
   return (
     <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2 shadow-inner">
-      <div className="text-[11px] text-zinc-500">{uiText(label)}</div>
+      <div className="text-[11px] text-zinc-500">{t(uiText(label))}</div>
       <div className="mt-1 text-sm font-semibold text-zinc-950">{value}</div>
     </div>
   );
@@ -103,14 +106,15 @@ export function ReferenceDialog({
   title: string;
   children: ReactNode;
 }) {
+  const { t } = useLocale();
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="context-room-dialog-overlay" />
         <Dialog.Content className="context-room-dialog-content" aria-label={title}>
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
-          <Dialog.Description className="sr-only">完成当前 Context Room 操作</Dialog.Description>
-          <Dialog.Close className="context-room-dialog-close" aria-label="关闭对话框">
+          <Dialog.Description className="sr-only">{t('contextRoom:shared.completeTheCurrentContextRoomAction')}</Dialog.Description>
+          <Dialog.Close className="context-room-dialog-close" aria-label={t('contextRoom:shared.closeDialog')}>
             <X className="size-4" aria-hidden="true" />
           </Dialog.Close>
           {children}
@@ -133,7 +137,7 @@ export function ActionConfirmDialog({
   rows = [],
   sources = [],
   risk,
-  confirmLabel = '确认执行',
+  confirmLabel = 'contextRoom:shared.confirmAction',
   danger = false,
   onConfirm,
 }: {
@@ -148,6 +152,7 @@ export function ActionConfirmDialog({
   danger?: boolean;
   onConfirm: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <ReferenceDialog open={open} onOpenChange={onOpenChange} title={title}>
       <div className="context-room-action-confirm">
@@ -164,8 +169,8 @@ export function ActionConfirmDialog({
           ))}
           {sources.length ? (
             <div className="context-room-action-confirm-row">
-              <span>来源</span>
-              <b>{sources.map((source) => `${source.type} · ${source.name}`).join('；')}</b>
+              <span>{t('contextRoom:shared.sources')}</span>
+              <b>{sources.map((source) => `${t(uiText(source.type))} · ${source.name}`).join('；')}</b>
             </div>
           ) : null}
           {risk ? (
@@ -177,7 +182,7 @@ export function ActionConfirmDialog({
         </div>
         <footer>
           <button type="button" className="context-room-ghost" onClick={() => onOpenChange(false)}>
-            取消
+            {t('contextRoom:shared.cancel')}
           </button>
           <button
             type="button"
@@ -187,7 +192,7 @@ export function ActionConfirmDialog({
               onConfirm();
             }}
           >
-            {confirmLabel}
+            {t(confirmLabel)}
           </button>
         </footer>
       </div>
@@ -216,6 +221,7 @@ export function ReferenceForm({
   submitLabel: string;
   onSubmit: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <form
       className="context-room-reference-form"
@@ -224,11 +230,11 @@ export function ReferenceForm({
         onSubmit();
       }}
     >
-      <h2>{title}</h2>
+      <h2>{t(title)}</h2>
       <div className="context-room-reference-fields">
         {fields.map((field) => (
           <label key={field.name}>
-            <span>{uiText(field.label)}</span>
+            <span>{t(uiText(field.label))}</span>
             {field.options ? (
               <select
                 name={field.name}
@@ -236,14 +242,14 @@ export function ReferenceForm({
                 required={field.required}
               >
                 {field.options.map((option) => (
-                  <option key={option}>{option}</option>
+                  <option key={option} value={option}>{t(uiText(option))}</option>
                 ))}
               </select>
             ) : field.multiline ? (
               <textarea
                 name={field.name}
                 defaultValue={field.defaultValue}
-                placeholder={uiText(field.placeholder)}
+                placeholder={t(uiText(field.placeholder))}
                 required={field.required}
                 rows={4}
               />
@@ -251,7 +257,7 @@ export function ReferenceForm({
               <input
                 name={field.name}
                 defaultValue={field.defaultValue}
-                placeholder={uiText(field.placeholder)}
+                placeholder={t(uiText(field.placeholder))}
                 required={field.required}
               />
             )}
@@ -260,7 +266,7 @@ export function ReferenceForm({
       </div>
       <div className="context-room-reference-form-actions">
         <button type="submit" className="context-room-primary">
-          {submitLabel}
+          {t(submitLabel)}
         </button>
       </div>
     </form>
@@ -282,15 +288,16 @@ export function ConfirmCard({
   confirmLabel: string;
   onConfirm?: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <section className="context-room-confirm-card rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-      <div className="mb-2 text-base font-semibold text-zinc-950 text-balance">{title}</div>
+      <div className="mb-2 text-base font-semibold text-zinc-950 text-balance">{t(title)}</div>
       <div className="text-sm leading-6 text-zinc-600 text-pretty">{summary}</div>
       {rows.length ? (
         <div className="mt-3 divide-y divide-dashed divide-zinc-200 border-y border-dashed border-zinc-200">
           {rows.map((row) => (
             <div key={uiText(row.label)} className="flex gap-3 py-2 text-sm">
-              <span className="w-16 shrink-0 text-zinc-500">{uiText(row.label)}</span>
+              <span className="w-16 shrink-0 text-zinc-500">{t(uiText(row.label))}</span>
               <span className="min-w-0 flex-1 text-zinc-800">{row.value}</span>
             </div>
           ))}
@@ -307,7 +314,7 @@ export function ConfirmCard({
           onClick={onConfirm}
           className="rounded-md border border-sky-200 bg-sky-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"
         >
-          {confirmLabel}
+          {t(confirmLabel)}
         </button>
       </div>
     </section>
@@ -327,6 +334,7 @@ export function SideTab({
   count?: number;
   onSelect?: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <button
       type="button"
@@ -342,7 +350,7 @@ export function SideTab({
         className={cn('size-4 shrink-0', active ? 'text-sky-600' : 'text-zinc-500')}
         aria-hidden="true"
       />
-      <span className="min-w-0 flex-1 truncate">{uiText(label)}</span>
+      <span className="min-w-0 flex-1 truncate">{t(uiText(label))}</span>
       {typeof count === 'number' ? <Tag>{count}</Tag> : null}
     </button>
   );

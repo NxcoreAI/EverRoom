@@ -1,4 +1,5 @@
 import { dialog, shell } from 'electron'
+import { desktopText } from '../desktop-locale'
 import { readFile } from 'node:fs/promises'
 import type {
   KnowledgeAttachInput,
@@ -7,6 +8,7 @@ import type {
   KnowledgeEntityDto,
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
+  KnowledgeRoomContextDto,
   KnowledgeRoomDto,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
@@ -15,11 +17,12 @@ import type {
 } from '../../shared/knowledge'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
-/** Room 注册表 / Wiki 页面 / 待归类队列 / 文件上传（docs/room-wiki-plan.md §7.2）。 */
+/** Room 注册表 / Wiki 页面 / 待归类队列 / Room 文件清单（docs/room-wiki-plan.md §7.2）。 */
 
 /**
  * 渲染器 → gateway knowledge 模块的 IPC 桥。
  * 与 DocumentGatewayBridge 同构（Bearer token 只在主进程，渲染器零感知）。
+ * 文件上传统一走 FilesGatewayBridge.pickAndImport（/v1/files + /v1/ingest）。
  */
 export class KnowledgeGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
@@ -35,6 +38,10 @@ export class KnowledgeGatewayBridge {
 
   deleteRoom(roomId: string): Promise<void> {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}`, { method: 'DELETE' })
+  }
+
+  getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto> {
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/context`)
   }
 
   listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }> {
@@ -121,7 +128,9 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/files/${encodeURIComponent(fileId)}/markdown`)
   }
 
-  /** 在系统文件管理器中定位文件本体（对象库 files/sha256/…）。 */
+  /**
+   * 在系统文件管理器中定位文件本体（对象库 files/sha256/…）。
+   */
   async revealFile(fileId: string): Promise<void> {
     const { storagePath } = await this.request<{ storagePath: string }>(
       `/v1/knowledge/files/${encodeURIComponent(fileId)}/storage`,
@@ -135,7 +144,7 @@ export class KnowledgeGatewayBridge {
    */
   async pickAndUploadFiles(): Promise<KnowledgeFileUploadResult[]> {
     const picked = await dialog.showOpenDialog({
-      title: '选择要归类的 Markdown 文件',
+      title: desktopText('dialog.knowledgeMarkdown.title'),
       properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
     })

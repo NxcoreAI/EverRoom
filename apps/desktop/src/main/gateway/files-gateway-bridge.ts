@@ -1,6 +1,5 @@
 import { dialog, shell } from 'electron'
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { basename, extname, relative, resolve, sep } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import type {
   FileDto,
   FileImportOutcome,
@@ -8,89 +7,7 @@ import type {
   IngestResultDto,
 } from '../../shared/ingest'
 import type { GatewaySupervisor } from './gateway-supervisor'
-
-const SUPPORTED_IMPORT_EXTENSIONS = new Set([
-  '.csv',
-  '.docx',
-  '.html',
-  '.htm',
-  '.md',
-  '.markdown',
-  '.pptx',
-  '.txt',
-  '.xlsx',
-])
-
-export interface ImportCandidate {
-  filePath: string
-  filename: string
-}
-
-function isSupportedImportFile(filePath: string): boolean {
-  return SUPPORTED_IMPORT_EXTENSIONS.has(extname(filePath).toLowerCase())
-}
-
-async function collectDirectoryFiles(directory: string): Promise<ImportCandidate[]> {
-  const rootPath = resolve(directory)
-  const candidates: ImportCandidate[] = []
-
-  const visit = async (currentDirectory: string, isRoot = false): Promise<void> => {
-    let entries
-    try {
-      entries = await readdir(currentDirectory, { withFileTypes: true })
-    } catch (error) {
-      if (isRoot) throw error
-      return
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue
-      const filePath = resolve(currentDirectory, entry.name)
-      if (entry.isDirectory()) {
-        await visit(filePath)
-        continue
-      }
-      if (!entry.isFile() || !isSupportedImportFile(filePath)) continue
-      candidates.push({
-        filePath,
-        filename: relative(rootPath, filePath).split(sep).join('/'),
-      })
-    }
-  }
-
-  await visit(rootPath, true)
-  candidates.sort((left, right) => left.filename.localeCompare(right.filename))
-  return candidates
-}
-
-/** 展开文件选择框返回的文件和目录，目录只导入理解引擎支持的文件类型。 */
-export async function collectImportCandidates(selectedPaths: string[]): Promise<ImportCandidate[]> {
-  const candidates: ImportCandidate[] = []
-  const seen = new Set<string>()
-
-  for (const selectedPath of selectedPaths) {
-    const resolvedPath = resolve(selectedPath)
-    if (seen.has(resolvedPath)) continue
-    seen.add(resolvedPath)
-
-    let selectedStat
-    try {
-      selectedStat = await stat(resolvedPath)
-    } catch {
-      // Keep the existing per-file error reporting for paths that disappear after selection.
-      candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
-      continue
-    }
-
-    if (selectedStat.isDirectory()) {
-      candidates.push(...await collectDirectoryFiles(resolvedPath))
-    } else if (selectedStat.isFile() && isSupportedImportFile(resolvedPath)) {
-      candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
-    }
-  }
-
-  const uniqueCandidates = new Map(candidates.map((candidate) => [resolve(candidate.filePath), candidate]))
-  return [...uniqueCandidates.values()]
-}
+import { desktopText } from '../desktop-locale'
 
 /**
  * 文件中心桥（unified-ingest-plan §8-§9）：modules/files 的管理面 +
@@ -112,6 +29,17 @@ export class FilesGatewayBridge {
   /** 文件当前解析产物的 markdown（渲染器预览用；未进过链路 404）。 */
   readMarkdown(fileId: string): Promise<{ markdown: string }> {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}/markdown`)
+  }
+
+  async readDataUrl(fileId: string): Promise<{ dataUrl: string }> {
+    const connection = this.supervisor.getConnection()
+    const response = await fetch(`${connection.baseUrl}/v1/files/${encodeURIComponent(fileId)}/content`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+    })
+    if (!response.ok) throw new Error(`图片读取失败（${response.status}）`)
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+    const bytes = Buffer.from(await response.arrayBuffer())
+    return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
   }
 
   rename(fileId: string, displayName: string): Promise<FileDto> {
@@ -141,28 +69,31 @@ export class FilesGatewayBridge {
   /**
    * 统一导入（用户主路径）：系统选择框 → 逐文件 multipart 上传（唯一字节
    * 入口）→ ref 形态进引擎。失败互不影响，逐行回报。
+   * roomId（Room 内上传）→ /v1/ingest 的显式归属：入口直达该 Room。
    */
-  async pickAndImport(options?: { pipelines?: IngestPipelines }): Promise<FileImportOutcome[]> {
+  async pickAndImport(options?: {
+    pipelines?: IngestPipelines
+    roomId?: string
+  }): Promise<FileImportOutcome[]> {
     const picked = await dialog.showOpenDialog({
-      title: '选择要导入的文件或文件夹',
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      title: desktopText('dialog.importFiles.title'),
+      properties: ['openFile', 'multiSelections'],
       filters: [
         {
-          name: '支持的文件',
-          extensions: [...SUPPORTED_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+          name: desktopText('dialog.importFiles.documents'),
+          extensions: ['md', 'markdown', 'txt', 'json', 'docx', 'xlsx', 'pptx', 'csv', 'html', 'htm'],
         },
       ],
     })
     if (picked.canceled || picked.filePaths.length === 0) return []
 
-    const candidates = await collectImportCandidates(picked.filePaths)
     const outcomes: FileImportOutcome[] = []
-    for (const candidate of candidates) {
-      const { filePath, filename } = candidate
+    for (const filePath of picked.filePaths) {
+      const filename = filePath.split(/[\\/]/).pop() ?? filePath
       try {
         const buffer = await readFile(filePath)
         const uploaded = await this.uploadBytes(filename, buffer)
-        const ingested = await this.ingestRef(uploaded.id, options?.pipelines)
+        const ingested = await this.ingestRef(uploaded.id, options?.pipelines, options?.roomId)
         outcomes.push({
           filename,
           fileId: uploaded.id,
@@ -207,12 +138,13 @@ export class FilesGatewayBridge {
     return response.json() as Promise<{ id: string; contentHash: string; deduped: boolean; bytes: number }>
   }
 
-  private async ingestRef(fileId: string, pipelines?: IngestPipelines) {
+  private async ingestRef(fileId: string, pipelines?: IngestPipelines, roomId?: string) {
     return this.request<IngestResultDto>('/v1/ingest', {
       method: 'POST',
       body: JSON.stringify({
         source: { ref: { sourceKind: 'file', sourceId: fileId } },
         ...(pipelines ? { pipelines } : {}),
+        ...(roomId ? { roomId } : {}),
       }),
     })
   }

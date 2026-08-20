@@ -15,6 +15,12 @@ let configured = false
 let enabledUntil = 0
 let currentAccount: CloudAccountStatus | null = null
 
+const LOCAL_ONLY_LOG_MODULES = new Set(['document-cursor-completion'])
+
+export function isSentryLogModuleAllowed(module: string): boolean {
+  return !LOCAL_ONLY_LOG_MODULES.has(module)
+}
+
 export function isRemoteDebugEligible(account: CloudAccountStatus, now = Date.now()): boolean {
   const subscription = account.subscription
   if (!account.authenticated || !account.user || !subscription) return false
@@ -77,6 +83,7 @@ export function captureSentryLog(
   level: 'info' | 'warn' | 'error',
   event: Record<string, unknown>,
 ): void {
+  if (!isSentryLogModuleAllowed(module)) return
   if (!configured || !Sentry || !Sentry.isInitialized() || !isRemoteDebugActive()) return
   const message = typeof event.event === 'string' ? event.event : `${module}.${level}`
   Sentry.logger[level](message, { source: 'desktop', module, ...event })

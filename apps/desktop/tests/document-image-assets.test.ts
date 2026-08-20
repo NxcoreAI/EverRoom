@@ -8,13 +8,13 @@ import {
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentImageAssets'
 
 describe('document image localization', () => {
-  it('uses the official resizable image node view with corner handles and locked proportions', () => {
+  it('uses the official resizable image node view with edge and corner handles', () => {
     expect(DOCUMENT_IMAGE_RESIZE_OPTIONS).toEqual({
       enabled: true,
-      directions: ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
+      directions: ['top', 'right', 'bottom', 'left', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
       minWidth: 96,
       minHeight: 48,
-      alwaysPreserveAspectRatio: true,
+      alwaysPreserveAspectRatio: false,
     })
   })
 

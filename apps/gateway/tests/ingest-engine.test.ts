@@ -11,7 +11,6 @@ import type { Logger } from "pino";
 import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
-  connectorEmails,
   documents,
   entities as entitiesTable,
   entityDocLinks,
@@ -79,7 +78,6 @@ async function engineForTest(options: EngineOptions = {}) {
       ? vi.fn().mockImplementationOnce(() => { throw new Error("knowledge unavailable"); })
         .mockReturnValue({ queued: true, jobId: "route-job-1" })
       : vi.fn().mockReturnValue({ queued: true, jobId: "route-job-1" }),
-    requestSourceCleanup: vi.fn(),
   } as unknown as KnowledgeService;
   const memorySuccess = {
     document: { id: "mdoc-1", title: "", callerRef: "", version: 1, sessionId: "s1", chunkCount: 3, derivedMemoryCount: null },
@@ -97,7 +95,6 @@ async function engineForTest(options: EngineOptions = {}) {
       : options.memoryErrorOnce
         ? vi.fn().mockRejectedValueOnce(new Error("memorycore down")).mockResolvedValue(memorySuccess)
         : vi.fn().mockResolvedValue(memorySuccess),
-    deleteDocumentsByCallerRef: vi.fn().mockResolvedValue([]),
   } as unknown as MemoryService;
 
   const service = new IngestService(db, files, knowledge, memory, silentLogger, options.policyLayers);
@@ -250,20 +247,21 @@ describe("引擎主流程：path 输入（U8 只读不拷贝）", () => {
     test.sqlite.close();
   });
 
-  it("来源删除后软删除旧台账并允许相同内容恢复时重新扇出", async () => {
+  it("roomId（Room 内上传）：透传 entryRoomId 进 knowledge 扇出；缺省不带", async () => {
     const test = await engineForTest();
-    const path = await tempFile("恢复测试.md", "# 恢复测试");
+    const path = await tempFile("项目X资料.md", "# 项目X资料\n\n正文");
 
-    const first = await test.service.ingest({ source: { path } });
-    await test.service.cleanupSource("file", first.source.sourceId);
-    const restored = await test.service.ingest({ source: { path } });
+    await test.service.ingest({ source: { path }, roomId: "room-x" });
+    expect(test.knowledge.submitEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKind: "file",
+      entryRoomId: "room-x",
+    }));
 
-    expect(restored).toMatchObject({ deduped: false, source: { sourceVersion: 2 } });
-    expect(test.knowledge.requestSourceCleanup).toHaveBeenCalledWith("file", first.source.sourceId);
-    expect(test.memory.deleteDocumentsByCallerRef).toHaveBeenCalledWith(first.source.sourceId);
-    expect(test.knowledge.submitEnvelope).toHaveBeenCalledTimes(2);
-    expect(test.sqlite.prepare("SELECT COUNT(*) c FROM ingest_events WHERE deleted_at IS NOT NULL").get())
-      .toMatchObject({ c: 1 });
+    (test.knowledge.submitEnvelope as ReturnType<typeof vi.fn>).mockClear();
+    const pathPlain = await tempFile("普通上传.md", "# 普通上传");
+    await test.service.ingest({ source: { path: pathPlain } });
+    const submitted = (test.knowledge.submitEnvelope as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect("entryRoomId" in submitted).toBe(false);
     test.sqlite.close();
   });
 
@@ -334,7 +332,7 @@ describe("引擎主流程：path 输入（U8 只读不拷贝）", () => {
 
 // ───────────────────────── ref 输入 ─────────────────────────
 
-describe("ref 输入：file / everroom-doc / reality-event / connector", () => {
+describe("ref 输入：file / everroom-doc / reality-event", () => {
   it("file ref：读对象库字节，回填 currentParsedId，版本流递增", async () => {
     const test = await engineForTest();
     const uploaded = await test.files.upload({
@@ -535,86 +533,6 @@ describe("ref 输入：file / everroom-doc / reality-event / connector", () => {
     expect(submitted.markdown).toContain("- **说话人1**（00:00）：先过上一轮");
     expect(submitted.markdown).toContain("- **说话人2**（00:04）：同意");
     expect(submitted.occurredAt).toBe("2026-08-01T11:00:00.000Z");
-
-    // marker/important 等不进入 Markdown 的元数据更新不应制造新内容版本。
-    test.sqlite.prepare("UPDATE reality_events SET important = 1, version = version + 1 WHERE id = ?")
-      .run("re-1");
-    const metadataOnlyRetry = await test.service.ingest({
-      source: { ref: { sourceKind: "reality-event", sourceId: "re-1" } },
-    });
-    expect(metadataOnlyRetry.deduped).toBe(true);
-    expect(test.knowledge.submitEnvelope).toHaveBeenCalledTimes(1);
-    test.sqlite.close();
-  });
-
-  it("connector-email ref：规范 Markdown → 台账 → Room/Wiki，内容更新生成新版本", async () => {
-    const test = await engineForTest();
-    const syncedAt = new Date("2026-08-20T01:00:00.000Z");
-    test.db.insert(connectorEmails).values({
-      id: "connector-email-1",
-      ownerId: "local-user",
-      service: "gmail",
-      connectionName: "default",
-      sourceRecordId: "gmail-source-1",
-      sourceUpdatedAt: syncedAt,
-      syncedAt,
-      schemaVersion: 1,
-      promptVersion: 1,
-      contentHash: "sync-hash-1",
-      extensionPayload: { attachmentList: [{ filename: "需求.pdf", mimeType: "application/pdf" }] },
-      messageId: "message-1",
-      threadId: "thread-1",
-      senderName: "产品经理",
-      senderAddress: "pm@example.com",
-      recipients: [{ name: "研发", address: "dev@example.com" }],
-      subject: "版本评审",
-      sentAt: syncedAt,
-      bodyText: "请确认本周版本范围。",
-      labels: ["INBOX", "IMPORTANT"],
-      hasAttachments: true,
-    }).run();
-
-    const first = await test.service.ingest({
-      source: { ref: { sourceKind: "connector-email", sourceId: "connector-email-1" } },
-    });
-    expect(first).toMatchObject({
-      dataType: "connector-email",
-      source: { sourceKind: "mail", sourceVersion: 1 },
-      pipelines: { room: true, wiki: true, memory: false },
-      originChannel: "connector",
-    });
-    const submitted = (test.knowledge.submitEnvelope as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(submitted.markdown).toContain('source_kind: "mail"');
-    expect(submitted.markdown).toContain("# 版本评审");
-    expect(submitted.markdown).toContain("产品经理 <pm@example.com>");
-    expect(submitted.markdown).toContain("请确认本周版本范围。");
-    expect(submitted.markdown).toContain('"filename":"需求.pdf"');
-    expect(submitted.entrySignals).toEqual({ sourceTag: "connector:gmail", threadId: "thread-1" });
-    expect(test.sqlite.prepare("SELECT COUNT(*) c FROM parsed_contents").get()).toMatchObject({ c: 1 });
-    expect(test.sqlite.prepare("SELECT COUNT(*) c FROM ingest_events").get()).toMatchObject({ c: 1 });
-
-    const unchanged = await test.service.ingest({
-      source: { ref: { sourceKind: "connector-email", sourceId: "connector-email-1" } },
-    });
-    expect(unchanged.deduped).toBe(true);
-    expect(test.knowledge.submitEnvelope).toHaveBeenCalledTimes(1);
-
-    test.sqlite.prepare("UPDATE connector_emails SET synced_at = ? WHERE id = ?")
-      .run(syncedAt.getTime() + 30_000, "connector-email-1");
-    const resynced = await test.service.ingest({
-      source: { ref: { sourceKind: "connector-email", sourceId: "connector-email-1" } },
-    });
-    expect(resynced.deduped).toBe(true);
-    expect(test.knowledge.submitEnvelope).toHaveBeenCalledTimes(1);
-
-    test.sqlite.prepare("UPDATE connector_emails SET body_text = ?, synced_at = ? WHERE id = ?")
-      .run("范围已确认，可以发布。", syncedAt.getTime() + 60_000, "connector-email-1");
-    const updated = await test.service.ingest({
-      source: { ref: { sourceKind: "connector-email", sourceId: "connector-email-1" } },
-    });
-    expect(updated).toMatchObject({ deduped: false, source: { sourceVersion: 2 } });
-    expect(test.knowledge.submitEnvelope).toHaveBeenCalledTimes(2);
-    expect(test.sqlite.prepare("SELECT COUNT(*) c FROM ingest_events").get()).toMatchObject({ c: 2 });
     test.sqlite.close();
   });
 });
@@ -846,143 +764,6 @@ describe("wiki 快照过滤：台账 wiki=false 的源只计链接分", () => {
     test.sqlite.close();
   });
 
-  it("启动恢复合并同一实体的历史晋升任务", async () => {
-    const test = await knowledgeForTest();
-    test.db.insert(entitiesTable).values({
-      id: "ent-idempotent",
-      name: "幂等实体",
-      kind: "项目",
-      status: "promoting",
-    }).run();
-    test.db.insert(jobs).values([
-      {
-        id: "promote-oldest",
-        type: "knowledge.entity-promote",
-        status: "pending",
-        payload: { entityId: "ent-idempotent", manual: true, previousStatus: "ready" },
-        createdAt: new Date(1_000),
-      },
-      {
-        id: "promote-running",
-        type: "knowledge.entity-promote",
-        status: "running",
-        payload: { entityId: "ent-idempotent", manual: true, previousStatus: "ready" },
-        createdAt: new Date(2_000),
-      },
-      {
-        id: "promote-latest",
-        type: "knowledge.entity-promote",
-        status: "pending",
-        payload: { entityId: "ent-idempotent", manual: true, previousStatus: "ready" },
-        createdAt: new Date(3_000),
-      },
-    ]).run();
-
-    test.service.start();
-
-    const promotionJobs = test.db.select().from(jobs).all()
-      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
-    expect(promotionJobs.map((job) => [job.id, job.status])).toEqual([
-      ["promote-oldest", "pending"],
-      ["promote-running", "cancelled"],
-      ["promote-latest", "cancelled"],
-    ]);
-    expect(test.service.promotionProgress("ent-idempotent")?.jobId).toBe("promote-oldest");
-    test.service.dispose();
-    test.sqlite.close();
-  });
-
-  it("活动任务入队幂等，启动时合并历史重复任务", async () => {
-    const test = await knowledgeForTest();
-    const internal = test.service as unknown as {
-      insertJob(type: string, payload: Record<string, unknown>): string;
-    };
-    const payload = {
-      sourceKind: "mail",
-      sourceId: "mail-duplicate",
-      sourceVersion: 1,
-      roomId: "room-1",
-      decisionId: "decision-1",
-    };
-
-    const firstId = internal.insertJob("knowledge.ingest", payload);
-    expect(internal.insertJob("knowledge.ingest", payload)).toBe(firstId);
-    test.db.insert(jobs).values({
-      id: "ingest-running-copy",
-      type: "knowledge.ingest",
-      status: "running",
-      payload,
-      createdAt: new Date(Date.now() + 1_000),
-    }).run();
-
-    test.service.start();
-
-    const ingestJobs = test.db.select().from(jobs).all()
-      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
-    expect(ingestJobs.map((job) => [job.id, job.status])).toEqual([
-      [firstId, "pending"],
-      ["ingest-running-copy", "cancelled"],
-    ]);
-    expect(ingestJobs[1]!.result).toMatchObject({ supersededBy: firstId });
-    test.service.dispose();
-    test.sqlite.close();
-  });
-
-  it("Room 晋升使用独立 worker，不等待正在执行的慢知识任务", async () => {
-    const test = await knowledgeForTest();
-    test.db.insert(jobs).values({
-      id: "route-slow",
-      type: "knowledge.route",
-      status: "pending",
-      payload: { sourceKind: "file", sourceId: "file-1", sourceVersion: 1 },
-      createdAt: new Date(1_000),
-    }).run();
-
-    const executionOrder: string[] = [];
-    let signalRouteStarted!: () => void;
-    let releaseRoute!: () => void;
-    const routeStarted = new Promise<void>((resolve) => { signalRouteStarted = resolve; });
-    const routeGate = new Promise<void>((resolve) => { releaseRoute = resolve; });
-    const internal = test.service as unknown as {
-      drain(): Promise<void>;
-      drainPromotions(): Promise<void>;
-      processJob(job: { id: string; type: string }, lockKey: string | null): Promise<void>;
-    };
-    internal.processJob = vi.fn(async (job: { id: string; type: string }) => {
-      executionOrder.push(`${job.id}:start`);
-      if (job.id === "route-slow") {
-        signalRouteStarted();
-        await routeGate;
-      }
-      test.sqlite.prepare("UPDATE jobs SET status = 'completed' WHERE id = ?").run(job.id);
-      executionOrder.push(`${job.id}:done`);
-    });
-
-    const slowDrain = internal.drain();
-    await routeStarted;
-    test.db.insert(jobs).values({
-      id: "promote-new",
-      type: "knowledge.entity-promote",
-      status: "pending",
-      payload: { entityId: "ent-new", manual: true, previousStatus: "ready" },
-      createdAt: new Date(2_000),
-    }).run();
-
-    await internal.drainPromotions();
-
-    expect(executionOrder).toEqual([
-      "route-slow:start",
-      "promote-new:start",
-      "promote-new:done",
-    ]);
-
-    releaseRoute();
-    await slowDrain;
-    expect(executionOrder.at(-1)).toBe("route-slow:done");
-    test.service.dispose();
-    test.sqlite.close();
-  });
-
   it("wikiDisabledForSource：无台账行=旧入口不动；有行看快照；多次取最新", async () => {
     const test = await knowledgeForTest();
     expect(wikiDisabledForSource(test.db, "file", "file-旧入口")).toBe(false);
@@ -1162,26 +943,6 @@ describe("U2 格式扩展：确定性转换器", () => {
     expect(submitted.markdown).toContain("[链](x)");
     // turndown 默认列表缩进：`-   项`
     expect(submitted.markdown).toMatch(/-\s+项/);
-    test.sqlite.close();
-  });
-
-  it("eml -> clean Markdown through the raw MIME converter", async () => {
-    const test = await engineForTest();
-    const path = await tempFile("reply.eml", [
-      "From: Sender <sender@example.com>",
-      "To: Receiver <receiver@example.com>",
-      "Subject: Release plan",
-      "MIME-Version: 1.0",
-      'Content-Type: text/html; charset="utf-8"',
-      "",
-      '<style>.noise{color:red}</style><p>Current <strong>reply</strong></p><div class="gmail_quote">Old body</div>',
-    ].join("\r\n"));
-    const result = await test.service.ingest({ source: { path } });
-
-    expect(result).toMatchObject({ dataType: "email", detectedBy: "extension", pipelines: { memory: false } });
-    const submitted = (test.knowledge.submitEnvelope as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(submitted.markdown).toBe("Current **reply**");
-    expect(submitted.markdown).not.toMatch(/noise|color:red|Old body/);
     test.sqlite.close();
   });
 

@@ -10,13 +10,12 @@ import {
   ListChecks,
   AudioLines,
   Bot,
-  Building2,
   NotebookPen,
   PlugZap,
   Settings,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'agents' | 'tasks' | 'diary' | 'settings'
+export type PageId = 'home' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'agents' | 'tasks' | 'diary' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -34,40 +33,39 @@ export interface NavigationSection {
 export const navigationSections: NavigationSection[] = [
   {
     id: 'core',
-    label: '核心工作',
+    label: 'surface:navigation.coreWork',
     items: [
-      { id: 'home', label: '首页', icon: Home, tone: 'slate' },
-      { id: 'office', label: '办公室', icon: Building2, tone: 'blue' },
-      { id: 'rooms', label: 'Context Room', icon: BookOpen, tone: 'blue' },
-      { id: 'docs', label: '文档', icon: FileText, tone: 'indigo' },
-      { id: 'recording', label: '现实感知', icon: AudioLines, tone: 'cyan' },
+      { id: 'home', label: 'surface:navigation.home', icon: Home, tone: 'slate' },
+      { id: 'rooms', label: 'surface:navigation.contextRoom', icon: BookOpen, tone: 'blue' },
+      { id: 'docs', label: 'surface:navigation.documents', icon: FileText, tone: 'indigo' },
+      { id: 'recording', label: 'surface:navigation.realityPerception', icon: AudioLines, tone: 'cyan' },
     ],
   },
   {
     id: 'context',
-    label: '上下文',
+    label: 'surface:navigation.context',
     items: [
-      { id: 'sources', label: '数据源', icon: FolderSync, tone: 'cyan' },
-      { id: 'files', label: '文件', icon: FolderOpen, tone: 'green' },
-      { id: 'memory', label: '记忆', icon: Brain, tone: 'orange' },
-      { id: 'wiki', label: 'Wiki', icon: BookOpenText, tone: 'indigo' },
-      { id: 'connectors', label: '连接器', icon: PlugZap, tone: 'green' },
+      { id: 'sources', label: 'surface:navigation.sources', icon: FolderSync, tone: 'cyan' },
+      { id: 'files', label: 'surface:navigation.files', icon: FolderOpen, tone: 'green' },
+      { id: 'memory', label: 'surface:navigation.memory', icon: Brain, tone: 'orange' },
+      { id: 'wiki', label: 'surface:navigation.wiki', icon: BookOpenText, tone: 'indigo' },
+      { id: 'connectors', label: 'surface:navigation.connectors', icon: PlugZap, tone: 'green' },
     ],
   },
   {
     id: 'execution',
-    label: '执行',
+    label: 'surface:navigation.execution',
     items: [
-      { id: 'agents', label: 'Agent 状态', icon: Bot, tone: 'blue' },
-      { id: 'tasks', label: '任务', icon: ListChecks, tone: 'green' },
+      { id: 'agents', label: 'surface:navigation.agentStatus', icon: Bot, tone: 'blue' },
+      { id: 'tasks', label: 'surface:navigation.tasks', icon: ListChecks, tone: 'green' },
     ],
   },
   {
     id: 'system',
-    label: '系统',
+    label: 'surface:navigation.system',
     items: [
-      { id: 'diary', label: '日记', icon: NotebookPen, tone: 'blue' },
-      { id: 'settings', label: '设置', icon: Settings, tone: 'slate' },
+      { id: 'diary', label: 'surface:navigation.diary', icon: NotebookPen, tone: 'blue' },
+      { id: 'settings', label: 'surface:navigation.settings', icon: Settings, tone: 'slate' },
     ],
   },
 ]
@@ -79,3 +77,34 @@ export const pageLabels: Record<PageId, string> = Object.fromEntries(
 export const pageIcons: Record<PageId, LucideIcon> = Object.fromEntries(
   navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.icon]))
 ) as Record<PageId, LucideIcon>
+
+const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
+  '首页': 'surface:navigation.home',
+  'Home': 'surface:navigation.home',
+  'Context Room': 'surface:navigation.contextRoom',
+  '文档': 'surface:navigation.documents',
+  'Documents': 'surface:navigation.documents',
+  '现实感知': 'surface:navigation.realityPerception',
+  'Reality perception': 'surface:navigation.realityPerception',
+  '数据源': 'surface:navigation.sources',
+  'Sources': 'surface:navigation.sources',
+  '文件': 'surface:navigation.files',
+  'Files': 'surface:navigation.files',
+  '记忆': 'surface:navigation.memory',
+  'Memory': 'surface:navigation.memory',
+  'Wiki': 'surface:navigation.wiki',
+  '连接器': 'surface:navigation.connectors',
+  'Connectors': 'surface:navigation.connectors',
+  'Agent 状态': 'surface:navigation.agentStatus',
+  'Agent status': 'surface:navigation.agentStatus',
+  '任务': 'surface:navigation.tasks',
+  'Tasks': 'surface:navigation.tasks',
+  '日记': 'surface:navigation.diary',
+  'Diary': 'surface:navigation.diary',
+  '设置': 'surface:navigation.settings',
+  'Settings': 'surface:navigation.settings',
+}
+
+export function pageLabelKey(value: string): string {
+  return LEGACY_PAGE_LABEL_KEYS[value] ?? value
+}

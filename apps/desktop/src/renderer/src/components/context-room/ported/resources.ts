@@ -1,4 +1,5 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
+import type { KnowledgeFileDto } from '../../../../../shared/knowledge';
 import type {
   ContextRoomFileItem,
   ContextRoomOfficeFormat,
@@ -50,12 +51,30 @@ export function getContextRoomOfficeFormat(fileName: string): ContextRoomOfficeF
   return officeFormat(fileName.split('.').pop() ?? '');
 }
 
-export function createContextRoomFileItem(file: FileItem): ContextRoomFileItem {
+/** knowledge 文件的归属状态文案（决策 status/decidedBy 派生）。 */
+export function knowledgeFileStatusLabel(file: {
+  status: string;
+  decidedBy: string | null;
+}): string {
+  if (file.status === 'confirmed') return '已沉淀';
+  if (file.status === 'auto') return file.decidedBy === 'user' ? '用户确认·入库中' : '归类中';
+  if (file.status === 'reverted') return '已撤销';
+  return '处理中';
+}
+
+/** 体积文案（B/KB/MB 一位小数）。 */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export function createContextRoomFileItem(file: FileItem, locale = 'zh-CN'): ContextRoomFileItem {
   return {
     id: `hostfs:${file.path}`,
     name: file.name,
     extension: file.name.split('.').pop()?.toUpperCase() ?? 'FILE',
-    time: file.modifiedAt.toLocaleDateString('zh-CN'),
+    time: file.modifiedAt.toLocaleDateString(locale),
     summary: `来自 Everroom PC 文件系统：${file.path}`,
     size: `${String(Math.max(1, Math.round(file.size / 1024)))} KB`,
     source: `文件系统 ${file.path}`,
@@ -125,7 +144,11 @@ export function createContextRoomResourceLibrary(
   room: ContextRoomRecord,
   backendDocuments: RoomDocument[] = [],
   trashedDocuments: RoomDocument[] = [],
+  knowledgeFilesOrLocale: KnowledgeFileDto[] | string = [],
+  locale = 'zh-CN',
 ): ContextRoomResourceLibrary {
+  const knowledgeFiles = Array.isArray(knowledgeFilesOrLocale) ? knowledgeFilesOrLocale : [];
+  const resolvedLocale = typeof knowledgeFilesOrLocale === 'string' ? knowledgeFilesOrLocale : locale;
   const documentsFolderId = `${room.id}:folder:documents`;
   const officeFolderId = `${room.id}:folder:office`;
   const designFolderId = `${room.id}:folder:design`;
@@ -163,7 +186,7 @@ export function createContextRoomResourceLibrary(
     roomId: room.id,
     folderId: documentsFolderId,
     name: document.title,
-    updatedAt: new Date(document.updatedAt).toLocaleString('zh-CN'),
+    updatedAt: new Date(document.updatedAt).toLocaleString(resolvedLocale),
     kind: 'cloud-doc',
     binding: {
       workspaceId: 'gateway',
@@ -179,8 +202,8 @@ export function createContextRoomResourceLibrary(
     folderId: trashFolderId,
     name: document.title,
     updatedAt: document.deletedAt
-      ? new Date(document.deletedAt).toLocaleString('zh-CN')
-      : new Date(document.updatedAt).toLocaleString('zh-CN'),
+      ? new Date(document.deletedAt).toLocaleString(resolvedLocale)
+      : new Date(document.updatedAt).toLocaleString(resolvedLocale),
     kind: 'cloud-doc',
     binding: {
       workspaceId: 'gateway',
@@ -191,9 +214,23 @@ export function createContextRoomResourceLibrary(
     saveState: '回收站',
     trashed: true,
   }));
+  const knowledgeFileResources: ContextRoomResource[] = knowledgeFiles.map((file) => ({
+    id: `${room.id}:kfile:${file.id}`,
+    roomId: room.id,
+    folderId: documentsFolderId,
+    name: file.originalName,
+    updatedAt: new Date(file.uploadedAt).toLocaleString('zh-CN'),
+    kind: 'knowledge-file' as const,
+    fileId: file.id,
+    originalName: file.originalName,
+    bytes: file.bytes,
+    uploadedAt: file.uploadedAt,
+    statusLabel: knowledgeFileStatusLabel(file),
+    sizeLabel: formatBytes(file.bytes),
+  }));
   return {
     folders,
-    resources: [...backendResources, ...fileResources, ...trashResources],
+    resources: [...backendResources, ...knowledgeFileResources, ...fileResources, ...trashResources],
   };
 }
 

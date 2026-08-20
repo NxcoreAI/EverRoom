@@ -17,6 +17,8 @@ import { useRoomDocumentsState } from '../../../RoomDocumentsProvider'
 import { cursorAnchorCandidateFromEditorState } from '@/components/agent/activeDocumentContext'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
+import { useLocale } from '../../../../../i18n/LocaleContext'
+import { uiText } from '../../adapters'
 import type { ContextRoomRecord, ContextRoomResource } from '../../types'
 import { TiptapBlockHandle } from './TiptapBlockHandle'
 import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
@@ -237,6 +239,7 @@ export function TiptapDocumentEditor({
   focusedBlockId?: string | null
   documentFocusRequestId?: number | null
 }) {
+  const { locale, t } = useLocale()
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
   const persistedName = backendDocument?.title ?? resource?.name ?? room.cloudDoc.title ?? room.title
   const initialDraft = useState(() => readDocumentDraftRecord(documentId))[0]
@@ -450,7 +453,7 @@ export function TiptapDocumentEditor({
         },
         onNavigate: (target, resolution) => {
           if (resolution && resolution.status !== 'available' && resolution.status !== 'block_missing') {
-            showToast({ title: '引用暂时不可用', message: resolution.status === 'document_trashed' ? '目标文档在回收站中。' : '目标文档已不可用。' })
+            showToast({ title: t('contextRoom:tiptapDocumentEditor.referenceTemporarilyUnavailable'), message: t(resolution.status === 'document_trashed' ? 'contextRoom:tiptapDocumentEditor.theTargetDocumentIsInTrash' : 'contextRoom:tiptapDocumentEditor.theTargetDocumentIsUnavailable') })
             return
           }
           requestDocumentBlockNavigation(target)
@@ -466,7 +469,9 @@ export function TiptapDocumentEditor({
         onUpdate: setTableOfContents,
       }),
       Placeholder.configure({
-        placeholder: ({ node }) => node.type.name === 'heading' ? '标题' : "输入 '/' 插入内容",
+        placeholder: ({ node }) => node.type.name === 'heading'
+          ? t('contextRoom:tiptapDocumentEditor.headingPlaceholder')
+          : t('contextRoom:tiptapDocumentEditor.contentPlaceholder'),
         includeChildren: true,
       }),
     ],
@@ -475,7 +480,7 @@ export function TiptapDocumentEditor({
     editorProps: {
       attributes: {
         class: 'context-room-tiptap-content',
-        'aria-label': 'Room 文档编辑器',
+        'aria-label': t('contextRoom:tiptapDocumentEditor.roomDocumentEditor'),
         spellcheck: 'true',
       },
       handleDOMEvents: {
@@ -492,7 +497,7 @@ export function TiptapDocumentEditor({
           }
           if (parseEverroomBlockReferenceUrl(href)) {
             event.preventDefault()
-            showToast({ title: '无法打开块链接', message: '块链接只能在同一个 Room 内跳转。' })
+            showToast({ title: t('contextRoom:tiptapDocumentEditor.unableToOpenBlockLink'), message: t('contextRoom:tiptapDocumentEditor.blockLinksCanOnlyOpenWithinTheSame') })
             return true
           }
           return false
@@ -509,7 +514,7 @@ export function TiptapDocumentEditor({
     onCreate: ({ editor: currentEditor }) => {
       ensureStableBlockIds(currentEditor)
     },
-  }, [documentId])
+  }, [documentId, locale])
   const visibleReviewOperation = documentOperations.atomicDiff?.review
   const visibleContinuationOperation = documentOperations.continuation?.review
   const editorLocked = writing || documentOperations.locked
@@ -664,9 +669,9 @@ export function TiptapDocumentEditor({
     })
     try {
       await writeTextToClipboard(url)
-      showToast({ title: '已复制块引用', message: '可粘贴到同一 Room 的文档中。' })
+      showToast({ title: t('contextRoom:tiptapDocumentEditor.blockReferenceCopied'), message: t('contextRoom:tiptapDocumentEditor.youCanPasteItIntoADocumentIn') })
     } catch {
-      showToast({ title: '复制失败', message: '请检查剪贴板权限。' })
+      showToast({ title: t('contextRoom:tiptapDocumentEditor.copyFailed'), message: t('contextRoom:tiptapDocumentEditor.checkClipboardPermissions') })
     }
   }, [documentId, documentName, room.id])
 
@@ -870,7 +875,7 @@ export function TiptapDocumentEditor({
           queueDocumentSave(localized.content, 0)
         }
         if (localized.unsupported > 0) {
-          showToast({ title: '部分旧图片无法迁移', message: '请重新插入不受支持的图片。' })
+          showToast({ title: t('contextRoom:tiptapDocumentEditor.someOlderImagesCouldNotBeMigrated'), message: t('contextRoom:tiptapDocumentEditor.reinsertUnsupportedImages') })
         }
         return
       }
@@ -878,8 +883,8 @@ export function TiptapDocumentEditor({
     void migrate().catch((error: unknown) => {
       if (!cancelled) {
         showToast({
-          title: '旧图片迁移失败',
-          message: error instanceof Error ? error.message : '请稍后重试。',
+          title: t('contextRoom:tiptapDocumentEditor.legacyImageMigrationFailed'),
+          message: error instanceof Error ? error.message : t('contextRoom:tiptapDocumentEditor.tryAgainLater'),
         })
       }
     })
@@ -907,7 +912,7 @@ export function TiptapDocumentEditor({
       if (!resolution || resolution.status !== 'available') {
         handledBlockFocusKey.current = requestKey
         if (resolution?.status === 'block_missing') {
-          showToast({ title: '引用块已失效', message: '原引用块已被删除或合并。' })
+          showToast({ title: t('contextRoom:tiptapDocumentEditor.referencedBlockIsUnavailable'), message: t('contextRoom:tiptapDocumentEditor.theOriginalBlockWasDeletedOrMerged') })
         }
         return
       }
@@ -923,7 +928,7 @@ export function TiptapDocumentEditor({
       if (cancelled) return
       if (resolution?.status === 'block_missing') {
         handledBlockFocusKey.current = requestKey
-        showToast({ title: '引用块已失效', message: '原引用块已被删除或合并。' })
+        showToast({ title: t('contextRoom:tiptapDocumentEditor.referencedBlockIsUnavailable'), message: t('contextRoom:tiptapDocumentEditor.theOriginalBlockWasDeletedOrMerged') })
       }
     }
     void focus().catch(() => undefined)
@@ -988,7 +993,7 @@ export function TiptapDocumentEditor({
       data-continuation-active={String(Boolean(visibleContinuationOperation))}
     >
       <div className="context-room-embedded-doc-status">
-        <b>{saveState}</b>
+        <b>{t(uiText(saveState))}</b>
         {cursorCompletionRunning ? (
           <div
             className="context-room-cursor-completion-banner"
@@ -996,7 +1001,7 @@ export function TiptapDocumentEditor({
             aria-live="polite"
           >
             <LoaderCircle aria-hidden="true" />
-            <span>agent思考中....</span>
+            <span>{t('contextRoom:tiptapDocumentEditor.agentThinking')}</span>
           </div>
         ) : null}
         {editor ? (
@@ -1030,7 +1035,7 @@ export function TiptapDocumentEditor({
         <div className="context-room-agent-write-overlay" role="status" aria-live="polite">
           <span>
             <LoaderCircle aria-hidden="true" />
-            <strong>Agent 正在写入内容</strong>
+            <strong>{t('contextRoom:tiptapDocumentEditor.agentWritingContent')}</strong>
           </span>
         </div>
       ) : null}
@@ -1042,7 +1047,7 @@ export function TiptapDocumentEditor({
           <textarea
             ref={titleInputRef}
             className="context-room-document-title-input"
-            aria-label="文档标题"
+            aria-label={t('contextRoom:tiptapDocumentEditor.documentTitle')}
             value={documentName}
             disabled={editorLocked}
             maxLength={120}

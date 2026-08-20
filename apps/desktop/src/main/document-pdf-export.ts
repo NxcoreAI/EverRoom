@@ -5,6 +5,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 
 import type { ExportDocumentPdfInput, ExportDocumentPdfResult } from '../shared/sources'
 import { createDocumentPdfHtml } from './document-pdf-template'
+import { desktopText, getDesktopLocale } from './desktop-locale'
 
 export const DOCUMENT_PDF_EXPORT_CHANNEL = 'documents:export-pdf'
 
@@ -12,28 +13,28 @@ const MAX_PDF_HTML_BYTES = 8 * 1024 * 1024
 const MAX_PDF_TITLE_LENGTH = 120
 
 function pdfExportInput(input: unknown): ExportDocumentPdfInput {
-  if (!input || typeof input !== 'object') throw new Error('无效的 PDF 导出请求。')
+  if (!input || typeof input !== 'object') throw new Error(desktopText('error.pdf.invalidRequest'))
   const value = input as Partial<ExportDocumentPdfInput>
-  if (typeof value.fileName !== 'string') throw new Error('无效的 PDF 文件名。')
+  if (typeof value.fileName !== 'string') throw new Error(desktopText('error.pdf.invalidFileName'))
   if (typeof value.title !== 'string' || value.title.length > MAX_PDF_TITLE_LENGTH) {
-    throw new Error('无效的 PDF 文档标题。')
+    throw new Error(desktopText('error.pdf.invalidTitle'))
   }
   if (
     typeof value.html !== 'string'
     || !value.html.trim()
     || Buffer.byteLength(value.html, 'utf8') > MAX_PDF_HTML_BYTES
   ) {
-    throw new Error('PDF 文档内容为空或过大。')
+    throw new Error(desktopText('error.pdf.invalidContent'))
   }
   const safeName = basename(value.fileName)
     .replace(/[\\/:*?"<>|]/g, '-')
     .replace(/[.\s]+$/g, '')
     .trim()
     .slice(0, 180)
-  const fileName = safeName || '无标题文档'
+  const fileName = safeName || desktopText('document.untitled')
   return {
     fileName: fileName.toLowerCase().endsWith('.pdf') ? fileName : `${fileName}.pdf`,
-    title: value.title.trim() || '无标题文档',
+    title: value.title.trim() || desktopText('document.untitled'),
     html: value.html,
   }
 }
@@ -73,6 +74,7 @@ async function renderPdf(input: ExportDocumentPdfInput): Promise<Buffer> {
     const documentHtml = createDocumentPdfHtml({
       title: input.title,
       contentHtml: input.html,
+      locale: getDesktopLocale(),
     })
     const dataUrl = `data:text/html;base64,${Buffer.from(documentHtml, 'utf8').toString('base64')}`
     await printWindow.loadURL(dataUrl)
@@ -95,18 +97,18 @@ export function registerDocumentPdfExportHandler(): void {
     async (event, input: unknown): Promise<ExportDocumentPdfResult> => {
       const owner = BrowserWindow.fromWebContents(event.sender)
       if (!owner || owner.isDestroyed() || event.sender.isDestroyed()) {
-        throw new Error('无法验证 PDF 导出请求来源。')
+        throw new Error(desktopText('error.pdf.invalidSource'))
       }
       if (event.senderFrame !== event.sender.mainFrame) {
-        throw new Error('无法验证 PDF 导出请求来源。')
+        throw new Error(desktopText('error.pdf.invalidSource'))
       }
 
       const validatedInput = pdfExportInput(input)
       const selection = await dialog.showSaveDialog(owner, {
-        title: '导出 PDF',
+        title: desktopText('dialog.exportPdf.title'),
         defaultPath: validatedInput.fileName,
-        buttonLabel: '导出',
-        filters: [{ name: 'PDF 文档', extensions: ['pdf'] }],
+        buttonLabel: desktopText('dialog.exportPdf.button'),
+        filters: [{ name: desktopText('dialog.exportPdf.pdfDocument'), extensions: ['pdf'] }],
         properties: ['showOverwriteConfirmation', 'createDirectory'],
       })
       if (selection.canceled || !selection.filePath) return { canceled: true }

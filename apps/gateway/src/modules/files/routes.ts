@@ -25,6 +25,13 @@ const FileDto = Type.Object({
   originalName: Type.String(),
   bytes: Type.Integer(),
   mime: Type.String(),
+  assetKind: Type.Union([
+    Type.Literal("document"), Type.Literal("screenshot"), Type.Literal("photo"),
+    Type.Literal("audio"), Type.Literal("other"),
+  ]),
+  originChannel: Type.String(),
+  visibility: Type.Union([Type.Literal("private"), Type.Literal("shared")]),
+  capturedAt: Type.Union([Type.String(), Type.Null()]),
   contentHash: Type.String(),
   /** 是否已有归一化解析产物（未进过链路的裸上传为 false）。 */
   parsed: Type.Boolean(),
@@ -51,6 +58,10 @@ function toDto(row: UploadedFileRow) {
     originalName: row.originalName,
     bytes: row.bytes,
     mime: row.mime,
+    assetKind: row.assetKind,
+    originChannel: row.originChannel,
+    visibility: row.visibility,
+    capturedAt: row.capturedAt?.toISOString() ?? null,
     contentHash: row.contentHash,
     parsed: Boolean(row.currentParsedId),
     createdAt: iso(row.createdAt),
@@ -96,10 +107,16 @@ export function filesRoutes(service: FilesService, deletionHooks?: FileDeletionH
         const contentType = request.headers["content-type"] ?? "";
         let filename: string;
         let buffer: Buffer;
+        let mime: string | undefined;
+        let assetKind: "document" | "screenshot" | "photo" | "audio" | "other" | undefined;
+        let originChannel: string | undefined;
+        let visibility: "private" | "shared" | undefined;
+        let capturedAt: Date | undefined;
         if (contentType.startsWith("multipart/form-data")) {
           const file = await request.file();
           if (!file) return reply.code(400).send(errorOf("file_part_required"));
           filename = file.filename;
+          mime = file.mimetype;
           try {
             buffer = await file.toBuffer();
           } catch {
@@ -107,7 +124,15 @@ export function filesRoutes(service: FilesService, deletionHooks?: FileDeletionH
           }
         } else {
           const body = request.body as
-            | { filename?: unknown; contentBase64?: unknown; mime?: unknown }
+            | {
+                filename?: unknown;
+                contentBase64?: unknown;
+                mime?: unknown;
+                assetKind?: unknown;
+                originChannel?: unknown;
+                visibility?: unknown;
+                capturedAt?: unknown;
+              }
             | undefined;
           if (typeof body?.filename !== "string" || !body.filename.trim()) {
             return reply.code(400).send(errorOf("filename_required"));
@@ -116,6 +141,16 @@ export function filesRoutes(service: FilesService, deletionHooks?: FileDeletionH
             return reply.code(400).send(errorOf("content_base64_required"));
           }
           filename = body.filename;
+          mime = typeof body.mime === "string" ? body.mime : undefined;
+          if (["document", "screenshot", "photo", "audio", "other"].includes(String(body.assetKind))) {
+            assetKind = body.assetKind as typeof assetKind;
+          }
+          originChannel = typeof body.originChannel === "string" ? body.originChannel : undefined;
+          if (body.visibility === "private" || body.visibility === "shared") visibility = body.visibility;
+          if (typeof body.capturedAt === "string") {
+            const parsed = new Date(body.capturedAt);
+            if (!Number.isNaN(parsed.getTime())) capturedAt = parsed;
+          }
           buffer = Buffer.from(body.contentBase64, "base64");
         }
         if (buffer.byteLength === 0) return reply.code(400).send(errorOf("empty_file"));
@@ -124,7 +159,9 @@ export function filesRoutes(service: FilesService, deletionHooks?: FileDeletionH
           return reply.code(400).send(errorOf("unsupported_file_type"));
         }
 
-        const uploaded = await service.upload({ filename, buffer });
+        const uploaded = await service.upload({
+          filename, buffer, mime, assetKind, originChannel, visibility, capturedAt,
+        });
         return reply.code(201).send({
           id: uploaded.fileId,
           contentHash: uploaded.contentHash,
@@ -177,6 +214,24 @@ export function filesRoutes(service: FilesService, deletionHooks?: FileDeletionH
           storagePath: service.storagePathOf(request.params.id) ?? "",
           currentParsedId: row.currentParsedId ?? null,
         };
+      },
+    );
+
+    app.get(
+      "/v1/files/:id/content",
+      {
+        schema: {
+          tags: ["files"],
+          params: FileIdParams,
+        },
+      },
+      async (request, reply) => {
+        const content = await service.contentOf(request.params.id);
+        if (!content) return reply.code(404).send(errorOf("file_not_found"));
+        reply.header("content-type", content.mime);
+        reply.header("content-length", String(content.buffer.byteLength));
+        reply.header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(content.filename)}`);
+        return reply.send(content.buffer);
       },
     );
 

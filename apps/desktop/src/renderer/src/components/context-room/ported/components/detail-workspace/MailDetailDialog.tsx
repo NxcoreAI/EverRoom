@@ -1,4 +1,5 @@
 import type { ContextRoomRecord } from '../../types';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 import { ReferenceDialog } from '../shared';
 
 export function MailDetailDialog({
@@ -10,6 +11,7 @@ export function MailDetailDialog({
   mailId: string | null;
   onClose: () => void;
 }) {
+  const { t } = useLocale();
   const mail = mailId
     ? room.materials.find((item) => item.id === mailId && item.type === '邮件')
     : null;
@@ -18,7 +20,7 @@ export function MailDetailDialog({
     <ReferenceDialog
       open={Boolean(mailId)}
       onOpenChange={(open) => !open && onClose()}
-      title="邮件详情"
+      title={t('contextRoom:mailDetailDialog.emailDetails')}
     >
       {mail ? (
         <article className="context-room-workspace-mail-dialog">
@@ -27,25 +29,25 @@ export function MailDetailDialog({
           </header>
           <dl>
             <div>
-              <dt>发件人</dt>
+              <dt>{t('contextRoom:mailDetailDialog.from')}</dt>
               <dd>{mail.sender ?? '张总 · 星港科技'}</dd>
             </div>
             <div>
-              <dt>收件人</dt>
-              <dd>{mail.recipient ?? '我'}</dd>
+              <dt>{t('contextRoom:mailDetailDialog.to')}</dt>
+              <dd>{mail.recipient ?? t('contextRoom:mailDetailDialog.me')}</dd>
             </div>
             <div>
-              <dt>时间</dt>
+              <dt>{t('contextRoom:mailDetailDialog.time')}</dt>
               <dd>{mail.time}</dd>
             </div>
           </dl>
           <section>
-            <span>正文</span>
+            <span>{t('contextRoom:mailDetailDialog.text')}</span>
             <p>{mail.body ?? mail.summary}</p>
           </section>
           {mail.attachments?.length ? (
             <section className="context-room-mail-attachments">
-              <span>附件</span>
+              <span>{t('contextRoom:mailDetailDialog.attachments')}</span>
               {mail.attachments.map((attachment) => (
                 <button type="button" key={attachment.name}>
                   <b>{attachment.name}</b>
@@ -55,7 +57,7 @@ export function MailDetailDialog({
             </section>
           ) : null}
           <footer>
-            <span>所属 Room</span>
+            <span>{t('contextRoom:mailDetailDialog.room')}</span>
             <b>{room.title}</b>
           </footer>
         </article>

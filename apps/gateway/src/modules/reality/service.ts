@@ -19,14 +19,6 @@ import { realityEvents } from "../../infrastructure/database/schema.js";
 import { RealityError } from "./errors.js";
 import { RealityEventBroker } from "./event-broker.js";
 
-/**
- * 现实事件完成后交给统一理解引擎的适配器。
- * Reality 模块只负责事件状态，不直接依赖 knowledge/ingest，避免模块环依赖。
- */
-export type RealityKnowledgeIngestHandler = (input: {
-  sourceId: string;
-}) => Promise<unknown>;
-
 const EMPTY_INSIGHTS: RealityInsights = {
   currentTopic: null,
   summary: null,
@@ -97,6 +89,7 @@ function deriveInsights(transcript: string, contextPrompt: string | null): Reali
 
 export class RealityService {
   readonly broker = new RealityEventBroker();
+  private readySink: ((event: RealityEvent) => Promise<void>) | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -104,23 +97,8 @@ export class RealityService {
     private readonly logger?: Logger,
   ) {}
 
-  private knowledgeIngestHandler: RealityKnowledgeIngestHandler | null = null;
-
-  /** 由 bootstrap 在统一理解引擎创建后注入，便于保持模块边界。 */
-  setKnowledgeIngestHandler(handler: RealityKnowledgeIngestHandler | null): void {
-    this.knowledgeIngestHandler = handler;
-  }
-
-  /** 手动重试入口：仅允许已完成且有可沉淀内容的事件。 */
-  async ingestToKnowledge(id: string): Promise<unknown> {
-    const event = this.requireRow(id);
-    if (event.status !== "completed") {
-      throw new RealityError("reality_event_not_completed", "Reality event is not completed", 409);
-    }
-    if (!this.knowledgeIngestHandler) {
-      throw new RealityError("knowledge_ingest_unavailable", "Knowledge ingest is not enabled", 503);
-    }
-    return this.knowledgeIngestHandler({ sourceId: id });
+  setReadySink(sink: ((event: RealityEvent) => Promise<void>) | null): void {
+    this.readySink = sink;
   }
 
   listEvents(filters: { status?: string; search?: string }): RealityEvent[] {
@@ -240,27 +218,27 @@ export class RealityService {
       updatedAt: new Date(),
     };
 
+    let event: RealityEvent;
     if (current) {
-      const event = this.update(current, imported, "synced reality event imported");
-      if (event.status === "completed") this.scheduleKnowledgeIngest(event);
-      return event;
+      event = this.update(current, imported, "synced reality event imported");
+    } else {
+      const now = new Date();
+      this.db.insert(realityEvents).values({
+        id: input.id,
+        ...imported,
+        audioFileName: null,
+        audioMimeType: null,
+        transcriptEditedAt: null,
+        markers: [],
+        important: false,
+        asrJobId: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      }).run();
+      event = this.publish(input.id, "synced reality event imported");
     }
-    const now = new Date();
-    this.db.insert(realityEvents).values({
-      id: input.id,
-      ...imported,
-      audioFileName: null,
-      audioMimeType: null,
-      transcriptEditedAt: null,
-      markers: [],
-      important: false,
-      asrJobId: null,
-      version: 1,
-      createdAt: now,
-      updatedAt: now,
-    }).run();
-    const event = this.publish(input.id, "synced reality event imported");
-    this.scheduleKnowledgeIngest(event);
+    this.notifyReady(event);
     return event;
   }
 
@@ -311,7 +289,7 @@ export class RealityService {
       resultVersion,
       error: null,
     }, "reality ASR completed");
-    this.scheduleKnowledgeIngest(event);
+    this.notifyReady(event);
     return event;
   }
 
@@ -335,7 +313,7 @@ export class RealityService {
       insights,
       currentTopic: insights.currentTopic,
     }, "reality transcript edited");
-    if (event.status === "completed") this.scheduleKnowledgeIngest(event);
+    this.notifyReady(event);
     return event;
   }
 
@@ -367,11 +345,7 @@ export class RealityService {
   }
 
   confirm(id: string): RealityEvent {
-    const row = this.requireRow(id);
-    if (row.status === "completed") return toEvent(row);
-    const event = this.update(row, { status: "completed" }, "reality event confirmed");
-    this.scheduleKnowledgeIngest(event);
-    return event;
+    return this.update(this.requireRow(id), { status: "completed" }, "reality event confirmed");
   }
 
   async discard(id: string): Promise<void> {
@@ -386,7 +360,7 @@ export class RealityService {
     return this.update(this.requireRow(id), {
       status: "failed",
       processingState: "failed",
-      error: error.trim().slice(0, 2_000) || "智能感知处理失败",
+      error: error.trim().slice(0, 2_000) || "现实感知处理失败",
       endedAt: new Date(),
     }, "reality event failed");
   }
@@ -449,20 +423,14 @@ export class RealityService {
     return event;
   }
 
-  private scheduleKnowledgeIngest(event: RealityEvent): void {
-    // 只在正文稳定点触发，marker/important 等元数据更新不会重复写 Wiki。
-    // 重试与并发幂等由统一引擎的 ingest ledger/content hash 兜底。
-    if (
-      event.status === "completed"
-      && (event.transcript.trim() || event.insights.summary?.trim())
-      && this.knowledgeIngestHandler
-    ) {
-      void this.knowledgeIngestHandler({ sourceId: event.id }).catch((error) => {
-        this.logger?.warn(
-          { realityEventId: event.id, version: event.version, err: (error as Error).message },
-          "reality knowledge ingest failed",
-        );
-      });
-    }
+  private notifyReady(event: RealityEvent): void {
+    if (!this.readySink || event.processingState !== "ready") return;
+    void this.readySink(event).catch((error: unknown) => {
+      this.logger?.warn({
+        realityEventId: event.id,
+        version: event.version,
+        err: error instanceof Error ? error.message : String(error),
+      }, "ready reality event downstream ingest failed");
+    });
   }
 }

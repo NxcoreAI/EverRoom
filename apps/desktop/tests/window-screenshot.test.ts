@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
 import {
   SCREENSHOT_DEFAULT_INTERVAL_MS,
   SCREENSHOT_MIN_INTERVAL_MS,
+  calculateDHash,
   createWindowScreenshotScheduler,
   type WindowScreenshotCaptureResult,
 } from '../src/main/screenshot/window-screenshot-service'
@@ -29,6 +30,21 @@ function success(filePath = '/workspace/screenshots/test.jpg'): WindowScreenshot
 }
 
 describe('window screenshot scheduler', () => {
+  it('computes a stable 64-bit perceptual hash from a 9 by 8 sample', () => {
+    const pixels = Buffer.alloc(9 * 8 * 4)
+    for (let y = 0; y < 8; y += 1) {
+      for (let x = 0; x < 9; x += 1) {
+        const index = (y * 9 + x) * 4
+        pixels[index] = x
+        pixels[index + 1] = x
+        pixels[index + 2] = x
+        pixels[index + 3] = 255
+      }
+    }
+    const image = { resize: () => ({ toBitmap: () => pixels }) }
+    expect(calculateDHash(image as never)).toBe('0000000000000000')
+  })
+
   it('captures immediately and schedules only after the capture completes', async () => {
     const callbacks: Array<() => void> = []
     const capture = vi.fn().mockResolvedValue(success())
@@ -93,5 +109,15 @@ describe('window screenshot scheduler', () => {
 
     expect(stopped.enabled).toBe(false)
     expect(stopped.lastResult?.ok).toBe(true)
+  })
+
+  it('remembers an interval configured while capture is disabled', async () => {
+    const scheduler = createWindowScreenshotScheduler(vi.fn().mockResolvedValue(success()))
+
+    const updated = scheduler.updateInterval(3_600_000)
+
+    expect(updated.enabled).toBe(false)
+    expect(updated.intervalMs).toBe(3_600_000)
+    expect(scheduler.getStatus().intervalMs).toBe(3_600_000)
   })
 })
