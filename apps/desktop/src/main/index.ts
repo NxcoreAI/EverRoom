@@ -161,6 +161,7 @@ const CONTEXT_ROOM_CHANNELS = {
 } as const
 
 const AGENT_CHANNELS = {
+  getStatus: 'agent:get-status',
   listSessions: 'agent:list-sessions',
   createSession: 'agent:create-session',
   createSessionLink: 'agent:create-session-link',
@@ -788,6 +789,7 @@ function registerCliConnectorSyncHandlers(bridge: CliConnectorSyncGatewayBridge)
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge): void {
+  handle(AGENT_CHANNELS.getStatus, () => bridge.getStatus())
   handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
   handle(AGENT_CHANNELS.createSessionLink, (_event, input) => bridge.createSessionLink(input))

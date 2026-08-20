@@ -245,6 +245,7 @@ const api: NxcoreDesktopApi = {
     },
   },
   agent: {
+    getStatus: () => invokeQuietly('agent:get-status'),
     listSessions: (pageLabel, roomId) => invoke('agent:list-sessions', pageLabel, roomId),
     createSession: (input) => invoke('agent:create-session', input),
     createSessionLink: (input) => invoke('agent:create-session-link', input),

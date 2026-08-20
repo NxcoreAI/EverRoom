@@ -33,7 +33,6 @@ import {
 } from "./types.js";
 import {
   extensionOf,
-  normalizeJsonPayload,
   normalizeMarkdown,
   sniffAsMarkdown,
   truncateUtf8,
@@ -755,21 +754,7 @@ async function normalizeFileBytes(
   const mdFamily = ["md", "markdown", "txt"];
 
   if (extension === "json") {
-    let payload: unknown;
-    try {
-      payload = JSON.parse(buffer.toString("utf8"));
-    } catch (error) {
-      throw new IngestError(`json 解析失败：${(error as Error).message}`, "convert_failed");
-    }
-    const normalized = normalizeJsonPayload(payload, undefined, titleOfFilename(filename));
-    const dataType = explicitDataType ?? normalized.dataType ?? dataTypeOfJsonTypeSafe(normalized.jsonType);
-    return {
-      dataType,
-      detectedBy: explicitDataType ? "explicit" : "json-type",
-      title: normalized.title,
-      markdown: normalized.markdown,
-      jsonType: normalized.jsonType,
-    };
+    throw new IngestError("JSON 文件不支持进入文件库或理解引擎", "unsupported_type");
   }
 
   if (mdFamily.includes(extension)) {
@@ -848,10 +833,6 @@ function formatMillis(ms: number): string {
   const minutes = Math.floor(total / 60);
   const seconds = total % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function dataTypeOfJsonTypeSafe(jsonType: string): string {
-  return jsonType === "meeting-minutes" ? "meeting-minutes" : "document";
 }
 
 function toEventDto(row: typeof ingestEvents.$inferSelect): IngestEventDto {

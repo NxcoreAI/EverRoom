@@ -23,7 +23,10 @@ describe('default local folders', () => {
     const documents = join(fixtureRoot, 'Documents')
     const downloads = join(fixtureRoot, 'Downloads')
     await Promise.all([desktop, documents, downloads].map((directory) => mkdir(directory)))
+    await mkdir(join(documents, 'node_modules', 'dependency'), { recursive: true })
     await writeFile(join(documents, 'notes.md'), '# Notes')
+    await writeFile(join(documents, 'manual.pdf'), 'unsupported')
+    await writeFile(join(documents, 'node_modules', 'dependency', 'README.md'), '# Dependency')
 
     const service = new LocalDataService(
       dataDirectory,

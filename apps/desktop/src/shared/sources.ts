@@ -15,6 +15,7 @@ import type {
   AgentEvent,
   PendingAgentIntent,
   AgentRun,
+  AgentStatusSnapshot,
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
@@ -196,6 +197,11 @@ export interface SyncResult {
 export interface SourceChangeEvent {
   sourceId: string
   filesChanged: boolean
+  deletion?: {
+    stage: 'queued' | 'waiting' | 'database' | 'objects' | 'completed' | 'failed'
+    percent: number
+    message: string
+  }
 }
 
 export type GatewayState = 'starting' | 'ready' | 'stopped' | 'error'
@@ -532,6 +538,7 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: RealitySocketFrame) => void): () => void
   }
   agent: {
+    getStatus(): Promise<AgentStatusSnapshot>
     listSessions(pageLabel?: string, roomId?: string | null): Promise<AgentSession[]>
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>
     createSessionLink(input: CreateAgentSessionLinkInput): Promise<AgentSessionLink>

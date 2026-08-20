@@ -64,7 +64,7 @@ export function SourceTable({
                 <button type="button" className="icon-button" aria-label={source.status === 'paused' || source.status === 'disconnected' || source.status === 'error' ? `恢复 ${source.name}` : `暂停 ${source.name}`} title={source.status === 'disconnected' ? '重新连接' : source.status === 'paused' || source.status === 'error' ? '恢复同步' : '暂停同步'} disabled={busy} onClick={() => onTogglePaused(source)}>
                   {source.status === 'paused' || source.status === 'disconnected' || source.status === 'error' ? <Play aria-hidden="true" strokeWidth={1.8} /> : <Pause aria-hidden="true" strokeWidth={1.8} />}
                 </button>
-                <button type="button" className="icon-button danger" aria-label={`删除 ${source.name}`} title="删除并清理本地副本" disabled={busy} onClick={() => onDelete(source)}>
+                <button type="button" className="icon-button danger" aria-label={`删除 ${source.name}`} title="删除并清理本地副本" disabled={busyId === source.id} onClick={() => onDelete(source)}>
                   <Trash2 aria-hidden="true" strokeWidth={1.8} />
                 </button>
               </span>

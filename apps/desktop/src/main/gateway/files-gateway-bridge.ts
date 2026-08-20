@@ -14,7 +14,6 @@ const SUPPORTED_IMPORT_EXTENSIONS = new Set([
   '.docx',
   '.html',
   '.htm',
-  '.json',
   '.md',
   '.markdown',
   '.pptx',
@@ -84,7 +83,7 @@ export async function collectImportCandidates(selectedPaths: string[]): Promise<
 
     if (selectedStat.isDirectory()) {
       candidates.push(...await collectDirectoryFiles(resolvedPath))
-    } else if (selectedStat.isFile()) {
+    } else if (selectedStat.isFile() && isSupportedImportFile(resolvedPath)) {
       candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
     }
   }

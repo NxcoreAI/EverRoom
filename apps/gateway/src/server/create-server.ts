@@ -70,6 +70,7 @@ import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js"
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { createSubagentPiTools } from "../modules/subagents/tools.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
+import { AgentStatusService } from "../modules/agent/status-service.js";
 
 function swaggerAssetsDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -353,6 +354,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
+  const purgedUnsupportedFiles = await filesService.purgeUnsupportedFiles();
+  if (purgedUnsupportedFiles > 0) {
+    app.log.info({ purgedUnsupportedFiles }, "purged unsupported JSON file records");
+  }
   const realityService = new RealityService(db, config.asrInputDir, app.log);
   const recoveredCaptures = realityService.recoverInterruptedCaptures();
   if (recoveredCaptures > 0) {
@@ -388,7 +393,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     sqlite.close();
     await gatewayLogger.close();
   });
-  await app.register(agentRoutes(agentService));
+  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator)));
   await app.register(subagentRoutes(subagentOrchestrator));
   await app.register(mcpRoutes(config));
   await app.register(contextRoomRoutes(contextRoomService));

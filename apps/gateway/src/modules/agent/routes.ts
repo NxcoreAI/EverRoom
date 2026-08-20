@@ -2,6 +2,7 @@ import { AGENT_PROTOCOL_VERSION } from "@nxcore/agent-contract";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { AgentService } from "./service.js";
+import type { AgentStatusService } from "./status-service.js";
 import { DocumentServiceError } from "../documents/errors.js";
 
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
@@ -29,8 +30,18 @@ const NavigationTarget = Type.Object({
   ])),
 });
 
-export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
+export function agentRoutes(
+  service: AgentService,
+  statusService?: AgentStatusService,
+): FastifyPluginAsyncTypebox {
   return async (app) => {
+    if (statusService) {
+      app.get(
+        "/v1/agent/status",
+        { schema: { tags: ["agent"] } },
+        async () => statusService.snapshot(),
+      );
+    }
     app.get(
       "/v1/agent/sessions",
       {

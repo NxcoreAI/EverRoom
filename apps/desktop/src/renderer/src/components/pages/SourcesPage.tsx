@@ -6,6 +6,7 @@ import type {
   EvidenceDocument,
   EvidenceSearchResult,
   MarkdownPreview,
+  SourceChangeEvent,
   SourceFileSummary,
 } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
@@ -27,11 +28,14 @@ const EMPTY_GITHUB_FORM: GitHubConnectionInput = {
   syncIssues: true,
 }
 
+type DeletionProgress = NonNullable<SourceChangeEvent['deletion']> & { sourceId: string }
+
 export function SourcesPage() {
   const api = window.nxcore?.sources
   const [sources, setSources] = useState<DataSourceSummary[]>([])
   const [loading, setLoading] = useState(Boolean(api))
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [deletionProgress, setDeletionProgress] = useState<DeletionProgress | null>(null)
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null)
   const [filesBySource, setFilesBySource] = useState<Record<string, SourceFileSummary[]>>({})
   const [filesLoadingId, setFilesLoadingId] = useState<string | null>(null)
@@ -128,6 +132,16 @@ export function SourcesPage() {
     void loadSources()
     if (!api) return
     return api.onChanged((event) => {
+      if (event.deletion) {
+        setDeletionProgress({ sourceId: event.sourceId, ...event.deletion })
+      }
+      const terminalDeletion = event.deletion?.stage === 'completed' || event.deletion?.stage === 'failed'
+      if (terminalDeletion) {
+        window.setTimeout(() => {
+          setDeletionProgress((current) => current?.sourceId === event.sourceId ? null : current)
+        }, event.deletion?.stage === 'completed' ? 1800 : 4000)
+      }
+      if (event.deletion && !terminalDeletion) return
       void loadSources().then((nextSources) => {
         if (event.filesChanged && expandedSourceId === event.sourceId && nextSources?.some((source) => source.id === event.sourceId)) {
           void loadFiles(event.sourceId, false)
@@ -147,7 +161,8 @@ export function SourcesPage() {
       await action()
       const nextSources = await loadSources()
       if (expandedSourceId === id && nextSources?.some((source) => source.id === id)) await loadFiles(id)
-    } catch {
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '清理数据源失败，请稍后重试。')
     } finally {
       setBusyId(null)
     }
@@ -238,8 +253,26 @@ export function SourcesPage() {
 
   const deleteSource = (source: DataSourceSummary) => {
     if (!api || !window.confirm(`要删除“${source.name}”吗？\n\n这会删除 ${PRODUCT_NAME} 保存的文件副本和版本记录，不会删除原文件。`)) return
+    // Deletion is queued in the main process and returns immediately. Remove
+    // the row optimistically so a long-running scan cannot freeze this page.
+    setBusyId(source.id)
+    setSources((current) => current.filter((item) => item.id !== source.id))
+    setFilesBySource((current) => {
+      const next = { ...current }
+      delete next[source.id]
+      return next
+    })
     if (expandedSourceId === source.id) setExpandedSourceId(null)
-    void runAction(source.id, () => api.disconnect(source.id, true))
+    setMessage('正在清理数据源本地副本…')
+    void api.disconnect(source.id, true)
+      .then(() => {
+        setBusyId(null)
+      })
+      .catch((error) => {
+        setBusyId(null)
+        setMessage(error instanceof Error ? error.message : '清理数据源失败，请稍后重试。')
+        void loadSources()
+      })
   }
 
   const showFile = (sourceId: string, fileId: string) => {
@@ -261,7 +294,7 @@ export function SourcesPage() {
       <PageHeader title="数据源" description={`管理进入 ${PRODUCT_NAME} 的文件、应用和网页资料。`} action="连接数据源" actionDisabled={busyId === 'new'} onAction={() => setConnectMenuOpen((open) => !open)} />
       {api && connectMenuOpen ? <ConnectSourceMenu busy={busyId === 'new'} onLocalFolder={() => void addLocalFolder()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} /> : null}
       {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>请在桌面版中连接本地文件夹</strong><span>网页版不会请求或读取本机文件权限。</span></div></div> : null}
-      {message ? <div className="source-feedback" role="status">{message}</div> : null}
+      {deletionProgress ? <div className="source-feedback source-delete-progress" role="status"><div className="source-delete-progress-copy"><strong>{deletionProgress.message}</strong><span className="source-delete-progress-track"><span style={{ width: `${deletionProgress.percent}%` }} /></span></div><b>{deletionProgress.percent}%</b></div> : message ? <div className="source-feedback" role="status">{message}</div> : null}
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
       {api && sources.length > 0 ? <EvidenceSearch query={searchQuery} results={searchResults} searching={searching} onQueryChange={setSearchQuery} onSearch={(event) => void searchEvidence(event)} onClear={() => { setSearchQuery(''); setSearchResults(null) }} onOpen={(result) => void openEvidence(result.sourceId, result.fileId, result.id)} /> : null}
       {api && !loading && sources.length === 0 ? <div className="sources-empty"><span className="sources-empty-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span><strong>还没有连接数据源</strong><p>连接一个数据源，{PRODUCT_NAME} 会保存受支持内容的版本与同步状态。</p><button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><Plus aria-hidden="true" strokeWidth={1.8} />连接文件夹</button></div> : null}

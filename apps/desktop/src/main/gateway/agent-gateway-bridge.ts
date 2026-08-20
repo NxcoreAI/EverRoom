@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   PendingAgentIntent,
   AgentRun,
+  AgentStatusSnapshot,
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
@@ -48,6 +49,10 @@ export class AgentGatewayBridge {
   private readonly contentsLifecycle = new WebContentsLifecycle()
 
   constructor(private readonly supervisor: GatewaySupervisor) {}
+
+  getStatus(): Promise<AgentStatusSnapshot> {
+    return this.request('/v1/agent/status')
+  }
 
   createSession(input: CreateAgentSessionInput): Promise<AgentSession> {
     return this.request('/v1/agent/sessions', { method: 'POST', data: input })

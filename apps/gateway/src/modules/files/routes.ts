@@ -1,12 +1,12 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import multipart from "@fastify/multipart";
 import { Type } from "@sinclair/typebox";
-import type { FileDeletionHooks, FilesService, UploadedFileRow } from "./service.js";
+import { isSupportedUploadFilename, type FileDeletionHooks, type FilesService, type UploadedFileRow } from "./service.js";
 
 /** 上传原件体积上限（与 knowledge file-convert 同源，唯一字节入口统一把关）。 */
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-export type FileStoreErrorCode = "empty_file" | "too_large";
+export type FileStoreErrorCode = "empty_file" | "too_large" | "unsupported_file_type";
 
 export class FileStoreError extends Error {
   constructor(
@@ -120,6 +120,9 @@ export function filesRoutes(service: FilesService, deletionHooks?: FileDeletionH
         }
         if (buffer.byteLength === 0) return reply.code(400).send(errorOf("empty_file"));
         if (buffer.byteLength > MAX_UPLOAD_BYTES) return reply.code(413).send(errorOf("too_large"));
+        if (!isSupportedUploadFilename(filename)) {
+          return reply.code(400).send(errorOf("unsupported_file_type"));
+        }
 
         const uploaded = await service.upload({ filename, buffer });
         return reply.code(201).send({

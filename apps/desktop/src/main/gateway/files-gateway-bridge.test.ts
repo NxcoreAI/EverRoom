@@ -19,11 +19,21 @@ describe('collectImportCandidates', () => {
     await writeFile(join(directory, 'root.md'), '# root')
     await writeFile(join(directory, 'nested', 'notes.txt'), 'notes')
     await writeFile(join(directory, 'nested', 'ignored.pdf'), 'pdf')
+    await writeFile(join(directory, 'nested', 'ignored.json'), '{}')
     await writeFile(join(directory, '.hidden', 'secret.md'), 'secret')
 
     await expect(collectImportCandidates([directory])).resolves.toEqual([
       { filePath: join(directory, 'nested', 'notes.txt'), filename: 'nested/notes.txt' },
       { filePath: join(directory, 'root.md'), filename: 'root.md' },
     ])
+  })
+
+  it('drops a directly selected JSON file before upload', async () => {
+    const directory = await mkdtemp(join('/tmp', 'everroom-import-json-'))
+    temporaryDirectories.push(directory)
+    const jsonPath = join(directory, 'package.json')
+    await writeFile(jsonPath, '{}')
+
+    await expect(collectImportCandidates([jsonPath])).resolves.toEqual([])
   })
 })

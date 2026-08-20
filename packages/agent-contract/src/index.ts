@@ -81,6 +81,48 @@ export interface RuntimeCapabilities {
   resume: boolean;
 }
 
+export type AgentWorkspaceState = "idle" | "running" | "error";
+export type AgentWorkspaceRunStatus =
+  | AgentRunStatus
+  | SubagentInvocationStatus;
+
+export interface AgentWorkspaceRunSummary {
+  id: string;
+  task: string;
+  pageLabel: string | null;
+  status: AgentWorkspaceRunStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface AgentWorkspaceStatus {
+  agentId: string;
+  name: string;
+  description: string;
+  kind: "builtin" | "developer";
+  state: AgentWorkspaceState;
+  activeRunCount: number;
+  workspace: {
+    id: string;
+    isolation: "dedicated";
+    revisionId: string | null;
+  };
+  currentRun: AgentWorkspaceRunSummary | null;
+  lastRun: AgentWorkspaceRunSummary | null;
+  updatedAt: string | null;
+}
+
+export interface AgentStatusSnapshot {
+  generatedAt: string;
+  summary: {
+    total: number;
+    running: number;
+    idle: number;
+    error: number;
+  };
+  agents: AgentWorkspaceStatus[];
+}
+
 export type SubagentInvocationSource = "primary_agent" | "scheduler" | "internal_workflow";
 export type SubagentInvocationStatus =
   | "accepted"
