@@ -1,5 +1,6 @@
 import { dialog } from 'electron'
 import { readFile } from 'node:fs/promises'
+import { desktopText } from '../desktop-locale'
 
 import type {
   MemoryAtomicListOptions,
@@ -12,6 +13,8 @@ import type {
   MemoryDocumentDto,
   MemoryImportMarkdownResultDto,
   MemoryDocumentRewriteInput,
+  MemoryOnboardingInput,
+  MemoryOnboardingResultDto,
   MemoryOverviewDto,
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
@@ -43,6 +46,13 @@ export class MemoryGatewayBridge {
 
   overview(): Promise<MemoryOverviewDto> {
     return this.request('/v1/memory/overview')
+  }
+
+  startOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResultDto> {
+    return this.request('/v1/memory/onboarding', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
   }
 
   listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto> {
@@ -167,7 +177,7 @@ export class MemoryGatewayBridge {
    */
   async pickMarkdownFiles(): Promise<Array<{ filename: string; markdown: string } | { filename: string; error: string }>> {
     const picked = await dialog.showOpenDialog({
-      title: '选择要导入记忆的 Markdown 文件',
+      title: desktopText('dialog.memoryMarkdown.title'),
       properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
     })
@@ -179,7 +189,12 @@ export class MemoryGatewayBridge {
       try {
         const buffer = await readFile(filePath)
         if (buffer.byteLength > MAX_IMPORT_BYTES) {
-          results.push({ filename, error: `文件超过 2MB 导入上限（${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB）` })
+          results.push({
+            filename,
+            error: desktopText('error.memory.fileTooLarge', {
+              size: (buffer.byteLength / 1024 / 1024).toFixed(1),
+            }),
+          })
           continue
         }
         results.push({ filename, markdown: buffer.toString('utf8') })

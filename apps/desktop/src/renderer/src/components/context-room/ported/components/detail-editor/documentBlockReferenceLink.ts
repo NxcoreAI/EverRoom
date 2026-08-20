@@ -115,16 +115,16 @@ export function parseSameRoomBlockReferenceLink(
 }
 
 const STATUS_LABELS: Record<DocumentBlockResolutionStatus, string> = {
-  available: '可用',
-  document_trashed: '文档在回收站',
-  document_deleted: '文档已删除',
-  block_missing: '原内容块已不存在',
-  room_unavailable: '不在当前 Room',
-  permission_denied: '无权访问',
+  available: 'contextRoom:documentBlockReference.available',
+  document_trashed: 'contextRoom:documentBlockReference.documentInTrash',
+  document_deleted: 'contextRoom:documentBlockReference.documentDeleted',
+  block_missing: 'contextRoom:documentBlockReference.blockMissing',
+  room_unavailable: 'contextRoom:documentBlockReference.roomUnavailable',
+  permission_denied: 'contextRoom:documentBlockReference.permissionDenied',
 }
 
 export function documentBlockResolutionLabel(
   resolution: Pick<DocumentBlockResolution, 'status'> | null,
 ): string {
-  return resolution ? STATUS_LABELS[resolution.status] : '暂时无法更新'
+  return resolution ? STATUS_LABELS[resolution.status] : 'contextRoom:documentBlockReference.temporarilyUnavailable'
 }

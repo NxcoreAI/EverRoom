@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
+import type { KnowledgeRoomContextDto } from '../../../../../shared/knowledge';
 
 export interface CloudDocBinding {
   workspaceId: string;
@@ -92,6 +93,7 @@ export interface ContextRoomMaterial {
   replyDraft?: string;
   draftSaved?: boolean;
   sent?: boolean;
+  generated?: boolean;
 }
 
 export interface ContextRoomActionItem {
@@ -102,6 +104,7 @@ export interface ContextRoomActionItem {
   deadline: string;
   completed?: boolean;
   source?: { type: string; name: string; objectId?: string };
+  generated?: boolean;
 }
 
 export interface ContextRoomGraphEdge {
@@ -226,6 +229,8 @@ export interface ContextRoomRecord {
   tone: ContextRoomTone;
   status: string;
   starred: boolean;
+  /** Last content change as an ISO timestamp. Legacy records may only have lastViewed. */
+  updatedAt?: string;
   lastViewed: string;
   roomCode: string;
   /** gateway 注册表来源（room-wiki 方案）：auto = 路由层自动创建（打开即认领翻转为 user）。 */
@@ -246,6 +251,8 @@ export interface ContextRoomRecord {
   crossHint?: string;
   nextReverseRecall: string;
   cloudDoc: CloudDocBinding;
+  /** Read-only document synthesis; user-authored brief fields remain authoritative. */
+  generatedContext?: KnowledgeRoomContextDto;
 }
 
 export interface ToolbarAction {

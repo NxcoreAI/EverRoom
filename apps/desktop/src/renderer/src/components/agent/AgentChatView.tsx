@@ -19,11 +19,13 @@ import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSessio
 import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, RoomDocument } from '@nxcore/agent-contract'
 import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 import { writeTextToClipboard } from '../../lib/systemClipboard'
+import { useLocale, type Translate } from '../../i18n/LocaleContext'
+import { pageLabelKey } from '../../data/navigation'
 
 const quickPrompts = [
-  ['总结当前页面的重点，并列出下一步', '总结当前页面最重要的内容，并按优先级列出下一步。'],
-  ['检查当前上下文中的风险与冲突', '检查当前上下文中可能存在的风险、冲突和遗漏。'],
-  ['基于当前上下文整理待办事项', '基于当前上下文整理一份清晰的待办事项。'],
+  ['surface:agentChat.quickPromptSummarizeLabel', 'surface:agentChat.quickPromptSummarize'],
+  ['surface:agentChat.quickPromptRisksLabel', 'surface:agentChat.quickPromptRisks'],
+  ['surface:agentChat.quickPromptTasksLabel', 'surface:agentChat.quickPromptTasks'],
 ] as const
 
 function ThinkingStatus({ label }: { label: string }) {
@@ -34,12 +36,12 @@ function ThinkingStatus({ label }: { label: string }) {
   )
 }
 
-function getThinkingLabel(message: DisplayAgentMessage | undefined, tools: DisplayAgentToolCall[]): string {
+function getThinkingLabel(message: DisplayAgentMessage | undefined, tools: DisplayAgentToolCall[], t: Translate): string {
   const runningTool = tools.find((tool) => tool.status === 'running' || tool.status === 'pending')
-  if (runningTool) return '正在调用工具...'
-  if (message?.content.trim()) return '正在生成回答...'
-  if (tools.length > 0) return '正在整理结果...'
-  return '正在分析问题...'
+  if (runningTool) return t('surface:agentChat.callingATool')
+  if (message?.content.trim()) return t('surface:agentChat.writingAResponse')
+  if (tools.length > 0) return t('surface:agentChat.organizingResults')
+  return t('surface:agentChat.analyzing')
 }
 
 function RoomSelection({
@@ -55,12 +57,13 @@ function RoomSelection({
   onSelect: (room: AgentRoomReference) => void
   rooms: AgentRoomReference[]
 }) {
+  const { t } = useLocale()
   const availableById = new Map(availableRooms.map((room) => [room.id, room]))
   return (
-    <section className="agent-room-selection" aria-label="选择文档所在 Room">
+    <section className="agent-room-selection" aria-label={t('surface:agentChat.chooseARoomForTheDocument')}>
       <header>
-        <span><FolderKanban aria-hidden="true" /><strong>选择文档所在 Room</strong></span>
-        <button type="button" aria-label="取消选择 Room" title="取消" disabled={busy} onClick={onCancel}>
+        <span><FolderKanban aria-hidden="true" /><strong>{t('surface:agentChat.chooseARoomForTheDocument')}</strong></span>
+        <button type="button" aria-label={t('surface:agentChat.cancelRoomSelection')} title={t('surface:agentChat.cancel')} disabled={busy} onClick={onCancel}>
           <X aria-hidden="true" />
         </button>
       </header>
@@ -73,18 +76,18 @@ function RoomSelection({
               key={listedRoom.id}
               type="button"
               disabled={busy || !currentRoom}
-              title={currentRoom ? room.title : `${listedRoom.title}（已不可用）`}
+              title={currentRoom ? room.title : t('surface:agentChat.titleUnavailable', { title: listedRoom.title })}
               onClick={() => currentRoom && onSelect(room)}
             >
               <Folder aria-hidden="true" />
               <span>
                 <strong>{room.title}</strong>
-                <small>{currentRoom ? room.kind ?? 'Room' : '已不可用'}</small>
+                <small>{currentRoom ? room.kind ?? 'Room' : t('surface:agentChat.unavailable')}</small>
               </span>
               <ChevronRight aria-hidden="true" />
             </button>
           )
-        }) : <p>暂无可用 Room</p>}
+        }) : <p>{t('surface:agentChat.noRoomsAvailable')}</p>}
       </div>
     </section>
   )
@@ -101,21 +104,22 @@ function DocumentIntentClarification({
   onReject: () => void
   topic: string
 }) {
+  const { t } = useLocale()
   return (
-    <section className="agent-room-selection agent-document-intent" aria-label="确认是否创建文档">
+    <section className="agent-room-selection agent-document-intent" aria-label={t('surface:agentChat.confirmDocumentCreation')}>
       <header>
-        <span><CircleHelp aria-hidden="true" /><strong>确认创建方式</strong></span>
+        <span><CircleHelp aria-hidden="true" /><strong>{t('surface:agentChat.confirmCreationMethod')}</strong></span>
       </header>
-      <p className="agent-document-intent-question">你是想创建一篇关于“{topic}”的文档吗？</p>
+      <p className="agent-document-intent-question">{t('surface:agentChat.doYouWantToCreateADocumentAbout', { topic })}</p>
       <div className="agent-room-selection-list">
         <button type="button" disabled={busy} onClick={onConfirm}>
           <FileText aria-hidden="true" />
-          <span><strong>创建文档</strong><small>下一步选择保存到哪个 Room</small></span>
+          <span><strong>{t('surface:agentChat.createDocument')}</strong><small>{t('surface:agentChat.nextChooseTheRoomWhereItWillBe')}</small></span>
           <ChevronRight aria-hidden="true" />
         </button>
         <button type="button" disabled={busy} onClick={onReject}>
           <MessageSquareText aria-hidden="true" />
-          <span><strong>不是</strong><small>继续补充你的具体需求</small></span>
+          <span><strong>{t('surface:agentChat.no')}</strong><small>{t('surface:agentChat.continueDescribingWhatYouNeed')}</small></span>
           <ChevronRight aria-hidden="true" />
         </button>
       </div>
@@ -138,6 +142,7 @@ function FormattedAgentText({ content }: { content: string }) {
 }
 
 function AssistantMessageContent({ content }: { content: string }) {
+  const { t } = useLocale()
   const match = generatedDocumentPattern.exec(content)
   if (!match || match.index === undefined) return <FormattedAgentText content={content} />
 
@@ -148,11 +153,11 @@ function AssistantMessageContent({ content }: { content: string }) {
   return (
     <>
       {before ? <FormattedAgentText content={before} /> : null}
-      <div className="agent-artifact" role="status" aria-label={`文档已生成：${title}`}>
+      <div className="agent-artifact" role="status" aria-label={t('surface:agentChat.documentCreatedTitle', { title })}>
         <span className="agent-artifact-icon" aria-hidden="true"><FileText /></span>
         <span className="agent-artifact-copy">
           <strong>{title}</strong>
-          <small>文档已生成</small>
+          <small>{t('surface:agentChat.documentCreated')}</small>
         </span>
       </div>
       {after ? <FormattedAgentText content={after} /> : null}
@@ -161,25 +166,27 @@ function AssistantMessageContent({ content }: { content: string }) {
 }
 
 const navigationPageLabels: Record<string, string> = {
-  home: '首页',
-  rooms: 'Context Room',
-  docs: '文档',
-  sources: '数据源',
-  memory: '记忆',
-  tasks: '任务',
-  diary: '日记',
+  home: 'surface:navigation.home',
+  rooms: 'surface:navigation.contextRoom',
+  docs: 'surface:navigation.documents',
+  sources: 'surface:navigation.sources',
+  memory: 'surface:navigation.memory',
+  tasks: 'surface:navigation.tasks',
+  diary: 'surface:navigation.diary',
 }
 
 function SessionReference({ link, onOpen }: { link: AgentSessionLink; onOpen: () => void }) {
+  const { t } = useLocale()
+  const sourcePage = t(pageLabelKey(link.sourcePageLabel))
   return (
     <button
       type="button"
       className="agent-navigation-status agent-session-reference"
-      title={`${link.sourcePageLabel} · ${link.target.title}`}
+      title={`${sourcePage} · ${link.target.title}`}
       onClick={onOpen}
     >
       <Link2 aria-hidden="true" />
-      <span>引用自 {link.sourcePageLabel} · {link.target.title}</span>
+      <span>{t('surface:agentChat.referencedFromSourceTitle', { source: sourcePage, title: link.target.title })}</span>
       <ChevronRight aria-hidden="true" />
     </button>
   )
@@ -194,17 +201,19 @@ function RunNavigation({
   onOpen: (link: AgentSessionLink) => void
   pending?: AgentNavigationTarget
 }) {
+  const { t } = useLocale()
   if (link) {
+    const page = t(navigationPageLabels[link.target.pageId] ?? link.target.pageId)
     return (
       <button
         type="button"
         className="agent-navigation-status"
-        aria-label={`前往${navigationPageLabels[link.target.pageId] ?? link.target.pageId}`}
+        aria-label={t('surface:agentChat.goToPage', { page })}
         title={link.target.title}
         onClick={() => onOpen(link)}
       >
         <Check aria-hidden="true" />
-        <span>已前往「{link.target.title}」继续创建</span>
+        <span>{t('surface:agentChat.continuedCreationInTitle', { title: link.target.title })}</span>
         <ChevronRight aria-hidden="true" />
       </button>
     )
@@ -213,12 +222,13 @@ function RunNavigation({
   return (
     <div className="agent-navigation-status is-pending" role="status" title={pending.title}>
       <Link2 aria-hidden="true" />
-      <span>前往「{pending.title}」继续创建</span>
+      <span>{t('surface:agentChat.continueCreationInTitle', { title: pending.title })}</span>
     </div>
   )
 }
 
 function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
+  const { t } = useLocale()
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
   const finalContent = state.documentPending
@@ -231,10 +241,10 @@ function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
 
   return (
     <>
-      <section className="agent-linked-run" aria-label="引用任务进度">
-        {state.loading ? <ThinkingStatus label="正在同步工作进度..." /> : null}
+      <section className="agent-linked-run" aria-label={t('surface:agentChat.referencedTaskProgress')}>
+        {state.loading ? <ThinkingStatus label={t('surface:agentChat.syncingProgress')} /> : null}
         {active ? (
-          <ThinkingStatus label={state.documentPending ? '正在编辑文档...' : getThinkingLabel(assistantMessage, state.tools)} />
+          <ThinkingStatus label={state.documentPending ? t('surface:agentChat.editingDocument') : getThinkingLabel(assistantMessage, state.tools, t)} />
         ) : null}
         {state.activity.hasTools ? (
           <AgentExecutionTimeline
@@ -242,11 +252,11 @@ function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
             runStartedAt={state.startedAt}
             runCompletedAt={state.completedAt}
             continuing={state.documentPending}
-            continuationLabel="正在编辑文档"
+            continuationLabel={t('surface:agentChat.editingDocumentLabel')}
           />
         ) : null}
         {state.status === 'completed' && !finalContent ? (
-          <div className="agent-linked-status" role="status">创建已完成</div>
+          <div className="agent-linked-status" role="status">{t('surface:agentChat.creationComplete')}</div>
         ) : null}
         {state.error ? <div className="agent-error" role="alert">{state.error}</div> : null}
       </section>
@@ -312,6 +322,7 @@ export function AgentChatView({
   submitting: boolean
   toolCallsByRun: Record<string, DisplayAgentToolCall[]>
 }) {
+  const { t } = useLocale()
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [dismissedDocumentIntents, setDismissedDocumentIntents] = useState<Set<string>>(() => new Set())
   const [dismissedRoomSelections, setDismissedRoomSelections] = useState<Set<string>>(() => new Set())
@@ -537,7 +548,7 @@ export function AgentChatView({
         ) setQuickPromptsReady(true)
       }}
     >
-      {emptyLayout ? <div className="agent-chat-empty-heading"><h2>开始一段新对话</h2></div> : null}
+      {emptyLayout ? <div className="agent-chat-empty-heading"><h2>{t('surface:agentChat.startANewConversation')}</h2></div> : null}
       <div ref={conversationRef} className="agent-conversation" aria-live="polite">
           {incomingLink ? (
             <>
@@ -587,7 +598,7 @@ export function AgentChatView({
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 ) : null}
                 {message.streaming && message.runId === activeRunId
-                  ? <ThinkingStatus label={getThinkingLabel(message, tools)} />
+                  ? <ThinkingStatus label={getThinkingLabel(message, tools, t)} />
                   : null}
                 {hasToolActivity && activity ? (
                   <AgentExecutionTimeline
@@ -597,20 +608,20 @@ export function AgentChatView({
                   />
                 ) : null}
                 {partialContent ? (
-                  <div className="agent-linked-status" role="status">运行未正常完成，以下为中断前的部分回答</div>
+                  <div className="agent-linked-status" role="status">{t('surface:agentChat.theRunEndedUnexpectedlyHereIsThePartial')}</div>
                 ) : null}
                 {finalContent ? (
                   <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
                 ) : null}
                 {showActions ? (
                   <div className="agent-message-actions">
-                    <button type="button" aria-label="复制回答" title="复制回答" onClick={() => void copyMessage(message.id, finalContent)}>
+                    <button type="button" aria-label={t('surface:agentChat.copyResponse')} title={t('surface:agentChat.copyResponse')} onClick={() => void copyMessage(message.id, finalContent)}>
                       {copiedMessageId === message.id ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
                     </button>
                     <button
                       type="button"
-                      aria-label="重新生成"
-                      title="重新生成"
+                      aria-label={t('surface:agentChat.regenerate')}
+                      title={t('surface:agentChat.regenerate')}
                       disabled={!previousUserMessage}
                       onClick={() => previousUserMessage && onRetryPrompt(previousUserMessage.content)}
                     >
@@ -630,7 +641,7 @@ export function AgentChatView({
                   onOpen={onOpenSessionLink}
                 />
               ) : null}
-              <ThinkingStatus label={getThinkingLabel(undefined, latestTools)} />
+              <ThinkingStatus label={getThinkingLabel(undefined, latestTools, t)} />
               {latestActivity?.hasTools ? (
                 <AgentExecutionTimeline
                   activity={latestActivity}
@@ -641,7 +652,7 @@ export function AgentChatView({
             </div>
           ) : null}
           {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
-            ? <ThinkingStatus label={getThinkingLabel(undefined, latestTools)} />
+            ? <ThinkingStatus label={getThinkingLabel(undefined, latestTools, t)} />
             : null}
           {pendingDocumentIntent ? (
             <DocumentIntentClarification
@@ -725,13 +736,13 @@ export function AgentChatView({
               }}
             />
           ) : null}
-          {loading && messages.length === 0 ? <div className="agent-loading">正在载入会话...</div> : null}
+          {loading && messages.length === 0 ? <div className="agent-loading">{t('surface:agentChat.loadingConversation')}</div> : null}
           {error ? <div className="agent-error" role="alert">{error}</div> : null}
       </div>
       {composer}
-      <div className="agent-chat-quick-prompts" aria-label="快捷提示" aria-hidden={!quickPromptsReady}>
+      <div className="agent-chat-quick-prompts" aria-label={t('surface:agentChat.suggestedPrompts')} aria-hidden={!quickPromptsReady}>
         {quickPrompts.map(([label, prompt]) => (
-          <button key={label} type="button" onClick={() => onSelectPrompt(prompt)}>{label}</button>
+          <button key={label} type="button" onClick={() => onSelectPrompt(t(prompt))}>{t(label)}</button>
         ))}
       </div>
     </section>

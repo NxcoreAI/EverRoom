@@ -19,6 +19,7 @@ import type {
   RealityCaptureDevice,
   RealityInsights,
   RealityMarker,
+  RealityTag,
   RealityTranscriptSegment,
 } from "@nxcore/reality-contract";
 
@@ -820,7 +821,7 @@ export const entityDocLinks = sqliteTable(
     id: text("id").primaryKey(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -874,7 +875,7 @@ export const routeDecisions = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
     }).notNull().default("everroom-doc"),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -943,6 +944,13 @@ export const uploadedFiles = sqliteTable("uploaded_files", {
   originalName: text("original_name").notNull(),
   bytes: integer("bytes").notNull(),
   mime: text("mime").notNull().default("text/markdown"),
+  /** Asset semantics are explicit so diary/perception never infer privacy from filenames. */
+  assetKind: text("asset_kind", {
+    enum: ["document", "screenshot", "photo", "audio", "other"],
+  }).notNull().default("document"),
+  originChannel: text("origin_channel").notNull().default("upload"),
+  visibility: text("visibility", { enum: ["private", "shared"] }).notNull().default("private"),
+  capturedAt: integer("captured_at", { mode: "timestamp_ms" }),
   /** 当前生效的解析产物（后级路由/ingest 只读 parsed_contents.markdown）。 */
   currentParsedId: text("current_parsed_id"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -1012,6 +1020,196 @@ export const realityEvents = sqliteTable(
   (table) => [uniqueIndex("reality_events_asr_job_idx").on(table.asrJobId)],
 );
 
+// ═══════════════════ Local visual perception and diary ═══════════════════
+
+export const perceptionSettings = sqliteTable("perception_settings", {
+  ownerId: text("owner_id").primaryKey().default("local-user"),
+  captureEnabled: integer("capture_enabled", { mode: "boolean" }).notNull().default(false),
+  captureIntervalSeconds: integer("capture_interval_seconds").notNull().default(300),
+  onlineVlmEnabled: integer("online_vlm_enabled", { mode: "boolean" }).notNull().default(false),
+  configVersion: integer("config_version").notNull().default(1),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const visualNodes = sqliteTable(
+  "visual_nodes",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind", { enum: ["screenshot", "photo"] }).notNull(),
+    startAt: integer("start_at", { mode: "timestamp_ms" }).notNull(),
+    endAt: integer("end_at", { mode: "timestamp_ms" }).notNull(),
+    sampleCount: integer("sample_count").notNull().default(1),
+    representativeObservationId: text("representative_observation_id"),
+    latestPerceptualHash: text("latest_perceptual_hash"),
+    vlmStatus: text("vlm_status", {
+      enum: ["disabled", "pending", "processing", "ready", "failed"],
+    }).notNull().default("disabled"),
+    eventType: text("event_type"),
+    title: text("title"),
+    summary: text("summary"),
+    keyPoints: text("key_points", { mode: "json" }).$type<string[]>().notNull().default([]),
+    representativeTags: text("representative_tags", { mode: "json" }).$type<RealityTag[]>().notNull().default([]),
+    confidence: real("confidence"),
+    model: text("model"),
+    promptVersion: integer("prompt_version").notNull().default(1),
+    resultVersion: integer("result_version").notNull().default(0),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("visual_nodes_range_idx").on(table.startAt, table.endAt),
+    index("visual_nodes_status_idx").on(table.vlmStatus, table.updatedAt),
+  ],
+);
+
+export const visualObservations = sqliteTable(
+  "visual_observations",
+  {
+    id: text("id").primaryKey(),
+    nodeId: text("node_id").notNull().references(() => visualNodes.id, { onDelete: "cascade" }),
+    fileId: text("file_id").notNull().references(() => uploadedFiles.id, { onDelete: "restrict" }),
+    kind: text("kind", { enum: ["screenshot", "photo"] }).notNull(),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
+    perceptualHash: text("perceptual_hash"),
+    width: integer("width"),
+    height: integer("height"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("visual_observations_file_idx").on(table.fileId),
+    index("visual_observations_node_captured_idx").on(table.nodeId, table.capturedAt),
+    index("visual_observations_captured_idx").on(table.capturedAt),
+  ],
+);
+
+export const visualProcessingJobs = sqliteTable(
+  "visual_processing_jobs",
+  {
+    id: text("id").primaryKey(),
+    nodeId: text("node_id").notNull().references(() => visualNodes.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["pending", "running", "completed", "failed"] }).notNull().default("pending"),
+    attempt: integer("attempt").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("visual_processing_jobs_node_idx").on(table.nodeId),
+    index("visual_processing_jobs_due_idx").on(table.status, table.nextAttemptAt, table.leaseExpiresAt),
+  ],
+);
+
+export const diarySchedules = sqliteTable("diary_schedules", {
+  ownerId: text("owner_id").primaryKey().default("local-user"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  localTime: text("local_time").notNull().default("23:30"),
+  timezone: text("timezone").notNull(),
+  enabledFrom: text("enabled_from"),
+  nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
+  configVersion: integer("config_version").notNull().default(1),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const diaryDays = sqliteTable(
+  "diary_days",
+  {
+    date: text("date").primaryKey(),
+    status: text("status", { enum: ["pending", "generating", "ready", "stale", "failed"] }).notNull().default("pending"),
+    currentVersionId: text("current_version_id"),
+    sourceFingerprint: text("source_fingerprint"),
+    eventCount: integer("event_count").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("diary_days_status_date_idx").on(table.status, table.date)],
+);
+
+export interface DiaryPayload {
+  headline: string;
+  summary: string;
+  reflection: string;
+  range: { start: string; end: string };
+  events: Array<{
+    time: string;
+    endTime?: string;
+    title: string;
+    summary: string;
+    sourceRefs: string[];
+    tags?: string[];
+  }>;
+  closing: string;
+}
+
+export const diaryVersions = sqliteTable(
+  "diary_versions",
+  {
+    id: text("id").primaryKey(),
+    date: text("date").notNull().references(() => diaryDays.date, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    content: text("content", { mode: "json" }).$type<DiaryPayload>().notNull(),
+    windowStart: integer("window_start", { mode: "timestamp_ms" }).notNull(),
+    windowEnd: integer("window_end", { mode: "timestamp_ms" }).notNull(),
+    sourceFingerprint: text("source_fingerprint").notNull(),
+    agentModel: text("agent_model"),
+    promptVersion: integer("prompt_version").notNull().default(1),
+    runId: text("run_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("diary_versions_date_version_idx").on(table.date, table.version)],
+);
+
+export const diaryVersionSources = sqliteTable(
+  "diary_version_sources",
+  {
+    versionId: text("version_id").notNull().references(() => diaryVersions.id, { onDelete: "cascade" }),
+    sourceId: text("source_id").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceVersion: text("source_version").notNull(),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+    endedAt: integer("ended_at", { mode: "timestamp_ms" }),
+    timeBasis: text("time_basis").notNull().default("recorded_at"),
+    contentFingerprint: text("content_fingerprint").notNull(),
+    evidenceSummary: text("evidence_summary").notNull(),
+    assetFileId: text("asset_file_id").references(() => uploadedFiles.id, { onDelete: "restrict" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.versionId, table.sourceId] }),
+    index("diary_version_sources_source_idx").on(table.sourceKind, table.sourceId),
+  ],
+);
+
+export const diaryRuns = sqliteTable(
+  "diary_runs",
+  {
+    id: text("id").primaryKey(),
+    date: text("date").notNull().references(() => diaryDays.date, { onDelete: "cascade" }),
+    trigger: text("trigger", { enum: ["scheduled", "catch_up", "manual"] }).notNull(),
+    status: text("status", { enum: ["pending", "running", "completed", "failed"] }).notNull().default("pending"),
+    windowStart: integer("window_start", { mode: "timestamp_ms" }).notNull(),
+    windowEnd: integer("window_end", { mode: "timestamp_ms" }).notNull(),
+    attempt: integer("attempt").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }).notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
+    error: text("error"),
+    versionId: text("version_id").references(() => diaryVersions.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("diary_runs_due_idx").on(table.status, table.nextAttemptAt, table.leaseExpiresAt),
+    index("diary_runs_date_idx").on(table.date, table.createdAt),
+  ],
+);
+
 // ═══════════════════ 统一理解引擎（docs/unified-ingest-plan.md）═══════════════════
 
 /** 三链路开关（Room / wiki / 记忆）。wiki 依赖 Room（U2：无 Room 不设全局 wiki）。 */
@@ -1040,7 +1238,7 @@ export const ingestEvents = sqliteTable(
     /** ing-<uuid12> */
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "mail", "file", "cloud-doc"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),

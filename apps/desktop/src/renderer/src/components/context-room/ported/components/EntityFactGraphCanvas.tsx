@@ -1,10 +1,12 @@
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
-  InteractiveGraphCanvas,
-  type GraphCanvasEdge,
-  type GraphCanvasNode,
-} from '../graph/InteractiveGraphCanvas'
+  PixiForceGraphCanvas,
+  type PixiForceGraphCanvasNode,
+} from '../graph/PixiForceGraphCanvas'
+import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
+import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+import { useLocale } from '../../../../i18n/LocaleContext'
 import type { EntityFactGraphData, EntityFactGraphNode } from './entityFactGraphModel'
 
 interface EntityFactGraphCanvasProps {
@@ -30,18 +32,19 @@ const FACT_POSITIONS = [
 ] as const
 
 export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFactGraphCanvasProps) {
+  const { t } = useLocale()
+  const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const nodeIndex = useMemo(
     () => new Map(data.nodes.map((node, index) => [node.id, index])),
     [data.nodes],
   )
-  const nodes = useMemo<GraphCanvasNode[]>(() => data.nodes.map((node) => ({
-    fill: node.kind === 'entity' ? '#408cf0' : '#8fb9f3',
+  const nodes = useMemo<PixiForceGraphCanvasNode[]>(() => data.nodes.map((node) => ({
+    color: node.kind === 'entity' ? 0x408cf0 : 0x8fb9f3,
     id: node.id,
     label: node.label,
     radius: node.kind === 'entity' ? 12 : 6,
-    stroke: node.kind === 'entity' ? '#408cf0' : '#8fb9f3',
   })), [data.nodes])
-  const edges = useMemo<GraphCanvasEdge[]>(() => data.edges.flatMap((edge) => {
+  const edges = useMemo<PixiForceGraphEdge[]>(() => data.edges.flatMap((edge) => {
     const source = nodeIndex.get(edge.source)
     const target = nodeIndex.get(edge.target)
     return source === undefined || target === undefined ? [] : [{ source, target }]
@@ -59,24 +62,65 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
     })
     return result
   }, [data.nodes])
+  const resizeLayout = useCallback(
+    (width: number, height: number) => layout?.resize(width, height),
+    [layout],
+  )
+  const readRevision = useCallback(() => layout?.revision() ?? 0, [layout])
+
+  useEffect(() => {
+    let next: ForceGraphLayoutController
+    try {
+      next = new ForceGraphLayoutController({
+        nodes: data.nodes.map((node, index) => ({
+          id: node.id,
+          radius: node.kind === 'entity' ? 12 : 6,
+          x: positions[index * 2],
+          y: positions[index * 2 + 1],
+        })),
+        edges: data.edges.map((edge) => ({ source: edge.source, target: edge.target })),
+        options: {
+          collisionPadding: 8,
+          linkDistance: 82,
+          manyBodyStrength: -140,
+        },
+      })
+    } catch (error) {
+      console.error('Failed to initialize entity/fact force graph layout', error)
+      setLayout(null)
+      return
+    }
+    setLayout(next)
+    void next.ready.catch((error) => {
+      console.error('Entity/fact force graph worker failed', error)
+    })
+    return () => next.dispose()
+  }, [data.edges, data.nodes, positions])
 
   return (
     <div className="context-room-entity-fact-graph-shell">
-      <InteractiveGraphCanvas
-        ariaLabel="Room 实体与事实图谱画布"
+      <PixiForceGraphCanvas
+        ariaLabel={t('contextRoom:graphs.entityFactCanvas')}
         className="context-room-entity-fact-graph-canvas"
         edges={edges}
         nodes={nodes}
-        positions={positions}
+        positions={layout?.snapshot.positions ?? positions}
+        revision={layout ? readRevision : undefined}
         selectedId={selectedId}
+        onResize={resizeLayout}
+        onDragNode={(nodeId, x, y) => layout?.drag(nodeId, x, y)}
+        onReleaseNode={(nodeId) => layout?.release(nodeId)}
         onSelectNode={onSelect}
       />
-      <div className="context-room-visually-hidden" aria-label="实体与事实节点">
+      <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.entityFactNodes')}>
         {data.nodes.map((node: EntityFactGraphNode) => (
           <button
             type="button"
             key={node.id}
-            aria-label={`${node.kind === 'entity' ? '实体' : '事实'}：${node.label}`}
+            aria-label={t(
+              node.kind === 'entity' ? 'contextRoom:graphs.entityNode' : 'contextRoom:graphs.factNode',
+              { label: node.label },
+            )}
             aria-pressed={selectedId === node.id}
             onClick={() => onSelect(node.id)}
           >

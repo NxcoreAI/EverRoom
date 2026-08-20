@@ -60,7 +60,7 @@
 
 .diary-strip-days {
   display: grid;
-  width: calc(100% - 58px);
+  width: calc(100% - 220px);
   grid-template-columns: repeat(29, minmax(18px, 1fr));
   align-items: center;
   margin-left: 24px;
@@ -153,7 +153,8 @@
 }
 
 .diary-icon-button,
-.diary-today-button {
+.diary-today-button,
+.diary-generate-button {
   display: inline-flex;
   height: 30px;
   align-items: center;
@@ -184,6 +185,26 @@
   white-space: nowrap;
 }
 
+.diary-generate-button {
+  gap: 5px;
+  padding: 0 10px;
+  border-color: var(--diary-accent);
+  background: var(--diary-accent);
+  color: var(--accent-contrast);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.diary-generate-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.diary-generate-button[aria-busy='true'] svg {
+  animation: diary-generate-spin 900ms linear infinite;
+}
+
 .diary-today-button svg {
   width: 13px;
   height: 13px;
@@ -194,6 +215,24 @@
   border-color: var(--border-strong);
   background: var(--surface);
   color: var(--text);
+}
+
+.diary-generate-button:hover:not(:disabled) {
+  border-color: var(--diary-accent-strong);
+  background: var(--diary-accent-strong);
+}
+
+.diary-generate-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+@keyframes diary-generate-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diary-generate-button[aria-busy='true'] svg { animation: none; }
 }
 
 .diary-strip-selection {
@@ -400,6 +439,14 @@
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   text-align: left;
+  white-space: nowrap;
+}
+
+.diary-timeline-event > time small {
+  display: block;
+  margin-top: 2px;
+  color: var(--subtle);
+  font-size: 9px;
 }
 
 .diary-event-content {
@@ -1015,7 +1062,7 @@
 .diary-calendar-day[data-today='true'] span::after {
   margin-left: 4px;
   color: var(--diary-accent);
-  content: "今";
+  content: attr(data-today-label);
   font-size: 8px;
 }
 
@@ -1138,6 +1185,12 @@
     grid-template-columns: 1fr;
     gap: 7px;
     padding-left: 44px;
+  }
+
+  .diary-timeline-event > time small {
+    display: inline;
+    margin-top: 0;
+    margin-left: 4px;
   }
 
   .diary-event-icon {

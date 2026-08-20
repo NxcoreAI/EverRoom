@@ -1,12 +1,14 @@
 import './DiaryPageSkeleton.css'
+import { useLocale } from '@/i18n/LocaleContext'
 
 const SKELETON_DAYS = Array.from({ length: 29 }, (_, index) => index)
 const SKELETON_EVENTS = [0, 1, 2, 3]
 
 export function DiaryPageSkeleton() {
+  const { t } = useLocale()
   return (
-    <div className="page diary-skeleton-page" aria-busy="true" aria-label="正在加载日记">
-      <span className="diary-skeleton-status" role="status">正在加载日记</span>
+    <div className="page diary-skeleton-page" aria-busy="true" aria-label={t('diaryReality:diaryPageSkeleton.loadingDiary')}>
+      <span className="diary-skeleton-status" role="status">{t('diaryReality:diaryPageSkeleton.loadingDiary')}</span>
 
       <header className="diary-skeleton-strip" aria-hidden="true">
         <div className="diary-skeleton-strip-inner">

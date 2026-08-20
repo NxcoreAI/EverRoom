@@ -12,14 +12,11 @@ import {
 } from 'react'
 import type { SaveContextRoomSnapshotInput } from '@nxcore/agent-contract'
 
+import i18n from '@/i18n/i18next'
 import { showToast } from '@/state/toast'
-import {
-  isDemoContextRoomId,
-  removeDemoContextRoomLocalArtifacts,
-} from './ported/demoContextRooms'
+import { removeDemoContextRoomLocalArtifacts } from './ported/demoContextRooms'
 import {
   createContextRoomSnapshotInput,
-  isContextRoomSnapshotEmpty,
   loadContextRoomLocalState,
   restoreContextRoomSnapshot,
   saveContextRoomLocalState,
@@ -37,6 +34,7 @@ interface ContextRoomStateValue {
   state: ContextRoomLocalState
   setState: Dispatch<SetStateAction<ContextRoomLocalState>>
   backendReady: boolean
+  refreshFromBackend: () => Promise<ContextRoomLocalState | null>
 }
 
 const ContextRoomStateContext = createContext<ContextRoomStateValue | null>(null)
@@ -50,13 +48,14 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
     removeDemoContextRoomLocalArtifacts()
     return loadContextRoomLocalState([])
   })
-  const [backendReady, setBackendReady] = useState(false)
+  const [backendReady, setBackendReady] = useState(true)
   const stateRef = useRef(state)
   const mountedRef = useRef(true)
-  const bootstrappedRef = useRef(false)
   const syncingRef = useRef(false)
   const pendingRef = useRef<PendingSnapshot | null>(null)
-  const lastSyncedFingerprintRef = useRef<string | null>(null)
+  const lastSyncedFingerprintRef = useRef<string | null>(
+    fingerprint(createContextRoomSnapshotInput(state)),
+  )
   const retryAttemptRef = useRef(0)
   const retryTimerRef = useRef<number | null>(null)
   const syncErrorShownRef = useRef(false)
@@ -72,7 +71,7 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
       : value
     if (Object.is(current, next)) return
     stateRef.current = next
-    if (bootstrappedRef.current) setBackendReady(false)
+    setBackendReady(false)
     setState(next)
   }, [])
 
@@ -80,10 +79,27 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
     if (syncErrorShownRef.current) return
     syncErrorShownRef.current = true
     showToast({
-      title: 'Room 暂未同步',
-      message: '本地内容已保留，连接恢复后会自动重试。',
+      title: i18n.t('contextRoom:contextRoomState.roomNotSynced'),
+      message: i18n.t('contextRoom:contextRoomState.localContentPreserved'),
     })
   }
+
+  const refreshFromBackend = useCallback(async (): Promise<ContextRoomLocalState | null> => {
+    if (!api) return null
+    const snapshot = await api.list()
+    const restored = restoreContextRoomSnapshot(snapshot)
+    if (!restored) throw new Error('Room 快照格式无效')
+    const restoredInput = createContextRoomSnapshotInput(restored)
+    pendingRef.current = null
+    lastSyncedFingerprintRef.current = fingerprint(restoredInput)
+    retryAttemptRef.current = 0
+    syncErrorShownRef.current = false
+    stateRef.current = restored
+    setState(restored)
+    saveContextRoomLocalState(restored)
+    setBackendReady(true)
+    return restored
+  }, [api])
 
   flushRef.current = () => {
     if (
@@ -148,7 +164,7 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
 
   useEffect(() => {
     saveContextRoomLocalState(state)
-    if (!api || !bootstrappedRef.current) return
+    if (!api) return
     const input = createContextRoomSnapshotInput(state)
     const nextFingerprint = fingerprint(input)
     if (nextFingerprint === lastSyncedFingerprintRef.current) return
@@ -157,68 +173,9 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
     flushRef.current()
   }, [api, state])
 
-  useEffect(() => {
-    if (!api) {
-      bootstrappedRef.current = true
-      setBackendReady(true)
-      return undefined
-    }
-    let cancelled = false
-    let retryAttempt = 0
-    const bootstrap = async () => {
-      while (!cancelled) {
-        try {
-          const remote = await api.list()
-          if (cancelled) return
-          const remoteEmpty = isContextRoomSnapshotEmpty(remote)
-          const importInput = remoteEmpty ? createContextRoomSnapshotInput(stateRef.current) : null
-          const snapshot = importInput ? await api.syncSnapshot(importInput) : remote
-          if (cancelled) return
-          const restoredSnapshot = restoreContextRoomSnapshot(snapshot)
-          if (!restoredSnapshot) throw new Error('Room 快照格式无效')
-          const restored = restoredSnapshot
-          const restoredInput = createContextRoomSnapshotInput(restored)
-          const containsDemoRooms = [...snapshot.rooms, ...snapshot.deletedRooms]
-            .some((room) => isDemoContextRoomId(room.id))
-          lastSyncedFingerprintRef.current = containsDemoRooms
-            ? fingerprint({ rooms: snapshot.rooms, deletedRooms: snapshot.deletedRooms })
-            : fingerprint(restoredInput)
-          bootstrappedRef.current = true
-          syncErrorShownRef.current = false
-          if (importInput) {
-            const latestInput = createContextRoomSnapshotInput(stateRef.current)
-            const latestFingerprint = fingerprint(latestInput)
-            if (latestFingerprint !== fingerprint(importInput)) {
-              pendingRef.current = { input: latestInput, fingerprint: latestFingerprint }
-              setBackendReady(false)
-              flushRef.current()
-              return
-            }
-          }
-          stateRef.current = restored
-          setState(restored)
-          saveContextRoomLocalState(restored)
-          setBackendReady(true)
-          return
-        } catch {
-          if (cancelled) return
-          showSyncError()
-          setBackendReady(false)
-          const delay = SYNC_RETRY_DELAYS_MS[Math.min(retryAttempt, SYNC_RETRY_DELAYS_MS.length - 1)]
-          retryAttempt += 1
-          await new Promise((resolve) => window.setTimeout(resolve, delay))
-        }
-      }
-    }
-    void bootstrap()
-    return () => {
-      cancelled = true
-    }
-  }, [api])
-
   const value = useMemo(
-    () => ({ state, setState: updateState, backendReady }),
-    [backendReady, state, updateState],
+    () => ({ state, setState: updateState, backendReady, refreshFromBackend }),
+    [backendReady, refreshFromBackend, state, updateState],
   )
   return <ContextRoomStateContext.Provider value={value}>{children}</ContextRoomStateContext.Provider>
 }

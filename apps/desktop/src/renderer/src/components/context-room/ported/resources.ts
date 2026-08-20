@@ -69,12 +69,12 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function createContextRoomFileItem(file: FileItem): ContextRoomFileItem {
+export function createContextRoomFileItem(file: FileItem, locale = 'zh-CN'): ContextRoomFileItem {
   return {
     id: `hostfs:${file.path}`,
     name: file.name,
     extension: file.name.split('.').pop()?.toUpperCase() ?? 'FILE',
-    time: file.modifiedAt.toLocaleDateString('zh-CN'),
+    time: file.modifiedAt.toLocaleDateString(locale),
     summary: `来自 Everroom PC 文件系统：${file.path}`,
     size: `${String(Math.max(1, Math.round(file.size / 1024)))} KB`,
     source: `文件系统 ${file.path}`,
@@ -144,8 +144,11 @@ export function createContextRoomResourceLibrary(
   room: ContextRoomRecord,
   backendDocuments: RoomDocument[] = [],
   trashedDocuments: RoomDocument[] = [],
-  knowledgeFiles: KnowledgeFileDto[] = [],
+  knowledgeFilesOrLocale: KnowledgeFileDto[] | string = [],
+  locale = 'zh-CN',
 ): ContextRoomResourceLibrary {
+  const knowledgeFiles = Array.isArray(knowledgeFilesOrLocale) ? knowledgeFilesOrLocale : [];
+  const resolvedLocale = typeof knowledgeFilesOrLocale === 'string' ? knowledgeFilesOrLocale : locale;
   const documentsFolderId = `${room.id}:folder:documents`;
   const officeFolderId = `${room.id}:folder:office`;
   const designFolderId = `${room.id}:folder:design`;
@@ -183,7 +186,7 @@ export function createContextRoomResourceLibrary(
     roomId: room.id,
     folderId: documentsFolderId,
     name: document.title,
-    updatedAt: new Date(document.updatedAt).toLocaleString('zh-CN'),
+    updatedAt: new Date(document.updatedAt).toLocaleString(resolvedLocale),
     kind: 'cloud-doc',
     binding: {
       workspaceId: 'gateway',
@@ -199,8 +202,8 @@ export function createContextRoomResourceLibrary(
     folderId: trashFolderId,
     name: document.title,
     updatedAt: document.deletedAt
-      ? new Date(document.deletedAt).toLocaleString('zh-CN')
-      : new Date(document.updatedAt).toLocaleString('zh-CN'),
+      ? new Date(document.deletedAt).toLocaleString(resolvedLocale)
+      : new Date(document.updatedAt).toLocaleString(resolvedLocale),
     kind: 'cloud-doc',
     binding: {
       workspaceId: 'gateway',

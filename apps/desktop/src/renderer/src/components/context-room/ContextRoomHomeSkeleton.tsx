@@ -1,4 +1,5 @@
 import './ContextRoomHomeSkeleton.css'
+import { useLocale } from '../../i18n/LocaleContext'
 
 function SkeletonLine({ width }: { width: string }) {
   return <span className="context-room-skeleton-block context-room-skeleton-line" style={{ width }} />
@@ -34,9 +35,10 @@ function SkeletonSectionTitle({ compact = false }: { compact?: boolean }) {
 }
 
 export function ContextRoomHomeSkeleton() {
+  const { t } = useLocale()
   return (
-    <div className="context-room-home-loading" role="status" aria-label="正在加载 Context Room">
-      <span className="context-room-skeleton-status">正在加载 Context Room</span>
+    <div className="context-room-home-loading" role="status" aria-label={t('contextRoom:contextRoomHomeSkeleton.loadingContextRoom')}>
+      <span className="context-room-skeleton-status">{t('contextRoom:contextRoomHomeSkeleton.loadingContextRoom')}</span>
       <div className="context-room-home-loading-layout">
         <section>
           <SkeletonSectionTitle />

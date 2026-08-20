@@ -12,6 +12,10 @@ export interface FileDto {
   originalName: string
   bytes: number
   mime: string
+  assetKind: 'document' | 'screenshot' | 'photo' | 'audio' | 'other'
+  originChannel: string
+  visibility: 'private' | 'shared'
+  capturedAt: string | null
   contentHash: string
   /** 是否已有归一化解析产物（未进过链路的裸上传为 false）。 */
   parsed: boolean

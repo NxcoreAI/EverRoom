@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -66,12 +66,29 @@ export class FilesService {
     filename: string;
     buffer: Buffer;
     mime?: string | undefined;
+    assetKind?: "document" | "screenshot" | "photo" | "audio" | "other" | undefined;
+    originChannel?: string | undefined;
+    visibility?: "private" | "shared" | undefined;
+    capturedAt?: Date | undefined;
   }): Promise<FileUploadResult> {
-    const fileId = fileIdOf(input.filename);
     const contentHash = contentHashOf(input.buffer);
+    const visualIdentity = input.assetKind === "screenshot" || input.assetKind === "photo"
+      ? `${input.assetKind}-${contentHash}-${input.filename}`
+      : input.filename;
+    const fileId = fileIdOf(visualIdentity);
 
     const existing = this.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get();
     if (existing?.contentHash === contentHash) {
+      if (input.mime || input.assetKind || input.originChannel || input.visibility || input.capturedAt) {
+        this.db.update(uploadedFiles).set({
+          ...(input.mime ? { mime: input.mime } : {}),
+          ...(input.assetKind ? { assetKind: input.assetKind } : {}),
+          ...(input.originChannel ? { originChannel: input.originChannel } : {}),
+          ...(input.visibility ? { visibility: input.visibility } : {}),
+          ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
+          updatedAt: new Date(),
+        }).where(eq(uploadedFiles.id, fileId)).run();
+      }
       return {
         fileId,
         contentHash,
@@ -90,6 +107,10 @@ export class FilesService {
         originalName: input.filename,
         bytes: input.buffer.byteLength,
         ...(input.mime ? { mime: input.mime } : {}),
+        ...(input.assetKind ? { assetKind: input.assetKind } : {}),
+        ...(input.originChannel ? { originChannel: input.originChannel } : {}),
+        ...(input.visibility ? { visibility: input.visibility } : {}),
+        ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
         updatedAt: new Date(),
       }).where(eq(uploadedFiles.id, fileId)).run();
     } else {
@@ -100,6 +121,10 @@ export class FilesService {
         originalName: input.filename,
         bytes: input.buffer.byteLength,
         ...(input.mime ? { mime: input.mime } : {}),
+        ...(input.assetKind ? { assetKind: input.assetKind } : {}),
+        ...(input.originChannel ? { originChannel: input.originChannel } : {}),
+        ...(input.visibility ? { visibility: input.visibility } : {}),
+        ...(input.capturedAt ? { capturedAt: input.capturedAt } : {}),
       }).onConflictDoNothing().run();
     }
     return {
@@ -139,6 +164,16 @@ export class FilesService {
   storagePathOf(fileId: string): string | null {
     const file = this.get(fileId);
     return file ? join(this.dataDir, file.storagePath) : null;
+  }
+
+  async contentOf(fileId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null> {
+    const file = this.get(fileId);
+    if (!file) return null;
+    return {
+      buffer: await readFile(join(this.dataDir, file.storagePath)),
+      mime: file.mime,
+      filename: file.originalName,
+    };
   }
 
   /** 改显示名（身份 ID 不变——确定性身份在首次上传时定死，aliases 语义）。 */

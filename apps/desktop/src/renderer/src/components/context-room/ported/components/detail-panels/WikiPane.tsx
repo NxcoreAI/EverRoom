@@ -8,6 +8,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { showToast } from '@/state/toast';
 import type {
@@ -16,21 +17,34 @@ import type {
   KnowledgeWikiPageDto,
 } from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord, ContextRoomWikiPageResource } from '../../types';
-import { formatBytes, knowledgeFileStatusLabel } from '../../resources';
 import { WikiGraphCanvas } from '../WikiGraphCanvas';
 import { MarkdownBody } from './MarkdownBody';
 import { WikiTree } from './WikiTree';
 
 const SOURCE_KIND_LABELS: Record<string, string> = {
-  'everroom-doc': 'Room 文档',
-  'reality-event': '会议实录',
-  mail: '邮件',
-  file: '文件',
-  'cloud-doc': '云文档',
+  'everroom-doc': 'contextRoom:wiki.roomDocument',
+  'reality-event': 'contextRoom:wiki.meetingTranscript',
+  mail: 'contextRoom:display.email',
+  file: 'contextRoom:display.file',
+  'cloud-doc': 'contextRoom:wiki.cloudDocument',
 };
 
 function sourceKindLabel(kind: string): string {
   return SOURCE_KIND_LABELS[kind] ?? kind;
+}
+
+/** 上传文件的沉淀状态徽标文案（route_decisions.status → 展示）。 */
+function fileStatusLabel(file: KnowledgeFileDto): string {
+  if (file.status === 'confirmed') return 'contextRoom:wiki.captured';
+  if (file.status === 'auto') return file.decidedBy === 'user' ? 'contextRoom:wiki.userConfirmedImporting' : 'contextRoom:wiki.classifying';
+  if (file.status === 'reverted') return 'contextRoom:wiki.reverted';
+  return 'contextRoom:wiki.processing';
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 type WikiView = 'tree' | 'graph';
@@ -46,6 +60,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
   selectedResourceId?: string | null;
   onOpenPage: (resource: ContextRoomWikiPageResource) => void;
 }) {
+  const { t } = useLocale();
   const [status, setStatus] = useState<string>('loading');
   const [pages, setPages] = useState<KnowledgeWikiPageDto[]>([]);
   const [pageCount, setPageCount] = useState<number | null>(null);
@@ -104,11 +119,11 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
     knowledge.getWikiGraph(room.id)
       .then((data) => setGraph(data))
       .catch((cause) => {
-        showToast({ title: '图谱加载失败', message: cause instanceof Error ? cause.message : undefined });
+        showToast({ title: t('contextRoom:wiki.failedToLoadGraph'), message: cause instanceof Error ? cause.message : undefined });
         setGraph({ nodes: [], edges: [] });
       })
       .finally(() => setGraphLoading(false));
-  }, [view, graph, graphLoading, pages.length, room.id]);
+  }, [view, graph, graphLoading, pages.length, room.id, t]);
 
   const openPage = (page: KnowledgeWikiPageDto) => {
     onOpenPage({
@@ -129,7 +144,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
       const data = await knowledge.readFileMarkdown(file.id);
       setSelectedFile({ title: file.originalName, markdown: data.markdown, fileId: file.id });
     } catch (cause) {
-      showToast({ title: '读取文件失败', message: cause instanceof Error ? cause.message : undefined });
+      showToast({ title: t('contextRoom:wiki.failedToReadFile'), message: cause instanceof Error ? cause.message : undefined });
     }
   };
 
@@ -139,7 +154,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
     try {
       await knowledge.revealFile(fileId);
     } catch (cause) {
-      showToast({ title: '定位文件失败', message: cause instanceof Error ? cause.message : undefined });
+      showToast({ title: t('contextRoom:wiki.failedToLocateFile'), message: cause instanceof Error ? cause.message : undefined });
     }
   };
 
@@ -156,22 +171,22 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
       const succeeded = results.length - failed.length - deduped;
       if (deduped > 0) {
         showToast({
-          title: `${deduped} 份文件已存在`,
-          message: '同名且内容未变，跳过重复入库',
+          title: t('contextRoom:wiki.countFilesAlreadyExist', { count: deduped }),
+          message: t('contextRoom:wiki.skippedDuplicateFilesWithTheSameNameAnd'),
         });
       }
       if (succeeded > 0) {
         showToast({
-          title: `已提交 ${succeeded} 份文件`,
-          message: '已归入本 Room，正在沉淀知识页面',
+          title: t('contextRoom:wiki.countFilesSubmitted', { count: succeeded }),
+          message: t('contextRoom:wiki.classifyingAutomaticallyHighConfidenceFilesGoDirectlyTo'),
         });
       }
       for (const failure of failed) {
-        showToast({ title: `${failure.filename} 上传失败`, message: failure.error ?? undefined });
+        showToast({ title: t('contextRoom:wiki.failedToUploadFilename', { filename: failure.filename }), message: failure.error ?? undefined });
       }
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
     } catch (cause) {
-      showToast({ title: '上传失败', message: cause instanceof Error ? cause.message : undefined });
+      showToast({ title: t('contextRoom:wiki.uploadFailed'), message: cause instanceof Error ? cause.message : undefined });
     } finally {
       setUploading(false);
     }
@@ -184,18 +199,18 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
           <div className="context-room-wiki-reader-heading">
             <button type="button" className="context-room-wiki-back" onClick={() => setSelectedFile(null)}>
               <ChevronLeft aria-hidden="true" />
-              返回列表
+              {t('contextRoom:wiki.backToList')}
             </button>
             <strong title={selectedFile.title}>{selectedFile.title}</strong>
           </div>
           <button
             type="button"
             className="context-room-wiki-reveal"
-            title="在文件夹中显示原件"
+            title={t('contextRoom:wiki.showOriginalInFolder')}
             onClick={() => void revealFile(selectedFile.fileId)}
           >
             <FolderOpen aria-hidden="true" />
-            显示原件
+            {t('contextRoom:wiki.showOriginal')}
           </button>
         </header>
         <div className="context-room-wiki-reader">
@@ -209,51 +224,51 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
     <div className="context-room-wiki-pane">
       <header className="context-room-wiki-header">
         <div className="context-room-wiki-title">
-          <h2>知识库</h2>
-          {pages.length > 0 ? <span>{pages.length} 页</span> : null}
+          <h2>{t('contextRoom:wiki.knowledgeBase')}</h2>
+          {pages.length > 0 ? <span>{t('contextRoom:wiki.countPages', { count: pages.length })}</span> : null}
         </div>
         <div className="context-room-wiki-actions">
-          <div className="context-room-wiki-toggle" role="tablist" aria-label="知识库视图">
+          <div className="context-room-wiki-toggle" role="tablist" aria-label={t('contextRoom:wiki.knowledgeBaseView')}>
             <button
               type="button"
               role="tab"
-              aria-label="目录树"
+              aria-label={t('contextRoom:wiki.pageTree')}
               aria-selected={view === 'tree'}
               className={view === 'tree' ? 'is-active' : ''}
-              title="目录树"
+              title={t('contextRoom:wiki.pageTree')}
               onClick={() => setView('tree')}
             >
               <ListTree aria-hidden="true" />
-              <span>目录</span>
+              <span>{t('contextRoom:wiki.pages')}</span>
             </button>
             <button
               type="button"
               role="tab"
-              aria-label="页面内链图谱"
+              aria-label={t('contextRoom:wiki.pageLinkGraph')}
               aria-selected={view === 'graph'}
               className={view === 'graph' ? 'is-active' : ''}
-              title="页面内链图谱"
+              title={t('contextRoom:wiki.pageLinkGraph')}
               onClick={() => setView('graph')}
             >
               <Network aria-hidden="true" />
-              <span>图谱</span>
+              <span>{t('contextRoom:wiki.graph')}</span>
             </button>
           </div>
           <button
             type="button"
             className="context-room-wiki-upload"
-            aria-label={uploading ? '正在上传文件' : '上传文件'}
+            aria-label={t(uploading ? 'contextRoom:wiki.uploadingFiles' : 'contextRoom:wiki.uploadFiles')}
             disabled={uploading}
             onClick={() => void uploadFiles()}
           >
             <Upload aria-hidden="true" />
-            <span>{uploading ? '上传中…' : '上传文件'}</span>
+            <span>{t(uploading ? 'contextRoom:wiki.uploading' : 'contextRoom:wiki.uploadFiles')}</span>
           </button>
           <button
             type="button"
             className="context-room-wiki-refresh"
-            aria-label="刷新"
-            title="刷新"
+            aria-label={t('contextRoom:wiki.refresh')}
+            title={t('contextRoom:wiki.refresh')}
             onClick={() => void refresh()}
           >
             <RefreshCw aria-hidden="true" />
@@ -261,24 +276,24 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
         </div>
       </header>
       {status === 'error' ? (
-        <div className="context-room-workspace-empty">知识服务不可用：{error}</div>
+        <div className="context-room-workspace-empty">{t('contextRoom:wiki.knowledgeServiceUnavailableError', { error: error ?? '' })}</div>
       ) : status === 'loading' ? (
-        <div className="context-room-workspace-empty">加载中…</div>
+        <div className="context-room-workspace-empty">{t('contextRoom:wiki.loading')}</div>
       ) : status === 'none' ? (
         <div className="context-room-workspace-empty">
-          这个 Room 还没有知识沉淀：Room 内文档提交后会自动整理成知识页面。
+          {t('contextRoom:wiki.thisRoomHasNoCapturedKnowledgeYetSubmitted')}
         </div>
       ) : status === 'processing' || status === 'pending' ? (
         <div className="context-room-workspace-empty">
-          知识库正在构建中{pageCount ? `（已生成 ${pageCount} 页）` : ''}，停止编辑片刻后刷新即可查看。
+          {t('contextRoom:wiki.buildingTheKnowledgeBaseProgressPauseEditingBriefly', { progress: pageCount ? t('contextRoom:wiki.countPagesGenerated', { count: pageCount }) : '' })}
         </div>
       ) : pages.length === 0 ? (
         <div className="context-room-workspace-empty">
-          还没有生成知识页面：上传文件或在 Room 里写文档后自动生成。
+          {t('contextRoom:wiki.noKnowledgePagesYetUploadFilesOrWrite')}
         </div>
       ) : view === 'graph' ? (
         graphLoading ? (
-          <div className="context-room-workspace-empty">图谱构建中…</div>
+          <div className="context-room-workspace-empty">{t('contextRoom:wiki.buildingGraph')}</div>
         ) : graph && graph.nodes.length > 0 ? (
           <div className="context-room-wiki-graph-wrap">
             <WikiGraphCanvas
@@ -290,12 +305,12 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
               }}
             />
             <p className="context-room-wiki-graph-hint">
-              <span>{graph.nodes.length} 个页面</span>
-              <span>{graph.edges.length} 条内链</span>
+              <span>{t('contextRoom:wiki.pageCountLabel', { count: graph.nodes.length })}</span>
+              <span>{t('contextRoom:wiki.countInternalLinks', { count: graph.edges.length })}</span>
             </p>
           </div>
         ) : (
-          <div className="context-room-workspace-empty">页面之间还没有内链，图谱为空。</div>
+          <div className="context-room-workspace-empty">{t('contextRoom:wiki.thereAreNoLinksBetweenPagesYet')}</div>
         )
       ) : (
         <div className="context-room-wiki-tree-wrap">
@@ -304,7 +319,7 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
       )}
       {files.length > 0 && view === 'tree' ? (
         <section className="context-room-wiki-files">
-          <h3>来源文件</h3>
+          <h3>{t('contextRoom:wiki.sourceFiles')}</h3>
           <ul>
             {files.map((file) => (
               <li key={file.id}>
@@ -315,15 +330,15 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
                   <span className="context-room-wiki-item-body">
                     <strong>{file.originalName}</strong>
                     <span>
-                      {knowledgeFileStatusLabel(file)} · {formatBytes(file.bytes)}
+                      {t(fileStatusLabel(file))} · {formatBytes(file.bytes)}
                     </span>
                   </span>
                 </button>
                 <button
                   type="button"
                   className="context-room-file-reveal"
-                  aria-label="在文件夹中显示原件"
-                  title="在文件夹中显示原件"
+                  aria-label={t('contextRoom:wiki.showOriginalInFolder')}
+                  title={t('contextRoom:wiki.showOriginalInFolder')}
                   onClick={() => void revealFile(file.id)}
                 >
                   <FolderOpen aria-hidden="true" />

@@ -37,6 +37,7 @@ export function PageCanvas({
   onNavigate,
   onFocusAgent,
   onOpenDocument,
+  onStartMemoryOnboarding,
 }: {
   page: PageId
   activeContextRoomId: string | null
@@ -54,6 +55,7 @@ export function PageCanvas({
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
+  onStartMemoryOnboarding?: () => void
 }) {
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
@@ -84,7 +86,7 @@ export function PageCanvas({
   if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage />
-  if (page === 'memory') content = <MemoryPage />
+  if (page === 'memory') content = <MemoryPage onStartOnboarding={onStartMemoryOnboarding} />
   if (page === 'wiki') content = <WikiPage />
   if (page === 'connectors') content = <ConnectorSyncPage />
   if (page === 'agents') content = <AgentStatusPage onFocusAgent={onFocusAgent} />

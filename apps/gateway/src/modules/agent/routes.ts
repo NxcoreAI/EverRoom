@@ -7,6 +7,39 @@ import { DocumentServiceError } from "../documents/errors.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
 const SessionParams = Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 100 }) });
 const IntentParams = Type.Object({ intentId: Type.String({ minLength: 1, maxLength: 100 }) });
+const ResponseLanguage = Type.String({
+  minLength: 2,
+  maxLength: 35,
+  pattern: "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$",
+});
+const RoomContextSummary = Type.Object({
+  generatedAt: Type.Optional(Type.String({ maxLength: 40 })),
+  overview: Type.String({ maxLength: 500 }),
+  nextSteps: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 4 }),
+  entities: Type.Array(Type.Object({
+    name: Type.String({ maxLength: 120 }),
+    kind: Type.String({ maxLength: 24 }),
+    description: Type.String({ maxLength: 300 }),
+  }), { maxItems: 10 }),
+  actionItems: Type.Array(Type.Object({
+    title: Type.String({ maxLength: 300 }),
+    owner: Type.Union([Type.String({ maxLength: 120 }), Type.Null()]),
+    dueDate: Type.Union([Type.String({ maxLength: 120 }), Type.Null()]),
+    sourceTitle: Type.String({ maxLength: 300 }),
+  }), { maxItems: 10 }),
+  meetings: Type.Array(Type.Object({
+    title: Type.String({ maxLength: 300 }),
+    when: Type.String({ maxLength: 120 }),
+    participants: Type.Array(Type.String({ maxLength: 120 }), { maxItems: 20 }),
+    sourceTitle: Type.String({ maxLength: 300 }),
+  }), { maxItems: 10 }),
+  sourceDocuments: Type.Array(Type.Object({
+    documentId: Type.String({ maxLength: 200 }),
+    title: Type.String({ maxLength: 300 }),
+    version: Type.Integer({ minimum: 0 }),
+    updatedAt: Type.String({ maxLength: 40 }),
+  }), { maxItems: 20 }),
+});
 const NavigationTarget = Type.Object({
   pageId: Type.String({ minLength: 1, maxLength: 40 }),
   title: Type.String({ minLength: 1, maxLength: 200 }),
@@ -168,6 +201,7 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
           body: Type.Object({
             prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            responseLanguage: Type.Optional(ResponseLanguage),
             captureMemory: Type.Optional(Type.Boolean()),
             recallMemory: Type.Optional(Type.Boolean()),
             toolsEnabled: Type.Optional(Type.Boolean()),
@@ -177,6 +211,10 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
                 id: Type.String({ minLength: 1, maxLength: 100 }),
                 title: Type.String({ minLength: 1, maxLength: 120 }),
                 kind: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+                background: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
+                goal: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
+                status: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+                contextSummary: Type.Optional(RoomContextSummary),
               }), { maxItems: 200 })),
               selectedRoomId: Type.Optional(Type.Union([
                 Type.String({ minLength: 1, maxLength: 100 }),
@@ -284,6 +322,7 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
             roomId: Type.String({ minLength: 1, maxLength: 100 }),
             documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            responseLanguage: Type.Optional(ResponseLanguage),
           }),
         },
       },

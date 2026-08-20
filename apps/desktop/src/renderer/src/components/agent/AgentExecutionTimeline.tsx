@@ -18,6 +18,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 import {
   agentToolCommand,
@@ -63,13 +64,15 @@ function durationMs(startedAt: string, completedAt: string | undefined, now: num
   return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0
 }
 
-function formatDuration(duration: number): string {
-  if (duration < 1_000) return '<1 秒'
+function formatDuration(duration: number, t: Translate): string {
+  if (duration < 1_000) return t('surface:agentExecutionTimeline.1Sec')
   const seconds = Math.max(1, Math.round(duration / 1_000))
-  if (seconds < 60) return `${seconds} 秒`
+  if (seconds < 60) return t('surface:agentExecutionTimeline.countSec', { count: seconds })
   const minutes = Math.floor(seconds / 60)
   const remainder = seconds % 60
-  return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分`
+  return remainder
+    ? t('surface:agentExecutionTimeline.minutesMinSecondsSec', { minutes, seconds: remainder })
+    : t('surface:agentExecutionTimeline.countMin', { count: minutes })
 }
 
 function ToolIcon({ kind }: { kind: ToolKind }) {
@@ -97,12 +100,21 @@ function StatusIcon({ status }: { status: DisplayAgentToolCall['status'] }) {
   return <Circle aria-hidden="true" />
 }
 
-function statusLabel(status: DisplayAgentToolCall['status']): string {
-  if (status === 'completed') return '已完成'
-  if (status === 'error') return '失败'
-  if (status === 'stopped') return '已停止'
-  if (status === 'running') return '执行中'
-  return '等待中'
+function statusLabel(status: DisplayAgentToolCall['status'], t: Translate): string {
+  if (status === 'completed') return t('surface:agentExecutionTimeline.completed')
+  if (status === 'error') return t('surface:agentExecutionTimeline.failed')
+  if (status === 'stopped') return t('surface:agentExecutionTimeline.stopped')
+  if (status === 'running') return t('surface:agentExecutionTimeline.running')
+  return t('surface:agentExecutionTimeline.waiting')
+}
+
+function localizeAgentActivityText(value: string | undefined, t: Translate): string | undefined {
+  if (!value) return value
+  const executed = /^已执行\s+(.+)$/u.exec(value)
+  if (executed) return t('surface:agentExecutionTimeline.executedName', { name: executed[1]! })
+  const executing = /^执行\s+(.+)$/u.exec(value)
+  if (executing) return t('surface:agentExecutionTimeline.executingName', { name: executing[1]! })
+  return value
 }
 
 export function AgentExecutionTimeline({
@@ -110,7 +122,7 @@ export function AgentExecutionTimeline({
   runStartedAt,
   runCompletedAt,
   continuing = false,
-  continuationLabel = '正在继续处理',
+  continuationLabel = 'surface:agentExecutionTimeline.continuing',
 }: {
   activity: AgentRunActivity
   runStartedAt?: string
@@ -118,6 +130,7 @@ export function AgentExecutionTimeline({
   continuing?: boolean
   continuationLabel?: string
 }) {
+  const { t } = useLocale()
   const tools = activity.steps.map((step) => step.tool)
   const running = tools.some((tool) => tool.status === 'pending' || tool.status === 'running')
   const active = continuing || !runCompletedAt
@@ -170,14 +183,14 @@ export function AgentExecutionTimeline({
   const failed = tools.some((tool) => tool.status === 'error')
   const stopped = tools.some((tool) => tool.status === 'stopped')
   const summary = continuing && !running
-    ? continuationLabel
+    ? t(continuationLabel)
     : active
-      ? '正在处理'
+      ? t('surface:agentExecutionTimeline.processing')
       : failed
-        ? '处理失败'
+        ? t('surface:agentExecutionTimeline.processingFailed')
         : stopped
-          ? '已停止'
-          : '已处理'
+          ? t('surface:agentExecutionTimeline.stopped')
+          : t('surface:agentExecutionTimeline.processed')
 
   return (
     <section className="agent-execution" data-running={String(active)} data-expanded={String(expanded)}>
@@ -194,7 +207,7 @@ export function AgentExecutionTimeline({
       >
         {active ? <LoaderCircle className="spin" aria-hidden="true" /> : <Wrench aria-hidden="true" />}
         <strong>{summary}</strong>
-        <span>{totalDuration ? formatDuration(totalDuration) : ''}</span>
+        <span>{totalDuration ? formatDuration(totalDuration, t) : ''}</span>
         <ChevronRight className="agent-execution-chevron" aria-hidden="true" />
       </button>
       <div
@@ -206,18 +219,19 @@ export function AgentExecutionTimeline({
           <div className="agent-tool-list">
             {activity.steps.map((step) => {
               const tool = step.tool
-              const summaryText = agentToolResultSummary(tool.result ?? tool.partialResult)
+              const summaryText = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult), t)
               const subject = agentToolSubject(tool)
               const preview = subject ?? summaryText ?? tool.error
               const duration = durationMs(tool.startedAt, tool.completedAt, now)
               const command = agentToolCommand(tool)
               const args = Object.keys(tool.args).length ? detailText(tool.args) : undefined
               const result = detailText(tool.result ?? tool.partialResult)
-              const label = agentToolLabel(tool)
-              const stageText = step.afterText || agentToolStageText(tool)
+              const label = localizeAgentActivityText(agentToolLabel(tool), t) ?? agentToolLabel(tool)
+              const beforeText = localizeAgentActivityText(step.beforeText, t)
+              const stageText = localizeAgentActivityText(step.afterText || agentToolStageText(tool), t)
               return (
                 <div key={step.id} className="agent-tool-step" data-status={tool.status}>
-                  {step.beforeText ? <p className="agent-activity-commentary">{step.beforeText}</p> : null}
+                  {beforeText ? <p className="agent-activity-commentary">{beforeText}</p> : null}
                   <details className="agent-tool-row" data-status={tool.status}>
                     <summary className="agent-tool-command" title={preview ? `${label} ${preview}` : label}>
                       <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
@@ -225,7 +239,7 @@ export function AgentExecutionTimeline({
                         <strong>{label}</strong>
                         {preview ? <span>{preview}</span> : null}
                       </span>
-                      <span className="agent-tool-status" title={statusLabel(tool.status)}>
+                      <span className="agent-tool-status" title={statusLabel(tool.status, t)}>
                         <StatusIcon status={tool.status} />
                       </span>
                       <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
@@ -234,13 +248,13 @@ export function AgentExecutionTimeline({
                       <div>
                         <div className="agent-tool-meta">
                           <code>{tool.name}</code>
-                          <span>{statusLabel(tool.status)} · {formatDuration(duration)}</span>
+                          <span>{statusLabel(tool.status, t)} · {formatDuration(duration, t)}</span>
                         </div>
                         {tool.error ? <p className="agent-tool-error">{tool.error}</p> : null}
-                        {command ? <><small>命令</small><pre>{command}</pre></> : null}
-                        {!command && args ? <><small>参数</small><pre>{args}</pre></> : null}
-                        {result ? <><small>结果</small><pre>{result}</pre></> : null}
-                        {!command && !args && !result && !tool.error ? <p>暂无更多详情</p> : null}
+                        {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
+                        {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
+                        {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}
+                        {!command && !args && !result && !tool.error ? <p>{t('surface:agentExecutionTimeline.noAdditionalDetails')}</p> : null}
                       </div>
                     </div>
                   </details>
