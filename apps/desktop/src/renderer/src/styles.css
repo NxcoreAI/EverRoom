@@ -2389,6 +2389,7 @@ summary:focus-visible {
   .app-shell,
   .app-shell[data-agent-open='false'] {
     grid-template-columns: 0 minmax(0, 1fr) 0;
+    transition: none;
   }
 
   .agent-panel {
@@ -2396,6 +2397,7 @@ summary:focus-visible {
     z-index: 70;
     inset: var(--topbar-height) 0 0 auto;
     width: min(var(--agent-width), 92vw);
+    background: #fff;
     box-shadow: -12px 0 32px rgba(25, 25, 20, 0.12);
   }
 }
