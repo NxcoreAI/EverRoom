@@ -112,6 +112,7 @@ export class NangoSupervisor {
           ...process.env,
           DOTENV_CONFIG_PATH: join(nangoDirectory, '.env'),
           NANGO_EMBEDDED_DB: 'true',
+          NANGO_DB_PORT: process.env.NANGO_DB_PORT?.trim() || '5433',
           SERVER_PORT: String(NANGO_PORT),
         },
         stdio: ['pipe', 'pipe', 'pipe'],
