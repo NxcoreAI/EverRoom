@@ -84,10 +84,17 @@ function requestsWorkspaceDocument(prompt: string): boolean {
   if (/(?:如何|怎么|怎样|为什么|介绍|解释|说明).{0,12}(?:创建|新建|生成|写入|保存|撰写).{0,24}(?:文档|文件)/iu.test(text)) {
     return false;
   }
+  if (/\b(?:do not|don't|dont|no need to|not asking (?:you )?to|should not|shouldn't)\b.{0,24}\b(?:create|draft|write|generate|compose|prepare|save)\b.{0,64}\b(?:doc(?:ument)?|file)s?\b/iu.test(text)) {
+    return false;
+  }
+  if (/\b(?:how (?:do|can|should|would)|why|explain|describe)\b.{0,24}\b(?:create|draft|write|generate|compose|prepare|save)\b.{0,64}\b(?:doc(?:ument)?|file)s?\b/iu.test(text)) {
+    return false;
+  }
   return /(?:创建|新建|生成|写入|保存|落盘|存入|写|撰写).{0,32}(?:文档|文件)/iu.test(text)
     || /(?:文档|文件).{0,20}(?:创建|新建|写入|保存|落盘)/iu.test(text)
     || /(?:我要|我想要|给我|帮我做).{0,24}(?:文档|文件)/iu.test(text)
-    || /(?:保存|写入|落盘|存入).{0,20}(?:文档|Room|房间)/iu.test(text);
+    || /(?:保存|写入|落盘|存入).{0,20}(?:文档|Room|房间)/iu.test(text)
+    || /\b(?:create|draft|write|generate|compose|prepare|save)\b.{0,64}\b(?:doc(?:ument)?|file)s?\b/iu.test(text);
 }
 
 const NON_DOCUMENT_CREATION_TARGET = /(?:Room|房间|项目|任务|计划|方案|列表|代码|程序|函数|类|表格|图片|图像|幻灯片|演示|提醒|日记|记录|目录|文件夹|数据源|页面|会话|对话|仓库|分支|数据库|接口)/iu;
