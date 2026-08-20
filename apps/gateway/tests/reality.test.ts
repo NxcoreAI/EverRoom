@@ -29,6 +29,8 @@ async function testConfig(): Promise<GatewayConfig> {
     knowledge: null,
     backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
+    webSearch: null,
+    mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
     asr: null,
   };
 }
@@ -77,7 +79,7 @@ describe("reality routes", () => {
     })).json<RealityEvent>();
     expect(imported).toMatchObject({
       id: eventId,
-      status: "pending_confirmation",
+      status: "completed",
       processingState: "ready",
       captureDevice: { name: "iPhone", kind: "iphone" },
       durationMs: 11_300,
@@ -234,7 +236,7 @@ describe("reality routes", () => {
         },
       },
     })).json<RealityEvent>();
-    expect(completed.status).toBe("pending_confirmation");
+    expect(completed.status).toBe("completed");
     expect(completed.insights).toMatchObject({
       source: "mock",
       eventType: "MEETING",
@@ -272,6 +274,24 @@ describe("reality routes", () => {
     })).json<RealityEvent>();
     expect(marked.important).toBe(true);
     expect(marked.markers).toHaveLength(1);
+
+    const unmarked = (await app.inject({
+      method: "PATCH",
+      url: `/v1/reality/events/${eventId}/important`,
+      headers,
+      payload: { important: false },
+    })).json<RealityEvent>();
+    expect(unmarked.important).toBe(false);
+    expect(unmarked.markers).toHaveLength(0);
+
+    const reMarked = (await app.inject({
+      method: "PATCH",
+      url: `/v1/reality/events/${eventId}/important`,
+      headers,
+      payload: { important: true },
+    })).json<RealityEvent>();
+    expect(reMarked.important).toBe(true);
+    expect(reMarked.markers).toHaveLength(1);
 
     const audio = await app.inject({
       method: "GET",

@@ -195,7 +195,7 @@ export class RealityService {
     }));
     const imported = {
       title: input.title.trim() || insights.currentTopic || "iPhone 录音",
-      status: current?.status === "completed" ? "completed" as const : "pending_confirmation" as const,
+      status: "completed" as const,
       processingState: "ready" as const,
       captureDevice: input.captureDevice,
       processingDevice: "SaaS",
@@ -267,7 +267,7 @@ export class RealityService {
       ? input.result.insights
       : deriveInsights(transcript, row.currentTopic);
     return this.update(row, {
-      status: "pending_confirmation",
+      status: "completed",
       processingState: "ready",
       transcript,
       transcriptSegments,
@@ -314,6 +314,19 @@ export class RealityService {
       important: true,
       markers: [...row.markers, marker],
     }, "reality event marked important");
+  }
+
+  setImportant(id: string, important: boolean): RealityEvent {
+    const row = this.requireRow(id);
+    if (important) {
+      if (row.important) return toEvent(row);
+      return this.addMarker(id, { atMs: row.durationMs });
+    }
+    if (!row.important) return toEvent(row);
+    return this.update(row, {
+      important: false,
+      markers: [],
+    }, "reality event unmarked important");
   }
 
   confirm(id: string): RealityEvent {

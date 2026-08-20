@@ -27,6 +27,8 @@ async function testConfig(): Promise<GatewayConfig> {
     backgroundPi: null,
     knowledge: null,
     asrInputDir: join(dataDir, "recordings"),
+    webSearch: null,
+    mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
     asr: null,
   };
 }

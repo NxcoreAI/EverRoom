@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,6 +76,11 @@ const RawConfigSchema = Type.Object(
     cursorCompletionAiContextWindow: Type.Integer({ minimum: 1 }),
     cursorCompletionAiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
     cursorCompletionAiReasoning: AiReasoningSchema,
+    piBuiltinTools: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+    webSearchEnabled: Type.Boolean(),
+    webSearchBaseUrl: Type.String(),
+    webSearchModel: Type.String({ minLength: 1 }),
+    webSearchApiKey: Type.String(),
     asrProvider: AsrProviderSchema,
     asrAliyunApiKey: Type.String(),
     asrAliyunBaseUrl: Type.String(),
@@ -139,6 +144,13 @@ export interface AliyunOssConfig {
   prefix: string;
 }
 
+/** 百炼（DashScope compatible-mode）联网搜索配置，注入 agent 的 web_search 工具。 */
+export interface WebSearchConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
 export interface PiRuntimeConfig {
   provider: string;
   model: string;
@@ -152,12 +164,15 @@ export interface PiRuntimeConfig {
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
+  /** Pi 内置工具白名单；缺省启用全部，NXCORE_PI_TOOLS（逗号分隔）收窄。 */
+  builtinTools?: string[];
+  /** MCP 服务器注入配置（pi-mcp-adapter）；读取 NXCORE_MCP_CONFIG 或 dataDir/agent/mcp.json。 */
+  mcp?: { mcpServers: Record<string, unknown> };
   memory?: MemoryRuntimeConfig;
   knowledge?: KnowledgeRuntimeConfig;
 }
 
-/** gateway 侧 knowledge 模块配置（Room wiki 注册表 + 实体晋升制，docs/entity-room-plan.md §6）。 */
-export interface KnowledgeGatewayConfig {
+/** gateway 侧 knowledge 模块配置（Room wiki 注册表 + 实体晋升制，docs/entity-room-plan.md §6）。 */export interface KnowledgeGatewayConfig {
   baseUrl: string;
   serviceId: string;
   teamId: string;
@@ -234,9 +249,36 @@ export interface GatewayConfig {
   cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
   backgroundPi: PiRuntimeConfig | null;
+  /** agent MCP 配置文件绝对路径（设置页管理用）。 */
+  mcpConfigPath: string;
+  /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
+  webSearch: WebSearchConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
   openConnector?: OpenConnectorCliConfig | null;
+}
+
+/** agent MCP 配置文件路径（NXCORE_MCP_CONFIG 优先，缺省 dataDir/agent/mcp.json）。 */
+export function resolveMcpConfigPath(dataDir: string, overridePath?: string): string {
+  return resolve(overridePath?.trim() || join(dataDir, "agent", "mcp.json"));
+}
+
+/** 读取 agent MCP 服务器配置（.mcp.json 格式，仅取 mcpServers 字段）；缺省或解析失败返回空。 */
+function loadMcpServers(configPath: string): Record<string, unknown> {
+  if (!existsSync(configPath)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as {
+      mcpServers?: Record<string, unknown>;
+    };
+    if (!parsed.mcpServers || typeof parsed.mcpServers !== "object") {
+      console.error(`[config] ${configPath} 缺少 mcpServers 字段，忽略 MCP 配置`);
+      return {};
+    }
+    return parsed.mcpServers;
+  } catch (error) {
+    console.error(`[config] 解析 MCP 配置失败（${configPath}）：${error instanceof Error ? error.message : error}`);
+    return {};
+  }
 }
 
 function defaultDataDir(): string {
@@ -549,6 +591,18 @@ export function loadConfig(
     ),
     cursorCompletionAiReasoning: env.NXCORE_CURSOR_COMPLETION_AI_REASONING?.trim()
       || env.NXCORE_AI_REASONING?.trim() || "medium",
+    piBuiltinTools: env.NXCORE_PI_TOOLS?.trim()
+      ? env.NXCORE_PI_TOOLS.split(",")
+          .map((name) => name.trim())
+          .filter((name) => name.length > 0)
+      : undefined,
+    webSearchEnabled: env.NXCORE_WEB_SEARCH == null
+      ? true
+      : parseBoolean("NXCORE_WEB_SEARCH", env.NXCORE_WEB_SEARCH.trim()),
+    webSearchBaseUrl: env.NXCORE_WEB_SEARCH_BASE_URL?.trim()
+      ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    webSearchModel: env.NXCORE_WEB_SEARCH_MODEL?.trim() ?? "qwen-plus",
+    webSearchApiKey: env.NXCORE_WEB_SEARCH_API_KEY?.trim() ?? env.NXCORE_AI_API_KEY?.trim() ?? "",
     asrProvider: env.NXCORE_ASR_PROVIDER ?? "disabled",
     asrAliyunApiKey: env.NXCORE_ASR_ALIYUN_API_KEY?.trim() ?? "",
     asrAliyunBaseUrl: env.NXCORE_ASR_ALIYUN_BASE_URL?.trim()
@@ -745,6 +799,8 @@ export function loadConfig(
     // 自动晋升依赖抽取产出的证据，没有 LLM 同样不会发生——不构成错误。
   }
 
+  const mcpConfigPath = resolveMcpConfigPath(dataDir, env.NXCORE_MCP_CONFIG);
+  const mcpServers = loadMcpServers(mcpConfigPath);
   const pi: PiRuntimeConfig | null = rawConfig.agentRuntime === "pi"
     ? {
         provider: rawConfig.aiProvider,
@@ -759,6 +815,8 @@ export function loadConfig(
         sessionsDir: join(dataDir, "agent", "pi-sessions"),
         workingDirectory: join(dataDir, "agent", "workspace"),
         agentDirectory: join(dataDir, "agent", "pi-config"),
+        ...(rawConfig.piBuiltinTools ? { builtinTools: rawConfig.piBuiltinTools } : {}),
+        ...(Object.keys(mcpServers).length > 0 ? { mcp: { mcpServers } } : {}),
         ...(memory ? { memory } : {}),
         ...(knowledge ? { knowledge } : {}),
       }
@@ -840,6 +898,14 @@ export function loadConfig(
           ...pi,
           model: rawConfig.aiBackgroundModel,
           maxTokens: rawConfig.aiBackgroundMaxTokens,
+        }
+      : null,
+    mcpConfigPath,
+    webSearch: pi && rawConfig.webSearchEnabled && rawConfig.webSearchApiKey
+      ? {
+          baseUrl: rawConfig.webSearchBaseUrl,
+          apiKey: rawConfig.webSearchApiKey,
+          model: rawConfig.webSearchModel,
         }
       : null,
     knowledge: knowledgeGateway,

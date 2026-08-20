@@ -13,6 +13,7 @@ import { SourcesPage } from './pages/SourcesPage'
 import { TasksPage } from './pages/TasksPage'
 import { WikiPage } from './pages/WikiPage'
 import { ConnectorSyncPage } from './pages/ConnectorSyncPage'
+import { AgentStatusPage } from './pages/AgentStatusPage'
 
 const ContextRoomPage = lazy(() =>
   import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
@@ -35,6 +36,7 @@ export function PageCanvas({
   onContextRoomShowHome,
   onNavigate,
   onFocusAgent,
+  onOpenDocument,
 }: {
   page: PageId
   activeContextRoomId: string | null
@@ -51,6 +53,7 @@ export function PageCanvas({
   onContextRoomShowHome: () => void
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
+  onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
 }) {
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
@@ -77,12 +80,13 @@ export function PageCanvas({
       </Suspense>
     )
   }
-  if (page === 'docs') content = <DocsPage />
+  if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage />
   if (page === 'memory') content = <MemoryPage />
   if (page === 'wiki') content = <WikiPage />
   if (page === 'connectors') content = <ConnectorSyncPage />
+  if (page === 'agents') content = <AgentStatusPage onFocusAgent={onFocusAgent} />
   if (page === 'tasks') content = <TasksPage />
   if (page === 'diary') {
     content = (
@@ -95,7 +99,7 @@ export function PageCanvas({
   return (
     <>
       <div className="reality-page-host" hidden={page !== 'recording'}>
-        <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载智能感知...</div></div>}>
+        <Suspense fallback={<div className="page"><div className="evidence-viewer-state">正在加载现实感知...</div></div>}>
           <RealityPage onOpenSettings={() => onNavigate('settings')} />
         </Suspense>
       </div>

@@ -82,10 +82,12 @@ async function waitForStop(recorder: MediaRecorder): Promise<void> {
 const CassetteListeningControl = memo(function CassetteListeningControl({
   listening,
   busy,
+  elapsed,
   onToggle,
 }: {
   listening: boolean
   busy: boolean
+  elapsed: number
   onToggle: () => void
 }) {
   return (
@@ -364,11 +366,20 @@ export function RecordingPage({
   if (controlOnly) {
     const listening = state === 'recording'
     return (
-      <CassetteListeningControl
-        listening={listening}
-        busy={busy}
-        onToggle={listening ? stopRecording : startRecording}
-      />
+      <div className="cassette-control-column">
+        <CassetteListeningControl
+          listening={listening}
+          busy={busy}
+          elapsed={listening ? elapsed : 0}
+          onToggle={listening ? stopRecording : startRecording}
+        />
+        {listening || busy ? (
+          <span className="cassette-recording-timer" data-recording={String(listening)} role="timer">
+            <i aria-hidden="true" />
+            {listening ? formatDuration(elapsed) : '处理中'}
+          </span>
+        ) : null}
+      </div>
     )
   }
 

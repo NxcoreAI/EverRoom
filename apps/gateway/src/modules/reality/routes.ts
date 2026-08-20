@@ -261,6 +261,18 @@ export function realityRoutes(service: RealityService): FastifyPluginAsyncTypebo
       async (request) => service.addMarker(request.params.id, request.body),
     );
 
+    app.patch(
+      "/v1/reality/events/:id/important",
+      {
+        schema: {
+          tags: ["reality"],
+          params: IdParams,
+          body: Type.Object({ important: Type.Boolean() }),
+        },
+      },
+      async (request) => service.setImportant(request.params.id, request.body.important),
+    );
+
     app.post(
       "/v1/reality/events/:id/confirm",
       { schema: { tags: ["reality"], params: IdParams } },

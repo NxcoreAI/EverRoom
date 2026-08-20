@@ -8,6 +8,7 @@ import { parseAgentNavigationTarget } from './agentNavigation'
 import { formatAgentOutput } from './agentOutputFormat'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
+import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
 import {
   findPendingAgentDocumentSelection,
   type AgentDocumentSelectionItem,

@@ -35,6 +35,7 @@ import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
+import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import './SettingsPage.css'
 
 const SETTINGS: Array<{ icon: LucideIcon; title: string; description: string }> = [
@@ -542,17 +543,19 @@ export function SettingsPage() {
         </div>
       </section>
 
+      <McpSettingsSection />
+
       <section className="reality-settings-section" aria-labelledby="reality-settings-title">
         <header>
           <span><AudioLines aria-hidden="true" /></span>
           <div>
-            <h2 id="reality-settings-title">智能感知</h2>
+            <h2 id="reality-settings-title">现实感知</h2>
             <p>配置聆听时使用的音源与转写方式。</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div><strong>转写服务</strong><small>自动模式会在登录后优先使用 SaaS。</small></div>
-          <div className="segmented-control" aria-label="智能感知转写服务">
+          <div className="segmented-control" aria-label="现实感知转写服务">
             {([['auto', '自动'], ['cloud', 'SaaS'], ['local', '本地']] as const).map(([value, label]) => (
               <button key={value} type="button" data-active={String(realitySettings.mode === value)} disabled={value === 'cloud' && !account?.authenticated} onClick={() => updateRealitySettings({ mode: value })}>{label}</button>
             ))}
@@ -560,14 +563,14 @@ export function SettingsPage() {
         </div>
         <div className="reality-setting-row">
           <div><strong>录制来源</strong><small>电脑音频需要 macOS 系统授权。</small></div>
-          <div className="segmented-control reality-source-setting" aria-label="智能感知录制来源">
+          <div className="segmented-control reality-source-setting" aria-label="现实感知录制来源">
             <button type="button" data-active={String(realitySettings.audioSource === 'microphone')} onClick={() => updateRealitySettings({ audioSource: 'microphone' })}><Mic aria-hidden="true" />麦克风</button>
             <button type="button" data-active={String(realitySettings.audioSource === 'system')} disabled={window.nxcore?.platform !== 'darwin'} onClick={() => updateRealitySettings({ audioSource: 'system' })}><MonitorSpeaker aria-hidden="true" />电脑音频</button>
           </div>
         </div>
         <div className="reality-setting-row">
           <div><strong>转写语言</strong><small>至少保留一种主要语言。</small></div>
-          <div className="segmented-control" aria-label="智能感知转写语言">
+          <div className="segmented-control" aria-label="现实感知转写语言">
             {([['zh', '中文'], ['en', 'English']] as const).map(([value, label]) => {
               const active = realitySettings.languages.includes(value)
               return <button key={value} type="button" data-active={String(active)} onClick={() => updateRealitySettings({ languages: active && realitySettings.languages.length > 1 ? realitySettings.languages.filter((item) => item !== value) : active ? realitySettings.languages : [...realitySettings.languages, value] })}>{label}</button>

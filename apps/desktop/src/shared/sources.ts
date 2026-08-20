@@ -399,6 +399,10 @@ export interface NxcoreDesktopApi {
     data(query: ConnectorDataQuery): Promise<ConnectorDataRecord[]>
     record(id: string): Promise<ConnectorDataRecord>
   }
+  mcp: {
+    listServers(): Promise<McpServersSnapshot>
+    saveServers(servers: McpServersSnapshot['servers']): Promise<McpServersSnapshot>
+  }
   screenCapture: {
     captureCurrentWindow(): Promise<WindowScreenshotResult>
     start(intervalMs: number): Promise<WindowScreenshotStatus>
@@ -479,10 +483,12 @@ export interface NxcoreDesktopApi {
     finishCapture(id: string, input: FinishRealityCaptureInput): Promise<RealityEvent>
     updateTranscript(id: string, input: UpdateRealityTranscriptInput): Promise<RealityEvent>
     addMarker(id: string, input: MarkRealityEventInput): Promise<RealityEvent>
+    setImportant(id: string, important: boolean): Promise<RealityEvent>
     confirm(id: string): Promise<RealityEvent>
     discard(id: string): Promise<void>
     fail(id: string, error: string): Promise<RealityEvent>
     readAudio(id: string): Promise<Uint8Array>
+    exportTranscript(input: { fileName: string; content: string }): Promise<{ canceled: boolean; filePath?: string }>
     subscribe(): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: RealitySocketFrame) => void): () => void
@@ -643,6 +649,7 @@ import type {
   IngestEventDto,
   IngestPipelines,
 } from './ingest'
+import type { McpServersSnapshot } from './mcp'
 export type {
   CreateRealityEventInput,
   FinishRealityCaptureInput,

@@ -1,0 +1,39 @@
+diff --git a/npx-resolver.ts b/npx-resolver.ts
+index c735a77fc87231f12e74b79a288e4b720ebde880..619c4ee12fc30fa9c5df44acda5687704ecf5d80 100644
+--- a/npx-resolver.ts
++++ b/npx-resolver.ts
+@@ -272,7 +272,7 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
+         signal?.removeEventListener("abort", abort);
+         resolve();
+       });
+-      proc.on("error", (err) => {
++      proc.on("error", (err: Error) => {
+         clearTimeout(timer);
+         signal?.removeEventListener("abort", abort);
+         reject(err);
+diff --git a/request-headers-command.ts b/request-headers-command.ts
+index 67d63606a47a4822acc4466024f6d09c595c58e0..41ce63db269a6f44eca055120e485cbdc1bc0448 100644
+--- a/request-headers-command.ts
++++ b/request-headers-command.ts
+@@ -307,7 +307,7 @@ export function createRequestHeadersCommandFetch(
+ ): FetchLike {
+   // Validate static configuration before the first request.
+   resolvedCommand(config);
+-  return async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
++  return async (input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response> => {
+     const request = new Request(input, init);
+     const body = Buffer.from(await request.clone().arrayBuffer());
+     const derived = await invokeRequestHeadersCommand(config, {
+diff --git a/unix-socket-transport.ts b/unix-socket-transport.ts
+index f6b4577eb4a5f9459eb6e324338f325549841421..568f89027b02a731316111e96e7d271a2a5d8258 100644
+--- a/unix-socket-transport.ts
++++ b/unix-socket-transport.ts
+@@ -30,7 +30,7 @@ export class UnixSocketClientTransport implements Transport {
+       });
+       socket.on("data", chunk => {
+         try {
+-          this.readBuffer.append(chunk);
++          this.readBuffer.append(Buffer.from(chunk as Buffer));
+           while (true) {
+             const message = this.readBuffer.readMessage();
+             if (message === null) break;

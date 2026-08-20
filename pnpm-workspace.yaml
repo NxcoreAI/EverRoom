@@ -25,3 +25,6 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-protocol@0.84.2'
   - '@earendil-works/pi-telemetry@0.84.2'
   - '@earendil-works/pi-tui@0.84.2'
+
+patchedDependencies:
+  pi-mcp-adapter@2.26.1: patches/pi-mcp-adapter@2.26.1.patch

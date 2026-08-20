@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 
@@ -23,6 +24,7 @@ import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
+import type { McpServersSnapshot } from '../shared/mcp'
 import type { IngestPipelines } from '../shared/ingest'
 import type {
   MemoryAtomicListOptions,
@@ -31,6 +33,7 @@ import type {
 } from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
+import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
@@ -219,10 +222,12 @@ const REALITY_CHANNELS = {
   finishCapture: 'reality:finish-capture',
   updateTranscript: 'reality:update-transcript',
   addMarker: 'reality:add-marker',
+  setImportant: 'reality:set-important',
   confirm: 'reality:confirm',
   discard: 'reality:discard',
   fail: 'reality:fail',
   readAudio: 'reality:read-audio',
+  exportTranscript: 'reality:export-transcript',
   subscribe: 'reality:subscribe',
   unsubscribe: 'reality:unsubscribe',
 } as const
@@ -269,6 +274,11 @@ const MEMORY_CHANNELS = {
   deleteDocument: 'memory:documents:delete',
   atomicProvenance: 'memory:atomic-provenance',
   captureDocumentRewrite: 'memory:capture-document-rewrite',
+} as const
+
+const MCP_CHANNELS = {
+  listServers: 'mcp:servers:list',
+  saveServers: 'mcp:servers:save',
 } as const
 
 const KNOWLEDGE_CHANNELS = {
@@ -363,6 +373,7 @@ function installIpcRouters(): void {
     TRANSCRIPTION_CHANNELS,
     MEMORY_CHANNELS,
     KNOWLEDGE_CHANNELS,
+    MCP_CHANNELS,
     FILES_CHANNELS,
     INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
@@ -783,6 +794,11 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: Documen
   })
 }
 
+function registerMcpHandlers(bridge: McpGatewayBridge): void {
+  handle(MCP_CHANNELS.listServers, () => bridge.list())
+  handle(MCP_CHANNELS.saveServers, (_event, servers: McpServersSnapshot['servers']) => bridge.save(servers))
+}
+
 function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listRooms, (_event, origin?: 'user' | 'auto') => bridge.listRooms(origin))
   handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
@@ -922,10 +938,30 @@ function registerRealityHandlers(bridge: RealityGatewayBridge): void {
   handle(REALITY_CHANNELS.finishCapture, (_event, id, input) => bridge.finishCapture(id, input))
   handle(REALITY_CHANNELS.updateTranscript, (_event, id, input) => bridge.updateTranscript(id, input))
   handle(REALITY_CHANNELS.addMarker, (_event, id, input) => bridge.addMarker(id, input))
+  handle(REALITY_CHANNELS.setImportant, (_event, id, important) => bridge.setImportant(id, important))
   handle(REALITY_CHANNELS.confirm, (_event, id) => bridge.confirm(id))
   handle(REALITY_CHANNELS.discard, (_event, id) => bridge.discard(id))
   handle(REALITY_CHANNELS.fail, (_event, id, error) => bridge.fail(id, error))
   handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
+  handle(REALITY_CHANNELS.exportTranscript, async (event, input: unknown) => {
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    if (!owner || owner.isDestroyed() || event.sender.isDestroyed()) throw new Error('无法验证导出请求来源。')
+    if (!input || typeof input !== 'object' || typeof (input as { content?: unknown }).content !== 'string') {
+      throw new Error('无效的逐字稿导出请求。')
+    }
+    const rawName = typeof (input as { fileName?: unknown }).fileName === 'string' ? (input as { fileName: string }).fileName : '逐字稿.txt'
+    const fileName = rawName.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 180) || '逐字稿'
+    const selection = await dialog.showSaveDialog(owner, {
+      title: '导出逐字稿',
+      defaultPath: fileName.toLowerCase().endsWith('.txt') ? fileName : `${fileName}.txt`,
+      buttonLabel: '导出',
+      filters: [{ name: '文本文件', extensions: ['txt'] }],
+      properties: ['showOverwriteConfirmation', 'createDirectory'],
+    })
+    if (selection.canceled || !selection.filePath) return { canceled: true }
+    await writeFile(selection.filePath, (input as { content: string }).content, 'utf8')
+    return { canceled: false, filePath: selection.filePath }
+  })
   handle(REALITY_CHANNELS.subscribe, (event) => bridge.subscribe(event.sender))
   handle(REALITY_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
@@ -1198,6 +1234,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerDocumentHandlers(documentGatewayBridge, documentAssets)
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
+    registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
     registerFilesHandlers(new FilesGatewayBridge(gatewaySupervisor))
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
