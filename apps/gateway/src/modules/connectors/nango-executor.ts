@@ -69,6 +69,16 @@ export class NangoExecutor implements ConnectorExecutor {
       throw error;
     }
   }
+  /** 只读代理 GET（agent 工具 nango_request 使用）；与内部 proxy 共用鉴权与错误语义。 */
+  async proxyGet(
+    connectionId: string,
+    configKey: string,
+    url: string,
+    headers?: Record<string, string>,
+  ) {
+    return this.proxy(connectionId, configKey, url, headers);
+  }
+
   private async proxyPost(connectionId: string, configKey: string, url: string, body: unknown) {
     const request = nangoProxyRequest(this.secret, connectionId, configKey, url);
     try {

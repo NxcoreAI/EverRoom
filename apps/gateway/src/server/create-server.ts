@@ -89,11 +89,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
   const nangoSecret = connectorConfig.enabled ? await bootstrapNango(connectorConfig) : connectorConfig.nangoSecret;
   const connectorDb = createConnectorDatabase(connectorConfig.enabled ? connectorConfig.databasePath : ":memory:");
+  const nangoExecutor = connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, nangoSecret) : null;
   const connectorManager = new ConnectorManager(
     new ConnectorRepository(connectorDb.sqlite),
-    connectorConfig.enabled ? new NangoExecutor(connectorConfig.nangoUrl, nangoSecret) : null,
+    nangoExecutor,
     connectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
   );
+  // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
+  const nangoAgentTools = nangoExecutor ? { manager: connectorManager, executor: nangoExecutor } : null;
   const connectorAuthorization = connectorConfig.enabled && "gmailConfigKey" in connectorConfig
     ? new NangoAuthorizationService(
         connectorConfig.nangoUrl,
@@ -245,7 +248,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           },
         }
       : {}),
-  }, connectorSyncService);
+  }, connectorSyncService, nangoAgentTools);
   app.log.info(
     {
       runtimeId: agentRuntime.id,

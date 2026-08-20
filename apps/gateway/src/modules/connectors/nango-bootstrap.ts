@@ -81,7 +81,7 @@ const PROVIDER_SCOPES: Record<string, string> = {
   // microsoft 的 default_scopes(offline_access,.default)由 provider 兜底,无需显式传。
 };
 
-async function ensureIntegration(
+export async function ensureIntegration(
   dashboard: AxiosInstance,
   providerConfigKey: string,
   provider: string,
@@ -106,14 +106,15 @@ async function ensureIntegration(
       console.warn(`[nango-bootstrap] 查询 integration ${providerConfigKey} 失败(HTTP ${existing.status})`);
       return;
     }
-    const scopes = PROVIDER_SCOPES[providerConfigKey];
+    // 显式传入的 scopes 优先；未传时回退到 executor 实际调用所需的最小集合。
+    const effectiveScopes = scopes ?? PROVIDER_SCOPES[providerConfigKey];
     await dashboard.post("/api/v1/integrations", {
       provider,
       integrationId: providerConfigKey,
       useSharedCredentials: false,
-      auth: { authType: "OAUTH2", clientId, clientSecret, ...(scopes ? { scopes } : {}) },
+      auth: { authType: "OAUTH2", clientId, clientSecret, ...(effectiveScopes ? { scopes: effectiveScopes } : {}) },
     }, { params: { env: "dev" } });
-    console.info(`[nango-bootstrap] 已创建 integration ${providerConfigKey} (provider=${provider}${scopes ? `, scopes=${scopes}` : ""})`);
+    console.info(`[nango-bootstrap] 已创建 integration ${providerConfigKey} (provider=${provider}${effectiveScopes ? `, scopes=${effectiveScopes}` : ""})`);
   } catch (error) {
     console.warn(`[nango-bootstrap] 创建 integration ${providerConfigKey} 失败:`, error instanceof Error ? error.message : error);
   }
