@@ -263,16 +263,9 @@ function availableRooms(input: StartAgentRunInput, registry?: AgentRoomRegistry)
 }
 
 function selectedRunRoomId(
-  sessionRoomId: string | null,
   input: StartAgentRunInput,
   registry?: AgentRoomRegistry,
 ): string | null {
-  if (sessionRoomId) {
-    if (registry && !registry.isActive(sessionRoomId)) {
-      throw new Error("agent_room_not_available");
-    }
-    return sessionRoomId;
-  }
   const selectedRoomId = input.context?.selectedRoomId?.trim()
     || input.context?.activeDocument?.roomId.trim();
   if (!selectedRoomId) return null;
@@ -360,7 +353,9 @@ export class AgentService {
     const now = new Date();
     const row: typeof agentSessions.$inferInsert = {
       id: randomUUID(),
-      roomId: normalizeRoomId(input.roomId),
+      // Room is run context, not session identity. Keep the legacy column
+      // nullable so old databases and specialized callers remain compatible.
+      roomId: null,
       pageLabel: input.pageLabel.trim(),
       runtimeId: this.runtime.id,
       status: "idle",
@@ -369,6 +364,50 @@ export class AgentService {
     };
     const created = this.db.insert(agentSessions).values(row).returning().get();
     return toSession(created);
+  }
+
+  /** Remote commands use a deterministic, tool-free session so a redelivered
+   * SaaS command can safely resolve to the same local run. */
+  async startRemoteRun(input: {
+    commandId: string;
+    idempotencyKey: string;
+    prompt: string;
+    title?: string;
+  }): Promise<AgentRun> {
+    const sessionId = `remote-${input.commandId}`;
+    let session = this.db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+    if (!session) {
+      const now = new Date();
+      session = this.db.insert(agentSessions).values({
+        id: sessionId,
+        roomId: null,
+        pageLabel: "Remote Agent",
+        runtimeId: this.runtime.id,
+        status: "idle",
+        title: input.title?.trim() || input.prompt.trim().slice(0, 48),
+        createdAt: now,
+        updatedAt: now,
+      }).returning().get();
+    }
+    return this.startRun(sessionId, {
+      prompt: input.prompt,
+      idempotencyKey: input.idempotencyKey,
+      captureMemory: false,
+      recallMemory: false,
+      toolsEnabled: false,
+    });
+  }
+
+  async cancelRemoteRun(commandId: string, runId?: string, sessionId?: string): Promise<AgentRun> {
+    const resolvedRunId = runId ?? this.db.select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.sessionId, sessionId ?? `remote-${commandId}`), inArray(agentRuns.status, ["accepted", "running"])))
+      .orderBy(desc(agentRuns.createdAt))
+      .get()?.id;
+    if (!resolvedRunId) throw new Error("agent_run_not_found");
+    const run = await this.cancelRun(resolvedRunId);
+    if (!run) throw new Error("agent_run_not_found");
+    return run;
   }
 
   listSessions(pageLabel?: string, roomId?: string | null): AgentSession[] {
@@ -686,7 +725,8 @@ export class AgentService {
     const completedSelectionRewriteMatches = Boolean(session
       && run?.status === "completed"
       && input.capabilityId === "document.selection-rewrite"
-      && normalizeRoomId(session.roomId) === input.roomId
+      && execution?.sessionId === input.agentSessionId
+      && execution.roomId === normalizeRoomId(input.roomId)
       && run.completedAt
       && Date.now() - run.completedAt.getTime() <= SELECTION_REWRITE_OPERATION_GRACE_MS);
     if (!session || !run
@@ -731,9 +771,8 @@ export class AgentService {
     let session = this.db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
     if (!session) throw new Error("agent_session_not_found");
     if (session.status === "running") throw new Error("agent_session_busy");
-    const sessionRoomId = normalizeRoomId(session.roomId);
     const rooms = availableRooms(input, this.roomRegistry);
-    const runRoomId = selectedRunRoomId(sessionRoomId, input, this.roomRegistry);
+    const runRoomId = selectedRunRoomId(input, this.roomRegistry);
     const activeDocument = input.context?.activeDocument
       ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument, runRoomId)
         ?? input.context.activeDocument
@@ -780,14 +819,14 @@ export class AgentService {
       { event: "agent.input", sessionId, runId, content: input.prompt },
       "agent user input",
     );
-    await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: {} });
+    await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: { prompt: input.prompt } });
 
     // Selection and clarification controls are driven by completed tool events.
     // Emit those preflights deterministically instead of relying on model behavior.
-    const documentTopic = !sessionRoomId && !runRoomId
+    const documentTopic = !runRoomId
       ? ambiguousDocumentTopic(input.prompt)
       : null;
-    const preflightTool = !sessionRoomId && !runRoomId && requestsWorkspaceDocument(input.prompt)
+    const preflightTool = !runRoomId && requestsWorkspaceDocument(input.prompt)
       ? {
           name: "context_room_list",
           result: { rooms, selectionRequired: true },
@@ -841,6 +880,7 @@ export class AgentService {
       ...(activeDocument ? { activeDocument } : {}),
     });
 
+    const runPageLabel = input.context?.pageLabel?.trim() || session.pageLabel;
     let runtimeRun;
     try {
       const responseLanguage = normalizeAgentLocale(input.responseLanguage);
@@ -848,12 +888,12 @@ export class AgentService {
         runId,
         sessionId,
         runtimeSessionRef: session.runtimeSessionRef,
-        prompt: runtimePrompt(input, session.pageLabel, this.connectorMode),
+        prompt: runtimePrompt(input, runPageLabel, this.connectorMode),
         ...(responseLanguage ? { responseLanguage } : {}),
-        pageLabel: session.pageLabel,
+        pageLabel: runPageLabel,
         roomId: runRoomId,
         availableRooms: rooms,
-        roomSelectionRequired: sessionRoomId === null && runRoomId === null,
+        roomSelectionRequired: runRoomId === null,
         captureMemory: input.captureMemory !== false,
         recallMemory: input.recallMemory !== false,
         toolsEnabled: input.toolsEnabled !== false,
@@ -998,7 +1038,12 @@ export class AgentService {
     };
     const nextStatus = runtimeEvent.type === "run.started" ? "running" : terminalStatus[runtimeEvent.type];
     if (nextStatus && nextStatus !== "running") {
-      this.executionContexts.delete(runId);
+      if (nextStatus === "completed") {
+        const cleanup = setTimeout(() => this.executionContexts.delete(runId), SELECTION_REWRITE_OPERATION_GRACE_MS);
+        cleanup.unref?.();
+      } else {
+        this.executionContexts.delete(runId);
+      }
       const trustedSessions = this.trustedMcpSessions.get(runId);
       if (trustedSessions) {
         for (const sessionId of trustedSessions) revokeTrustedMcpSession(sessionId);

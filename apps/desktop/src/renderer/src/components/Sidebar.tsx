@@ -5,6 +5,7 @@ import { navigationSections, type PageId } from '@/data/navigation'
 import { useAccount } from '@/state/AccountContext'
 import type { GatewayState, GatewayStatus } from '../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
+import { MemoryPipelineStatus } from './MemoryPipelineStatus'
 
 const INITIAL_GATEWAY_STATUS: GatewayStatus = {
   state: 'starting',
@@ -156,6 +157,9 @@ export function Sidebar({
         ))}
       </nav>
 
+      <MemoryPipelineStatus onNavigate={onNavigate} />
+      {/* Gateway 正常运行时保持安静，只在启动/异常/停止时提示。 */}
+      {gatewayStatus.state !== 'ready' ? (
       <div
         className="gateway-status"
         data-state={gatewayStatus.state}
@@ -170,6 +174,7 @@ export function Sidebar({
         </span>
         <i className="gateway-status-dot" aria-hidden="true" />
       </div>
+      ) : null}
       <button type="button" className="account-row" onClick={() => onNavigate('settings')}>
         <span className="account-avatar" aria-hidden="true">{accountName.slice(0, 1).toUpperCase()}</span>
         <span className="account-copy">

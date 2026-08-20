@@ -228,7 +228,7 @@ export function AgentPanel({
     setSubmitting(true)
     try {
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
-      await session.sendPrompt(submittedPrompt, submittedContext, undefined, activeDocumentContext)
+      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext)
       setSelectedText('')
       setComposerResetKey((current) => current + 1)
     } catch {

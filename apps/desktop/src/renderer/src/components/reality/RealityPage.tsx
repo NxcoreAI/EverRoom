@@ -9,13 +9,16 @@ import {
   FileText,
   Image as ImageIcon,
   LoaderCircle,
+  Monitor,
   Pause,
   Play,
   RefreshCw,
   Search,
+  Smartphone,
   Sparkles,
   Tag,
   Trash2,
+  Watch,
   X,
   UserRound,
 } from 'lucide-react'
@@ -48,10 +51,25 @@ type TimelineItem =
 
 const STATUS_LABELS: Record<RealityEventStatus, string> = {
   ongoing: 'diaryReality:reality.inProgress',
-  pending_confirmation: 'diaryReality:reality.completed',
   completed: 'diaryReality:reality.completed',
   failed: 'diaryReality:reality.failed',
   pending_sync: 'diaryReality:reality.pendingSync',
+}
+
+/** 转录来源图标：PC / 手机 / 手表。 */
+const DEVICE_ICONS = {
+  desktop: Monitor,
+  iphone: Smartphone,
+  apple_watch: Watch,
+} as const
+
+function DeviceIcon({ event }: { event: RealityEvent }) {
+  const Icon = DEVICE_ICONS[event.captureDevice.kind] ?? Monitor
+  return (
+    <span className="event-device" title={event.captureDevice.name} aria-label={event.captureDevice.name}>
+      <Icon aria-hidden="true" />
+    </span>
+  )
 }
 
 const PROCESSING_LABELS: Record<RealityEvent['processingState'], string> = {
@@ -283,7 +301,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     const timer = window.setInterval(() => void sync().catch(() => undefined), 15_000)
     return () => window.clearInterval(timer)
   }, [account?.authenticated, loadEvents])
-
   const selected = events.find((event) => event.id === expandedId) ?? null
   const timelineItems = useMemo<TimelineItem[]>(() => [
     ...events.map((event): TimelineItem => ({ kind: 'audio', id: event.id, startedAt: event.startedAt, event })),
@@ -293,7 +310,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     if (filter !== 'all') {
       const matches = item.kind === 'audio'
         ? filter === 'completed'
-          ? item.event.status === 'completed' || item.event.status === 'pending_confirmation'
+          ? item.event.status === 'completed'
           : item.event.status === filter
         : filter === 'ongoing'
           ? item.node.status === 'pending' || item.node.status === 'processing'
@@ -730,6 +747,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                       <button type="button" className="schedule-trigger" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : event.id)}>
                         <span className="event-type">{EVENT_TYPE_LABELS[type]}</span>
                         <span className="event-status" data-status={event.status}>{t(STATUS_LABELS[event.status])}</span>
+                        <DeviceIcon event={event} />
                         <strong>{event.currentTopic || event.insights.currentTopic || event.title}</strong>
                         <p>{event.insights.summary || (event.transcript ? event.transcript.slice(0, 120) : t(PROCESSING_LABELS[event.processingState]))}</p>
                         {(event.insights.representativeTags?.length ?? 0) > 0 ? <span className="schedule-tags">{event.insights.representativeTags!.slice(0, 5).map((tag) => <span key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind}>{tag.label}{(tag.occurrenceCount ?? 0) > 1 ? <small>{tag.occurrenceCount}</small> : null}</span>)}</span> : null}
@@ -882,7 +900,7 @@ function DetailSkeleton({ lines = 5 }: { lines?: number }) {
   )
 }
 
-/** 进行中事件的时长需要每秒走秒;隔离在小组件里避免整页跟着重渲染。 */
+/** Keep the live timer isolated so ongoing captures do not rerender the whole page. */
 function LiveDuration({ durationMs, startedAt, ongoing }: { durationMs: number; startedAt: string; ongoing: boolean }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {

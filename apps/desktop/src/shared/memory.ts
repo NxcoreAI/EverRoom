@@ -54,9 +54,17 @@ export interface MemoryCoreDto {
   updatedAt: string
 }
 
+export interface MemoryPipelineSessionDto {
+  sessionId: string
+  title: string | null
+  latestUserMessage: string | null
+}
+
 export interface MemoryPipelineStageDto {
   queued: number
   running: number
+  queuedSessions: MemoryPipelineSessionDto[]
+  runningSessions: MemoryPipelineSessionDto[]
   idle: boolean
 }
 

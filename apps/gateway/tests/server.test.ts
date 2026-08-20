@@ -368,7 +368,11 @@ describe("gateway server", () => {
       method: "POST",
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
-      payload: { prompt: "列出当前文档", idempotencyKey: "mcp-http-run" },
+      payload: {
+        prompt: "列出当前文档",
+        idempotencyKey: "mcp-http-run",
+        context: { selectedRoomId: "room-test" },
+      },
     })).json<AgentRun>();
     const trusted = (await app.inject({
       method: "POST",
@@ -450,7 +454,11 @@ describe("gateway server", () => {
       method: "POST",
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
-      payload: { prompt: "列出当前文档", idempotencyKey: "mcp-client-run" },
+      payload: {
+        prompt: "列出当前文档",
+        idempotencyKey: "mcp-client-run",
+        context: { selectedRoomId: "room-client-test" },
+      },
     })).json<AgentRun>();
     const trusted = (await app.inject({
       method: "POST",

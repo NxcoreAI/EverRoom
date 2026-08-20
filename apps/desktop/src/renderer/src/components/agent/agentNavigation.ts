@@ -37,9 +37,10 @@ export interface AgentSessionRouteRequest {
 }
 
 export function navigationRequiresSessionHandoff(request: AgentNavigationRequest): boolean {
-  const sourceRoomId = request.source.roomId?.trim() || null
-  const targetRoomId = request.target.roomId?.trim() || null
-  return !sourceRoomId || sourceRoomId !== targetRoomId
+  // Navigation changes the visible resource only. Agent conversation state is
+  // global and remains selected across pages and Context Rooms.
+  void request
+  return false
 }
 
 export function agentSessionLinkDestination(

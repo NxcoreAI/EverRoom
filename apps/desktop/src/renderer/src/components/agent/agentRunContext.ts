@@ -9,8 +9,10 @@ export function buildAgentRunContext(
   selectedText?: string,
   selectedRoomId?: string,
   activeDocument?: AgentActiveDocumentContext | null,
+  pageLabel?: string,
 ): NonNullable<StartAgentRunInput['context']> {
   return {
+    ...(pageLabel?.trim() ? { pageLabel: pageLabel.trim() } : {}),
     rooms: rooms.map(({ id, title, kind, background, goal, status, contextSummary }) => ({
       id,
       title,

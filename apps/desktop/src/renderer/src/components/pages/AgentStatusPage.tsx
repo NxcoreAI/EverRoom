@@ -23,7 +23,6 @@ import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { pageLabelKey } from '@/data/navigation'
 import './AgentStatusPage.css'
 
-const PAGE_LABELS = ['首页', 'Context Room', '文档', '现实感知', '数据源', '文件', '记忆', 'Wiki', '任务', '日记', '设置']
 const OFFICE_ZONES = ['desk', 'coffee', 'kitchen', 'lounge', 'restroom'] as const
 
 type OfficeZone = typeof OFFICE_ZONES[number]
@@ -106,8 +105,7 @@ export function AgentStatusPage({ onFocusAgent }: { onFocusAgent: () => void }) 
     }
     if (!quiet) setRefreshing(true)
     try {
-      const pages = await Promise.all(PAGE_LABELS.map((label) => api.listSessions(label)))
-      const sessions = Array.from(new Map(pages.flat().map((session) => [session.id, session])).values())
+      const sessions = (await api.listSessions())
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       const runningSession = sessions.find((session) => session.status === 'running')
       const active = runningSession ? await api.getSession(runningSession.id) : null

@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest'
 import { parseAgentRoomSelectionResult } from '../src/renderer/src/components/agent/agentRoomSelection'
 import { parseAgentDocumentIntentResult } from '../src/renderer/src/components/agent/agentDocumentIntent'
 import {
-  buildAgentRunContext,
   mergePendingAgentMessages,
 } from '../src/renderer/src/components/agent/useAgentSession'
+import { buildAgentRunContext } from '../src/renderer/src/components/agent/agentRunContext'
 
 function message(id: string, content: string): AgentMessage {
   return {

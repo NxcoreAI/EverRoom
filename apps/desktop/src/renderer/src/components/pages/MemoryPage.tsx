@@ -1,6 +1,7 @@
 import { RefreshCw, Search, Sparkles } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
+import { MEMORY_TAB_EVENT } from '../MemoryPipelineStatus'
 import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
 import { ConversationPane } from './memory/ConversationPane'
 import { CoreProfilePane } from './memory/CoreProfilePane'
@@ -35,6 +36,19 @@ export function MemoryPage({ onStartOnboarding }: { onStartOnboarding?: () => vo
   // 溯源跳转目标（原子记忆 → 文档详情 / 会话过滤），置位同时切 Tab。
   const [documentFocus, setDocumentFocus] = useState<string | null>(null)
   const [conversationFocus, setConversationFocus] = useState<string | null>(null)
+
+  // 侧边栏记忆管道点击跳转：按新增层级直接打开对应 tab。
+  useEffect(() => {
+    const openTab = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab: string }>).detail?.tab
+      if (tab && TABS.some((entry) => entry.id === tab)) {
+        setSearch(null)
+        setTab(tab as MemoryTabId)
+      }
+    }
+    window.addEventListener(MEMORY_TAB_EVENT, openTab)
+    return () => window.removeEventListener(MEMORY_TAB_EVENT, openTab)
+  }, [])
 
   const openDocument = (documentId: string) => {
     setDocumentFocus(documentId)

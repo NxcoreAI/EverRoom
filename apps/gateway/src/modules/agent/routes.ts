@@ -40,6 +40,12 @@ const RoomContextSummary = Type.Object({
     updatedAt: Type.String({ maxLength: 40 }),
   }), { maxItems: 20 }),
 });
+const RemoteCommandBody = Type.Object({
+  commandId: Type.String({ minLength: 1, maxLength: 100 }),
+  idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+  prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
+  title: Type.Optional(Type.String({ maxLength: 160 })),
+});
 const NavigationTarget = Type.Object({
   pageId: Type.String({ minLength: 1, maxLength: 40 }),
   title: Type.String({ minLength: 1, maxLength: 200 }),
@@ -90,6 +96,30 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
         },
       },
       async (request, reply) => reply.code(201).send(service.createSession(request.body)),
+    );
+
+    app.post(
+      "/v1/agent/remote/commands",
+      { schema: { tags: ["agent"], body: RemoteCommandBody } },
+      async (request, reply) => {
+        try {
+          return reply.code(202).send(await service.startRemoteRun(request.body));
+        } catch (error) {
+          if (error instanceof Error && error.message === "agent_session_busy") {
+            return reply.code(409).send({ error: "session_busy", message: "Remote Agent already has an active run" });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/agent/remote/commands/:id/cancel",
+      { schema: { tags: ["agent"], params: IdParams, body: Type.Object({
+        runId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+        sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+      }) } },
+      async (request, reply) => reply.code(200).send(await service.cancelRemoteRun(request.params.id, request.body.runId, request.body.sessionId)),
     );
 
     app.post(
@@ -206,6 +236,7 @@ export function agentRoutes(service: AgentService): FastifyPluginAsyncTypebox {
             recallMemory: Type.Optional(Type.Boolean()),
             toolsEnabled: Type.Optional(Type.Boolean()),
             context: Type.Optional(Type.Object({
+              pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
               selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 8_000 })),
               rooms: Type.Optional(Type.Array(Type.Object({
                 id: Type.String({ minLength: 1, maxLength: 100 }),

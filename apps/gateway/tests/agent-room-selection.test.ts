@@ -127,29 +127,32 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
-  it('keeps a Room-scoped session bound to its current Room', async () => {
+  it('treats Room selection as per-run context instead of session binding', async () => {
     const { rooms, runtime, service, sqlite } = await createHarness()
     rooms.saveSnapshot({
-      rooms: [{
-        id: 'room-current',
-        title: '当前 Room',
-        kind: '项目',
-        data: {
+      rooms: [
+        {
           id: 'room-current',
           title: '当前 Room',
           kind: '项目',
-          brief: { background: '用户创建的背景', goal: '完成首个版本', status: '等待资料' },
-          generatedContext: {
-            overview: '该 Room 聚焦资料评审。',
-            status: '资料已进入评审',
-            nextSteps: ['确认评审意见'],
-            entities: [],
-            actionItems: [],
-            meetings: [],
-            sourceDocuments: [],
+          data: {
+            id: 'room-current',
+            title: '当前 Room',
+            kind: '项目',
+            brief: { background: '用户创建的背景', goal: '完成首个版本', status: '等待资料' },
+            generatedContext: {
+              overview: '该 Room 聚焦资料评审。',
+              status: '资料已进入评审',
+              nextSteps: ['确认评审意见'],
+              entities: [],
+              actionItems: [],
+              meetings: [],
+              sourceDocuments: [],
+            },
           },
         },
-      }],
+        { id: 'room-other', title: '其他 Room', data: { id: 'room-other', title: '其他 Room' } },
+      ],
       deletedRooms: [],
     })
     const session = service.createSession({ pageLabel: 'Context Room', roomId: 'room-current' })
@@ -163,18 +166,22 @@ describe('Agent Room selection', () => {
     })
 
     expect(runtime.starts[0]).toMatchObject({
-      roomId: 'room-current',
+      roomId: 'room-other',
       roomSelectionRequired: false,
-      availableRooms: [{
-        id: 'room-current',
-        title: '当前 Room',
-        kind: '项目',
-        background: '用户创建的背景',
-        goal: '完成首个版本',
-        status: '资料已进入评审',
-        contextSummary: expect.objectContaining({ nextSteps: ['确认评审意见'] }),
-      }],
+      availableRooms: [
+        {
+          id: 'room-current',
+          title: '当前 Room',
+          kind: '项目',
+          background: '用户创建的背景',
+          goal: '完成首个版本',
+          status: '资料已进入评审',
+          contextSummary: expect.objectContaining({ nextSteps: ['确认评审意见'] }),
+        },
+        { id: 'room-other', title: '其他 Room' },
+      ],
     })
+    expect(session.roomId).toBeNull()
     sqlite.close()
   })
 

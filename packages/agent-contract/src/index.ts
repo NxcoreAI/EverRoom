@@ -33,7 +33,9 @@ export type AgentEventType =
 
 export interface AgentSession {
   id: string;
+  /** Legacy metadata; user sessions are not Room-scoped. */
   roomId: string | null;
+  /** Last/creation UI surface, never a session partition key. */
   pageLabel: string;
   runtimeId: string;
   title: string | null;
@@ -83,6 +85,7 @@ export interface RuntimeCapabilities {
 
 export interface CreateAgentSessionInput {
   pageLabel: string;
+  /** Legacy input accepted for compatibility; ignored for user sessions. */
   roomId?: string | null;
 }
 
@@ -178,6 +181,8 @@ export interface StartAgentRunInput {
   /** Defaults to true. Lightweight runs can hide all runtime tools from the model. */
   toolsEnabled?: boolean;
   context?: {
+    /** UI surface where this run was started; never part of session identity. */
+    pageLabel?: string;
     selectedText?: string;
     /** Current, non-deleted Rooms visible to the desktop when this run starts. */
     rooms?: AgentRoomReference[];
