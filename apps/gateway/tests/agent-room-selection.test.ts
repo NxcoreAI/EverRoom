@@ -379,6 +379,8 @@ describe('Agent Room selection', () => {
       roomId: 'room-b',
       availableRooms: rooms,
     })
+    expect(service.getSnapshot(session.id)?.messages.filter((message) => message.role === 'user'))
+      .toMatchObject([{ content: originalPrompt, runId: sourceRun.id }])
     expect(service.listPendingIntents(session.id)).toEqual([])
     await expect(service.submitPendingIntent(intent!.id, {
       roomId: 'room-b',

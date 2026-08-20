@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink } from '@nxcore/agent-contract'
+import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -19,6 +19,7 @@ import type { PageId } from '@/data/navigation'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import {
   buildAgentDocumentSelectionRunRequest,
+  type AgentDocumentSelectionItem,
   type AgentDocumentSelectionSubmission,
 } from '@/components/agent/agentDocumentSelection'
 
@@ -229,36 +230,26 @@ export function AgentPanel({
     }
   }
 
-  const selectDocumentRoom = async (room: AgentRoomReference) => {
+  const selectDocumentRoom = async (
+    room: AgentRoomReference,
+    intent: PendingAgentIntent,
+    document?: AgentDocumentSelectionItem,
+  ) => {
     if (!roomBackendReady) return
     setSubmitting(true)
     try {
-      const runId = await session.sendPrompt(`在「${room.title}」中创建。`, undefined, room.id)
-      if (runId) {
-        setPendingNavigationByRun((current) => ({
-          ...current,
-          [runId]: {
-            pageId: 'rooms',
-            title: room.title,
-            action: 'created',
-            roomId: room.id,
-          },
-        }))
-      }
-    } catch {
-      // useAgentSession exposes the request error inside the conversation.
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const confirmDocumentIntent = async (topic: string) => {
-    if (!roomBackendReady) return
-    setSubmitting(true)
-    try {
-      await session.sendPrompt(`请围绕“${topic}”创建一篇文档。`)
-    } catch {
-      // useAgentSession exposes the request error inside the conversation.
+      const runId = await session.submitPendingIntent(intent.id, room.id, document?.documentId)
+      if (!runId) throw new Error('当前请求仍在处理中。')
+      setPendingNavigationByRun((current) => ({
+        ...current,
+        [runId]: {
+          pageId: 'rooms',
+          title: document?.title ?? room.title,
+          action: document ? 'updated' : 'created',
+          roomId: room.id,
+          ...(document ? { objectId: document.documentId, objectType: 'document' as const } : {}),
+        },
+      }))
     } finally {
       setSubmitting(false)
     }
@@ -331,18 +322,16 @@ export function AgentPanel({
         error={session.error}
         loading={session.loading}
         messages={session.messages}
-        onConfirmDocumentIntent={(topic) => void confirmDocumentIntent(topic)}
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt) => void sendPrompt(prompt)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
-        onSelectRoom={(room) => void selectDocumentRoom(room)}
+        onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}
         onSelectPrompt={(prompt) => {
           setDraft(prompt)
           focusComposer()
         }}
         pendingNavigationByRun={pendingNavigationByRun}
-        reasoningByRun={session.reasoningByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}
         runStartedAtByRun={session.runStartedAtByRun}
         sessionLinks={session.sessionLinks}

@@ -5,10 +5,13 @@ import {
   Check,
   ChevronRight,
   Circle,
+  FileJson,
   FileText,
   Image as ImageIcon,
   LoaderCircle,
   Mail,
+  Play,
+  Plug,
   Search,
   Square,
   Terminal,
@@ -26,10 +29,14 @@ import {
   type DisplayAgentToolCall,
 } from './agentRunActivity'
 
-type ToolKind = 'search' | 'memory' | 'file' | 'email' | 'calendar' | 'image' | 'command' | 'other'
+type ToolKind = 'search' | 'memory' | 'file' | 'email' | 'calendar' | 'image' | 'command' | 'schema' | 'connector' | 'action' | 'other'
 
-function toolKind(name: string): ToolKind {
+export function toolKind(name: string): ToolKind {
   const normalized = name.toLowerCase()
+  if (normalized === 'connector_search') return 'search'
+  if (normalized === 'connector_schema') return 'schema'
+  if (normalized === 'connector_apps') return 'connector'
+  if (normalized === 'connector_run') return 'action'
   if (/photo|image/.test(normalized)) return 'image'
   if (/calendar|scheduler/.test(normalized)) return 'calendar'
   if (/memory/.test(normalized)) return 'memory'
@@ -67,13 +74,16 @@ function formatDuration(duration: number): string {
 
 function ToolIcon({ kind }: { kind: ToolKind }) {
   const Icon = {
+    action: Play,
     calendar: CalendarDays,
     command: Terminal,
+    connector: Plug,
     email: Mail,
     file: FileText,
     image: ImageIcon,
     memory: Brain,
     other: Wrench,
+    schema: FileJson,
     search: Search,
   }[kind]
   return <Icon aria-hidden="true" />
@@ -97,14 +107,12 @@ function statusLabel(status: DisplayAgentToolCall['status']): string {
 
 export function AgentExecutionTimeline({
   activity,
-  reasoning,
   runStartedAt,
   runCompletedAt,
   continuing = false,
   continuationLabel = '正在继续处理',
 }: {
   activity: AgentRunActivity
-  reasoning?: string
   runStartedAt?: string
   runCompletedAt?: string
   continuing?: boolean
@@ -196,12 +204,6 @@ export function AgentExecutionTimeline({
       >
         <div>
           <div className="agent-tool-list">
-            {reasoning ? (
-              <details className="agent-execution-reasoning">
-                <summary><Brain aria-hidden="true" />思考过程</summary>
-                <p>{reasoning}</p>
-              </details>
-            ) : null}
             {activity.steps.map((step) => {
               const tool = step.tool
               const summaryText = agentToolResultSummary(tool.result ?? tool.partialResult)

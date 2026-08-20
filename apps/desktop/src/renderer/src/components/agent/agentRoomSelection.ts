@@ -1,8 +1,9 @@
-import type { AgentRoomReference } from '@nxcore/agent-contract'
+import type { AgentRoomReference, PendingAgentIntent } from '@nxcore/agent-contract'
 
 export interface AgentRoomSelectionResult {
   rooms: AgentRoomReference[]
   selectionRequired: true
+  pendingIntent?: PendingAgentIntent
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -32,6 +33,40 @@ function roomsFrom(value: unknown): AgentRoomReference[] | null {
   return rooms
 }
 
+export function parsePendingAgentIntent(value: unknown): PendingAgentIntent | null {
+  const candidate = record(value)
+  if (!candidate) return null
+  const targetCapability = candidate.targetCapability
+  const allowedRoomIds = Array.isArray(candidate.allowedRoomIds)
+    ? candidate.allowedRoomIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
+    : []
+  const allowedDocumentIds = Array.isArray(candidate.allowedDocumentIds)
+    ? candidate.allowedDocumentIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
+    : []
+  if (
+    typeof candidate.id !== 'string'
+    || typeof candidate.sessionId !== 'string'
+    || typeof candidate.sourceRunId !== 'string'
+    || typeof candidate.originalPrompt !== 'string'
+    || !['document.create', 'document.edit', 'document.continue'].includes(String(targetCapability))
+    || allowedRoomIds.length === 0
+    || typeof candidate.expiresAt !== 'string'
+    || typeof candidate.createdAt !== 'string'
+  ) return null
+  return {
+    id: candidate.id,
+    sessionId: candidate.sessionId,
+    sourceRunId: candidate.sourceRunId,
+    originalPrompt: candidate.originalPrompt,
+    targetCapability: targetCapability as PendingAgentIntent['targetCapability'],
+    allowedRoomIds,
+    allowedDocumentIds,
+    expiresAt: candidate.expiresAt,
+    consumedAt: typeof candidate.consumedAt === 'string' ? candidate.consumedAt : null,
+    createdAt: candidate.createdAt,
+  }
+}
+
 export function parseAgentRoomSelectionResult(result: unknown): AgentRoomSelectionResult | null {
   const root = record(result)
   if (!root) return null
@@ -43,7 +78,8 @@ export function parseAgentRoomSelectionResult(result: unknown): AgentRoomSelecti
     const candidate = record(value)
     if (candidate?.selectionRequired !== true) continue
     const rooms = roomsFrom(candidate.rooms)
-    if (rooms) return { rooms, selectionRequired: true }
+    const pendingIntent = parsePendingAgentIntent(candidate.pendingIntent)
+    if (rooms) return { rooms, selectionRequired: true, ...(pendingIntent ? { pendingIntent } : {}) }
   }
   return null
 }
