@@ -26,6 +26,7 @@ async function testConfig(): Promise<GatewayConfig> {
     cursorCompletionPi: null,
     backgroundPi: null,
     knowledge: null,
+    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [] },
     asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),

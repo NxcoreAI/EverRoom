@@ -61,30 +61,31 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Database }> = [
   { id: 'developer', label: 'surface:connectorSync.developerTools', icon: Wrench },
 ]
 
-function servicePreset(service: string): Pick<JobDraft, 'resourceType' | 'dataset' | 'goal' | 'allowedActions'> {
+function servicePreset(service: string, t?: Translate): Pick<JobDraft, 'resourceType' | 'dataset' | 'goal' | 'allowedActions'> {
+  const goal = (key: string) => t?.(key) ?? key
   if (service === 'gmail') return {
     resourceType: 'email', dataset: 'emails',
-    goal: '同步指定范围内的完整邮件并标准化发件人、主题、正文、标签和时间',
+    goal: goal('surface:connectorSync.defaultEmailGoal'),
     allowedActions: 'fetch_emails, get_message',
   }
   if (service === 'notion') return {
     resourceType: 'document', dataset: 'documents',
-    goal: '同步可访问的文档并标准化标题、正文、所有者和来源链接',
+    goal: goal('surface:connectorSync.defaultDocumentGoal'),
     allowedActions: 'search_pages, get_page',
   }
   if (service === 'google_calendar') return {
     resourceType: 'calendar', dataset: 'calendar_events',
-    goal: '同步指定时间窗口内的日程并标准化参与者、起止时间、地点和状态',
+    goal: goal('surface:connectorSync.defaultCalendarGoal'),
     allowedActions: 'list_events, get_event',
   }
   return {
-    resourceType: 'generic', dataset: 'records', goal: '同步已授权连接器中的数据到本地数据库',
+    resourceType: 'generic', dataset: 'records', goal: goal('surface:connectorSync.defaultGenericGoal'),
     allowedActions: '',
   }
 }
 
-function blankDraft(service = 'gmail'): JobDraft {
-  const preset = servicePreset(service)
+function blankDraft(service = 'gmail', t?: Translate): JobDraft {
+  const preset = servicePreset(service, t)
   return {
     id: null, configVersion: null, name: '', service, connectionName: '', ...preset,
     query: service === 'gmail' ? 'newer_than:1d' : '', maxResults: 50,
@@ -296,7 +297,7 @@ export function ConnectorSyncPage() {
 
       {!loading && tab === 'jobs' ? (
         <section className="connector-sync-section">
-          <div className="connector-section-heading"><div><h2>{t('surface:connectorSync.syncJobs')}</h2><p>{t('surface:connectorSync.jobConfigurationIsStoredLocallyAndRemainsActive')}</p></div><button type="button" className="primary-button" onClick={() => setDraft(blankDraft(services[0]))}><Plus />{t('surface:connectorSync.newTask')}</button></div>
+              <div className="connector-section-heading"><div><h2>{t('surface:connectorSync.syncJobs')}</h2><p>{t('surface:connectorSync.jobConfigurationIsStoredLocallyAndRemainsActive')}</p></div><button type="button" className="primary-button" onClick={() => setDraft(blankDraft(services[0], t))}><Plus />{t('surface:connectorSync.newTask')}</button></div>
           <div className="connector-table-wrap"><table className="connector-sync-table"><thead><tr><th>{t('surface:connectorSync.tasks')}</th><th>{t('surface:connectorSync.account')}</th><th>{t('surface:connectorSync.schedule')}</th><th>{t('surface:connectorSync.lastResult')}</th><th>{t('surface:connectorSync.nextRun')}</th><th aria-label={t('surface:connectorSync.actions')} /></tr></thead><tbody>
             {jobs.filter((job) => job.status !== 'archived').map((job) => (
               <tr key={job.id}>
@@ -335,7 +336,7 @@ export function ConnectorSyncPage() {
             <header><div><Settings2 /><span><strong>{t(draft.id ? 'surface:connectorSync.editSyncJob' : 'surface:connectorSync.newSyncJob')}</strong><small>{t('surface:connectorSync.structuredSettingsAreSavedToTheLocalDatabase')}</small></span></div><button type="button" title={t('surface:connectorSync.close')} onClick={() => setDraft(null)}><X /></button></header>
             <div className="connector-job-form">
               <label><span>{t('surface:connectorSync.jobName')}</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder={t('surface:connectorSync.forExampleGmailMailFromTheLastDay')} /></label>
-              <div className="connector-form-grid"><label><span>{t('surface:connectorSync.connectors')}</span><select value={draft.service} onChange={(event) => { const service = event.target.value; setDraft({ ...draft, service, connectionName: '', ...servicePreset(service), promptProfileId: '' }) }}>{services.map((service) => <option key={service} value={service}>{service}</option>)}</select></label><label><span>{t('surface:connectorSync.authorizedAccount')}</span><select value={draft.connectionName} onChange={(event) => setDraft({ ...draft, connectionName: event.target.value })}><option value="">{t('surface:connectorSync.defaultConnection')}</option>{connections.filter((item) => item.service === draft.service && item.connectionName).map((item) => <option key={item.connectionName!} value={item.connectionName!}>{item.displayName || item.connectionName}</option>)}</select></label></div>
+              <div className="connector-form-grid"><label><span>{t('surface:connectorSync.connectors')}</span><select value={draft.service} onChange={(event) => { const service = event.target.value; setDraft({ ...draft, service, connectionName: '', ...servicePreset(service, t), promptProfileId: '' }) }}>{services.map((service) => <option key={service} value={service}>{service}</option>)}</select></label><label><span>{t('surface:connectorSync.authorizedAccount')}</span><select value={draft.connectionName} onChange={(event) => setDraft({ ...draft, connectionName: event.target.value })}><option value="">{t('surface:connectorSync.defaultConnection')}</option>{connections.filter((item) => item.service === draft.service && item.connectionName).map((item) => <option key={item.connectionName!} value={item.connectionName!}>{item.displayName || item.connectionName}</option>)}</select></label></div>
               <div className="connector-form-grid"><label><span>{t('surface:connectorSync.dataType')}</span><select value={draft.resourceType} onChange={(event) => setDraft({ ...draft, resourceType: event.target.value as ConnectorResourceType })}><option value="email">{t('surface:connectorSync.email')}</option><option value="document">{t('surface:connectorSync.documents')}</option><option value="calendar">{t('surface:connectorSync.calendar')}</option><option value="generic">{t('surface:connectorSync.general')}</option></select></label><label><span>{t('surface:connectorSync.dataset')}</span><input value={draft.dataset} onChange={(event) => setDraft({ ...draft, dataset: event.target.value })} /></label></div>
               <div className="connector-form-grid"><label><span>{t('surface:connectorSync.queryScope')}</span><input value={draft.query} onChange={(event) => setDraft({ ...draft, query: event.target.value })} placeholder={t('surface:connectorSync.forExampleNewerThan1d')} /></label><label><span>{t('surface:connectorSync.perRunLimit')}</span><input type="number" min={1} max={500} value={draft.maxResults} onChange={(event) => setDraft({ ...draft, maxResults: Number(event.target.value) })} /></label></div>
               <label><span>{t('surface:connectorSync.syncGoal')}</span><textarea value={draft.goal} onChange={(event) => setDraft({ ...draft, goal: event.target.value })} /></label>

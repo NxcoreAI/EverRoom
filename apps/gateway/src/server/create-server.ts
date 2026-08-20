@@ -43,6 +43,7 @@ import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
 import { IngestService } from "../modules/ingest/service.js";
+import { IngestFilterService } from "../modules/ingest/filter-agent.js";
 import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
@@ -106,11 +107,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
   const nangoSecret = nangoConnectorConfig.enabled ? await bootstrapNango(nangoConnectorConfig) : nangoConnectorConfig.nangoSecret;
   const nangoConnectorDb = createConnectorDatabase(nangoConnectorConfig.enabled ? nangoConnectorConfig.databasePath : ":memory:");
+  const nangoExecutor = nangoConnectorConfig.enabled
+    ? new NangoExecutor(nangoConnectorConfig.nangoUrl, nangoSecret)
+    : null;
   const nangoConnectorManager = new ConnectorManager(
     new ConnectorRepository(nangoConnectorDb.sqlite),
-    nangoConnectorConfig.enabled ? new NangoExecutor(nangoConnectorConfig.nangoUrl, nangoSecret) : null,
+    nangoExecutor,
     nangoConnectorConfig.enabled ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents")) : null,
   );
+  // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
+  const nangoAgentTools = nangoExecutor
+    ? { manager: nangoConnectorManager, executor: nangoExecutor }
+    : null;
   const nangoConnectorAuthorization = nangoConnectorConfig.enabled && "gmailConfigKey" in nangoConnectorConfig
     ? new NangoAuthorizationService(
         nangoConnectorConfig.nangoUrl,
@@ -307,7 +315,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           },
         }
       : {}),
-  }, cliConnectorSyncService);
+  }, cliConnectorSyncService, nangoAgentTools);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
   app.log.info(
     {
@@ -361,7 +369,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const diaryService = new DiaryService(db, { logger: app.log });
   diaryService.initialize();
   const perceptionService = new PerceptionService(db, filesService, null, app.log, (at) => diaryService.markStaleAt(at));
-  perceptionService.initialize();
   const purgedUnsupportedFiles = await filesService.purgeUnsupportedFiles();
   if (purgedUnsupportedFiles > 0) {
     app.log.info({ purgedUnsupportedFiles }, "purged unsupported JSON file records");
@@ -393,6 +400,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
+    ingestService.disposeFilter();
     await cliConnectorSyncService.dispose();
     await cliConnectorMarkdownService?.dispose();
     await perceptionService.dispose();
@@ -427,6 +435,26 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
   // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
   const policyWarn = (message: string) => app.log.warn({ module: "ingest.policy" }, message);
+  // agent 过滤器（ingest 第一级闸门）：runtime 用无头 background agent，
+  // 降级链 agent → knowledge LLM → fail-open；enabled=false 时全量直通。
+  const ingestFilterService = config.ingestFilter.enabled
+      ? new IngestFilterService(
+          backgroundAgentRuntime,
+          agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
+        config.ingestFilter,
+        app.log,
+      )
+    : null;
+  if (ingestFilterService) {
+    app.log.info(
+      {
+        mode: config.ingestFilter.mode,
+        threshold: config.ingestFilter.confidenceThreshold,
+        exempt: config.ingestFilter.exemptSourceKinds,
+      },
+      "ingest filter gate enabled",
+    );
+  }
   const ingestService = new IngestService(
     db,
     filesService,
@@ -437,7 +465,33 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       project: await loadProjectDefaults(policyWarn),
       deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
     },
+    ingestFilterService,
   );
+  // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
+  ingestService.recoverPendingFilters();
+  realityService.setReadySink(async (event) => {
+    diaryService.markStaleAt(new Date(event.startedAt));
+    const roomEnabled = knowledgeService.routerEnabled;
+    const memoryEnabled = memoryService.enabled;
+    if (!roomEnabled && !memoryEnabled) return;
+    await ingestService.ingest({
+      source: { ref: { sourceKind: "reality-event", sourceId: event.id } },
+      dataType: "meeting-minutes",
+      occurredAt: event.endedAt ?? event.startedAt,
+      pipelines: { room: roomEnabled, wiki: roomEnabled, memory: memoryEnabled },
+      originChannel: "reality",
+    });
+  });
+  perceptionService.setReadySink(async (evidence) => {
+    const roomEnabled = knowledgeService.routerEnabled;
+    const memoryEnabled = memoryService.enabled;
+    if (!roomEnabled && !memoryEnabled) return;
+    await ingestService.ingestVisualEvent({
+      ...evidence,
+      pipelines: { room: roomEnabled, wiki: roomEnabled, memory: memoryEnabled },
+    });
+  });
+  perceptionService.initialize();
   // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
   // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
   nangoConnectorManager.setMemorySink((input) =>
@@ -467,15 +521,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   await cliConnectorMarkdownService.initialize();
-  // 智能感知在用户确认完成后自动进入统一理解引擎：
-  // reality-event → Markdown → Room 路由 → Wiki（策略与文件链路共用）。
-  if (config.knowledge?.roomWikisEnabled && config.knowledge.routerEnabled) {
-    realityService.setKnowledgeIngestHandler(({ sourceId }) => ingestService.ingest({
-      source: { ref: { sourceKind: "reality-event", sourceId } },
-      dataType: "meeting-minutes",
-      originChannel: "reality",
-    }));
-  }
   await app.register(ingestRoutes(ingestService));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));

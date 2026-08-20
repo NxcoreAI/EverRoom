@@ -129,6 +129,14 @@ export class KnowledgeLlm {
     return this.chatJson("entity-registration", prompt, parseRegisterResponse);
   }
 
+  /**
+   * 过滤器降级通道（ingest 第一级闸门）：prompt 自带格式要求，原样透传一次
+   * 调用返回原始 JSON 文本（解析由调用方负责）。失败抛 KnowledgeLlmError。
+   */
+  async chatForFilter(prompt: string): Promise<string> {
+    return this.chat("ingest-filter", prompt);
+  }
+
   /** 两次尝试（第二次带解析错误反馈），失败抛 KnowledgeLlmError。 */
   private async chatJson<T>(
     skillName: string,

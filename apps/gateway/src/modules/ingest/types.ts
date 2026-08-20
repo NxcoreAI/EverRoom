@@ -40,6 +40,12 @@ export const DATA_TYPES: DataTypeDef[] = [
     defaults: { room: true, wiki: true, memory: true },
   },
   {
+    key: "perception-event",
+    label: "视觉感知事件",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: true },
+  },
+  {
     key: "office-doc",
     label: "Office 文档",
     matchExtensions: ["docx"],
@@ -193,7 +199,9 @@ export type IngestErrorCode =
   | "no_pipelines"
   | "convert_failed"
   | "empty_content"
-  | "router_disabled";
+  | "router_disabled"
+  | "not_filtered"
+  | "parsed_missing";
 
 export class IngestError extends Error {
   constructor(

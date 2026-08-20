@@ -8,8 +8,11 @@ import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
 import { createOpenConnectorPiTools } from "./open-connector-tools.js";
 import { createConnectorDataPiTools } from "../connectors/pi-tools.js";
+import { createNangoPiTools } from "../connectors/nango-agent-tools.js";
 import { createConnectorSyncAgentTools } from "../connectors/agent-tools.js";
 import type { ConnectorSyncService } from "../connectors/service.js";
+import type { ConnectorManager } from "../connectors/manager.js";
+import type { NangoExecutor } from "../connectors/nango-executor.js";
 import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
@@ -78,6 +81,7 @@ export function createAgentRuntime(
   mcpHost: DocumentMcpHost,
   knowledge?: AgentRuntimeIntegrationOptions,
   connectorSync?: ConnectorSyncService,
+  nango?: { manager: ConnectorManager; executor: NangoExecutor } | null,
 ): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
@@ -95,6 +99,7 @@ export function createAgentRuntime(
       ...(config.cliConnectorAgentMode === "local" && connectorSync
         ? createConnectorDataPiTools(connectorSync, config.cliConnectorSyncOwnerId ?? "local-user")
         : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector) : []),
+      ...(nango ? createNangoPiTools(nango.manager, nango.executor) : []),
       ...(config.webSearch && knowledge?.agentResolver
         ? createWebSearchPiTools(knowledge.agentResolver)
         : []),
@@ -236,13 +241,20 @@ export function registerPrimaryAgent(
   mcpHost: DocumentMcpHost,
   integrations: AgentRuntimeIntegrationOptions,
   connectorSync?: ConnectorSyncService,
+  nango?: { manager: ConnectorManager; executor: NangoExecutor } | null,
 ): void {
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   resolver.register(definition(config, {
     id: BUILTIN_AGENT_IDS.primary,
     name: bundle.name,
     description: bundle.description,
-  }), () => createAgentRuntime(config, mcpHost, { ...integrations, agentResolver: resolver }, connectorSync));
+  }), () => createAgentRuntime(
+    config,
+    mcpHost,
+    { ...integrations, agentResolver: resolver },
+    connectorSync,
+    nango,
+  ));
 }
 
 export function registerConnectorSyncAgent(

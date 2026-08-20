@@ -2,11 +2,12 @@ schemaVersion: 1
 kind: builtin
 id: knowledge
 name: Knowledge Agent
-description: 执行实体抽取、实体同一性判定和实体登记等知识工作流任务
+description: 执行资料过滤、实体抽取、实体同一性判定和实体登记等知识工作流任务
 runtime: openai-completions
 systemPrompt: ./SYSTEM.md
 
 capabilities:
+  - knowledge.ingest-filter
   - knowledge.entity-extract
   - knowledge.entity-identity
   - knowledge.entity-register
@@ -14,6 +15,7 @@ capabilities:
 tools: []
 
 skills:
+  - ./skills/ingest-filter
   - ./skills/entity-extraction
   - ./skills/entity-identity
   - ./skills/entity-registration
