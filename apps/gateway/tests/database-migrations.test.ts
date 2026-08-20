@@ -69,10 +69,11 @@ describe("database migrations", () => {
     expect(upgraded.sqlite.prepare(
       "SELECT id, template FROM connector_prompt_profiles WHERE id = ?",
     ).get("gmail-email-v1")).toEqual({ id: "gmail-email-v1", template: "prompt" });
-    expect(upgraded.sqlite.prepare(
+    const latestMigration = upgraded.sqlite.prepare(
       "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
-    ).get()).toEqual({ created_at: 1787150345690 });
+    ).get();
     upgraded.sqlite.close();
+    expect(latestMigration).toEqual({ created_at: journal.entries.at(-1)?.when });
   });
 
   it("upgrades databases from the connector migration branch", async () => {
