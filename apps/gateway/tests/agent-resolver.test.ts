@@ -140,4 +140,45 @@ describe("Agent runtime isolation", () => {
     );
     await resolver.dispose();
   });
+
+  it("puts the response locale in the OpenAI system message", async () => {
+    const root = await mkdtemp(join(tmpdir(), "everroom-agent-locale-"));
+    temporaryDirectories.push(root);
+    let requestBody: { messages?: Array<{ role?: string; content?: string }> } = {};
+    vi.stubGlobal("fetch", vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as typeof requestBody;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "result" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+    const runtime = new OpenAiCompletionAgentRuntime({
+      runtimeId: "locale-test",
+      baseUrl: "https://agent.example/v1",
+      apiKey: "secret",
+      model: "test-model",
+      systemPrompt: "Base system prompt",
+      sessionsDir: join(root, "sessions"),
+      workingDirectory: join(root, "workspace"),
+      agentDirectory: join(root, "config"),
+    });
+    const run = await runtime.start({
+      runId: "locale-run",
+      sessionId: "locale-session",
+      runtimeSessionRef: null,
+      prompt: "User-authored request",
+      responseLanguage: "de-DE",
+      pageLabel: "Agent",
+      roomId: null,
+    });
+    for await (const _event of run.events) {
+      // Drain the runtime so the mocked request completes.
+    }
+
+    expect(requestBody.messages?.find((message) => message.role === "system")?.content)
+      .toContain("当前界面 locale：de-DE");
+    expect(requestBody.messages?.find((message) => message.role === "user")?.content)
+      .toBe("User-authored request");
+    await runtime.dispose();
+  });
 });

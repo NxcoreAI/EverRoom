@@ -201,6 +201,14 @@ export interface SyncResult {
   failed: number
 }
 
+export type DefaultLocalFolder = 'documents' | 'desktop'
+
+export interface DefaultLocalFolderConnectionResult {
+  folder: DefaultLocalFolder
+  connected: boolean
+  error?: string
+}
+
 export interface SourceChangeEvent {
   sourceId: string
   filesChanged: boolean
@@ -777,6 +785,7 @@ export interface NxcoreDesktopApi {
     onChanged(listener: (event: SourceChangeEvent) => void): () => void
     showFile(id: string, fileId: string): Promise<void>
     addLocalFolder(): Promise<SyncResult | null>
+    connectDefaultLocalFolders(folders: DefaultLocalFolder[]): Promise<DefaultLocalFolderConnectionResult[]>
     addGitHub(input: { repository: string; branch?: string; token?: string; syncIssues?: boolean }): Promise<SyncResult>
     addGoogleDocs(input: { documentIds: string[]; token: string }): Promise<SyncResult>
     addNotion(input: { pageIds: string[]; token: string }): Promise<SyncResult>
@@ -815,12 +824,13 @@ export interface NxcoreDesktopApi {
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
   }
   files: {
-    list(limit?: number, offset?: number): Promise<{ items: FileDto[]; total: number }>
+    list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
-    rename(fileId: string, displayName: string): Promise<FileDto>
+    rename(fileId: string, displayName: string): Promise<FileCatalogDto>
+    pinClusterTitle(clusterId: string, sharedTitle: string): Promise<{ id: string; canonicalTitle: string; titlePinned: boolean }>
     /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
     delete(fileId: string): Promise<{
       deleted: boolean
@@ -832,6 +842,8 @@ export interface NxcoreDesktopApi {
     reveal(fileId: string): Promise<void>
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
+    importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
   }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
@@ -871,6 +883,7 @@ import type {
   MemoryScenarioEntryDto,
 } from './memory'
 import type {
+  FileCatalogDto,
   FileDto,
   FileImportOutcome,
   IngestEventDto,

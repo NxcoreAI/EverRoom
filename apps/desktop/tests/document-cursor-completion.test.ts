@@ -14,6 +14,22 @@ vi.mock('../src/renderer/src/components/context-room/ported/components/detail-ed
   streamDocumentCursorCompletion: vi.fn().mockResolvedValue({ text: '补全结果', replaceCharacters: 0 }),
 }))
 
+vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/i18n/LocaleContext')>()
+  return {
+    ...actual,
+    useLocale: () => ({
+      locale: 'zh-CN',
+      setLocale: vi.fn(),
+      t: (message: string, values?: Record<string, string | number>) => actual.translate('zh-CN', message, values),
+      formatNumber: (value: number) => value.toLocaleString('zh-CN'),
+      formatDate: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => (
+        new Intl.DateTimeFormat('zh-CN', options).format(new Date(value))
+      ),
+    }),
+  }
+})
+
 import {
   currentDocumentCursorCompletion,
   documentCursorCompletionContext,

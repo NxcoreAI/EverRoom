@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { showToast } from '@/state/toast';
 import { useLocale } from '../../../../i18n/LocaleContext';
+import type { Translate } from '../../../../i18n/LocaleContext';
 import {
   type KnowledgeDecisionDto,
   type KnowledgeEntityDto,
@@ -37,6 +38,20 @@ function promotionPercent(progress: KnowledgePromotionProgressDto): number {
     return Math.min(95, Math.round(60 + materialRatio * 35));
   }
   return 5;
+}
+
+function promotionLabel(progress: KnowledgePromotionProgressDto, t: Translate): string {
+  if (progress.status === 'failed') return t('contextRoom:knowledgePending.creationFailed');
+  if (progress.status === 'completed') return t('contextRoom:knowledgePending.roomCreated');
+  const stageKeys: Record<string, string> = {
+    queued: 'contextRoom:knowledgePending.promotionQueued',
+    checking_identity: 'contextRoom:knowledgePending.checkingIdentity',
+    registering_entity: 'contextRoom:knowledgePending.registeringEntity',
+    creating_room: 'contextRoom:knowledgePending.creatingRoom',
+    creating_wiki: 'contextRoom:knowledgePending.creatingWiki',
+    importing_documents: 'contextRoom:knowledgePending.importingDocuments',
+  };
+  return t(stageKeys[progress.stage] ?? 'contextRoom:knowledgePending.creatingRoom');
 }
 
 /** 推荐池展示上限：页面只放前三个，按证据分排（推荐确认制）。 */
@@ -90,10 +105,10 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
       const failed = ready.items.filter((entity) => previous.has(entity.id) && entity.promotion?.status === 'failed');
       activePromotionsRef.current = new Map(activePromotions.map((entity) => [entity.id, entity.name]));
       for (const entity of completed) {
-        showToast({ title: 'Room 创建完成', message: `「${entity.name}」已可以使用` });
+        showToast({ title: t('contextRoom:knowledgePending.roomCreated'), message: t('contextRoom:knowledgePending.nameIsReadyToUse', { name: entity.name }) });
       }
       for (const entity of failed) {
-        showToast({ title: 'Room 创建失败', message: entity.promotion?.error ?? entity.promotion?.message });
+        showToast({ title: t('contextRoom:knowledgePending.creationFailed'), message: entity.promotion?.error ?? undefined });
       }
       if (completed.length > 0) {
         window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom:knowledge-changed')), 0);
@@ -101,7 +116,7 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
     } catch {
       setLoaded(true); // 知识服务不可用：面板静默为空
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void refresh();
@@ -287,16 +302,16 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
                         : promotion.status === 'queued'
                           ? <Clock3 aria-hidden="true" />
                           : <LoaderCircle className="spin" aria-hidden="true" />}
-                      <strong>{promotion.message}</strong>
+                      <strong>{promotionLabel(promotion, t)}</strong>
                       <span>{creationPercent}%</span>
                     </div>
                     <div className="context-room-creation-progress-bar" aria-hidden="true">
                       <div style={{ width: `${creationPercent}%` }} />
                     </div>
                     {promotion.status === 'queued' && promotion.queuePosition ? (
-                      <small>队列位置：第 {promotion.queuePosition} 个</small>
+                      <small>{t('contextRoom:knowledgePending.queuePosition', { position: promotion.queuePosition })}</small>
                     ) : promotion.stage === 'importing_documents' && promotion.total !== null ? (
-                      <small>资料进度：{promotion.current ?? 0} / {promotion.total}</small>
+                      <small>{t('contextRoom:knowledgePending.resourceProgress', { current: promotion.current ?? 0, total: promotion.total })}</small>
                     ) : promotion.error ? <small>{promotion.error}</small> : null}
                   </div>
                 ) : null}
@@ -308,7 +323,9 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
                     onClick={() => void confirmCreate(entity)}
                   >
                     {promotionActive ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
-                    {promotionActive ? (promotion?.status === 'queued' ? '排队中' : '创建中') : promotion?.status === 'failed' ? '重试创建' : '确认创建'}
+                    {t(promotionActive
+                      ? promotion?.status === 'queued' ? 'contextRoom:knowledgePending.queued' : 'contextRoom:knowledgePending.creating'
+                      : promotion?.status === 'failed' ? 'contextRoom:knowledgePending.retryCreation' : 'contextRoom:knowledgePending.create')}
                   </button>
                 </footer>
               </article>

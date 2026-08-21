@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  createRoomDocumentContent,
   readDocumentDraftRecord,
   removeDocumentDraft,
   shouldRecoverDocumentDraft,
   writeDocumentDraft,
 } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentDraftStorage'
+import { translate } from '../src/renderer/src/i18n/LocaleContext'
+import { createContextRoomFixture } from './context-room-fixture'
 
 const values = new Map<string, string>()
 const localStorageStub = {
@@ -19,6 +22,20 @@ Object.defineProperty(globalThis, 'localStorage', { value: localStorageStub, con
 afterEach(() => values.clear())
 
 describe('document draft persistence', () => {
+  it('localizes the generated starter document', () => {
+    const content = createRoomDocumentContent(
+      createContextRoomFixture(),
+      'Untitled',
+      (message, interpolation) => translate('en-US', message, interpolation),
+    )
+    const text = JSON.stringify(content)
+
+    expect(text).toContain('Goal')
+    expect(text).toContain('Key conclusions')
+    expect(text).toContain('No key conclusions yet')
+    expect(text).not.toContain('暂无关键结论')
+  })
+
   it('stores content with the SQLite base version and removes it after persistence', () => {
     const content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '待保存' }] }] }
 

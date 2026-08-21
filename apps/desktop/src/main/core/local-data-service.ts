@@ -16,6 +16,7 @@ import { EvidenceService } from '../evidence/evidence-service'
 import {
   isIgnoredLocalDirectory,
   isLocalParseableExtension,
+  LOCAL_PARSEABLE_EXTENSIONS,
 } from '../file-format-policy'
 import type {
   DataSourceSummary,
@@ -25,6 +26,36 @@ import type {
   SourceChangeEvent,
   SyncResult,
 } from '../../shared/sources'
+import type { FileFormatCapabilityDto, FileImportAcceptedDto } from '../../shared/ingest'
+
+export interface LocalFileExportTarget {
+  capabilities(): Promise<{ items: FileFormatCapabilityDto[] }>
+  importLocalFile(input: {
+    filePath: string
+    sourceKey: string
+    originalName: string
+    localSourceId: string
+    localItemId: string
+    relativePath: string
+    sourceModifiedAt: string
+  }): Promise<FileImportAcceptedDto>
+  importConnectorFile(input: {
+    filePath: string
+    sourceKey: string
+    originalName: string
+    provider: string
+    connectionId: string
+    relativePath: string
+    sourceUri: string
+    sourceModifiedAt: string
+  }): Promise<FileImportAcceptedDto>
+}
+
+export interface LocalFolderConnectionResult {
+  rootPath: string
+  connected: boolean
+  error?: string
+}
 
 interface SourceRow {
   id: string
@@ -53,6 +84,8 @@ interface ItemRow {
   relative_path: string
   content_hash: string | null
   state: 'present' | 'missing'
+  size: number
+  modified_at: string
 }
 
 interface FileSummaryRow {
@@ -84,10 +117,15 @@ export class LocalDataService {
   private readonly watchTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly verificationTimers = new Map<string, ReturnType<typeof setInterval>>()
   private readonly changeListeners = new Set<(event: SourceChangeEvent) => void>()
+  private exportWorker: Promise<void> | null = null
+  private shuttingDown = false
 
   constructor(
     private readonly dataDirectory: string,
     private readonly connectors: ConnectorRegistry,
+    private readonly fileExports: LocalFileExportTarget | null = null,
+    private readonly autoScanExtensions: ReadonlySet<string> = LOCAL_PARSEABLE_EXTENSIONS,
+    private readonly connectorImportExtensions: ReadonlySet<string> = LOCAL_PARSEABLE_EXTENSIONS,
   ) {
     this.objectsDirectory = join(dataDirectory, 'objects', 'sha256')
     mkdirSync(join(dataDirectory, 'database'), { recursive: true })
@@ -189,6 +227,19 @@ export class LocalDataService {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS source_exports (
+        source_version_id TEXT PRIMARY KEY REFERENCES source_versions(id) ON DELETE CASCADE,
+        file_entry_id TEXT,
+        file_version_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'exporting', 'exported', 'failed')),
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_source_exports_status_updated
+        ON source_exports(status, updated_at);
     `)
 
     const sourceColumns = this.database
@@ -301,12 +352,43 @@ export class LocalDataService {
       SET status = 'error', last_error = '上次同步未完成，请重新扫描', updated_at = ?
       WHERE status = 'syncing'
     `).run(recoveredAt)
+    this.database.prepare(`
+      UPDATE source_exports SET status = 'pending', updated_at = ? WHERE status = 'exporting'
+    `).run(recoveredAt)
+    if (this.fileExports) {
+      this.database.prepare(`
+        INSERT OR IGNORE INTO source_exports (source_version_id, status, updated_at)
+        SELECT source_versions.id, 'pending', ?
+        FROM source_versions
+        JOIN source_items ON source_items.id = source_versions.source_item_id
+        JOIN data_sources ON data_sources.id = source_items.data_source_id
+        WHERE data_sources.kind = 'local-folder' AND source_items.state = 'present'
+      `).run(recoveredAt)
+      const connectorVersions = this.database.prepare(`
+        SELECT source_versions.id, data_sources.kind, source_items.extension, source_items.remote_id
+        FROM source_versions
+        JOIN source_items ON source_items.id = source_versions.source_item_id
+        JOIN data_sources ON data_sources.id = source_items.data_source_id
+        WHERE data_sources.kind != 'local-folder' AND source_items.state = 'present'
+      `).all() as unknown as Array<{ id: string; kind: ConnectorKind; extension: string; remote_id: string }>
+      const backfill = this.database.prepare(`
+        INSERT OR IGNORE INTO source_exports (source_version_id, status, updated_at)
+        VALUES (?, 'pending', ?)
+      `)
+      for (const version of connectorVersions) {
+        const eligible = this.connectorImportExtensions.has(version.extension.toLowerCase()) &&
+          (version.kind === 'google-docs' || version.kind === 'notion' ||
+            (version.kind === 'github' && !version.remote_id.startsWith('repo:issue:')))
+        if (eligible) backfill.run(version.id, recoveredAt)
+      }
+    }
 
     const connectedSources = this.database.prepare(`
       SELECT * FROM data_sources
       WHERE status = 'connected' AND disconnected_at IS NULL
     `).all() as unknown as SourceRow[]
     for (const source of connectedSources) this.startWatching(source)
+    this.kickExportWorker()
   }
 
   private migrateDataSourcesTable(columns: Array<{ name: string }>): void {
@@ -457,6 +539,8 @@ export class LocalDataService {
     this.watchers.clear()
     await Promise.allSettled(this.activeScans.values())
     await Promise.allSettled(this.pendingDisconnects)
+    this.shuttingDown = true
+    await this.exportWorker
     await this.evidence.shutdown()
     this.database.close()
   }
@@ -617,6 +701,26 @@ export class LocalDataService {
     return this.addConnection('local-folder', basename(rootPath), { rootPath }, rootPath)
   }
 
+  async connectLocalFolders(rootPaths: string[]): Promise<LocalFolderConnectionResult[]> {
+    const results: LocalFolderConnectionResult[] = []
+    const uniquePaths = [...new Set(rootPaths.map((rootPath) => rootPath.trim()).filter(Boolean))]
+    for (const rootPath of uniquePaths) {
+      try {
+        const info = await stat(rootPath)
+        if (!info.isDirectory()) throw new Error('所选位置不是文件夹。')
+        await this.addLocalFolder(rootPath)
+        results.push({ rootPath, connected: true })
+      } catch (error) {
+        results.push({
+          rootPath,
+          connected: false,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return results
+  }
+
   /**
    * 首次启动时连接系统常用目录。标记先于扫描写入，确保用户后续删除或
    * 暂停默认数据源后，不会在下次启动时被应用强制恢复。
@@ -629,16 +733,7 @@ export class LocalDataService {
     `).run(now).changes > 0
     if (!claimed) return
 
-    const uniquePaths = [...new Set(rootPaths.map((rootPath) => rootPath.trim()).filter(Boolean))]
-    await Promise.all(uniquePaths.map(async (rootPath) => {
-      try {
-        const info = await stat(rootPath)
-        if (!info.isDirectory()) return
-        await this.addLocalFolder(rootPath)
-      } catch {
-        // A denied or unavailable standard folder must not block the other defaults.
-      }
-    }))
+    await this.connectLocalFolders(rootPaths)
   }
 
   async addConnection<TConfig>(
@@ -836,13 +931,13 @@ export class LocalDataService {
             const extension = extname(item.path).toLowerCase()
             return !segments.slice(0, -1).some(isIgnoredLocalDirectory) &&
               !item.title.startsWith('.') &&
-              isLocalParseableExtension(extension)
+              this.autoScanExtensions.has(extension)
           })
         : scan.items
       counts.failed = scan.failed
       counts.discovered = items.length
       const allExistingItems = this.database
-        .prepare('SELECT id, remote_id, relative_path, content_hash, state FROM source_items WHERE data_source_id = ?')
+        .prepare('SELECT id, remote_id, relative_path, content_hash, state, size, modified_at FROM source_items WHERE data_source_id = ?')
         .all(id) as unknown as ItemRow[]
       const filteredItemIds = source.kind === 'local-folder'
         ? await this.pruneFilteredLocalItems(allExistingItems)
@@ -860,11 +955,24 @@ export class LocalDataService {
         if (existingItem) seenRemoteIds.add(existingItem.remote_id)
 
         try {
+          if (existingItem && source.kind === 'local-folder' && existingItem.content_hash &&
+            existingItem.size === item.byteSize && existingItem.modified_at === item.modifiedAt) {
+            const moved = existingItem.relative_path !== item.path
+            if (moved) {
+              const status = basename(existingItem.relative_path) === basename(item.path) ? 'moved' : 'renamed'
+              this.recordItemChange(existingItem, runId, item, existingItem.content_hash, status)
+              counts.moved += 1
+            } else {
+              this.markItemSeen(existingItem.id, item, existingItem.content_hash)
+              counts.unchanged += 1
+            }
+            continue
+          }
           const contentHash = await this.hashItem(item)
 
           if (!existingItem) {
-            await this.storeObject(item, contentHash)
-            this.insertItemAndVersion(id, runId, item, contentHash)
+            if (source.kind !== 'local-folder' || !this.fileExports) await this.storeObject(item, contentHash)
+            this.insertItemAndVersion(id, runId, item, contentHash, this.shouldExport(source.kind, item))
             counts.added += 1
             continue
           }
@@ -880,7 +988,7 @@ export class LocalDataService {
               counts.moved += 1
             } else if (restored) {
               this.recordItemChange(existingItem, runId, item, contentHash, 'restored')
-              this.insertVersion(existingItem.id, item, contentHash)
+              this.insertVersion(id, existingItem.id, item, contentHash, this.shouldExport(source.kind, item))
               counts.added += 1
             } else {
               this.markItemSeen(existingItem.id, item, contentHash)
@@ -889,9 +997,9 @@ export class LocalDataService {
             continue
           }
 
-          await this.storeObject(item, contentHash)
+          if (source.kind !== 'local-folder' || !this.fileExports) await this.storeObject(item, contentHash)
           this.recordItemChange(existingItem, runId, item, contentHash, 'updated')
-          this.insertVersion(existingItem.id, item, contentHash)
+          this.insertVersion(id, existingItem.id, item, contentHash, this.shouldExport(source.kind, item))
           if (moved) counts.moved += 1
           counts.updated += 1
         } catch {
@@ -936,6 +1044,7 @@ export class LocalDataService {
       `).run(finishedAt, hasChanges ? 1 : 0, runId, finishedAt, id)
 
       this.notifyChanged(id, hasChanges)
+      this.kickExportWorker()
 
       return { source: this.getSummary(id), ...counts }
     } catch (error) {
@@ -1036,7 +1145,7 @@ export class LocalDataService {
       const segments = item.relative_path.split(/[\\/]/)
       const extension = extname(item.relative_path).toLowerCase()
       return segments.slice(0, -1).some(isIgnoredLocalDirectory) ||
-      !isLocalParseableExtension(extension)
+      !this.autoScanExtensions.has(extension)
     })
     if (filtered.length === 0) return new Set()
 
@@ -1086,6 +1195,7 @@ export class LocalDataService {
     runId: string,
     item: ConnectorItem,
     hash: string,
+    shouldExport: boolean,
   ): void {
     const itemId = randomUUID()
     const now = new Date().toISOString()
@@ -1113,7 +1223,7 @@ export class LocalDataService {
       now,
       now,
     )
-    this.insertVersion(itemId, item, hash)
+    this.insertVersion(dataSourceId, itemId, item, hash, shouldExport)
   }
 
   private recordItemChange(
@@ -1175,14 +1285,141 @@ export class LocalDataService {
     )
   }
 
-  private insertVersion(itemId: string, item: ConnectorItem, hash: string): void {
+  private insertVersion(
+    dataSourceId: string,
+    itemId: string,
+    item: ConnectorItem,
+    hash: string,
+    shouldExport: boolean,
+  ): void {
     const versionId = randomUUID()
     this.database.prepare(`
       INSERT INTO source_versions (
         id, source_item_id, content_hash, object_hash, size, source_modified_at, captured_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(versionId, itemId, hash, hash, item.byteSize, item.modifiedAt, new Date().toISOString())
-    this.evidence.enqueueVersion(versionId, item.extension)
+    if (!shouldExport && isLocalParseableExtension(item.extension)) this.evidence.enqueueVersion(versionId, item.extension)
+    if (shouldExport && this.fileExports) {
+      this.database.prepare(`
+        INSERT OR IGNORE INTO source_exports (source_version_id, status, updated_at)
+        VALUES (?, 'pending', ?)
+      `).run(versionId, new Date().toISOString())
+    }
+  }
+
+  private kickExportWorker(): void {
+    if (!this.fileExports || this.shuttingDown || this.exportWorker) return
+    this.exportWorker = this.processExports().finally(() => {
+      this.exportWorker = null
+      if (!this.shuttingDown && this.hasPendingExports()) this.kickExportWorker()
+    })
+  }
+
+  private hasPendingExports(): boolean {
+    return Boolean(this.database.prepare(`
+      SELECT 1 FROM source_exports WHERE status = 'pending' LIMIT 1
+    `).get())
+  }
+
+  private async processExports(): Promise<void> {
+    while (!this.shuttingDown && this.fileExports) {
+      const rows = this.database.prepare(`
+        SELECT
+          source_exports.source_version_id,
+          source_exports.attempt_count,
+          source_items.id AS local_item_id,
+          source_items.remote_id,
+          source_items.relative_path,
+          source_items.title,
+          source_items.uri,
+          source_items.state,
+          source_versions.source_modified_at,
+          source_versions.object_hash,
+          data_sources.*
+        FROM source_exports
+        JOIN source_versions ON source_versions.id = source_exports.source_version_id
+        JOIN source_items ON source_items.id = source_versions.source_item_id
+        JOIN data_sources ON data_sources.id = source_items.data_source_id
+        WHERE source_exports.status = 'pending' AND source_items.state = 'present'
+        ORDER BY source_exports.updated_at
+        LIMIT 2
+      `).all() as unknown as Array<SourceRow & {
+        source_version_id: string
+        attempt_count: number
+        local_item_id: string
+        remote_id: string
+        relative_path: string
+        title: string
+        source_modified_at: string
+        object_hash: string
+        uri: string | null
+      }>
+      if (rows.length === 0) return
+      await Promise.all(rows.map((row) => this.exportVersion(row)))
+    }
+  }
+
+  private async exportVersion(row: SourceRow & {
+    source_version_id: string
+    attempt_count: number
+    local_item_id: string
+    remote_id: string
+    relative_path: string
+    title: string
+    source_modified_at: string
+    object_hash: string
+    uri: string | null
+  }): Promise<void> {
+    const now = new Date().toISOString()
+    this.database.prepare(`
+      UPDATE source_exports SET status = 'exporting', attempt_count = attempt_count + 1,
+        last_error = NULL, updated_at = ? WHERE source_version_id = ?
+    `).run(now, row.source_version_id)
+    try {
+      const connector = this.connectors.get(row.kind)
+      const result = row.kind === 'local-folder'
+        ? await this.fileExports!.importLocalFile({
+            filePath: connector.resolveLocalPath!(this.toConnection(row), row.relative_path),
+            sourceKey: `local:${row.id}:${row.remote_id}`,
+            originalName: basename(row.relative_path),
+            localSourceId: row.id,
+            localItemId: row.local_item_id,
+            relativePath: row.relative_path,
+            sourceModifiedAt: row.source_modified_at,
+          })
+        : await this.fileExports!.importConnectorFile({
+            filePath: this.objectPath(row.object_hash),
+            sourceKey: `connector:${row.kind}:${row.id}:${row.remote_id}`,
+            originalName: basename(row.relative_path),
+            provider: row.kind,
+            connectionId: row.id,
+            relativePath: row.relative_path,
+            sourceUri: row.uri ?? '',
+            sourceModifiedAt: row.source_modified_at,
+          })
+      this.database.prepare(`
+        UPDATE source_exports SET status = 'exported', file_entry_id = ?, file_version_id = ?,
+          last_error = NULL, updated_at = ? WHERE source_version_id = ?
+      `).run(result.fileEntryId, result.fileVersionId, new Date().toISOString(), row.source_version_id)
+    } catch (error) {
+      const attempt = row.attempt_count + 1
+      this.database.prepare(`
+        UPDATE source_exports SET status = ?, last_error = ?, updated_at = ? WHERE source_version_id = ?
+      `).run(
+        attempt >= 3 ? 'failed' : 'pending',
+        error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+        new Date().toISOString(),
+        row.source_version_id,
+      )
+    }
+  }
+
+  private shouldExport(kind: ConnectorKind, item: ConnectorItem): boolean {
+    if (!this.fileExports) return false
+    if (kind === 'local-folder') return this.autoScanExtensions.has(item.extension.toLowerCase())
+    if (!this.connectorImportExtensions.has(item.extension.toLowerCase())) return false
+    if (kind === 'google-docs' || kind === 'notion') return true
+    return kind === 'github' && !item.remoteId.startsWith('repo:issue:')
   }
 
   private toConnection(source: SourceRow): ConnectorConnection<any> {

@@ -1,5 +1,6 @@
 import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import i18n from '@/i18n/i18next'
 
 import { hasEmbeddedDocumentImages, localizeDocumentImages } from '../components/detail-editor/documentImageAssets'
 import { invalidateDocumentBlockReferences } from '../components/detail-editor/documentBlockReferenceInvalidation'
@@ -181,7 +182,7 @@ export function useRoomDocuments(roomIds: string[]) {
 
   const deleteDocument = useCallback(async (document: RoomDocument) => {
     const documents = window.nxcore?.documents
-    if (!documents) throw new Error('文档服务不可用')
+    if (!documents) throw new Error(i18n.t('surface:agent.documentServiceUnavailable'))
     await documents.delete(document.id)
     upsertDocument({ ...document, deletedAt: new Date().toISOString() })
     setFocusedDocumentByRoom((current) => current[document.roomId] === document.id
@@ -195,7 +196,7 @@ export function useRoomDocuments(roomIds: string[]) {
     contentJson: TiptapJsonContent = { type: 'doc', content: [{ type: 'paragraph' }] },
   ) => {
     const documents = window.nxcore?.documents
-    if (!documents) throw new Error('文档服务不可用')
+    if (!documents) throw new Error(i18n.t('surface:agent.documentServiceUnavailable'))
     const documentId = crypto.randomUUID()
     const localizedContent = hasEmbeddedDocumentImages(contentJson)
       ? (await localizeDocumentImages(contentJson, documentId, documents.storeImage)).content
@@ -212,13 +213,13 @@ export function useRoomDocuments(roomIds: string[]) {
 
   const restoreDocument = useCallback(async (document: RoomDocument) => {
     const documents = window.nxcore?.documents
-    if (!documents) throw new Error('文档服务不可用')
+    if (!documents) throw new Error(i18n.t('surface:agent.documentServiceUnavailable'))
     upsertDocument(await documents.restore(document.id))
   }, [upsertDocument])
 
   const deleteDocumentPermanently = useCallback(async (document: RoomDocument) => {
     const documents = window.nxcore?.documents
-    if (!documents) throw new Error('文档服务不可用')
+    if (!documents) throw new Error(i18n.t('surface:agent.documentServiceUnavailable'))
     await documents.deletePermanently(document.id)
     setTrashedDocumentsByRoom((current) => ({
       ...current,
@@ -228,7 +229,7 @@ export function useRoomDocuments(roomIds: string[]) {
 
   const emptyTrash = useCallback(async (roomId: string) => {
     const documents = window.nxcore?.documents
-    if (!documents) throw new Error('文档服务不可用')
+    if (!documents) throw new Error(i18n.t('surface:agent.documentServiceUnavailable'))
     await documents.emptyTrash(roomId)
     setTrashedDocumentsByRoom((current) => ({ ...current, [roomId]: [] }))
   }, [])

@@ -26,6 +26,7 @@ const IngestBody = Type.Object({
         Type.Literal("connector-record"),
       ]),
       sourceId: Type.String({ minLength: 1, maxLength: 200 }),
+      sourceVersionId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     })),
   }),
   dataType: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),

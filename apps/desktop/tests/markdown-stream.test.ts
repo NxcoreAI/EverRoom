@@ -9,6 +9,7 @@ import {
   hasVisibleTiptapContent,
   isAgentDocumentAwaitingContent,
   isEmptyTiptapParagraph,
+  isEmptyTiptapTable,
   MarkdownBlockBuffer,
   operationStreamChunksToApply,
   revealTiptapNode,
@@ -57,6 +58,25 @@ describe('Markdown stream buffering', () => {
       content: [{ type: 'text', text: '正文' }],
     })).toBe(false)
     expect(isEmptyTiptapParagraph({ type: 'heading' })).toBe(false)
+  })
+
+  it('filters empty Agent tables without hiding populated tables', () => {
+    const emptyCell = { type: 'tableCell', content: [{ type: 'paragraph' }] }
+    expect(isEmptyTiptapTable({
+      type: 'table',
+      content: [{ type: 'tableRow', content: [emptyCell, emptyCell] }],
+    })).toBe(true)
+    expect(isEmptyTiptapTable({
+      type: 'table',
+      content: [{
+        type: 'tableRow',
+        content: [{
+          type: 'tableCell',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Value' }] }],
+        }],
+      }],
+    })).toBe(false)
+    expect(isEmptyTiptapTable({ type: 'paragraph' })).toBe(false)
   })
 
   it('shows the Agent overlay only before the first visible content is persisted', () => {

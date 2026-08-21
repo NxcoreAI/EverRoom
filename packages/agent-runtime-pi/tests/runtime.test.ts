@@ -437,6 +437,11 @@ describe("PiAgentRuntime", () => {
       const firstRequest = JSON.stringify(requestBodies[0]);
       expect(firstRequest).toContain("必须使用简体中文");
       expect(firstRequest).toContain("当前界面 locale：ja-JP");
+      const firstMessages = requestBodies[0]?.messages as Array<{ role?: string; content?: string }>;
+      expect(firstMessages.find((message) => message.role === "system")?.content)
+        .toContain("当前界面 locale：ja-JP");
+      expect(firstMessages.filter((message) => message.role === "user").at(-1)?.content)
+        .not.toContain("当前界面 locale");
       expect(firstRequest).toContain("动态文档能力规范：只使用当前注册表提供的能力说明。");
       expect(firstRequest).not.toContain("准备写入正文的实际核心内容、重点或结论");
       expect(requestBodies[1]?.messages).toEqual(expect.arrayContaining([

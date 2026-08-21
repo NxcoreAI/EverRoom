@@ -1,28 +1,110 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { Readable } from "node:stream";
+import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { ingestEvents, parsedContents, uploadedFiles } from "../../infrastructure/database/schema.js";
+import {
+  fileBlobs,
+  fileClassifications,
+  fileClusterMemberships,
+  fileClusters,
+  fileEntries,
+  fileVersions,
+  ingestEvents,
+  jobs,
+  parsedContents,
+  uploadedFiles,
+} from "../../infrastructure/database/schema.js";
 import {
   contentHashOf,
   fileIdOf,
   MARKDOWN_PARSER_VERSION,
   storageRelPath,
   storeFileBlob,
+  storeFileBlobStream,
 } from "./storage.js";
+import {
+  FILE_FORMAT_CAPABILITIES,
+  fileFormatCapability,
+  normalizedFileExtension,
+} from "./format-registry.js";
 
 export type UploadedFileRow = typeof uploadedFiles.$inferSelect;
 
 export const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
-  ".csv", ".docx", ".gif", ".html", ".htm", ".jpeg", ".jpg", ".md", ".markdown", ".png", ".pptx", ".txt", ".webp", ".xlsx",
+  ...FILE_FORMAT_CAPABILITIES.map((item) => item.extension),
+  ".gif", ".jpeg", ".jpg", ".png", ".webp",
 ]);
 
 export function isSupportedUploadFilename(filename: string): boolean {
-  const basename = filename.split(/[\\/]/).pop() ?? filename;
-  const dot = basename.lastIndexOf(".");
-  return dot > 0 && SUPPORTED_UPLOAD_EXTENSIONS.has(basename.slice(dot).toLowerCase());
+  return SUPPORTED_UPLOAD_EXTENSIONS.has(normalizedFileExtension(filename));
 }
+
+export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "legacy-upload";
+
+export interface FileImportInput {
+  sourceKind: Exclude<FileSourceKind, "legacy-upload">;
+  sourceKey: string;
+  originalName: string;
+  buffer: Buffer;
+  mime?: string | undefined;
+  provider?: string | undefined;
+  connectionId?: string | undefined;
+  localSourceId?: string | undefined;
+  localItemId?: string | undefined;
+  relativePath?: string | undefined;
+  sourceUri?: string | undefined;
+  sourceModifiedAt?: Date | undefined;
+  pipelines?: { room: boolean; wiki: boolean; memory: boolean } | undefined;
+  roomId?: string | undefined;
+}
+
+export type FileImportStreamInput = Omit<FileImportInput, "buffer"> & { stream: Readable };
+
+export interface FileImportResult {
+  fileEntryId: string;
+  fileVersionId: string;
+  jobId: string;
+  contentHash: string;
+  blobDeduped: boolean;
+  versionDeduped: boolean;
+}
+
+export interface CatalogFileDto {
+  id: string;
+  originalName: string;
+  displayName: string | null;
+  sharedTitle: string;
+  sourceKind: FileSourceKind;
+  sourceLabel: string;
+  relativePath: string | null;
+  provider: string | null;
+  bytes: number;
+  dataType: string | null;
+  agentCategory: string | null;
+  summary: string | null;
+  tags: string[];
+  processingState: "processing" | "ready" | "failed" | "missing";
+  clusterId: string | null;
+  contentHash: string;
+  parsed: boolean;
+  updatedAt: string;
+}
+
+interface VersionIngestResult {
+  eventId: string;
+  parsedId: string;
+  dataType: string;
+}
+
+type VersionIngestor = (input: {
+  fileEntryId: string;
+  fileVersionId: string;
+  pipelines?: FileImportInput["pipelines"];
+  roomId?: string;
+}) => Promise<VersionIngestResult>;
+type VersionClassifier = (fileEntryId: string, fileVersionId: string) => void;
 
 /** 统一上传结果：deduped = 判重闸 1 命中（同名同内容，零写入）。 */
 export interface FileUploadResult {
@@ -60,10 +142,452 @@ export interface FileDeletionResult {
  * 与对象库 GC。表与磁盘结构沿用 knowledge 时期的设计，零迁移。
  */
 export class FilesService {
+  private versionIngestor: VersionIngestor | null = null;
+  private versionClassifier: VersionClassifier | null = null;
+  private fileJobWorker: Promise<void> | null = null;
+  private disposed = false;
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly dataDir: string,
   ) {}
+
+  /** Backfill the compatibility table without changing any legacy IDs. */
+  initializeCatalog(): void {
+    const legacyRows = this.db.select().from(uploadedFiles).all();
+    for (const row of legacyRows) {
+      const capability = fileFormatCapability(row.originalName);
+      if (!capability) continue;
+      const versionId = `fver-legacy-${row.id}`;
+      this.db.insert(fileBlobs).values({
+        contentHash: row.contentHash,
+        storagePath: row.storagePath,
+        byteSize: row.bytes,
+        mime: row.mime,
+        createdAt: row.createdAt,
+      }).onConflictDoNothing().run();
+      this.db.insert(fileEntries).values({
+        id: row.id,
+        sourceKind: "legacy-upload",
+        sourceKey: `legacy:${row.id}`,
+        originalName: row.originalName,
+        extension: normalizedFileExtension(row.originalName),
+        currentVersionId: versionId,
+        state: row.currentParsedId ? "ready" : "processing",
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }).onConflictDoNothing().run();
+      this.db.insert(fileVersions).values({
+        id: versionId,
+        fileEntryId: row.id,
+        versionNo: 1,
+        contentHash: row.contentHash,
+        parserId: capability.parserId,
+        parserVersion: capability.parserVersion,
+        parsedId: row.currentParsedId,
+        status: row.currentParsedId ? "parsed" : "stored",
+        createdAt: row.createdAt,
+        processedAt: row.currentParsedId ? row.updatedAt : null,
+      }).onConflictDoNothing().run();
+    }
+    this.db.update(jobs).set({ status: "pending", updatedAt: new Date() })
+      .where(and(eq(jobs.type, "file.ingest"), eq(jobs.status, "running"))).run();
+  }
+
+  setVersionIngestor(ingestor: VersionIngestor): void {
+    if (this.disposed) throw new Error("FilesService 已关闭");
+    this.versionIngestor = ingestor;
+    this.kickFileJobs();
+  }
+
+  setVersionClassifier(classifier: VersionClassifier): void {
+    this.versionClassifier = classifier;
+  }
+
+  async importFile(input: FileImportInput): Promise<FileImportResult> {
+    const capability = this.validateImport(input);
+    const stored = await storeFileBlobStream(
+      this.dataDir,
+      Readable.from(input.buffer),
+      capability.maxBytes,
+    );
+    return this.registerImportedFile(input, stored.contentHash, stored.bytes);
+  }
+
+  async importFileStream(input: FileImportStreamInput): Promise<FileImportResult> {
+    const capability = this.validateImport(input);
+    const stored = await storeFileBlobStream(this.dataDir, input.stream, capability.maxBytes);
+    return this.registerImportedFile(input, stored.contentHash, stored.bytes);
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    this.versionIngestor = null;
+    await this.fileJobWorker;
+  }
+
+  private validateImport(input: Omit<FileImportInput, "buffer"> | FileImportInput) {
+    const capability = fileFormatCapability(input.originalName);
+    if (!capability) {
+      throw new Error(input.originalName.toLowerCase().endsWith(".json")
+        ? "JSON 文件不会进入文件库"
+        : `不支持的文件格式：${input.originalName}`);
+    }
+    if (!input.sourceKey.trim()) throw new Error("sourceKey 不能为空");
+    return capability;
+  }
+
+  private async registerImportedFile(
+    input: Omit<FileImportInput, "buffer">,
+    contentHash: string,
+    bytes: number,
+  ): Promise<FileImportResult> {
+    if (bytes === 0) throw new Error("文件内容为空");
+    const capability = fileFormatCapability(input.originalName)!;
+    const existingBlob = this.db.select().from(fileBlobs)
+      .where(eq(fileBlobs.contentHash, contentHash)).get();
+
+    const now = new Date();
+    let entry = this.db.select().from(fileEntries).where(and(
+      eq(fileEntries.sourceKind, input.sourceKind),
+      eq(fileEntries.sourceKey, input.sourceKey),
+    )).get();
+    const fileEntryId = entry?.id ?? `file-${randomUUID()}`;
+    const existingVersion = entry
+      ? this.db.select().from(fileVersions).where(and(
+          eq(fileVersions.fileEntryId, entry.id),
+          eq(fileVersions.contentHash, contentHash),
+        )).get()
+      : null;
+
+    if (existingVersion) {
+      this.db.update(fileEntries).set({
+        originalName: input.originalName,
+        relativePath: input.relativePath,
+        sourceUri: input.sourceUri,
+        lastSeenAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        state: existingVersion.status === "parsed" ? "ready" : existingVersion.status === "failed" ? "failed" : "processing",
+        ...(entry?.currentVersionId === existingVersion.id ? {} : { currentVersionId: existingVersion.id }),
+      }).where(eq(fileEntries.id, fileEntryId)).run();
+      return {
+        fileEntryId,
+        fileVersionId: existingVersion.id,
+        jobId: this.fileJobId(existingVersion.id, capability.parserId, capability.parserVersion),
+        contentHash,
+        blobDeduped: Boolean(existingBlob),
+        versionDeduped: true,
+      };
+    }
+
+    const previousVersions = entry
+      ? this.db.select({ versionNo: fileVersions.versionNo }).from(fileVersions)
+          .where(eq(fileVersions.fileEntryId, entry.id)).orderBy(desc(fileVersions.versionNo)).limit(1).all()
+      : [];
+    const versionNo = (previousVersions[0]?.versionNo ?? 0) + 1;
+    const fileVersionId = `fver-${randomUUID()}`;
+    const jobId = this.fileJobId(fileVersionId, capability.parserId, capability.parserVersion);
+
+    this.db.transaction((tx) => {
+      tx.insert(fileBlobs).values({
+        contentHash,
+        storagePath: storageRelPath(contentHash),
+        byteSize: bytes,
+        mime: input.mime ?? "application/octet-stream",
+      }).onConflictDoNothing().run();
+      if (!entry) {
+        tx.insert(fileEntries).values({
+          id: fileEntryId,
+          sourceKind: input.sourceKind,
+          sourceKey: input.sourceKey,
+          originalName: input.originalName,
+          extension: capability.extension,
+          provider: input.provider,
+          connectionId: input.connectionId,
+          localSourceId: input.localSourceId,
+          localItemId: input.localItemId,
+          relativePath: input.relativePath,
+          sourceUri: input.sourceUri,
+          currentVersionId: fileVersionId,
+          state: "processing",
+          lastSeenAt: now,
+        }).run();
+      } else {
+        tx.update(fileEntries).set({
+          originalName: input.originalName,
+          extension: capability.extension,
+          provider: input.provider,
+          connectionId: input.connectionId,
+          localSourceId: input.localSourceId,
+          localItemId: input.localItemId,
+          relativePath: input.relativePath,
+          sourceUri: input.sourceUri,
+          currentVersionId: fileVersionId,
+          state: "processing",
+          lastSeenAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        }).where(eq(fileEntries.id, fileEntryId)).run();
+      }
+      tx.insert(fileVersions).values({
+        id: fileVersionId,
+        fileEntryId,
+        versionNo,
+        contentHash,
+        sourceModifiedAt: input.sourceModifiedAt,
+        parserId: capability.parserId,
+        parserVersion: capability.parserVersion,
+        status: "queued",
+      }).run();
+      tx.insert(jobs).values({
+        id: jobId,
+        type: "file.ingest",
+        status: "pending",
+        payload: {
+          fileEntryId,
+          fileVersionId,
+          attempts: 0,
+          ...(input.pipelines ? { pipelines: input.pipelines } : {}),
+          ...(input.roomId ? { roomId: input.roomId } : {}),
+        },
+      }).run();
+    });
+    entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    this.kickFileJobs();
+    return { fileEntryId, fileVersionId, jobId, contentHash, blobDeduped: Boolean(existingBlob), versionDeduped: false };
+  }
+
+  getVersionContext(fileEntryId: string, fileVersionId: string): {
+    entry: typeof fileEntries.$inferSelect;
+    version: typeof fileVersions.$inferSelect;
+    blob: typeof fileBlobs.$inferSelect;
+    storagePath: string;
+  } | null {
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    const version = this.db.select().from(fileVersions).where(and(
+      eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId),
+    )).get();
+    if (!entry || !version) return null;
+    const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, version.contentHash)).get();
+    if (!blob) return null;
+    return { entry, version, blob, storagePath: join(this.dataDir, blob.storagePath) };
+  }
+
+  touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string, ingestEventId: string): void {
+    const now = new Date();
+    this.db.update(fileVersions).set({
+      parsedId, ingestEventId, status: "parsed", errorCode: null, errorMessage: null,
+      processedAt: now,
+    }).where(and(eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId))).run();
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (entry?.currentVersionId === fileVersionId) {
+      this.db.update(fileEntries).set({ state: "ready", updatedAt: now })
+        .where(eq(fileEntries.id, fileEntryId)).run();
+    }
+    this.versionClassifier?.(fileEntryId, fileVersionId);
+  }
+
+  listCatalog(limit = 100, offset = 0): { items: CatalogFileDto[]; total: number } {
+    const rows = this.db.select({
+      entry: fileEntries,
+      version: fileVersions,
+      blob: fileBlobs,
+      membership: fileClusterMemberships,
+      cluster: fileClusters,
+      classification: fileClassifications,
+    }).from(fileEntries)
+      .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+      .leftJoin(fileClusterMemberships, eq(fileEntries.id, fileClusterMemberships.fileEntryId))
+      .leftJoin(fileClusters, eq(fileClusterMemberships.clusterId, fileClusters.id))
+      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId))
+      .where(isNull(fileEntries.deletedAt))
+      .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
+    const items = rows.map(({ entry, version, blob, cluster, classification }) => ({
+      id: entry.id,
+      originalName: entry.originalName,
+      displayName: entry.displayName,
+      sharedTitle: cluster?.canonicalTitle ?? entry.displayName ?? entry.originalName,
+      sourceKind: entry.sourceKind,
+      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : "历史上传"),
+      relativePath: entry.relativePath,
+      provider: entry.provider,
+      bytes: blob?.byteSize ?? 0,
+      dataType: fileFormatCapability(entry.originalName)?.dataType ?? null,
+      agentCategory: classification?.category ?? null,
+      summary: classification?.summary ?? null,
+      tags: classification?.tags ?? [],
+      processingState: entry.state === "deleted" ? "missing" : entry.state,
+      clusterId: cluster?.id ?? null,
+      contentHash: version?.contentHash ?? "",
+      parsed: Boolean(version?.parsedId),
+      updatedAt: entry.updatedAt.toISOString(),
+    } satisfies CatalogFileDto));
+    const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
+      .where(isNull(fileEntries.deletedAt)).all().length;
+    return { items, total };
+  }
+
+  capabilities() {
+    return FILE_FORMAT_CAPABILITIES;
+  }
+
+  isCatalogEntry(fileEntryId: string): boolean {
+    const entry = this.db.select({ sourceKind: fileEntries.sourceKind }).from(fileEntries)
+      .where(eq(fileEntries.id, fileEntryId)).get();
+    return Boolean(entry && entry.sourceKind !== "legacy-upload");
+  }
+
+  catalogMarkdownOf(fileEntryId: string): string | null {
+    const row = this.db.select({ markdown: parsedContents.markdown }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .innerJoin(parsedContents, eq(fileVersions.parsedId, parsedContents.id))
+      .where(eq(fileEntries.id, fileEntryId)).get();
+    return row?.markdown ?? null;
+  }
+
+  catalogStoragePathOf(fileEntryId: string): string | null {
+    const row = this.db.select({ storagePath: fileBlobs.storagePath }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .innerJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+      .where(eq(fileEntries.id, fileEntryId)).get();
+    return row ? join(this.dataDir, row.storagePath) : null;
+  }
+
+  async catalogContentOf(fileEntryId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null> {
+    const row = this.db.select({ entry: fileEntries, blob: fileBlobs }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .innerJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+      .where(eq(fileEntries.id, fileEntryId)).get();
+    if (!row) return null;
+    return { buffer: await readFile(join(this.dataDir, row.blob.storagePath)), mime: row.blob.mime, filename: row.entry.originalName };
+  }
+
+  renameCatalogEntry(fileEntryId: string, displayName: string): CatalogFileDto | null {
+    const normalized = displayName.trim().slice(0, 300);
+    if (!normalized) throw new Error("显示名不能为空");
+    this.db.update(fileEntries).set({ displayName: normalized, updatedAt: new Date() })
+      .where(eq(fileEntries.id, fileEntryId)).run();
+    return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
+  }
+
+  async deleteCatalogEntry(fileEntryId: string, hooks?: FileDeletionHooks): Promise<FileDeletionResult | null> {
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry || entry.sourceKind === "legacy-upload") return null;
+    const versions = this.db.select().from(fileVersions).where(eq(fileVersions.fileEntryId, fileEntryId)).all();
+    const membership = this.db.select().from(fileClusterMemberships)
+      .where(eq(fileClusterMemberships.fileEntryId, fileEntryId)).get();
+    this.db.delete(fileEntries).where(eq(fileEntries.id, fileEntryId)).run();
+    if (membership) {
+      const remaining = this.db.select({ id: fileClusterMemberships.fileEntryId }).from(fileClusterMemberships)
+        .where(eq(fileClusterMemberships.clusterId, membership.clusterId)).limit(1).get();
+      if (!remaining) this.db.delete(fileClusters).where(eq(fileClusters.id, membership.clusterId)).run();
+    }
+    let knowledgeCleanup = false;
+    if (hooks?.requestKnowledgeCleanup) {
+      hooks.requestKnowledgeCleanup(fileEntryId);
+      knowledgeCleanup = true;
+    }
+    const deletedMemoryDocuments = hooks?.deleteMemoryDocuments
+      ? await hooks.deleteMemoryDocuments(fileEntryId)
+      : [];
+    let blobCollected = false;
+    for (const version of versions) {
+      const catalogReference = this.db.select({ id: fileVersions.id }).from(fileVersions)
+        .where(eq(fileVersions.contentHash, version.contentHash)).limit(1).get();
+      const legacyReference = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+        .where(eq(uploadedFiles.contentHash, version.contentHash)).limit(1).get();
+      if (!catalogReference && !legacyReference) {
+        const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, version.contentHash)).get();
+        this.db.delete(fileBlobs).where(eq(fileBlobs.contentHash, version.contentHash)).run();
+        if (blob) await rm(join(this.dataDir, blob.storagePath), { force: true }).catch(() => undefined);
+        blobCollected = true;
+      }
+      if (version.parsedId) {
+        const parsedReference = this.db.select({ id: fileVersions.id }).from(fileVersions)
+          .where(eq(fileVersions.parsedId, version.parsedId)).limit(1).get();
+        const legacyParsedReference = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+          .where(eq(uploadedFiles.currentParsedId, version.parsedId)).limit(1).get();
+        if (!parsedReference && !legacyParsedReference) {
+          this.db.delete(parsedContents).where(eq(parsedContents.id, version.parsedId)).run();
+        }
+      }
+    }
+    return { fileId: fileEntryId, knowledgeCleanup, deletedMemoryDocuments, blobCollected };
+  }
+
+  private fileJobId(fileVersionId: string, parserId: string, parserVersion: number): string {
+    return `file.ingest:${fileVersionId}:${parserId}@${parserVersion}`;
+  }
+
+  private kickFileJobs(): void {
+    if (this.disposed || !this.versionIngestor || this.fileJobWorker) return;
+    this.fileJobWorker = this.processPendingFileJobs().finally(() => {
+      this.fileJobWorker = null;
+      if (!this.disposed && this.versionIngestor) {
+        const pending = this.db.select({ id: jobs.id }).from(jobs).where(and(
+          eq(jobs.type, "file.ingest"), eq(jobs.status, "pending"),
+        )).limit(1).get();
+        if (pending) this.kickFileJobs();
+      }
+    });
+  }
+
+  private async processPendingFileJobs(): Promise<void> {
+    while (!this.disposed && this.versionIngestor) {
+        const job = this.db.select().from(jobs).where(and(
+          eq(jobs.type, "file.ingest"), eq(jobs.status, "pending"),
+        )).orderBy(jobs.createdAt).limit(1).get();
+        if (!job) return;
+        const payload = job.payload as {
+          fileEntryId: string;
+          fileVersionId: string;
+          attempts?: number;
+          pipelines?: FileImportInput["pipelines"];
+          roomId?: string;
+        };
+        const attempts = payload.attempts ?? 0;
+        this.db.update(jobs).set({ status: "running", updatedAt: new Date() }).where(eq(jobs.id, job.id)).run();
+        this.db.update(fileVersions).set({ status: "parsing", errorCode: null, errorMessage: null })
+          .where(eq(fileVersions.id, payload.fileVersionId)).run();
+        try {
+          const ingestor = this.versionIngestor;
+          if (!ingestor) return;
+          const result = await ingestor({
+            fileEntryId: payload.fileEntryId,
+            fileVersionId: payload.fileVersionId,
+            ...(payload.pipelines ? { pipelines: payload.pipelines } : {}),
+            ...(payload.roomId ? { roomId: payload.roomId } : {}),
+          });
+          this.touchVersionParsed(payload.fileEntryId, payload.fileVersionId, result.parsedId, result.eventId);
+          this.db.update(jobs).set({ status: "completed", result, error: null, updatedAt: new Date() })
+            .where(eq(jobs.id, job.id)).run();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (attempts < 2) {
+            this.db.update(jobs).set({
+              status: "pending",
+              payload: { ...payload, attempts: attempts + 1 },
+              error: { message },
+              updatedAt: new Date(),
+            }).where(eq(jobs.id, job.id)).run();
+          } else {
+            const now = new Date();
+            this.db.update(jobs).set({ status: "failed", error: { message }, updatedAt: now })
+              .where(eq(jobs.id, job.id)).run();
+            this.db.update(fileVersions).set({
+              status: "failed", errorCode: "ingest_failed", errorMessage: message.slice(0, 500), processedAt: now,
+            }).where(eq(fileVersions.id, payload.fileVersionId)).run();
+            const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, payload.fileEntryId)).get();
+            if (entry?.currentVersionId === payload.fileVersionId) {
+              this.db.update(fileEntries).set({ state: "failed", updatedAt: now })
+                .where(eq(fileEntries.id, payload.fileEntryId)).run();
+            }
+          }
+        }
+    }
+  }
 
   /**
    * 统一上传（全系统唯一字节入口）：

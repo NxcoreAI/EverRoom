@@ -8,6 +8,7 @@ body,
   width: 100%;
   height: 100%;
   margin: 0;
+  overscroll-behavior-x: none;
 }
 
 body {
@@ -755,6 +756,7 @@ summary:focus-visible {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  overscroll-behavior-x: none;
   background: var(--bg);
 }
 
@@ -2413,6 +2415,33 @@ summary:focus-visible {
 .file-recognition {
   display: grid;
   gap: 16px;
+}
+
+.files-drop-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 16px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow);
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.files-drop-overlay svg {
+  width: 30px;
+  height: 30px;
+}
+
+.files-drop-overlay strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .file-recognition-toolbar {

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRun, AgentSession, TrustedMcpSession } from "@nxcore/agent-contract";
 import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
@@ -37,6 +37,7 @@ async function testConfig(): Promise<GatewayConfig> {
 }
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -64,6 +65,37 @@ describe("gateway server", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
+  });
+
+  it("keeps memory routes enabled without a Pi runtime", async () => {
+    const config = await testConfig();
+    config.memory = {
+      baseUrl: "http://127.0.0.1:8420",
+      apiKey: "memory-key",
+      serviceId: "everroom",
+      teamId: "everroom",
+      agentId: "pi-agent",
+      userId: "local-user",
+      recallLimit: 5,
+      charBudget: 2_000,
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      code: 0,
+      message: "ok",
+      data: { items: [], total: 0 },
+    }), { headers: { "content-type": "application/json" } })));
+    const app = await createServer(config);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/memory/atomic?limit=1&offset=0",
+      headers: { authorization: `Bearer ${config.authToken}` },
+    });
+    await app.close();
+
+    expect(config.pi).toBeNull();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ items: [], total: 0 });
   });
 
   it("serves persisted perception and diary settings with local visual nodes", async () => {

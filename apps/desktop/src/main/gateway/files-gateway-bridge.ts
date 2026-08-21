@@ -1,29 +1,33 @@
 import { dialog, shell } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { basename, extname, relative, resolve, sep } from 'node:path'
 import type {
   FileDto,
+  FileCatalogDto,
+  FileFormatCapabilityDto,
+  FileImportAcceptedDto,
   FileImportOutcome,
   IngestPipelines,
-  IngestResultDto,
 } from '../../shared/ingest'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
-
-const SUPPORTED_IMPORT_EXTENSIONS = new Set([
-  '.csv', '.docx', '.html', '.htm', '.md', '.markdown', '.pptx', '.txt', '.xlsx',
-])
+import { isIgnoredLocalDirectory } from '../file-format-policy'
 
 export interface ImportCandidate {
   filePath: string
   filename: string
 }
 
-function isSupportedImportFile(filePath: string): boolean {
-  return SUPPORTED_IMPORT_EXTENSIONS.has(extname(filePath).toLowerCase())
+const DEFAULT_IMPORT_EXTENSIONS = new Set([
+  '.csv', '.docx', '.html', '.htm', '.md', '.markdown', '.mdx', '.pptx', '.text', '.txt', '.xlsx',
+])
+
+function isSupportedImportFile(filePath: string, extensions: ReadonlySet<string>): boolean {
+  return extensions.has(extname(filePath).toLowerCase())
 }
 
-async function collectDirectoryFiles(directory: string): Promise<ImportCandidate[]> {
+async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<string>): Promise<ImportCandidate[]> {
   const rootPath = resolve(directory)
   const candidates: ImportCandidate[] = []
   const visit = async (currentDirectory: string, isRoot = false): Promise<void> => {
@@ -38,8 +42,9 @@ async function collectDirectoryFiles(directory: string): Promise<ImportCandidate
       if (entry.name.startsWith('.')) continue
       const filePath = resolve(currentDirectory, entry.name)
       if (entry.isDirectory()) {
+        if (isIgnoredLocalDirectory(entry.name)) continue
         await visit(filePath)
-      } else if (entry.isFile() && isSupportedImportFile(filePath)) {
+      } else if (entry.isFile() && isSupportedImportFile(filePath, extensions)) {
         candidates.push({ filePath, filename: relative(rootPath, filePath).split(sep).join('/') })
       }
     }
@@ -49,7 +54,10 @@ async function collectDirectoryFiles(directory: string): Promise<ImportCandidate
   return candidates
 }
 
-export async function collectImportCandidates(selectedPaths: string[]): Promise<ImportCandidate[]> {
+export async function collectImportCandidates(
+  selectedPaths: string[],
+  extensions: ReadonlySet<string> = DEFAULT_IMPORT_EXTENSIONS,
+): Promise<ImportCandidate[]> {
   const candidates: ImportCandidate[] = []
   const seen = new Set<string>()
   for (const selectedPath of selectedPaths) {
@@ -60,11 +68,10 @@ export async function collectImportCandidates(selectedPaths: string[]): Promise<
     try {
       selectedStat = await stat(resolvedPath)
     } catch {
-      candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
       continue
     }
-    if (selectedStat.isDirectory()) candidates.push(...await collectDirectoryFiles(resolvedPath))
-    else if (selectedStat.isFile() && isSupportedImportFile(resolvedPath)) candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
+    if (selectedStat.isDirectory()) candidates.push(...await collectDirectoryFiles(resolvedPath, extensions))
+    else if (selectedStat.isFile() && isSupportedImportFile(resolvedPath, extensions)) candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
   }
   return [...new Map(candidates.map((candidate) => [resolve(candidate.filePath), candidate])).values()]
 }
@@ -77,9 +84,18 @@ export async function collectImportCandidates(selectedPaths: string[]): Promise<
 export class FilesGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
-  list(limit = 100, offset = 0): Promise<{ items: FileDto[]; total: number }> {
+  list(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-    return this.request(`/v1/files?${query}`)
+    return this.request(`/v1/files/catalog?${query}`)
+  }
+
+  catalog(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    return this.request(`/v1/files/catalog?${query}`)
+  }
+
+  capabilities(): Promise<{ items: FileFormatCapabilityDto[] }> {
+    return this.request('/v1/files/capabilities')
   }
 
   get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }> {
@@ -102,10 +118,17 @@ export class FilesGatewayBridge {
     return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
   }
 
-  rename(fileId: string, displayName: string): Promise<FileDto> {
-    return this.request(`/v1/files/${encodeURIComponent(fileId)}/meta`, {
+  rename(fileId: string, displayName: string): Promise<FileCatalogDto> {
+    return this.request(`/v1/file-entries/${encodeURIComponent(fileId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ displayName }),
+    })
+  }
+
+  pinClusterTitle(clusterId: string, sharedTitle: string): Promise<{ id: string; canonicalTitle: string; titlePinned: boolean }> {
+    return this.request(`/v1/file-clusters/${encodeURIComponent(clusterId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ sharedTitle }),
     })
   }
 
@@ -141,28 +164,52 @@ export class FilesGatewayBridge {
       filters: [
         {
           name: desktopText('dialog.importFiles.documents'),
-          extensions: ['md', 'markdown', 'txt', 'json', 'docx', 'xlsx', 'pptx', 'csv', 'html', 'htm'],
+          extensions: ['md', 'markdown', 'mdx', 'txt', 'text', 'docx', 'xlsx', 'pptx', 'csv', 'html', 'htm'],
         },
       ],
     })
     if (picked.canceled || picked.filePaths.length === 0) return []
 
+    return this.importPathsOnce(picked.filePaths, options)
+  }
+
+  /**
+   * 一次性手动采集：展开本次明确选择的文件/目录并导入。不会注册本地
+   * 数据源或 watcher，后续文件变化也不会触发自动重扫。
+   */
+  async importPathsOnce(selectedPaths: string[], options?: {
+    pipelines?: IngestPipelines
+    roomId?: string
+  }): Promise<FileImportOutcome[]> {
+    if (!Array.isArray(selectedPaths) || selectedPaths.length === 0) return []
+
     const outcomes: FileImportOutcome[] = []
-    for (const filePath of picked.filePaths) {
-      const filename = filePath.split(/[\\/]/).pop() ?? filePath
+    const manualExtensions = new Set((await this.capabilities()).items
+      .filter((item) => item.manualImport).map((item) => item.extension))
+    const candidates = await collectImportCandidates(
+      selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
+      manualExtensions,
+    )
+    for (const { filePath, filename } of candidates) {
       try {
-        const buffer = await readFile(filePath)
-        const uploaded = await this.uploadBytes(filename, buffer)
-        const ingested = await this.ingestRef(uploaded.id, options?.pipelines, options?.roomId)
+        const uploaded = await this.importPath({
+          filePath,
+          sourceKind: 'manual-upload',
+          sourceKey: `manual:${randomUUID()}`,
+          originalName: basename(filePath),
+          relativePath: filename,
+          ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
+          ...(options?.roomId ? { roomId: options.roomId } : {}),
+        })
         outcomes.push({
           filename,
-          fileId: uploaded.id,
-          eventId: ingested.eventId,
-          dataType: ingested.dataType,
-          deduped: ingested.deduped,
-          pipelines: ingested.pipelines,
-          memoryResult: ingested.memoryResult,
-          routeJobId: ingested.routeJobId,
+          fileId: uploaded.fileEntryId,
+          eventId: null,
+          dataType: null,
+          deduped: uploaded.versionDeduped,
+          pipelines: options?.pipelines ?? null,
+          memoryResult: null,
+          routeJobId: uploaded.jobId,
           error: null,
         })
       } catch (error) {
@@ -182,11 +229,70 @@ export class FilesGatewayBridge {
     return outcomes
   }
 
-  private async uploadBytes(filename: string, buffer: Buffer) {
+  async importLocalFile(input: {
+    filePath: string
+    sourceKey: string
+    originalName: string
+    localSourceId: string
+    localItemId: string
+    relativePath: string
+    sourceModifiedAt: string
+  }): Promise<FileImportAcceptedDto> {
+    return this.importPath({ ...input, sourceKind: 'local-folder' })
+  }
+
+  async importConnectorFile(input: {
+    filePath: string
+    sourceKey: string
+    originalName: string
+    provider: string
+    connectionId: string
+    relativePath: string
+    sourceUri: string
+    sourceModifiedAt: string
+  }): Promise<FileImportAcceptedDto> {
+    return this.importPath({ ...input, sourceKind: 'connector' })
+  }
+
+  private async importPath(input: {
+    filePath: string
+    sourceKind: 'manual-upload' | 'local-folder' | 'connector'
+    sourceKey: string
+    originalName: string
+    localSourceId?: string
+    localItemId?: string
+    relativePath?: string
+    sourceModifiedAt?: string
+    pipelines?: IngestPipelines
+    roomId?: string
+    provider?: string
+    connectionId?: string
+    sourceUri?: string
+  }): Promise<FileImportAcceptedDto> {
+    const before = await stat(input.filePath)
+    const buffer = await readFile(input.filePath)
+    const after = await stat(input.filePath)
+    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) {
+      throw new Error('文件在导入过程中发生变化，请稍后重试。')
+    }
     const form = new FormData()
-    form.append('file', new Blob([new Uint8Array(buffer)]), filename)
+    form.append('metadata', JSON.stringify({
+      sourceKind: input.sourceKind,
+      sourceKey: input.sourceKey,
+      originalName: input.originalName,
+      ...(input.localSourceId ? { localSourceId: input.localSourceId } : {}),
+      ...(input.localItemId ? { localItemId: input.localItemId } : {}),
+      ...(input.provider ? { provider: input.provider } : {}),
+      ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+      ...(input.sourceUri ? { sourceUri: input.sourceUri } : {}),
+      ...(input.relativePath ? { relativePath: input.relativePath } : {}),
+      sourceModifiedAt: input.sourceModifiedAt ?? after.mtime.toISOString(),
+      ...(input.pipelines ? { pipelines: input.pipelines } : {}),
+      ...(input.roomId ? { roomId: input.roomId } : {}),
+    }))
+    form.append('file', new Blob([new Uint8Array(buffer)]), input.originalName)
     const connection = this.supervisor.getConnection()
-    const response = await fetch(`${connection.baseUrl}/v1/files`, {
+    const response = await fetch(`${connection.baseUrl}/v1/file-imports`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${connection.token}` },
       body: form,
@@ -195,18 +301,7 @@ export class FilesGatewayBridge {
       const body = await response.json().catch(() => null) as { error?: unknown } | null
       throw new Error(typeof body?.error === 'string' ? body.error : `文件上传失败（${response.status}）`)
     }
-    return response.json() as Promise<{ id: string; contentHash: string; deduped: boolean; bytes: number }>
-  }
-
-  private async ingestRef(fileId: string, pipelines?: IngestPipelines, roomId?: string) {
-    return this.request<IngestResultDto>('/v1/ingest', {
-      method: 'POST',
-      body: JSON.stringify({
-        source: { ref: { sourceKind: 'file', sourceId: fileId } },
-        ...(pipelines ? { pipelines } : {}),
-        ...(roomId ? { roomId } : {}),
-      }),
-    })
+    return response.json() as Promise<FileImportAcceptedDto>
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

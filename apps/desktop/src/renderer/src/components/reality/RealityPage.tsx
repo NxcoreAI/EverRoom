@@ -39,7 +39,7 @@ import type {
 } from '../../../../shared/sources'
 import { RecordingPage } from '../recording/RecordingPage'
 import { mergeRealityEvent, mergeRealitySnapshot } from './reality-event-state'
-import { perceptionDisplayText, VisualDetail } from './VisualPerceptionPanel'
+import { perceptionDisplayText, realityTagKindLabel, VisualDetail } from './VisualPerceptionPanel'
 import './RealityPage.css'
 
 type DetailTab = 'insights' | 'transcript'
@@ -785,7 +785,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                   <section className="reality-topic"><span>{t('diaryReality:reality.topic')}</span><strong>{event.insights.currentTopic || event.currentTopic || t('diaryReality:reality.waitingForTranscript')}</strong><p>{event.insights.summary || t('diaryReality:reality.aSummaryWillBeGeneratedAfterTranscription')}</p></section>
                                   <section className="reality-tags-section">
                                     <div className="reality-tags-heading"><h3><Tag aria-hidden="true" />{t('diaryReality:reality.representativeTags')}</h3></div>
-                                    {(event.insights.representativeTags?.length ?? 0) > 0 ? <div className="reality-tag-list">{event.insights.representativeTags!.map((tag) => <div className="reality-tag" key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind} title={tag.evidence || undefined}><span>{t(tag.kind === 'entity' ? 'diaryReality:reality.entity' : 'diaryReality:reality.fact')}</span><strong>{tag.label}</strong>{(tag.occurrenceCount ?? 0) > 1 ? <small>{t('diaryReality:reality.appearsCountTimes', { count: tag.occurrenceCount ?? 0 })}</small> : null}{tag.id && event.insights.summaryRecordId ? <div><button type="button" title={t('diaryReality:reality.removeFromThisSummary')} aria-label={t('diaryReality:reality.removeLabel', { label: tag.label })} disabled={savingTags} onClick={() => void removeTag(event, tag)}><X /></button></div> : null}</div>)}</div> : <p className="reality-tags-empty">{t('diaryReality:reality.noRepresentativeTags')}</p>}
+                                    {(event.insights.representativeTags?.length ?? 0) > 0 ? <div className="reality-tag-list">{event.insights.representativeTags!.map((tag) => <div className="reality-tag" key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind} title={tag.evidence || undefined}><span>{realityTagKindLabel(tag, t)}</span><strong>{tag.label}</strong>{(tag.occurrenceCount ?? 0) > 1 ? <small>{t('diaryReality:reality.appearsCountTimes', { count: tag.occurrenceCount ?? 0 })}</small> : null}{tag.id && event.insights.summaryRecordId ? <div><button type="button" title={t('diaryReality:reality.removeFromThisSummary')} aria-label={t('diaryReality:reality.removeLabel', { label: tag.label })} disabled={savingTags} onClick={() => void removeTag(event, tag)}><X /></button></div> : null}</div>)}</div> : <p className="reality-tags-empty">{t('diaryReality:reality.noRepresentativeTags')}</p>}
                                   </section>
                                   <InsightList title="diaryReality:reality.keyContent" items={event.insights.keyPoints} empty="diaryReality:reality.noKeyContent" />
                                   <div className="reality-insight-columns">

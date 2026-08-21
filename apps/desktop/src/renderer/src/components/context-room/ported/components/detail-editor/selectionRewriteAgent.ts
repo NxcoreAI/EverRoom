@@ -5,6 +5,7 @@ import type {
   CreateAgentSessionInput,
   StartAgentRunInput,
 } from '@nxcore/agent-contract'
+import i18n from '@/i18n/i18next'
 
 export interface SelectionRewriteAgentApi {
   createSession(input: CreateAgentSessionInput): Promise<AgentSession>
@@ -44,18 +45,20 @@ export interface SelectionRewriteAgentResult {
   runId: string
 }
 
-const DEFAULT_INSTRUCTION = '保持原意，重写得更清晰、自然。'
-
-export function buildSelectionRewritePrompt(input: SelectionRewriteRequest): string {
+export function buildSelectionRewritePrompt(
+  input: SelectionRewriteRequest,
+  responseLanguage: StartAgentRunInput['responseLanguage'] = 'zh-CN',
+): string {
+  const t = i18n.getFixedT(responseLanguage, 'common')
   const payload = {
-    instruction: input.instruction.trim() || DEFAULT_INSTRUCTION,
+    instruction: input.instruction.trim() || t('contextRoom:selectionRewriteAgent.defaultInstruction'),
     selectedText: input.selectedText,
     contextBefore: input.contextBefore,
     contextAfter: input.contextAfter,
     ...(input.formatContext ? { formatContext: input.formatContext } : {}),
   }
   return [
-    '使用 selection-rewrite Skill 重写文档中的指定选区。',
+    t('contextRoom:selectionRewriteAgent.promptInstruction'),
     '',
     JSON.stringify(payload),
   ].join('\n')
@@ -154,13 +157,13 @@ export async function streamSelectionRewrite(
   try {
     throwIfAborted(options.signal)
     const session = await api.createSession({
-      pageLabel: `AI 重写 · ${input.documentName}`,
+      pageLabel: i18n.getFixedT(options.responseLanguage ?? 'zh-CN', 'common')('contextRoom:selectionRewriteAgent.pageLabel', { name: input.documentName }),
       roomId: input.roomId,
     })
     sessionId = session.id
     throwIfAborted(options.signal)
     const run = await api.startRun(session.id, {
-      prompt: buildSelectionRewritePrompt(input),
+      prompt: buildSelectionRewritePrompt(input, options.responseLanguage),
       idempotencyKey: crypto.randomUUID(),
       responseLanguage: options.responseLanguage,
       captureMemory: false,
@@ -192,13 +195,13 @@ export async function streamSelectionRewrite(
         } else if (event.type === 'run.completed') {
           runSettled = true
           const output = sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace })
-          if (!output) throw new Error('Agent 没有返回可替换的文本。')
+          if (!output) throw new Error(i18n.t('contextRoom:selectionRewriteAgent.noReplacementText'))
           completed = true
           return { replacementText: output, sessionId: session.id, runId: run.id }
         } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {
           runSettled = true
           const message = eventText(event, 'message')
-          throw new Error(message || 'Agent 重写失败。')
+          throw new Error(message || i18n.t('contextRoom:selectionRewriteAgent.failed'))
         } else if (event.type === 'run.cancelled') {
           runSettled = true
           throw abortError()
@@ -207,7 +210,7 @@ export async function streamSelectionRewrite(
       await wait(pollIntervalMs, options.signal)
     }
     cancelRun()
-    throw new Error('Agent 重写超时。')
+    throw new Error(i18n.t('contextRoom:selectionRewriteAgent.timedOut'))
   } finally {
     options.signal.removeEventListener('abort', onAbort)
     if (!runSettled) cancelRun()

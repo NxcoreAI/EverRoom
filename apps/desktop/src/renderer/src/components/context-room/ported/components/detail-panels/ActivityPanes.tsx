@@ -15,7 +15,7 @@ import { useMemo, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
-import { uiText } from '../../adapters';
+import { localizedUiText, uiText } from '../../adapters';
 import { roomKindTone } from '../utils';
 import { PanelEmptyState } from './PanelEmptyState';
 
@@ -58,13 +58,13 @@ function dateInView(date: Date, cursor: Date, view: ScheduleView) {
 }
 
 export function SchedulePane({ room, onOpen }: { room: ContextRoomRecord; onOpen: (target: { kind: 'meeting' | 'task'; id: string }) => void }) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   const [view, setView] = useState<ScheduleView>('month');
   const [cursor, setCursor] = useState(new Date(SCHEDULE_TODAY));
   const scheduleItems = useMemo(() => [
     ...room.materials.filter((material) => material.type === '会议').map((meeting) => ({
       id: meeting.id, kind: 'meeting' as const, date: parseScheduleDate(meeting.time), time: meeting.time.match(/\b\d{1,2}:\d{2}\b/)?.[0] ?? '', title: meeting.title,
-      subtitle: meeting.attendees?.join('、') || meeting.summary, description: meeting.summary, location: meeting.location,
+      subtitle: meeting.attendees?.join(locale === 'zh-CN' ? '、' : ', ') || localizedUiText(meeting.summary, t), description: localizedUiText(meeting.summary, t), location: meeting.location,
       attachments: room.fileItems.slice(0, 1).map((file) => ({ name: file.name, size: file.size })),
     })),
     ...room.actionItems.filter((task) => !task.completed && task.status !== '已完成').map((task) => ({
@@ -72,7 +72,7 @@ export function SchedulePane({ room, onOpen }: { room: ContextRoomRecord; onOpen
       subtitle: t('contextRoom:activityPanes.ownerOwner', { owner: task.owner }), description: t('contextRoom:activityPanes.theSourceAndStatusWillSyncToThe'), location: undefined,
       attachments: [] as Array<{ name: string; size?: string }>,
     })),
-  ], [room, t]);
+  ], [locale, room, t]);
   const visibleItems = scheduleItems.filter((item) => dateInView(item.date, cursor, view));
   const groups = visibleItems.reduce<Map<string, typeof visibleItems>>((result, item) => {
     const key = localDateKey(item.date);
@@ -184,5 +184,5 @@ export function TasksPane({ room, onSelect, onToggle }: { room: ContextRoomRecor
 export function MailsPane({ room, onSelect }: { room: ContextRoomRecord; onSelect: (id: string) => void }) {
   const { t } = useLocale();
   const mails = room.materials.filter((material) => material.type === '邮件');
-  return <div className="context-room-mail-pane"><header><h2>{t('contextRoom:activityPanes.roomEmail')}</h2><span>{mails.length}</span></header>{mails.length ? mails.map((mail) => <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}><Mail aria-hidden="true" /><span><span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? t('contextRoom:activityPanes.to') : mail.sender ?? '张总 · 星港科技'}</b><time>{mail.time}</time></span><strong>{mail.title}</strong><small>{mail.summary}</small></span></button>) : <PanelEmptyState icon={Mail} title={t('contextRoom:activityPanes.noEmailYet')} description={t('contextRoom:activityPanes.emailRelatedToThisRoomAppearsHere')} />}</div>;
+  return <div className="context-room-mail-pane"><header><h2>{t('contextRoom:activityPanes.roomEmail')}</h2><span>{mails.length}</span></header>{mails.length ? mails.map((mail) => <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}><Mail aria-hidden="true" /><span><span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? t('contextRoom:activityPanes.to') : mail.sender ?? t('contextRoom:objectDetail.defaultSender')}</b><time>{mail.time}</time></span><strong>{mail.title}</strong><small>{localizedUiText(mail.summary, t)}</small></span></button>) : <PanelEmptyState icon={Mail} title={t('contextRoom:activityPanes.noEmailYet')} description={t('contextRoom:activityPanes.emailRelatedToThisRoomAppearsHere')} />}</div>;
 }

@@ -20,7 +20,7 @@ import {
 import { type ReactNode, useMemo, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
-import { cn, uiText } from '../adapters';
+import { cn, localizedUiText, uiText } from '../adapters';
 import type {
   ContextRoomActionItem,
   ContextRoomFileItem,
@@ -436,7 +436,7 @@ function MeetingDetail({
   onBack: () => void;
   onUpdateRoom: (updater: RoomUpdater) => void;
 }) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   const [tab, setTab] = useState<'summary' | 'actions' | 'transcript'>('summary');
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const actions = meeting.meetingActions ?? [];
@@ -487,7 +487,7 @@ function MeetingDetail({
         <div>
           <h1>{meeting.title}</h1>
           <p>
-            {meeting.attendees?.join('、') || t('contextRoom:objectDetail.noAttendeesRecorded')} · {meeting.duration ?? t('contextRoom:objectDetail.durationNotRecorded')}
+            {meeting.attendees?.join(locale === 'zh-CN' ? '、' : ', ') || t('contextRoom:objectDetail.noAttendeesRecorded')} · {meeting.duration ?? t('contextRoom:objectDetail.durationNotRecorded')}
           </p>
         </div>
       </header>
@@ -495,9 +495,9 @@ function MeetingDetail({
       <div className="context-room-meeting-tabs" role="tablist" aria-label={t('contextRoom:objectDetail.meetingDetails')}>
         {(
           [
-            ['summary', 'AI 纪要'],
-            ['actions', `行动项 ${String(actions.length)}`],
-            ['transcript', '转写原文'],
+            ['summary', t('contextRoom:objectDetail.aiMeetingNotes')],
+            ['actions', t('contextRoom:objectDetail.countActionItems', { count: actions.length })],
+            ['transcript', t('contextRoom:objectDetail.transcript')],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -507,13 +507,13 @@ function MeetingDetail({
             aria-selected={tab === id}
             onClick={() => setTab(id)}
           >
-            {t(uiText(label))}
+            {label}
           </button>
         ))}
       </div>
       {tab === 'summary' ? (
         <Panel title={t('contextRoom:objectDetail.aiNotes')} className="context-room-meeting-panel">
-          <p className="context-room-memory-content">{meeting.summary}</p>
+          <p className="context-room-memory-content">{localizedUiText(meeting.summary, t)}</p>
           <div className="context-room-meeting-facts">
             <span>
               <small>{t('contextRoom:objectDetail.time')}</small>
@@ -599,12 +599,14 @@ function MailDetail({
   const [folder, setFolder] = useState<MailFolder>(mail.folder ?? 'inbox');
   const [selectedMailId, setSelectedMailId] = useState(mail.id);
   const [confirmAction, setConfirmAction] = useState<'send' | 'task' | null>(null);
+  const defaultSender = t('contextRoom:objectDetail.defaultSender');
+  const formalQuoteTaskTitle = t('contextRoom:objectDetail.formalQuoteTask');
   const mailItems = useMemo(
     () => [
       {
         id: mail.id,
         folder: mail.folder ?? ('inbox' as const),
-        sender: '张总 · 星港科技',
+        sender: mail.sender ?? defaultSender,
         title: mail.title,
         summary: mail.summary,
         time: mail.time,
@@ -614,19 +616,19 @@ function MailDetail({
       {
         id: `${mail.id}-scope`,
         folder: 'inbox' as const,
-        sender: '王敏 · 交付团队',
-        title: `Re: ${room.title} 范围确认`,
-        summary: '交付范围已补充桌面端安装、权限说明和来源追溯验收项。',
-        time: '昨天 16:40',
+        sender: t('contextRoom:objectDetail.deliveryTeamSender'),
+        title: t('contextRoom:objectDetail.scopeConfirmationTitle', { room: room.title }),
+        summary: t('contextRoom:objectDetail.scopeConfirmationSummary'),
+        time: t('contextRoom:objectDetail.yesterdayAt', { time: '16:40' }),
         unread: false,
         starred: false,
       },
       {
         id: `${mail.id}-sent`,
         folder: 'sent' as const,
-        sender: '发送至：项目协作组',
-        title: `${room.title} 阶段同步`,
-        summary: '已同步当前进度、阻塞项和下一轮评审时间。',
+        sender: t('contextRoom:objectDetail.sentToProjectCollaborationTeam'),
+        title: t('contextRoom:objectDetail.phaseUpdateTitle', { room: room.title }),
+        summary: t('contextRoom:objectDetail.phaseUpdateSummary'),
         time: '07-21 10:20',
         unread: false,
         starred: false,
@@ -634,9 +636,9 @@ function MailDetail({
       {
         id: `${mail.id}-archive`,
         folder: 'archive' as const,
-        sender: 'Everroom 系统通知',
-        title: '历史资料索引完成',
-        summary: '归档邮件和附件已完成索引，可在 Context Room 中追溯。',
+        sender: t('contextRoom:objectDetail.systemNotificationSender'),
+        title: t('contextRoom:objectDetail.historicalDataIndexComplete'),
+        summary: t('contextRoom:objectDetail.archivedEmailIndexSummary'),
         time: '07-18 09:12',
         unread: false,
         starred: false,
@@ -645,12 +647,15 @@ function MailDetail({
     [
       mail.folder,
       mail.id,
+      mail.sender,
       mail.starred,
       mail.summary,
       mail.time,
       mail.title,
       mail.unread,
       room.title,
+      defaultSender,
+      t,
     ]
   );
   const visibleMails = mailItems.filter((item) =>
@@ -683,9 +688,9 @@ function MailDetail({
             ...current.actionItems,
             {
               id: `${mail.id}-task`,
-              title: '补充正式报价函和交付范围',
+              title: formalQuoteTaskTitle,
               status: '未开始',
-              owner: '陆远',
+              owner: t('contextRoom:objectDetail.defaultOwnerName'),
               deadline: '07-24',
               source: { type: '邮件', name: mail.title, objectId: mail.id },
             },
@@ -824,15 +829,15 @@ function MailDetail({
           <section className="context-room-mail-derived-section">
             <h3>{t('contextRoom:objectDetail.questionsToAnswer')}</h3>
             <article className="context-room-mail-suggestion">
-              <b>{uiText('请确认最终报价是否包含部署与首月支持？')}</b>
+              <b>{t('contextRoom:objectDetail.quoteConfirmationQuestion')}</b>
             </article>
           </section>
           <section className="context-room-mail-derived-section">
             <h3>{t('contextRoom:objectDetail.taskCandidate')}</h3>
             <article className="context-room-mail-suggestion context-room-mail-task-candidate">
               <div>
-                <b>{uiText('补充正式报价函和交付范围')}</b>
-                <span>{uiText('截止 07-24')}</span>
+                <b>{formalQuoteTaskTitle}</b>
+                <span>{t('contextRoom:objectDetail.dueDateValue', { date: '07-24' })}</span>
               </div>
               <button
                 type="button"
@@ -853,7 +858,7 @@ function MailDetail({
             <textarea
               aria-label={t('contextRoom:objectDetail.replyDraft')}
               value={
-                mail.replyDraft ?? `已收到，关于「${room.title}」的补充信息会同步到下一版方案中。`
+                mail.replyDraft ?? t('contextRoom:objectDetail.replyDraftForRoom', { room: room.title })
               }
               onChange={(event) => updateMail({ replyDraft: event.target.value })}
             />
@@ -886,7 +891,7 @@ function MailDetail({
         title={t('contextRoom:objectDetail.addToTasks')}
         summary={t('contextRoom:objectDetail.theTaskCandidateFromThisEmailWillBe')}
         rows={[
-          { label: t('contextRoom:objectDetail.tasks'), value: '补充正式报价函和交付范围' },
+          { label: t('contextRoom:objectDetail.tasks'), value: formalQuoteTaskTitle },
           { label: t('contextRoom:objectDetail.dueDate'), value: '07-24' },
         ]}
         sources={[{ type: t('contextRoom:objectDetail.email'), name: mail.title }]}
@@ -899,7 +904,7 @@ function MailDetail({
         title={t('contextRoom:objectDetail.sendEmail')}
         summary={t('contextRoom:objectDetail.theCurrentReplyDraftWillBeSentExternally')}
         rows={[
-          { label: t('contextRoom:objectDetail.to'), value: '张总 · 星港科技' },
+          { label: t('contextRoom:objectDetail.to'), value: mail.sender ?? defaultSender },
           { label: t('contextRoom:objectDetail.topic'), value: mail.title },
         ]}
         sources={[{ type: t('contextRoom:objectDetail.email'), name: mail.title }]}
@@ -937,7 +942,7 @@ function MaterialDetail({
       </header>
       <div className="context-room-object-content-grid">
         <Panel title={t('contextRoom:objectDetail.resourceSummary')}>
-          <p className="text-sm leading-6 text-zinc-700">{material.summary}</p>
+          <p className="text-sm leading-6 text-zinc-700">{localizedUiText(material.summary, t)}</p>
         </Panel>
         <Panel title={t('contextRoom:objectDetail.roomContext')}>
           <div className="context-room-object-facts">
@@ -1076,7 +1081,7 @@ function MemoryDetail({
                   aria-pressed={activeMemory.id === item.id}
                   onClick={() => setSelectedMemoryId(item.id)}
                 >
-                  <b>{item.content}</b>
+                  <b>{localizedUiText(item.content, t)}</b>
                   <span>
                     {t(uiText(item.type))} · {room.title}
                   </span>
@@ -1086,11 +1091,11 @@ function MemoryDetail({
             </div>
           </section>
           <Panel
-            title={activeMemory.content}
+            title={localizedUiText(activeMemory.content, t)}
             action={<Tag variant={statusVariant(uiText(activeMemory.status))}>{t(uiText(activeMemory.status))}</Tag>}
             className="context-room-memory-detail-panel"
           >
-            <p className="context-room-memory-content">{activeMemory.content}</p>
+            <p className="context-room-memory-content">{localizedUiText(activeMemory.content, t)}</p>
             <div className="context-room-object-label context-room-memory-source-label">{t('contextRoom:objectDetail.sources')}</div>
             <div className="context-room-source-card" data-icon-tone="ai">
               <Sparkles className="size-4" aria-hidden="true" />

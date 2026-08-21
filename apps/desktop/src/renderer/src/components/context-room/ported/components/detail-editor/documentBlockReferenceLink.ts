@@ -7,6 +7,7 @@ import {
   createEverroomBlockReferenceUrl as createSharedBlockReferenceUrl,
   parseEverroomBlockReferenceUrl as parseSharedBlockReferenceUrl,
 } from '@nxcore/document-model'
+import i18n from '@/i18n/i18next'
 
 export const DOCUMENT_BLOCK_REFERENCE_NODE = 'documentBlockReference'
 
@@ -80,7 +81,8 @@ function unescapeMarkdownLabel(value: string): string {
 export function documentBlockReferenceToMarkdown(
   reference: DocumentBlockReferenceAttrs,
 ): string {
-  const label = escapeMarkdownLabel(reference.fallbackTitle || '文档块引用') || '文档块引用'
+  const fallbackLabel = i18n.t('contextRoom:documentBlockReference.referencedDocument') as string
+  const label = escapeMarkdownLabel(reference.fallbackTitle || fallbackLabel) || fallbackLabel
   return `[${label}](${createEverroomBlockReferenceUrl(reference)})`
 }
 

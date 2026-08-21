@@ -321,7 +321,7 @@ export function SourcesPage() {
     setMessage(t('surface:sources.clearingFolderDocumentData'))
     void api.disconnect(source.id, true).catch((error) => {
       setBusyId(null)
-      setMessage(error instanceof Error ? error.message : '清理数据源失败，请稍后重试。')
+      setMessage(error instanceof Error ? error.message : t('surface:sources.failedToClearSourceData'))
       void loadSources()
     })
   }

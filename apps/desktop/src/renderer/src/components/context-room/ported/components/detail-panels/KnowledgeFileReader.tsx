@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { FolderOpen } from 'lucide-react';
 
 import { showToast } from '@/state/toast';
+import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomKnowledgeFileResource } from '../../types';
+import { uiText } from '../../adapters';
 import { MarkdownBody } from './MarkdownBody';
 
 /**
@@ -11,6 +13,7 @@ import { MarkdownBody } from './MarkdownBody';
  * 不进 Tiptap 编辑器（上传文件是只读资料，云文档列表合并展示的一部分）。
  */
 export function KnowledgeFileReader({ resource }: { resource: ContextRoomKnowledgeFileResource }) {
+  const { t } = useLocale();
   const [markdown, setMarkdown] = useState<string | null>(null);
 
   useEffect(() => {
@@ -24,10 +27,10 @@ export function KnowledgeFileReader({ resource }: { resource: ContextRoomKnowled
       })
       .catch((cause) => {
         if (cancelled) return;
-        showToast({ title: '读取文件失败', message: cause instanceof Error ? cause.message : undefined });
+        showToast({ title: t('contextRoom:knowledgeFileReader.readFailed'), message: cause instanceof Error ? cause.message : undefined });
       });
     return () => { cancelled = true; };
-  }, [resource.fileId]);
+  }, [resource.fileId, t]);
 
   const reveal = async () => {
     const knowledge = window.nxcore?.knowledge;
@@ -35,7 +38,7 @@ export function KnowledgeFileReader({ resource }: { resource: ContextRoomKnowled
     try {
       await knowledge.revealFile(resource.fileId);
     } catch (cause) {
-      showToast({ title: '定位文件失败', message: cause instanceof Error ? cause.message : undefined });
+      showToast({ title: t('contextRoom:knowledgeFileReader.revealFailed'), message: cause instanceof Error ? cause.message : undefined });
     }
   };
 
@@ -43,20 +46,20 @@ export function KnowledgeFileReader({ resource }: { resource: ContextRoomKnowled
     <div className="context-room-wiki-reader-pane">
       <header>
         <strong title={resource.originalName}>{resource.originalName}</strong>
-        <span title={resource.updatedAt}>{`${resource.statusLabel} · ${resource.sizeLabel}`}</span>
+        <span title={resource.updatedAt}>{`${t(uiText(resource.statusLabel))} · ${resource.sizeLabel}`}</span>
         <button
           type="button"
           className="context-room-wiki-reveal"
           onClick={() => void reveal()}
-          title="在系统文件管理器中显示原件"
+          title={t('contextRoom:knowledgeFileReader.showOriginalInSystemFileManager')}
         >
           <FolderOpen aria-hidden="true" />
-          显示原件
+          {t('contextRoom:wiki.showOriginal')}
         </button>
       </header>
       <div className="context-room-wiki-reader-body">
         {markdown === null ? (
-          <div className="context-room-workspace-empty">加载中…</div>
+          <div className="context-room-workspace-empty">{t('contextRoom:wiki.loading')}</div>
         ) : (
           <MarkdownBody markdown={markdown} />
         )}

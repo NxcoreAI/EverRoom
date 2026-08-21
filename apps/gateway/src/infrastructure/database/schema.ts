@@ -1020,6 +1020,124 @@ export const uploadedFiles = sqliteTable("uploaded_files", {
 });
 
 /**
+ * 统一文件目录（files-unified-catalog-and-ingest-plan F1-F7）。
+ * uploaded_files 在兼容期继续存在；新入口以 file_entries/file_versions 为
+ * 权威目录，原始字节按 hash 复用 file_blobs。
+ */
+export const fileBlobs = sqliteTable("file_blobs", {
+  contentHash: text("content_hash").primaryKey(),
+  storagePath: text("storage_path").notNull().unique(),
+  byteSize: integer("byte_size").notNull(),
+  mime: text("mime").notNull().default("application/octet-stream"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const fileEntries = sqliteTable(
+  "file_entries",
+  {
+    id: text("id").primaryKey(),
+    sourceKind: text("source_kind", {
+      enum: ["manual-upload", "local-folder", "connector", "legacy-upload"],
+    }).notNull(),
+    sourceKey: text("source_key").notNull(),
+    originalName: text("original_name").notNull(),
+    displayName: text("display_name"),
+    extension: text("extension").notNull(),
+    provider: text("provider"),
+    connectionId: text("connection_id"),
+    localSourceId: text("local_source_id"),
+    localItemId: text("local_item_id"),
+    relativePath: text("relative_path"),
+    sourceUri: text("source_uri"),
+    currentVersionId: text("current_version_id"),
+    state: text("state", {
+      enum: ["processing", "ready", "failed", "missing", "deleted"],
+    }).notNull().default("processing"),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("file_entries_source_key_idx").on(table.sourceKind, table.sourceKey),
+    index("file_entries_state_updated_idx").on(table.state, table.updatedAt),
+    index("file_entries_local_item_idx").on(table.localSourceId, table.localItemId),
+  ],
+);
+
+export const fileVersions = sqliteTable(
+  "file_versions",
+  {
+    id: text("id").primaryKey(),
+    fileEntryId: text("file_entry_id").notNull().references(() => fileEntries.id, { onDelete: "cascade" }),
+    versionNo: integer("version_no").notNull(),
+    contentHash: text("content_hash").notNull().references(() => fileBlobs.contentHash),
+    sourceModifiedAt: integer("source_modified_at", { mode: "timestamp_ms" }),
+    parserId: text("parser_id").notNull(),
+    parserVersion: integer("parser_version").notNull(),
+    parsedId: text("parsed_id").references(() => parsedContents.id),
+    ingestEventId: text("ingest_event_id"),
+    status: text("status", {
+      enum: ["stored", "queued", "parsing", "parsed", "failed"],
+    }).notNull().default("stored"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    processedAt: integer("processed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("file_versions_entry_version_idx").on(table.fileEntryId, table.versionNo),
+    uniqueIndex("file_versions_entry_hash_idx").on(table.fileEntryId, table.contentHash),
+    index("file_versions_hash_idx").on(table.contentHash),
+    index("file_versions_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const fileClassifications = sqliteTable(
+  "file_classifications",
+  {
+    id: text("id").primaryKey(),
+    fileVersionId: text("file_version_id").notNull().references(() => fileVersions.id, { onDelete: "cascade" }),
+    category: text("category").notNull(),
+    summary: text("summary").notNull(),
+    tags: text("tags", { mode: "json" }).$type<string[]>().notNull().default([]),
+    embedding: text("embedding", { mode: "json" }).$type<number[]>(),
+    confidence: real("confidence").notNull(),
+    model: text("model").notNull(),
+    promptVersion: integer("prompt_version").notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("file_classifications_version_idx").on(table.fileVersionId)],
+);
+
+export const fileClusters = sqliteTable("file_clusters", {
+  id: text("id").primaryKey(),
+  canonicalTitle: text("canonical_title").notNull(),
+  titleSource: text("title_source", { enum: ["agent", "user", "fallback"] }).notNull(),
+  titlePinned: integer("title_pinned", { mode: "boolean" }).notNull().default(false),
+  summary: text("summary").notNull().default(""),
+  embedding: text("embedding", { mode: "json" }).$type<number[]>(),
+  embeddingModel: text("embedding_model"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const fileClusterMemberships = sqliteTable(
+  "file_cluster_memberships",
+  {
+    fileEntryId: text("file_entry_id").primaryKey().references(() => fileEntries.id, { onDelete: "cascade" }),
+    clusterId: text("cluster_id").notNull().references(() => fileClusters.id, { onDelete: "cascade" }),
+    confidence: real("confidence").notNull(),
+    decidedBy: text("decided_by", { enum: ["exact-hash", "agent", "fallback", "user"] }).notNull(),
+    model: text("model"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("file_cluster_memberships_cluster_idx").on(table.clusterId)],
+);
+
+/**
  * 解析产物表（判重闸 2）：md 是唯一权威派生形态，后级只处理 md。
  * (content_hash, parser_version) 唯一 —— 同内容同解析器零重复解析；
  * 解析器升级（版本号变）是唯一合法的重解析场景。

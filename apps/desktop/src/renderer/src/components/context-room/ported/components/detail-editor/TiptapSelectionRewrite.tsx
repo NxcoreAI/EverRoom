@@ -325,7 +325,7 @@ export function useTiptapSelectionRewrite({
           ),
           originalText: current.originalText,
           replacementText: current.replacementText,
-          instruction: current.instruction.trim() || '保持原意，重写得更清晰、自然。',
+          instruction: current.instruction.trim() || t('contextRoom:selectionRewriteAgent.defaultInstruction'),
         },
       })
       if (!operation) throw new Error(t('contextRoom:tiptapSelectionRewrite.theDocumentOperationServiceIsUnavailable'))
@@ -334,7 +334,7 @@ export function useTiptapSelectionRewrite({
       if (activeOperation && activeOperation.id === localOperation?.id) activeOperation.startingOperation = false
     }
     return operation
-  }, [documentId, editor, prepareDocument, roomId, start])
+  }, [documentId, editor, prepareDocument, roomId, start, t])
 
   const startOperation = useCallback(async (current: RewritePreviewState): Promise<void> => {
     const operation = await createOperation(current)
@@ -372,7 +372,7 @@ export function useTiptapSelectionRewrite({
         instruction,
         formatContext,
         phase: 'error',
-        error: 'Agent 服务仅在桌面应用中可用。',
+        error: t('contextRoom:tiptapSelectionRewrite.agentServiceDesktopOnly'),
         sessionId: null,
         runId: null,
         operationId: null,
@@ -456,7 +456,7 @@ export function useTiptapSelectionRewrite({
         error: rewriteErrorMessage(error),
       } : current)
     })
-  }, [documentName, editor, locale, restoreEditor, rewriteErrorMessage, roomId, startOperation])
+  }, [documentName, editor, locale, restoreEditor, rewriteErrorMessage, roomId, startOperation, t])
 
   const requestRewrite = useCallback((instruction: string) => {
     if (!editor || editor.isDestroyed || externallyLocked) return
