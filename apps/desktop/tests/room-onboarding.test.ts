@@ -26,8 +26,8 @@ describe('room onboarding state', () => {
     expect(shouldShowRoomOnboarding(true, 0, null)).toBe(true)
   })
 
-  it('does not interrupt an existing workspace without a marker', () => {
-    expect(shouldShowRoomOnboarding(true, 1, null)).toBe(false)
+  it('shows on first use even when a built-in data Room already exists', () => {
+    expect(shouldShowRoomOnboarding(true, 1, null)).toBe(true)
   })
 
   it('waits for the Context Room backend before showing', () => {

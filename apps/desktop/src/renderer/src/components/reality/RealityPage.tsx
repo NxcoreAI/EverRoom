@@ -7,6 +7,7 @@ import {
   CircleDot,
   Download,
   FileText,
+  FolderOpen,
   Image as ImageIcon,
   LoaderCircle,
   Monitor,
@@ -44,10 +45,12 @@ import './RealityPage.css'
 
 type DetailTab = 'insights' | 'transcript'
 type StatusFilter = 'all' | RealityEventStatus
+type PerceptionTypeFilter = 'all' | PerceptionNode['kind']
 type ActivityRange = '1w' | '1m' | '3m' | '6m' | '1y'
 type TimelineItem =
   | { kind: 'audio'; id: string; startedAt: string; event: RealityEvent }
   | { kind: 'visual'; id: string; startedAt: string; node: PerceptionNode }
+  | { kind: 'source'; id: string; startedAt: string; node: PerceptionNode }
 
 const STATUS_LABELS: Record<RealityEventStatus, string> = {
   ongoing: 'diaryReality:reality.inProgress',
@@ -208,9 +211,11 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const { account } = useAccount()
   const [events, setEvents] = useState<RealityEvent[]>([])
   const [visualNodes, setVisualNodes] = useState<PerceptionNode[]>([])
+  const [sourceNodes, setSourceNodes] = useState<PerceptionNode[]>([])
   const [visualDetail, setVisualDetail] = useState<PerceptionNodeDetail | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<StatusFilter>('all')
+  const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('all')
   const [search, setSearch] = useState('')
   const [activityRange, setActivityRange] = useState<ActivityRange>('3m')
   const [rangeTouched, setRangeTouched] = useState(false)
@@ -261,6 +266,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     try {
       const result = await window.nxcore.screenCapture.listPerceptionNodes()
       setVisualNodes(result.items.filter((node) => node.kind === 'screenshot' || node.kind === 'photo'))
+      setSourceNodes(result.items.filter((node) => node.kind === 'document' || node.kind === 'file'))
       if (!quiet) setError(null)
     } catch (caught) {
       if (!quiet) setError(caught instanceof Error ? caught.message : t('diaryReality:reality.unableToLoadVisualPerception'))
@@ -305,8 +311,11 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const timelineItems = useMemo<TimelineItem[]>(() => [
     ...events.map((event): TimelineItem => ({ kind: 'audio', id: event.id, startedAt: event.startedAt, event })),
     ...visualNodes.map((node): TimelineItem => ({ kind: 'visual', id: node.id, startedAt: node.startAt, node })),
-  ].sort((left, right) => right.startedAt.localeCompare(left.startedAt)), [events, visualNodes])
+    ...sourceNodes.map((node): TimelineItem => ({ kind: 'source', id: node.id, startedAt: node.startAt, node })),
+  ].sort((left, right) => right.startedAt.localeCompare(left.startedAt)), [events, sourceNodes, visualNodes])
   const visibleEvents = useMemo(() => timelineItems.filter((item) => {
+    const itemType = item.kind === 'audio' ? 'audio' : item.node.kind
+    if (typeFilter !== 'all' && itemType !== typeFilter) return false
     if (filter !== 'all') {
       const matches = item.kind === 'audio'
         ? filter === 'completed'
@@ -333,7 +342,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
           ...item.node.tags,
         ]
     return values.some((value) => value.toLocaleLowerCase().includes(query))
-  }), [filter, perceptionT, search, selectedDay, t, timelineItems])
+  }), [filter, perceptionT, search, selectedDay, t, timelineItems, typeFilter])
   const grouped = useMemo(() => {
     const groups = new Map<string, TimelineItem[]>()
     for (const item of visibleEvents) {
@@ -667,6 +676,14 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
           )}
         </div>
         <label className="reality-search"><Search aria-hidden="true" /><input value={search} placeholder={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')} onChange={(event) => setSearch(event.target.value)} /></label>
+        <select value={typeFilter} aria-label={t('diaryReality:reality.filterByPerceptionType')} onChange={(event) => setTypeFilter(event.target.value as PerceptionTypeFilter)}>
+          <option value="all">{t('diaryReality:reality.allPerceptionTypes')}</option>
+          <option value="audio">{t('diaryReality:reality.audioPerception')}</option>
+          <option value="screenshot">{t('diaryReality:reality.screenshotPerception')}</option>
+          <option value="photo">{t('diaryReality:reality.photoPerception')}</option>
+          <option value="document">{t('diaryReality:reality.documentPerception')}</option>
+          <option value="file">{t('diaryReality:reality.filePerception')}</option>
+        </select>
         <select value={filter} aria-label={t('diaryReality:reality.filterByEventStatus')} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
           <option value="all">{t('diaryReality:reality.allStatuses')}</option>
           <option value="ongoing">{t('diaryReality:reality.inProgress')}</option>
@@ -694,6 +711,28 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
             <header><h2>{label}</h2><span>{t('diaryReality:reality.countBlocks', { count: items.length })}</span></header>
             <div className="reality-schedule">
               {items.map((item) => {
+                if (item.kind === 'source') {
+                  const node = item.node
+                  const SourceIcon = node.kind === 'document' ? FileText : FolderOpen
+                  return (
+                    <article className="schedule-event source-schedule-event" key={node.id} data-type={node.kind} data-status={node.status}>
+                      <div className="schedule-time">
+                        <time>{timeLabel(node.startAt, locale)}</time>
+                        <span />
+                        <small>{t('diaryReality:reality.collected')}</small>
+                      </div>
+                      <div className="schedule-block">
+                        <div className="schedule-trigger source-trigger">
+                          <span className="event-type"><SourceIcon aria-hidden="true" />{t(node.kind === 'document' ? 'diaryReality:reality.documentPerception' : 'diaryReality:reality.filePerception')}</span>
+                          <span className="event-status" data-status={node.status}>{t('diaryReality:reality.collected')}</span>
+                          <strong>{node.title}</strong>
+                          <p>{node.summary || t('diaryReality:reality.dataCollected')}</p>
+                          <small>{node.status === 'ready' ? t('diaryReality:reality.processed') : t('diaryReality:reality.processing')}</small>
+                        </div>
+                      </div>
+                    </article>
+                  )
+                }
                 if (item.kind === 'visual') {
                   const node = item.node
                   const expanded = node.id === expandedId

@@ -74,7 +74,10 @@ export function perceptionRoutes(service: PerceptionService): FastifyPluginAsync
         querystring: Type.Object({
           from: Type.Optional(Type.String()),
           to: Type.Optional(Type.String()),
-          kind: Type.Optional(Type.Union([Type.Literal("audio"), Type.Literal("screenshot"), Type.Literal("photo")])),
+          kind: Type.Optional(Type.Union([
+            Type.Literal("audio"), Type.Literal("screenshot"), Type.Literal("photo"),
+            Type.Literal("document"), Type.Literal("file"),
+          ])),
           status: Type.Optional(Type.String()),
         }),
       },

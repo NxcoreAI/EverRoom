@@ -6,7 +6,7 @@ import { interpolate, resolveLocale, translate } from '../src/renderer/src/i18n/
 import i18n from '../src/renderer/src/i18n/i18next'
 import { i18nResources } from '../src/renderer/src/i18n/resources'
 import { desktopMessageResources, translateDesktopMessage } from '../src/shared/i18n/desktop'
-import { localizedRoomSummary, localizedUiText } from '../src/renderer/src/components/context-room/ported/adapters'
+import { localizedRoomKind, localizedRoomSummary, localizedUiText } from '../src/renderer/src/components/context-room/ported/adapters'
 
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -48,6 +48,13 @@ describe('renderer i18n', () => {
     expect(localizedUiText('来自《交付方案》', t)).toBe('From “交付方案”')
     expect(localizedUiText('用户结论（已编辑）', t)).toBe('用户结论 (edited)')
     expect(localizedUiText('用户填写的 Room 背景', t)).toBe('用户填写的 Room 背景')
+  })
+
+  it('localizes Room kinds in onboarding for canonical and legacy values', () => {
+    const t = (message: string, values?: Record<string, string | number>) => translate('en-US', message, values)
+    expect(localizedRoomKind('主题', t)).toBe('Topic')
+    expect(localizedRoomKind('topic', t)).toBe('Topic')
+    expect(localizedRoomKind('long-term-goal', t)).toBe('Long-term goal')
   })
 
   it('uses the generated Room overview for home summaries before the default background', () => {

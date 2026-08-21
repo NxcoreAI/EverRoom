@@ -600,16 +600,26 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     },
   )
 
-  handle(SOURCE_CHANNELS.addLocalFolder, async () => {
-    const result = await dialog.showOpenDialog({
+  const showFolderDialog = (
+    event: Electron.IpcMainInvokeEvent,
+    options: Electron.OpenDialogOptions,
+  ) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    if (parent && !parent.isDestroyed()) return dialog.showOpenDialog(parent, options)
+    return dialog.showOpenDialog(options)
+  }
+
+  handle(SOURCE_CHANNELS.addLocalFolder, async (event) => {
+    const result = await showFolderDialog(event, {
       title: desktopText('dialog.chooseFolder.title'),
       buttonLabel: desktopText('dialog.chooseFolder.button'),
       properties: ['openDirectory', 'createDirectory'],
+      ...(process.platform === 'darwin' ? { securityScopedBookmarks: true } : {}),
     })
     const rootPath = result.filePaths[0]
     return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
   })
-  handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (_event, folders: unknown) => {
+  handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (event, folders: unknown) => {
     if (!Array.isArray(folders)) throw new Error('无效的默认文件夹配置。')
     if (folders.some((folder) => folder !== 'documents' && folder !== 'desktop')) {
       throw new Error('无效的默认文件夹配置。')
@@ -621,11 +631,12 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
       try {
         let rootPath = app.getPath(folder)
         if (process.platform === 'darwin') {
-          const picked = await dialog.showOpenDialog({
+          const picked = await showFolderDialog(event, {
             title: `${desktopText('dialog.chooseFolder.title')} · ${folder === 'documents' ? 'Documents' : 'Desktop'}`,
             buttonLabel: desktopText('dialog.chooseFolder.button'),
             defaultPath: rootPath,
             properties: ['openDirectory', 'createDirectory'],
+            securityScopedBookmarks: true,
           })
           if (picked.canceled || !picked.filePaths[0]) {
             results.push({ folder, connected: false, error: '用户取消了文件夹授权。' })

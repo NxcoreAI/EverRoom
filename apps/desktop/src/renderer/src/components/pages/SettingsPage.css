@@ -78,7 +78,8 @@
 .settings-content[data-active-setting='settings-memory'] > #settings-memory,
 .settings-content[data-active-setting='settings-editor'] > #settings-editor,
 .settings-content[data-active-setting='settings-reality'] > #settings-reality,
-.settings-content[data-active-setting='settings-capture'] > #settings-capture {
+.settings-content[data-active-setting='settings-capture'] > #settings-capture,
+.settings-content[data-active-setting='settings-diary'] > #settings-diary {
   display: block;
 }
 
