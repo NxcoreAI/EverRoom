@@ -228,9 +228,20 @@ function transcriptText(source: SourceRecord): string {
     })
   const text = lines.join('\n') || source.detailMarkdown?.trim() || ''
   if (!text) throw new Error('empty_transcription_source')
-  let limited = text
-  while (Buffer.byteLength(limited, 'utf8') > 480_000) limited = limited.slice(0, Math.floor(limited.length * 0.9))
-  return limited === text ? text : `${limited}\n\n[转写过长，已截断]`
+  // Gateway performs line-aware chunking. Keep the full source here so the
+  // final synthesis can still see the ending of long recordings.
+  const maxBytes = 1_900_000
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text
+  const marker = '\n\n[转写中间过长，已省略]\n\n'
+  const availableBytes = maxBytes - Buffer.byteLength(marker, 'utf8')
+  let headChars = Math.floor(text.length * 0.65)
+  let tailChars = Math.floor(text.length * 0.35)
+  while (Buffer.byteLength(text.slice(0, headChars), 'utf8')
+    + Buffer.byteLength(text.slice(-tailChars), 'utf8') > availableBytes) {
+    headChars = Math.floor(headChars * 0.95)
+    tailChars = Math.floor(tailChars * 0.95)
+  }
+  return `${text.slice(0, headChars)}${marker}${text.slice(-tailChars)}`
 }
 
 function parseSummary(raw: string, transcript: string): SummaryValue {
@@ -296,6 +307,19 @@ function parseSummary(raw: string, transcript: string): SummaryValue {
 function parseRepresentativeTags(value: unknown): SummaryTagValue[] {
   if (!Array.isArray(value)) throw new Error('invalid_agent_representativeTags')
   return value.slice(0, 12).map((item) => {
+    // Older/background models sometimes return a plain label. Preserve it as
+    // a low-confidence entity so the otherwise valid summary can be materialized.
+    if (typeof item === 'string') {
+      const label = item.trim().slice(0, 200)
+      if (!label) throw new Error('invalid_agent_representativeTag_label')
+      return {
+        kind: 'entity',
+        label,
+        entityType: 'other',
+        confidence: 0.5,
+        evidence: label,
+      }
+    }
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('invalid_agent_representativeTag')
     const tag = item as Record<string, unknown>
     if (tag.kind !== 'entity' && tag.kind !== 'fact') throw new Error('invalid_agent_representativeTag_kind')

@@ -144,7 +144,7 @@ describe("loadConfig", () => {
     });
     expect(config.backgroundPi).toMatchObject({
       model: "deepseek-chat",
-      maxTokens: 4096,
+      maxTokens: 8192,
     });
     expect(config.diaryMaxTokens).toBe(16384);
     expect(config.cursorCompletionPi).toMatchObject({
