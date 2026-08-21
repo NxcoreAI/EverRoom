@@ -19,7 +19,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import type { ContextRoomKind, ContextRoomRecord } from '@/components/context-room/ported/types'
-import { localizedUiText } from '@/components/context-room/ported/adapters'
+import { localizedRoomKind } from '@/components/context-room/ported/adapters'
 import { createRoomUsageGuide } from './roomUsageGuide'
 import {
   readRoomOnboardingMarker,
@@ -90,7 +90,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
     if (!backendReady) return
     // The provider starts from the local cache. On a fresh install that cache
     // is empty even when the gateway already owns Rooms, so hydrate once
-    // before deciding whether this is a first-use workspace.
+    // before deciding whether this is the first-use setup.
     if (initialBackendSyncRef.current === 'loading') return
     if (initialBackendSyncRef.current === 'idle' && state.rooms.length === 0 && state.deletedRooms.length === 0) {
       initialBackendSyncRef.current = 'loading'
@@ -288,7 +288,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
                 <div className="room-onboarding-success-kicker"><span>{t('contextRoom:display.room')}</span><span className="room-onboarding-success-ready"><Check aria-hidden="true" />{t('contextRoom:onboarding.ready')}</span></div>
                 <div className="room-onboarding-success-identity">
                   <div className="room-onboarding-success-room-icon" aria-hidden="true">{createdRoom.icon || 'R'}</div>
-                  <div><h2>{createdRoom.title}</h2><p>{localizedUiText(createdRoom.kind, t)} · {createdRoom.roomCode}</p></div>
+                  <div><h2>{createdRoom.title}</h2><p>{localizedRoomKind(createdRoom.kind, t)} · {createdRoom.roomCode}</p></div>
                 </div>
                 <p className="room-onboarding-success-goal">{createdRoom.brief.goal || purpose.trim()}</p>
               </div>

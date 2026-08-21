@@ -5,7 +5,10 @@ import type { RealityTag } from "@nxcore/reality-contract";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   diaryVersionSources,
+  documentVersions,
+  documents,
   perceptionSettings,
+  parsedContents,
   realityEvents,
   uploadedFiles,
   visualNodes,
@@ -41,9 +44,11 @@ export interface VisualReadyEvidence {
   occurredAt: string;
 }
 
+export type PerceptionNodeKind = "audio" | "screenshot" | "photo" | "document" | "file";
+
 export interface PerceptionNodeDto {
   id: string;
-  kind: "audio" | "screenshot" | "photo";
+  kind: PerceptionNodeKind;
   startAt: string;
   endAt: string;
   title: string;
@@ -58,6 +63,13 @@ export interface PerceptionNodeDto {
   error: string | null;
   sampleCount: number;
   mediaFileId: string | null;
+}
+
+function textFromJson(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(textFromJson).filter(Boolean).join(" ");
+  if (value && typeof value === "object") return Object.values(value).map(textFromJson).filter(Boolean).join(" ");
+  return "";
 }
 
 function nodeDto(
@@ -298,7 +310,7 @@ export class PerceptionService {
     if (input.to) visualConditions.push(lt(visualNodes.startAt, input.to));
     if (input.kind === "screenshot" || input.kind === "photo") visualConditions.push(eq(visualNodes.kind, input.kind));
     if (input.status) visualConditions.push(eq(visualNodes.vlmStatus, input.status as typeof visualNodes.$inferSelect.vlmStatus));
-    const visual = input.kind === "audio" ? [] : this.db.select().from(visualNodes)
+    const visual = input.kind && input.kind !== "screenshot" && input.kind !== "photo" ? [] : this.db.select().from(visualNodes)
       .where(and(...visualConditions)).orderBy(asc(visualNodes.startAt)).all().map((node) => this.dtoForVisual(node));
 
     const audioConditions = [];
@@ -325,7 +337,76 @@ export class PerceptionService {
           sampleCount: 1,
           mediaFileId: null,
         }));
-    return [...visual, ...audio].sort((a, b) => a.startAt.localeCompare(b.startAt));
+    const documentConditions = [];
+    if (input.from) documentConditions.push(gte(documentVersions.createdAt, input.from));
+    if (input.to) documentConditions.push(lt(documentVersions.createdAt, input.to));
+    const documentsNodes: PerceptionNodeDto[] = (
+      (input.kind && input.kind !== "document") || (input.status && input.status !== "ready")
+    ) ? [] : (
+      this.db.select().from(documentVersions)
+        .where(documentConditions.length ? and(...documentConditions) : undefined)
+        .orderBy(asc(documentVersions.createdAt)).all().map((version) => {
+          const document = this.db.select({ title: documents.title }).from(documents)
+            .where(eq(documents.id, version.documentId)).get();
+          const content = textFromJson(version.contentJson);
+          return {
+            id: `document_version:${version.id}`,
+            kind: "document",
+            startAt: version.createdAt.toISOString(),
+            endAt: version.createdAt.toISOString(),
+            title: version.title || document?.title || "文档",
+            summary: content.slice(0, 240),
+            status: "ready",
+            eventType: null,
+            tags: [],
+            keyPoints: [],
+            insightTags: [],
+            confidence: null,
+            model: null,
+            error: null,
+            sampleCount: 1,
+            mediaFileId: null,
+          } satisfies PerceptionNodeDto;
+        })
+      );
+    const fileNodes: PerceptionNodeDto[] = (
+      (input.kind && input.kind !== "file") || (input.status && !["ready", "processing"].includes(input.status))
+    ) ? [] : (
+      this.db.select().from(uploadedFiles).all()
+        .filter((file) => file.assetKind !== "screenshot" && file.assetKind !== "photo")
+        .filter((file) => {
+          const occurredAt = file.capturedAt ?? file.updatedAt;
+          return (!input.from || occurredAt >= input.from) && (!input.to || occurredAt < input.to);
+        })
+        .sort((left, right) => (left.capturedAt ?? left.updatedAt).getTime() - (right.capturedAt ?? right.updatedAt).getTime())
+        .map((file) => {
+          const content = file.currentParsedId
+            ? this.db.select({ markdown: parsedContents.markdown }).from(parsedContents)
+              .where(eq(parsedContents.id, file.currentParsedId)).get()?.markdown ?? ""
+            : "";
+          const occurredAt = file.capturedAt ?? file.updatedAt;
+          return {
+            id: `file:${file.id}`,
+            kind: "file",
+            startAt: occurredAt.toISOString(),
+            endAt: occurredAt.toISOString(),
+            title: file.originalName,
+            summary: content.slice(0, 240) || file.originalName,
+            status: file.currentParsedId ? "ready" : "processing",
+            eventType: null,
+            tags: [],
+            keyPoints: [],
+            insightTags: [],
+            confidence: null,
+            model: null,
+            error: null,
+            sampleCount: 1,
+            mediaFileId: file.id,
+          } satisfies PerceptionNodeDto;
+        })
+        .filter((node) => !input.status || node.status === input.status)
+      );
+    return [...visual, ...audio, ...documentsNodes, ...fileNodes].sort((a, b) => a.startAt.localeCompare(b.startAt));
   }
 
   detail(id: string) {

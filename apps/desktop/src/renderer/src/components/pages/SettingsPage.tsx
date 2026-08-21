@@ -32,7 +32,7 @@ import {
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
-import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice, DiarySettings, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
@@ -47,6 +47,7 @@ const SETTINGS_NAV = [
   { id: 'settings-memory', label: 'memory:settings.memorySetupTitle', description: 'memory:settings.memorySetupActionBody', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
+  { id: 'settings-diary', label: 'surface:settings.diarySchedule', description: 'surface:settings.navigationDiaryDescription', icon: CalendarClock },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
 ]
@@ -124,6 +125,8 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
   const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
   const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
   const [perceptionBusy, setPerceptionBusy] = useState(false)
+  const [diarySettings, setDiarySettings] = useState<DiarySettings | null>(null)
+  const [diaryBusy, setDiaryBusy] = useState(false)
   const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
   const [activeSetting, setActiveSetting] = useState(SETTINGS_NAV[0].id)
 
@@ -228,11 +231,13 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
     void Promise.all([
       window.nxcore.screenCapture.status(),
       window.nxcore.screenCapture.perceptionSettings(),
+      window.nxcore.diary.settings(),
     ])
-      .then(([status, settings]) => {
+      .then(([status, settings, diary]) => {
         setScreenCaptureStatus(status)
         setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
         setPerceptionSettings(settings)
+        setDiarySettings(diary)
       })
       .catch(() => undefined)
   }, [])
@@ -368,6 +373,24 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
       // The preload request interceptor reports the error globally.
     } finally {
       setScreenCaptureBusy(false)
+    }
+  }
+
+  const updateDiarySettings = async (patch: Partial<Pick<DiarySettings, 'enabled' | 'localTime' | 'timezone'>>) => {
+    if (!window.nxcore || !diarySettings) return
+    setDiaryBusy(true)
+    try {
+      const settings = await window.nxcore.diary.updateSettings({
+        enabled: patch.enabled ?? diarySettings.enabled,
+        localTime: patch.localTime ?? diarySettings.localTime,
+        timezone: patch.timezone ?? diarySettings.timezone,
+        configVersion: diarySettings.configVersion,
+      })
+      setDiarySettings(settings)
+    } catch {
+      // The preload request interceptor reports configuration errors globally.
+    } finally {
+      setDiaryBusy(false)
     }
   }
 
@@ -819,6 +842,59 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
             {t('surface:settings.captureCurrentWindow')}
           </button>
         </div>
+      </section>
+
+      <section id="settings-diary" className="reality-settings-section settings-anchor-section" aria-labelledby="diary-schedule-settings-title">
+        <header>
+          <span><CalendarClock aria-hidden="true" /></span>
+          <div>
+            <h2 id="diary-schedule-settings-title">{t('surface:settings.diarySchedule')}</h2>
+            <p>{t('surface:settings.diaryScheduleDescription')}</p>
+          </div>
+        </header>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.automaticDiaryGeneration')}</strong><small>{t('surface:settings.automaticDiaryGenerationDescription')}</small></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.automaticDiaryGeneration')}
+            aria-checked={Boolean(diarySettings?.enabled)}
+            disabled={diaryBusy || diarySettings === null}
+            data-active={String(Boolean(diarySettings?.enabled))}
+            onClick={() => void updateDiarySettings({ enabled: !diarySettings?.enabled })}
+          >
+            <span aria-hidden="true" />
+            {t(diarySettings?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.diaryGenerationTime')}</strong><small>{t('surface:settings.diaryGenerationTimeDescription')}</small></div>
+          <input
+            type="time"
+            value={diarySettings?.localTime ?? '23:30'}
+            disabled={diaryBusy || diarySettings === null}
+            onChange={(event) => void updateDiarySettings({ localTime: event.target.value })}
+          />
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.diaryTimezone')}</strong><small>{t('surface:settings.diaryTimezoneDescription')}</small></div>
+          <select
+            value={diarySettings?.timezone ?? 'Asia/Shanghai'}
+            disabled={diaryBusy || diarySettings === null}
+            onChange={(event) => void updateDiarySettings({ timezone: event.target.value })}
+          >
+            {['Asia/Shanghai', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London', 'Europe/Berlin', 'America/Los_Angeles', 'America/New_York', 'UTC'].map((timezone) => (
+              <option key={timezone} value={timezone}>{timezone}</option>
+            ))}
+          </select>
+        </div>
+        {diarySettings?.enabled && diarySettings.nextRunAt ? (
+          <div className="reality-setting-row">
+            <div><strong>{t('surface:settings.nextDiaryGeneration')}</strong></div>
+            <time>{new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: diarySettings.timezone }).format(new Date(diarySettings.nextRunAt))}</time>
+          </div>
+        ) : null}
       </section>
 
         </main>

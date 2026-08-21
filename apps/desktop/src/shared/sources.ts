@@ -381,7 +381,7 @@ export interface PerceptionSettings {
   updatedAt: string
 }
 
-export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo'
+export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo' | 'document' | 'file'
 export type VisualPerceptionStatus = 'disabled' | 'pending' | 'processing' | 'ready' | 'failed'
 
 export interface PerceptionNode {
