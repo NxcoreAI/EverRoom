@@ -7,12 +7,13 @@ export function processingRoutes(service: TranscriptionSummaryService): FastifyP
     app.post(
       "/v1/processing/transcription-summary",
       {
+        bodyLimit: 2 * 1024 * 1024,
         schema: {
           tags: ["processing"],
           body: Type.Object({
             jobId: Type.String({ minLength: 1, maxLength: 100 }),
             sourceRecordId: Type.String({ minLength: 1, maxLength: 100 }),
-            transcript: Type.String({ minLength: 1, maxLength: 500_000 }),
+            transcript: Type.String({ minLength: 1, maxLength: 2_000_000 }),
             language: Type.Optional(Type.String({ minLength: 2, maxLength: 20 })),
           }),
         },

@@ -301,6 +301,16 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     const timer = window.setInterval(() => void sync().catch(() => undefined), 15_000)
     return () => window.clearInterval(timer)
   }, [account?.authenticated, loadEvents])
+
+  // The main process also syncs in the background. Refresh the timeline as soon
+  // as that sync materializes a new summary instead of waiting for the interval.
+  useEffect(() => {
+    if (!window.nxcore) return
+    return window.nxcore.transcriptions.onSyncCompleted(() => {
+      void loadEvents()
+    })
+  }, [loadEvents])
+
   const selected = events.find((event) => event.id === expandedId) ?? null
   const timelineItems = useMemo<TimelineItem[]>(() => [
     ...events.map((event): TimelineItem => ({ kind: 'audio', id: event.id, startedAt: event.startedAt, event })),

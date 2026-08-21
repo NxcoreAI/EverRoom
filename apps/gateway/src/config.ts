@@ -667,7 +667,7 @@ export function loadConfig(
     aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "8192"),
     aiBackgroundMaxTokens: parsePositiveInteger(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
-      env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "4096",
+      env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
     ),
     diaryMaxTokens: parsePositiveInteger(
       "NXCORE_DIARY_MAX_TOKENS",
@@ -992,6 +992,9 @@ export function loadConfig(
     : null;
   if (cursorCompletionPi) {
     validateAiEndpoint(cursorCompletionPi.baseUrl, "NXCORE_CURSOR_COMPLETION_AI_BASE_URL");
+  }
+  if (rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel) {
+    validateAiEndpoint(rawConfig.vlmBaseUrl, "NXCORE_VLM_BASE_URL");
   }
   const cliConnectorUrl = env.NXCORE_CLI_CONNECTOR_URL?.trim();
   if (cliConnectorUrl) validateConnectorEndpoint("NXCORE_CLI_CONNECTOR_URL", cliConnectorUrl);
