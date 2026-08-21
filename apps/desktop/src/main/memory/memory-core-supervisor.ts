@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { join } from 'node:path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
@@ -67,7 +66,7 @@ export class MemoryCoreSupervisor {
     }
 
     const apiKey = randomBytes(24).toString('base64url')
-    const { packageDirectory, tsxEntryUrl } = this.resolvePackage()
+    const entryPath = this.resolveEntry()
     await mkdir(this.dataDirectory, { recursive: true })
     // 数据目录收进应用数据(KS 的 knowledge/ 同款约定):不设 TDAI_DATA_DIR 时
     // MemoryCore 默认落 ~/.memory-tencentdb/,卸载/清数据会留残骸。
@@ -77,12 +76,9 @@ export class MemoryCoreSupervisor {
     await mkdir(logDirectory, { recursive: true })
 
     const command = app.isPackaged ? process.execPath : (process.env.NXCORE_MEMORY_NODE ?? 'node')
-    // Windows + Node 22 的组合下:--import 必须是 file:// URL,而主入口必须是
-    // 正斜杠路径(file:// 会被误判为 CJS 相对路径,反斜杠会被判为 URL scheme)。
-    const serverEntry = join(packageDirectory, 'src', 'gateway', 'server.ts').replace(/\\/g, '/')
     const child = spawn(
       command,
-      ['--import', tsxEntryUrl, serverEntry],
+      [entryPath],
       {
         cwd: dataDir,
         env: {
@@ -201,24 +197,13 @@ export class MemoryCoreSupervisor {
     throw new Error(`MemoryCore did not become ready within ${STARTUP_TIMEOUT_MS}ms`)
   }
 
-  private resolvePackage(): { packageDirectory: string; tsxEntryUrl: string } {
+  private resolveEntry(): string {
     const override = process.env.NXCORE_MEMORY_CORE_DIR?.trim()
-    if (override) {
-      const packageRequire = createRequire(join(override, 'package.json'))
-      return { packageDirectory: override, tsxEntryUrl: pathToFileURL(packageRequire.resolve('tsx')).href }
-    }
-    if (app.isPackaged) {
-      const packageDirectory = join(process.resourcesPath, 'memory-core')
-      const packageRequire = createRequire(join(packageDirectory, 'package.json'))
-      return { packageDirectory, tsxEntryUrl: pathToFileURL(packageRequire.resolve('tsx')).href }
-    }
+    if (override) return join(override, 'bin', 'memory-gateway.mjs')
     // dev:从 apps/desktop 的 node_modules 解析 git 依赖安装的 memory-core 包。
     // 包的 exports 只放行了 ./bin/*,所以用 bin 入口定位包根目录。
     const baseRequire = createRequire(join(app.getAppPath(), 'package.json'))
-    const binPath = baseRequire.resolve(`${PACKAGE_NAME}/bin/memory-gateway.mjs`)
-    const packageDirectory = dirname(dirname(binPath))
-    const packageRequire = createRequire(binPath)
-    return { packageDirectory, tsxEntryUrl: pathToFileURL(packageRequire.resolve('tsx')).href }
+    return baseRequire.resolve(`${PACKAGE_NAME}/bin/memory-gateway.mjs`)
   }
 
   private killChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): boolean {
