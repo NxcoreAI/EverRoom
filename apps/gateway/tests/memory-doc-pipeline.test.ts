@@ -279,6 +279,9 @@ beforeAll(async () => {
       userId: "local-user",
       recallLimit: 5,
       charBudget: 2000,
+      // Windows CI 上 MemoryCore 子进程忙于前一用例的文档切块/embedding，
+      // 默认 3s 会在负载下超时（实测失败请求正好 3010ms），放宽到 30s。
+      timeoutMs: 30_000,
     };
     service = new MemoryService(runtime, logger, { db: database.db, dataDir: gatewayDataDir });
     client = new MemoryCoreClient(runtime);
