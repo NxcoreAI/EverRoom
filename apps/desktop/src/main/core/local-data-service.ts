@@ -203,6 +203,14 @@ export class LocalDataService {
       CREATE INDEX IF NOT EXISTS idx_source_items_source_path
         ON source_items(data_source_id, relative_path);
 
+      CREATE TABLE IF NOT EXISTS source_ignored_items (
+        data_source_id TEXT NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+        remote_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        ignored_at TEXT NOT NULL,
+        PRIMARY KEY(data_source_id, remote_id)
+      );
+
       CREATE TABLE IF NOT EXISTS source_versions (
         id TEXT PRIMARY KEY,
         source_item_id TEXT NOT NULL REFERENCES source_items(id) ON DELETE CASCADE,
@@ -602,13 +610,14 @@ export class LocalDataService {
         source_items.last_changed_at,
         source_items.content_hash,
         source_items.last_seen_at,
-        COUNT(source_versions.id) AS version_count,
+        COUNT(CASE WHEN source_versions.import_policy IN ('normal', 'approved') THEN source_versions.id END) AS version_count,
         (
           SELECT evidence_parse_jobs.status
           FROM source_versions AS latest_version
           LEFT JOIN evidence_parse_jobs
             ON evidence_parse_jobs.source_version_id = latest_version.id
           WHERE latest_version.source_item_id = source_items.id
+            AND latest_version.import_policy IN ('normal', 'approved')
           ORDER BY latest_version.captured_at DESC, latest_version.rowid DESC
           LIMIT 1
         ) AS parse_status,
@@ -619,6 +628,7 @@ export class LocalDataService {
             SELECT latest_evidence_version.id
             FROM source_versions AS latest_evidence_version
             WHERE latest_evidence_version.source_item_id = source_items.id
+              AND latest_evidence_version.import_policy IN ('normal', 'approved')
             ORDER BY latest_evidence_version.captured_at DESC, latest_evidence_version.rowid DESC
             LIMIT 1
           )
@@ -626,6 +636,12 @@ export class LocalDataService {
       FROM source_items
       LEFT JOIN source_versions ON source_versions.source_item_id = source_items.id
       WHERE source_items.data_source_id = ?
+        AND EXISTS (
+          SELECT 1
+          FROM source_versions AS visible_version
+          WHERE visible_version.source_item_id = source_items.id
+            AND visible_version.import_policy IN ('normal', 'approved')
+        )
       GROUP BY source_items.id
       ORDER BY source_items.state = 'missing', source_items.relative_path COLLATE NOCASE
     `).all(dataSourceId) as unknown as FileSummaryRow[]
@@ -968,6 +984,11 @@ export class LocalDataService {
       const connector = this.connectors.get(source.kind)
       const scan = await connector.scan(this.toConnection(source))
       if (this.disconnectingSources.has(id)) throw new Error('数据源正在清理。')
+      const ignoredRemoteIds = source.kind === 'local-folder'
+        ? new Set((this.database.prepare(
+            'SELECT remote_id FROM source_ignored_items WHERE data_source_id = ?',
+          ).all(id) as unknown as Array<{ remote_id: string }>).map((row) => row.remote_id))
+        : new Set<string>()
       // Keep the database boundary defensive: a connector must never be able
       // to reintroduce generated directories or formats without a parser.
       const items = source.kind === 'local-folder'
@@ -976,6 +997,7 @@ export class LocalDataService {
             const extension = extname(item.path).toLowerCase()
             return !segments.slice(0, -1).some(isIgnoredLocalDirectory) &&
               !item.title.startsWith('.') &&
+              !ignoredRemoteIds.has(item.remoteId) &&
               this.autoScanExtensions.has(extension)
           })
         : scan.items
@@ -992,6 +1014,13 @@ export class LocalDataService {
       const itemsByRemoteId = new Map(existingItems.map((item) => [item.remote_id, item]))
       const itemsByPath = new Map(existingItems.map((item) => [item.relative_path, item]))
       const seenRemoteIds = new Set<string>()
+      // Keep ignored items out of hashing/import, while still noticing when a
+      // previously accepted ignored item is physically removed.
+      if (source.kind === 'local-folder') {
+        for (const item of scan.items) {
+          if (ignoredRemoteIds.has(item.remoteId)) seenRemoteIds.add(item.remoteId)
+        }
+      }
       const highRiskImportCandidates = source.kind === 'local-folder'
         ? items.filter((item) => {
             if (isLowRiskFileExtension(item.extension)) return false
@@ -1448,7 +1477,15 @@ export class LocalDataService {
     accepted: boolean,
   ): Promise<HighRiskImportResolution> {
     const findVersion = this.database.prepare(`
-      SELECT source_versions.id
+      SELECT source_versions.id, source_versions.object_hash, source_versions.source_item_id,
+        source_items.remote_id, source_items.relative_path,
+        (
+          SELECT COUNT(*)
+          FROM source_versions AS accepted_version
+          WHERE accepted_version.source_item_id = source_versions.source_item_id
+            AND accepted_version.id != source_versions.id
+            AND accepted_version.import_policy IN ('normal', 'approved')
+        ) AS accepted_version_count
       FROM source_versions
       JOIN source_items ON source_items.id = source_versions.source_item_id
       WHERE source_versions.id = ? AND source_items.data_source_id = ?
@@ -1459,18 +1496,48 @@ export class LocalDataService {
     const updatePolicy = this.database.prepare(
       'UPDATE source_versions SET import_policy = ? WHERE id = ?',
     )
+    const addIgnored = this.database.prepare(`
+      INSERT OR REPLACE INTO source_ignored_items (data_source_id, remote_id, relative_path, ignored_at)
+      VALUES (?, ?, ?, ?)
+    `)
+    const deleteVersion = this.database.prepare('DELETE FROM source_versions WHERE id = ?')
+    const deleteItem = this.database.prepare('DELETE FROM source_items WHERE id = ?')
+    const findObjectReference = this.database.prepare(
+      'SELECT 1 FROM source_versions WHERE object_hash = ? LIMIT 1',
+    )
     const enqueue = this.database.prepare(`
       INSERT OR IGNORE INTO source_exports (source_version_id, status, updated_at)
       VALUES (?, 'pending', ?)
     `)
     let processed = 0
     for (const versionId of batch.versionIds) {
-      if (!findVersion.get(versionId, batch.sourceId)) continue
-      updatePolicy.run(accepted ? 'approved' : 'rejected', versionId)
-      if (accepted) enqueue.run(versionId, new Date().toISOString())
+      const version = findVersion.get(versionId, batch.sourceId) as unknown as {
+        id: string
+        object_hash: string
+        source_item_id: string
+        remote_id: string
+        relative_path: string
+        accepted_version_count: number
+      } | undefined
+      if (!version) continue
+      if (accepted) {
+        updatePolicy.run('approved', versionId)
+        enqueue.run(versionId, new Date().toISOString())
+      } else {
+        addIgnored.run(batch.sourceId, version.remote_id, version.relative_path, new Date().toISOString())
+        if (Number(version.accepted_version_count) === 0) {
+          deleteItem.run(version.source_item_id)
+        } else {
+          deleteVersion.run(versionId)
+        }
+        if (!findObjectReference.get(version.object_hash) && /^[a-f0-9]{64}$/.test(version.object_hash)) {
+          await unlink(this.objectPath(version.object_hash)).catch(() => undefined)
+        }
+      }
       processed += 1
     }
     if (accepted && processed > 0) this.kickExportWorker()
+    if (!accepted && processed > 0) this.notifyChanged(batch.sourceId, true)
     return { accepted, imported: accepted ? processed : 0, failed: batch.versionIds.length - processed }
   }
 
@@ -1647,12 +1714,23 @@ export class LocalDataService {
     const counts = this.database.prepare(`
       SELECT
         (SELECT COUNT(*) FROM source_items
-          WHERE data_source_id = ? AND state = 'present') AS file_count,
+          WHERE data_source_id = ? AND state = 'present'
+            AND EXISTS (
+              SELECT 1 FROM source_versions
+              WHERE source_versions.source_item_id = source_items.id
+                AND source_versions.import_policy IN ('normal', 'approved')
+            )) AS file_count,
         (SELECT COUNT(*) FROM source_versions
           JOIN source_items ON source_items.id = source_versions.source_item_id
-          WHERE source_items.data_source_id = ?) AS version_count,
+          WHERE source_items.data_source_id = ?
+            AND source_versions.import_policy IN ('normal', 'approved')) AS version_count,
         (SELECT COALESCE(SUM(size), 0) FROM source_items
-          WHERE data_source_id = ? AND state = 'present') AS total_bytes
+          WHERE data_source_id = ? AND state = 'present'
+            AND EXISTS (
+              SELECT 1 FROM source_versions
+              WHERE source_versions.source_item_id = source_items.id
+                AND source_versions.import_policy IN ('normal', 'approved')
+            )) AS total_bytes
     `).get(source.id, source.id, source.id) as unknown as CountRow
 
     return {

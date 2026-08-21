@@ -214,6 +214,61 @@ describe('default local folders', () => {
     }
   })
 
+  it('hides and permanently skips high-risk files rejected from auto-scan', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-high-risk-reject-'))
+    temporaryDirectories.push(fixtureRoot)
+    const dataDirectory = join(fixtureRoot, 'data')
+    const documents = join(fixtureRoot, 'Documents')
+    await mkdir(documents)
+    await Promise.all(Array.from({ length: 101 }, (_, index) =>
+      writeFile(join(documents, `note-${index}.md`), `# Note ${index}`)))
+
+    const importLocalFile = vi.fn(async () => ({
+      fileEntryId: 'file-entry', fileVersionId: 'file-version', jobId: 'job-1',
+      contentHash: 'a'.repeat(64), blobDeduped: false, versionDeduped: false,
+    }))
+    let autoResolver: ((batch: PendingAutoScanBatch, accepted: boolean) => Promise<HighRiskImportResolution>) | null = null
+    let pendingBatch: PendingAutoScanBatch | null = null
+    const highRiskImports = {
+      enqueueManual: vi.fn(),
+      enqueueAuto: vi.fn(async (batch: PendingAutoScanBatch) => {
+        pendingBatch = batch
+        return { id: 'review-1', origin: 'auto-scan' as const, sourceLabel: 'Documents', fileCount: batch.versionIds.length, createdAt: new Date().toISOString() }
+      }),
+      setManualResolver: vi.fn(),
+      setAutoResolver: (resolver) => { autoResolver = resolver },
+      discardAutoSource: vi.fn(),
+    } satisfies HighRiskImportQueue
+    const extensions = new Set(['.md'])
+    const service = new LocalDataService(
+      dataDirectory,
+      new ConnectorRegistry().register(new LocalFolderConnector(extensions)),
+      { capabilities: async () => ({ items: [] }), importLocalFile, importConnectorFile: vi.fn() },
+      extensions,
+      new Set(),
+      highRiskImports,
+    )
+    await service.initialize()
+
+    try {
+      await service.addLocalFolder(documents)
+      const source = service.listSources()[0]!
+      expect(service.listFiles(source.id)).toEqual([])
+      expect(source.fileCount).toBe(0)
+      expect(autoResolver).not.toBeNull()
+      expect(pendingBatch?.versionIds).toHaveLength(101)
+
+      await autoResolver!(pendingBatch!, false)
+      expect(service.listFiles(source.id)).toEqual([])
+      expect(service.listSources()[0]!.fileCount).toBe(0)
+      await expect(service.sync(source.id)).resolves.toMatchObject({ discovered: 0, added: 0, updated: 0 })
+      expect(highRiskImports.enqueueAuto).toHaveBeenCalledTimes(1)
+      expect(importLocalFile).not.toHaveBeenCalled()
+    } finally {
+      await service.shutdown()
+    }
+  })
+
   it('exports cloud-native connector documents while keeping the provider identity', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-connector-export-'))
     temporaryDirectories.push(fixtureRoot)

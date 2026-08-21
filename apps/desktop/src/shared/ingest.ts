@@ -78,6 +78,17 @@ export interface FileImportOutcome {
   error: string | null
 }
 
+/** 手动导入批次的桌面端实时进度。 */
+export interface FileImportProgressEvent {
+  batchId: string
+  status: 'started' | 'file-started' | 'file-completed' | 'completed'
+  total: number
+  completed: number
+  filename: string | null
+  succeeded: number
+  failed: number
+}
+
 export interface HighRiskImportReview {
   id: string
   origin: 'manual-import' | 'auto-scan'

@@ -355,6 +355,7 @@ const FILES_CHANNELS = {
   openOriginal: 'files:open-original',
   pickAndImport: 'files:pick-and-import',
   importPathsOnce: 'files:import-paths-once',
+  importProgress: 'files:import-progress',
   listHighRiskReviews: 'files:high-risk-reviews:list',
   resolveHighRiskReview: 'files:high-risk-reviews:resolve',
   highRiskReviewsChanged: 'files:high-risk-reviews:changed',
@@ -1027,6 +1028,11 @@ function registerFilesHandlers(
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
   handle(FILES_CHANNELS.openOriginal, (_event, fileId: string) => bridge.openOriginal(fileId))
+  bridge.onImportProgress((event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(FILES_CHANNELS.importProgress, event)
+    }
+  })
   handle(
     FILES_CHANNELS.pickAndImport,
     (_event, options?: { pipelines?: IngestPipelines; roomId?: string }) => bridge.pickAndImport(options),

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import type {
   FileCatalogDto,
   FileImportOutcome,
+  FileImportProgressEvent,
   IngestEventDto,
   IngestPipelines,
 } from '../../../../shared/ingest'
@@ -85,6 +86,7 @@ export function FilesPage() {
   const [loading, setLoading] = useState(Boolean(filesApi) && !fileCatalogCache.complete)
   const [events, setEvents] = useState<IngestEventDto[]>([])
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<FileImportProgressEvent | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [selectedCategoryKey, setSelectedCategoryKey] = useState<string | null>(null)
@@ -181,6 +183,13 @@ export function FilesPage() {
     }
   }, [loadEvents, loadFiles])
 
+  useEffect(() => {
+    if (!filesApi || typeof filesApi.onImportProgress !== 'function') return
+    return filesApi.onImportProgress((progress) => {
+      setImportProgress(progress.status === 'completed' ? null : progress)
+    })
+  }, [filesApi])
+
   const classifiedFilesByCategory = useMemo(() => groupCatalogFiles(files), [files])
 
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
@@ -218,6 +227,7 @@ export function FilesPage() {
       setMessage(error instanceof Error ? error.message : t('surface:files.importFailedTryAgainLater'))
     } finally {
       setImporting(false)
+      setImportProgress(null)
     }
   }
 
@@ -313,6 +323,7 @@ export function FilesPage() {
       setMessage(error instanceof Error ? error.message : t('surface:files.importFailedTryAgainLater'))
     } finally {
       setImporting(false)
+      setImportProgress(null)
     }
   }
 
@@ -375,7 +386,25 @@ export function FilesPage() {
       {!filesApi ? (
         <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:files.importFilesInTheDesktopApp')}</strong><span>{t('surface:files.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div>
       ) : null}
-      {message ? <div className="source-feedback" role="status">{message}</div> : null}
+      {importProgress ? (
+        <div className="source-feedback file-import-progress" role="status" aria-live="polite">
+          <div className="file-import-progress-copy">
+            <strong>{t('surface:files.importingFiles')}</strong>
+            <span>{importProgress.filename ?? t('surface:files.preparingImport')}</span>
+            <div
+              className="file-import-progress-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={importProgress.total}
+              aria-valuenow={importProgress.completed}
+              aria-label={t('surface:files.importProgressCount', { completed: importProgress.completed, total: importProgress.total })}
+            >
+              <span style={{ width: `${importProgress.total > 0 ? (importProgress.completed / importProgress.total) * 100 : 0}%` }} />
+            </div>
+          </div>
+          <b>{t('surface:files.importProgressCount', { completed: importProgress.completed, total: importProgress.total })}</b>
+        </div>
+      ) : message ? <div className="source-feedback" role="status">{message}</div> : null}
 
       {view === 'files' && filesApi ? (
         <section className="file-recognition" aria-labelledby="file-recognition-heading">

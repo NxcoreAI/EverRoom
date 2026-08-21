@@ -8,6 +8,7 @@ import type {
   FileFormatCapabilityDto,
   FileImportAcceptedDto,
   FileImportOutcome,
+  FileImportProgressEvent,
   HighRiskImportResolution,
   IngestPipelines,
 } from '../../shared/ingest'
@@ -114,11 +115,18 @@ export async function collectImportCandidates(
  * 与 KnowledgeGatewayBridge 同构（Bearer token 只在主进程）。
  */
 export class FilesGatewayBridge {
+  private readonly importProgressListeners = new Set<(event: FileImportProgressEvent) => void>()
+
   constructor(
     private readonly supervisor: GatewaySupervisor,
     private readonly highRiskImports: HighRiskImportQueue | null = null,
   ) {
     this.highRiskImports?.setManualResolver((batch, accepted) => this.resolveManualBatch(batch, accepted))
+  }
+
+  onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void {
+    this.importProgressListeners.add(listener)
+    return () => this.importProgressListeners.delete(listener)
   }
 
   list(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
@@ -206,7 +214,10 @@ export class FilesGatewayBridge {
   }): Promise<FileImportOutcome[]> {
     const picked = await dialog.showOpenDialog({
       title: desktopText('dialog.importFiles.title'),
-      properties: ['openFile', 'multiSelections'],
+      // Allow the same import action to select individual files or directories.
+      // Directories are expanded by importPathsOnce, so they retain the same
+      // allowlist, ignored-directory rules, and high-risk review behavior.
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
         {
           name: desktopText('dialog.importFiles.documents'),
@@ -271,7 +282,12 @@ export class FilesGatewayBridge {
     roomId?: string
   }): Promise<FileImportOutcome[]> {
     const outcomes: FileImportOutcome[] = []
+    const batchId = randomUUID()
+    let succeeded = 0
+    let failed = 0
+    this.emitImportProgress({ batchId, status: 'started', total: candidates.length, completed: 0, filename: null, succeeded, failed })
     for (const { filePath, filename } of candidates) {
+      this.emitImportProgress({ batchId, status: 'file-started', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
       try {
         const uploaded = await this.importPath({
           filePath,
@@ -293,6 +309,7 @@ export class FilesGatewayBridge {
           routeJobId: uploaded.jobId,
           error: null,
         })
+        succeeded += 1
       } catch (error) {
         outcomes.push({
           filename,
@@ -305,9 +322,16 @@ export class FilesGatewayBridge {
           routeJobId: null,
           error: error instanceof Error ? error.message : String(error),
         })
+        failed += 1
       }
+      this.emitImportProgress({ batchId, status: 'file-completed', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
     }
+    this.emitImportProgress({ batchId, status: 'completed', total: candidates.length, completed: outcomes.length, filename: null, succeeded, failed })
     return outcomes
+  }
+
+  private emitImportProgress(event: FileImportProgressEvent): void {
+    for (const listener of this.importProgressListeners) listener(event)
   }
 
   async importLocalFile(input: {

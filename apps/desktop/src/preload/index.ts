@@ -442,6 +442,11 @@ const api: NxcoreDesktopApi = {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
     },
+    onImportProgress: (listener) => {
+      const handleProgress = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) => listener(progress)
+      ipcRenderer.on('files:import-progress', handleProgress)
+      return () => ipcRenderer.removeListener('files:import-progress', handleProgress)
+    },
     listHighRiskReviews: () => invoke('files:high-risk-reviews:list'),
     resolveHighRiskReview: (id: string, accepted: boolean) =>
       invoke('files:high-risk-reviews:resolve', id, accepted),

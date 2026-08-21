@@ -846,6 +846,7 @@ export interface NxcoreDesktopApi {
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
     onHighRiskReviewsChanged(listener: () => void): () => void
@@ -883,6 +884,7 @@ import type {
   FileCatalogDto,
   FileDto,
   FileImportOutcome,
+  FileImportProgressEvent,
   HighRiskImportResolution,
   HighRiskImportReview,
   IngestEventDto,

@@ -1514,6 +1514,46 @@ summary:focus-visible {
   gap: 7px;
 }
 
+.file-import-progress {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.file-import-progress-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.file-import-progress-copy strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.file-import-progress-copy > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-import-progress-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+.file-import-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
 .source-delete-progress-copy strong {
   color: var(--text);
   font-size: 11px;
