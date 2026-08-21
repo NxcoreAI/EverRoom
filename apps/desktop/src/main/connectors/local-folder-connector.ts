@@ -12,7 +12,7 @@ import type {
 } from './types'
 import {
   isIgnoredLocalDirectory,
-  isLocalParseableExtension,
+  LOCAL_PARSEABLE_EXTENSIONS,
 } from '../file-format-policy'
 
 export interface LocalFolderConfig {
@@ -22,6 +22,8 @@ export interface LocalFolderConfig {
 export class LocalFolderConnector implements Connector<LocalFolderConfig> {
   readonly kind = 'local-folder' as const
   readonly capabilities = ['pull', 'incremental', 'watch'] as const
+
+  constructor(private readonly scanExtensions: ReadonlySet<string> = LOCAL_PARSEABLE_EXTENSIONS) {}
 
   getConnectionKey(config: LocalFolderConfig): string {
     return resolve(config.rootPath)
@@ -54,7 +56,7 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
         if (!entry.isFile()) continue
 
         const extension = extname(entry.name).toLowerCase()
-        if (!isLocalParseableExtension(extension)) continue
+        if (!this.scanExtensions.has(extension)) continue
 
         try {
           const info = await stat(absolutePath)

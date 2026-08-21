@@ -34,6 +34,7 @@ import {
 } from "./types.js";
 import {
   extensionOf,
+  normalizeJsonPayload,
   normalizeMarkdown,
   sniffAsMarkdown,
   truncateUtf8,
@@ -302,9 +303,32 @@ export class IngestService {
   }
 
   private async ingestFromRef(input: IngestInput): Promise<IngestResult> {
-    const { sourceKind, sourceId } = input.source.ref!;
+    const { sourceKind, sourceId, sourceVersionId } = input.source.ref!;
     switch (sourceKind) {
       case "file": {
+        if (sourceVersionId) {
+          const context = this.files.getVersionContext(sourceId, sourceVersionId);
+          if (!context) throw new IngestError(`file_versions 无此版本：${sourceVersionId}`, "ref_not_found", 404);
+          let buffer: Buffer;
+          try {
+            buffer = await readFile(context.storagePath);
+          } catch (error) {
+            throw new IngestError(
+              `对象库字节不可读：${context.storagePath}（${(error as Error).message}）`,
+              "path_unreadable",
+            );
+          }
+          return this.processBytes(input, {
+            sourceKind: "file",
+            sourceId,
+            sourceVersion: context.version.versionNo,
+            filename: context.entry.originalName,
+            buffer,
+            origin: context.entry.sourceKind === "manual-upload" ? "upload" : "file",
+            parserVersion: `${context.version.parserId}@${context.version.parserVersion}`,
+            touchFileRow: false,
+          });
+        }
         const row = this.files.get(sourceId);
         if (!row) throw new IngestError(`uploaded_files 无此行：${sourceId}`, "ref_not_found", 404);
         const storagePath = this.files.storagePathOf(sourceId);
@@ -476,6 +500,8 @@ export class IngestService {
       filename: string;
       buffer: Buffer;
       origin: OriginChannel;
+      sourceVersion?: number;
+      parserVersion?: string;
       /** ref 形态回填 uploaded_files.current_parsed_id；path 形态无登记行。 */
       touchFileRow: boolean;
     },
@@ -490,7 +516,7 @@ export class IngestService {
     return this.processNormalized(input, {
       sourceKind: ctx.sourceKind,
       sourceId: ctx.sourceId,
-      sourceVersion: this.nextLedgerVersion(ctx.sourceKind, ctx.sourceId),
+      sourceVersion: ctx.sourceVersion ?? this.nextLedgerVersion(ctx.sourceKind, ctx.sourceId),
       dataType: normalized.dataType,
       detectedBy: normalized.detectedBy,
       title: input.title ?? normalized.title,
@@ -500,6 +526,7 @@ export class IngestService {
       origin: ctx.origin,
       jsonType: normalized.jsonType,
       touchFileRow: ctx.touchFileRow,
+      parserVersion: ctx.parserVersion,
       filename: ctx.filename,
     });
   }
@@ -519,6 +546,7 @@ export class IngestService {
       origin: OriginChannel;
       jsonType?: string | undefined;
       touchFileRow?: boolean | undefined;
+      parserVersion?: string | undefined;
       filename?: string | undefined;
     },
   ): Promise<IngestResult> {
@@ -534,7 +562,7 @@ export class IngestService {
     }
 
     // 解析产物（闸2 同 hash 同 parser 幂等）；file ref 顺带回填登记行指针
-    const parsedId = this.files.ensureParsed(unit.contentHash, unit.markdown);
+    const parsedId = this.files.ensureParsed(unit.contentHash, unit.markdown, unit.parserVersion);
     if (unit.touchFileRow) this.files.touchParsed(unit.sourceId, parsedId);
 
     // 台账：类型识别 + 策略快照落定（晋升/增量 ingest 的 wiki 判定读快照）
@@ -1066,10 +1094,23 @@ async function normalizeFileBytes(
   explicitDataType: string | undefined,
 ): Promise<{ dataType: string; detectedBy: DetectedBy; title: string; markdown: string; jsonType?: string }> {
   const extension = extensionOf(filename);
-  const mdFamily = ["md", "markdown", "txt"];
+  const mdFamily = ["md", "markdown", "mdx", "txt", "text"];
 
   if (extension === "json") {
-    throw new IngestError("JSON 文件不支持进入文件库或理解引擎", "unsupported_type");
+    let payload: unknown;
+    try {
+      payload = JSON.parse(buffer.toString("utf8"));
+    } catch (error) {
+      throw new IngestError(`json 解析失败：${(error as Error).message}`, "convert_failed");
+    }
+    const normalized = normalizeJsonPayload(payload, undefined, titleOfFilename(filename));
+    return {
+      dataType: explicitDataType ?? normalized.dataType ?? (normalized.jsonType === "meeting-minutes" ? "meeting-minutes" : "document"),
+      detectedBy: explicitDataType ? "explicit" : "json-type",
+      title: normalized.title,
+      markdown: normalized.markdown,
+      jsonType: normalized.jsonType,
+    };
   }
 
   if (mdFamily.includes(extension)) {

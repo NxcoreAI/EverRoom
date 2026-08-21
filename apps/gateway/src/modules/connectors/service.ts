@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, isNull, lt, lte, or, like } from "drizzle-orm"
 import type { AgentRuntime, StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { ConnectorSyncJobConfig, GatewayConfig, OpenConnectorCliConfig } from "../../config.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import type { FilesService } from "../files/service.js";
 import {
   connectorAuditEvents,
   connectorAccounts,
@@ -311,6 +312,7 @@ export class ConnectorSyncService {
   private agentRuntime: AgentRuntime | null = null;
   private disposeAgentRuntime = true;
   private evidenceSink: ((evidence: unknown) => Promise<void>) | null = null;
+  private filesService: FilesService | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -327,6 +329,13 @@ export class ConnectorSyncService {
 
   setEvidenceSink(sink: ((evidence: unknown) => Promise<void>) | null): void {
     this.evidenceSink = sink;
+  }
+
+  setFilesService(service: FilesService): void {
+    this.filesService = service;
+    for (const row of this.db.select().from(connectorDocuments).where(isNull(connectorDocuments.deletedAt)).all()) {
+      void this.importConnectorDocument(row);
+    }
   }
 
   async initialize(): Promise<void> {
@@ -432,6 +441,9 @@ export class ConnectorSyncService {
         result[outcome] += 1;
       }
     });
+    if (resourceType === "document") {
+      this.enqueueConnectorDocuments(state, accepted.map((item) => item.sourceRecordId));
+    }
     state.stats.inserted += result.inserted;
     state.stats.updated += result.updated;
     state.stats.unchanged += result.unchanged;
@@ -1773,6 +1785,45 @@ export class ConnectorSyncService {
         state.stats[outcome] += 1;
       }
     });
+    this.enqueueConnectorDocuments(state, documents.map((value) => textValue(objectValue(value).sourceRecordId)).filter((id): id is string => Boolean(id)));
+  }
+
+  private enqueueConnectorDocuments(state: AgentSyncRunState, sourceRecordIds: string[]): void {
+    if (!this.filesService || sourceRecordIds.length === 0) return;
+    for (const sourceRecordId of sourceRecordIds) {
+      const row = this.db.select().from(connectorDocuments).where(and(
+        eq(connectorDocuments.ownerId, state.job.ownerId),
+        eq(connectorDocuments.service, state.job.service),
+        eq(connectorDocuments.connectionName, state.job.connectionName ?? ""),
+        eq(connectorDocuments.sourceRecordId, sourceRecordId),
+        isNull(connectorDocuments.deletedAt),
+      )).get();
+      if (row) void this.importConnectorDocument(row);
+    }
+  }
+
+  private async importConnectorDocument(row: typeof connectorDocuments.$inferSelect): Promise<void> {
+    if (!this.filesService) return;
+    const cleanTitle = row.title.replace(/[\\/]/g, "-").trim() || "无标题文档";
+    const originalName = /\.(?:md|markdown|mdx)$/i.test(cleanTitle) ? cleanTitle : `${cleanTitle}.md`;
+    try {
+      await this.filesService.importFile({
+        sourceKind: "connector",
+        sourceKey: `connector:${row.service}:${row.connectionName}:${row.sourceRecordId}`,
+        originalName,
+        buffer: Buffer.from(row.bodyText, "utf8"),
+        mime: "text/markdown",
+        provider: row.service,
+        connectionId: row.connectionName ?? undefined,
+        sourceUri: row.sourceUrl ?? undefined,
+        sourceModifiedAt: row.sourceUpdatedAt ?? undefined,
+      });
+    } catch (error) {
+      this.logger.warn({
+        connectorDocumentId: row.id,
+        error: error instanceof Error ? error.message : String(error),
+      }, "connector document file import failed");
+    }
   }
 
   private deleteDocumentBySourceId(state: AgentSyncRunState, sourceId: string): void {

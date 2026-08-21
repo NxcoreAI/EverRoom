@@ -14,7 +14,7 @@ import {
   Users,
 } from 'lucide-react'
 
-import type { FileDto, IngestEventDto } from '../../../../shared/ingest'
+import type { FileCatalogDto } from '../../../../shared/ingest'
 
 export interface FileCategoryDefinition {
   key: string
@@ -53,20 +53,21 @@ const MATCHERS: Array<{ key: string; terms: string[] }> = [
   { key: 'book', terms: ['书籍', 'book', 'handbook', 'manual', '教材'] },
 ]
 
-function extensionOf(file: FileDto): string {
+function extensionOf(file: FileCatalogDto): string {
   const match = file.originalName.match(/\.([^.]+)$/)
   return match?.[1]?.toLowerCase() ?? ''
 }
 
-export function categoryForFile(file: FileDto, event?: IngestEventDto): FileCategoryDefinition {
-  const haystack = `${file.originalName} ${event?.title ?? ''}`.toLocaleLowerCase()
+export function categoryForFile(file: FileCatalogDto): FileCategoryDefinition {
+  if (file.agentCategory && categoryByKey.has(file.agentCategory)) return categoryByKey.get(file.agentCategory)!
+  const haystack = `${file.originalName} ${file.sharedTitle}`.toLocaleLowerCase()
   for (const matcher of MATCHERS) {
     if (matcher.terms.some((term) => haystack.includes(term))) {
       return categoryByKey.get(matcher.key) ?? categoryByKey.get('document')!
     }
   }
 
-  switch (event?.dataType) {
+  switch (file.dataType) {
     case 'spreadsheet': return categoryByKey.get('data')!
     case 'slides': return categoryByKey.get('lesson')!
     case 'office-doc': return categoryByKey.get('form')!
@@ -75,4 +76,3 @@ export function categoryForFile(file: FileDto, event?: IngestEventDto): FileCate
       return categoryByKey.get('document')!
   }
 }
-
