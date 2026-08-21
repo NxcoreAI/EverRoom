@@ -9,7 +9,7 @@ import type {
   StartDocumentOperationInput,
 } from '@nxcore/agent-contract'
 
-import type { CloudAccountStatus, DefaultLocalFolder } from '../shared/sources'
+import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
 import type { PrivateTranscriptionSyncCompletedEvent } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -372,6 +372,10 @@ const FILES_CHANNELS = {
 
 const INGEST_CHANNELS = {
   listEvents: 'ingest:events:list',
+  getFilterRules: 'ingest:filter-rules:get',
+  updateFilterPreference: 'ingest:filter-rules:update-preference',
+  reinstateEvent: 'ingest:events:reinstate',
+  getEventContent: 'ingest:events:content',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -618,8 +622,17 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     },
   )
 
-  handle(SOURCE_CHANNELS.addLocalFolder, async () => {
-    const result = await dialog.showOpenDialog({
+  const showFolderDialog = (
+    event: Electron.IpcMainInvokeEvent,
+    options: Electron.OpenDialogOptions,
+  ) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    if (parent && !parent.isDestroyed()) return dialog.showOpenDialog(parent, options)
+    return dialog.showOpenDialog(options)
+  }
+
+  handle(SOURCE_CHANNELS.addLocalFolder, async (event) => {
+    const result = await showFolderDialog(event, {
       title: desktopText('dialog.chooseFolder.title'),
       buttonLabel: desktopText('dialog.chooseFolder.button'),
       properties: ['openDirectory', 'createDirectory'],
@@ -627,26 +640,25 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     const rootPath = result.filePaths[0]
     return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
   })
-  handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (_event, folders: unknown) => {
+  handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (event, folders: unknown) => {
     if (!Array.isArray(folders)) throw new Error('无效的默认文件夹配置。')
     if (folders.some((folder) => folder !== 'documents' && folder !== 'desktop')) {
       throw new Error('无效的默认文件夹配置。')
     }
-    const selected = folders as DefaultLocalFolder[]
-    const unique = [...new Set(selected)]
-    const results: Array<{ folder: DefaultLocalFolder; connected: boolean; error?: string }> = []
-    for (const folder of unique) {
+    const selected = [...new Set(folders as DefaultLocalFolder[])]
+    const results: DefaultLocalFolderConnectionResult[] = []
+    for (const folder of selected) {
       try {
         let rootPath = app.getPath(folder)
         if (process.platform === 'darwin') {
-          const picked = await dialog.showOpenDialog({
+          const picked = await showFolderDialog(event, {
             title: `${desktopText('dialog.chooseFolder.title')} · ${folder === 'documents' ? 'Documents' : 'Desktop'}`,
             buttonLabel: desktopText('dialog.chooseFolder.button'),
             defaultPath: rootPath,
             properties: ['openDirectory', 'createDirectory'],
           })
           if (picked.canceled || !picked.filePaths[0]) {
-            results.push({ folder, connected: false, error: '用户取消了文件夹授权。' })
+            results.push({ folder, connected: false, error: '用户取消了文件夹选择。' })
             continue
           }
           rootPath = picked.filePaths[0]
@@ -654,11 +666,7 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
         await service.addLocalFolder(rootPath)
         results.push({ folder, connected: true })
       } catch (error) {
-        results.push({
-          folder,
-          connected: false,
-          error: error instanceof Error ? error.message : String(error),
-        })
+        results.push({ folder, connected: false, error: error instanceof Error ? error.message : String(error) })
       }
     }
     return results
@@ -1086,6 +1094,16 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
     (_event, query: { limit?: number; offset?: number; sourceKind?: string; sourceId?: string }) =>
       bridge.listEvents(query),
   )
+  // 过滤规则文档（记忆页「过滤规则」入口）：偏好段可读写，洞察段只读。
+  handle(INGEST_CHANNELS.getFilterRules, () => bridge.getFilterRules())
+  handle(
+    INGEST_CHANNELS.updateFilterPreference,
+    (_event, content: string) => bridge.updateFilterPreference(content),
+  )
+  // 误杀恢复（导入记录页「恢复」按钮）
+  handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
+  // 事件详情：归一化产物全文
+  handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
@@ -1759,6 +1777,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
+    // Default folders are a global file-app source, not part of Room setup.
+    // Bootstrap in the background so a denied directory does not block startup.
+    void localDataService.bootstrapDefaultLocalFolders([
+      app.getPath('desktop'),
+      app.getPath('documents'),
+    ]).catch((error) => console.warn('Default local folder scan failed.', error))
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))

@@ -32,7 +32,7 @@ import {
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
-import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice, DiarySettings, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
@@ -46,9 +46,10 @@ const SETTINGS_NAV = [
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
   { id: 'settings-runtime-config', label: '运行时 AI 配置', description: 'SaaS 与本地 JSON 配置', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
-  { id: 'settings-memory', label: 'memory:settings.memorySetupTitle', description: 'memory:settings.memorySetupActionBody', icon: Sparkles },
+  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', description: 'surface:settings.onboardingSetupDescription', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
+  { id: 'settings-diary', label: 'surface:settings.diarySchedule', description: 'surface:settings.navigationDiaryDescription', icon: CalendarClock },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
 ]
@@ -98,7 +99,7 @@ function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): 
   return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
 }
 
-export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }: { onStartMemoryOnboarding?: () => void; onStartRoomOnboarding?: () => void }) {
+export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
   const { locale, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [identifier, setIdentifier] = useState('')
@@ -126,6 +127,8 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
   const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
   const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
   const [perceptionBusy, setPerceptionBusy] = useState(false)
+  const [diarySettings, setDiarySettings] = useState<DiarySettings | null>(null)
+  const [diaryBusy, setDiaryBusy] = useState(false)
   const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
   const [activeSetting, setActiveSetting] = useState(SETTINGS_NAV[0].id)
 
@@ -230,11 +233,13 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
     void Promise.all([
       window.nxcore.screenCapture.status(),
       window.nxcore.screenCapture.perceptionSettings(),
+      window.nxcore.diary.settings(),
     ])
-      .then(([status, settings]) => {
+      .then(([status, settings, diary]) => {
         setScreenCaptureStatus(status)
         setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
         setPerceptionSettings(settings)
+        setDiarySettings(diary)
       })
       .catch(() => undefined)
   }, [])
@@ -373,6 +378,24 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
     }
   }
 
+  const updateDiarySettings = async (patch: Partial<Pick<DiarySettings, 'enabled' | 'localTime' | 'timezone'>>) => {
+    if (!window.nxcore || !diarySettings) return
+    setDiaryBusy(true)
+    try {
+      const settings = await window.nxcore.diary.updateSettings({
+        enabled: patch.enabled ?? diarySettings.enabled,
+        localTime: patch.localTime ?? diarySettings.localTime,
+        timezone: patch.timezone ?? diarySettings.timezone,
+        configVersion: diarySettings.configVersion,
+      })
+      setDiarySettings(settings)
+    } catch {
+      // The preload request interceptor reports configuration errors globally.
+    } finally {
+      setDiaryBusy(false)
+    }
+  }
+
   const isBusy = pending !== null
   const accountName = account?.user?.email
     || account?.user?.name
@@ -439,30 +462,21 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
         </div>
       </section>
 
-      <section id="settings-memory" className="reality-settings-section settings-anchor-section" aria-labelledby="memory-settings-title">
+      <section id="settings-onboarding" className="reality-settings-section settings-anchor-section" aria-labelledby="onboarding-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
           <div>
-            <h2 id="memory-settings-title">{t('memory:settings.memorySetupTitle')}</h2>
-            <p>{t('memory:settings.memorySetupBody')}</p>
+            <h2 id="onboarding-settings-title">{t('surface:settings.onboardingSetupTitle')}</h2>
+            <p>{t('surface:settings.onboardingSetupBody')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
-            <strong>{t('memory:settings.memorySetupActionTitle')}</strong>
-            <small>{t('memory:settings.memorySetupActionBody')}</small>
+            <strong>{t('surface:settings.fullOnboardingActionTitle')}</strong>
+            <small>{t('surface:settings.fullOnboardingActionBody')}</small>
           </div>
-          <button type="button" className="primary-button" onClick={onStartMemoryOnboarding} disabled={!onStartMemoryOnboarding}>
-            <Sparkles aria-hidden="true" />{t('memory:onboarding.reopen')}
-          </button>
-        </div>
-        <div className="reality-setting-row">
-          <div>
-            <strong>{t('contextRoom:settings.roomSetupTitle')}</strong>
-            <small>{t('contextRoom:settings.roomSetupBody')}</small>
-          </div>
-          <button type="button" className="primary-button" onClick={onStartRoomOnboarding} disabled={!onStartRoomOnboarding}>
-            <Sparkles aria-hidden="true" />{t('contextRoom:settings.roomSetupAction')}
+          <button type="button" className="primary-button" onClick={onStartFullOnboarding} disabled={!onStartFullOnboarding}>
+            <Sparkles aria-hidden="true" />{t('surface:settings.fullOnboardingAction')}
           </button>
         </div>
       </section>
@@ -823,6 +837,59 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
             {t('surface:settings.captureCurrentWindow')}
           </button>
         </div>
+      </section>
+
+      <section id="settings-diary" className="reality-settings-section settings-anchor-section" aria-labelledby="diary-schedule-settings-title">
+        <header>
+          <span><CalendarClock aria-hidden="true" /></span>
+          <div>
+            <h2 id="diary-schedule-settings-title">{t('surface:settings.diarySchedule')}</h2>
+            <p>{t('surface:settings.diaryScheduleDescription')}</p>
+          </div>
+        </header>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.automaticDiaryGeneration')}</strong><small>{t('surface:settings.automaticDiaryGenerationDescription')}</small></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.automaticDiaryGeneration')}
+            aria-checked={Boolean(diarySettings?.enabled)}
+            disabled={diaryBusy || diarySettings === null}
+            data-active={String(Boolean(diarySettings?.enabled))}
+            onClick={() => void updateDiarySettings({ enabled: !diarySettings?.enabled })}
+          >
+            <span aria-hidden="true" />
+            {t(diarySettings?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.diaryGenerationTime')}</strong><small>{t('surface:settings.diaryGenerationTimeDescription')}</small></div>
+          <input
+            type="time"
+            value={diarySettings?.localTime ?? '23:30'}
+            disabled={diaryBusy || diarySettings === null}
+            onChange={(event) => void updateDiarySettings({ localTime: event.target.value })}
+          />
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.diaryTimezone')}</strong><small>{t('surface:settings.diaryTimezoneDescription')}</small></div>
+          <select
+            value={diarySettings?.timezone ?? 'Asia/Shanghai'}
+            disabled={diaryBusy || diarySettings === null}
+            onChange={(event) => void updateDiarySettings({ timezone: event.target.value })}
+          >
+            {['Asia/Shanghai', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London', 'Europe/Berlin', 'America/Los_Angeles', 'America/New_York', 'UTC'].map((timezone) => (
+              <option key={timezone} value={timezone}>{timezone}</option>
+            ))}
+          </select>
+        </div>
+        {diarySettings?.enabled && diarySettings.nextRunAt ? (
+          <div className="reality-setting-row">
+            <div><strong>{t('surface:settings.nextDiaryGeneration')}</strong></div>
+            <time>{new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: diarySettings.timezone }).format(new Date(diarySettings.nextRunAt))}</time>
+          </div>
+        ) : null}
       </section>
 
         </main>

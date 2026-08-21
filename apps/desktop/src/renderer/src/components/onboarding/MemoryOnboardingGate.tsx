@@ -48,6 +48,7 @@ interface MemoryOnboardingControls {
 
 interface MemoryOnboardingGateProps {
   children: (controls: MemoryOnboardingControls) => ReactNode
+  onFinished?: () => void
 }
 
 const MEMORY_TYPE_KEYS: Record<string, string> = {
@@ -72,7 +73,7 @@ function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `memory-onboarding-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-export function MemoryOnboardingGate({ children }: MemoryOnboardingGateProps) {
+export function MemoryOnboardingGate({ children, onFinished }: MemoryOnboardingGateProps) {
   const { locale, setLocale, t, formatDate } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const storedMarker = readMemoryOnboardingMarker()
@@ -96,7 +97,8 @@ export function MemoryOnboardingGate({ children }: MemoryOnboardingGateProps) {
   const submitRequestIdRef = useRef<string | null>(null)
   const finishOnboarding = useCallback(() => {
     setMode('app')
-  }, [])
+    onFinished?.()
+  }, [onFinished])
 
   const resetQuestions = useCallback(() => {
     setStep(0)

@@ -1,17 +1,13 @@
 import {
-  ArrowRight,
   BookOpen,
   BrainCircuit,
   Check,
   ChevronRight,
   DoorOpen,
-  FolderOpen,
-  FolderPlus,
   Languages,
   LoaderCircle,
   Network,
   RefreshCw,
-  ShieldCheck,
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
@@ -19,7 +15,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import type { ContextRoomKind, ContextRoomRecord } from '@/components/context-room/ported/types'
-import { localizedUiText } from '@/components/context-room/ported/adapters'
+import { localizedRoomKind } from '@/components/context-room/ported/adapters'
 import { createRoomUsageGuide } from './roomUsageGuide'
 import {
   readRoomOnboardingMarker,
@@ -29,19 +25,20 @@ import {
 } from './roomOnboardingState'
 import './RoomOnboardingGate.css'
 
-type GateMode = 'checking' | 'app' | 'form' | 'creating' | 'success' | 'setup' | 'setup-saving' | 'unavailable'
+type GateMode = 'checking' | 'app' | 'form' | 'creating' | 'success' | 'unavailable'
 
 interface RoomOnboardingGateProps {
   children: (controls: { openRoomOnboarding: () => void }) => ReactNode
   onOpenRoom: (room: { id: string; title: string; kind: ContextRoomKind }) => void
   suppressOnboarding?: boolean
+  onFinished?: () => void
 }
 
 // The guide is shown only on first use. Its marker is still updated during a
 // run so the form does not reopen after skip/create.
 const REPEATABLE_ROOM_ONBOARDING = false
 
-export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = false }: RoomOnboardingGateProps) {
+export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = false, onFinished }: RoomOnboardingGateProps) {
   const { locale, setLocale, t } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const { state, backendReady, refreshFromBackend } = useContextRoomState()
@@ -55,9 +52,6 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
   const [error, setError] = useState<string | null>(null)
   const [createdRoom, setCreatedRoom] = useState<ContextRoomRecord | null>(null)
   const [guideCreated, setGuideCreated] = useState<boolean | null>(null)
-  const [selectedFolders, setSelectedFolders] = useState<Array<'documents' | 'desktop'>>(['documents', 'desktop'])
-  const [customFolders, setCustomFolders] = useState<string[]>([])
-  const [setupError, setSetupError] = useState<string | null>(null)
   const [checkRequest, setCheckRequest] = useState(0)
 
   const openRoomOnboarding = () => {
@@ -68,19 +62,16 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
     setCreatedRoom(null)
     createdRoomIdRef.current = null
     setGuideCreated(null)
-    setSelectedFolders(['documents', 'desktop'])
-    setCustomFolders([])
-    setSetupError(null)
     setMode('form')
   }
 
   useEffect(() => {
-    if (suppressOnboarding) {
-      setMode('app')
-      return
-    }
     if (forceOpenRef.current) {
       forceOpenRef.current = false
+      return
+    }
+    if (suppressOnboarding) {
+      setMode('app')
       return
     }
     if (markerRef.current && !REPEATABLE_ROOM_ONBOARDING) {
@@ -90,7 +81,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
     if (!backendReady) return
     // The provider starts from the local cache. On a fresh install that cache
     // is empty even when the gateway already owns Rooms, so hydrate once
-    // before deciding whether this is a first-use workspace.
+    // before deciding whether this is the first-use setup.
     if (initialBackendSyncRef.current === 'loading') return
     if (initialBackendSyncRef.current === 'idle' && state.rooms.length === 0 && state.deletedRooms.length === 0) {
       initialBackendSyncRef.current = 'loading'
@@ -112,6 +103,12 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
     writeRoomOnboardingMarker({ status: 'skipped' })
     markerRef.current = { status: 'skipped' }
     setMode('app')
+    onFinished?.()
+  }
+
+  const finish = () => {
+    setMode('app')
+    onFinished?.()
   }
 
   const createRoom = async () => {
@@ -167,59 +164,6 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
     }
   }
 
-  const openFolderSetup = () => {
-    setSetupError(null)
-    setMode('setup')
-  }
-
-  const skipFolderSetup = () => {
-    setMode('app')
-    if (!suppressOnboarding && createdRoom) {
-      onOpenRoom({ id: createdRoom.id, title: createdRoom.title, kind: createdRoom.kind })
-    }
-  }
-
-  const applyFolderSetup = async () => {
-    setSetupError(null)
-    setMode('setup-saving')
-    try {
-      const sources = window.nxcore?.sources
-      if (selectedFolders.length > 0) {
-        if (!sources?.connectDefaultLocalFolders) throw new Error(t('contextRoom:onboarding.folderSetupFailed'))
-        const results = await sources.connectDefaultLocalFolders(selectedFolders)
-        const failed = results.filter((result) => !result.connected)
-        if (results.length !== selectedFolders.length || failed.length === results.length) {
-          throw new Error(t('contextRoom:onboarding.folderSetupFailed'))
-        }
-      }
-      skipFolderSetup()
-    } catch (cause) {
-      setSetupError(cause instanceof Error ? cause.message : t('contextRoom:onboarding.folderSetupFailed'))
-      setMode('setup')
-    }
-  }
-
-  const addCustomFolder = async () => {
-    const sources = window.nxcore?.sources
-    if (!sources?.addLocalFolder) {
-      setSetupError(t('contextRoom:onboarding.folderSetupFailed'))
-      return
-    }
-    setSetupError(null)
-    setMode('setup-saving')
-    try {
-      const result = await sources.addLocalFolder()
-      if (result) {
-        const folderName = result.source.name || result.source.rootPath
-        setCustomFolders((current) => current.includes(folderName) ? current : [...current, folderName])
-      }
-      setMode('setup')
-    } catch (cause) {
-      setSetupError(cause instanceof Error ? cause.message : t('contextRoom:onboarding.folderSetupFailed'))
-      setMode('setup')
-    }
-  }
-
   if (mode === 'app') return <>{children({ openRoomOnboarding })}</>
 
   return (
@@ -237,7 +181,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
             <button type="button" data-active={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
             <button type="button" data-active={locale === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
-          {!['success', 'setup-saving'].includes(mode) ? <button type="button" className="room-onboarding-skip" onClick={mode === 'setup' ? skipFolderSetup : skip}>{t('contextRoom:onboarding.skip')}</button> : null}
+          {mode !== 'success' ? <button type="button" className="room-onboarding-skip" onClick={skip}>{t('contextRoom:onboarding.skip')}</button> : null}
         </div>
       </header>
       <main className="room-onboarding-main" aria-live="polite">
@@ -288,7 +232,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
                 <div className="room-onboarding-success-kicker"><span>{t('contextRoom:display.room')}</span><span className="room-onboarding-success-ready"><Check aria-hidden="true" />{t('contextRoom:onboarding.ready')}</span></div>
                 <div className="room-onboarding-success-identity">
                   <div className="room-onboarding-success-room-icon" aria-hidden="true">{createdRoom.icon || 'R'}</div>
-                  <div><h2>{createdRoom.title}</h2><p>{localizedUiText(createdRoom.kind, t)} · {createdRoom.roomCode}</p></div>
+                  <div><h2>{createdRoom.title}</h2><p>{localizedRoomKind(createdRoom.kind, t)} · {createdRoom.roomCode}</p></div>
                 </div>
                 <p className="room-onboarding-success-goal">{createdRoom.brief.goal || purpose.trim()}</p>
               </div>
@@ -301,22 +245,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
                 </div>
               </div>
             </div>
-            <div className="room-onboarding-success-actions"><button type="button" className="room-onboarding-primary" onClick={openFolderSetup}>{t('contextRoom:onboarding.continueSetup')}<ArrowRight aria-hidden="true" /></button><button type="button" className="room-onboarding-secondary" onClick={skipFolderSetup}>{t('contextRoom:onboarding.skipSetup')}</button></div>
-          </section>
-        ) : null}
-        {(mode === 'setup' || mode === 'setup-saving') && createdRoom ? (
-          <section className="room-onboarding-setup" aria-labelledby="room-onboarding-setup-title" aria-busy={mode === 'setup-saving'}>
-            <div className="room-onboarding-setup-heading"><div className="room-onboarding-setup-icon"><ShieldCheck aria-hidden="true" /></div><div><span>{t('contextRoom:onboarding.permissionsEyebrow')}</span><h1 id="room-onboarding-setup-title">{t('contextRoom:onboarding.permissionsTitle')}</h1><p>{t('contextRoom:onboarding.permissionsBody')}</p></div></div>
-            <div className="room-onboarding-folder-panel">
-              <div className="room-onboarding-folder-panel-header"><span>{t('contextRoom:onboarding.folderAccess')}</span><small>{t('contextRoom:onboarding.folderAccessHint')}</small></div>
-              <label className="room-onboarding-folder-option"><input type="checkbox" checked={selectedFolders.includes('documents')} onChange={(event) => setSelectedFolders((current) => event.target.checked ? current.includes('documents') ? current : [...current, 'documents'] : current.filter((folder) => folder !== 'documents'))} /><span className="room-onboarding-folder-icon"><FolderOpen aria-hidden="true" /></span><span><strong>{t('contextRoom:onboarding.documentsFolder')}</strong><small>{t('contextRoom:onboarding.documentsFolderBody')}</small></span><Check aria-hidden="true" /></label>
-              <label className="room-onboarding-folder-option"><input type="checkbox" checked={selectedFolders.includes('desktop')} onChange={(event) => setSelectedFolders((current) => event.target.checked ? current.includes('desktop') ? current : [...current, 'desktop'] : current.filter((folder) => folder !== 'desktop'))} /><span className="room-onboarding-folder-icon"><FolderOpen aria-hidden="true" /></span><span><strong>{t('contextRoom:onboarding.desktopFolder')}</strong><small>{t('contextRoom:onboarding.desktopFolderBody')}</small></span><Check aria-hidden="true" /></label>
-              {customFolders.length > 0 ? <div className="room-onboarding-custom-folder-list"><span>{t('contextRoom:onboarding.customFolders')}</span>{customFolders.map((folder) => <div key={folder}><FolderOpen aria-hidden="true" /><strong>{folder}</strong></div>)}</div> : null}
-              <button type="button" className="room-onboarding-custom-folder" disabled={mode === 'setup-saving'} onClick={() => void addCustomFolder()}><FolderPlus aria-hidden="true" /><span>{t('contextRoom:onboarding.addCustomFolder')}</span></button>
-            </div>
-            <p className="room-onboarding-setup-note">{t('contextRoom:onboarding.permissionsNote')}</p>
-            <p className="room-onboarding-error" aria-live="polite">{setupError ?? '\u00a0'}</p>
-            <div className="room-onboarding-success-actions"><button type="button" className="room-onboarding-primary" disabled={mode === 'setup-saving'} onClick={() => void applyFolderSetup()}>{mode === 'setup-saving' ? <LoaderCircle className="room-onboarding-inline-loader" aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}{mode === 'setup-saving' ? t('contextRoom:onboarding.requestingPermissions') : t('contextRoom:onboarding.allowAndImport')}</button><button type="button" className="room-onboarding-secondary" disabled={mode === 'setup-saving'} onClick={skipFolderSetup}>{t('contextRoom:onboarding.skipSetup')}</button></div>
+            <div className="room-onboarding-success-actions"><button type="button" className="room-onboarding-primary" onClick={() => { onOpenRoom({ id: createdRoom.id, title: createdRoom.title, kind: createdRoom.kind }); finish() }}>{t('contextRoom:onboarding.open')}<ChevronRight aria-hidden="true" /></button><button type="button" className="room-onboarding-secondary" onClick={finish}>{t('contextRoom:onboarding.continue')}</button></div>
           </section>
         ) : null}
       </main>

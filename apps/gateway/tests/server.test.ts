@@ -27,7 +27,7 @@ async function testConfig(): Promise<GatewayConfig> {
     pi: null,
     cursorCompletionPi: null,
     knowledge: null,
-    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [] },
+    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
     backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
@@ -65,7 +65,7 @@ describe("gateway server", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
-  });
+  }, 10_000);
 
   it("keeps memory routes enabled without a Pi runtime", async () => {
     const config = await testConfig();

@@ -118,6 +118,14 @@ export interface IngestResultDto {
   originChannel: string
 }
 
+/** 过滤器判定快照（与 gateway IngestFilterVerdict 对齐）。 */
+export interface IngestFilterVerdictDto {
+  informative: boolean
+  reason: string
+  category: string
+  confidence: number
+}
+
 export interface IngestEventDto {
   id: string
   sourceKind: string
@@ -131,7 +139,20 @@ export interface IngestEventDto {
   pipelines: IngestPipelines
   memoryResult: FileImportOutcome['memoryResult']
   routeJobId: string | null
+  /** 过滤闸状态：pending 判定中 / passed 放行 / filtered 被拦（可恢复）/ bypassed 故障放行。 */
+  filterStatus: 'pending' | 'passed' | 'filtered' | 'bypassed' | null
+  /** 判定快照（含 reason/category/confidence；恢复误杀的依据）。 */
+  filterVerdict: IngestFilterVerdictDto | null
   originChannel: string
   createdAt: string
   updatedAt: string
+}
+
+/** 过滤规则文档（ingest-filter-agent-plan §4.3，记忆页「过滤规则」入口数据源）。 */
+export interface IngestFilterRulesDto {
+  /** 用户偏好段（可编辑，PUT 重写）。 */
+  preference: string
+  /** 系统洞察段（洞察 job 每小时重写，用户只读）。 */
+  insight: string
+  updatedAt: string | null
 }

@@ -1465,6 +1465,11 @@ export const ingestEvents = sqliteTable(
     /** 过滤器判定 json {informative, reason, category, confidence}（含 bypassed 的失败说明）。 */
     filterVerdict: text("filter_verdict", { mode: "json" })
       .$type<IngestFilterVerdict>(),
+    /**
+     * 误杀恢复时间戳（POST reinstate 写入）：用户明确表达"过滤器拦错了"的
+     * 精确记录——洞察 job 的误杀样本只认这列，不拿 verdict 近似。
+     */
+    reinstatedAt: integer("reinstated_at", { mode: "timestamp_ms" }),
     /** file | paste-file | connector | reality | everroom-doc | upload */
     originChannel: text("origin_channel").notNull().default("upload"),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),

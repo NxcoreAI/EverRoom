@@ -2,7 +2,9 @@ import axios, { type AxiosInstance } from "axios";
 
 import type { ConnectorConfig } from "./types.js";
 
-const READY_TIMEOUT_MS = 180_000;
+// 桌面端 Nango 托管启动包含首次依赖安装 + server 构建(各 300s 超时),
+// Gateway 先于 Nango ready;此窗口需覆盖冷启动全程,取 10 分钟。
+const READY_TIMEOUT_MS = 600_000;
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();

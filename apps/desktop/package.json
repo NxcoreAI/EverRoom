@@ -137,7 +137,9 @@
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
-        "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac."
+        "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac.",
+        "NSDocumentsFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
+        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app."
       },
       "target": [
         "dmg",
