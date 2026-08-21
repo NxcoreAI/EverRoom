@@ -1,0 +1,1 @@
+ALTER TABLE `ingest_events` ADD `reinstated_at` integer;

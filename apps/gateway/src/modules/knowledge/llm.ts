@@ -156,15 +156,6 @@ export class KnowledgeLlm {
     return this.chat("ingest-filter", prompt);
   }
 
-  /**
-   * 过滤规则·系统洞察蒸馏通道（ingest-filter-agent-plan §4.4）：
-   * 素材 + 旧洞察 → 修订后的纯 markdown 洞察段（≤600 字约束在 prompt 里，
-   * 调用方负责防御截断）。失败抛 KnowledgeLlmError，保留旧洞察。
-   */
-  async chatForFilterInsight(prompt: string): Promise<string> {
-    return this.chat("ingest-filter-insight", prompt);
-  }
-
   /** 两次尝试（第二次带解析错误反馈），失败抛 KnowledgeLlmError。 */
   private async chatJson<T>(
     skillName: string,

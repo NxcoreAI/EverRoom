@@ -39,6 +39,16 @@ export class IngestGatewayBridge {
     })
   }
 
+  /** 误杀恢复：filtered 事件重新放行三链路扇出（同时落 reinstated_at 精确标记）。 */
+  reinstateEvent(eventId: string): Promise<IngestEventDto> {
+    return this.request(`/v1/ingest/${encodeURIComponent(eventId)}/reinstate`, { method: 'POST' })
+  }
+
+  /** 事件归一化产物全文（台账详情查看——被过滤条目"到底拦了什么"）。 */
+  getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }> {
+    return this.request(`/v1/ingest/${encodeURIComponent(eventId)}/content`)
+  }
+
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const connection = this.supervisor.getConnection()
     const response = await fetch(`${connection.baseUrl}${path}`, {

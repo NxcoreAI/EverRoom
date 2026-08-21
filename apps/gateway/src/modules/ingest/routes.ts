@@ -251,6 +251,26 @@ export function ingestRoutes(
       },
     );
 
+    // 事件详情：归一化产物全文（被过滤条目点开查看"到底拦了什么"）
+    app.get(
+      "/v1/ingest/:id/content",
+      {
+        schema: {
+          tags: ["ingest"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 64 }) }),
+          response: {
+            200: Type.Object({ markdown: Type.String(), parsedAt: Type.String() }),
+            404: ErrorSchema,
+          },
+        },
+      },
+      async (request, reply) => {
+        const content = service.getEventContent(request.params.id);
+        if (!content) throw new IngestError("台账无此事件或产物缺失", "ref_not_found", 404);
+        return content;
+      },
+    );
+
     // 过滤误杀恢复：filtered 事件重新放行三链路扇出
     app.post(
       "/v1/ingest/:id/reinstate",

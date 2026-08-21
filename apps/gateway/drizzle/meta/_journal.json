@@ -148,6 +148,13 @@
       "when": 1787258120105,
       "tag": "0021_first_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1787326131004,
+      "tag": "0022_reinstate_marker",
+      "breakpoints": true
     }
   ]
 }

@@ -32,9 +32,6 @@ function entity(id: string, evidenceScore: number) {
 
 function installKnowledgeApi(items: ReturnType<typeof entity>[]) {
   const listEntities = vi.fn().mockResolvedValue({ items })
-  const listUnmatched = vi.fn().mockResolvedValue({
-    items: [{ decisionId: 'unmatched-1', title: '未识别资料' }],
-  })
   const listRecentDecisions = vi.fn().mockResolvedValue({
     items: [{ decisionId: 'recent-1', title: '最近归类资料', roomTitle: '已有 Room' }],
   })
@@ -44,7 +41,6 @@ function installKnowledgeApi(items: ReturnType<typeof entity>[]) {
     nxcore: {
       knowledge: {
         listEntities,
-        listUnmatched,
         listRecentDecisions,
       },
     },
@@ -54,7 +50,7 @@ function installKnowledgeApi(items: ReturnType<typeof entity>[]) {
     removeEventListener: vi.fn(),
   })
 
-  return { clearInterval, listEntities, listRecentDecisions, listUnmatched }
+  return { clearInterval, listEntities, listRecentDecisions }
 }
 
 describe('Context Room recommendations', () => {
@@ -74,13 +70,11 @@ describe('Context Room recommendations', () => {
     })
 
     expect(api.listEntities.mock.calls.map(([status]) => status)).toEqual([
-      'ready', 'promoting', 'weak', 'room',
+      'ready', 'promoting', 'room',
     ])
-    expect(api.listUnmatched).toHaveBeenCalledOnce()
     expect(api.listRecentDecisions).toHaveBeenCalledOnce()
     expect(renderer!.root.findAllByProps({ className: 'context-room-knowledge-empty' })).toHaveLength(1)
     expect(JSON.stringify(renderer!.toJSON())).toContain('最近归类资料')
-    expect(JSON.stringify(renderer!.toJSON())).toContain('未识别资料')
   })
 
   it('renders only ready recommendations as creation cards', async () => {

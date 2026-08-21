@@ -162,6 +162,9 @@ export class NangoAuthorizationService {
         provider: attempt.provider,
         nangoConfigKey: attempt.configKey,
         nangoConnectionId,
+        // 授权新建的连接：首同步暂缓——桌面端弹过滤偏好引导，用户设置完成
+        // 后显式触发，避免首批数据在偏好生效前被过滤（轮询周期兜底）
+        deferFirstSync: true,
       });
       attempt.status = "connected";
     } catch {

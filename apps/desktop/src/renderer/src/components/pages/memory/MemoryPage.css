@@ -868,6 +868,262 @@
   color: var(--subtle);
 }
 
+/* 文档删除确认：展示级联损失（派生记忆预览） */
+.mem-doc-delete-dialog {
+  width: min(560px, 90vw);
+  height: auto;
+  max-height: 80vh;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.mem-doc-delete-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.mem-doc-delete-warning {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.mem-doc-delete-loss {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(178, 59, 50, 0.06);
+  border-radius: 8px;
+}
+
+.mem-doc-delete-loss li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.mem-doc-delete-loss .mem-atomic-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mem-doc-delete-more {
+  color: var(--subtle);
+  font-size: 11.5px;
+}
+
+.mem-doc-delete-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.mem-doc-delete-foot button {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mem-doc-delete-foot .mem-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.mem-doc-delete-foot button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 导入记录（统一引擎台账）：全源进入记录 + 过滤闸状态 */
+.mem-ledger {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mem-ledger-filter {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mem-ledger-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 6px 0 2px;
+}
+
+.mem-ledger-pager span {
+  font-size: 12px;
+  color: var(--subtle);
+}
+
+.mem-ledger-pager button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mem-ledger-pager button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.mem-ledger-pager button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mem-ledger-table .table-head,
+.mem-ledger-table .table-row {
+  grid-template-columns: minmax(180px, 1.4fr) minmax(90px, 0.7fr) minmax(120px, 0.9fr) minmax(120px, 0.8fr) minmax(88px, 0.6fr);
+}
+
+/* 行可点击查看详情 */
+.mem-ledger-row {
+  cursor: pointer;
+}
+
+.mem-ledger-row:hover,
+.mem-ledger-row:focus-visible {
+  outline: none;
+  background: rgba(127, 127, 127, 0.08);
+}
+
+/* 条目详情弹窗（判定快照 + 全文） */
+.mem-ledger-detail {
+  max-width: 720px;
+}
+
+.mem-ledger-detail-kind {
+  display: block;
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+/* 头部动作行：恢复按钮（主样式）+ 关闭按钮（图标），横向排列、高度统一 30px。
+   注意：.evidence-dialog-head > div 会给所有直接子 div 强加 column（标题块需要），
+   这里用更高特异性覆盖回行向。 */
+.evidence-dialog-head .mem-ledger-detail-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.mem-ledger-reinstate {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mem-ledger-reinstate:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.mem-ledger-reinstate:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mem-ledger-detail-actions .icon-button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+}
+
+.mem-ledger-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mem-ledger-detail-body h3 {
+  margin: 8px 0 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mem-ledger-verdict p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+/* 徽标/图标按钮在判定行内不拉伸，与文字对齐 */
+.mem-ledger-verdict .filter-status-cell {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.mem-ledger-verdict-reason {
+  font-size: 12px;
+}
+
+.mem-ledger-verdict small {
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.mem-ledger-content {
+  margin: 0;
+  padding: 10px;
+  max-height: 50vh;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(127, 127, 127, 0.06);
+  border-radius: 8px;
+}
+
 /* L0 对话 */
 .mem-conversation {
   display: flex;

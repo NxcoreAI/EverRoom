@@ -69,7 +69,12 @@ export function useAsyncData<T>(
   return { ...state, refresh }
 }
 
-export type MemoryTabId = 'overview' | 'conversation' | 'documents' | 'atomic' | 'scenario' | 'core' | 'filter-rules'
+export type MemoryTabId = 'overview' | 'conversation' | 'documents' | 'atomic' | 'scenario' | 'core' | 'ledger' | 'filter-rules'
+
+/** 翻页/换筛选后把记忆页滚动容器（.mem-content）回顶。 */
+export function scrollPaneToTop(): void {
+  document.querySelector('.mem-content')?.scrollTo({ top: 0 })
+}
 
 export function useMemoryOverview() {
   return useAsyncData<MemoryOverviewDto>(

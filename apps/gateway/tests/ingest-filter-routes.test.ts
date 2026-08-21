@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import pino from "pino";
@@ -47,6 +47,22 @@ describe("过滤规则 API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/ingest/filter/rules" });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ preference: "- 默认偏好", insight: "" });
+    await app.close();
+  });
+
+  it("GET /v1/ingest/:id/content 返回产物全文；缺事件/产物 404", async () => {
+    const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+    const service = {
+      getEventContent: vi.fn((id: string) =>
+        id === "evt-1" ? { markdown: "# 全文", parsedAt: "2026-08-21T00:00:00Z" } : null),
+    } as unknown as IngestService;
+    await app.register(ingestRoutes(service, null, null));
+    const ok = await app.inject({ method: "GET", url: "/v1/ingest/evt-1/content" });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().markdown).toBe("# 全文");
+    const missing = await app.inject({ method: "GET", url: "/v1/ingest/evt-x/content" });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().error).toBe("ref_not_found");
     await app.close();
   });
 

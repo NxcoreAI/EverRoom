@@ -491,16 +491,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         filterRulesStore,
     )
     : null;
-  // 系统洞察维护 job（§4.4）：每小时蒸馏记忆/wiki/误杀样本重写 insight 段。
+  // 系统洞察维护 job（§4.4）：每小时洞察 agent 蒸馏记忆 L2/L3 + wiki + 误杀样本
+  // 重写 insight 段。素材域不含 L1（原子记忆琐碎噪音大）；agent 不可用或失败
+  // 保留旧洞察——洞察是增强，不是依赖，无 LLM 降级路径。
   let filterInsightJob: FilterInsightJob | null = null;
   if (ingestFilterService) {
     filterInsightJob = new FilterInsightJob(
       db,
-      memoryService,
-      knowledgeService.enabled ? knowledgeService : null,
-      agentResolver.has(BUILTIN_AGENT_IDS.knowledge)
-        ? new KnowledgeLlm(agentResolver)
-        : null,
+      ingestFilterRuntime,
       filterRulesStore,
       { enabled: config.ingestFilter.insightEnabled, intervalMs: config.ingestFilter.insightIntervalMs },
       app.log,

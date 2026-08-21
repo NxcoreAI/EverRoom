@@ -576,8 +576,33 @@ export class MemoryService {
     const page = await this.call(() => client.listDocuments({ limit, offset }));
     return {
       documents: page.documents.map((item) => this.toDocumentDto(item)),
-      total: page.total,
+      // MemoryCore 的 total = 本页条数（实测 /v3/document/list），不是全量——
+      // 分页 UI 据此判断"有没有下一页"会永远停在第一页。这里用探测法取真实
+      // 总数：请求 limit=200（gateway 路由上限）看是否截断，截断说明还有更多。
+      total: await this.trueDocumentTotal(client, limit, offset, page),
     };
+  }
+
+  /** 真实文档总数（探测法）：本页不满 = 到底；满页则翻一页大 limit 探底。 */
+  private async trueDocumentTotal(
+    client: ReturnType<MemoryService["require"]>,
+    pageLimit: number,
+    pageOffset: number,
+    page: { documents: unknown[] },
+  ): Promise<number> {
+    const pageSize = page.documents.length;
+    if (pageSize < pageLimit) {
+      // 本页不满：offset + 本页条数即全量
+      return pageOffset + pageSize;
+    }
+    // 本页满：可能还有更多——大 limit 探底（200 是路由上限；超过 200 的
+    // 极端库再翻页补数，每页 200 一次往返）
+    let total = 0;
+    for (let probeOffset = 0; ; probeOffset += 200) {
+      const probe = await this.call(() => client.listDocuments({ limit: 200, offset: probeOffset }));
+      total += probe.documents.length;
+      if (probe.documents.length < 200) return total;
+    }
   }
 
   async getDocument(documentId: string): Promise<{
