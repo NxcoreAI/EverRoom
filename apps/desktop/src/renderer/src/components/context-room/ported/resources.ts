@@ -1,5 +1,6 @@
 import type { RoomDocument } from '@nxcore/agent-contract';
 import type { KnowledgeFileDto } from '../../../../../shared/knowledge';
+import { translate, type AppLocale } from '../../../i18n/LocaleContext';
 import type {
   ContextRoomFileItem,
   ContextRoomOfficeFormat,
@@ -18,6 +19,18 @@ interface FileItem {
 export interface ContextRoomResourceLibrary {
   folders: ContextRoomResourceFolder[];
   resources: ContextRoomResource[];
+}
+
+function supportedLocale(locale: string): AppLocale {
+  return locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
+function resourceText(
+  locale: string,
+  key: string,
+  values?: Record<string, string | number>,
+): string {
+  return translate(supportedLocale(locale), `contextRoom:resourcePreview.${key}`, values);
 }
 
 function officeFormat(extension: string): ContextRoomOfficeFormat {
@@ -75,25 +88,30 @@ export function createContextRoomFileItem(file: FileItem, locale = 'zh-CN'): Con
     name: file.name,
     extension: file.name.split('.').pop()?.toUpperCase() ?? 'FILE',
     time: file.modifiedAt.toLocaleDateString(locale),
-    summary: `来自 Everroom PC 文件系统：${file.path}`,
+    summary: resourceText(locale, 'fileSystemSummary', { path: file.path }),
     size: `${String(Math.max(1, Math.round(file.size / 1024)))} KB`,
-    source: `文件系统 ${file.path}`,
+    source: resourceText(locale, 'fileSystemSource', { path: file.path }),
     lifecycle: '活跃',
     hostfsPath: file.path,
     mimeType: file.mimeType,
   };
 }
 
-function previewFor(format: ContextRoomOfficeFormat, title: string, summary: string) {
+function previewFor(format: ContextRoomOfficeFormat, title: string, summary: string, locale: string) {
   if (format === 'xlsx') {
     return {
       title,
       summary,
-      columns: ['项目', '负责人', '状态', '更新时间'],
+      columns: [
+        resourceText(locale, 'columnItem'),
+        resourceText(locale, 'columnOwner'),
+        resourceText(locale, 'columnStatus'),
+        resourceText(locale, 'columnUpdatedAt'),
+      ],
       rows: [
-        ['发布材料', '林薇', '进行中', '今天'],
-        ['来源追溯', '周明', '待确认', '昨天'],
-        ['内测包', '陆远', '计划中', '07-30'],
+        [resourceText(locale, 'releaseMaterials'), resourceText(locale, 'ownerLinWei'), resourceText(locale, 'inProgress'), resourceText(locale, 'today')],
+        [resourceText(locale, 'sourceTraceability'), resourceText(locale, 'ownerZhouMing'), resourceText(locale, 'pendingConfirmation'), resourceText(locale, 'yesterday')],
+        [resourceText(locale, 'betaPackage'), resourceText(locale, 'ownerLuYuan'), resourceText(locale, 'planned'), '07-30'],
       ],
     };
   }
@@ -102,9 +120,9 @@ function previewFor(format: ContextRoomOfficeFormat, title: string, summary: str
       title,
       summary,
       slides: [
-        { title: '项目目标', body: '围绕当前 Room 汇总目标、范围和交付节点。' },
-        { title: '核心进展', body: '资料持续聚合，关键结论保留来源。' },
-        { title: '下一步', body: '确认风险项并完成阶段交付。' },
+        { title: resourceText(locale, 'projectGoal'), body: resourceText(locale, 'projectGoalBody') },
+        { title: resourceText(locale, 'coreProgress'), body: resourceText(locale, 'coreProgressBody') },
+        { title: resourceText(locale, 'nextSteps'), body: resourceText(locale, 'nextStepsBody') },
       ],
     };
   }
@@ -113,8 +131,8 @@ function previewFor(format: ContextRoomOfficeFormat, title: string, summary: str
       title,
       summary,
       pages: [
-        { title: '摘要', body: summary },
-        { title: '关键内容', body: '该文件已建立预览索引，可供 Room 和 Agent 引用。' },
+        { title: resourceText(locale, 'summary'), body: summary },
+        { title: resourceText(locale, 'keyContent'), body: resourceText(locale, 'keyContentBody') },
       ],
     };
   }
@@ -123,9 +141,9 @@ function previewFor(format: ContextRoomOfficeFormat, title: string, summary: str
       title,
       summary,
       metadata: [
-        { label: '格式', value: format.toUpperCase() },
-        { label: '用途', value: '设计与视觉资料' },
-        { label: '索引状态', value: '已生成预览数据' },
+        { label: resourceText(locale, 'format'), value: format.toUpperCase() },
+        { label: resourceText(locale, 'purpose'), value: resourceText(locale, 'designAndVisualMaterials') },
+        { label: resourceText(locale, 'indexStatus'), value: resourceText(locale, 'previewDataGenerated') },
       ],
     };
   }
@@ -134,8 +152,8 @@ function previewFor(format: ContextRoomOfficeFormat, title: string, summary: str
     summary,
     paragraphs: [
       summary,
-      '此内容为当前阶段的确定性预览数据。资源接入后将替换为真实文件解析结果。',
-      '资源所属 Room 已写入数据契约，后续服务端查询必须按 Room 进行隔离。',
+      resourceText(locale, 'previewPlaceholderBody'),
+      resourceText(locale, 'roomIsolationBody'),
     ],
   };
 }
@@ -170,7 +188,7 @@ export function createContextRoomResourceLibrary(
       updatedAt: item.time,
       kind: 'office-file',
       format,
-      preview: previewFor(format, item.name, item.summary),
+      preview: previewFor(format, item.name, item.summary, resolvedLocale),
       source: item.hostfsPath
         ? {
             type: 'hostfs',
@@ -219,7 +237,7 @@ export function createContextRoomResourceLibrary(
     roomId: room.id,
     folderId: documentsFolderId,
     name: file.originalName,
-    updatedAt: new Date(file.uploadedAt).toLocaleString('zh-CN'),
+    updatedAt: new Date(file.uploadedAt).toLocaleString(resolvedLocale),
     kind: 'knowledge-file' as const,
     fileId: file.id,
     originalName: file.originalName,

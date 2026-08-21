@@ -254,6 +254,8 @@ export function agentRoutes(
           body: Type.Object({
             prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            replaceRunId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+            responseLanguage: Type.Optional(ResponseLanguage),
             captureMemory: Type.Optional(Type.Boolean()),
             recallMemory: Type.Optional(Type.Boolean()),
             toolsEnabled: Type.Optional(Type.Boolean()),
@@ -301,6 +303,12 @@ export function agentRoutes(
           }
           if (error instanceof Error && error.message === "agent_session_busy") {
             return reply.code(409).send({ error: "session_busy", message: "Agent session already has an active run" });
+          }
+          if (error instanceof Error && error.message === "agent_replace_run_not_found") {
+            return reply.code(404).send({ error: "replace_run_not_found", message: "Agent run to regenerate was not found" });
+          }
+          if (error instanceof Error && error.message === "agent_replace_run_active") {
+            return reply.code(409).send({ error: "replace_run_active", message: "An active Agent run cannot be regenerated" });
           }
           if (error instanceof Error && error.message === "agent_room_not_available") {
             return reply.code(409).send({
@@ -371,6 +379,7 @@ export function agentRoutes(
             roomId: Type.String({ minLength: 1, maxLength: 100 }),
             documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            responseLanguage: Type.Optional(ResponseLanguage),
           }),
         },
       },

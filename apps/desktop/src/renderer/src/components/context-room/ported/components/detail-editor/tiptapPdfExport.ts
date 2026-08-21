@@ -1,5 +1,6 @@
 import { generateHTML } from '@tiptap/html'
 import type { Editor } from '@tiptap/react'
+import i18n from '@/i18n/i18next'
 
 import type { ExportDocumentPdfResult } from '../../../../../../../shared/sources'
 
@@ -15,8 +16,8 @@ function staticDocumentHtml(editor: Editor): string {
   const container = document.createElement('div')
   container.innerHTML = generateHTML(editor.getJSON(), editor.extensionManager.extensions)
   container.querySelectorAll<HTMLElement>('[data-document-block-reference]').forEach((reference) => {
-    const title = reference.dataset.fallbackTitle?.trim() || '引用的文档'
-    const preview = reference.dataset.fallbackPreview?.trim() || '内容预览不可用'
+    const title = reference.dataset.fallbackTitle?.trim() || i18n.t('contextRoom:documentBlockReference.referencedDocument')
+    const preview = reference.dataset.fallbackPreview?.trim() || i18n.t('contextRoom:documentBlockReference.previewUnavailable')
     const heading = document.createElement('strong')
     const summary = document.createElement('small')
     heading.textContent = title
@@ -32,7 +33,7 @@ export async function exportEditorPdf(
   untitled = '无标题文档',
 ): Promise<ExportDocumentPdfResult> {
   const api = window.nxcore?.documents
-  if (!api) throw new Error('PDF 导出仅在桌面版中可用。')
+  if (!api) throw new Error(i18n.t('contextRoom:tiptapDocumentActions.pdfExportDesktopOnly'))
   return api.exportPdf({
     fileName: pdfExportFileName(documentName, untitled),
     title: documentName.trim() || untitled,

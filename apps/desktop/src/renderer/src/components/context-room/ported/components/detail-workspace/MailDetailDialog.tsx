@@ -30,7 +30,7 @@ export function MailDetailDialog({
           <dl>
             <div>
               <dt>{t('contextRoom:mailDetailDialog.from')}</dt>
-              <dd>{mail.sender ?? '张总 · 星港科技'}</dd>
+              <dd>{mail.sender ?? t('contextRoom:objectDetail.defaultSender')}</dd>
             </div>
             <div>
               <dt>{t('contextRoom:mailDetailDialog.to')}</dt>

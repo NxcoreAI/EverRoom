@@ -337,8 +337,8 @@ export function FilesPage() {
         </div>
       ) : null}
       <PageHeader
-        title="文档识别"
-        description={`按识别类型整理 ${PRODUCT_NAME} 中的文件，点击类型卡片查看聚类清单。`}
+        title={t('surface:files.documentRecognition')}
+        description={t('surface:files.documentRecognitionDescription', { product: PRODUCT_NAME })}
         action={t('surface:files.importFiles')}
         actionDisabled={!filesApi || importing}
         onAction={() => void importFiles()}
@@ -363,7 +363,7 @@ export function FilesPage() {
                 <span>{t('surface:files.files')}</span>
               </button>
             ) : (
-              <h2 id="file-recognition-heading">文档识别（{categoryCards.length}）</h2>
+              <h2 id="file-recognition-heading">{t('surface:files.documentRecognitionCount', { count: categoryCards.length })}</h2>
             )}
             <div className="file-recognition-tools">
               {searchOpen ? (
@@ -371,12 +371,12 @@ export function FilesPage() {
                   autoFocus
                   type="search"
                   value={searchQuery}
-                  placeholder="搜索文件"
-                  aria-label="搜索文件"
+                  placeholder={t('surface:files.searchFiles')}
+                  aria-label={t('surface:files.searchFiles')}
                   onChange={(event) => setSearchQuery(event.target.value)}
                 />
               ) : null}
-              <button type="button" className="icon-button file-search-button" aria-label="搜索文件" title="搜索文件" onClick={() => setSearchOpen((open) => !open)}>
+              <button type="button" className="icon-button file-search-button" aria-label={t('surface:files.searchFiles')} title={t('surface:files.searchFiles')} onClick={() => setSearchOpen((open) => !open)}>
                 <Search aria-hidden="true" strokeWidth={1.8} />
               </button>
             </div>
@@ -386,8 +386,8 @@ export function FilesPage() {
           {!loading && !selectedCategory && categoryCards.length === 0 ? (
             <div className="file-recognition-empty">
               <span className="file-recognition-empty-icon"><FileTextIcon /></span>
-              <strong>{searchQuery ? '没有匹配的文件' : '还没有可识别的文件'}</strong>
-              <p>{searchQuery ? '换一个关键词试试。' : '点击右上角“导入文件”后，文件会按识别类型自动归类。'}</p>
+              <strong>{t(searchQuery ? 'surface:files.noMatchingFiles' : 'surface:files.noRecognizableFiles')}</strong>
+              <p>{t(searchQuery ? 'surface:files.tryAnotherKeyword' : 'surface:files.importFilesToClassifyAutomatically')}</p>
             </div>
           ) : null}
 
@@ -406,8 +406,8 @@ export function FilesPage() {
                       <span className="file-category-title-wrap">
                         <span className="file-category-icon"><CategoryIcon aria-hidden="true" strokeWidth={1.8} /></span>
                         <span>
-                          <strong>{category.label}</strong>
-                          <small>{category.files.length} 份文件</small>
+                          <strong>{t(category.label)}</strong>
+                          <small>{t('surface:files.countFiles', { count: category.files.length })}</small>
                         </span>
                       </span>
                       <ChevronRight aria-hidden="true" strokeWidth={1.8} />
@@ -419,7 +419,7 @@ export function FilesPage() {
                           <span title={`${file.sharedTitle} · ${file.originalName}`}>{file.sharedTitle}</span>
                         </span>
                       ))}
-                      {category.files.length > 5 ? <small className="file-category-more">+ {category.files.length - 5} 份</small> : null}
+                      {category.files.length > 5 ? <small className="file-category-more">{t('surface:files.countMoreFiles', { count: category.files.length - 5 })}</small> : null}
                     </span>
                   </button>
                 )
@@ -431,7 +431,7 @@ export function FilesPage() {
             <div className="file-category-detail">
               <div className="file-category-detail-title">
                 <span className={`file-category-icon file-category-${selectedCategory.tone}`}>{SelectedCategoryIcon ? <SelectedCategoryIcon aria-hidden="true" strokeWidth={1.8} /> : null}</span>
-                <div><h2>{selectedCategory.label}</h2><span>{selectedCategory.files.length} 份文件</span></div>
+                <div><h2>{t(selectedCategory.label)}</h2><span>{t('surface:files.countFiles', { count: selectedCategory.files.length })}</span></div>
               </div>
               <div className="data-table files-table">
                 <div className="table-head"><span>{t('surface:files.name')}</span><span>{t('surface:files.size')}</span><span>{t('surface:files.status')}</span><span>{t('surface:files.imported')}</span><span className="files-actions-column">{t('surface:files.actions')}</span></div>

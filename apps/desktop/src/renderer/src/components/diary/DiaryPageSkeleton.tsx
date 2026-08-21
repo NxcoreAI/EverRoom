@@ -4,6 +4,55 @@ import { useLocale } from '@/i18n/LocaleContext'
 const SKELETON_DAYS = Array.from({ length: 29 }, (_, index) => index)
 const SKELETON_EVENTS = [0, 1, 2, 3]
 
+export function DiaryContentSkeleton() {
+  return (
+    <>
+      <section className="diary-skeleton-intro">
+        <i className="diary-skeleton-kicker diary-skeleton-block" />
+        <i className="diary-skeleton-title diary-skeleton-block" />
+        <i className="diary-skeleton-title diary-skeleton-title-short diary-skeleton-block" />
+        <div className="diary-skeleton-copy">
+          <i className="diary-skeleton-block" />
+          <i className="diary-skeleton-block" />
+        </div>
+        <i className="diary-skeleton-note diary-skeleton-block" />
+      </section>
+
+      <aside className="diary-skeleton-reflection">
+        <i className="diary-skeleton-reflection-heading diary-skeleton-block" />
+        <i className="diary-skeleton-block" />
+        <i className="diary-skeleton-block" />
+      </aside>
+
+      <section className="diary-skeleton-trace">
+        <header>
+          <span>
+            <i className="diary-skeleton-eyebrow diary-skeleton-block" />
+            <i className="diary-skeleton-section-title diary-skeleton-block" />
+          </span>
+          <i className="diary-skeleton-range diary-skeleton-block" />
+        </header>
+
+        <div className="diary-skeleton-timeline">
+          {SKELETON_EVENTS.map((event) => (
+            <article key={event} className="diary-skeleton-event">
+              <i className="diary-skeleton-time diary-skeleton-block" />
+              <div>
+                <span className="diary-skeleton-node diary-skeleton-block" />
+                <i className="diary-skeleton-event-label diary-skeleton-block" />
+                <i className="diary-skeleton-event-title diary-skeleton-block" />
+                <i className="diary-skeleton-event-copy diary-skeleton-block" />
+                <i className="diary-skeleton-event-copy diary-skeleton-event-copy-short diary-skeleton-block" />
+                {event === 1 ? <i className="diary-skeleton-media diary-skeleton-block" /> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </>
+  )
+}
+
 export function DiaryPageSkeleton() {
   const { t } = useLocale()
   return (
@@ -31,48 +80,7 @@ export function DiaryPageSkeleton() {
       </header>
 
       <main className="diary-skeleton-content" aria-hidden="true">
-        <section className="diary-skeleton-intro">
-          <i className="diary-skeleton-kicker diary-skeleton-block" />
-          <i className="diary-skeleton-title diary-skeleton-block" />
-          <i className="diary-skeleton-title diary-skeleton-title-short diary-skeleton-block" />
-          <div className="diary-skeleton-copy">
-            <i className="diary-skeleton-block" />
-            <i className="diary-skeleton-block" />
-          </div>
-          <i className="diary-skeleton-note diary-skeleton-block" />
-        </section>
-
-        <aside className="diary-skeleton-reflection">
-          <i className="diary-skeleton-reflection-heading diary-skeleton-block" />
-          <i className="diary-skeleton-block" />
-          <i className="diary-skeleton-block" />
-        </aside>
-
-        <section className="diary-skeleton-trace">
-          <header>
-            <span>
-              <i className="diary-skeleton-eyebrow diary-skeleton-block" />
-              <i className="diary-skeleton-section-title diary-skeleton-block" />
-            </span>
-            <i className="diary-skeleton-range diary-skeleton-block" />
-          </header>
-
-          <div className="diary-skeleton-timeline">
-            {SKELETON_EVENTS.map((event) => (
-              <article key={event} className="diary-skeleton-event">
-                <i className="diary-skeleton-time diary-skeleton-block" />
-                <div>
-                  <span className="diary-skeleton-node diary-skeleton-block" />
-                  <i className="diary-skeleton-event-label diary-skeleton-block" />
-                  <i className="diary-skeleton-event-title diary-skeleton-block" />
-                  <i className="diary-skeleton-event-copy diary-skeleton-block" />
-                  <i className="diary-skeleton-event-copy diary-skeleton-event-copy-short diary-skeleton-block" />
-                  {event === 1 ? <i className="diary-skeleton-media diary-skeleton-block" /> : null}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
+        <DiaryContentSkeleton />
       </main>
     </div>
   )

@@ -9,6 +9,7 @@ import { formatAgentOutput } from './agentOutputFormat'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
 import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
+import { uiText } from '../context-room/ported/adapters'
 import {
   findPendingAgentDocumentSelection,
   type AgentDocumentSelectionItem,
@@ -42,6 +43,13 @@ function getThinkingLabel(message: DisplayAgentMessage | undefined, tools: Displ
   if (message?.content.trim()) return t('surface:agentChat.writingAResponse')
   if (tools.length > 0) return t('surface:agentChat.organizingResults')
   return t('surface:agentChat.analyzing')
+}
+
+function localizeAgentAnswer(value: string, t: Translate): string {
+  const createdDocument = /^文档《(.+)》已创建完成，内容已写入对应工作区。你可以在文档中继续查看或编辑。$/u.exec(value)
+  return createdDocument
+    ? t('surface:agentChat.documentTitleCreatedInWorkspace', { title: createdDocument[1]! })
+    : value
 }
 
 function RoomSelection({
@@ -82,7 +90,7 @@ function RoomSelection({
               <Folder aria-hidden="true" />
               <span>
                 <strong>{room.title}</strong>
-                <small>{currentRoom ? room.kind ?? 'Room' : t('surface:agentChat.unavailable')}</small>
+                <small>{currentRoom ? t(uiText(room.kind ?? 'Room')) : t('surface:agentChat.unavailable')}</small>
               </span>
               <ChevronRight aria-hidden="true" />
             </button>
@@ -231,13 +239,14 @@ function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
   const { t } = useLocale()
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
-  const finalContent = state.documentPending
+  const rawFinalContent = state.documentPending
     ? ''
     : state.activity.hasTools
       ? state.activity.finalAnswer
         || state.activity.pendingAnswer
         || (state.activity.completed ? assistantMessage?.content || '' : '')
       : assistantMessage?.content || ''
+  const finalContent = localizeAgentAnswer(rawFinalContent, t)
 
   return (
     <>
@@ -561,11 +570,12 @@ export function AgentChatView({
             const tools = toolCallsByRun[message.runId] ?? []
             const activity = activityByRun[message.runId]
             const hasToolActivity = Boolean(activity?.hasTools)
-            const finalContent = hasToolActivity
+            const rawFinalContent = hasToolActivity
               ? activity?.finalAnswer || activity?.pendingAnswer || (
                 activity?.completed && !message.streaming && runCompletedAtByRun[message.runId] ? message.content : ''
               )
               : message.content
+            const finalContent = localizeAgentAnswer(rawFinalContent, t)
             const partialContent = Boolean(
               hasToolActivity && activity && !activity.completed && runCompletedAtByRun[message.runId] && finalContent,
             )

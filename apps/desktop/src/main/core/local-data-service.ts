@@ -51,6 +51,12 @@ export interface LocalFileExportTarget {
   }): Promise<FileImportAcceptedDto>
 }
 
+export interface LocalFolderConnectionResult {
+  rootPath: string
+  connected: boolean
+  error?: string
+}
+
 interface SourceRow {
   id: string
   kind: ConnectorKind
@@ -695,6 +701,26 @@ export class LocalDataService {
     return this.addConnection('local-folder', basename(rootPath), { rootPath }, rootPath)
   }
 
+  async connectLocalFolders(rootPaths: string[]): Promise<LocalFolderConnectionResult[]> {
+    const results: LocalFolderConnectionResult[] = []
+    const uniquePaths = [...new Set(rootPaths.map((rootPath) => rootPath.trim()).filter(Boolean))]
+    for (const rootPath of uniquePaths) {
+      try {
+        const info = await stat(rootPath)
+        if (!info.isDirectory()) throw new Error('所选位置不是文件夹。')
+        await this.addLocalFolder(rootPath)
+        results.push({ rootPath, connected: true })
+      } catch (error) {
+        results.push({
+          rootPath,
+          connected: false,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return results
+  }
+
   /**
    * 首次启动时连接系统常用目录。标记先于扫描写入，确保用户后续删除或
    * 暂停默认数据源后，不会在下次启动时被应用强制恢复。
@@ -707,16 +733,7 @@ export class LocalDataService {
     `).run(now).changes > 0
     if (!claimed) return
 
-    const uniquePaths = [...new Set(rootPaths.map((rootPath) => rootPath.trim()).filter(Boolean))]
-    await Promise.all(uniquePaths.map(async (rootPath) => {
-      try {
-        const info = await stat(rootPath)
-        if (!info.isDirectory()) return
-        await this.addLocalFolder(rootPath)
-      } catch {
-        // A denied or unavailable standard folder must not block the other defaults.
-      }
-    }))
+    await this.connectLocalFolders(rootPaths)
   }
 
   async addConnection<TConfig>(

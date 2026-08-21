@@ -32,6 +32,7 @@ import {
 import { showToast } from '@/state/toast'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import type { DiaryDayDetails } from '../../../../shared/sources'
+import { DiaryContentSkeleton, DiaryPageSkeleton } from './DiaryPageSkeleton'
 
 import './DiaryPage.css'
 
@@ -748,7 +749,8 @@ export function DiaryPage() {
   const [activeRun, setActiveRun] = useState<ActiveDiaryRun | null>(null)
   const [generatedDays, setGeneratedDays] = useState<Record<string, DiaryDay>>({})
   const [intensityByDate, setIntensityByDate] = useState<Record<string, number>>({})
-  const [loadingDate, setLoadingDate] = useState<string | null>(null)
+  const [loadingDate, setLoadingDate] = useState<string | null>(() => toDateKey(REFERENCE_TODAY))
+  const [hasCompletedInitialLoad, setHasCompletedInitialLoad] = useState(false)
   const [runElapsedSeconds, setRunElapsedSeconds] = useState(0)
   const stripDays = useMemo(() => buildDateRange(STRIP_START, STRIP_DAY_COUNT), [])
   const selectedKey = toDateKey(selectedDate)
@@ -784,7 +786,11 @@ export function DiaryPage() {
   }, [])
 
   useEffect(() => {
-    if (!window.nxcore) return
+    if (!window.nxcore) {
+      setLoadingDate(null)
+      setHasCompletedInitialLoad(true)
+      return
+    }
     let cancelled = false
     setLoadingDate(selectedKey)
     void window.nxcore.diary.day(selectedKey).then((details) => {
@@ -808,7 +814,10 @@ export function DiaryPage() {
         })
       }
     }).catch(() => undefined).finally(() => {
-      if (!cancelled) setLoadingDate((current) => current === selectedKey ? null : current)
+      if (!cancelled) {
+        setLoadingDate((current) => current === selectedKey ? null : current)
+        setHasCompletedInitialLoad(true)
+      }
     })
     return () => { cancelled = true }
   }, [locale, selectedKey, t])
@@ -903,8 +912,13 @@ export function DiaryPage() {
     const direction = nextDate > selectedDate ? 1 : -1
     transitionDirectionRef.current = direction
 
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !contentRef.current) {
+    const commitSelection = () => {
+      setLoadingDate(toDateKey(nextDate))
       setSelectedDate(nextDate)
+    }
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !contentRef.current) {
+      commitSelection()
       return
     }
 
@@ -914,7 +928,7 @@ export function DiaryPage() {
       x: direction * -10,
       duration: 0.15,
       ease: 'power2.in',
-      onComplete: () => setSelectedDate(nextDate),
+      onComplete: commitSelection,
     })
   }, [selectedDate])
 
@@ -990,6 +1004,10 @@ export function DiaryPage() {
     }
   }, [selectedKey])
 
+  if (!hasCompletedInitialLoad && diaryLoading) {
+    return <DiaryPageSkeleton />
+  }
+
   return (
     <div ref={pageRef} className="page diary-page">
       <header className="diary-date-strip">
@@ -1055,45 +1073,59 @@ export function DiaryPage() {
         </div>
       </header>
 
-      <main ref={contentRef} className="diary-content" aria-busy={diaryLoading}>
-        <button
-          type="button"
-          className="diary-day-arrow diary-day-arrow-previous"
-          title={t('diaryReality:diary.previousDay')}
-          aria-label={t('diaryReality:diary.viewPreviousDay')}
-          onClick={() => selectDate(shiftDate(selectedDate, -1))}
-        ><ChevronLeft aria-hidden="true" /></button>
-        <button
-          type="button"
-          className="diary-day-arrow diary-day-arrow-next"
-          title={t('diaryReality:diary.nextDay')}
-          aria-label={t('diaryReality:diary.viewNextDay')}
-          disabled={selectedDate >= REFERENCE_TODAY}
-          onClick={() => selectDate(shiftDate(selectedDate, 1))}
-        ><ChevronRight aria-hidden="true" /></button>
+      <main
+        ref={contentRef}
+        className={`diary-content${diaryLoading ? ' diary-skeleton-content diary-skeleton-content-only' : ''}`}
+        aria-busy={diaryLoading}
+        aria-label={diaryLoading ? t('diaryReality:diaryPageSkeleton.loadingDiary') : undefined}
+      >
+        {diaryLoading ? (
+          <>
+            <span className="diary-skeleton-status" role="status">{t('diaryReality:diaryPageSkeleton.loadingDiary')}</span>
+            <div aria-hidden="true"><DiaryContentSkeleton /></div>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="diary-day-arrow diary-day-arrow-previous"
+              title={t('diaryReality:diary.previousDay')}
+              aria-label={t('diaryReality:diary.viewPreviousDay')}
+              onClick={() => selectDate(shiftDate(selectedDate, -1))}
+            ><ChevronLeft aria-hidden="true" /></button>
+            <button
+              type="button"
+              className="diary-day-arrow diary-day-arrow-next"
+              title={t('diaryReality:diary.nextDay')}
+              aria-label={t('diaryReality:diary.viewNextDay')}
+              disabled={selectedDate >= REFERENCE_TODAY}
+              onClick={() => selectDate(shiftDate(selectedDate, 1))}
+            ><ChevronRight aria-hidden="true" /></button>
 
-        <section className="diary-day-intro">
-          <span>{formatDayHeading(selectedDate, locale, t)}</span>
-          <h1>{diary?.headline ?? t(diaryLoading ? 'diaryReality:diary.loadingThisDaySDiary' : 'diaryReality:diary.noDiaryEntryForThisDayYet')}</h1>
-          <p>{diary?.summary ?? t(diaryLoading ? 'diaryReality:diary.loadingTheOrganizedTimeline' : 'diaryReality:diary.thereAreNoRecordsToOrganizeButThis')}</p>
-          {diary ? <small><Sparkles aria-hidden="true" />{t('diaryReality:diary.contentOrganized')} <i /> {diary.processingNote}</small> : null}
-        </section>
+            <section className="diary-day-intro">
+              <span>{formatDayHeading(selectedDate, locale, t)}</span>
+              <h1>{diary?.headline ?? t('diaryReality:diary.noDiaryEntryForThisDayYet')}</h1>
+              <p>{diary?.summary ?? t('diaryReality:diary.thereAreNoRecordsToOrganizeButThis')}</p>
+              {diary ? <small><Sparkles aria-hidden="true" />{t('diaryReality:diary.contentOrganized')} <i /> {diary.processingNote}</small> : null}
+            </section>
 
-        {diary ? (
-          <aside className="diary-reflection">
-            <strong><Sparkles aria-hidden="true" />{t('diaryReality:diary.todaySReflection')}</strong>
-            <p>{diary.reflection}</p>
-          </aside>
-        ) : null}
+            {diary ? (
+              <aside className="diary-reflection">
+                <strong><Sparkles aria-hidden="true" />{t('diaryReality:diary.todaySReflection')}</strong>
+                <p>{diary.reflection}</p>
+              </aside>
+            ) : null}
 
-        <section className="diary-trace">
-          <header>
-            <div><span>{t('diaryReality:diary.dayTrace')}</span><h2>{formatActivityCount(diary?.events.length ?? 0, t)}</h2></div>
-            <time>{diary?.range ?? t('diaryReality:diary.noActivity')}</time>
-          </header>
-          <DiaryTimeline events={diary?.events ?? []} />
-          {diary?.closing ? <DiaryClosing thought={diary.closing.thought} meta={diary.closing.meta} /> : null}
-        </section>
+            <section className="diary-trace">
+              <header>
+                <div><span>{t('diaryReality:diary.dayTrace')}</span><h2>{formatActivityCount(diary?.events.length ?? 0, t)}</h2></div>
+                <time>{diary?.range ?? t('diaryReality:diary.noActivity')}</time>
+              </header>
+              <DiaryTimeline events={diary?.events ?? []} />
+              {diary?.closing ? <DiaryClosing thought={diary.closing.thought} meta={diary.closing.meta} /> : null}
+            </section>
+          </>
+        )}
       </main>
 
       {calendarOpen ? (

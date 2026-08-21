@@ -41,6 +41,10 @@ export function isEmptyTiptapParagraph(node: TiptapJsonContent | undefined): boo
   return node?.type === 'paragraph' && (node.content?.length ?? 0) === 0
 }
 
+export function isEmptyTiptapTable(node: TiptapJsonContent | undefined): boolean {
+  return node?.type === 'table' && !hasVisibleTiptapContent(node)
+}
+
 function cloneTiptapNode(node: TiptapJsonContent): TiptapJsonContent {
   return {
     ...node,

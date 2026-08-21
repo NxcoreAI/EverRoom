@@ -1,5 +1,6 @@
 import type { JSONContent } from '@tiptap/react'
 
+import type { Translate } from '../../../../../i18n/LocaleContext'
 import type { ContextRoomRecord } from '../../types'
 
 const DOCUMENT_DRAFT_PREFIX = 'everroom:context-room:document:v1:'
@@ -28,16 +29,19 @@ function textNode(text: string): JSONContent {
 export function createRoomDocumentContent(
   room: ContextRoomRecord,
   _title: string,
+  t?: Translate,
 ): JSONContent {
-  const decisions = room.brief.decisions.length ? room.brief.decisions : ['暂无关键结论']
+  const decisions = room.brief.decisions.length
+    ? room.brief.decisions
+    : [t?.('contextRoom:documentDraft.noKeyConclusions') ?? '暂无关键结论']
 
   return {
     type: 'doc',
     content: [
       { type: 'paragraph', content: [textNode(room.brief.background)] },
-      { type: 'heading', attrs: { level: 2 }, content: [textNode('目标')] },
+      { type: 'heading', attrs: { level: 2 }, content: [textNode(t?.('contextRoom:documentDraft.goal') ?? '目标')] },
       { type: 'paragraph', content: [textNode(room.brief.goal)] },
-      { type: 'heading', attrs: { level: 2 }, content: [textNode('关键结论')] },
+      { type: 'heading', attrs: { level: 2 }, content: [textNode(t?.('contextRoom:documentDraft.keyConclusions') ?? '关键结论')] },
       {
         type: 'bulletList',
         content: decisions.map((decision) => ({

@@ -394,6 +394,7 @@ const api: NxcoreDesktopApi = {
     },
     showFile: (id, fileId) => invoke('sources:show-file', id, fileId),
     addLocalFolder: () => invoke('sources:add-local-folder'),
+    connectDefaultLocalFolders: (folders) => invoke('sources:connect-default-local-folders', folders),
     addGitHub: (input) => invoke('sources:add-github', input),
     addGoogleDocs: (input) => invoke('sources:add-google-docs', input),
     addNotion: (input) => invoke('sources:add-notion', input),

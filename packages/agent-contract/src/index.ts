@@ -295,6 +295,8 @@ export interface CreateContextRoomResult {
 export interface StartAgentRunInput {
   prompt: string;
   idempotencyKey: string;
+  /** Completed run replaced by this regeneration request. */
+  replaceRunId?: string;
   /** Current UI locale used for assistant-generated summaries and documents. */
   responseLanguage?: string;
   /** Defaults to true. Temporary preview runs can defer capture until user confirmation. */

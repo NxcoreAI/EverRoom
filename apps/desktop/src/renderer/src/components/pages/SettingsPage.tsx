@@ -96,7 +96,7 @@ function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): 
   return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
 }
 
-export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboarding?: () => void }) {
+export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }: { onStartMemoryOnboarding?: () => void; onStartRoomOnboarding?: () => void }) {
   const { locale, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [identifier, setIdentifier] = useState('')
@@ -452,6 +452,15 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
           </div>
           <button type="button" className="primary-button" onClick={onStartMemoryOnboarding} disabled={!onStartMemoryOnboarding}>
             <Sparkles aria-hidden="true" />{t('memory:onboarding.reopen')}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div>
+            <strong>{t('contextRoom:settings.roomSetupTitle')}</strong>
+            <small>{t('contextRoom:settings.roomSetupBody')}</small>
+          </div>
+          <button type="button" className="primary-button" onClick={onStartRoomOnboarding} disabled={!onStartRoomOnboarding}>
+            <Sparkles aria-hidden="true" />{t('contextRoom:settings.roomSetupAction')}
           </button>
         </div>
       </section>

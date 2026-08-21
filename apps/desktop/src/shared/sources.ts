@@ -201,6 +201,14 @@ export interface SyncResult {
   failed: number
 }
 
+export type DefaultLocalFolder = 'documents' | 'desktop'
+
+export interface DefaultLocalFolderConnectionResult {
+  folder: DefaultLocalFolder
+  connected: boolean
+  error?: string
+}
+
 export interface SourceChangeEvent {
   sourceId: string
   filesChanged: boolean
@@ -777,6 +785,7 @@ export interface NxcoreDesktopApi {
     onChanged(listener: (event: SourceChangeEvent) => void): () => void
     showFile(id: string, fileId: string): Promise<void>
     addLocalFolder(): Promise<SyncResult | null>
+    connectDefaultLocalFolders(folders: DefaultLocalFolder[]): Promise<DefaultLocalFolderConnectionResult[]>
     addGitHub(input: { repository: string; branch?: string; token?: string; syncIssues?: boolean }): Promise<SyncResult>
     addGoogleDocs(input: { documentIds: string[]; token: string }): Promise<SyncResult>
     addNotion(input: { pageIds: string[]; token: string }): Promise<SyncResult>
