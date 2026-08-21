@@ -66,6 +66,9 @@ describe("document capability registry", () => {
     expect(registry.promptGuidelines().join(" ")).toMatch(
       /目标读者.*连贯提纲.*简短引言.*围栏标注语言.*提交前通读全文.*重复.*矛盾/,
     );
+    expect(registry.promptGuidelines().join(" ")).toMatch(
+      /Markdown 表格.*连续.*完整.*列数一致.*禁止输出空表.*全空行.*重复分隔线/,
+    );
     expect(registry.listTools().find((tool) => tool.name === "context_room_write_append")?.description)
       .toMatch(/title.*页面顶部 H1.*不属于 Markdown 正文.*任何一级标题.*2\.1.*###/);
     expect(registry.listTools().find((tool) => tool.name === "context_room_write_append")?.description)
@@ -393,7 +396,16 @@ describe("document capability registry", () => {
       sequence: 1,
       operation: "replace",
       target: { blockId: targetId },
-      markdown: "| Option | Status |\n| --- | --- |\n| Alpha | Ready |\n| Beta | Planned |",
+      markdown: [
+        "| Option | Status |",
+        "| --- | --- |",
+        "| Alpha | Ready |",
+        "|   |   |",
+        "| Beta | Planned |",
+        "",
+        "|   |   |",
+        "| --- | --- |",
+      ].join("\n"),
     }, context);
     await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
 
@@ -690,6 +702,45 @@ describe("document capability registry", () => {
     await registry.execute("context_room_write_commit", { operationId, finalSequence: 2 }, context);
     expect(documents.get(documentId)).toMatchObject({ version: 1, status: "active" });
     expect(documents.get(documentId)?.contentJson.content?.[0]).toMatchObject({ type: "table" });
+  });
+
+  it("removes empty tables and rows from Agent-created documents", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-create-empty-table-test-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const documents = new DocumentService(database.db, new DocumentEventBroker());
+    disposables.push(() => database.sqlite.close());
+
+    const markdown = [
+      "| Item | Result |",
+      "| --- | --- |",
+      "| Alpha | Pass |",
+      "|   |   |",
+      "| Beta | Pass |",
+      "",
+      "|   |   |   |",
+      "| --- | --- | --- |",
+      "|   |   |   |",
+    ].join("\n");
+    const normalizedChunk = documents.normalizeAgentDocumentChunk("Comparison", markdown);
+    expect(normalizedChunk).not.toMatch(/\|\s*\|\s*\|\s*\|/);
+
+    const prepared = documents.prepareAgentDocumentDraft({
+      documentId: "doc-empty-tables",
+      roomId: "room-1",
+      title: "Comparison",
+      markdown,
+    });
+    const tables = prepared.content.content?.filter((node) => node.type === "table") ?? [];
+    expect(tables).toHaveLength(1);
+    expect(tables[0]?.content).toHaveLength(3);
+    expect(tables[0]?.content?.map((row) => row.content?.map((cell) => (
+      cell.content?.[0]?.content?.[0]?.text ?? ""
+    )))).toEqual([
+      ["Item", "Result"],
+      ["Alpha", "Pass"],
+      ["Beta", "Pass"],
+    ]);
   });
 
   it("enforces the authoritative title and heading hierarchy for Agent-created bodies", async () => {

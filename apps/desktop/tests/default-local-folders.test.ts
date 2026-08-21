@@ -16,6 +16,34 @@ afterEach(async () => {
 })
 
 describe('default local folders', () => {
+  it('reports each explicit folder result without stopping after a failure', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-explicit-folders-'))
+    temporaryDirectories.push(fixtureRoot)
+    const dataDirectory = join(fixtureRoot, 'data')
+    const documents = join(fixtureRoot, 'Documents')
+    const unavailable = join(fixtureRoot, 'Unavailable')
+    await mkdir(documents)
+    await writeFile(join(documents, 'notes.md'), '# Notes')
+
+    const service = new LocalDataService(
+      dataDirectory,
+      new ConnectorRegistry().register(new LocalFolderConnector()),
+    )
+    await service.initialize()
+
+    try {
+      const results = await service.connectLocalFolders([unavailable, documents])
+      expect(results).toEqual([
+        expect.objectContaining({ rootPath: unavailable, connected: false }),
+        { rootPath: documents, connected: true },
+      ])
+      expect(service.listSources()).toHaveLength(1)
+      expect(service.listSources()[0]?.rootPath).toBe(documents)
+    } finally {
+      await service.shutdown()
+    }
+  })
+
   it('connects standard folders once and keeps a cleared folder available for rescanning', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-default-folders-'))
     temporaryDirectories.push(fixtureRoot)

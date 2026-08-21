@@ -5,6 +5,7 @@ import type {
   CreateAgentSessionInput,
   StartAgentRunInput,
 } from '@nxcore/agent-contract'
+import i18n from '@/i18n/i18next'
 
 export interface DocumentCursorCompletionAgentApi {
   createSession(input: CreateAgentSessionInput): Promise<AgentSession>
@@ -145,42 +146,52 @@ interface StreamDocumentCursorCompletionOptions {
 
 export function buildDocumentCursorCompletionPrompt(
   input: DocumentCursorCompletionRequest,
+  responseLanguage: StartAgentRunInput['responseLanguage'] = 'zh-CN',
 ): string {
+  const t = i18n.getFixedT(responseLanguage, 'common')
   const { formatContext } = input
   const insideCodeBlock = input.blockType === 'codeBlock'
     || formatContext.ancestorTypes.includes('codeBlock')
   let outputRule: string
   if (insideCodeBlock) {
-    const language = formatContext.codeLanguage?.trim() || '未标注语言'
-    outputRule = `光标位于 ${language} 代码块：只补全当前代码块内的原始代码，依据 codeLinePrefix 保持当前行缩进，允许必要换行，最多 160 个字符，不要添加代码围栏或语言标记。`
+    const language = formatContext.codeLanguage?.trim() || t('contextRoom:documentCursorCompletionAgent.unspecifiedLanguage')
+    outputRule = t('contextRoom:documentCursorCompletionAgent.codeBlockRule', { language })
   } else if (formatContext.list) {
     const listLabel = formatContext.list.type === 'orderedList'
-      ? '有序列表'
-      : formatContext.list.type === 'taskList' ? '任务列表' : '无序列表'
+      ? t('contextRoom:documentCursorCompletionAgent.orderedList')
+      : formatContext.list.type === 'taskList'
+        ? t('contextRoom:documentCursorCompletionAgent.taskList')
+        : t('contextRoom:documentCursorCompletionAgent.bulletList')
     const taskState = formatContext.list.type === 'taskList'
-      ? `，当前任务${formatContext.list.checked ? '已完成' : '未完成'}`
+      ? t('contextRoom:documentCursorCompletionAgent.taskState', {
+        state: t(formatContext.list.checked
+          ? 'contextRoom:documentCursorCompletionAgent.taskCompleted'
+          : 'contextRoom:documentCursorCompletionAgent.taskIncomplete'),
+      })
       : ''
-    outputRule = `光标位于第 ${formatContext.list.depth} 层${listLabel}的当前条目中${taskState}：只补全当前条目正文，最多 80 个字符，不要换行，不要输出列表标记、复选框或创建下一条目。`
+    outputRule = t('contextRoom:documentCursorCompletionAgent.listRule', { depth: formatContext.list.depth, list: listLabel, state: taskState })
   } else if (input.blockType === 'heading') {
-    outputRule = `光标位于 ${formatContext.headingLevel ?? '未知'} 级标题：只补全当前标题文字，最多 80 个字符，不要换行，不要输出 # 或创建新标题。`
+    outputRule = t('contextRoom:documentCursorCompletionAgent.headingRule', {
+      level: formatContext.headingLevel ?? t('contextRoom:documentCursorCompletionAgent.unknown'),
+    })
   } else if (formatContext.ancestorTypes.includes('blockquote')) {
-    outputRule = '光标位于引用块：只补全当前引用段落文字，最多 80 个字符，不要换行，不要输出 > 或创建新引用块。'
+    outputRule = t('contextRoom:documentCursorCompletionAgent.blockquoteRule')
   } else if (formatContext.ancestorTypes.some((type) => type === 'tableCell' || type === 'tableHeader')) {
-    outputRule = '光标位于表格单元格：只补全当前单元格内的文字，最多 80 个字符，不要换行，不要输出表格分隔符或创建行列。'
+    outputRule = t('contextRoom:documentCursorCompletionAgent.tableCellRule')
   } else {
-    outputRule = '只补全当前文本块内的一个短语或一句话，最多 80 个字符，不要换行，不要创建标题、列表或其他新块。'
+    outputRule = t('contextRoom:documentCursorCompletionAgent.textBlockRule')
   }
   const markRule = formatContext.activeMarks.includes('code')
-    ? '当前文字使用行内代码格式，只输出原始文本，不要添加反引号。'
+    ? t('contextRoom:documentCursorCompletionAgent.inlineCodeRule')
     : formatContext.activeMarks.length > 0
-      ? `当前文字 marks 为 ${formatContext.activeMarks.join(', ')}；只输出文字，不要重复添加 Markdown 格式标记。`
+      ? t('contextRoom:documentCursorCompletionAgent.marksRule', { marks: formatContext.activeMarks.join(', ') })
       : null
   return [
-    '使用 document-cursor-completion Skill 完成富文本文档的 FIM 补全。只生成 <CURSOR /> 位置应出现的内容。',
-    '若光标前存在明显错字可以按 Skill 协议纠正，否则只补充光标后的内容。',
+    t('contextRoom:documentCursorCompletionAgent.promptInstruction'),
+    t('contextRoom:documentCursorCompletionAgent.correctionRule'),
     outputRule,
     ...(markRule ? [markRule] : []),
-    '不要复述 PREFIX 或 SUFFIX；必须与当前 Tiptap 块类型、祖先结构和 marks 保持一致。',
+    t('contextRoom:documentCursorCompletionAgent.structureRule'),
     '',
     '<PREFIX>',
     input.contextBefore,
@@ -406,13 +417,13 @@ export async function streamDocumentCursorCompletion(
   try {
     throwIfAborted(options.signal)
     const session = await api.createSession({
-      pageLabel: `AI 补全 · ${input.documentName}`,
+      pageLabel: i18n.getFixedT(options.responseLanguage ?? 'zh-CN', 'common')('contextRoom:documentCursorCompletionAgent.pageLabel', { name: input.documentName }),
       roomId: input.roomId,
     })
     sessionId = session.id
     throwIfAborted(options.signal)
     const run = await api.startRun(session.id, {
-      prompt: buildDocumentCursorCompletionPrompt(input),
+      prompt: buildDocumentCursorCompletionPrompt(input, options.responseLanguage),
       idempotencyKey: crypto.randomUUID(),
       responseLanguage: options.responseLanguage,
       captureMemory: false,
@@ -444,11 +455,11 @@ export async function streamDocumentCursorCompletion(
         } else if (event.type === 'run.completed') {
           runSettled = true
           const suggestion = parseDocumentCursorCompletion(rawText, input)
-          if (!suggestion.text) throw new Error('Agent 没有返回可用的补全内容。')
+          if (!suggestion.text) throw new Error(i18n.t('contextRoom:documentCursorCompletionAgent.noUsableCompletion'))
           return suggestion
         } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {
           runSettled = true
-          throw new Error(eventText(event, 'message') || 'Agent 补全失败。')
+          throw new Error(eventText(event, 'message') || i18n.t('contextRoom:documentCursorCompletionAgent.failed'))
         } else if (event.type === 'run.cancelled') {
           runSettled = true
           throw abortError()
@@ -457,7 +468,7 @@ export async function streamDocumentCursorCompletion(
       await wait(pollIntervalMs, options.signal)
     }
     cancelRun()
-    throw new Error('Agent 补全超时。')
+    throw new Error(i18n.t('contextRoom:documentCursorCompletionAgent.timedOut'))
   } finally {
     options.signal.removeEventListener('abort', onAbort)
     if (!runSettled) cancelRun()

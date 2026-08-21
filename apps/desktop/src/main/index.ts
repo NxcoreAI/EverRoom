@@ -9,7 +9,7 @@ import type {
   StartDocumentOperationInput,
 } from '@nxcore/agent-contract'
 
-import type { CloudAccountStatus } from '../shared/sources'
+import type { CloudAccountStatus, DefaultLocalFolder } from '../shared/sources'
 import type { PrivateTranscriptionSyncCompletedEvent } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -139,6 +139,7 @@ const SOURCE_CHANNELS = {
   changed: 'sources:changed',
   showFile: 'sources:show-file',
   addLocalFolder: 'sources:add-local-folder',
+  connectDefaultLocalFolders: 'sources:connect-default-local-folders',
   addGitHub: 'sources:add-github',
   addGoogleDocs: 'sources:add-google-docs',
   addNotion: 'sources:add-notion',
@@ -607,6 +608,42 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     })
     const rootPath = result.filePaths[0]
     return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
+  })
+  handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (_event, folders: unknown) => {
+    if (!Array.isArray(folders)) throw new Error('无效的默认文件夹配置。')
+    if (folders.some((folder) => folder !== 'documents' && folder !== 'desktop')) {
+      throw new Error('无效的默认文件夹配置。')
+    }
+    const selected = folders as DefaultLocalFolder[]
+    const unique = [...new Set(selected)]
+    const results: Array<{ folder: DefaultLocalFolder; connected: boolean; error?: string }> = []
+    for (const folder of unique) {
+      try {
+        let rootPath = app.getPath(folder)
+        if (process.platform === 'darwin') {
+          const picked = await dialog.showOpenDialog({
+            title: `${desktopText('dialog.chooseFolder.title')} · ${folder === 'documents' ? 'Documents' : 'Desktop'}`,
+            buttonLabel: desktopText('dialog.chooseFolder.button'),
+            defaultPath: rootPath,
+            properties: ['openDirectory', 'createDirectory'],
+          })
+          if (picked.canceled || !picked.filePaths[0]) {
+            results.push({ folder, connected: false, error: '用户取消了文件夹授权。' })
+            continue
+          }
+          rootPath = picked.filePaths[0]
+        }
+        await service.addLocalFolder(rootPath)
+        results.push({ folder, connected: true })
+      } catch (error) {
+        results.push({
+          folder,
+          connected: false,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return results
   })
   handle(SOURCE_CHANNELS.addGitHub, async (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('无效的 GitHub 配置。')
@@ -1641,10 +1678,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
-    void localDataService.bootstrapDefaultLocalFolders([
-      app.getPath('desktop'),
-      app.getPath('documents'),
-    ]).catch((error) => console.warn('Default local folder scan failed.', error))
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))

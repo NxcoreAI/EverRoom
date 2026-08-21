@@ -99,6 +99,11 @@
   padding-top: 48px;
 }
 
+.diary-skeleton-content-only {
+  --diary-skeleton-base: color-mix(in srgb, var(--border) 62%, var(--surface));
+  --diary-skeleton-soft: color-mix(in srgb, var(--border) 34%, var(--surface));
+}
+
 .diary-skeleton-intro {
   padding-bottom: 36px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);

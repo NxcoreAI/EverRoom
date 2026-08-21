@@ -48,7 +48,6 @@ interface MemoryOnboardingControls {
 
 interface MemoryOnboardingGateProps {
   children: (controls: MemoryOnboardingControls) => ReactNode
-  onEnterHome: () => void
 }
 
 const MEMORY_TYPE_KEYS: Record<string, string> = {
@@ -73,7 +72,7 @@ function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `memory-onboarding-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboardingGateProps) {
+export function MemoryOnboardingGate({ children }: MemoryOnboardingGateProps) {
   const { locale, setLocale, t, formatDate } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const storedMarker = readMemoryOnboardingMarker()
@@ -95,6 +94,9 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
   const baselineIdsRef = useRef<Set<string>>(new Set())
   const foregroundStartedAtRef = useRef(0)
   const submitRequestIdRef = useRef<string | null>(null)
+  const finishOnboarding = useCallback(() => {
+    setMode('app')
+  }, [])
 
   const resetQuestions = useCallback(() => {
     setStep(0)
@@ -114,7 +116,9 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
     const marker = initialMarkerRef.current
     if (marker?.status === 'pending') {
       setPending(marker)
-      setMode('app')
+      submitRequestIdRef.current = marker.requestId
+      foregroundStartedAtRef.current = Date.now()
+      setMode('refining')
       return () => { cancelled = true }
     }
     if (marker && !REPEATABLE_MEMORY_ONBOARDING) {
@@ -191,8 +195,8 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
       }
 
       if (foreground && Date.now() - foregroundStartedAtRef.current >= MEMORY_ONBOARDING_FOREGROUND_TIMEOUT_MS) {
-        setMode('app')
-        onEnterHome()
+        setFailureContext('submit')
+        setMode('unavailable')
         return
       }
       timer = window.setTimeout(
@@ -206,22 +210,20 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
       cancelled = true
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [completeWithMemory, findGeneratedMemory, mode, onEnterHome, pending])
+  }, [completeWithMemory, findGeneratedMemory, finishOnboarding, mode, pending])
 
   useEffect(() => {
     if (mode !== 'success' || !generatedMemory) return
     const timer = window.setTimeout(() => {
-      setMode('app')
-      onEnterHome()
+      finishOnboarding()
     }, MEMORY_SUCCESS_DISPLAY_MS)
     return () => window.clearTimeout(timer)
-  }, [generatedMemory, mode, onEnterHome])
+  }, [finishOnboarding, generatedMemory, mode])
 
   const skip = () => {
     writeMemoryOnboardingMarker({ status: 'skipped' })
     setPending(null)
-    setMode('app')
-    onEnterHome()
+    finishOnboarding()
   }
 
   const updateAnswer = (value: string) => {

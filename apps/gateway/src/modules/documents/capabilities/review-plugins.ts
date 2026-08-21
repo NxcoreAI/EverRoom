@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DocumentOperation, DocumentOperationCommandInput, DocumentOperationItem, DocumentMutationTarget, TiptapJsonContent } from "@nxcore/agent-contract";
-import { agentDocumentMarkdown } from "../agent-markdown.js";
+import { agentDocumentMarkdown, sanitizeAgentDocumentTables } from "../agent-markdown.js";
 import { applyDocumentMutation, findBlockPath, mutationTargetBlockIds, targetsOverlap, tiptapText } from "../content-model.js";
 import { DocumentContentEngine } from "../core/index.js";
 import { DocumentServiceError } from "../errors.js";
@@ -100,7 +100,10 @@ function authoritativeDocument(backend: CapabilityBackend, operation: DocumentOp
 function parseFragment(backend: CapabilityBackend, documentId: string, roomId: string, source: string): TiptapJsonContent[] {
   const engine = new DocumentContentEngine({ findDocumentRoom: (id) => backend.get(id)?.roomId ?? null });
   try {
-    return engine.normalizeFragment(agentDocumentMarkdown.parse(source) as TiptapJsonContent, documentId, roomId).content.content ?? [];
+    const parsed = sanitizeAgentDocumentTables(
+      agentDocumentMarkdown.parse(source) as TiptapJsonContent,
+    ).content;
+    return engine.normalizeFragment(parsed, documentId, roomId).content.content ?? [];
   } catch (error) {
     if (error instanceof DocumentServiceError) throw error;
     throw new DocumentServiceError(

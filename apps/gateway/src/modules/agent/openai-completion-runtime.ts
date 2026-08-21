@@ -101,7 +101,7 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
         body: JSON.stringify({
           model: this.config.model,
           messages: [
-            { role: "system", content: this.systemPromptFor(input.prompt) },
+            { role: "system", content: this.systemPromptFor(input) },
             { role: "user", content: input.prompt },
           ],
           ...(this.config.temperature === undefined ? {} : { temperature: this.config.temperature }),
@@ -143,9 +143,16 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
     }
   }
 
-  private systemPromptFor(prompt: string): string {
-    const skillName = /^使用 Knowledge Agent 的 ([a-z0-9-]+) Skill。/iu.exec(prompt)?.[1];
+  private systemPromptFor(input: StartRuntimeRunInput): string {
+    const skillName = /^使用 Knowledge Agent 的 ([a-z0-9-]+) Skill。/iu.exec(input.prompt)?.[1];
     const skill = skillName ? this.config.skillPrompts?.[skillName] : undefined;
-    return skill ? `${this.config.systemPrompt}\n\n<skill name="${skillName}">\n${skill}\n</skill>` : this.config.systemPrompt;
+    const responseLanguage = input.responseLanguage?.trim();
+    return [
+      this.config.systemPrompt,
+      ...(skill ? [`<skill name="${skillName}">\n${skill}\n</skill>`] : []),
+      ...(responseLanguage ? [
+        `当前界面 locale：${responseLanguage}。除非用户明确要求本次输出使用另一种语言，所有 Agent 生成的自然语言内容（包括聊天答复、总结、文档标题和文档正文）都必须使用 ${responseLanguage} 对应的主要语言；代码、路径、引用、专有名词和用户原文保持原样。`,
+      ] : []),
+    ].join("\n\n");
   }
 }

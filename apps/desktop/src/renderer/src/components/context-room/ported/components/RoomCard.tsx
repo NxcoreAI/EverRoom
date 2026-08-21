@@ -3,7 +3,7 @@ import { Clock3, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../types';
-import { localizedUiText } from '../adapters';
+import { localizedRoomSummary } from '../adapters';
 import { useRoomUpdatedTime } from '../roomUpdatedTime';
 import { roomKindIcon, roomKindTone } from './utils';
 
@@ -42,7 +42,7 @@ export function RoomCard({
               </span>
             ) : null}
           </strong>
-          <span className="context-room-home-card-brief">{localizedUiText(room.brief.background, t)}</span>
+          <span className="context-room-home-card-brief">{localizedRoomSummary(room.brief.background, room.generatedContext?.overview, t)}</span>
           <span className="context-room-home-card-time">
             <Clock3 aria-hidden="true" />
             {updatedTime}

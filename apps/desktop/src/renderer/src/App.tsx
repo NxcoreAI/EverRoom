@@ -21,8 +21,10 @@ import { pageLabels, type PageId } from '@/data/navigation'
 import { onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
+import { workspaceTabSwipeTarget } from '@/workspaceTabSwipe'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
+const TAB_SWIPE_THRESHOLD = 72
 const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nxcore'])
 
 function detectMacDesktop(): boolean {
@@ -69,15 +71,18 @@ export function App() {
   } | null>(null)
   const documentFocusRequestIdRef = useRef(0)
   const agentNavigationTimerRef = useRef<number | null>(null)
+  const workspaceMainRef = useRef<HTMLElement>(null)
+  const tabSwipeRef = useRef({ distance: 0, lastAt: 0, lockedUntil: 0 })
   const [navCollapsed, setNavCollapsed] = useState(() => window.matchMedia('(max-width: 1200px)').matches)
   const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
   const [suppressRoomOnboarding, setSuppressRoomOnboarding] = useState(false)
+  const manualMemoryOnboardingRef = useRef(false)
   const [theme] = useState<ThemeId>(readStoredTheme)
-  const enterOnboardingHome = useCallback(() => setActivePage('home'), [])
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
+  const activeWorkspaceRoomId = activePage === 'rooms' ? activeContextRoomId : null
   const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
   const availableContextRooms = useMemo(() => (
     contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
@@ -121,6 +126,7 @@ export function App() {
   }
 
   const openContextRoomTab = useCallback((room: ContextRoomWorkspaceTab) => {
+    if (manualMemoryOnboardingRef.current) return
     setContextRoomTabs((current) => (
       current.some((tab) => tab.id === room.id)
         ? current.map((tab) => tab.id === room.id ? room : tab)
@@ -131,11 +137,19 @@ export function App() {
     setActiveContextRoomId(room.id)
   }, [])
 
+  useEffect(() => {
+    if (activePage !== 'settings') {
+      manualMemoryOnboardingRef.current = false
+      setSuppressRoomOnboarding(false)
+    }
+  }, [activePage])
+
   const openDocumentTarget = useCallback((target: {
     roomId: string
     documentId: string
     blockId?: string | null
   }) => {
+    if (manualMemoryOnboardingRef.current) return
     const room = availableContextRooms.find((item) => item.id === target.roomId)
     if (room) openContextRoomTab(room)
     else {
@@ -201,6 +215,62 @@ export function App() {
     if (!focused) setContextRoomNavRevealed(false)
   }, [])
 
+  useEffect(() => {
+    const workspace = workspaceMainRef.current
+    if (!workspace) return
+    let resetTimer: number | null = null
+
+    const roomIds = contextRoomTabs.map((tab) => tab.id)
+    const canNestedElementScroll = (target: EventTarget | null, direction: -1 | 1) => {
+      if (!(target instanceof Element)) return false
+      if (target.closest('input, textarea, select, [contenteditable="true"], canvas, [role="slider"]')) return true
+
+      let element: Element | null = target
+      while (element && element !== workspace) {
+        const style = window.getComputedStyle(element)
+        if ((style.overflowX === 'auto' || style.overflowX === 'scroll') && element.scrollWidth > element.clientWidth + 1) {
+          const maxScrollLeft = element.scrollWidth - element.clientWidth
+          if ((direction > 0 && element.scrollLeft < maxScrollLeft) || (direction < 0 && element.scrollLeft > 0)) {
+            return true
+          }
+        }
+        element = element.parentElement
+      }
+      return false
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) < 6 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
+      const direction = event.deltaX > 0 ? 1 : -1
+      if (canNestedElementScroll(event.target, direction)) return
+
+      event.preventDefault()
+      const now = performance.now()
+      const swipe = tabSwipeRef.current
+      if (now - swipe.lastAt > 180) swipe.distance = 0
+      swipe.lastAt = now
+      if (now < swipe.lockedUntil) return
+      swipe.distance += event.deltaX
+
+      if (resetTimer !== null) window.clearTimeout(resetTimer)
+      resetTimer = window.setTimeout(() => { swipe.distance = 0 }, 180)
+      if (Math.abs(swipe.distance) < TAB_SWIPE_THRESHOLD) return
+
+      const target = workspaceTabSwipeTarget(roomIds, activeWorkspaceRoomId, direction)
+      swipe.distance = 0
+      swipe.lockedUntil = now + 520
+      if (target === undefined) return
+      if (target === null) showContextRoomHome()
+      else activateContextRoomTab(target)
+    }
+
+    workspace.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      if (resetTimer !== null) window.clearTimeout(resetTimer)
+      workspace.removeEventListener('wheel', handleWheel)
+    }
+  }, [activateContextRoomTab, activeWorkspaceRoomId, contextRoomTabs, showContextRoomHome])
+
   const focusAgent = () => {
     setAgentOpen(true)
     setAgentFocusRequest((request) => request + 1)
@@ -214,6 +284,7 @@ export function App() {
     const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180
     agentNavigationTimerRef.current = window.setTimeout(() => {
       agentNavigationTimerRef.current = null
+      if (manualMemoryOnboardingRef.current) return
       const { target } = request
       if (target.pageId === 'rooms' && target.roomId) {
         const room = availableContextRooms.find((item) => item.id === target.roomId)
@@ -241,6 +312,7 @@ export function App() {
   }
 
   const openAgentSessionLink = (link: AgentSessionLink, destination: 'source' | 'target') => {
+    if (manualMemoryOnboardingRef.current) return
     const route = resolveAgentSessionLinkRoute(link, destination)
     if (!route) return
     if (agentNavigationTimerRef.current !== null) {
@@ -270,9 +342,10 @@ export function App() {
   }
 
   return (
-    <MemoryOnboardingGate onEnterHome={enterOnboardingHome}>
+    <MemoryOnboardingGate>
       {({ openMemoryOnboarding }) => (
       <RoomOnboardingGate onOpenRoom={openContextRoomTab} suppressOnboarding={suppressRoomOnboarding}>
+      {({ openRoomOnboarding }) => (
       <div
       className="app-shell"
       data-agent-open={String(agentOpen)}
@@ -282,7 +355,7 @@ export function App() {
     >
       <TopBar
         contextRoomTabs={contextRoomTabs}
-        activeContextRoomId={activePage === 'rooms' ? activeContextRoomId : null}
+        activeContextRoomId={activeWorkspaceRoomId}
         agentOpen={agentOpen}
         navCollapsed={effectiveNavCollapsed}
         onActivateWorkbench={() => {
@@ -310,7 +383,7 @@ export function App() {
         }}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
-      <main className="workspace-main">
+      <main ref={workspaceMainRef} className="workspace-main">
         <PageCanvas
           page={activePage}
           activeContextRoomId={activeContextRoomId}
@@ -323,8 +396,25 @@ export function App() {
           onNavigate={navigate}
           onFocusAgent={focusAgent}
           onOpenDocument={openDocumentTarget}
+          onStartRoomOnboarding={() => {
+            manualMemoryOnboardingRef.current = false
+            setSuppressRoomOnboarding(false)
+            setActiveContextRoomId(null)
+            setActivePage('settings')
+            openRoomOnboarding()
+          }}
           onStartMemoryOnboarding={() => {
+            if (agentNavigationTimerRef.current !== null) {
+              window.clearTimeout(agentNavigationTimerRef.current)
+              agentNavigationTimerRef.current = null
+            }
+            manualMemoryOnboardingRef.current = true
             setSuppressRoomOnboarding(true)
+            setActiveContextRoomId(null)
+            setAgentNavigationRequest(null)
+            setAgentSessionRouteRequest(null)
+            setAgentDocumentFocus(null)
+            setActivePage('settings')
             openMemoryOnboarding()
           }}
         />
@@ -349,6 +439,7 @@ export function App() {
       <AppToast />
       <AppErrorDialog />
       </div>
+      )}
       </RoomOnboardingGate>
       )}
     </MemoryOnboardingGate>

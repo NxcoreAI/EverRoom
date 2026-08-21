@@ -350,7 +350,7 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
           previousSummary: continuationReview.summary,
           rejectedText,
           feedback: normalizedFeedback,
-        }),
+        }, locale),
         idempotencyKey: `continuation-revision:${continuationEntry.id}:${crypto.randomUUID()}`,
         responseLanguage: locale,
         context: {

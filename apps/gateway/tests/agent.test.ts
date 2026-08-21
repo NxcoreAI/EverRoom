@@ -234,6 +234,75 @@ describe("agent gateway", () => {
     await app.close();
   });
 
+  it("persists regeneration by removing the replaced run from session history", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "首页" },
+    })).json<AgentSession>();
+    const readSnapshot = async () => (await app.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${session.id}`,
+      headers,
+    })).json<AgentSessionSnapshot>();
+
+    const original = (await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: { prompt: "重新回答这个问题", idempotencyKey: "original-regeneration-key" },
+    })).json<AgentRun>();
+    await waitFor(readSnapshot, (snapshot) => (
+      snapshot.activeRun === null && snapshot.messages.some((message) => message.runId === original.id)
+    ));
+
+    const replacementResponse = await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: {
+        prompt: "重新回答这个问题",
+        idempotencyKey: "replacement-regeneration-key",
+        replaceRunId: original.id,
+      },
+    });
+    const replacement = replacementResponse.json<AgentRun>();
+    const regenerated = await waitFor(readSnapshot, (snapshot) => (
+      snapshot.activeRun === null
+      && snapshot.messages.length === 2
+      && snapshot.messages.every((message) => message.runId === replacement.id)
+    ));
+
+    expect(replacementResponse.statusCode).toBe(202);
+    expect(regenerated.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(regenerated.messages.some((message) => message.runId === original.id)).toBe(false);
+    expect((await app.inject({
+      method: "GET",
+      url: `/v1/agent/runs/${original.id}`,
+      headers,
+    })).statusCode).toBe(404);
+    expect((await app.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${session.id}/events?runId=${original.id}&afterSeq=0`,
+      headers,
+    })).json<AgentEvent[]>()).toEqual([]);
+    await app.close();
+
+    const restartedApp = await createServer(config);
+    const restored = (await restartedApp.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${session.id}`,
+      headers,
+    })).json<AgentSessionSnapshot>();
+    expect(restored.messages).toHaveLength(2);
+    expect(restored.messages.every((message) => message.runId === replacement.id)).toBe(true);
+    await restartedApp.close();
+  });
+
   it("rejects a stale Room selection before creating an Agent run", async () => {
     const config = await testConfig();
     const app = await createServer(config);

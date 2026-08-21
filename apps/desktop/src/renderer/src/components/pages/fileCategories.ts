@@ -24,19 +24,19 @@ export interface FileCategoryDefinition {
 }
 
 export const FILE_CATEGORY_DEFINITIONS: FileCategoryDefinition[] = [
-  { key: 'data', label: '数据', icon: BarChart3, tone: 'green' },
-  { key: 'form', label: '表单', icon: ClipboardList, tone: 'blue' },
-  { key: 'lesson', label: '课件', icon: Presentation, tone: 'orange' },
-  { key: 'proof', label: '证明', icon: FileCheck2, tone: 'teal' },
-  { key: 'paper', label: '论文', icon: ScrollText, tone: 'purple' },
-  { key: 'report', label: '报告', icon: FileText, tone: 'red' },
-  { key: 'resume', label: '简历', icon: BriefcaseBusiness, tone: 'slate' },
-  { key: 'exercise', label: '习题', icon: GraduationCap, tone: 'blue' },
-  { key: 'meeting', label: '会议', icon: Users, tone: 'teal' },
-  { key: 'contract', label: '合同', icon: Handshake, tone: 'orange' },
-  { key: 'summary', label: '总结', icon: ScrollText, tone: 'purple' },
-  { key: 'book', label: '书籍', icon: BookOpen, tone: 'red' },
-  { key: 'document', label: '文档', icon: FileText, tone: 'slate' },
+  { key: 'data', label: 'surface:files.categoryData', icon: BarChart3, tone: 'green' },
+  { key: 'form', label: 'surface:files.categoryForm', icon: ClipboardList, tone: 'blue' },
+  { key: 'lesson', label: 'surface:files.categoryLesson', icon: Presentation, tone: 'orange' },
+  { key: 'proof', label: 'surface:files.categoryProof', icon: FileCheck2, tone: 'teal' },
+  { key: 'paper', label: 'surface:files.categoryPaper', icon: ScrollText, tone: 'purple' },
+  { key: 'report', label: 'surface:files.categoryReport', icon: FileText, tone: 'red' },
+  { key: 'resume', label: 'surface:files.categoryResume', icon: BriefcaseBusiness, tone: 'slate' },
+  { key: 'exercise', label: 'surface:files.categoryExercise', icon: GraduationCap, tone: 'blue' },
+  { key: 'meeting', label: 'surface:files.categoryMeeting', icon: Users, tone: 'teal' },
+  { key: 'contract', label: 'surface:files.categoryContract', icon: Handshake, tone: 'orange' },
+  { key: 'summary', label: 'surface:files.categorySummary', icon: ScrollText, tone: 'purple' },
+  { key: 'book', label: 'surface:files.categoryBook', icon: BookOpen, tone: 'red' },
+  { key: 'document', label: 'surface:files.categoryDocument', icon: FileText, tone: 'slate' },
 ]
 
 const categoryByKey = new Map(FILE_CATEGORY_DEFINITIONS.map((category) => [category.key, category]))

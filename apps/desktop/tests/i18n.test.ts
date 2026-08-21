@@ -6,7 +6,7 @@ import { interpolate, resolveLocale, translate } from '../src/renderer/src/i18n/
 import i18n from '../src/renderer/src/i18n/i18next'
 import { i18nResources } from '../src/renderer/src/i18n/resources'
 import { desktopMessageResources, translateDesktopMessage } from '../src/shared/i18n/desktop'
-import { localizedUiText } from '../src/renderer/src/components/context-room/ported/adapters'
+import { localizedRoomSummary, localizedUiText } from '../src/renderer/src/components/context-room/ported/adapters'
 
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -42,9 +42,18 @@ describe('renderer i18n', () => {
   })
 
   it('localizes persisted Room defaults without translating user content', () => {
-    const t = (message: string) => translate('en-US', message)
+    const t = (message: string, values?: Record<string, string | number>) => translate('en-US', message, values)
     expect(localizedUiText('待补充 Room 的背景和资料范围。', t)).toBe('Add the Room background and resource scope.')
+    expect(localizedUiText('资料归类时判定为新主题，自动创建的 Room。', t)).toBe('This Room was created automatically when the material was classified as a new topic.')
+    expect(localizedUiText('来自《交付方案》', t)).toBe('From “交付方案”')
+    expect(localizedUiText('用户结论（已编辑）', t)).toBe('用户结论 (edited)')
     expect(localizedUiText('用户填写的 Room 背景', t)).toBe('用户填写的 Room 背景')
+  })
+
+  it('uses the generated Room overview for home summaries before the default background', () => {
+    const t = (message: string) => translate('en-US', message)
+    expect(localizedRoomSummary('待补充 Room 的背景和资料范围。', '星港项目聚焦方案评审与交付。', t)).toBe('星港项目聚焦方案评审与交付。')
+    expect(localizedRoomSummary('用户填写的 Room 背景', '', t)).toBe('用户填写的 Room 背景')
   })
 
   it('keeps locale namespace keys in parity without a legacy runtime dictionary', () => {
