@@ -12,7 +12,7 @@ import type {
 } from './types'
 import {
   isIgnoredLocalDirectory,
-  LOCAL_PARSEABLE_EXTENSIONS,
+  LOCAL_AUTO_SCAN_EXTENSIONS,
 } from '../file-format-policy'
 
 export interface LocalFolderConfig {
@@ -23,7 +23,7 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
   readonly kind = 'local-folder' as const
   readonly capabilities = ['pull', 'incremental', 'watch'] as const
 
-  constructor(private readonly scanExtensions: ReadonlySet<string> = LOCAL_PARSEABLE_EXTENSIONS) {}
+  constructor(private readonly scanExtensions: ReadonlySet<string> = LOCAL_AUTO_SCAN_EXTENSIONS) {}
 
   getConnectionKey(config: LocalFolderConfig): string {
     return resolve(config.rootPath)
@@ -84,11 +84,31 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
   watch(
     connection: ConnectorConnection<LocalFolderConfig>,
     onChange: () => void,
+    onError?: () => void,
   ): ConnectorSubscription | null {
     try {
       const watcher = watch(connection.config.rootPath, { recursive: true }, onChange)
-      watcher.on('error', () => watcher.close())
-      return watcher
+      let closedByCaller = false
+      let reportedError = false
+      const reportError = () => {
+        if (reportedError || closedByCaller) return
+        reportedError = true
+        onError?.()
+        watcher.close()
+      }
+      watcher.on('error', reportError)
+      watcher.on('close', () => {
+        if (!closedByCaller && !reportedError) {
+          reportedError = true
+          onError?.()
+        }
+      })
+      return {
+        close: () => {
+          closedByCaller = true
+          watcher.close()
+        },
+      }
     } catch {
       return null
     }

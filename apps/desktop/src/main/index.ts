@@ -18,6 +18,8 @@ import { GitHubConnector, type GitHubConfig } from './connectors/github-connecto
 import { GoogleDocsConnector, type GoogleDocsConfig } from './connectors/google-docs-connector'
 import { NotionConnector, type NotionConfig } from './connectors/notion-connector'
 import { LocalDataService } from './core/local-data-service'
+import { LOCAL_AUTO_SCAN_EXTENSIONS } from './file-format-policy'
+import { HighRiskImportCoordinator } from './high-risk-import-coordinator'
 import { CredentialStore } from './security/credential-store'
 import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
@@ -350,8 +352,12 @@ const FILES_CHANNELS = {
   pinClusterTitle: 'files:pin-cluster-title',
   delete: 'files:delete',
   reveal: 'files:reveal',
+  openOriginal: 'files:open-original',
   pickAndImport: 'files:pick-and-import',
   importPathsOnce: 'files:import-paths-once',
+  listHighRiskReviews: 'files:high-risk-reviews:list',
+  resolveHighRiskReview: 'files:high-risk-reviews:resolve',
+  highRiskReviewsChanged: 'files:high-risk-reviews:changed',
 } as const
 
 const INGEST_CHANNELS = {
@@ -1001,7 +1007,15 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
 }
 
-function registerFilesHandlers(bridge: FilesGatewayBridge): void {
+function registerFilesHandlers(
+  bridge: FilesGatewayBridge,
+  highRiskImports: HighRiskImportCoordinator,
+): void {
+  highRiskImports.onChanged(() => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(FILES_CHANNELS.highRiskReviewsChanged)
+    }
+  })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
   handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
   handle(FILES_CHANNELS.readMarkdown, (_event, fileId: string) => bridge.readMarkdown(fileId))
@@ -1012,6 +1026,7 @@ function registerFilesHandlers(bridge: FilesGatewayBridge): void {
     bridge.pinClusterTitle(clusterId, sharedTitle))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
+  handle(FILES_CHANNELS.openOriginal, (_event, fileId: string) => bridge.openOriginal(fileId))
   handle(
     FILES_CHANNELS.pickAndImport,
     (_event, options?: { pipelines?: IngestPipelines; roomId?: string }) => bridge.pickAndImport(options),
@@ -1020,6 +1035,16 @@ function registerFilesHandlers(bridge: FilesGatewayBridge): void {
     FILES_CHANNELS.importPathsOnce,
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       bridge.importPathsOnce(paths, options),
+  )
+  handle(FILES_CHANNELS.listHighRiskReviews, () => ({ items: highRiskImports.list() }))
+  handle(
+    FILES_CHANNELS.resolveHighRiskReview,
+    (_event, id: unknown, accepted: unknown) => {
+      if (typeof id !== 'string' || id.length < 1 || id.length > 100 || typeof accepted !== 'boolean') {
+        throw new Error('无效的高风险文件确认请求。')
+      }
+      return highRiskImports.resolve(id, accepted)
+    },
   )
 }
 
@@ -1573,8 +1598,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
-    const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor)
-    registerFilesHandlers(filesGatewayBridge)
+    const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'))
+    await highRiskImports.initialize()
+    const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)
+    registerFilesHandlers(filesGatewayBridge, highRiskImports)
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
@@ -1659,7 +1686,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return { items: [] }
     })
     const autoScanExtensions = new Set(fileCapabilities.items
-      .filter((item) => item.autoScan)
+      .filter((item) => item.autoScan && LOCAL_AUTO_SCAN_EXTENSIONS.has(item.extension.toLowerCase()))
       .map((item) => item.extension.toLowerCase()))
     const connectorImportExtensions = new Set(fileCapabilities.items
       .filter((item) => item.connectorImport)
@@ -1675,6 +1702,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       filesGatewayBridge,
       autoScanExtensions,
       connectorImportExtensions,
+      highRiskImports,
     )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)

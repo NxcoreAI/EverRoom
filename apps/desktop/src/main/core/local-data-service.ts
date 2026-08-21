@@ -14,10 +14,17 @@ import type {
 } from '../connectors/types'
 import { EvidenceService } from '../evidence/evidence-service'
 import {
+  HIGH_RISK_FILE_BATCH_THRESHOLD,
   isIgnoredLocalDirectory,
+  isLowRiskFileExtension,
   isLocalParseableExtension,
+  LOCAL_AUTO_SCAN_EXTENSIONS,
   LOCAL_PARSEABLE_EXTENSIONS,
 } from '../file-format-policy'
+import type {
+  HighRiskImportQueue,
+  PendingAutoScanBatch,
+} from '../high-risk-import-coordinator'
 import type {
   DataSourceSummary,
   SourceFileStatus,
@@ -27,6 +34,7 @@ import type {
   SyncResult,
 } from '../../shared/sources'
 import type { FileFormatCapabilityDto, FileImportAcceptedDto } from '../../shared/ingest'
+import type { HighRiskImportResolution } from '../../shared/ingest'
 
 export interface LocalFileExportTarget {
   capabilities(): Promise<{ items: FileFormatCapabilityDto[] }>
@@ -114,8 +122,11 @@ export class LocalDataService {
   private readonly disconnectingSources = new Set<string>()
   private readonly pendingDisconnects = new Set<Promise<void>>()
   private readonly watchers = new Map<string, ConnectorSubscription>()
-  private readonly watchTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private readonly verificationTimers = new Map<string, ReturnType<typeof setInterval>>()
+  private readonly scanStates = new Map<string, {
+    dirty: boolean
+    debounceTimer: ReturnType<typeof setTimeout> | null
+  }>()
+  private readonly watcherRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly changeListeners = new Set<(event: SourceChangeEvent) => void>()
   private exportWorker: Promise<void> | null = null
   private shuttingDown = false
@@ -124,8 +135,9 @@ export class LocalDataService {
     private readonly dataDirectory: string,
     private readonly connectors: ConnectorRegistry,
     private readonly fileExports: LocalFileExportTarget | null = null,
-    private readonly autoScanExtensions: ReadonlySet<string> = LOCAL_PARSEABLE_EXTENSIONS,
+    private readonly autoScanExtensions: ReadonlySet<string> = LOCAL_AUTO_SCAN_EXTENSIONS,
     private readonly connectorImportExtensions: ReadonlySet<string> = LOCAL_PARSEABLE_EXTENSIONS,
+    private readonly highRiskImports: HighRiskImportQueue | null = null,
   ) {
     this.objectsDirectory = join(dataDirectory, 'objects', 'sha256')
     mkdirSync(join(dataDirectory, 'database'), { recursive: true })
@@ -135,6 +147,7 @@ export class LocalDataService {
       (hash) => this.objectPath(hash),
       (sourceId) => this.notifyChanged(sourceId, true),
     )
+    this.highRiskImports?.setAutoResolver((batch, accepted) => this.resolveAutoScanBatch(batch, accepted))
   }
 
   async initialize(): Promise<void> {
@@ -197,6 +210,7 @@ export class LocalDataService {
         object_hash TEXT NOT NULL,
         size INTEGER NOT NULL,
         source_modified_at TEXT NOT NULL,
+        import_policy TEXT NOT NULL DEFAULT 'normal',
         captured_at TEXT NOT NULL
       );
 
@@ -338,6 +352,12 @@ export class LocalDataService {
     if (versionSchema.sql.includes('UNIQUE(source_item_id, content_hash)')) {
       this.migrateSourceVersionsTable()
     }
+    const versionColumns = this.database
+      .prepare('PRAGMA table_info(source_versions)')
+      .all() as unknown as Array<{ name: string }>
+    if (!versionColumns.some((column) => column.name === 'import_policy')) {
+      this.database.exec("ALTER TABLE source_versions ADD COLUMN import_policy TEXT NOT NULL DEFAULT 'normal'")
+    }
     this.backfillLatestChangeRuns()
     this.evidence.initialize()
 
@@ -363,6 +383,7 @@ export class LocalDataService {
         JOIN source_items ON source_items.id = source_versions.source_item_id
         JOIN data_sources ON data_sources.id = source_items.data_source_id
         WHERE data_sources.kind = 'local-folder' AND source_items.state = 'present'
+          AND source_versions.import_policy IN ('normal', 'approved')
       `).run(recoveredAt)
       const connectorVersions = this.database.prepare(`
         SELECT source_versions.id, data_sources.kind, source_items.extension, source_items.remote_id
@@ -387,7 +408,12 @@ export class LocalDataService {
       SELECT * FROM data_sources
       WHERE status = 'connected' AND disconnected_at IS NULL
     `).all() as unknown as SourceRow[]
-    for (const source of connectedSources) this.startWatching(source)
+    for (const source of connectedSources) {
+      this.startWatching(source)
+      // fs.watch does not replay changes made while the app was closed. One
+      // startup reconciliation closes that gap without polling while idle.
+      void this.sync(source.id).catch(() => undefined)
+    }
     this.kickExportWorker()
   }
 
@@ -531,15 +557,17 @@ export class LocalDataService {
   }
 
   async shutdown(): Promise<void> {
-    for (const timer of this.watchTimers.values()) clearTimeout(timer)
-    this.watchTimers.clear()
-    for (const timer of this.verificationTimers.values()) clearInterval(timer)
-    this.verificationTimers.clear()
+    this.shuttingDown = true
+    for (const state of this.scanStates.values()) {
+      if (state.debounceTimer) clearTimeout(state.debounceTimer)
+    }
+    this.scanStates.clear()
+    for (const timer of this.watcherRetryTimers.values()) clearTimeout(timer)
+    this.watcherRetryTimers.clear()
     for (const watcher of this.watchers.values()) watcher.close()
     this.watchers.clear()
     await Promise.allSettled(this.activeScans.values())
     await Promise.allSettled(this.pendingDisconnects)
-    this.shuttingDown = true
     await this.exportWorker
     await this.evidence.shutdown()
     this.database.close()
@@ -752,8 +780,8 @@ export class LocalDataService {
       if (existing.status === 'paused' || existing.disconnected_at) {
         this.setPaused(existing.id, false)
       }
-      const result = await this.sync(existing.id)
       this.startWatching(this.requireSource(existing.id))
+      const result = await this.sync(existing.id)
       return result
     }
 
@@ -774,9 +802,8 @@ export class LocalDataService {
       now,
     )
 
-    const result = await this.sync(id)
     this.startWatching(this.requireSource(id))
-    return result
+    return this.sync(id)
   }
 
   sync(id: string): Promise<SyncResult> {
@@ -784,10 +811,27 @@ export class LocalDataService {
       return Promise.reject(new Error('数据源正在清理，请稍候。'))
     }
     const running = this.activeScans.get(id)
-    if (running) return running
+    if (running) {
+      this.scanState(id).dirty = true
+      return running
+    }
+
+    const state = this.scanState(id)
+    state.dirty = false
+    if (state.debounceTimer) {
+      clearTimeout(state.debounceTimer)
+      state.debounceTimer = null
+    }
 
     const scan = this.performSync(id).finally(() => this.activeScans.delete(id))
     this.activeScans.set(id, scan)
+    const schedulePendingScan = () => {
+      const nextState = this.scanStates.get(id)
+      if (nextState?.dirty && !this.shuttingDown && !this.disconnectingSources.has(id)) {
+        this.scheduleScan(id)
+      }
+    }
+    void scan.then(schedulePendingScan, schedulePendingScan)
     return scan
   }
 
@@ -857,6 +901,7 @@ export class LocalDataService {
   }
 
   private async clearSourceData(id: string): Promise<void> {
+    await this.highRiskImports?.discardAutoSource(id)
     const objectHashes = this.database.prepare(`
       SELECT DISTINCT source_versions.object_hash AS object_hash
       FROM source_versions
@@ -947,8 +992,31 @@ export class LocalDataService {
       const itemsByRemoteId = new Map(existingItems.map((item) => [item.remote_id, item]))
       const itemsByPath = new Map(existingItems.map((item) => [item.relative_path, item]))
       const seenRemoteIds = new Set<string>()
+      const highRiskImportCandidates = source.kind === 'local-folder'
+        ? items.filter((item) => {
+            if (isLowRiskFileExtension(item.extension)) return false
+            const existing = itemsByRemoteId.get(item.remoteId) ?? itemsByPath.get(item.path)
+            return !existing || existing.state === 'missing' || existing.size !== item.byteSize ||
+              existing.modified_at !== item.modifiedAt
+          })
+        : []
+      const needsHighRiskReview = Boolean(
+        this.highRiskImports && highRiskImportCandidates.length > HIGH_RISK_FILE_BATCH_THRESHOLD,
+      )
+      const deferredRemoteIds = new Set(needsHighRiskReview
+        ? highRiskImportCandidates.map((item) => item.remoteId)
+        : [])
+      const orderedItems = needsHighRiskReview
+        ? [
+            ...items.filter((item) => !deferredRemoteIds.has(item.remoteId)),
+            ...items.filter((item) => deferredRemoteIds.has(item.remoteId)),
+          ]
+        : items
+      const lowRiskItemCount = orderedItems.length - deferredRemoteIds.size
+      const deferredVersionIds: string[] = []
 
-      for (const item of items) {
+      for (const [itemIndex, item] of orderedItems.entries()) {
+        if (needsHighRiskReview && itemIndex === lowRiskItemCount) this.kickExportWorker()
         if (this.disconnectingSources.has(id)) throw new Error('数据源正在清理。')
         const existingItem = itemsByRemoteId.get(item.remoteId) ?? itemsByPath.get(item.path)
         seenRemoteIds.add(item.remoteId)
@@ -969,10 +1037,13 @@ export class LocalDataService {
             continue
           }
           const contentHash = await this.hashItem(item)
+          const deferExport = deferredRemoteIds.has(item.remoteId)
+          const shouldExport = this.shouldExport(source.kind, item) && !deferExport
 
           if (!existingItem) {
             if (source.kind !== 'local-folder' || !this.fileExports) await this.storeObject(item, contentHash)
-            this.insertItemAndVersion(id, runId, item, contentHash, this.shouldExport(source.kind, item))
+            const versionId = this.insertItemAndVersion(id, runId, item, contentHash, shouldExport, deferExport)
+            if (deferExport) deferredVersionIds.push(versionId)
             counts.added += 1
             continue
           }
@@ -988,7 +1059,8 @@ export class LocalDataService {
               counts.moved += 1
             } else if (restored) {
               this.recordItemChange(existingItem, runId, item, contentHash, 'restored')
-              this.insertVersion(id, existingItem.id, item, contentHash, this.shouldExport(source.kind, item))
+              const versionId = this.insertVersion(id, existingItem.id, item, contentHash, shouldExport, deferExport)
+              if (deferExport) deferredVersionIds.push(versionId)
               counts.added += 1
             } else {
               this.markItemSeen(existingItem.id, item, contentHash)
@@ -999,7 +1071,8 @@ export class LocalDataService {
 
           if (source.kind !== 'local-folder' || !this.fileExports) await this.storeObject(item, contentHash)
           this.recordItemChange(existingItem, runId, item, contentHash, 'updated')
-          this.insertVersion(id, existingItem.id, item, contentHash, this.shouldExport(source.kind, item))
+          const versionId = this.insertVersion(id, existingItem.id, item, contentHash, shouldExport, deferExport)
+          if (deferExport) deferredVersionIds.push(versionId)
           if (moved) counts.moved += 1
           counts.updated += 1
         } catch {
@@ -1045,6 +1118,11 @@ export class LocalDataService {
 
       this.notifyChanged(id, hasChanges)
       this.kickExportWorker()
+      if (deferredVersionIds.length > HIGH_RISK_FILE_BATCH_THRESHOLD) {
+        await this.highRiskImports!.enqueueAuto({ sourceId: id, versionIds: deferredVersionIds }, source.name)
+      } else if (deferredVersionIds.length > 0) {
+        await this.resolveAutoScanBatch({ sourceId: id, versionIds: deferredVersionIds }, true)
+      }
 
       return { source: this.getSummary(id), ...counts }
     } catch (error) {
@@ -1061,39 +1139,83 @@ export class LocalDataService {
   }
 
   private startWatching(source: SourceRow): void {
-    if (!this.verificationTimers.has(source.id)) {
-      this.verificationTimers.set(source.id, setInterval(() => {
-        if (!this.activeScans.has(source.id)) void this.sync(source.id).catch(() => undefined)
-      }, 60_000))
-    }
-    if (this.watchers.has(source.id)) return
+    if (this.shuttingDown || this.watchers.has(source.id)) return
 
     try {
       const connector = this.connectors.get(source.kind)
       if (!connector.watch) return
       const watcher = connector.watch(this.toConnection(source), () => {
-        const existingTimer = this.watchTimers.get(source.id)
-        if (existingTimer) clearTimeout(existingTimer)
-        this.watchTimers.set(source.id, setTimeout(() => {
-          this.watchTimers.delete(source.id)
-          void this.sync(source.id).catch(() => undefined)
-        }, 750))
-      })
-      if (watcher) this.watchers.set(source.id, watcher)
+        this.markSourceDirty(source.id)
+      }, () => this.handleWatcherFailure(source.id))
+      if (watcher) {
+        this.watchers.set(source.id, watcher)
+        const retryTimer = this.watcherRetryTimers.get(source.id)
+        if (retryTimer) clearTimeout(retryTimer)
+        this.watcherRetryTimers.delete(source.id)
+      } else {
+        this.scheduleWatcherRetry(source.id)
+      }
     } catch {
-      // Periodic verification remains active when native watching is unavailable.
+      this.scheduleWatcherRetry(source.id)
     }
   }
 
   private stopWatching(id: string): void {
-    const timer = this.watchTimers.get(id)
-    if (timer) clearTimeout(timer)
-    this.watchTimers.delete(id)
+    const state = this.scanStates.get(id)
+    if (state?.debounceTimer) clearTimeout(state.debounceTimer)
+    this.scanStates.delete(id)
     this.watchers.get(id)?.close()
     this.watchers.delete(id)
-    const verificationTimer = this.verificationTimers.get(id)
-    if (verificationTimer) clearInterval(verificationTimer)
-    this.verificationTimers.delete(id)
+    const retryTimer = this.watcherRetryTimers.get(id)
+    if (retryTimer) clearTimeout(retryTimer)
+    this.watcherRetryTimers.delete(id)
+  }
+
+  private scanState(id: string): { dirty: boolean; debounceTimer: ReturnType<typeof setTimeout> | null } {
+    let state = this.scanStates.get(id)
+    if (!state) {
+      state = { dirty: false, debounceTimer: null }
+      this.scanStates.set(id, state)
+    }
+    return state
+  }
+
+  private markSourceDirty(id: string): void {
+    if (this.shuttingDown || this.disconnectingSources.has(id)) return
+    const state = this.scanState(id)
+    state.dirty = true
+    if (!this.activeScans.has(id)) this.scheduleScan(id)
+  }
+
+  private scheduleScan(id: string): void {
+    if (this.shuttingDown || this.disconnectingSources.has(id)) return
+    const state = this.scanState(id)
+    if (state.debounceTimer) clearTimeout(state.debounceTimer)
+    state.debounceTimer = setTimeout(() => {
+      state.debounceTimer = null
+      if (!state.dirty || this.shuttingDown || this.disconnectingSources.has(id)) return
+      void this.sync(id).catch(() => undefined)
+    }, 750)
+  }
+
+  private handleWatcherFailure(id: string): void {
+    if (this.shuttingDown || this.disconnectingSources.has(id)) return
+    this.watchers.delete(id)
+    this.markSourceDirty(id)
+    this.scheduleWatcherRetry(id)
+  }
+
+  private scheduleWatcherRetry(id: string): void {
+    if (this.shuttingDown || this.disconnectingSources.has(id) || this.watcherRetryTimers.has(id)) return
+    this.watcherRetryTimers.set(id, setTimeout(() => {
+      this.watcherRetryTimers.delete(id)
+      try {
+        const source = this.requireSource(id)
+        if (source.status !== 'paused' && !source.disconnected_at) this.startWatching(source)
+      } catch {
+        // The source may have been removed while the retry was pending.
+      }
+    }, 5_000))
   }
 
   private hashItem(item: ConnectorItem): Promise<string> {
@@ -1196,7 +1318,8 @@ export class LocalDataService {
     item: ConnectorItem,
     hash: string,
     shouldExport: boolean,
-  ): void {
+    deferExport = false,
+  ): string {
     const itemId = randomUUID()
     const now = new Date().toISOString()
     this.database.prepare(`
@@ -1223,7 +1346,7 @@ export class LocalDataService {
       now,
       now,
     )
-    this.insertVersion(dataSourceId, itemId, item, hash, shouldExport)
+    return this.insertVersion(dataSourceId, itemId, item, hash, shouldExport, deferExport)
   }
 
   private recordItemChange(
@@ -1291,20 +1414,64 @@ export class LocalDataService {
     item: ConnectorItem,
     hash: string,
     shouldExport: boolean,
-  ): void {
+    deferExport = false,
+  ): string {
     const versionId = randomUUID()
     this.database.prepare(`
       INSERT INTO source_versions (
-        id, source_item_id, content_hash, object_hash, size, source_modified_at, captured_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(versionId, itemId, hash, hash, item.byteSize, item.modifiedAt, new Date().toISOString())
-    if (!shouldExport && isLocalParseableExtension(item.extension)) this.evidence.enqueueVersion(versionId, item.extension)
+        id, source_item_id, content_hash, object_hash, size, source_modified_at, import_policy, captured_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      versionId,
+      itemId,
+      hash,
+      hash,
+      item.byteSize,
+      item.modifiedAt,
+      deferExport ? 'pending' : 'normal',
+      new Date().toISOString(),
+    )
+    if (!shouldExport && !deferExport && isLocalParseableExtension(item.extension)) {
+      this.evidence.enqueueVersion(versionId, item.extension)
+    }
     if (shouldExport && this.fileExports) {
       this.database.prepare(`
         INSERT OR IGNORE INTO source_exports (source_version_id, status, updated_at)
         VALUES (?, 'pending', ?)
       `).run(versionId, new Date().toISOString())
     }
+    return versionId
+  }
+
+  private async resolveAutoScanBatch(
+    batch: PendingAutoScanBatch,
+    accepted: boolean,
+  ): Promise<HighRiskImportResolution> {
+    const findVersion = this.database.prepare(`
+      SELECT source_versions.id
+      FROM source_versions
+      JOIN source_items ON source_items.id = source_versions.source_item_id
+      WHERE source_versions.id = ? AND source_items.data_source_id = ?
+        AND source_items.state = 'present'
+        AND source_items.modified_at = source_versions.source_modified_at
+        AND source_versions.import_policy = 'pending'
+    `)
+    const updatePolicy = this.database.prepare(
+      'UPDATE source_versions SET import_policy = ? WHERE id = ?',
+    )
+    const enqueue = this.database.prepare(`
+      INSERT OR IGNORE INTO source_exports (source_version_id, status, updated_at)
+      VALUES (?, 'pending', ?)
+    `)
+    let processed = 0
+    for (const versionId of batch.versionIds) {
+      if (!findVersion.get(versionId, batch.sourceId)) continue
+      updatePolicy.run(accepted ? 'approved' : 'rejected', versionId)
+      if (accepted) enqueue.run(versionId, new Date().toISOString())
+      processed += 1
+    }
+    if (accepted && processed > 0) this.kickExportWorker()
+    return { accepted, imported: accepted ? processed : 0, failed: batch.versionIds.length - processed }
   }
 
   private kickExportWorker(): void {

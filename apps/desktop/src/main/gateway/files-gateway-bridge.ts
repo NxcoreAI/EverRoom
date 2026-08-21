@@ -8,11 +8,20 @@ import type {
   FileFormatCapabilityDto,
   FileImportAcceptedDto,
   FileImportOutcome,
+  HighRiskImportResolution,
   IngestPipelines,
 } from '../../shared/ingest'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
-import { isIgnoredLocalDirectory } from '../file-format-policy'
+import {
+  HIGH_RISK_FILE_BATCH_THRESHOLD,
+  isIgnoredLocalDirectory,
+  isLowRiskFileExtension,
+} from '../file-format-policy'
+import type {
+  HighRiskImportQueue,
+  PendingManualImportBatch,
+} from '../high-risk-import-coordinator'
 
 export interface ImportCandidate {
   filePath: string
@@ -20,14 +29,21 @@ export interface ImportCandidate {
 }
 
 const DEFAULT_IMPORT_EXTENSIONS = new Set([
-  '.csv', '.docx', '.html', '.htm', '.md', '.markdown', '.mdx', '.pptx', '.text', '.txt', '.xlsx',
+  '.csv', '.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm', '.html', '.htm', '.md', '.markdown',
+  '.mdx', '.odt', '.ods', '.odp', '.pdf', '.pot', '.potx', '.potm', '.pps', '.ppsx', '.ppsm', '.ppt',
+  '.pptx', '.pptm', '.rtf', '.sldx', '.sldm', '.text', '.txt', '.xls', '.xla', '.xlam', '.xlsb',
+  '.xlsx', '.xlsm', '.xlt', '.xltx', '.xltm',
 ])
+
+interface ImportCollectionPlan {
+  candidates: ImportCandidate[]
+}
 
 function isSupportedImportFile(filePath: string, extensions: ReadonlySet<string>): boolean {
   return extensions.has(extname(filePath).toLowerCase())
 }
 
-async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<string>): Promise<ImportCandidate[]> {
+async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<string>): Promise<ImportCollectionPlan> {
   const rootPath = resolve(directory)
   const candidates: ImportCandidate[] = []
   const visit = async (currentDirectory: string, isRoot = false): Promise<void> => {
@@ -44,20 +60,22 @@ async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<
       if (entry.isDirectory()) {
         if (isIgnoredLocalDirectory(entry.name)) continue
         await visit(filePath)
-      } else if (entry.isFile() && isSupportedImportFile(filePath, extensions)) {
-        candidates.push({ filePath, filename: relative(rootPath, filePath).split(sep).join('/') })
+      } else if (entry.isFile()) {
+        if (isSupportedImportFile(filePath, extensions)) {
+          candidates.push({ filePath, filename: relative(rootPath, filePath).split(sep).join('/') })
+        }
       }
     }
   }
   await visit(rootPath, true)
   candidates.sort((left, right) => left.filename.localeCompare(right.filename))
-  return candidates
+  return { candidates }
 }
 
-export async function collectImportCandidates(
+export async function collectImportPlan(
   selectedPaths: string[],
   extensions: ReadonlySet<string> = DEFAULT_IMPORT_EXTENSIONS,
-): Promise<ImportCandidate[]> {
+): Promise<{ candidates: ImportCandidate[]; highRiskFileCount: number }> {
   const candidates: ImportCandidate[] = []
   const seen = new Set<string>()
   for (const selectedPath of selectedPaths) {
@@ -70,10 +88,24 @@ export async function collectImportCandidates(
     } catch {
       continue
     }
-    if (selectedStat.isDirectory()) candidates.push(...await collectDirectoryFiles(resolvedPath, extensions))
+    if (selectedStat.isDirectory()) {
+      const plan = await collectDirectoryFiles(resolvedPath, extensions)
+      candidates.push(...plan.candidates)
+    }
     else if (selectedStat.isFile() && isSupportedImportFile(resolvedPath, extensions)) candidates.push({ filePath: resolvedPath, filename: basename(resolvedPath) })
   }
-  return [...new Map(candidates.map((candidate) => [resolve(candidate.filePath), candidate])).values()]
+  const uniqueCandidates = [...new Map(candidates.map((candidate) => [resolve(candidate.filePath), candidate])).values()]
+  return {
+    candidates: uniqueCandidates,
+    highRiskFileCount: uniqueCandidates.filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath))).length,
+  }
+}
+
+export async function collectImportCandidates(
+  selectedPaths: string[],
+  extensions: ReadonlySet<string> = DEFAULT_IMPORT_EXTENSIONS,
+): Promise<ImportCandidate[]> {
+  return (await collectImportPlan(selectedPaths, extensions)).candidates
 }
 
 /**
@@ -82,7 +114,12 @@ export async function collectImportCandidates(
  * 与 KnowledgeGatewayBridge 同构（Bearer token 只在主进程）。
  */
 export class FilesGatewayBridge {
-  constructor(private readonly supervisor: GatewaySupervisor) {}
+  constructor(
+    private readonly supervisor: GatewaySupervisor,
+    private readonly highRiskImports: HighRiskImportQueue | null = null,
+  ) {
+    this.highRiskImports?.setManualResolver((batch, accepted) => this.resolveManualBatch(batch, accepted))
+  }
 
   list(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
@@ -149,6 +186,15 @@ export class FilesGatewayBridge {
     shell.showItemInFolder(storagePath)
   }
 
+  /** 使用操作系统为该文件类型配置的默认查看器打开文件本体。 */
+  async openOriginal(fileId: string): Promise<void> {
+    const { storagePath } = await this.request<{ storagePath: string }>(
+      `/v1/files/${encodeURIComponent(fileId)}/storage`,
+    )
+    const error = await shell.openPath(storagePath)
+    if (error) throw new Error(error)
+  }
+
   /**
    * 统一导入（用户主路径）：系统选择框 → 逐文件 multipart 上传（唯一字节
    * 入口）→ ref 形态进引擎。失败互不影响，逐行回报。
@@ -164,7 +210,7 @@ export class FilesGatewayBridge {
       filters: [
         {
           name: desktopText('dialog.importFiles.documents'),
-          extensions: ['md', 'markdown', 'mdx', 'txt', 'text', 'docx', 'xlsx', 'pptx', 'csv', 'html', 'htm'],
+          extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -183,13 +229,48 @@ export class FilesGatewayBridge {
   }): Promise<FileImportOutcome[]> {
     if (!Array.isArray(selectedPaths) || selectedPaths.length === 0) return []
 
-    const outcomes: FileImportOutcome[] = []
     const manualExtensions = new Set((await this.capabilities()).items
       .filter((item) => item.manualImport).map((item) => item.extension))
-    const candidates = await collectImportCandidates(
+    const importPlan = await collectImportPlan(
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
       manualExtensions,
     )
+    let candidates = importPlan.candidates
+    if (importPlan.highRiskFileCount > HIGH_RISK_FILE_BATCH_THRESHOLD && this.highRiskImports) {
+      const lowRiskCandidates = candidates.filter((candidate) => isLowRiskFileExtension(extname(candidate.filePath)))
+      const highRiskCandidates = candidates.filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath)))
+      await this.highRiskImports.enqueueManual({
+        files: highRiskCandidates,
+        ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
+        ...(options?.roomId ? { roomId: options.roomId } : {}),
+      }, basename(resolve(selectedPaths[0]!)))
+      candidates = lowRiskCandidates
+    }
+
+    return this.importCandidates(candidates, options)
+  }
+
+  private async resolveManualBatch(
+    batch: PendingManualImportBatch,
+    accepted: boolean,
+  ): Promise<HighRiskImportResolution> {
+    if (!accepted) return { accepted: false, imported: 0, failed: 0 }
+    const outcomes = await this.importCandidates(batch.files, {
+      ...(batch.pipelines ? { pipelines: batch.pipelines } : {}),
+      ...(batch.roomId ? { roomId: batch.roomId } : {}),
+    })
+    return {
+      accepted: true,
+      imported: outcomes.filter((outcome) => outcome.fileId !== null).length,
+      failed: outcomes.filter((outcome) => outcome.error !== null).length,
+    }
+  }
+
+  private async importCandidates(candidates: ImportCandidate[], options?: {
+    pipelines?: IngestPipelines
+    roomId?: string
+  }): Promise<FileImportOutcome[]> {
+    const outcomes: FileImportOutcome[] = []
     for (const { filePath, filename } of candidates) {
       try {
         const uploaded = await this.importPath({

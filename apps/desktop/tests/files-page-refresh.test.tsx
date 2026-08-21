@@ -97,4 +97,106 @@ describe('FilesPage catalog refresh', () => {
     expect(list).toHaveBeenCalledTimes(4)
     expect(list.mock.calls.filter(([, offset]) => offset === 200)).toHaveLength(1)
   })
+
+  it('restores drag import when a desktop directory is exposed through dataTransfer.items', async () => {
+    const importedFile = { name: 'notes.md' } as File
+    const importDropped = vi.fn().mockResolvedValue([{
+      filename: 'notes.md',
+      fileId: 'file-1',
+      eventId: null,
+      dataType: null,
+      deduped: false,
+      pipelines: null,
+      memoryResult: null,
+      routeJobId: 'job-1',
+      error: null,
+    }])
+    const list = vi.fn().mockResolvedValue({ items: [], total: 0 })
+    const listEvents = vi.fn().mockResolvedValue({ items: [], total: 0 })
+    vi.stubGlobal('window', {
+      nxcore: {
+        files: { list, importDropped },
+        ingest: { listEvents },
+      },
+      setInterval: vi.fn(() => 1),
+      clearInterval: vi.fn(),
+    })
+    vi.stubGlobal('document', {
+      hidden: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+
+    await act(async () => {
+      renderer = TestRenderer.create(<FilesPage />)
+    })
+
+    const dropTarget = renderer!.root.findByProps({ className: 'page files-page-drop-target' })
+    await act(async () => {
+      await dropTarget.props.onDrop({
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        dataTransfer: {
+          types: ['Files'],
+          files: [],
+          items: [{ kind: 'file', getAsFile: () => importedFile }],
+        },
+      })
+    })
+
+    expect(importDropped).toHaveBeenCalledWith([importedFile])
+  })
+
+  it('walks a directory entry when the drag payload has no FileList entries', async () => {
+    const importedFile = { name: 'nested.md' } as File
+    const importDropped = vi.fn().mockResolvedValue([])
+    vi.stubGlobal('window', {
+      nxcore: {
+        files: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }), importDropped },
+        ingest: { listEvents: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
+      },
+      setInterval: vi.fn(() => 1),
+      clearInterval: vi.fn(),
+    })
+    vi.stubGlobal('document', {
+      hidden: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+
+    await act(async () => {
+      renderer = TestRenderer.create(<FilesPage />)
+    })
+    const directoryEntry = {
+      isDirectory: true,
+      isFile: false,
+      createReader: () => {
+        let read = false
+        return {
+          readEntries: (resolve: (entries: unknown[]) => void) => {
+            resolve(read ? [] : [{
+              isDirectory: false,
+              isFile: true,
+              file: (onFile: (file: File) => void) => onFile(importedFile),
+            }])
+            read = true
+          },
+        }
+      },
+    }
+    const dropTarget = renderer!.root.findByProps({ className: 'page files-page-drop-target' })
+    await act(async () => {
+      await dropTarget.props.onDrop({
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        dataTransfer: {
+          types: ['Files'],
+          files: [],
+          items: [{ kind: 'file', getAsFile: () => null, webkitGetAsEntry: () => directoryEntry }],
+        },
+      })
+    })
+
+    expect(importDropped).toHaveBeenCalledWith([importedFile])
+  })
 })

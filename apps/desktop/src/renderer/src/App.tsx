@@ -9,6 +9,7 @@ import {
 } from '@/components/agent/agentNavigation'
 import { AppErrorDialog } from '@/components/AppErrorDialog'
 import { AppToast } from '@/components/AppToast'
+import { HighRiskImportReview } from '@/components/HighRiskImportReview'
 import { PageCanvas } from '@/components/PageCanvas'
 import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
@@ -436,6 +437,7 @@ export function App() {
           focusRequest={agentFocusRequest}
         />
       ) : null}
+      <HighRiskImportReview />
       <AppToast />
       <AppErrorDialog />
       </div>

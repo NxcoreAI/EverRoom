@@ -78,6 +78,20 @@ export interface FileImportOutcome {
   error: string | null
 }
 
+export interface HighRiskImportReview {
+  id: string
+  origin: 'manual-import' | 'auto-scan'
+  sourceLabel: string
+  fileCount: number
+  createdAt: string
+}
+
+export interface HighRiskImportResolution {
+  accepted: boolean
+  imported: number
+  failed: number
+}
+
 export interface IngestResultDto {
   eventId: string
   deduped: boolean
