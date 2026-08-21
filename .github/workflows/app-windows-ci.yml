@@ -42,7 +42,7 @@ jobs:
       - name: Run tests
         id: tests
         continue-on-error: true
-        run: pnpm test
+        run: pnpm test:ci
 
       - name: Build gateway and desktop
         id: build

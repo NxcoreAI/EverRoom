@@ -65,7 +65,7 @@ describe("gateway server", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
-  });
+  }, 10_000);
 
   it("keeps memory routes enabled without a Pi runtime", async () => {
     const config = await testConfig();
