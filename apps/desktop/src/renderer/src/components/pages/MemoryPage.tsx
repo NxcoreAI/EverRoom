@@ -6,6 +6,7 @@ import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
 import { ConversationPane } from './memory/ConversationPane'
 import { CoreProfilePane } from './memory/CoreProfilePane'
 import { DocumentPane } from './memory/DocumentPane'
+import { FilterRulesPane } from './memory/FilterRulesPane'
 import { MemoryDisabledView, MemoryUnreachableView } from './memory/MemoryStatusViews'
 import type { MemorySearchResult } from './memory/MemorySearchResults'
 import { MemorySearchResults } from './memory/MemorySearchResults'
@@ -23,6 +24,8 @@ const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'atomic', label: 'memory:memory.atomicMemory', level: 'L1' },
   { id: 'scenario', label: 'memory:memory.scenarios', level: 'L2' },
   { id: 'core', label: 'memory:memory.profile', level: 'L3' },
+  // 过滤规则不是记忆层，是记忆相关的管线配置（过滤器 agent 判定偏好）
+  { id: 'filter-rules', label: 'memory:memory.filterRules', level: '' },
 ]
 
 export function MemoryPage() {
@@ -167,6 +170,7 @@ export function MemoryPage() {
           ) : null}
           {tab === 'scenario' ? <ScenarioPane /> : null}
           {tab === 'core' ? <CoreProfilePane /> : null}
+          {tab === 'filter-rules' ? <FilterRulesPane /> : null}
           {tab === 'conversation' ? (
             <ConversationPane focusSessionId={conversationFocus} />
           ) : null}

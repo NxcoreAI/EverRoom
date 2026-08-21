@@ -1,10 +1,12 @@
-import type { IngestEventDto } from '../../shared/ingest'
+import type { IngestEventDto, IngestFilterRulesDto } from '../../shared/ingest'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
 /**
  * 统一理解引擎的台账读取面（unified-ingest-plan §9，导入记录页数据源）。
  * 策略不在桌面端管理：defaults 在 gateway 代码注册表，覆盖走部署期配置文件
  * （<dataDir>/ingest-policies.json），REST 只有只读展示。
+ * 过滤规则文档例外（ingest-filter-agent-plan §4.3）：偏好段是用户地盘，
+ * 桌面端可读可写（记忆页「过滤规则」入口）。
  */
 export class IngestGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
@@ -22,6 +24,19 @@ export class IngestGatewayBridge {
     if (query.sourceId) params.set('sourceId', query.sourceId)
     const suffix = params.size > 0 ? `?${params}` : ''
     return this.request(`/v1/ingest${suffix}`)
+  }
+
+  /** 过滤规则文档（用户偏好段 + 系统洞察段）。 */
+  getFilterRules(): Promise<IngestFilterRulesDto> {
+    return this.request('/v1/ingest/filter/rules')
+  }
+
+  /** 只重写用户偏好段（系统洞察段由洞察 job 维护，用户只读）。 */
+  updateFilterPreference(content: string): Promise<IngestFilterRulesDto> {
+    return this.request('/v1/ingest/filter/rules/preference', {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    })
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

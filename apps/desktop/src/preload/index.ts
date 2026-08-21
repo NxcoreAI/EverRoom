@@ -442,6 +442,9 @@ const api: NxcoreDesktopApi = {
       sourceKind?: string
       sourceId?: string
     }) => invoke('ingest:events:list', query),
+    getFilterRules: () => invoke('ingest:filter-rules:get'),
+    updateFilterPreference: (content: string) =>
+      invoke('ingest:filter-rules:update-preference', content),
   },
 }
 

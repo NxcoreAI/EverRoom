@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { IngestError } from "./types.js";
 import type { IngestEventDto, IngestService } from "./service.js";
 import { listPolicyViews } from "./policy.js";
+import { FilterRulesError, type FilterRulesStore } from "./rules.js";
 
 const PipelinesSchema = Type.Object({
   room: Type.Boolean(),
@@ -140,6 +141,12 @@ const PolicyViewSchema = Type.Object({
 
 const ErrorSchema = Type.Object({ error: Type.String(), message: Type.String() });
 
+const FilterRulesSchema = Type.Object({
+  preference: Type.String(),
+  insight: Type.String(),
+  updatedAt: Type.Union([Type.String(), Type.Null()]),
+});
+
 const errorCodes = ["source_required", "source_conflict", "path_unreadable", "ref_not_found",
   "unsupported_type", "unknown_data_type", "invalid_pipelines", "no_pipelines",
   "convert_failed", "empty_content", "router_disabled", "not_filtered", "parsed_missing"] as const;
@@ -152,13 +159,20 @@ const ErrorResponse = Type.Object({
 /**
  * 统一理解引擎 REST（unified-ingest-plan §9）：POST /v1/ingest 是接入面
  * 唯一入口（path 或 ref，U8）；台账查询与策略只读展示（覆盖走配置文件，
- * 部署期改，无写接口）。
+ * 部署期改，无写接口）。过滤规则文档例外：偏好段是用户地盘，有读写 API。
  */
-export function ingestRoutes(service: IngestService): FastifyPluginAsyncTypebox {
+export function ingestRoutes(
+  service: IngestService,
+  filterRules?: FilterRulesStore | null,
+  refreshInsight?: (() => Promise<void>) | null,
+): FastifyPluginAsyncTypebox {
   return async (app) => {
     // IngestError → {error, message} + 对应状态码；其余（AJV 校验等）走默认
     app.setErrorHandler(async (error, _request, reply) => {
       if (error instanceof IngestError) {
+        return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+      }
+      if (error instanceof FilterRulesError) {
         return reply.code(error.statusCode).send({ error: error.code, message: error.message });
       }
       return reply.send(error);
@@ -258,5 +272,50 @@ export function ingestRoutes(service: IngestService): FastifyPluginAsyncTypebox 
         return event;
       },
     );
+
+    // ───────────────── 过滤规则文档（ingest-filter-agent-plan §4.3） ─────────────────
+
+    if (filterRules) {
+      app.get(
+        "/v1/ingest/filter/rules",
+        {
+          schema: {
+            tags: ["ingest"],
+            response: { 200: FilterRulesSchema },
+          },
+        },
+        async () => filterRules.load(),
+      );
+
+      // 偏好段是用户地盘：只重写 user-preference 标记段（洞察段由系统维护）
+      app.put(
+        "/v1/ingest/filter/rules/preference",
+        {
+          schema: {
+            tags: ["ingest"],
+            body: Type.Object({ content: Type.String({ minLength: 1, maxLength: 8_192 }) }),
+            response: { 200: FilterRulesSchema },
+          },
+        },
+        async (request) => filterRules.updatePreference(request.body.content),
+      );
+
+      if (refreshInsight) {
+        // 手动触发洞察维护（调试/运维用；与定时 job 同一互斥）
+        app.post(
+          "/v1/ingest/filter/rules/insight/refresh",
+          {
+            schema: {
+              tags: ["ingest"],
+              response: { 200: Type.Object({ refreshed: Type.Boolean() }) },
+            },
+          },
+          async () => {
+            await refreshInsight();
+            return { refreshed: true };
+          },
+        );
+      }
+    }
   };
 }

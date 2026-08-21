@@ -841,6 +841,10 @@ export interface NxcoreDesktopApi {
       sourceKind?: string
       sourceId?: string
     }): Promise<{ items: IngestEventDto[]; total: number }>
+    /** 过滤规则文档（记忆页「过滤规则」入口）：偏好段 + 洞察段。 */
+    getFilterRules(): Promise<IngestFilterRulesDto>
+    /** 只重写用户偏好段（洞察段由系统维护）。 */
+    updateFilterPreference(content: string): Promise<IngestFilterRulesDto>
   }
 }
 import type {
@@ -866,6 +870,7 @@ import type {
   FileDto,
   FileImportOutcome,
   IngestEventDto,
+  IngestFilterRulesDto,
   IngestPipelines,
 } from './ingest'
 import type { McpServersSnapshot } from './mcp'

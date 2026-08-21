@@ -135,6 +135,12 @@ const RawConfigSchema = Type.Object(
     ingestFilterBatchSize: Type.Integer({ minimum: 1, maximum: 20 }),
     ingestFilterBatchDelayMs: Type.Integer({ minimum: 0 }),
     ingestFilterExemptSourceKinds: Type.String(),
+    ingestFilterToolsEnabled: Type.Boolean(),
+    ingestFilterMaxToolCalls: Type.Integer({ minimum: 0, maximum: 128 }),
+    ingestFilterRulesFile: Type.String(),
+    ingestFilterRulesMaxBytes: Type.Integer({ minimum: 256, maximum: 65_536 }),
+    ingestFilterInsightEnabled: Type.Boolean(),
+    ingestFilterInsightIntervalMs: Type.Integer({ minimum: 60_000 }),
   },
   { additionalProperties: false },
 );
@@ -241,6 +247,18 @@ export interface IngestFilterConfig {
   batchDelayMs: number;
   /** 豁免 sourceKind（用户手写/录音转写内容默认豁免，agent 不判生死）。 */
   exemptSourceKinds: string[];
+  /** 只读 wiki/记忆工具总开关（false = 零工具纯 prompt，现行为）。 */
+  toolsEnabled: boolean;
+  /** 单 run 工具调用上限（过滤器专用 runtime 用）。 */
+  maxToolCalls: number;
+  /** 部署覆盖层规则文档路径。 */
+  rulesFile: string;
+  /** 单段注入截断上限（字节）。 */
+  rulesMaxBytes: number;
+  /** 洞察维护 job 开关。 */
+  insightEnabled: boolean;
+  /** 洞察刷新周期 ms。 */
+  insightIntervalMs: number;
 }
 
 export interface OpenConnectorCliConfig {
@@ -821,6 +839,26 @@ export function loadConfig(
     ),
     ingestFilterExemptSourceKinds: env.NXCORE_INGEST_FILTER_EXEMPT_SOURCE_KINDS?.trim()
       ?? "everroom-doc,reality-event",
+    ingestFilterToolsEnabled: env.NXCORE_INGEST_FILTER_TOOLS_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_INGEST_FILTER_TOOLS_ENABLED", env.NXCORE_INGEST_FILTER_TOOLS_ENABLED.trim()),
+    ingestFilterMaxToolCalls: parsePositiveInteger(
+      "NXCORE_INGEST_FILTER_MAX_TOOL_CALLS",
+      env.NXCORE_INGEST_FILTER_MAX_TOOL_CALLS ?? "8",
+    ),
+    ingestFilterRulesFile: env.NXCORE_INGEST_FILTER_RULES_FILE?.trim()
+      || join(dataDir, "ingest", "filter-rules.md"),
+    ingestFilterRulesMaxBytes: parsePositiveInteger(
+      "NXCORE_INGEST_FILTER_RULES_MAX_BYTES",
+      env.NXCORE_INGEST_FILTER_RULES_MAX_BYTES ?? "2048",
+    ),
+    ingestFilterInsightEnabled: env.NXCORE_INGEST_FILTER_INSIGHT_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_INGEST_FILTER_INSIGHT_ENABLED", env.NXCORE_INGEST_FILTER_INSIGHT_ENABLED.trim()),
+    ingestFilterInsightIntervalMs: parseNonNegativeInteger(
+      "NXCORE_INGEST_FILTER_INSIGHT_INTERVAL_MS",
+      env.NXCORE_INGEST_FILTER_INSIGHT_INTERVAL_MS ?? "3600000",
+    ),
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -1104,6 +1142,12 @@ export function loadConfig(
         .split(",")
         .map((kind) => kind.trim())
         .filter(Boolean),
+      toolsEnabled: rawConfig.ingestFilterToolsEnabled,
+      maxToolCalls: rawConfig.ingestFilterMaxToolCalls,
+      rulesFile: rawConfig.ingestFilterRulesFile,
+      rulesMaxBytes: rawConfig.ingestFilterRulesMaxBytes,
+      insightEnabled: rawConfig.ingestFilterInsightEnabled,
+      insightIntervalMs: rawConfig.ingestFilterInsightIntervalMs,
     },
   };
 }

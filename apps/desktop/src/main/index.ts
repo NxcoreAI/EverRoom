@@ -353,6 +353,8 @@ const FILES_CHANNELS = {
 
 const INGEST_CHANNELS = {
   listEvents: 'ingest:events:list',
+  getFilterRules: 'ingest:filter-rules:get',
+  updateFilterPreference: 'ingest:filter-rules:update-preference',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -982,6 +984,12 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
     INGEST_CHANNELS.listEvents,
     (_event, query: { limit?: number; offset?: number; sourceKind?: string; sourceId?: string }) =>
       bridge.listEvents(query),
+  )
+  // 过滤规则文档（记忆页「过滤规则」入口）：偏好段可读写，洞察段只读。
+  handle(INGEST_CHANNELS.getFilterRules, () => bridge.getFilterRules())
+  handle(
+    INGEST_CHANNELS.updateFilterPreference,
+    (_event, content: string) => bridge.updateFilterPreference(content),
   )
 }
 

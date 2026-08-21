@@ -69,7 +69,7 @@ export function useAsyncData<T>(
   return { ...state, refresh }
 }
 
-export type MemoryTabId = 'overview' | 'conversation' | 'documents' | 'atomic' | 'scenario' | 'core'
+export type MemoryTabId = 'overview' | 'conversation' | 'documents' | 'atomic' | 'scenario' | 'core' | 'filter-rules'
 
 export function useMemoryOverview() {
   return useAsyncData<MemoryOverviewDto>(

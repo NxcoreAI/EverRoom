@@ -233,6 +233,8 @@ describe("IngestFilterService 降级链", () => {
     const config = {
       enabled: true, mode: "enforce" as const, confidenceThreshold: 0.7,
       batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [],
+      toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048,
+      insightEnabled: false, insightIntervalMs: 3_600_000,
     };
     const service = new IngestFilterService(null, null, config, silentLogger);
     const outcome = await service.judgeBatch([{
@@ -246,8 +248,64 @@ describe("IngestFilterService 降级链", () => {
     const config = {
       enabled: true, mode: "enforce" as const, confidenceThreshold: 0.7,
       batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [],
+      toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048,
+      insightEnabled: false, insightIntervalMs: 3_600_000,
     };
     // 直接用内部判定路径：通过 observe 走一遍（不拦截），阈值行为在 agent 输出侧生效
     void config;
+  });
+});
+
+describe("过滤 prompt 偏好化注入", () => {
+  const item: FilterItem = {
+    eventId: "evt-1", title: "t", dataType: "mail", sourceKind: "mail", markdown: "ok",
+  };
+
+  it("注入规则文档两段；toolsEnabled 时附工具指引", async () => {
+    const config = {
+      enabled: true, mode: "observe" as const, confidenceThreshold: 0.7,
+      batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [],
+      toolsEnabled: true, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048,
+      insightEnabled: false, insightIntervalMs: 3_600_000,
+    };
+    const rules = {
+      loadForPrompt: vi.fn().mockResolvedValue({
+        preference: "- 用户的偏好：技术决策必须保留",
+        insight: "- 用户关注 EverRoom",
+      }),
+    } as unknown as import("../src/modules/ingest/rules.js").FilterRulesStore;
+    const service = new IngestFilterService(null, null, config, silentLogger, rules);
+    const prompt = await (service as unknown as {
+      buildPrompt: (items: FilterItem[]) => Promise<string>;
+    }).buildPrompt([item]);
+    expect(prompt).toContain("【过滤规则——用户偏好】");
+    expect(prompt).toContain("技术决策必须保留");
+    expect(prompt).toContain("【过滤规则——系统洞察】");
+    expect(prompt).toContain("用户关注 EverRoom");
+    expect(prompt).toContain("【工具使用】");
+    expect(prompt).toContain("预算 ≤8 次/批");
+    // JSON 协议保留
+    expect(prompt).toContain("只输出一个 JSON 数组");
+    // 兜底语义固定在 engine prompt，不受规则文档影响
+    expect(prompt).toContain("宁漏勿错杀");
+  });
+
+  it("toolsEnabled=false 时零工具指引（与现状等价）", async () => {
+    const config = {
+      enabled: true, mode: "observe" as const, confidenceThreshold: 0.7,
+      batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [],
+      toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048,
+      insightEnabled: false, insightIntervalMs: 3_600_000,
+    };
+    const rules = {
+      loadForPrompt: vi.fn().mockResolvedValue({ preference: "偏好", insight: "洞察" }),
+    } as unknown as import("../src/modules/ingest/rules.js").FilterRulesStore;
+    const service = new IngestFilterService(null, null, config, silentLogger, rules);
+    const prompt = await (service as unknown as {
+      buildPrompt: (items: FilterItem[]) => Promise<string>;
+    }).buildPrompt([item]);
+    expect(prompt).not.toContain("【工具使用】");
+    // 兜底语义在无规则文档路径同样存在（engine prompt 固定段）
+    expect(prompt).toContain("宁漏勿错杀");
   });
 });

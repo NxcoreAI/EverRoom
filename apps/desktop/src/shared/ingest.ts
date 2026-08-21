@@ -69,3 +69,12 @@ export interface IngestEventDto {
   createdAt: string
   updatedAt: string
 }
+
+/** 过滤规则文档（ingest-filter-agent-plan §4.3，记忆页「过滤规则」入口数据源）。 */
+export interface IngestFilterRulesDto {
+  /** 用户偏好段（可编辑，PUT 重写）。 */
+  preference: string
+  /** 系统洞察段（洞察 job 每小时重写，用户只读）。 */
+  insight: string
+  updatedAt: string | null
+}

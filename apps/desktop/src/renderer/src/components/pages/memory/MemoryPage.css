@@ -855,6 +855,19 @@
   color: var(--subtle);
 }
 
+/* 过滤规则（记忆页入口）：偏好段可编辑，洞察段只读 */
+.mem-rules-heading {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mem-rules-hint {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--subtle);
+}
+
 /* L0 对话 */
 .mem-conversation {
   display: flex;
