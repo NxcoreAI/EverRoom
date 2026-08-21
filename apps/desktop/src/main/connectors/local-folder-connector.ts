@@ -58,7 +58,7 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
 
         try {
           const info = await stat(absolutePath)
-          const itemPath = relative(connection.config.rootPath, absolutePath)
+          const itemPath = relative(connection.config.rootPath, absolutePath).split(sep).join('/')
           items.push({
             remoteId: info.ino > 0 ? `${info.dev}:${info.ino}` : itemPath,
             title: basename(itemPath),

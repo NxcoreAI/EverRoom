@@ -73,8 +73,9 @@ describe('Context Room recommendations', () => {
       renderer = TestRenderer.create(<KnowledgePendingPanel />)
     })
 
-    expect(api.listEntities).toHaveBeenCalledTimes(3)
-    expect(api.listEntities).toHaveBeenCalledWith('ready')
+    expect(api.listEntities.mock.calls.map(([status]) => status)).toEqual([
+      'ready', 'promoting', 'weak', 'room',
+    ])
     expect(api.listUnmatched).toHaveBeenCalledOnce()
     expect(api.listRecentDecisions).toHaveBeenCalledOnce()
     expect(renderer!.root.findAllByProps({ className: 'context-room-knowledge-empty' })).toHaveLength(1)

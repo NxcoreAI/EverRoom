@@ -24,7 +24,7 @@ describe("AgentResolver", () => {
     expect(bundles.map(({ id }) => id).sort()).toEqual(Object.values(BUILTIN_AGENT_IDS).sort());
     for (const bundle of bundles) {
       expect(bundle.systemPrompt.length).toBeGreaterThan(0);
-      expect(bundle.directory).toContain(`/agents/${bundle.id}`);
+      expect(bundle.directory).toBe(join(bundledAgentDefinitionsDir(), bundle.id));
     }
   });
 
@@ -49,7 +49,7 @@ describe("AgentResolver", () => {
   });
 
   it("registers model-backed built-ins with isolated config directories", () => {
-    const dataDir = "/tmp/everroom-agent-resolver";
+    const dataDir = join(tmpdir(), "everroom-agent-resolver");
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", dataDir], {
       NXCORE_KNOWLEDGE_ENABLED: "true",
       NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
@@ -79,7 +79,7 @@ describe("AgentResolver", () => {
 
 describe("Agent runtime isolation", () => {
   it("scopes cursor completion sessions, workspace, config and runtime id", () => {
-    const dataDir = "/tmp/everroom-cursor-agent";
+    const dataDir = join(tmpdir(), "everroom-cursor-agent");
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", dataDir], {
       NXCORE_AGENT_RUNTIME: "pi",
       NXCORE_AI_PROVIDER: "openai",

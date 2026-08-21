@@ -843,6 +843,10 @@ export function loadConfig(
     validateAiEndpoint(rawConfig.aiBaseUrl);
   }
 
+  if (rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel) {
+    validateAiEndpoint(rawConfig.vlmBaseUrl, "NXCORE_VLM_BASE_URL");
+  }
+
   if (rawConfig.asrProvider === "aliyun") {
     if (!rawConfig.asrAliyunApiKey) {
       throw new Error("Aliyun ASR requires: NXCORE_ASR_ALIYUN_API_KEY");
