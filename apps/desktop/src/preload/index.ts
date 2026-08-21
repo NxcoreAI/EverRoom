@@ -218,6 +218,14 @@ const api: NxcoreDesktopApi = {
     getPairingSession: (id, options) => options?.quiet ? invokeQuietly('account:get-pairing-session', id) : invoke('account:get-pairing-session', id),
     approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
   },
+  runtimeConfig: {
+    get: () => invoke('runtime-config:get'),
+    saveUser: (input: unknown) => invoke('runtime-config:save-user', input),
+    clearUser: () => invoke('runtime-config:clear-user'),
+    refreshSaas: () => invoke('runtime-config:refresh-saas'),
+    clearSaas: () => invoke('runtime-config:clear-saas'),
+    selectSource: (source: 'user' | 'saas' | 'default') => invoke('runtime-config:select-source', source),
+  },
   asr: {
     requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
     openMicrophoneSettings: () => invoke('asr:open-microphone-settings'),

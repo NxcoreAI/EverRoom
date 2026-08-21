@@ -20,9 +20,15 @@ export class TranscriptionSummaryService {
   private readonly activeJobs = new Set<string>();
 
   constructor(
-    private readonly runtime: AgentRuntime,
+    private runtime: AgentRuntime,
     private readonly disposeRuntime = true,
   ) {}
+
+  async replaceRuntime(runtime: AgentRuntime): Promise<void> {
+    const previous = this.runtime;
+    this.runtime = runtime;
+    if (previous !== runtime) await previous.dispose();
+  }
 
   async summarize(input: TranscriptionSummaryInput): Promise<TranscriptionSummaryOutput> {
     if (this.activeJobs.has(input.jobId)) throw new Error("summary_job_busy");

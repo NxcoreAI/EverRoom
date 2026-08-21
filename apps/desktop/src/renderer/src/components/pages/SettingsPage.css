@@ -91,6 +91,18 @@
   display: block;
 }
 
+.settings-content[data-active-setting='settings-runtime-config'] > #settings-runtime-config { display: block; }
+.runtime-config-meta { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 16px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
+.runtime-config-source-selector { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.runtime-config-source-selector button { border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; color: var(--text); background: var(--surface); cursor: pointer; font-size: 12px; }
+.runtime-config-source-selector button.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.runtime-config-source-selector button:disabled { cursor: not-allowed; opacity: .5; }
+.runtime-config-editor { width: 100%; min-height: 360px; resize: vertical; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--border); color: var(--text); background: var(--surface-alt); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
+.runtime-config-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+.runtime-config-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.runtime-config-actions svg, .runtime-config-message svg { width: 14px; height: 14px; }
+.runtime-config-message { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0 16px 14px; color: var(--muted); font-size: 11px; }
+
 .token-usage-title-row {
   display: flex;
   align-items: center;

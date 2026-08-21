@@ -78,6 +78,48 @@ import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { createSubagentPiTools } from "../modules/subagents/tools.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
+import { RuntimeConfigManager } from "../runtime-config.js";
+import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
+import type { RuntimeConfig } from "../runtime-config.js";
+import { OpenAiCompatibleVlmClient } from "../modules/perception/vlm-client.js";
+
+function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void {
+  const apply = (target: Record<string, unknown> | null | undefined, source: unknown) => {
+    if (!target || !source || typeof source !== "object") return;
+    const value = source as Record<string, unknown>;
+    for (const key of ["provider", "model", "baseUrl", "api", "apiKey", "maxTokens", "contextWindow", "temperature", "reasoning"]) {
+      if (value[key] !== undefined) target[key] = value[key];
+    }
+  };
+  apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
+  apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
+  apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
+  apply(config.webSearch as unknown as Record<string, unknown> | null, runtime.webSearch);
+  apply(config.vlm as unknown as Record<string, unknown> | null, runtime.vlm);
+  if (config.asr && runtime.asr && typeof runtime.asr === "object") {
+    const value = runtime.asr as Record<string, unknown>;
+    for (const key of ["provider", "baseUrl", "model", "apiKey"]) if (value[key] !== undefined) (config.asr as unknown as Record<string, unknown>)[key] = value[key];
+  }
+  if (config.memory && runtime.memory && typeof runtime.memory === "object") {
+    const value = runtime.memory as Record<string, unknown>;
+    for (const key of ["baseUrl", "apiKey", "serviceId", "teamId", "agentId", "userId"]) {
+      if (value[key] !== undefined) (config.memory as unknown as Record<string, unknown>)[key] = value[key];
+    }
+  }
+  if (config.knowledge && runtime.knowledge && typeof runtime.knowledge === "object") {
+    const value = runtime.knowledge as Record<string, unknown>;
+    for (const key of ["baseUrl", "serviceId", "teamId", "wikiId"]) {
+      if (value[key] !== undefined) (config.knowledge as unknown as Record<string, unknown>)[key] = value[key];
+    }
+  }
+}
+
+function createVlmProvider(config: GatewayConfig): OpenAiCompatibleVlmClient | null {
+  const vlm = config.vlm;
+  return vlm && vlm.baseUrl && vlm.apiKey && vlm.model
+    ? new OpenAiCompatibleVlmClient({ baseUrl: vlm.baseUrl, apiKey: vlm.apiKey, model: vlm.model })
+    : null;
+}
 
 function swaggerAssetsDirectory(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -105,6 +147,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
+  const runtimeConfigManager = new RuntimeConfigManager(db);
+  applyRuntimeConfig(config, runtimeConfigManager.snapshot().config);
   const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
   // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
   const nangoSecret = nangoConnectorConfig.enabled ? await bootstrapNango(nangoConnectorConfig) : nangoConnectorConfig.nangoSecret;
@@ -190,7 +234,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(websocket);
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
+  await app.register(runtimeConfigRoutes(runtimeConfigManager));
   const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir });
+  runtimeConfigManager.onChange(() => memoryService.replaceConfig(config.memory));
   const contextRoomService = new ContextRoomService(db);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
@@ -361,10 +407,26 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "background transcription runtime configured",
   );
   const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime, false);
-  const asrProvider = Object.hasOwn(overrides, "asrProvider")
+  let asrProvider = Object.hasOwn(overrides, "asrProvider")
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
+  runtimeConfigManager.onChange((snapshot) => {
+    applyRuntimeConfig(config, snapshot.config);
+    asrProvider = createAsrProvider(config, app.log);
+    asrService.replaceProvider(asrProvider);
+    try {
+      const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
+      void agentService.replaceRuntime(primary.current);
+      const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
+      void transcriptionSummaryService.replaceRuntime(background.current);
+      for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
+        if (agentResolver.has(agentId)) agentResolver.reload(agentId);
+      }
+    } catch (error) {
+      app.log.error({ error: error instanceof Error ? error.message : String(error) }, "runtime config reload failed");
+    }
+  });
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
@@ -384,7 +446,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   fileClusteringService.initialize();
   const diaryService = new DiaryService(db, { logger: app.log });
   diaryService.initialize();
-  const perceptionService = new PerceptionService(db, filesService, null, app.log, (at) => diaryService.markStaleAt(at));
+  const perceptionService = new PerceptionService(db, filesService, createVlmProvider(config), app.log, (at) => diaryService.markStaleAt(at));
+  runtimeConfigManager.onChange(() => perceptionService.replaceVlm(createVlmProvider(config)));
   const purgedUnsupportedFiles = await filesService.purgeUnsupportedFiles();
   if (purgedUnsupportedFiles > 0) {
     app.log.info({ purgedUnsupportedFiles }, "purged unsupported JSON file records");

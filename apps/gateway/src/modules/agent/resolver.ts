@@ -158,6 +158,14 @@ export class AgentResolver {
     return registration.runtime;
   }
 
+  reload(agentId: string): { previous: AgentRuntime | null; current: AgentRuntime } {
+    const registration = this.registrations.get(agentId);
+    if (!registration) throw new Error(`Agent is not registered: ${agentId}`);
+    const previous = registration.runtime;
+    registration.runtime = trackedRuntime(registration.createRuntime(), registration.activity);
+    return { previous, current: registration.runtime };
+  }
+
   getDefinition(agentId: string): AgentDefinition {
     const definition = this.registrations.get(agentId)?.definition;
     if (!definition) throw new Error(`Agent is not registered: ${agentId}`);

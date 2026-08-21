@@ -38,11 +38,13 @@ import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
 import { TokenUsageSettingsSection } from '@/components/settings/TokenUsageSettingsSection'
+import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
+  { id: 'settings-runtime-config', label: '运行时 AI 配置', description: 'SaaS 与本地 JSON 配置', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
   { id: 'settings-memory', label: 'memory:settings.memorySetupTitle', description: 'memory:settings.memorySetupActionBody', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
@@ -716,6 +718,8 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
 
         <McpSettingsSection />
       </div>
+
+      <RuntimeConfigSettingsSection />
 
       <div id="settings-token-usage" className="settings-anchor-section settings-token-usage-group">
         <TokenUsageSettingsSection />

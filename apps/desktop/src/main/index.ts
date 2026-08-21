@@ -25,6 +25,7 @@ import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { RuntimeConfigBridge } from './gateway/runtime-config-bridge'
 import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
@@ -50,7 +51,7 @@ import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -152,6 +153,14 @@ const SOURCE_CHANNELS = {
 
 const GATEWAY_CHANNELS = {
   status: 'gateway:status',
+} as const
+const RUNTIME_CONFIG_CHANNELS = {
+  get: 'runtime-config:get',
+  saveUser: 'runtime-config:save-user',
+  clearUser: 'runtime-config:clear-user',
+  refreshSaas: 'runtime-config:refresh-saas',
+  clearSaas: 'runtime-config:clear-saas',
+  selectSource: 'runtime-config:select-source',
 } as const
 
 const CONNECTOR_CHANNELS = {
@@ -427,6 +436,7 @@ function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
+    RUNTIME_CONFIG_CHANNELS,
     OPEN_CONNECTOR_CHANNELS,
     CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
@@ -464,6 +474,7 @@ function installIpcRouters(): void {
 
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
@@ -710,6 +721,21 @@ function registerGatewayHandlers(): void {
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
   ipcMain.handle(CONNECTOR_CHANNELS.runtimeStatus, () =>
     nangoSupervisor?.getStatus() ?? { state: 'starting', message: null })
+}
+
+function registerRuntimeConfigHandlers(client: SaasClient): void {
+  handle(RUNTIME_CONFIG_CHANNELS.get, () => runtimeConfigBridge?.get())
+  handle(RUNTIME_CONFIG_CHANNELS.saveUser, (_event, input: unknown) => runtimeConfigBridge?.saveUser(input))
+  handle(RUNTIME_CONFIG_CHANNELS.clearUser, () => runtimeConfigBridge?.clearUser())
+  handle(RUNTIME_CONFIG_CHANNELS.refreshSaas, async () => {
+    const config = await client.getRuntimeConfig()
+    return runtimeConfigBridge?.saveSaas(config.config)
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.clearSaas, () => runtimeConfigBridge?.clearSaas())
+  handle(RUNTIME_CONFIG_CHANNELS.selectSource, (_event, source: unknown) => {
+    if (source !== 'user' && source !== 'saas' && source !== 'default') throw new Error('无效的运行时配置来源。')
+    return runtimeConfigBridge?.selectSource(source)
+  })
 }
 
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
@@ -1570,6 +1596,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     void screenshotOutbox.flush()
     perceptionGatewayBridge = new PerceptionGatewayBridge(gatewaySupervisor)
+    runtimeConfigBridge = new RuntimeConfigBridge(gatewaySupervisor)
     diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
     registerPerceptionAndDiaryHandlers()
     const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
@@ -1648,6 +1675,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     privateSyncScheduler = new PrivateSyncScheduler(privateTranscriptionSync, 15_000, publishSyncCompleted)
     const initialAccount = await saasClient.status().catch(() => null)
+    if (initialAccount?.authenticated) {
+      void saasClient.getRuntimeConfig()
+        .then((config) => runtimeConfigBridge?.saveSaas(config.config))
+        .catch((error) => {
+          if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
+            void runtimeConfigBridge?.clearSaas().catch(() => undefined)
+          } else {
+            console.warn('Unable to restore SaaS runtime config', error)
+          }
+        })
+    }
     privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
     if (initialAccount?.authenticated) remoteAgentCommandClient.start()
     privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
@@ -1670,6 +1708,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     let lastAccountId = initialAccount?.user?.id ?? null
     registerAccountHandlers(saasClient, (account) => {
+      if (account.authenticated) {
+        void saasClient?.getRuntimeConfig().then((config) => runtimeConfigBridge?.saveSaas(config.config)).catch((error) => {
+          if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) void runtimeConfigBridge?.clearSaas().catch(() => undefined)
+          else console.warn('Unable to refresh SaaS runtime config', error)
+        })
+      } else {
+        void runtimeConfigBridge?.clearSaas().catch(() => undefined)
+      }
       privateSyncScheduler?.setAuthenticated(account.authenticated)
       if (!account.authenticated) {
         remoteAgentCommandClient?.stop()
@@ -1682,6 +1728,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         agentStatusReporter?.reportNow()
       }
     })
+    registerRuntimeConfigHandlers(saasClient)
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
     registerPrivateAudioHandlers(privateAudioSync)

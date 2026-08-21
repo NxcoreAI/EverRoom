@@ -255,7 +255,7 @@ export interface MemoryImportDocumentResult {
  * 映射为稳定的 camelCase DTO；未配置记忆时所有方法抛 memory_disabled。
  */
 export class MemoryService {
-  private readonly client: MemoryCoreClient | null;
+  private client: MemoryCoreClient | null;
   /** md 导入的资产化通道（modules/files，U9 唯一字节入口）；未配置记忆时为 null。 */
   private readonly files: FilesService | null;
   private readonly db: GatewayDatabase | null;
@@ -274,6 +274,10 @@ export class MemoryService {
 
   get enabled(): boolean {
     return this.client !== null;
+  }
+
+  replaceConfig(config: MemoryRuntimeConfig | null): void {
+    this.client = config ? new MemoryClientWithTimeout(config) : null;
   }
 
   async overview(): Promise<MemoryOverviewDto> {

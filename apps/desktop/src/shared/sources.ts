@@ -381,6 +381,15 @@ export interface PerceptionSettings {
   updatedAt: string
 }
 
+export interface RuntimeConfigSnapshot {
+  config: Record<string, unknown>
+  source: 'user' | 'saas' | 'default'
+  selectedSource: 'user' | 'saas' | 'default'
+  availableSources: Array<'user' | 'saas' | 'default'>
+  configVersion: number
+  updatedAt: string
+}
+
 export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo'
 export type VisualPerceptionStatus = 'disabled' | 'pending' | 'processing' | 'ready' | 'failed'
 
@@ -556,6 +565,14 @@ export interface NxcoreDesktopApi {
   }
   gateway: {
     status(): Promise<GatewayStatus>
+  }
+  runtimeConfig: {
+    get(): Promise<RuntimeConfigSnapshot>
+    saveUser(input: unknown): Promise<RuntimeConfigSnapshot>
+    clearUser(): Promise<RuntimeConfigSnapshot>
+    refreshSaas(): Promise<RuntimeConfigSnapshot | undefined>
+    clearSaas(): Promise<RuntimeConfigSnapshot | undefined>
+    selectSource(source: 'user' | 'saas' | 'default'): Promise<RuntimeConfigSnapshot | undefined>
   }
   nangoConnector: {
     runtimeStatus(): Promise<NangoRuntimeStatus>

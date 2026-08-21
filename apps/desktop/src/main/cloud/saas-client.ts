@@ -85,6 +85,16 @@ export interface AgentStreamCredentials {
   deviceId: string
 }
 
+export interface SaasRuntimeConfig {
+  schemaVersion: number
+  configVersion: number
+  source: 'global' | 'plan' | 'tenant' | 'user'
+  planCode: string
+  planName: string
+  updatedAt: string
+  config: Record<string, unknown>
+}
+
 export interface KeyringResponse {
   userId: string
   initialized: boolean
@@ -311,6 +321,11 @@ export class SaasClient {
     await this.initialize()
     this.requireLogin()
     return this.request<CloudDevice[]>('/app/devices')
+  }
+
+  async getRuntimeConfig(): Promise<SaasRuntimeConfig> {
+    await this.initialize()
+    return this.request<SaasRuntimeConfig>('/app/runtime-config')
   }
 
   async reportAgentStatus(input: {

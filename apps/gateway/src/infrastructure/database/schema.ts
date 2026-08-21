@@ -32,6 +32,16 @@ export const gatewayMetadata = sqliteTable("gateway_metadata", {
     .$defaultFn(() => new Date()),
 });
 
+export const runtimeConfigStore = sqliteTable("runtime_config_store", {
+  source: text("source", { enum: ["user", "saas"] }).primaryKey(),
+  payload: text("payload", { mode: "json" }).notNull(),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  configVersion: integer("config_version").notNull().default(1),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const jobs = sqliteTable(
   "jobs",
   {
