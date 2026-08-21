@@ -185,7 +185,7 @@ export interface PiRuntimeConfig {
   systemPrompt?: string;
   runtimeRole?: "user-facing" | "internal";
   skillsEnabled?: boolean;
-  additionalSkillPaths?: string[];
+  skillPrompts?: Record<string, string>;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
   /** Pi 内置工具白名单；缺省启用全部，NXCORE_PI_TOOLS（逗号分隔）收窄。 */

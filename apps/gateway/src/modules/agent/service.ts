@@ -887,10 +887,12 @@ export class AgentService {
 
     // Selection and clarification controls are driven by completed tool events.
     // Emit those preflights deterministically instead of relying on model behavior.
-    const documentTopic = !runRoomId
+    // toolsEnabled=false 的运行是内部纯文本调用（选区重写/续写），不触发 UI 预检。
+    const interactiveRun = input.toolsEnabled !== false;
+    const documentTopic = interactiveRun && !runRoomId
       ? ambiguousDocumentTopic(input.prompt)
       : null;
-    const preflightTool = !runRoomId && requestsWorkspaceDocument(input.prompt)
+    const preflightTool = interactiveRun && !runRoomId && requestsWorkspaceDocument(input.prompt)
       ? {
           name: "context_room_list",
           result: { rooms, selectionRequired: true },

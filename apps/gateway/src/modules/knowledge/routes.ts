@@ -50,6 +50,37 @@ const MaterialDto = Type.Object({
   ingested: Type.Boolean(),
 });
 
+const RoomContextDto = Type.Object({
+  roomId: Type.String(),
+  generatedAt: Type.String(),
+  sourceDocuments: Type.Array(Type.Object({
+    documentId: Type.String(),
+    title: Type.String(),
+    version: Type.Integer(),
+    updatedAt: Type.String(),
+  })),
+  overview: Type.String(),
+  status: Type.String(),
+  nextSteps: Type.Array(Type.String()),
+  entities: Type.Array(Type.Object({
+    name: Type.String(),
+    kind: Type.String(),
+    description: Type.String(),
+  })),
+  actionItems: Type.Array(Type.Object({
+    title: Type.String(),
+    owner: Type.Union([Type.String(), Type.Null()]),
+    dueDate: Type.Union([Type.String(), Type.Null()]),
+    sourceTitle: Type.String(),
+  })),
+  meetings: Type.Array(Type.Object({
+    title: Type.String(),
+    when: Type.String(),
+    participants: Type.Array(Type.String()),
+    sourceTitle: Type.String(),
+  })),
+});
+
 const EntrySignalsSchema = Type.Object({
   sourceTag: Type.Optional(Type.String({ maxLength: 200 })),
   threadId: Type.Optional(Type.String({ maxLength: 200 })),
@@ -494,6 +525,18 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           updatedAt: iso(material.updatedAt),
         })),
       }),
+    );
+
+    app.get(
+      "/v1/knowledge/rooms/:id/context",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: RoomIdParams,
+          response: { 200: RoomContextDto },
+        },
+      },
+      async (request) => service.roomContext(request.params.id),
     );
 
     app.get(

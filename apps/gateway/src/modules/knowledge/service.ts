@@ -34,7 +34,9 @@ import { convertUploadedFile } from "./file-convert.js";
 import {
   KnowledgeLlm,
   type RegisterResult,
+  type RoomContextResult,
 } from "./llm.js";
+import { tiptapToMarkdown } from "./tiptap-markdown.js";
 import { OpenAiCompletionAgentRuntime } from "../agent/openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS } from "../agent/resolver.js";
 import { loadBuiltinAgentBundle } from "../agent/builtin-bundles.js";
@@ -379,6 +381,7 @@ export class KnowledgeService {
   private readonly entityRegistry: EntityRegistry;
   private readonly router: KnowledgeRouter;
   private readonly llm: KnowledgeLlm | null;
+  private readonly roomContextCache = new Map<string, { key: string; value: RoomContextSummary }>();
   private readonly ownedAgentResolver: AgentResolver | null;
   /** 字节与登记表的唯一所有者是 modules/files（U9）；此处仅编排路由/ingest。 */
   private readonly files: FilesService;
@@ -2468,4 +2471,81 @@ export class KnowledgeService {
       ingested: ingested.has(document.id),
     }));
   }
+
+  /** Room 详情投影：资料集合是事实源，LLM 只负责汇总，不直接改用户 Room 数据。 */
+  async roomContext(roomId: string): Promise<RoomContextSummary> {
+    const rows = this.db.select({ document: documents })
+      .from(roomDocumentLinks)
+      .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
+      .where(and(eq(roomDocumentLinks.roomId, roomId), isNull(documents.deletedAt)))
+      .orderBy(desc(documents.updatedAt))
+      .all()
+      .filter(({ document }) => document.status === "active");
+    const sourceDocuments = rows.map(({ document }) => ({
+      documentId: document.id,
+      title: document.title,
+      version: document.version,
+      updatedAt: document.updatedAt.toISOString(),
+    }));
+    const key = sourceDocuments.map((item) => `${item.documentId}:${item.version}`).join(" ");
+    const cached = this.roomContextCache.get(roomId);
+    if (cached?.key === key) return cached.value;
+
+    const fallbackStatus = sourceDocuments.length > 0
+      ? `已收录 ${sourceDocuments.length} 份文档，最新资料《${sourceDocuments[0]!.title}》已更新。`
+      : "";
+    let context: RoomContextResult = {
+      overview: fallbackStatus,
+      status: fallbackStatus,
+      nextSteps: [],
+      entities: [],
+      actionItems: [],
+      meetings: [],
+    };
+    let cacheable = !this.llm || rows.length === 0;
+    if (this.llm && rows.length > 0) {
+      const room = this.db.select({ title: rooms.title }).from(rooms).where(eq(rooms.id, roomId)).get();
+      try {
+        const generated = await this.llm.summarizeRoom(
+          room?.title ?? roomId,
+          rows.map(({ document }) => ({
+            title: document.title,
+            markdown: tiptapToMarkdown(document.contentJson as TiptapJsonContent),
+          })),
+        );
+        const sourceTitles = new Set(sourceDocuments.map((document) => document.title));
+        context = {
+          ...generated,
+          status: generated.status || fallbackStatus,
+          actionItems: generated.actionItems.filter((item) => sourceTitles.has(item.sourceTitle)),
+          meetings: generated.meetings.filter((item) => sourceTitles.has(item.sourceTitle)),
+        };
+        cacheable = true;
+      } catch (error) {
+        this.logger.warn(
+          { event: "knowledge.room_context.failed", roomId, error: error instanceof Error ? error.message : String(error) },
+          "Room context refresh failed; using document fallback",
+        );
+      }
+    }
+    const value: RoomContextSummary = {
+      roomId,
+      generatedAt: new Date().toISOString(),
+      sourceDocuments,
+      ...context,
+    };
+    if (cacheable) this.roomContextCache.set(roomId, { key, value });
+    return value;
+  }
+}
+
+export interface RoomContextSummary extends RoomContextResult {
+  roomId: string;
+  generatedAt: string;
+  sourceDocuments: Array<{
+    documentId: string;
+    title: string;
+    version: number;
+    updatedAt: string;
+  }>;
 }
