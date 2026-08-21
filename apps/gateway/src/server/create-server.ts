@@ -190,7 +190,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(websocket);
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
-  const memoryService = new MemoryService(config.pi?.memory ?? null, app.log, { db, dataDir: config.dataDir });
+  const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir });
   const contextRoomService = new ContextRoomService(db);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);

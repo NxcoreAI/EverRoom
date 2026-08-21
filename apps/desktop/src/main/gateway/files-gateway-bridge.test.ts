@@ -41,7 +41,7 @@ describe('collectImportCandidates', () => {
   })
 
   it('ignores dependency and build directories during a one-time directory scan', async () => {
-    const directory = await mkdtemp(join('/tmp', 'everroom-import-ignored-'))
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-ignored-'))
     temporaryDirectories.push(directory)
     await mkdir(join(directory, 'node_modules', 'dependency'), { recursive: true })
     await mkdir(join(directory, 'build'), { recursive: true })
@@ -56,7 +56,7 @@ describe('collectImportCandidates', () => {
   })
 
   it('deduplicates overlapping and missing selections', async () => {
-    const directory = await mkdtemp(join('/tmp', 'everroom-import-duplicate-'))
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-duplicate-'))
     temporaryDirectories.push(directory)
     const filePath = join(directory, 'notes.md')
     await writeFile(filePath, '# notes')
@@ -74,7 +74,7 @@ describe('collectImportCandidates', () => {
 
 describe('FilesGatewayBridge.importPathsOnce', () => {
   it('filters with gateway capabilities and imports through the unified manual path', async () => {
-    const directory = await mkdtemp(join('/tmp', 'everroom-import-once-'))
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-once-'))
     temporaryDirectories.push(directory)
     await mkdir(join(directory, 'notes'))
     await writeFile(join(directory, 'notes', 'kept.md'), '# kept')
