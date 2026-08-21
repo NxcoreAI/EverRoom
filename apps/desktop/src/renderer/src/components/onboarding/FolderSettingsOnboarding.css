@@ -1,0 +1,45 @@
+.folder-settings-onboarding { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 28px; background: color-mix(in srgb, var(--text) 22%, transparent); }
+.folder-settings-onboarding-panel { width: min(760px, 100%); max-height: min(720px, calc(100vh - 56px)); overflow: auto; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 24px 70px color-mix(in srgb, var(--text) 22%, transparent); }
+.folder-settings-onboarding-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 26px 28px 22px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
+.folder-settings-onboarding-heading { display: flex; min-width: 0; align-items: flex-start; gap: 16px; }
+.folder-settings-onboarding-heading > div:last-child { min-width: 0; }
+.folder-settings-onboarding-icon { display: grid; width: 44px; height: 44px; flex: 0 0 44px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.folder-settings-onboarding-icon svg { width: 22px; height: 22px; }
+.folder-settings-onboarding-eyebrow { display: block; margin: 2px 0 8px; color: var(--accent-strong); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.folder-settings-onboarding h1 { margin: 0; color: var(--text); font-size: 22px; }
+.folder-settings-onboarding-heading p { max-width: 600px; margin: 10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.folder-settings-onboarding-close { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--muted); cursor: pointer; }
+.folder-settings-onboarding-close:hover { background: var(--hover); color: var(--text); }
+.folder-settings-onboarding-close:disabled { cursor: wait; opacity: .55; }
+.folder-settings-onboarding-close svg { width: 16px; height: 16px; }
+.folder-settings-onboarding-content { padding: 26px 28px 0; }
+.folder-settings-onboarding-folder-panel { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.folder-settings-onboarding-panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
+.folder-settings-onboarding-panel-heading strong { color: var(--text); font-size: 13px; }
+.folder-settings-onboarding-panel-heading small { color: var(--muted); font-size: 10px; }
+.folder-settings-onboarding-option { display: grid; min-height: 72px; grid-template-columns: 20px 32px minmax(0, 1fr) 16px; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.folder-settings-onboarding-option input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.folder-settings-onboarding-option input:disabled { cursor: wait; }
+.folder-settings-onboarding-folder-icon { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); color: var(--accent-strong); }
+.folder-settings-onboarding-folder-icon svg { width: 15px; height: 15px; }
+.folder-settings-onboarding-option > span:nth-child(3) { display: grid; min-width: 0; gap: 4px; }
+.folder-settings-onboarding-option strong { color: var(--text); font-size: 12px; }
+.folder-settings-onboarding-option small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.folder-settings-onboarding-option > svg { width: 15px; height: 15px; color: var(--icon-task); }
+.folder-settings-onboarding-custom-list { display: grid; gap: 8px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
+.folder-settings-onboarding-custom-list > span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.folder-settings-onboarding-custom-list > div { display: flex; min-width: 0; align-items: center; gap: 8px; color: var(--text); }
+.folder-settings-onboarding-custom-list svg { width: 15px; height: 15px; flex: 0 0 auto; color: var(--accent-strong); }
+.folder-settings-onboarding-custom-list strong { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.folder-settings-onboarding-add { display: flex; width: 100%; align-items: center; gap: 9px; padding: 13px 20px; border: 0; background: transparent; color: var(--accent); text-align: left; cursor: pointer; }
+.folder-settings-onboarding-add:hover { background: var(--hover); }
+.folder-settings-onboarding-add:disabled { cursor: wait; opacity: .65; }
+.folder-settings-onboarding-add svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.folder-settings-onboarding-note { margin: 16px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.folder-settings-onboarding-error { min-height: 18px; margin: 10px 0 0; color: var(--danger, #a33); font-size: 11px; line-height: 1.4; }
+.folder-settings-onboarding-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 18px 28px 24px; }
+.folder-settings-onboarding-actions button { display: inline-flex; align-items: center; gap: 7px; }
+.folder-settings-onboarding-actions svg { width: 15px; height: 15px; }
+.folder-settings-onboarding-spinner { animation: folder-settings-onboarding-spin 1s linear infinite; }
+@keyframes folder-settings-onboarding-spin { to { transform: rotate(360deg); } }
+@media (max-width: 640px) { .folder-settings-onboarding { padding: 14px; } .folder-settings-onboarding-panel { max-height: calc(100vh - 28px); } .folder-settings-onboarding-header, .folder-settings-onboarding-content, .folder-settings-onboarding-actions { padding-left: 18px; padding-right: 18px; } .folder-settings-onboarding-panel-heading { align-items: flex-start; flex-direction: column; gap: 6px; } .folder-settings-onboarding-actions { flex-wrap: wrap; } .folder-settings-onboarding-actions button { flex: 1 1 150px; justify-content: center; } }

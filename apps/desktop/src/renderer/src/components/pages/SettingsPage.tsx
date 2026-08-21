@@ -44,7 +44,7 @@ const SETTINGS_NAV = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
   { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
-  { id: 'settings-memory', label: 'memory:settings.memorySetupTitle', description: 'memory:settings.memorySetupActionBody', icon: Sparkles },
+  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', description: 'surface:settings.onboardingSetupDescription', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
   { id: 'settings-diary', label: 'surface:settings.diarySchedule', description: 'surface:settings.navigationDiaryDescription', icon: CalendarClock },
@@ -97,7 +97,7 @@ function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): 
   return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
 }
 
-export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }: { onStartMemoryOnboarding?: () => void; onStartRoomOnboarding?: () => void }) {
+export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
   const { locale, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [identifier, setIdentifier] = useState('')
@@ -460,30 +460,21 @@ export function SettingsPage({ onStartMemoryOnboarding, onStartRoomOnboarding }:
         </div>
       </section>
 
-      <section id="settings-memory" className="reality-settings-section settings-anchor-section" aria-labelledby="memory-settings-title">
+      <section id="settings-onboarding" className="reality-settings-section settings-anchor-section" aria-labelledby="onboarding-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
           <div>
-            <h2 id="memory-settings-title">{t('memory:settings.memorySetupTitle')}</h2>
-            <p>{t('memory:settings.memorySetupBody')}</p>
+            <h2 id="onboarding-settings-title">{t('surface:settings.onboardingSetupTitle')}</h2>
+            <p>{t('surface:settings.onboardingSetupBody')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
-            <strong>{t('memory:settings.memorySetupActionTitle')}</strong>
-            <small>{t('memory:settings.memorySetupActionBody')}</small>
+            <strong>{t('surface:settings.fullOnboardingActionTitle')}</strong>
+            <small>{t('surface:settings.fullOnboardingActionBody')}</small>
           </div>
-          <button type="button" className="primary-button" onClick={onStartMemoryOnboarding} disabled={!onStartMemoryOnboarding}>
-            <Sparkles aria-hidden="true" />{t('memory:onboarding.reopen')}
-          </button>
-        </div>
-        <div className="reality-setting-row">
-          <div>
-            <strong>{t('contextRoom:settings.roomSetupTitle')}</strong>
-            <small>{t('contextRoom:settings.roomSetupBody')}</small>
-          </div>
-          <button type="button" className="primary-button" onClick={onStartRoomOnboarding} disabled={!onStartRoomOnboarding}>
-            <Sparkles aria-hidden="true" />{t('contextRoom:settings.roomSetupAction')}
+          <button type="button" className="primary-button" onClick={onStartFullOnboarding} disabled={!onStartFullOnboarding}>
+            <Sparkles aria-hidden="true" />{t('surface:settings.fullOnboardingAction')}
           </button>
         </div>
       </section>

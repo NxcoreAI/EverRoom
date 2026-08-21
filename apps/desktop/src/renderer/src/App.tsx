@@ -14,6 +14,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
 import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGate'
 import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
+import { FolderSettingsOnboarding } from '@/components/onboarding/FolderSettingsOnboarding'
 import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
@@ -78,7 +79,11 @@ export function App() {
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
   const [suppressRoomOnboarding, setSuppressRoomOnboarding] = useState(false)
+  const [fullOnboardingStage, setFullOnboardingStage] = useState<'idle' | 'memory' | 'room' | 'folder'>('idle')
+  const [folderOnboardingOpen, setFolderOnboardingOpen] = useState(false)
   const manualMemoryOnboardingRef = useRef(false)
+  const fullOnboardingStageRef = useRef<'idle' | 'memory' | 'room' | 'folder'>('idle')
+  const openRoomOnboardingRef = useRef<(() => void) | null>(null)
   const [theme] = useState<ThemeId>(readStoredTheme)
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
@@ -143,6 +148,27 @@ export function App() {
       setSuppressRoomOnboarding(false)
     }
   }, [activePage])
+
+  useEffect(() => {
+    if (fullOnboardingStage !== 'room') return
+    setActivePage('settings')
+    let attempts = 0
+    let timer: number | null = null
+    const openWhenReady = () => {
+      const openRoomOnboarding = openRoomOnboardingRef.current
+      if (openRoomOnboarding) {
+        openRoomOnboarding()
+        return
+      }
+      if (attempts >= 10) return
+      attempts += 1
+      timer = window.setTimeout(openWhenReady, 0)
+    }
+    openWhenReady()
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [fullOnboardingStage])
 
   const openDocumentTarget = useCallback((target: {
     roomId: string
@@ -342,10 +368,28 @@ export function App() {
   }
 
   return (
-    <MemoryOnboardingGate>
+    <MemoryOnboardingGate onFinished={() => {
+      if (fullOnboardingStageRef.current !== 'memory') return
+      manualMemoryOnboardingRef.current = false
+      fullOnboardingStageRef.current = 'room'
+      setFullOnboardingStage('room')
+      setSuppressRoomOnboarding(true)
+      setActivePage('settings')
+    }}>
       {({ openMemoryOnboarding }) => (
-      <RoomOnboardingGate onOpenRoom={openContextRoomTab} suppressOnboarding={suppressRoomOnboarding}>
-      {({ openRoomOnboarding }) => (
+      <RoomOnboardingGate
+        onOpenRoom={openContextRoomTab}
+        suppressOnboarding={suppressRoomOnboarding}
+        onFinished={() => {
+          if (fullOnboardingStageRef.current !== 'room') return
+          fullOnboardingStageRef.current = 'folder'
+          setFullOnboardingStage('folder')
+          setFolderOnboardingOpen(true)
+        }}
+      >
+      {({ openRoomOnboarding }) => {
+        openRoomOnboardingRef.current = openRoomOnboarding
+        return (
       <div
       className="app-shell"
       data-agent-open={String(agentOpen)}
@@ -396,19 +440,17 @@ export function App() {
           onNavigate={navigate}
           onFocusAgent={focusAgent}
           onOpenDocument={openDocumentTarget}
-          onStartRoomOnboarding={() => {
-            manualMemoryOnboardingRef.current = false
-            setSuppressRoomOnboarding(false)
-            setActiveContextRoomId(null)
-            setActivePage('settings')
-            openRoomOnboarding()
-          }}
-          onStartMemoryOnboarding={() => {
+          onStartFullOnboarding={() => {
             if (agentNavigationTimerRef.current !== null) {
               window.clearTimeout(agentNavigationTimerRef.current)
               agentNavigationTimerRef.current = null
             }
             manualMemoryOnboardingRef.current = true
+            fullOnboardingStageRef.current = 'memory'
+            // Memory onboarding temporarily unmounts the nested Room gate.
+            // Do not call the opener captured from that old instance later.
+            openRoomOnboardingRef.current = null
+            setFullOnboardingStage('memory')
             setSuppressRoomOnboarding(true)
             setActiveContextRoomId(null)
             setAgentNavigationRequest(null)
@@ -438,8 +480,19 @@ export function App() {
       ) : null}
       <AppToast />
       <AppErrorDialog />
+      <FolderSettingsOnboarding
+        open={folderOnboardingOpen}
+        onClose={() => {
+          setFolderOnboardingOpen(false)
+          fullOnboardingStageRef.current = 'idle'
+          setFullOnboardingStage('idle')
+          manualMemoryOnboardingRef.current = false
+          setSuppressRoomOnboarding(false)
+        }}
+      />
       </div>
-      )}
+      )
+      }}
       </RoomOnboardingGate>
       )}
     </MemoryOnboardingGate>

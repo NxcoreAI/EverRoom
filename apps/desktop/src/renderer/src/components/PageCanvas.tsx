@@ -37,8 +37,7 @@ export function PageCanvas({
   onNavigate,
   onFocusAgent,
   onOpenDocument,
-  onStartMemoryOnboarding,
-  onStartRoomOnboarding,
+  onStartFullOnboarding,
 }: {
   page: PageId
   activeContextRoomId: string | null
@@ -56,8 +55,7 @@ export function PageCanvas({
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
-  onStartMemoryOnboarding?: () => void
-  onStartRoomOnboarding?: () => void
+  onStartFullOnboarding?: () => void
 }) {
   const { t } = useLocale()
   let content = null
@@ -100,7 +98,7 @@ export function PageCanvas({
       </Suspense>
     )
   }
-  if (page === 'settings') content = <SettingsPage onStartMemoryOnboarding={onStartMemoryOnboarding} onStartRoomOnboarding={onStartRoomOnboarding} />
+  if (page === 'settings') content = <SettingsPage onStartFullOnboarding={onStartFullOnboarding} />
   return (
     <>
       <div
