@@ -166,6 +166,7 @@ export async function streamSelectionRewrite(
       captureMemory: false,
       recallMemory: false,
       toolsEnabled: false,
+      context: { selectedRoomId: input.roomId },
     })
     runId = run.id
     if (options.signal.aborted) {
