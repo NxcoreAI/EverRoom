@@ -94,6 +94,25 @@ export class KnowledgeLlm {
     return this.chatJson("entity-extraction", prompt, parseExtractionResponse);
   }
 
+  /** Room 当前文档集合 → 只读的详情投影，不参与资料归属判决。 */
+  async summarizeRoom(
+    roomTitle: string,
+    sourceDocuments: Array<{ title: string; markdown: string }>,
+  ): Promise<RoomContextResult> {
+    const prompt = [
+      `Room：${roomTitle}`,
+      `今天日期：${new Date().toISOString().slice(0, 10)}`,
+      "",
+      ...sourceDocuments.slice(0, 12).flatMap((document, index) => [
+        `--- 资料 ${index + 1}：《${document.title}》 ---`,
+        document.markdown.slice(0, 6_000),
+        "",
+      ]),
+      "请给出 Room 上下文 JSON。",
+    ].join("\n").slice(0, 36_000);
+    return this.chatJson("room-context", prompt, parseRoomContextResponse);
+  }
+
   /** 模糊带同一性判定（4.2/4.5）：双方是否同一实体。 */
   async judgeEntityIdentity(a: EntityIdentityInput, b: EntityIdentityInput): Promise<JudgeResult> {
     const prompt = [
