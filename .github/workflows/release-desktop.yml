@@ -300,7 +300,7 @@ jobs:
           } finally {
             if (-not $app.HasExited) {
               $null = $app.CloseMainWindow()
-              if (-not $app.WaitForExit(10_000)) { & taskkill.exe /PID $app.Id /T /F | Out-Null }
+              if (-not $app.WaitForExit(10000)) { & taskkill.exe /PID $app.Id /T /F | Out-Null }
             }
           }
 
