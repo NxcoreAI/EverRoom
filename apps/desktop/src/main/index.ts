@@ -10,7 +10,7 @@ import type {
 } from '@nxcore/agent-contract'
 
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
-import type { PrivateTranscriptionSyncCompletedEvent } from '../shared/sources'
+import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -30,6 +30,7 @@ import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
+import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { IngestPipelines } from '../shared/ingest'
@@ -161,6 +162,7 @@ const RUNTIME_CONFIG_CHANNELS = {
   refreshSaas: 'runtime-config:refresh-saas',
   clearSaas: 'runtime-config:clear-saas',
   selectSource: 'runtime-config:select-source',
+  test: 'runtime-config:test',
 } as const
 
 const CONNECTOR_CHANNELS = {
@@ -733,17 +735,67 @@ function registerGatewayHandlers(): void {
 
 function registerRuntimeConfigHandlers(client: SaasClient): void {
   handle(RUNTIME_CONFIG_CHANNELS.get, () => runtimeConfigBridge?.get())
-  handle(RUNTIME_CONFIG_CHANNELS.saveUser, (_event, input: unknown) => runtimeConfigBridge?.saveUser(input))
-  handle(RUNTIME_CONFIG_CHANNELS.clearUser, () => runtimeConfigBridge?.clearUser())
+  handle(RUNTIME_CONFIG_CHANNELS.saveUser, async (_event, input: unknown) => {
+    const snapshot = await runtimeConfigBridge?.saveUser(input)
+    if (snapshot) void syncMemoryCoreEmbedding(snapshot)
+    return snapshot
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.clearUser, async () => {
+    const snapshot = await runtimeConfigBridge?.clearUser()
+    if (snapshot) void syncMemoryCoreEmbedding(snapshot)
+    return snapshot
+  })
   handle(RUNTIME_CONFIG_CHANNELS.refreshSaas, async () => {
     const config = await client.getRuntimeConfig()
-    return runtimeConfigBridge?.saveSaas(config.config)
+    const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
+    if (snapshot) void syncMemoryCoreEmbedding(snapshot)
+    return snapshot
   })
-  handle(RUNTIME_CONFIG_CHANNELS.clearSaas, () => runtimeConfigBridge?.clearSaas())
+  handle(RUNTIME_CONFIG_CHANNELS.clearSaas, async () => {
+    const snapshot = await runtimeConfigBridge?.clearSaas()
+    if (snapshot) void syncMemoryCoreEmbedding(snapshot)
+    return snapshot
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.test, () => runtimeConfigBridge?.test())
   handle(RUNTIME_CONFIG_CHANNELS.selectSource, (_event, source: unknown) => {
     if (source !== 'user' && source !== 'saas' && source !== 'default') throw new Error('无效的运行时配置来源。')
     return runtimeConfigBridge?.selectSource(source)
   })
+}
+
+/** 上次注入 MemoryCore 的 TDAI_EMBEDDING_*（JSON 串比较），null = 未注入过。 */
+let memoryCoreEmbeddingEnvApplied: string | null = null
+
+/**
+ * runtime config 保存后同步 MemoryCore 的 embedding 环境变量：
+ * knowledge.embedding 四要素齐全 → /test 拿真实向量维度 → 注入
+ * TDAI_EMBEDDING_*；不齐全且之前注入过 → 重启清空（恢复 .env 透传）。
+ * 变化才重启（MemoryCore 无热加载），失败只记日志不影响保存结果。
+ * 非托管/未启动实例跳过（外部部署的 MemoryCore 由用户自行配置）。
+ */
+async function syncMemoryCoreEmbedding(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  try {
+    const supervisor = memoryCoreSupervisor
+    if (!supervisor?.getConnection()?.managed) return
+    const fields = embeddingFieldsFromConfig(snapshot.config)
+    let nextEnv: Record<string, string> | null = null
+    if (fields) {
+      // /test 只在 embedding 四要素齐全时测 /embeddings 并带维度；这里复用一次。
+      const result = await runtimeConfigBridge?.test()
+      if (!result?.embedding?.valid || !result.embedding.dimensions) {
+        console.warn('[memory-core] embedding config saved but /embeddings test failed; keeping current env')
+        return
+      }
+      nextEnv = memoryCoreEmbeddingEnv(fields, result.embedding.dimensions)
+    }
+    const nextJson = nextEnv ? JSON.stringify(nextEnv) : null
+    if (nextJson === memoryCoreEmbeddingEnvApplied) return
+    await supervisor.restart(nextEnv)
+    memoryCoreEmbeddingEnvApplied = nextJson
+    console.info(`[memory-core] embedding env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
+  } catch (error) {
+    console.error('[memory-core] failed to sync embedding env:', error)
+  }
 }
 
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
@@ -1777,12 +1829,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
-    // Default folders are a global file-app source, not part of Room setup.
-    // Bootstrap in the background so a denied directory does not block startup.
-    void localDataService.bootstrapDefaultLocalFolders([
-      app.getPath('desktop'),
-      app.getPath('documents'),
-    ]).catch((error) => console.warn('Default local folder scan failed.', error))
+    // Default folders are only connected after the user consents in the
+    // folder onboarding dialog (sources:connect-default-local-folders).
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))

@@ -145,6 +145,11 @@ export function pickPromotedTargets(
 export class KnowledgeRouter {
   constructor(private readonly deps: RouterDeps) {}
 
+  /** runtime config 变更后替换消歧 tie-break 的 embedding 端点（null = 关闭）。 */
+  replaceEmbedding(embedding: RouterDeps["embedding"]): void {
+    this.deps.embedding = embedding;
+  }
+
   /**
    * 跑完整瀑布并落 decision 行。
    * skipEntry：revert 后重路由时跳过 ①（否则同 Room 直连死循环）。

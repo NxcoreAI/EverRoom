@@ -225,6 +225,7 @@ const api: NxcoreDesktopApi = {
     refreshSaas: () => invoke('runtime-config:refresh-saas'),
     clearSaas: () => invoke('runtime-config:clear-saas'),
     selectSource: (source: 'user' | 'saas' | 'default') => invoke('runtime-config:select-source', source),
+    test: () => invoke('runtime-config:test'),
   },
   asr: {
     requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),

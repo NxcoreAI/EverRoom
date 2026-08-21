@@ -31,13 +31,24 @@ interface AgentDecision {
 export class FileClusteringService {
   private worker: Promise<void> | null = null;
   private disposed = false;
+  private embeddingClient: EmbeddingClient | null;
+  private embeddingModel: string | null;
 
   constructor(
     private readonly db: GatewayDatabase,
     private readonly agentResolver: AgentResolver | null,
-    private readonly embeddingClient: EmbeddingClient | null,
-    private readonly embeddingModel: string | null,
-  ) {}
+    embeddingClient: EmbeddingClient | null,
+    embeddingModel: string | null,
+  ) {
+    this.embeddingClient = embeddingClient;
+    this.embeddingModel = embeddingModel;
+  }
+
+  /** runtime config 变更后替换 embedding 端点（null = 关闭向量聚类）。 */
+  replaceEmbedding(client: EmbeddingClient | null, model: string | null): void {
+    this.embeddingClient = client;
+    this.embeddingModel = model;
+  }
 
   initialize(): void {
     const now = new Date();

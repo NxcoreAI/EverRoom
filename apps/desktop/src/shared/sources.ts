@@ -388,6 +388,25 @@ export interface RuntimeConfigSnapshot {
   availableSources: Array<'user' | 'saas' | 'default'>
   configVersion: number
   updatedAt: string
+  /** primary AI 四要素（provider/model/baseUrl/apiKey）是否已填写（占位空串视为未配置）。 */
+  primaryConfigured?: boolean
+}
+
+export interface RuntimeConfigTestResult {
+  valid: boolean
+  error?: string
+  /** knowledge.embedding 四要素齐全时才返回的 /embeddings 连通测试结果。 */
+  embedding?: {
+    valid: boolean
+    error?: string
+    /** 成功时的向量维度(MemoryCore TDAI_EMBEDDING_DIMENSIONS 注入用)。 */
+    dimensions?: number
+  }
+  /** vlm 四要素齐全时才返回的 chat/completions 连通测试结果。 */
+  vlm?: {
+    valid: boolean
+    error?: string
+  }
 }
 
 export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo' | 'document' | 'file'
@@ -573,6 +592,7 @@ export interface NxcoreDesktopApi {
     refreshSaas(): Promise<RuntimeConfigSnapshot | undefined>
     clearSaas(): Promise<RuntimeConfigSnapshot | undefined>
     selectSource(source: 'user' | 'saas' | 'default'): Promise<RuntimeConfigSnapshot | undefined>
+    test(): Promise<RuntimeConfigTestResult>
   }
   nangoConnector: {
     runtimeStatus(): Promise<NangoRuntimeStatus>

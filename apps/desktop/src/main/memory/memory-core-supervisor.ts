@@ -26,6 +26,16 @@ export interface MemoryCoreConnection {
   managed: boolean
 }
 
+export interface MemoryCoreStartOptions {
+  /** 重启时复用的 apiKey(不传则随机生成)。 */
+  apiKey?: string
+  /**
+   * embedding 覆盖环境变量(TDAI_EMBEDDING_*),在 ...process.env 之后展开,
+   * 覆盖 .env 透传值;null/undefined = 不覆盖(沿用进程 env)。
+   */
+  embeddingEnvironment?: Record<string, string> | null
+}
+
 const PACKAGE_NAME = '@tencentdb-agent-memory/memory-tencentdb-v2'
 const MEMORY_CORE_PORT = 8420
 const DEFAULT_BASE_URL = `http://127.0.0.1:${MEMORY_CORE_PORT}`
@@ -45,7 +55,7 @@ export class MemoryCoreSupervisor {
 
   constructor(private readonly dataDirectory: string) {}
 
-  async start(): Promise<MemoryCoreConnection | null> {
+  async start(options: MemoryCoreStartOptions = {}): Promise<MemoryCoreConnection | null> {
     if (this.connection) return this.connection
 
     if (process.env.NXCORE_MEMORY_MANAGED === 'false' || process.env.NXCORE_MEMORY_ENABLED === 'false') {
@@ -65,7 +75,9 @@ export class MemoryCoreSupervisor {
       return this.connection
     }
 
-    const apiKey = randomBytes(24).toString('base64url')
+    // 重启场景复用旧 apiKey：gateway env 里的 NXCORE_MEMORY_API_KEY 不变，
+    // 免去重启后 gateway 侧 401。
+    const apiKey = options.apiKey ?? randomBytes(24).toString('base64url')
     const entryPath = this.resolveEntry()
     await mkdir(this.dataDirectory, { recursive: true })
     // 数据目录收进应用数据(KS 的 knowledge/ 同款约定):不设 TDAI_DATA_DIR 时
@@ -90,6 +102,7 @@ export class MemoryCoreSupervisor {
           LOG_PATH: logDirectory,
           ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
           ...this.llmEnvironment(),
+          ...(options.embeddingEnvironment ?? {}),
         },
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -125,6 +138,18 @@ export class MemoryCoreSupervisor {
 
   getConnection(): MemoryCoreConnection | null {
     return this.connection
+  }
+
+  /**
+   * 重启托管实例以应用新的 embedding 环境(MemoryCore 启动时解析配置,无热加载)。
+   * 复用旧 apiKey,busy/外部/复用模式不重启。失败抛出,连接置空。
+   */
+  async restart(embeddingEnvironment: Record<string, string> | null): Promise<MemoryCoreConnection | null> {
+    const connection = this.connection
+    if (!connection?.managed) return connection
+    const apiKey = connection.apiKey
+    await this.shutdown()
+    return this.start({ apiKey, embeddingEnvironment: embeddingEnvironment ?? undefined })
   }
 
   getLastError(): string | null {

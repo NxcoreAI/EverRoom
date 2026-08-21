@@ -44,7 +44,7 @@ import './SettingsPage.css'
 const SETTINGS_NAV = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
-  { id: 'settings-runtime-config', label: '运行时 AI 配置', description: 'SaaS 与本地 JSON 配置', icon: ShieldCheck },
+  { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
   { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', description: 'surface:settings.onboardingSetupDescription', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },

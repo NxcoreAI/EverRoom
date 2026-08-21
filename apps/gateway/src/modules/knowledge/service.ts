@@ -434,6 +434,11 @@ export class KnowledgeService {
     });
   }
 
+  /** runtime config 变更后替换消歧 tie-break 的 embedding 端点（null = 关闭）。 */
+  replaceEmbedding(embedding: { client: EmbeddingClient; model: string } | null): void {
+    this.router.replaceEmbedding(embedding);
+  }
+
   /** supervisor 生命周期钩子：崩溃恢复清扫 + 启动 worker 轮询。 */
   start(): void {
     // 存量 file 决策迁移到确定性身份（一次性，失败不阻塞启动）

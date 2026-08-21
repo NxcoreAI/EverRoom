@@ -1292,3 +1292,140 @@
     flex-wrap: wrap;
   }
 }
+
+/* ── Runtime config 表单(四 tab:LLM/Embedding/VLM/ASR) ── */
+.rc-tabs {
+  display: flex;
+  gap: 5px;
+  margin: 12px 0;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--bg-secondary, #f2f4f8);
+  flex-wrap: wrap;
+}
+
+.rc-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 96px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #536070);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rc-tabs button[data-active='true'] {
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #151a22);
+  box-shadow: 0 1px 2px rgb(21 26 34 / 10%);
+}
+
+.rc-tab-badge {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #e7ebf2;
+  color: var(--text-muted, #7c8798);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.rc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rc-form-field {
+  display: grid;
+  gap: 4px;
+}
+
+.rc-form-field span {
+  color: var(--text-muted, #536070);
+  font-size: 10.5px;
+  font-weight: 620;
+}
+
+.rc-form-field input {
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong, #d8dee7);
+  border-radius: 6px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #151a22);
+  font-size: 12px;
+}
+
+.rc-form-field input:focus {
+  outline: none;
+  border-color: var(--text-primary, #151a22);
+}
+
+.rc-form-hint {
+  color: var(--text-muted, #7c8798);
+  font-size: 10.5px;
+}
+
+.rc-form-error {
+  color: #b4232a;
+  font-size: 11px;
+}
+
+.rc-form-test {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid #f0c6c9;
+  border-radius: 6px;
+  background: #fdf3f3;
+  color: #b4232a;
+  font-size: 11px;
+}
+
+.rc-form-test-ok {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  border-color: #bfe3c8;
+  background: #f2faf4;
+  color: #1d7a3a;
+}
+
+.rc-oss-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px dashed var(--border-strong, #d8dee7);
+  border-radius: 8px;
+}
+
+.rc-json-details {
+  margin-top: 14px;
+}
+
+.rc-json-details summary {
+  color: var(--text-muted, #536070);
+  font-size: 11.5px;
+  font-weight: 620;
+  cursor: pointer;
+  user-select: none;
+}
+
+.rc-json-details[open] summary {
+  margin-bottom: 8px;
+}
+
+.rc-json-details .runtime-config-editor {
+  margin-top: 6px;
+}

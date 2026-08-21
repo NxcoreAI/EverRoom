@@ -88,34 +88,88 @@ import type { RuntimeConfig } from "../runtime-config.js";
 import { OpenAiCompatibleVlmClient } from "../modules/perception/vlm-client.js";
 
 function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void {
+  // runtime config（尤其默认文件）里的 "" 是「未配置」占位，不是「清空」指令；
+  // 空串直接覆盖会把 env 兜底（如 NXCORE_MEMORY_BASE_URL）打掉，导致
+  // MemoryCoreClient baseUrl 为空、fetch 相对路径报 Failed to parse URL。
   const apply = (target: Record<string, unknown> | null | undefined, source: unknown) => {
     if (!target || !source || typeof source !== "object") return;
     const value = source as Record<string, unknown>;
     for (const key of ["provider", "model", "baseUrl", "api", "apiKey", "maxTokens", "contextWindow", "temperature", "reasoning"]) {
-      if (value[key] !== undefined) target[key] = value[key];
+      if (value[key] !== undefined && value[key] !== "") target[key] = value[key];
     }
   };
   apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
   apply(config.webSearch as unknown as Record<string, unknown> | null, runtime.webSearch);
-  apply(config.vlm as unknown as Record<string, unknown> | null, runtime.vlm);
-  if (config.asr && runtime.asr && typeof runtime.asr === "object") {
-    const value = runtime.asr as Record<string, unknown>;
-    for (const key of ["provider", "baseUrl", "model", "apiKey"]) if (value[key] !== undefined) (config.asr as unknown as Record<string, unknown>)[key] = value[key];
+  // VLM：runtime 三字段齐全可直接构造（否则 env 没配时 runtime.vlm 是死配置）；
+  // 不齐全时保持补丁行为——env 已配的键由 apply 补，缺的键沿用 env 值。
+  const runtimeVlm = runtime.vlm as Record<string, unknown> | undefined;
+  const vlmText = (key: string): string =>
+    runtimeVlm && typeof runtimeVlm[key] === "string" ? (runtimeVlm[key] as string).trim() : "";
+  if (vlmText("baseUrl") && vlmText("apiKey") && vlmText("model")) {
+    config.vlm = { baseUrl: vlmText("baseUrl"), apiKey: vlmText("apiKey"), model: vlmText("model") };
+  } else {
+    apply(config.vlm as unknown as Record<string, unknown> | null, runtime.vlm);
   }
-  if (config.memory && runtime.memory && typeof runtime.memory === "object") {
-    const value = runtime.memory as Record<string, unknown>;
-    for (const key of ["baseUrl", "apiKey", "serviceId", "teamId", "agentId", "userId"]) {
-      if (value[key] !== undefined) (config.memory as unknown as Record<string, unknown>)[key] = value[key];
+  // ASR（仅 aliyun provider）：runtime 标量 + OSS 必填项齐全可直接构造
+  // （含 OSS——env 从未应用 runtime.asr.oss，而阿里云提交转写无 OSS 直接抛错）；
+  // 仅标量齐全时保持补丁行为，env 配置的 OSS 保留。
+  const runtimeAsr = runtime.asr as Record<string, unknown> | undefined;
+  const asrText = (key: string): string =>
+    runtimeAsr && typeof runtimeAsr[key] === "string" ? (runtimeAsr[key] as string).trim() : "";
+  const runtimeOss = runtimeAsr?.oss as Record<string, unknown> | undefined;
+  const ossText = (key: string): string =>
+    runtimeOss && typeof runtimeOss[key] === "string" ? (runtimeOss[key] as string).trim() : "";
+  if (asrText("apiKey") && asrText("baseUrl") && asrText("model")
+    && ossText("region") && ossText("bucket") && ossText("accessKeyId") && ossText("accessKeySecret")) {
+    config.asr = {
+      apiKey: asrText("apiKey"),
+      baseUrl: asrText("baseUrl"),
+      model: asrText("model"),
+      oss: {
+        region: ossText("region"),
+        bucket: ossText("bucket"),
+        accessKeyId: ossText("accessKeyId"),
+        accessKeySecret: ossText("accessKeySecret"),
+        ...(ossText("stsToken") ? { stsToken: ossText("stsToken") } : {}),
+        prefix: ossText("prefix") || "nxcore-asr",
+      },
+    };
+  } else if (config.asr && runtimeAsr) {
+    for (const key of ["provider", "baseUrl", "model", "apiKey"] as const) {
+      if (asrText(key)) (config.asr as unknown as Record<string, unknown>)[key] = asrText(key);
     }
   }
-  if (config.knowledge && runtime.knowledge && typeof runtime.knowledge === "object") {
-    const value = runtime.knowledge as Record<string, unknown>;
-    for (const key of ["baseUrl", "serviceId", "teamId", "wikiId"]) {
-      if (value[key] !== undefined) (config.knowledge as unknown as Record<string, unknown>)[key] = value[key];
+  // memory / knowledge 不参与 runtime config 覆盖：桌面端两者都是主进程
+  // supervisor 托管的本地服务（baseUrl 127.0.0.1，apiKey 每次启动随机轮换），
+  // 云端下发的凭据必然对不上本地实例（401）；NXCORE_MEMORY_*/NXCORE_KNOWLEDGE_*
+  // env 由桌面主进程在 spawn gateway 时注入，永远比云端值准确。
+  // 唯一例外：knowledge.embedding 四要素齐全时覆盖 env 消歧/聚类的
+  // embedding 端点——它指向外部 LLM 服务（非托管本地实例），与 env 语义
+  // 完全一致（NXCORE_KNOWLEDGE_EMBEDDING_* 的 runtime-config 版本）。
+  const embedding = runtime.knowledge?.embedding as Record<string, unknown> | undefined;
+  if (embedding && config.knowledge) {
+    const embeddingText = (key: string): string =>
+      typeof embedding[key] === "string" ? (embedding[key] as string).trim() : "";
+    const baseUrl = embeddingText("baseUrl");
+    const apiKey = embeddingText("apiKey");
+    const model = embeddingText("model");
+    if (baseUrl && apiKey && model) {
+      config.knowledge.embeddingLlm = { baseUrl, apiKey, model };
+      config.knowledge.embeddingModel = model;
     }
   }
+}
+
+/** 从 GatewayConfig 构造 gateway 侧 embedding 客户端（未配置返回 null）。 */
+function embeddingFromConfig(
+  config: GatewayConfig,
+): { client: EmbeddingClient; model: string } | null {
+  const llm = config.knowledge?.embeddingLlm;
+  const model = config.knowledge?.embeddingModel;
+  if (!llm || !model) return null;
+  return { client: new EmbeddingClient(llm, model), model };
 }
 
 function createVlmProvider(config: GatewayConfig): OpenAiCompatibleVlmClient | null {
@@ -326,8 +380,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
     app.log,
     agentResolver,
-  );
-  const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
+  );  const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
   let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
   registerConnectorSyncAgent(agentResolver, config, cliConnectorSyncService);
   if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
@@ -435,6 +488,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
   runtimeConfigManager.onChange((snapshot) => {
     applyRuntimeConfig(config, snapshot.config);
+    // embedding 端点热替换（runtime knowledge.embedding 覆盖 env）。
+    const embedding = embeddingFromConfig(config);
+    knowledgeService.replaceEmbedding(embedding ? { client: embedding.client, model: embedding.model } : null);
+    fileClusteringService.replaceEmbedding(embedding?.client ?? null, embedding?.model ?? null);
     asrProvider = createAsrProvider(config, app.log);
     asrService.replaceProvider(asrProvider);
     try {
@@ -457,9 +514,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const fileClusteringService = new FileClusteringService(
     db,
     agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
-    config.knowledge?.embeddingLlm && config.knowledge.embeddingModel
-      ? new EmbeddingClient(config.knowledge.embeddingLlm, config.knowledge.embeddingModel)
-      : null,
+    embeddingFromConfig(config)?.client ?? null,
     config.knowledge?.embeddingModel ?? null,
   );
   filesService.setVersionClassifier((fileEntryId, fileVersionId) => {
