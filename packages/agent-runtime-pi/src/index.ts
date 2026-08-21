@@ -1,4 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
 import type { RuntimeCapabilities } from "@nxcore/agent-contract";
 import {
@@ -10,6 +11,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { createMcpAdapter } from "pi-mcp-adapter";
 import { Type } from "typebox";
@@ -123,6 +125,21 @@ export interface PiAgentRuntimeConfig {
     maxRetries?: number;
     baseDelayMs?: number;
   };
+  /** Restricts shell execution to an explicit sandbox policy. */
+  bashSandbox?: {
+    allowedRoots?: string[];
+    timeoutMs?: number;
+    /** Commands matching any expression are rejected before approval. */
+    deniedPatterns?: string[];
+  };
+}
+
+export interface PiBashApprovalRequest {
+  approvalId: string;
+  input: StartRuntimeRunInput;
+  command: string;
+  cwd: string;
+  timeoutMs: number;
 }
 
 export interface PiAgentRuntimeToolResult {
@@ -171,6 +188,10 @@ export interface PiAgentRuntimeIntegration {
     input: StartRuntimeRunInput,
     outcome: "completed" | "failed" | "cancelled",
   ) => Promise<void>;
+  /** Called before a sandboxed shell command runs. Returning false denies it. */
+  requestBashApproval?: (request: PiBashApprovalRequest) => Promise<boolean>;
+  /** Returns whether bash has already been approved for the current Agent session. */
+  isBashSessionAuthorized?: (sessionId: string) => boolean;
 }
 
 interface PiRunContextRef {
@@ -207,6 +228,50 @@ interface ActivePiRun {
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const TOOL_HISTORY_SUMMARY_MAX_CHARS = 8_000;
+function createBashSandboxExtension(
+  config: PiAgentRuntimeConfig,
+  runtime: PiAgentRuntime,
+  getInput: () => StartRuntimeRunInput | null,
+): ExtensionFactory {
+  const policy = config.bashSandbox ?? {};
+  const allowedRoots = (policy.allowedRoots?.length ? policy.allowedRoots : [config.workingDirectory])
+    .map((root) => `${resolve(root)}${sep}`);
+  const timeoutMs = Math.max(1_000, policy.timeoutMs ?? 30_000);
+  const deniedPatterns = (policy.deniedPatterns ?? [
+    "(^|[;&|])\\s*(sudo|su)\\b",
+    "(^|[;&|])\\s*(rm|mkfs|shutdown|reboot)\\b",
+    "(^|[;&|])\\s*(curl|wget)\\b[^;|]*(--upload|-T|--data|--request\\s+(POST|PUT|PATCH))",
+    "(^|[;&|])\\s*chmod\\s+(-R\\s+)?777\\b",
+    "(^|[\\s;&|])(?:/etc|/var|/private|/Users|/root)(?:[/\\s;&|]|$)",
+    "(?:^|[/\\s])\\.\\.(?:[/\\s;&|]|$)",
+  ]).map((pattern) => new RegExp(pattern, "i"));
+  return (pi) => {
+    pi.on("tool_call", async (event) => {
+      if (event.toolName !== "bash") return;
+      const command = String(event.input.command ?? "").trim();
+      const cwd = resolve(config.workingDirectory);
+      if (!allowedRoots.some((root) => cwd === root.slice(0, -1) || cwd.startsWith(root))) {
+        throw new Error("shell_cwd_not_allowed");
+      }
+      if (deniedPatterns.some((pattern) => pattern.test(command))) {
+        throw new Error("shell_command_denied_by_policy");
+      }
+      const input = getInput();
+      if (!input) throw new Error("shell_run_context_missing");
+      const approved = await runtime.requestBashApproval({
+        approvalId: randomUUID(),
+        input,
+        command,
+        cwd,
+        timeoutMs: Math.min(
+          timeoutMs,
+          typeof event.input.timeout === "number" ? event.input.timeout : timeoutMs,
+        ),
+      });
+      if (!approved) throw new Error("shell_execution_not_approved");
+    });
+  };
+}
 
 function messageText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -294,6 +359,38 @@ export class PiAgentRuntime implements AgentRuntime {
   ) {
     this.memoryClient = config.memory ? new MemoryCoreClient(config.memory) : null;
     this.knowledgeClient = config.knowledge ? new KnowledgeServiceClient(config.knowledge) : null;
+  }
+
+  setBashApprovalHandler(handler: ((request: PiBashApprovalRequest) => Promise<boolean>) | null): void {
+    if (handler) this.integration.requestBashApproval = handler;
+    else delete this.integration.requestBashApproval;
+  }
+
+  setBashSessionAuthorizationChecker(checker: ((sessionId: string) => boolean) | null): void {
+    if (checker) this.integration.isBashSessionAuthorized = checker;
+    else delete this.integration.isBashSessionAuthorized;
+  }
+
+  /** Internal bridge used by the sandbox shell tool to surface approval state. */
+  async requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
+    if (this.integration.isBashSessionAuthorized?.(request.input.sessionId)) return true;
+    const active = this.activeRuns.get(request.input.runId);
+    active?.queue.push({ type: "approval.requested", payload: {
+      approvalId: request.approvalId,
+      kind: "shell",
+      toolName: "bash",
+      command: request.command,
+      cwd: request.cwd,
+      timeoutMs: request.timeoutMs,
+    } });
+    let approved = false;
+    try {
+      approved = await (this.integration.requestBashApproval?.(request) ?? Promise.resolve(false));
+    } catch {
+      approved = false;
+    }
+    active?.queue.push({ type: "approval.resolved", payload: { approvalId: request.approvalId, approved } });
+    return approved;
   }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
@@ -445,7 +542,8 @@ export class PiAgentRuntime implements AgentRuntime {
     if (!model) throw new Error(`Pi model is unavailable: ${this.config.provider}/${this.config.model}`);
 
     const context: PiRunContextRef = { current: initialInput };
-    const customTools = (this.integration.tools ?? []).map((tool) => defineTool({
+    const customToolDefinitions = [...(this.integration.tools ?? [])];
+    const customTools = customToolDefinitions.map((tool) => defineTool({
       name: tool.name,
       label: tool.label,
       description: tool.description,
@@ -501,6 +599,9 @@ export class PiAgentRuntime implements AgentRuntime {
     // 扩展工厂：memory + MCP 适配器（pi-mcp-adapter，注入式隔离配置）。
     const mcpServers = this.config.mcp?.mcpServers;
     const extensionFactories = [
+      ...(this.config.bashSandbox
+        ? [createBashSandboxExtension(this.config, this, () => context.current)]
+        : []),
       ...(memory && memoryClient
         ? [
             createMemoryExtension({

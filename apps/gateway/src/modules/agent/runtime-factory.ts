@@ -88,6 +88,10 @@ export function createAgentRuntime(
   if (!config.pi) throw new Error("Pi runtime configuration is missing");
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi),
+    bashSandbox: {
+      allowedRoots: [agentDirectories(config, BUILTIN_AGENT_IDS.primary).workingDirectory],
+      timeoutMs: 30_000,
+    },
     runtimeRole: "user-facing",
     skillsEnabled: true,
     additionalSkillPaths: builtinSkillPaths(bundle),

@@ -319,6 +319,7 @@ const api: NxcoreDesktopApi = {
     submitPendingIntent: (intentId, input) =>
       invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
+    resolveApproval: (approvalId, decision) => invoke('agent:resolve-approval', approvalId, decision),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),
     onEvent: (listener) => {

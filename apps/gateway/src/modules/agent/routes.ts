@@ -8,6 +8,7 @@ import { DocumentServiceError } from "../documents/errors.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
 const SessionParams = Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 100 }) });
 const IntentParams = Type.Object({ intentId: Type.String({ minLength: 1, maxLength: 100 }) });
+const ApprovalParams = Type.Object({ approvalId: Type.String({ minLength: 1, maxLength: 100 }) });
 const ResponseLanguage = Type.String({
   minLength: 2,
   maxLength: 35,
@@ -92,6 +93,20 @@ export function agentRoutes(
         },
       },
       async (request) => service.getUsage(request.query.range ?? "7d"),
+    );
+    app.post(
+      "/v1/agent/approvals/:approvalId/resolve",
+      {
+        schema: {
+          tags: ["agent"],
+          params: ApprovalParams,
+          body: Type.Object({ decision: Type.Union([Type.Literal("approved"), Type.Literal("approved_session"), Type.Literal("denied")]) }),
+        },
+      },
+      async (request, reply) => {
+        const result = service.resolveBashApproval(request.params.approvalId, request.body.decision);
+        return result ?? reply.code(404).send({ error: "not_found", message: "Approval request not found" });
+      },
     );
     app.get(
       "/v1/agent/sessions",

@@ -334,6 +334,7 @@ export function AgentPanel({
         error={session.error}
         loading={session.loading}
         messages={session.messages}
+        pendingApprovals={session.pendingApprovals}
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
@@ -346,9 +347,11 @@ export function AgentPanel({
         pendingNavigationByRun={pendingNavigationByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}
         runStartedAtByRun={session.runStartedAtByRun}
+        resolvingApprovalIds={session.resolvingApprovalIds}
         sessionLinks={session.sessionLinks}
         submitting={submitting || !roomBackendReady}
         toolCallsByRun={session.toolCallsByRun}
+        onResolveApproval={(approvalId, decision) => void session.resolveApproval(approvalId, decision)}
       />
     </aside>
   )

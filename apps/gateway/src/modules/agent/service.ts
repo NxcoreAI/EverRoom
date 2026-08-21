@@ -23,6 +23,7 @@ import type {
   UpdateAgentSessionInput,
 } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
+import type { PiBashApprovalRequest } from "@nxcore/agent-runtime-pi";
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -293,6 +294,12 @@ export class AgentService {
   }>();
   private readonly trustedMcpSessions = new Map<string, Set<string>>();
   private readonly runtimeEventConsumers = new Map<string, Promise<void>>();
+  private readonly pendingBashApprovals = new Map<string, {
+    request: PiBashApprovalRequest;
+    resolve: (approved: boolean) => void;
+    timeout: NodeJS.Timeout;
+  }>();
+  private readonly bashAuthorizedSessions = new Set<string>();
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -304,7 +311,37 @@ export class AgentService {
     private readonly completedMessageResolver?: AgentCompletedMessageResolver,
     private readonly connectorMode: "direct" | "local" = "direct",
     private readonly disposeRuntime = true,
-  ) {}
+  ) {
+    const runtimeWithApprovals = this.runtime as AgentRuntime & {
+      setBashApprovalHandler?: (handler: ((request: PiBashApprovalRequest) => Promise<boolean>) | null) => void;
+      setBashSessionAuthorizationChecker?: (checker: ((sessionId: string) => boolean) | null) => void;
+    };
+    runtimeWithApprovals.setBashApprovalHandler?.((request) => this.requestBashApproval(request));
+    runtimeWithApprovals.setBashSessionAuthorizationChecker?.((sessionId) => this.bashAuthorizedSessions.has(sessionId));
+  }
+
+  private requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingBashApprovals.delete(request.approvalId);
+        resolve(false);
+      }, 5 * 60_000);
+      timeout.unref?.();
+      this.pendingBashApprovals.set(request.approvalId, { request, resolve, timeout });
+    });
+  }
+
+  /** decision：denied 拒绝；approved 仅本次放行；approved_session 放行并授权本会话后续命令。 */
+  resolveBashApproval(approvalId: string, decision: "approved" | "approved_session" | "denied"): { approvalId: string; decision: string } | null {
+    const pending = this.pendingBashApprovals.get(approvalId);
+    if (!pending) return null;
+    clearTimeout(pending.timeout);
+    this.pendingBashApprovals.delete(approvalId);
+    const approved = decision !== "denied";
+    if (decision === "approved_session") this.bashAuthorizedSessions.add(pending.request.input.sessionId);
+    pending.resolve(approved);
+    return { approvalId, decision };
+  }
 
   getUsage(range: AgentUsageRange): AgentUsageSnapshot {
     const now = Date.now()
@@ -401,6 +438,12 @@ export class AgentService {
   }
 
   async dispose(): Promise<void> {
+    for (const [approvalId, pending] of this.pendingBashApprovals) {
+      clearTimeout(pending.timeout);
+      pending.resolve(false);
+      this.pendingBashApprovals.delete(approvalId);
+    }
+    this.bashAuthorizedSessions.clear();
     for (const sessionIds of this.trustedMcpSessions.values()) {
       for (const sessionId of sessionIds) revokeTrustedMcpSession(sessionId);
     }
@@ -556,6 +599,7 @@ export class AgentService {
       await this.runtime.deleteSession(session.runtimeSessionRef);
     }
     this.db.delete(agentSessions).where(eq(agentSessions.id, sessionId)).run();
+    this.bashAuthorizedSessions.delete(sessionId);
     return true;
   }
 
