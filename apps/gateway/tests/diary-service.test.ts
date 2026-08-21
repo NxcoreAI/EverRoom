@@ -26,12 +26,14 @@ async function setup(generator?: DiaryGenerator, memory?: DiaryMemoryProvider, m
   temporaryDirectories.push(dir);
   const database = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
   databases.push(database);
-  return { database, service: new DiaryService(database.db, {
+  const service = new DiaryService(database.db, {
     ...(generator ? { generator } : {}),
     ...(memory ? { memory } : {}),
     now: () => new Date(NOW),
     maxAttempts,
-  }) };
+  });
+  service.updateSettings({ timezone: "Asia/Shanghai" });
+  return { database, service };
 }
 
 afterEach(async () => {
