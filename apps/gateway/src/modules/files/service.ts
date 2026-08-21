@@ -81,6 +81,9 @@ export class FilesService {
     visibility?: "private" | "shared" | undefined;
     capturedAt?: Date | undefined;
   }): Promise<FileUploadResult> {
+    if (!isSupportedUploadFilename(input.filename)) {
+      throw new Error("不支持的文件类型；JSON 文件不会进入文件库");
+    }
     const contentHash = contentHashOf(input.buffer);
     const visualIdentity = input.assetKind === "screenshot" || input.assetKind === "photo"
       ? `${input.assetKind}-${contentHash}-${input.filename}`

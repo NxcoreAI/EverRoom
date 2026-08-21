@@ -135,6 +135,7 @@ describe("database migrations", () => {
     const adopted = upgraded.sqlite.prepare(
       `SELECT created_at FROM __drizzle_migrations WHERE created_at IN (${placeholders}) ORDER BY created_at`,
     ).all(...canonicalEntries.map(({ when }) => when));
+    upgraded.sqlite.close();
     expect(adopted).toEqual(canonicalEntries.map(({ when }) => ({ created_at: when })));
   });
 

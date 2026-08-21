@@ -78,8 +78,8 @@ describe('document block references', () => {
   it('enforces same-Room references and describes broken states', () => {
     expect(isSameRoomBlockReference('room-1', { roomId: 'room-1' })).toBe(true)
     expect(isSameRoomBlockReference('room-1', { roomId: 'room-2' })).toBe(false)
-    expect(documentBlockResolutionLabel({ status: 'block_missing' })).toBe('原内容块已不存在')
-    expect(documentBlockResolutionLabel({ status: 'document_trashed' })).toBe('文档在回收站')
+    expect(documentBlockResolutionLabel({ status: 'block_missing' })).toBe('contextRoom:documentBlockReference.blockMissing')
+    expect(documentBlockResolutionLabel({ status: 'document_trashed' })).toBe('contextRoom:documentBlockReference.documentInTrash')
   })
 
   it('recognizes only same-Room deep links for inline navigation', () => {

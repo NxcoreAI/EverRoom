@@ -33,7 +33,9 @@ import {
   type Pipelines,
 } from "./types.js";
 import {
+  dataTypeOfJsonType,
   extensionOf,
+  normalizeJsonPayload,
   normalizeMarkdown,
   sniffAsMarkdown,
   truncateUtf8,
@@ -1069,7 +1071,20 @@ async function normalizeFileBytes(
   const mdFamily = ["md", "markdown", "txt"];
 
   if (extension === "json") {
-    throw new IngestError("JSON 文件不支持进入文件库或理解引擎", "unsupported_type");
+    let payload: unknown;
+    try {
+      payload = JSON.parse(buffer.toString("utf8")) as unknown;
+    } catch {
+      throw new IngestError("JSON 文件解析失败", "convert_failed");
+    }
+    const normalized = normalizeJsonPayload(payload, undefined, titleOfFilename(filename));
+    return {
+      dataType: explicitDataType ?? dataTypeOfJsonType(normalized.jsonType) ?? "document",
+      detectedBy: explicitDataType ? "explicit" : "json-type",
+      title: normalized.title,
+      markdown: normalized.markdown,
+      jsonType: normalized.jsonType,
+    };
   }
 
   if (mdFamily.includes(extension)) {

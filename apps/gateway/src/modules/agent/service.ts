@@ -80,6 +80,9 @@ function normalizeRoomId(roomId: string | null | undefined): string | null {
 function requestsWorkspaceDocument(prompt: string): boolean {
   const text = prompt.trim();
   if (!text) return false;
+  if (/(?:创建|新建|建立)(?:一个|一间)(?:(?!保存到|存入|写入).){0,32}(?:context\s*room|Room|房间)|\b(?:create|make|build)\s+(?:a|an|the)\s+(?:new\s+)?(?:context\s+)?room\b/iu.test(text)) {
+    return false;
+  }
   if (/(?:不要|别|无需|不需要|不想|禁止|不是要|并非要).{0,10}(?:创建|新建|生成|写入|保存|落盘|存入|写|撰写).{0,32}(?:文档|文件)/iu.test(text)) {
     return false;
   }
@@ -289,6 +292,7 @@ export class AgentService {
     activeDocument?: AgentActiveDocumentContext;
   }>();
   private readonly trustedMcpSessions = new Map<string, Set<string>>();
+  private readonly runtimeEventConsumers = new Map<string, Promise<void>>();
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -401,7 +405,12 @@ export class AgentService {
       for (const sessionId of sessionIds) revokeTrustedMcpSession(sessionId);
     }
     this.trustedMcpSessions.clear();
+    const consumers = [...this.runtimeEventConsumers.values()];
+    await Promise.allSettled(
+      [...this.runtimeEventConsumers.keys()].map((runId) => this.runtime.cancel(runId)),
+    );
     if (this.disposeRuntime) await this.runtime.dispose();
+    await Promise.allSettled(consumers);
   }
 
   createSession(input: CreateAgentSessionInput): AgentSession {
@@ -967,7 +976,10 @@ export class AgentService {
       .set({ runtimeSessionRef: runtimeRun.runtimeSessionRef, updatedAt: new Date() })
       .where(eq(agentSessions.id, sessionId))
       .run();
-    void this.consumeRuntimeEvents(sessionId, runId, runtimeRun.events);
+    const consumer = this.consumeRuntimeEvents(sessionId, runId, runtimeRun.events)
+      .finally(() => this.runtimeEventConsumers.delete(runId));
+    this.runtimeEventConsumers.set(runId, consumer);
+    void consumer.catch(() => undefined);
     return this.getRun(runId)!;
   }
 

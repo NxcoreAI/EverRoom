@@ -1266,7 +1266,10 @@ export class KnowledgeService {
       return;
     }
 
-    const result = await this.router.route(envelope, { skipEntry: payload.skipEntry ?? false });
+    const result = await this.router.route(envelope, {
+      skipEntry: payload.skipEntry ?? false,
+      ...(payload.entryRoomId ? { entryRoomId: payload.entryRoomId } : {}),
+    });
     if (result.disposition === "execute" && result.roomIds.length > 0) {
       // 多对多沉淀：每个已晋升链接实体的 Room 各入队一个 ingest job
       // （lockKeyOf 按 roomId 加锁，各 wiki 独立串行，互不阻塞）
