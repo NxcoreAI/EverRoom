@@ -9,9 +9,12 @@
  * objects/sha256 同款约定），同内容天然只存一份。
  */
 
-import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { link, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { Transform, type Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 /** 当前 md 解析器版本：升级版本号 = 唯一合法的重解析场景（判重闸 2）。 */
 export const MARKDOWN_PARSER_VERSION = "md-v1";
@@ -52,4 +55,57 @@ export async function storeFileBlob(dataDir: string, contentHash: string, buffer
     if (error.code !== "EEXIST") throw error;
   });
   return absolute;
+}
+
+export interface StoredFileBlob {
+  contentHash: string;
+  bytes: number;
+  absolutePath: string;
+  dedupedOnDisk: boolean;
+}
+
+/**
+ * Stream bytes into a same-volume temporary file while hashing, then hard-link
+ * the completed file into the CAS. link(2) gives us no-overwrite semantics;
+ * concurrent imports of the same hash therefore converge on one object.
+ */
+export async function storeFileBlobStream(
+  dataDir: string,
+  source: Readable,
+  maxBytes: number,
+): Promise<StoredFileBlob> {
+  const stagingDir = join(dataDir, "files", ".staging");
+  await mkdir(stagingDir, { recursive: true });
+  const temporaryPath = join(stagingDir, randomUUID());
+  const hash = createHash("sha256");
+  let bytes = 0;
+  const meter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.byteLength;
+      if (bytes > maxBytes) {
+        callback(new Error(`文件超过 ${Math.floor(maxBytes / 1024 / 1024)}MB 上限`));
+        return;
+      }
+      hash.update(chunk);
+      callback(null, chunk);
+    },
+  });
+
+  try {
+    await pipeline(source, meter, createWriteStream(temporaryPath, { flags: "wx" }));
+    if (bytes === 0) throw new Error("文件内容为空");
+    const contentHash = hash.digest("hex");
+    const absolutePath = join(dataDir, storageRelPath(contentHash));
+    await mkdir(dirname(absolutePath), { recursive: true });
+    let dedupedOnDisk = false;
+    try {
+      await link(temporaryPath, absolutePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      dedupedOnDisk = true;
+    }
+    return { contentHash, bytes, absolutePath, dedupedOnDisk };
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
 }

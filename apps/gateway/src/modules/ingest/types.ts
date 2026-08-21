@@ -152,7 +152,7 @@ export interface IngestSourceInput {
   /** 本地路径（逃生舱：明确不想入库的一次性文件；引擎只读不拷贝）。 */
   path?: string;
   /** 库表引用：uploaded_files / documents / reality_events 行。 */
-  ref?: { sourceKind: RefSourceKind; sourceId: string };
+  ref?: { sourceKind: RefSourceKind; sourceId: string; sourceVersionId?: string };
 }
 
 export interface IngestInput {
