@@ -64,6 +64,10 @@ describe("cursor completion process server", () => {
         captureMemory: false,
         recallMemory: false,
         toolsEnabled: false,
+        context: {
+          selectedRoomId: "room-1",
+          rooms: [{ id: "room-1", title: "测试 Room" }],
+        },
       },
     });
     expect(runResponse.statusCode).toBe(202);

@@ -42,6 +42,7 @@ export interface DocumentCursorCompletionNearbyBlock {
 
 export interface DocumentCursorCompletionRequest {
   roomId: string
+  roomTitle?: string
   documentName: string
   contextBefore: string
   contextAfter: string
@@ -429,7 +430,13 @@ export async function streamDocumentCursorCompletion(
       captureMemory: false,
       recallMemory: false,
       toolsEnabled: false,
-      context: { selectedRoomId: input.roomId },
+      context: {
+        selectedRoomId: input.roomId,
+        rooms: [{
+          id: input.roomId,
+          title: input.roomTitle?.trim() || input.documentName,
+        }],
+      },
     })
     runId = run.id
     if (options.signal.aborted) {

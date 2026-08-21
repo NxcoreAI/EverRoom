@@ -542,6 +542,7 @@ export function TiptapDocumentEditor({
   const cursorCompletionRunning = useDocumentCursorCompletion({
     editor,
     roomId: room.id,
+    roomTitle: room.title,
     documentName,
     enabled: Boolean(editor
       && !editorLocked

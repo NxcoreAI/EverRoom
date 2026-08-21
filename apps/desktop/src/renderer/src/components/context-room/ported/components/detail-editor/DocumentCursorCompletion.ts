@@ -533,11 +533,13 @@ function isAbortError(error: unknown): boolean {
 export function useDocumentCursorCompletion({
   editor,
   roomId,
+  roomTitle,
   documentName,
   enabled,
 }: {
   editor: Editor | null
   roomId: string
+  roomTitle: string
   documentName: string
   enabled: boolean
 }): boolean {
@@ -639,6 +641,7 @@ export function useDocumentCursorCompletion({
       })
       void streamDocumentCursorCompletion(api, {
         roomId,
+        roomTitle,
         documentName,
         contextBefore: context.contextBefore,
         contextAfter: context.contextAfter,
