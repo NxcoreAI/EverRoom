@@ -46,7 +46,7 @@ class RecordingRuntime implements AgentRuntime {
   }
 
   async sendInput(): Promise<void> {}
-  async cancel(): Promise<void> {}
+  async cancel(_runId: string): Promise<void> {}
   async deleteSession(): Promise<void> {}
   async dispose(): Promise<void> {}
 }
@@ -62,6 +62,24 @@ class CompletingRuntime extends RecordingRuntime {
   }
 }
 
+class HangingRuntime extends RecordingRuntime {
+  readonly cancels: string[] = []
+  private readonly queues = new Map<string, AsyncEventQueue<RuntimeEvent>>()
+
+  override async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+    this.starts.push(input)
+    const events = new AsyncEventQueue<RuntimeEvent>()
+    this.queues.set(input.runId, events)
+    return { runId: input.runId, runtimeSessionRef: `runtime-${input.sessionId}`, events }
+  }
+
+  override async cancel(runId: string): Promise<void> {
+    this.cancels.push(runId)
+    this.queues.get(runId)?.end()
+    this.queues.delete(runId)
+  }
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
@@ -69,6 +87,7 @@ afterEach(async () => {
 async function createHarness(options: {
   runtime?: RecordingRuntime
   completedMessageResolver?: AgentCompletedMessageResolver
+  disposeRuntime?: boolean
 } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-agent-room-selection-'))
   temporaryDirectories.push(dataDir)
@@ -83,11 +102,28 @@ async function createHarness(options: {
     rooms,
     { validateActiveDocumentContext: (context) => context },
     options.completedMessageResolver,
+    'direct',
+    options.disposeRuntime ?? true,
   )
   return { ...database, rooms, runtime, service }
 }
 
 describe('Agent Room selection', () => {
+  it('cancels active event streams before disposing a shared runtime', async () => {
+    const runtime = new HangingRuntime()
+    const { service, sqlite } = await createHarness({ runtime, disposeRuntime: false })
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+    const run = await service.startRun(session.id, {
+      prompt: 'keep running',
+      idempotencyKey: 'dispose-active-stream',
+    })
+
+    await service.dispose()
+
+    expect(runtime.cancels).toEqual([run.id])
+    sqlite.close()
+  })
+
   it('replaces a misleading completed message with the authoritative operation result', async () => {
     const runtime = new CompletingRuntime()
     const completedMessageResolver: AgentCompletedMessageResolver = {

@@ -218,7 +218,6 @@ describe("ConnectorSyncService Agent ingestion", () => {
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     let service: ConnectorSyncService;
     let invocation = 0;
-    const evidenceSink = vi.fn(async () => { throw new Error("downstream unavailable"); });
     const runtime = syncRuntime((input) => {
       invocation += 1;
       expect(input.prompt).toContain("gmail-sync Skill");
@@ -247,7 +246,6 @@ describe("ConnectorSyncService Agent ingestion", () => {
     });
     service = new ConnectorSyncService(database.db, config, logger);
     service.attachAgentRuntime(runtime);
-    service.setEvidenceSink(evidenceSink);
 
     try {
       await service.initialize();
@@ -256,7 +254,14 @@ describe("ConnectorSyncService Agent ingestion", () => {
 
       const emails = database.db.select().from(connectorEmails).all();
       expect(emails).toHaveLength(1);
-      expect(database.db.select().from(connectorMarkdownOutbox).all()).toHaveLength(1);
+      expect(database.db.select().from(connectorMarkdownOutbox).all()).toEqual([
+        expect.objectContaining({
+          ownerId: "local-user",
+          resourceType: "email",
+          ingestSourceId: emails[0]!.id,
+          operation: "upsert",
+        }),
+      ]);
       expect(emails[0]).toMatchObject({
         subject: "预算审批",
         schemaVersion: 3,
@@ -273,15 +278,6 @@ describe("ConnectorSyncService Agent ingestion", () => {
       expect(service.queryRecords({ ownerId: "local-user", dataset: "emails", query: "预算" }))
         .toEqual([expect.objectContaining({ resourceType: "email", title: "预算审批" })]);
       expect(service.queryRecords({ ownerId: "local-user", dataset: "repositories" })).toEqual([]);
-      await vi.waitFor(() => expect(evidenceSink).toHaveBeenCalledTimes(1));
-      expect(evidenceSink).toHaveBeenCalledWith(expect.objectContaining({
-        sourceId: expect.stringMatching(/^connector_email:/),
-        sourceKind: "mail",
-        dataType: "mail",
-        title: "预算审批",
-        occurredAt: "2026-08-19T01:30:00.000Z",
-        markdown: expect.stringContaining("请审批第三季度预算。"),
-      }));
     } finally {
       await service.dispose();
       database.sqlite.close();
@@ -398,7 +394,6 @@ describe("ConnectorSyncService Agent ingestion", () => {
     });
     const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
     let service: ConnectorSyncService;
-    const evidenceSink = vi.fn(async () => undefined);
     const runtime = syncRuntime((input) => {
       if (input.pageLabel.startsWith("document")) {
         const result = service.writeAgentBatch(input.runId, "document", [{
@@ -420,7 +415,6 @@ describe("ConnectorSyncService Agent ingestion", () => {
     });
     service = new ConnectorSyncService(database.db, config, logger);
     service.attachAgentRuntime(runtime);
-    service.setEvidenceSink(evidenceSink);
 
     try {
       await service.initialize();
@@ -432,20 +426,12 @@ describe("ConnectorSyncService Agent ingestion", () => {
       expect(database.db.select().from(connectorCalendarEvents).all()).toEqual([
         expect.objectContaining({ title: "评审会", eventId: "event-1" }),
       ]);
-      await vi.waitFor(() => expect(evidenceSink).toHaveBeenCalledTimes(2));
-      expect(evidenceSink).toHaveBeenCalledWith(expect.objectContaining({
-        sourceId: expect.stringMatching(/^connector_document:/),
-        sourceKind: "cloud-doc",
-        dataType: "document",
-        occurredAt: "2026-08-19T08:00:00.000Z",
-      }));
-      expect(evidenceSink).toHaveBeenCalledWith(expect.objectContaining({
-        sourceId: expect.stringMatching(/^connector_calendar:/),
-        sourceKind: "mail",
-        dataType: "calendar",
-        occurredAt: "2026-08-20T01:00:00.000Z",
-        markdown: expect.stringContaining("评审连接器方案"),
-      }));
+      const outbox = database.db.select().from(connectorMarkdownOutbox).all();
+      expect(outbox).toHaveLength(2);
+      expect(outbox).toEqual(expect.arrayContaining([
+        expect.objectContaining({ resourceType: "document", operation: "upsert" }),
+        expect.objectContaining({ resourceType: "calendar", operation: "upsert" }),
+      ]));
     } finally {
       await service.dispose();
       database.sqlite.close();

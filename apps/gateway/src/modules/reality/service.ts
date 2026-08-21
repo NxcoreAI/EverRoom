@@ -366,7 +366,10 @@ export class RealityService {
   }
 
   confirm(id: string): RealityEvent {
-    return this.update(this.requireRow(id), { status: "completed" }, "reality event confirmed");
+    const row = this.requireRow(id);
+    return row.status === "completed"
+      ? toEvent(row)
+      : this.update(row, { status: "completed" }, "reality event confirmed");
   }
 
   async discard(id: string): Promise<void> {

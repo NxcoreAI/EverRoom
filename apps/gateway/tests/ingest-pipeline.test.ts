@@ -132,7 +132,7 @@ function startMockLlm(): Promise<Server> {
       }
       const ids = [...user.matchAll(/\[([^\]\s]+)\] \[(?:user|assistant)\]/g)].map((match) => match[1]!);
       let content = "[]";
-      if (system.includes("资料实体抽取器")) {
+      if (user.includes("entity-extraction Skill")) {
         content = JSON.stringify({
           summary: `${ENTITY_NAME}的立项资料：打通文件到三条理解链路。`,
           entities: [{
@@ -142,13 +142,13 @@ function startMockLlm(): Promise<Server> {
             evidence: `项目代号${ENTITY_NAME}，本页是统一理解引擎 e2e 的源文档`,
           }],
         });
-      } else if (system.includes("实体登记员")) {
+      } else if (user.includes("entity-registration Skill")) {
         content = JSON.stringify({
           name: ENTITY_NAME,
           summary: `${ENTITY_NAME}：统一理解引擎 e2e 孵化出的实体。`,
           aliases: [],
         });
-      } else if (system.includes("实体同一性判定员")) {
+      } else if (user.includes("entity-identity Skill")) {
         content = JSON.stringify({ same: false, reason: "e2e 默认分立" });
       } else if (system.includes("knowledge base analyst")) {
         content = `Source Summary: ${ENTITY_NAME}立项资料。Entities: ${ENTITY_NAME}（项目核心）。Concepts: 无。`;
