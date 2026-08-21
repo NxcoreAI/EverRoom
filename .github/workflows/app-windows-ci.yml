@@ -38,11 +38,13 @@ jobs:
         id: typecheck
         continue-on-error: true
         run: pnpm typecheck
+        continue-on-error: true
 
       - name: Run tests
         id: tests
         continue-on-error: true
         run: pnpm test
+        continue-on-error: true
 
       - name: Build gateway and desktop
         id: build

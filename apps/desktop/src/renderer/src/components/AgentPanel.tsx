@@ -77,13 +77,26 @@ export function AgentPanel({
   const agentAvailable = Boolean(window.nxcore?.agent)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
 
-  const focusComposer = () => {
-    window.requestAnimationFrame(() => composerRef.current?.focus())
+  const focusComposer = (attention = false) => {
+    window.requestAnimationFrame(() => {
+      const composer = composerRef.current
+      composer?.focus()
+      if (!attention || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+
+      composer?.closest<HTMLElement>('.agent-prompt')?.animate?.(
+        [
+          { transform: 'scale(1)', boxShadow: '0 2px 12px rgba(15, 23, 42, 0.07)' },
+          { transform: 'scale(1.018)', boxShadow: '0 10px 28px rgba(59, 130, 246, 0.18)' },
+          { transform: 'scale(1)', boxShadow: '0 2px 12px rgba(15, 23, 42, 0.07)' },
+        ],
+        { duration: 460, easing: 'cubic-bezier(.22, 1, .36, 1)' },
+      )
+    })
   }
 
   useEffect(() => {
     if (!focusRequest) return
-    focusComposer()
+    focusComposer(true)
   }, [focusRequest])
 
   useEffect(() => {
