@@ -157,7 +157,8 @@ export function FilesPage() {
   const loadEvents = useCallback(async () => {
     if (!ingestApi) return
     try {
-      setEvents((await ingestApi.listEvents({ limit: 100 })).items)
+      // 文件页只看文件源台账（全源台账在记忆页「导入记录」——那是理解引擎的观测面）
+      setEvents((await ingestApi.listEvents({ limit: 100, sourceKind: 'file' })).items)
     } catch {
     }
   }, [ingestApi])

@@ -112,6 +112,17 @@ export function App() {
     return () => compactWindow.removeEventListener('change', collapseNavigation)
   }, [])
 
+  // 跨页导航事件（非页面树组件用，如连接器引导跳记忆页；照 MEMORY_TAB_EVENT 约定）
+  useEffect(() => {
+    const open = (event: Event) => {
+      const page = (event as CustomEvent<{ page: PageId }>).detail?.page
+      if (page) navigate(page)
+    }
+    window.addEventListener('nxcore:app:navigate', open as EventListener)
+    return () => window.removeEventListener('nxcore:app:navigate', open as EventListener)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const navigate = (page: PageId) => {
     if (page === 'sources' && pageMode === 'connectors') page = 'connectors'
     if (page === 'connectors' && pageMode === 'sources') page = 'sources'

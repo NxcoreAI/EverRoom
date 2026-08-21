@@ -859,6 +859,14 @@ export interface NxcoreDesktopApi {
       sourceKind?: string
       sourceId?: string
     }): Promise<{ items: IngestEventDto[]; total: number }>
+    /** 过滤规则文档（记忆页「过滤规则」入口）：偏好段 + 洞察段。 */
+    getFilterRules(): Promise<IngestFilterRulesDto>
+    /** 只重写用户偏好段（洞察段由系统维护）。 */
+    updateFilterPreference(content: string): Promise<IngestFilterRulesDto>
+    /** 误杀恢复：filtered 事件重新放行扇出（FilesPage「恢复」按钮）。 */
+    reinstateEvent(eventId: string): Promise<IngestEventDto>
+    /** 事件归一化产物全文（台账详情查看）。 */
+    getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }>
   }
 }
 import type {
@@ -888,6 +896,7 @@ import type {
   HighRiskImportResolution,
   HighRiskImportReview,
   IngestEventDto,
+  IngestFilterRulesDto,
   IngestPipelines,
 } from './ingest'
 import type { McpServersSnapshot } from './mcp'

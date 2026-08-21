@@ -23,6 +23,7 @@ import { documentOperationRoutes } from "../modules/documents/operations/routes.
 import { DocumentService } from "../modules/documents/service.js";
 import {
   createAgentResolver,
+  createIngestFilterAgentRuntime,
   registerConnectorSyncAgent,
   registerPrimaryAgent,
   registerTranscriptionSummaryAgent,
@@ -46,10 +47,13 @@ import { EmbeddingClient } from "../modules/knowledge/embedding.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
 import { IngestService } from "../modules/ingest/service.js";
 import { IngestFilterService } from "../modules/ingest/filter-agent.js";
+import { FilterRulesStore } from "../modules/ingest/rules.js";
+import { FilterInsightJob } from "../modules/ingest/rules-insight.js";
 import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
+import { KnowledgeLlm } from "../modules/knowledge/llm.js";
 import { cliConnectorRoutes, connectorSyncRoutes, nangoConnectorRoutes } from "../modules/connectors/routes.js";
 import { ConnectorMarkdownService } from "../modules/connectors/markdown-service.js";
 import { ConnectorSyncService } from "../modules/connectors/service.js";
@@ -70,7 +74,7 @@ import { ConnectorRepository } from "../modules/connectors/repository.js";
 import { ConnectorManager } from "../modules/connectors/manager.js";
 import { NangoExecutor } from "../modules/connectors/nango-executor.js";
 import { NangoAuthorizationService } from "../modules/connectors/nango-authorization.js";
-import { bootstrapNango } from "../modules/connectors/nango-bootstrap.js";
+import { bootstrapNangoWhenReady } from "../modules/connectors/nango-bootstrap.js";
 import { ConnectorDocumentStore } from "../modules/connectors/document-store.js";
 import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
@@ -106,11 +110,29 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
   const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
-  // 启动时自举 Nango:必要时创建 API key、按 .env 凭据补建 Google/Notion integration。
-  const nangoSecret = nangoConnectorConfig.enabled ? await bootstrapNango(nangoConnectorConfig) : nangoConnectorConfig.nangoSecret;
+  // Nango 自举（必要时创建 API key、按 .env 凭据补建 Google/Notion integration）。
+  // 桌面端 Gateway 先于托管 Nango ready（首次启动含依赖安装 + 构建），启动时同步
+  // 自举必失败且 placeholder secret 一直生效；改为后台自举：立即开始等待 Nango
+  // ready（最长 10 分钟，覆盖冷启动）并自举，secret 惰性 getter 在完成前返回
+  // 配置值，完成后自动切换到自举结果。
+  let nangoSecretResolved: string | null = null;
+  const resolveNangoSecret = (): string => nangoSecretResolved ?? nangoConnectorConfig.nangoSecret;
+  if (nangoConnectorConfig.enabled) {
+    void bootstrapNangoWhenReady(nangoConnectorConfig)
+      .then((secret) => {
+        nangoSecretResolved = secret;
+        app.log.info({ module: "nango-bootstrap" }, "Nango secret resolved after deferred bootstrap");
+      })
+      .catch((error) => {
+        app.log.warn(
+          { module: "nango-bootstrap", error: error instanceof Error ? error.message : String(error) },
+          "Deferred Nango bootstrap failed; falling back to configured secret",
+        );
+      });
+  }
   const nangoConnectorDb = createConnectorDatabase(nangoConnectorConfig.enabled ? nangoConnectorConfig.databasePath : ":memory:");
   const nangoExecutor = nangoConnectorConfig.enabled
-    ? new NangoExecutor(nangoConnectorConfig.nangoUrl, nangoSecret)
+    ? new NangoExecutor(nangoConnectorConfig.nangoUrl, resolveNangoSecret)
     : null;
   const nangoConnectorManager = new ConnectorManager(
     new ConnectorRepository(nangoConnectorDb.sqlite),
@@ -124,7 +146,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const nangoConnectorAuthorization = nangoConnectorConfig.enabled && "gmailConfigKey" in nangoConnectorConfig
     ? new NangoAuthorizationService(
         nangoConnectorConfig.nangoUrl,
-        nangoSecret,
+        resolveNangoSecret,
         {
           gmail: nangoConnectorConfig.gmailConfigKey,
           outlook: nangoConnectorConfig.outlookConfigKey,
@@ -419,6 +441,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
+    filterInsightJob?.dispose();
     ingestService.disposeFilter();
     await cliConnectorSyncService.dispose();
     await cliConnectorMarkdownService?.dispose();
@@ -454,22 +477,59 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
   // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
   const policyWarn = (message: string) => app.log.warn({ module: "ingest.policy" }, message);
-  // agent 过滤器（ingest 第一级闸门）：runtime 用无头 background agent，
-  // 降级链 agent → knowledge LLM → fail-open；enabled=false 时全量直通。
+  // agent 过滤器（ingest 第一级闸门）：偏好化改造（ingest-filter-agent-plan）——
+  // ① 规则文档（用户偏好段 + 系统洞察段）注入 prompt；② toolsEnabled 时换用
+  // 过滤器专用 runtime（只读 memory/wiki 工具 + 全局 wiki 作用域），关闭时退回
+  // 零工具 background runtime（现行为）；③ 降级链 agent → knowledge LLM → fail-open。
+  const filterRulesStore = new FilterRulesStore({
+    filePath: config.ingestFilter.rulesFile,
+    maxBytes: config.ingestFilter.rulesMaxBytes,
+  }, app.log);
+  const ingestFilterRuntime = config.ingestFilter.toolsEnabled
+    ? createIngestFilterAgentRuntime(
+        config,
+        // 全局 wiki 作用域（§4.2 方案 A）：过滤是全局闸门，一批可横跨多 Room，
+        // 忽略 roomId 返回全部活跃 wiki（Room wikis + 配置默认集）。解析失败由
+        // pi runtime 回退配置默认集。
+        knowledgeService.enabled
+          ? async () => {
+              const ids = knowledgeService.listRoomWikis()
+                .filter((wiki) => wiki.status === "active")
+                .map((wiki) => wiki.knowledgeId);
+              return [...new Set(ids)];
+            }
+          : undefined,
+      )
+    : backgroundAgentRuntime;
   const ingestFilterService = config.ingestFilter.enabled
-      ? new IngestFilterService(
-          backgroundAgentRuntime,
-          agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
+    ? new IngestFilterService(
+      ingestFilterRuntime ?? backgroundAgentRuntime,
+      agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
         config.ingestFilter,
         app.log,
-      )
+        filterRulesStore,
+    )
     : null;
+  // 系统洞察维护 job（§4.4）：每小时洞察 agent 蒸馏记忆 L2/L3 + wiki + 误杀样本
+  // 重写 insight 段。素材域不含 L1（原子记忆琐碎噪音大）；agent 不可用或失败
+  // 保留旧洞察——洞察是增强，不是依赖，无 LLM 降级路径。
+  let filterInsightJob: FilterInsightJob | null = null;
   if (ingestFilterService) {
+    filterInsightJob = new FilterInsightJob(
+      db,
+      ingestFilterRuntime,
+      filterRulesStore,
+      { enabled: config.ingestFilter.insightEnabled, intervalMs: config.ingestFilter.insightIntervalMs },
+      app.log,
+    );
+    filterInsightJob.start();
     app.log.info(
       {
         mode: config.ingestFilter.mode,
         threshold: config.ingestFilter.confidenceThreshold,
         exempt: config.ingestFilter.exemptSourceKinds,
+        tools: config.ingestFilter.toolsEnabled,
+        insight: config.ingestFilter.insightEnabled,
       },
       "ingest filter gate enabled",
     );
@@ -549,7 +609,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   await cliConnectorMarkdownService.initialize();
-  await app.register(ingestRoutes(ingestService));
+  await app.register(ingestRoutes(
+    ingestService,
+    filterRulesStore,
+    filterInsightJob ? () => filterInsightJob!.refreshNow() : null,
+  ));
   await app.register(processingRoutes(transcriptionSummaryService));
   await app.register(realityRoutes(realityService));
   await app.register(perceptionRoutes(perceptionService));

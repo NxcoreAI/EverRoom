@@ -155,6 +155,33 @@ export function createContextRoomAgentRuntime(config: GatewayConfig): AgentRunti
   });
 }
 
+/**
+ * ingest 过滤器专用 Runtime（ingest-filter-agent-plan §4.2）：
+ * 独立目录（ingest-filter 子目录），memory + knowledge 集成但**只读工具**——
+ * memory_search / wiki_search / wiki_read，无任何写路径，无 bash，无内置工具。
+ *
+ * 记忆隔离（§4.1）由装配与 run 侧共同保证：这里不给 mcp、不给写工具；
+ * filter-agent.ts 的 run 显式传 captureMemory/recallMemory 双 false。
+ * 与 background runtime（显式剥 memory）不同：过滤器需要只读记忆检索。
+ */
+export function createIngestFilterAgentRuntime(
+  config: GatewayConfig,
+  resolveWikiIds?: (input: { roomId: string | null }) => Promise<string[]>,
+): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !config.backgroundPi) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: config.ingestFilter.maxToolCalls,
+    runtimeRole: "internal",
+    sessionsDir: join(config.backgroundPi.sessionsDir, "ingest-filter"),
+    workingDirectory: join(config.backgroundPi.workingDirectory, "ingest-filter"),
+    agentDirectory: join(config.backgroundPi.agentDirectory, "ingest-filter"),
+  }, resolveWikiIds ? { resolveKnowledgeWikiIds: resolveWikiIds } : {});
+}
+
 /** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
 export function createDiaryAgentRuntime(
   config: GatewayConfig,

@@ -225,7 +225,9 @@ export class MemoryGatewayBridge {
       ...init,
       headers: {
         Authorization: `Bearer ${connection.token}`,
-        'Content-Type': 'application/json',
+        // 无 body 不带 Content-Type：Fastify 5 对「JSON 头 + 空 body」直接
+        // 400（FST_ERR_CTP_EMPTY_JSON_BODY），GET/DELETE 均无 body
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
     })

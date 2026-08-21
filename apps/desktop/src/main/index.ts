@@ -363,6 +363,10 @@ const FILES_CHANNELS = {
 
 const INGEST_CHANNELS = {
   listEvents: 'ingest:events:list',
+  getFilterRules: 'ingest:filter-rules:get',
+  updateFilterPreference: 'ingest:filter-rules:update-preference',
+  reinstateEvent: 'ingest:events:reinstate',
+  getEventContent: 'ingest:events:content',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -1060,6 +1064,16 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
     (_event, query: { limit?: number; offset?: number; sourceKind?: string; sourceId?: string }) =>
       bridge.listEvents(query),
   )
+  // 过滤规则文档（记忆页「过滤规则」入口）：偏好段可读写，洞察段只读。
+  handle(INGEST_CHANNELS.getFilterRules, () => bridge.getFilterRules())
+  handle(
+    INGEST_CHANNELS.updateFilterPreference,
+    (_event, content: string) => bridge.updateFilterPreference(content),
+  )
+  // 误杀恢复（导入记录页「恢复」按钮）
+  handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
+  // 事件详情：归一化产物全文
+  handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {

@@ -35,6 +35,12 @@ export class ConnectorManager {
     nangoConfigKey: string;
     nangoConnectionId: string;
     filters?: Record<string, unknown>;
+    /**
+     * 首次连接的首同步暂缓（授权流程用）：桌面端先弹过滤偏好引导，
+     * 用户设置完成后再显式触发——否则首批数据在偏好生效前就被过滤。
+     * 暂缓期间由轮询周期兜底（默认 5 分钟后无论如何开始同步）。
+     */
+    deferFirstSync?: boolean;
   }) {
     const c = this.repository.registerConnection(input);
     try {
@@ -46,8 +52,26 @@ export class ConnectorManager {
               displayName: input.provider === "gmail" ? "Mailbox" : input.provider === "google-calendar" ? "Primary calendar" : "Inbox",
             },
           ];
-      for (const scope of scopes)
-        this.repository.ensureScope(c.id, scope.id, scope.displayName);
+      // 重复注册（重装/重连）时 scope 已存在——只有新建的 scope 才需要首同步
+      const knownBefore = new Set(
+        this.repository.listScopes().filter((s) => s.connectionId === c.id).map((s) => s.providerScopeId),
+      );
+      const created: string[] = [];
+      for (const scope of scopes) {
+        const ensured = this.repository.ensureScope(c.id, scope.id, scope.displayName);
+        if (!knownBefore.has(scope.id)) created.push(ensured.id);
+      }
+      // 首次连接立即触发全量同步：不等轮询周期（默认 5 分钟）——
+      // "连接成功但什么都不发生"是最迷惑的首次体验。失败静默，轮询兜底。
+      if (created.length > 0 && this.executor && !input.deferFirstSync) {
+        for (const scopeId of created) {
+          try {
+            this.trigger(scopeId, "full");
+          } catch {
+            // 轮询周期会重试，注册流程不因首同步失败回滚连接
+          }
+        }
+      }
       return c;
     } catch (error) {
       this.repository.purgeConnection(c.id);
