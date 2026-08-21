@@ -311,7 +311,6 @@ export class ConnectorSyncService {
   private readonly instanceId = randomUUID();
   private agentRuntime: AgentRuntime | null = null;
   private disposeAgentRuntime = true;
-  private evidenceSink: ((evidence: unknown) => Promise<void>) | null = null;
   private filesService: FilesService | null = null;
 
   constructor(
@@ -325,10 +324,6 @@ export class ConnectorSyncService {
     if (this.agentRuntime) throw new Error("Connector sync Agent runtime is already attached");
     this.agentRuntime = runtime;
     this.disposeAgentRuntime = options.disposeRuntime ?? true;
-  }
-
-  setEvidenceSink(sink: ((evidence: unknown) => Promise<void>) | null): void {
-    this.evidenceSink = sink;
   }
 
   setFilesService(service: FilesService): void {

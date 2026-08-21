@@ -33,6 +33,7 @@ import {
   type Pipelines,
 } from "./types.js";
 import {
+  dataTypeOfJsonType,
   extensionOf,
   normalizeJsonPayload,
   normalizeMarkdown,
@@ -1099,13 +1100,13 @@ async function normalizeFileBytes(
   if (extension === "json") {
     let payload: unknown;
     try {
-      payload = JSON.parse(buffer.toString("utf8"));
-    } catch (error) {
-      throw new IngestError(`json 解析失败：${(error as Error).message}`, "convert_failed");
+      payload = JSON.parse(buffer.toString("utf8")) as unknown;
+    } catch {
+      throw new IngestError("JSON 文件解析失败", "convert_failed");
     }
     const normalized = normalizeJsonPayload(payload, undefined, titleOfFilename(filename));
     return {
-      dataType: explicitDataType ?? normalized.dataType ?? (normalized.jsonType === "meeting-minutes" ? "meeting-minutes" : "document"),
+      dataType: explicitDataType ?? dataTypeOfJsonType(normalized.jsonType) ?? "document",
       detectedBy: explicitDataType ? "explicit" : "json-type",
       title: normalized.title,
       markdown: normalized.markdown,

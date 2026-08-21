@@ -605,8 +605,8 @@ export class FilesService {
     visibility?: "private" | "shared" | undefined;
     capturedAt?: Date | undefined;
   }): Promise<FileUploadResult> {
-    if (input.filename.toLowerCase().endsWith(".json")) {
-      throw new Error("JSON 文件不会进入文件库");
+    if (!isSupportedUploadFilename(input.filename)) {
+      throw new Error("不支持的文件类型；JSON 文件不会进入文件库");
     }
     const contentHash = contentHashOf(input.buffer);
     const visualIdentity = input.assetKind === "screenshot" || input.assetKind === "photo"

@@ -149,8 +149,22 @@ export class KnowledgeRouter {
    * 跑完整瀑布并落 decision 行。
    * skipEntry：revert 后重路由时跳过 ①（否则同 Room 直连死循环）。
    */
-  async route(envelope: DocEnvelope, options: { skipEntry?: boolean } = {}): Promise<RouteResult> {
+  async route(envelope: DocEnvelope, options: { skipEntry?: boolean; entryRoomId?: string } = {}): Promise<RouteResult> {
     // ── ① 入口确定性：EverRoom 内文档天然带 Room（ED5：不跑抽取，零 LLM 成本）
+    if (!options.skipEntry && options.entryRoomId) {
+      const entry = this.deps.db.select({ id: rooms.id }).from(rooms)
+        .where(and(eq(rooms.id, options.entryRoomId), isNull(rooms.deletedAt))).get();
+      if (entry) {
+        return this.persist(envelope, {
+          disposition: "execute",
+          roomId: entry.id,
+          decidedBy: "entry",
+          confidence: 1,
+          reason: "文档创建于该 Room（入口确定性）",
+          evidence: null,
+        });
+      }
+    }
     if (!options.skipEntry && envelope.ref.kind === "everroom-doc") {
       const entry = this.resolveEntryRooms(envelope.ref.id);
       if (entry) {

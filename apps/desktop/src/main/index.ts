@@ -103,10 +103,21 @@ async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRa
 }
 
 const appDataDirectory = app.getPath('appData')
-const dataDirectory = join(appDataDirectory, APP_NAME)
+const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || join(appDataDirectory, APP_NAME)
 
 app.setPath('userData', dataDirectory)
 app.setName(APP_NAME)
+if (app.isPackaged) {
+  const esbuildExecutable = process.platform === 'win32' ? 'esbuild.exe' : join('bin', 'esbuild')
+  process.env.ESBUILD_BINARY_PATH = join(
+    process.resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    '@esbuild',
+    `${process.platform}-${process.arch}`,
+    esbuildExecutable,
+  )
+}
 configureDesktopLogger(dataDirectory)
 configureSentry(app.getVersion(), app.isPackaged)
 if (process.platform === 'darwin') process.title = APP_NAME

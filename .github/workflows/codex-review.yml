@@ -137,7 +137,7 @@ jobs:
               "properties": {
                 "decision": {
                   "type": "string",
-                  "enum": ["approve", "changes_requested"]
+                  "enum": ["approve", "comment", "changes_requested"]
                 },
                 "review": {
                   "type": "string"
@@ -157,8 +157,12 @@ jobs:
             Focus on correctness, regressions, security, privacy, missing tests,
             and build or release risks. Run the smallest relevant test command
             when practical; the upstream CI has already passed the full suite.
-            Use decision "approve" only when there are no actionable findings.
-            Otherwise use "changes_requested".
+            Use "changes_requested" only for evidence-backed blockers that can
+            cause a security or privacy issue, data loss, a runtime regression,
+            or a build or release failure. Use "comment" for lower-severity
+            findings, non-critical missing tests, and maintainability concerns.
+            Do not block on style preferences, speculative risks, or optional
+            improvements. Use "approve" when there are no actionable findings.
             Put the complete human-readable review in "review", ordered by
             severity with file and line references. If there are no findings,
             say so clearly. Respond in the primary language used by the pull
@@ -193,7 +197,7 @@ jobs:
               core.setFailed(`Codex returned invalid JSON: ${error.message}`);
               return;
             }
-            if (!['approve', 'changes_requested'].includes(result.decision)
+            if (!['approve', 'comment', 'changes_requested'].includes(result.decision)
                 || typeof result.review !== 'string'
                 || result.review.trim() === '') {
               core.setFailed('Codex returned an invalid review decision.');
@@ -217,6 +221,17 @@ jobs:
                 repo: context.repo.repo,
                 pull_number,
                 event: 'REQUEST_CHANGES',
+                body: result.review,
+              });
+              return;
+            }
+
+            if (result.decision === 'comment') {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number,
+                event: 'COMMENT',
                 body: result.review,
               });
               return;

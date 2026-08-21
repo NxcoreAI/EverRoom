@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,7 +15,7 @@ afterEach(async () => {
 
 describe('collectImportCandidates', () => {
   it('recursively collects supported files while ignoring hidden and unsupported entries', async () => {
-    const directory = await mkdtemp(join('/tmp', 'everroom-import-'))
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-'))
     temporaryDirectories.push(directory)
     await mkdir(join(directory, 'nested'))
     await mkdir(join(directory, '.hidden'))
@@ -31,7 +32,7 @@ describe('collectImportCandidates', () => {
   })
 
   it('drops a directly selected JSON file before upload', async () => {
-    const directory = await mkdtemp(join('/tmp', 'everroom-import-json-'))
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-json-'))
     temporaryDirectories.push(directory)
     const jsonPath = join(directory, 'package.json')
     await writeFile(jsonPath, '{}')
