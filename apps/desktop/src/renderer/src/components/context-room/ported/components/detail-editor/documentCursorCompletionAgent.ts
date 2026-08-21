@@ -418,6 +418,7 @@ export async function streamDocumentCursorCompletion(
       captureMemory: false,
       recallMemory: false,
       toolsEnabled: false,
+      context: { selectedRoomId: input.roomId },
     })
     runId = run.id
     if (options.signal.aborted) {

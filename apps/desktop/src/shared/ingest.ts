@@ -23,6 +23,47 @@ export interface FileDto {
   updatedAt: string
 }
 
+export interface FileCatalogDto {
+  id: string
+  originalName: string
+  displayName: string | null
+  sharedTitle: string
+  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'legacy-upload'
+  sourceLabel: string
+  relativePath: string | null
+  provider: string | null
+  bytes: number
+  dataType: string | null
+  agentCategory: string | null
+  summary: string | null
+  tags: string[]
+  processingState: 'processing' | 'ready' | 'failed' | 'missing'
+  clusterId: string | null
+  contentHash: string
+  parsed: boolean
+  updatedAt: string
+}
+
+export interface FileFormatCapabilityDto {
+  extension: string
+  dataType: string
+  parserId: string
+  parserVersion: number
+  manualImport: boolean
+  autoScan: boolean
+  connectorImport: boolean
+  maxBytes: number
+}
+
+export interface FileImportAcceptedDto {
+  fileEntryId: string
+  fileVersionId: string
+  jobId: string
+  contentHash: string
+  blobDeduped: boolean
+  versionDeduped: boolean
+}
+
 /** 统一导入的每份文件结果（导入对话框逐行展示）。 */
 export interface FileImportOutcome {
   filename: string

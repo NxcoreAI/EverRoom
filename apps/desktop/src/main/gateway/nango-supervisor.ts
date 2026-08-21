@@ -164,7 +164,10 @@ export class NangoSupervisor {
     }
 
     // ponytail: 打包形态尚未把 nango 子模块打进 extraResources,先只支持 dev 托管。
-    if (app.isPackaged) throw new Error('Nango 托管目前仅支持开发模式')
+    if (app.isPackaged) {
+      this.runtimeState = 'disabled'
+      return null
+    }
     const nangoDirectory = join(app.getAppPath(), '..', 'gateway', 'src', 'modules', 'connector')
 
     // 复用已在运行的实例(用户手动启动的 Nango 等)。

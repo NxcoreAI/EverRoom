@@ -41,6 +41,8 @@ import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
 import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
+import { FileClusteringService } from "../modules/files/clustering-service.js";
+import { EmbeddingClient } from "../modules/knowledge/embedding.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
 import { IngestService } from "../modules/ingest/service.js";
 import { IngestFilterService } from "../modules/ingest/filter-agent.js";
@@ -366,6 +368,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
+  filesService.initializeCatalog();
+  cliConnectorSyncService.setFilesService(filesService);
+  const fileClusteringService = new FileClusteringService(
+    db,
+    agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
+    config.knowledge?.embeddingLlm && config.knowledge.embeddingModel
+      ? new EmbeddingClient(config.knowledge.embeddingLlm, config.knowledge.embeddingModel)
+      : null,
+    config.knowledge?.embeddingModel ?? null,
+  );
+  filesService.setVersionClassifier((fileEntryId, fileVersionId) => {
+    fileClusteringService.enqueue(fileEntryId, fileVersionId);
+  });
+  fileClusteringService.initialize();
   const diaryService = new DiaryService(db, { logger: app.log });
   diaryService.initialize();
   const perceptionService = new PerceptionService(db, filesService, null, app.log, (at) => diaryService.markStaleAt(at));
@@ -392,6 +408,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   let documentOutboxWorker: DocumentOutboxWorker | null = null;
   app.addHook("onClose", async () => {
+    // Stop producers while all ingest/classification dependencies are still alive.
+    await filesService.dispose();
+    await fileClusteringService.dispose();
     await nangoConnectorManager.dispose();
     nangoConnectorDb.close();
     clearInterval(documentOperationExpiryTimer);
@@ -430,7 +449,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       if (config.knowledge?.roomWikisEnabled) knowledgeService.requestFileCleanup(fileId);
     },
     deleteMemoryDocuments: (fileId) => memoryService.deleteDocumentsByCallerRef(fileId),
-  }));
+  }, fileClusteringService));
   // 统一理解引擎（U1）：接入面唯一，台账 + 三链路扇出（§7）。
   // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
   // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
@@ -469,6 +488,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
+  filesService.setVersionIngestor((input) => ingestService.ingest({
+    source: { ref: {
+      sourceKind: "file",
+      sourceId: input.fileEntryId,
+      sourceVersionId: input.fileVersionId,
+    } },
+    ...(input.pipelines ? { pipelines: input.pipelines } : {}),
+    ...(input.roomId ? { roomId: input.roomId } : {}),
+  }));
   realityService.setReadySink(async (event) => {
     diaryService.markStaleAt(new Date(event.startedAt));
     const roomEnabled = knowledgeService.routerEnabled;

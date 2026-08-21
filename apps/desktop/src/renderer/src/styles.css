@@ -2415,6 +2415,33 @@ summary:focus-visible {
   gap: 16px;
 }
 
+.files-drop-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 16px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow);
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.files-drop-overlay svg {
+  width: 30px;
+  height: 30px;
+}
+
+.files-drop-overlay strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
 .file-recognition-toolbar {
   display: flex;
   min-height: 32px;
@@ -2662,11 +2689,6 @@ summary:focus-visible {
 .ingest-table .table-head,
 .ingest-table .table-row {
   grid-template-columns: minmax(200px, 1.5fr) minmax(84px, 0.6fr) minmax(130px, 0.9fr) minmax(84px, 0.6fr) minmax(88px, 0.6fr);
-}
-
-.files-outcomes .table-head,
-.files-outcomes .table-row {
-  grid-template-columns: minmax(200px, 1.4fr) minmax(84px, 0.6fr) minmax(150px, 1fr) minmax(84px, 0.6fr) minmax(0, 1fr);
 }
 
 .files-actions {

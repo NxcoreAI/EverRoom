@@ -103,10 +103,21 @@ async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRa
 }
 
 const appDataDirectory = app.getPath('appData')
-const dataDirectory = join(appDataDirectory, APP_NAME)
+const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || join(appDataDirectory, APP_NAME)
 
 app.setPath('userData', dataDirectory)
 app.setName(APP_NAME)
+if (app.isPackaged) {
+  const esbuildExecutable = process.platform === 'win32' ? 'esbuild.exe' : join('bin', 'esbuild')
+  process.env.ESBUILD_BINARY_PATH = join(
+    process.resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    '@esbuild',
+    `${process.platform}-${process.arch}`,
+    esbuildExecutable,
+  )
+}
 configureDesktopLogger(dataDirectory)
 configureSentry(app.getVersion(), app.isPackaged)
 if (process.platform === 'darwin') process.title = APP_NAME
@@ -336,9 +347,11 @@ const FILES_CHANNELS = {
   readMarkdown: 'files:read-markdown',
   readDataUrl: 'files:read-data-url',
   rename: 'files:rename',
+  pinClusterTitle: 'files:pin-cluster-title',
   delete: 'files:delete',
   reveal: 'files:reveal',
   pickAndImport: 'files:pick-and-import',
+  importPathsOnce: 'files:import-paths-once',
 } as const
 
 const INGEST_CHANNELS = {
@@ -960,11 +973,18 @@ function registerFilesHandlers(bridge: FilesGatewayBridge): void {
   handle(FILES_CHANNELS.readDataUrl, (_event, fileId: string) => bridge.readDataUrl(fileId))
   handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
     bridge.rename(fileId, displayName))
+  handle(FILES_CHANNELS.pinClusterTitle, (_event, clusterId: string, sharedTitle: string) =>
+    bridge.pinClusterTitle(clusterId, sharedTitle))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
   handle(
     FILES_CHANNELS.pickAndImport,
-    (_event, options?: { pipelines?: IngestPipelines }) => bridge.pickAndImport(options),
+    (_event, options?: { pipelines?: IngestPipelines; roomId?: string }) => bridge.pickAndImport(options),
+  )
+  handle(
+    FILES_CHANNELS.importPathsOnce,
+    (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
+      bridge.importPathsOnce(paths, options),
   )
 }
 
@@ -1518,7 +1538,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
-    registerFilesHandlers(new FilesGatewayBridge(gatewaySupervisor))
+    const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor)
+    registerFilesHandlers(filesGatewayBridge)
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
@@ -1598,14 +1619,34 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerPrivateAudioHandlers(privateAudioSync)
     registerScreenCaptureHandlers()
 
+    const fileCapabilities = await filesGatewayBridge.capabilities().catch((error) => {
+      console.warn('Unable to load file capabilities; automatic local scanning stays disabled.', error)
+      return { items: [] }
+    })
+    const autoScanExtensions = new Set(fileCapabilities.items
+      .filter((item) => item.autoScan)
+      .map((item) => item.extension.toLowerCase()))
+    const connectorImportExtensions = new Set(fileCapabilities.items
+      .filter((item) => item.connectorImport)
+      .map((item) => item.extension.toLowerCase()))
     const connectors = new ConnectorRegistry()
-      .register(new LocalFolderConnector())
+      .register(new LocalFolderConnector(autoScanExtensions))
       .register(new GitHubConnector((key) => credentials.get(key)))
       .register(new GoogleDocsConnector((key) => credentials.get(key)))
       .register(new NotionConnector((key) => credentials.get(key)))
-    localDataService = new LocalDataService(dataDirectory, connectors)
+    localDataService = new LocalDataService(
+      dataDirectory,
+      connectors,
+      filesGatewayBridge,
+      autoScanExtensions,
+      connectorImportExtensions,
+    )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
+    void localDataService.bootstrapDefaultLocalFolders([
+      app.getPath('desktop'),
+      app.getPath('documents'),
+    ]).catch((error) => console.warn('Default local folder scan failed.', error))
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))

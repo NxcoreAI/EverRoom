@@ -62,8 +62,11 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-      - name: Build gateway and desktop
-        run: pnpm build
+      - name: Build app and bundled runtimes
+        run: |
+          pnpm build
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
 
       - name: Package macOS arm64
         run: pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never
@@ -74,13 +77,15 @@ jobs:
           app_path="$(find release -type d -name EverRoom.app -print -quit)"
           test -n "$app_path" || { echo "EverRoom.app was not produced" >&2; exit 1; }
           resources="$app_path/Contents/Resources"
-          forbidden='(^|/)(\.env($|\.)|(__tests__|tests?)(/|$)|[^/]*(\.test|\.spec)\.[^/]+$|(test|spec)\.[^/]+$)|\.(map|ts|tsx|mts|cts)$'
+          forbidden='(^|/)(\.env($|\.)|(__tests__|tests?)(/|$)|[^/]*(\.test|\.spec)\.[^/]+$|(test|spec)\.[^/]+$)|\.map$'
 
           loose_files="$(find "$resources" -type f -print)"
           if printf '%s\n' "$loose_files" | grep -Eiq "$forbidden"; then
             printf '%s\n' "$loose_files" | grep -Ei "$forbidden" >&2
             exit 1
           fi
+          unexpected_typescript="$(printf '%s\n' "$loose_files" | grep -Ei '\.(ts|tsx|mts|cts)$' | grep -Ev "^$resources/open-connector/" || true)"
+          test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
 
           asar_path="$(cd "$resources" && pwd)/app.asar"
           pnpm --filter @nxcore/desktop exec asar list "$asar_path" > "$RUNNER_TEMP/asar-files.txt"
@@ -88,6 +93,20 @@ jobs:
             grep -Ei "$forbidden" "$RUNNER_TEMP/asar-files.txt" >&2
             exit 1
           fi
+          unexpected_typescript="$(grep -Ei '\.(ts|tsx|mts|cts)$' "$RUNNER_TEMP/asar-files.txt" | grep -Eiv '[\\/]node_modules[\\/]@tencentdb-agent-memory[\\/](memory-tencentdb-v2|knowledge-service)[\\/]src[\\/]' || true)"
+          test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
+
+          grep -Fq 'memory-tencentdb-v2/bin/memory-gateway.mjs' "$RUNNER_TEMP/asar-files.txt"
+          grep -Fq 'memory-tencentdb-v2/src/gateway/server.ts' "$RUNNER_TEMP/asar-files.txt"
+          grep -Fq 'knowledge-service/src/server.ts' "$RUNNER_TEMP/asar-files.txt"
+          grep -Fq '@node-rs/jieba-darwin-arm64' "$RUNNER_TEMP/asar-files.txt"
+          grep -Fq '@colbymchenry/codegraph-darwin-arm64' "$RUNNER_TEMP/asar-files.txt"
+          test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild"
+          test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
+          test -f "$resources/open-connector/src/server/index.ts"
+          test -f "$resources/open-connector/dist/web/index.html"
+          test -x "$resources/oo/darwin-arm64/oo"
+          "$resources/oo/darwin-arm64/oo" --version
 
       - name: Verify artifacts
         shell: bash
@@ -161,8 +180,11 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-      - name: Build gateway and desktop
-        run: pnpm build
+      - name: Build app and bundled runtimes
+        run: |
+          pnpm build
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
 
       - name: Package Windows x64
         run: pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never
@@ -176,13 +198,21 @@ jobs:
           if (-not (Test-Path $asar -PathType Leaf)) {
             throw 'app.asar was not produced'
           }
-          $forbidden = '(^|[\\/])(\.env($|\.)|(__tests__|tests?)([\\/]|$)|[^\\/]*(\.test|\.spec)\.[^\\/]+$|(test|spec)\.[^\\/]+$)|\.(map|ts|tsx|mts|cts)$'
+          $forbidden = '(^|[\\/])(\.env($|\.)|(__tests__|tests?)([\\/]|$)|[^\\/]*(\.test|\.spec)\.[^\\/]+$|(test|spec)\.[^\\/]+$)|\.map$'
 
           $looseFiles = Get-ChildItem $resources -File -Recurse | ForEach-Object FullName
           $forbiddenLooseFiles = @($looseFiles | Where-Object { $_ -match $forbidden })
           if ($forbiddenLooseFiles.Count -gt 0) {
             $forbiddenLooseFiles | Write-Error
             throw 'Forbidden loose files found in packaged resources'
+          }
+          $openConnectorRoot = (Resolve-Path (Join-Path $resources 'open-connector')).Path + [IO.Path]::DirectorySeparatorChar
+          $unexpectedLooseTypeScript = @($looseFiles | Where-Object {
+            $_ -match '\.(ts|tsx|mts|cts)$' -and -not $_.StartsWith($openConnectorRoot, [StringComparison]::OrdinalIgnoreCase)
+          })
+          if ($unexpectedLooseTypeScript.Count -gt 0) {
+            $unexpectedLooseTypeScript | Write-Error
+            throw 'Unexpected loose TypeScript files found in packaged resources'
           }
 
           $asarFiles = pnpm --filter @nxcore/desktop exec asar list (Resolve-Path $asar)
@@ -193,6 +223,85 @@ jobs:
           if ($forbiddenAsarFiles.Count -gt 0) {
             $forbiddenAsarFiles | Write-Error
             throw 'Forbidden files found in app.asar'
+          }
+          $allowedTypeScript = '[\\/]node_modules[\\/]@tencentdb-agent-memory[\\/](memory-tencentdb-v2|knowledge-service)[\\/]src[\\/]'
+          $unexpectedAsarTypeScript = @($asarFiles | Where-Object {
+            $_ -match '\.(ts|tsx|mts|cts)$' -and $_ -notmatch $allowedTypeScript
+          })
+          if ($unexpectedAsarTypeScript.Count -gt 0) {
+            $unexpectedAsarTypeScript | Write-Error
+            throw 'Unexpected TypeScript files found in app.asar'
+          }
+
+          foreach ($required in @(
+            'memory-tencentdb-v2[\\/]bin[\\/]memory-gateway.mjs',
+            'memory-tencentdb-v2[\\/]src[\\/]gateway[\\/]server.ts',
+            'knowledge-service[\\/]src[\\/]server.ts',
+            '@node-rs[\\/]jieba-win32-x64-msvc[\\/]jieba.win32-x64-msvc.node',
+            '@colbymchenry[\\/]codegraph-win32-x64'
+          )) {
+            if (-not ($asarFiles -match $required)) { throw "Missing packaged runtime entry: $required" }
+          }
+          foreach ($required in @(
+            "$resources/app.asar.unpacked/node_modules/@esbuild/win32-x64/esbuild.exe",
+            "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/win32-x64.node",
+            "$resources/open-connector/src/server/index.ts",
+            "$resources/open-connector/dist/web/index.html",
+            "$resources/oo/win32-x64/oo.exe"
+          )) {
+            if (-not (Test-Path $required -PathType Leaf)) { throw "Missing packaged runtime file: $required" }
+          }
+          & "$resources/oo/win32-x64/oo.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged oo CLI failed to start' }
+
+      - name: Cold-start packaged app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testRoot = Join-Path $env:RUNNER_TEMP 'everroom-cold-start'
+          $env:APPDATA = Join-Path $testRoot 'Roaming'
+          $env:LOCALAPPDATA = Join-Path $testRoot 'Local'
+          $env:NXCORE_DATA_DIR = Join-Path $testRoot 'EverRoom'
+          New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA | Out-Null
+          $stdout = Join-Path $testRoot 'stdout.log'
+          $stderr = Join-Path $testRoot 'stderr.log'
+          $app = Start-Process -FilePath (Resolve-Path 'release/win-unpacked/EverRoom.exe') `
+            -ArgumentList '--disable-gpu' -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(120)
+            $gatewayReady = $false
+            $memoryReady = $false
+            $knowledgeReady = $false
+            while ([DateTime]::UtcNow -lt $deadline -and -not $app.HasExited) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $memoryReady = (Invoke-WebRequest 'http://127.0.0.1:8420/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200
+              } catch {}
+              try {
+                $knowledgeReady = (Invoke-WebRequest 'http://127.0.0.1:8421/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200
+              } catch {}
+              $manifestPath = Join-Path $env:NXCORE_DATA_DIR 'runtime/gateway.json'
+              if (Test-Path $manifestPath -PathType Leaf) {
+                try {
+                  $gateway = Get-Content $manifestPath -Raw | ConvertFrom-Json
+                  $headers = @{ Authorization = "Bearer $($gateway.token)" }
+                  $gatewayReady = (Invoke-WebRequest "$($gateway.baseUrl)/v1/health/ready" -Headers $headers -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200
+                } catch {}
+              }
+              if ($gatewayReady -and $memoryReady -and $knowledgeReady) { break }
+            }
+            if (-not ($gatewayReady -and $memoryReady -and $knowledgeReady)) {
+              Get-Content $stdout -Tail 200 -ErrorAction SilentlyContinue
+              Get-Content $stderr -Tail 200 -ErrorAction SilentlyContinue | Write-Error
+              throw "Packaged app failed health checks: gateway=$gatewayReady memory=$memoryReady knowledge=$knowledgeReady"
+            }
+            Write-Host 'Packaged app cold-start health checks passed'
+          } finally {
+            if (-not $app.HasExited) {
+              $null = $app.CloseMainWindow()
+              if (-not $app.WaitForExit(10000)) { & taskkill.exe /PID $app.Id /T /F | Out-Null }
+            }
           }
 
       - name: Verify artifacts

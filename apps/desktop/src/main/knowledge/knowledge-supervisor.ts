@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
@@ -28,7 +28,6 @@ export interface KnowledgeServiceConnection {
 }
 
 const PACKAGE_NAME = '@tencentdb-agent-memory/knowledge-service'
-const MEMORY_PACKAGE_NAME = '@tencentdb-agent-memory/memory-tencentdb-v2'
 const KNOWLEDGE_PORT = 8421
 const DEFAULT_BASE_URL = `http://127.0.0.1:${KNOWLEDGE_PORT}`
 const SERVICE_ID = 'everroom'
@@ -80,8 +79,6 @@ export class KnowledgeServiceSupervisor {
     await mkdir(dataDir, { recursive: true })
 
     const command = app.isPackaged ? process.execPath : (process.env.NXCORE_KNOWLEDGE_NODE ?? 'node')
-    // Windows + Node 22 的组合下:--import 必须是 file:// URL,而主入口必须是
-    // 正斜杠路径(file:// 会被误判为 CJS 相对路径,反斜杠会被判为 URL scheme)。
     const serverEntry = join(packageDirectory, 'src', 'server.ts').replace(/\\/g, '/')
     const child = spawn(
       command,
@@ -217,30 +214,13 @@ export class KnowledgeServiceSupervisor {
 
   private resolvePackage(): { packageDirectory: string; tsxEntryUrl: string } {
     const override = process.env.NXCORE_KNOWLEDGE_SERVICE_DIR?.trim()
-    if (override) {
-      return { packageDirectory: override, tsxEntryUrl: this.resolveTsx(join(override, 'package.json')) }
-    }
-    if (app.isPackaged) {
-      // 打包态目录(v1 暂未随 extraResources 发布,占位保持与 memory-core 相同的结构)。
-      const packageDirectory = join(process.resourcesPath, 'knowledge-service')
-      return { packageDirectory, tsxEntryUrl: this.resolveTsx(join(packageDirectory, 'package.json')) }
-    }
-    // dev:从 apps/desktop 的 node_modules 解析 git 依赖安装的 knowledge-service 包。
-    // 该包没有 exports 字段,子路径可直接 resolve。
-    const baseRequire = createRequire(join(app.getAppPath(), 'package.json'))
-    const manifestPath = baseRequire.resolve(`${PACKAGE_NAME}/package.json`)
-    return { packageDirectory: join(manifestPath, '..'), tsxEntryUrl: this.resolveTsx(manifestPath) }
-  }
-
-  /** tsx 优先取 knowledge 包自带的依赖;包内缺失时回退到 memory 包(同为桌面依赖树内)。 */
-  private resolveTsx(anchor: string): string {
-    const packageRequire = createRequire(anchor)
-    try {
-      return pathToFileURL(packageRequire.resolve('tsx')).href
-    } catch {
-      const baseRequire = createRequire(join(app.getAppPath(), 'package.json'))
-      const memoryBin = baseRequire.resolve(`${MEMORY_PACKAGE_NAME}/bin/memory-gateway.mjs`)
-      return pathToFileURL(createRequire(memoryBin).resolve('tsx')).href
+    const manifestPath = override
+      ? join(override, 'package.json')
+      : createRequire(join(app.getAppPath(), 'package.json')).resolve(`${PACKAGE_NAME}/package.json`)
+    const packageRequire = createRequire(manifestPath)
+    return {
+      packageDirectory: dirname(manifestPath),
+      tsxEntryUrl: pathToFileURL(packageRequire.resolve('tsx')).href,
     }
   }
 

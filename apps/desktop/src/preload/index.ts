@@ -1,6 +1,6 @@
 import '@sentry/electron/preload'
 
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
@@ -431,10 +431,16 @@ const api: NxcoreDesktopApi = {
     readMarkdown: (fileId: string) => invoke('files:read-markdown', fileId),
     readDataUrl: (fileId: string) => invokeQuietly('files:read-data-url', fileId),
     rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
+    pinClusterTitle: (clusterId: string, sharedTitle: string) =>
+      invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),
+    importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }) => {
+      const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
+      return invoke('files:import-paths-once', paths, options)
+    },
   },
   ingest: {
     listEvents: (query: {

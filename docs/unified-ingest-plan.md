@@ -5,6 +5,8 @@
 > 范围：`apps/gateway`（新增 `modules/ingest` 理解引擎模块，主体）、`apps/desktop`（统一导入入口）、既有 `modules/knowledge` / `modules/memory` 少量重构
 > 与既有方案的关系：**不改** room-wiki-plan / entity-room-plan 的路由瀑布与晋升制，**不改** memory-md-source-plan 的 MemoryCore 文档子系统——本方案是它们**上游的统一进水口**；memory-md-source-plan §7 的 importMarkdown 保留自身存储逻辑，扇出并入本方案引擎（MemoryCore 侧 API 不变）
 > 前置阅读：`docs/entity-room-plan.md`（实体晋升制，Room 链路现状）、`docs/memory-md-source-plan.md`（记忆文档链路现状）
+>
+> **2026-08-21 后续决策**：本地手动文件和目录扫描文件的存储、版本化解析、连接器文件准入及 FilesPage 聚类，改由 `docs/files-unified-catalog-and-ingest-plan.zh-CN.md` 规定。该专项方案覆盖本文 U8 中“本地 path 只读不拷贝”的部分；U9“modules/files 是唯一字节入口”继续有效。
 
 ## 1. 背景与问题
 

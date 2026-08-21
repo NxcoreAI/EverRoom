@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import { PiAgentRuntime, type PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
@@ -55,12 +54,6 @@ function builtin(id: (typeof BUILTIN_AGENT_IDS)[keyof typeof BUILTIN_AGENT_IDS])
   return loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), id);
 }
 
-function builtinSkillPaths(bundle: ReturnType<typeof builtin>): string[] {
-  return bundle.skills
-    .map((skill) => join(bundle.directory, skill))
-    .filter((path) => existsSync(path));
-}
-
 function withAgentDirectories(
   config: GatewayConfig,
   agentId: string,
@@ -94,7 +87,7 @@ export function createAgentRuntime(
     },
     runtimeRole: "user-facing",
     skillsEnabled: true,
-    additionalSkillPaths: builtinSkillPaths(bundle),
+    skillPrompts: bundle.skillPrompts,
     systemPrompt: bundle.systemPrompt,
   }, {
     tools: [
@@ -130,7 +123,7 @@ export function createConnectorSyncAgentRuntime(
       maxToolCallsPerRun: 128,
       runtimeRole: "internal",
       skillsEnabled: true,
-      additionalSkillPaths: builtinSkillPaths(bundle),
+      skillPrompts: bundle.skillPrompts,
     }),
     systemPrompt: bundle.systemPrompt,
   }, {
@@ -147,7 +140,7 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.transcriptionSummary, pi),
     runtimeRole: "internal",
     skillsEnabled: true,
-    additionalSkillPaths: builtinSkillPaths(bundle),
+    skillPrompts: bundle.skillPrompts,
     systemPrompt: bundle.systemPrompt,
   });
 }
@@ -194,7 +187,7 @@ export function createCursorCompletionRuntime(config: GatewayConfig): AgentRunti
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.cursorCompletion, config.cursorCompletionPi),
     runtimeRole: "internal",
     skillsEnabled: true,
-    additionalSkillPaths: builtinSkillPaths(bundle),
+    skillPrompts: bundle.skillPrompts,
     systemPrompt: bundle.systemPrompt,
   });
 }
