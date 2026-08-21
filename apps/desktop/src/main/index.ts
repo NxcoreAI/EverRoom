@@ -9,7 +9,7 @@ import type {
   StartDocumentOperationInput,
 } from '@nxcore/agent-contract'
 
-import type { CloudAccountStatus, DefaultLocalFolder } from '../shared/sources'
+import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
 import type { PrivateTranscriptionSyncCompletedEvent } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -625,7 +625,6 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
       title: desktopText('dialog.chooseFolder.title'),
       buttonLabel: desktopText('dialog.chooseFolder.button'),
       properties: ['openDirectory', 'createDirectory'],
-      ...(process.platform === 'darwin' ? { securityScopedBookmarks: true } : {}),
     })
     const rootPath = result.filePaths[0]
     return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
@@ -635,10 +634,9 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     if (folders.some((folder) => folder !== 'documents' && folder !== 'desktop')) {
       throw new Error('无效的默认文件夹配置。')
     }
-    const selected = folders as DefaultLocalFolder[]
-    const unique = [...new Set(selected)]
-    const results: Array<{ folder: DefaultLocalFolder; connected: boolean; error?: string }> = []
-    for (const folder of unique) {
+    const selected = [...new Set(folders as DefaultLocalFolder[])]
+    const results: DefaultLocalFolderConnectionResult[] = []
+    for (const folder of selected) {
       try {
         let rootPath = app.getPath(folder)
         if (process.platform === 'darwin') {
@@ -647,10 +645,9 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
             buttonLabel: desktopText('dialog.chooseFolder.button'),
             defaultPath: rootPath,
             properties: ['openDirectory', 'createDirectory'],
-            securityScopedBookmarks: true,
           })
           if (picked.canceled || !picked.filePaths[0]) {
-            results.push({ folder, connected: false, error: '用户取消了文件夹授权。' })
+            results.push({ folder, connected: false, error: '用户取消了文件夹选择。' })
             continue
           }
           rootPath = picked.filePaths[0]
@@ -658,11 +655,7 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
         await service.addLocalFolder(rootPath)
         results.push({ folder, connected: true })
       } catch (error) {
-        results.push({
-          folder,
-          connected: false,
-          error: error instanceof Error ? error.message : String(error),
-        })
+        results.push({ folder, connected: false, error: error instanceof Error ? error.message : String(error) })
       }
     }
     return results
@@ -1737,6 +1730,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
+    // Default folders are a global file-app source, not part of Room setup.
+    // Bootstrap in the background so a denied directory does not block startup.
+    void localDataService.bootstrapDefaultLocalFolders([
+      app.getPath('desktop'),
+      app.getPath('documents'),
+    ]).catch((error) => console.warn('Default local folder scan failed.', error))
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
