@@ -13,6 +13,7 @@ export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' |
 
 import type {
   AgentEvent,
+  AgentAttachmentReference,
   AgentUsageRange,
   AgentUsageSnapshot,
   PendingAgentIntent,
@@ -844,6 +845,7 @@ export interface NxcoreDesktopApi {
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
   }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */

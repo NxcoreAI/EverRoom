@@ -352,6 +352,7 @@ const FILES_CHANNELS = {
   reveal: 'files:reveal',
   pickAndImport: 'files:pick-and-import',
   importPathsOnce: 'files:import-paths-once',
+  importAgentAttachments: 'files:import-agent-attachments',
 } as const
 
 const INGEST_CHANNELS = {
@@ -1020,6 +1021,10 @@ function registerFilesHandlers(bridge: FilesGatewayBridge): void {
     FILES_CHANNELS.importPathsOnce,
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       bridge.importPathsOnce(paths, options),
+  )
+  handle(
+    FILES_CHANNELS.importAgentAttachments,
+    (_event, paths: string[]) => bridge.importAgentAttachments(paths),
   )
 }
 

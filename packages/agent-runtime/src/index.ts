@@ -1,4 +1,5 @@
 import type {
+  AgentAttachmentKind,
   AgentActiveDocumentContext,
   AgentEventType,
   AgentRoomReference,
@@ -21,6 +22,7 @@ export interface StartRuntimeRunInput {
   /** Current UI locale; injected into the runtime system prompt for this run. */
   responseLanguage?: string;
   prompt: string;
+  attachments?: RuntimeAttachment[];
   pageLabel: string;
   roomId: string | null;
   availableRooms?: AgentRoomReference[];
@@ -29,6 +31,14 @@ export interface StartRuntimeRunInput {
   recallMemory?: boolean;
   toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
+}
+
+export interface RuntimeAttachment {
+  filename: string;
+  mimeType: string;
+  kind: AgentAttachmentKind;
+  text?: string;
+  dataUrl?: string;
 }
 
 export interface ResumeRuntimeRunInput extends StartRuntimeRunInput {

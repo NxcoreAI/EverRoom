@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
+import type { AgentAttachmentReference, AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -208,15 +208,18 @@ export function AgentPanel({
       .catch(() => handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key))
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
-  const sendPrompt = async (prompt: string, replaceRunId?: string) => {
-    if (!prompt.trim() || !agentAvailable) return
-    const submittedPrompt = prompt.trim()
+  const sendPrompt = async (prompt: string, attachments: AgentAttachmentReference[] = [], replaceRunId?: string) => {
+    if ((!prompt.trim() && attachments.length === 0) || !agentAvailable) return
+    const submittedPrompt = [
+      prompt.trim(),
+      attachments.length ? `[附件：${attachments.map((attachment) => attachment.filename).join('、')}]` : '',
+    ].filter(Boolean).join('\n\n')
     const submittedContext = selectedText
     setDraft('')
     setSubmitting(true)
     try {
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
-      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId)
+      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
       setSelectedText('')
       setComposerResetKey((current) => current + 1)
     } catch {
@@ -292,7 +295,7 @@ export function AgentPanel({
       onChange={setDraft}
       onClearContext={() => setSelectedText('')}
       onStop={() => void session.stop()}
-      onSubmit={() => void sendPrompt(draft)}
+      onSubmit={(attachments) => void sendPrompt(draft, attachments)}
     />
   )
 
@@ -335,7 +338,7 @@ export function AgentPanel({
         loading={session.loading}
         messages={session.messages}
         onRejectDocumentIntent={focusComposer}
-        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
+        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, [], runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}

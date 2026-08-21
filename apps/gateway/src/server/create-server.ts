@@ -369,6 +369,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
   filesService.initializeCatalog();
+  agentService.setFilesService(filesService);
   cliConnectorSyncService.setFilesService(filesService);
   const fileClusteringService = new FileClusteringService(
     db,

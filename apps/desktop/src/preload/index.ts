@@ -441,6 +441,10 @@ const api: NxcoreDesktopApi = {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
     },
+    importAgentAttachments: (files: File[]) => {
+      const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
+      return invoke('files:import-agent-attachments', paths)
+    },
   },
   ingest: {
     listEvents: (query: {

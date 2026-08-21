@@ -10,6 +10,7 @@ import type {
   FileImportOutcome,
   IngestPipelines,
 } from '../../shared/ingest'
+import type { AgentAttachmentReference } from '@nxcore/agent-contract'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
 import { isIgnoredLocalDirectory } from '../file-format-policy'
@@ -22,6 +23,15 @@ export interface ImportCandidate {
 const DEFAULT_IMPORT_EXTENSIONS = new Set([
   '.csv', '.docx', '.html', '.htm', '.md', '.markdown', '.mdx', '.pptx', '.text', '.txt', '.xlsx',
 ])
+const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
+const AGENT_MAX_ATTACHMENTS = 5
+const AGENT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+function imageMime(extension: string): string {
+  return extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg'
+    : extension === '.png' ? 'image/png'
+      : extension === '.gif' ? 'image/gif' : 'image/webp'
+}
 
 function isSupportedImportFile(filePath: string, extensions: ReadonlySet<string>): boolean {
   return extensions.has(extname(filePath).toLowerCase())
@@ -116,6 +126,57 @@ export class FilesGatewayBridge {
     const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
     const bytes = Buffer.from(await response.arrayBuffer())
     return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
+  }
+
+  async importAgentAttachments(selectedPaths: string[]): Promise<AgentAttachmentReference[]> {
+    const candidates = await collectImportCandidates(
+      selectedPaths,
+      new Set([...DEFAULT_IMPORT_EXTENSIONS, ...AGENT_IMAGE_EXTENSIONS]),
+    )
+    if (candidates.length > AGENT_MAX_ATTACHMENTS) throw new Error('最多只能添加 5 个附件')
+    const attachments: AgentAttachmentReference[] = []
+    for (const candidate of candidates) {
+      const fileStat = await stat(candidate.filePath)
+      if (fileStat.size > AGENT_MAX_ATTACHMENT_BYTES) throw new Error(`附件超过 10 MB：${candidate.filename}`)
+      const extension = extname(candidate.filename).toLowerCase()
+      if (AGENT_IMAGE_EXTENSIONS.has(extension)) {
+        const uploaded = await this.request<{ id: string; bytes: number; originalName: string }>('/v1/files', {
+          method: 'POST',
+          body: JSON.stringify({
+            filename: basename(candidate.filename),
+            contentBase64: (await readFile(candidate.filePath)).toString('base64'),
+            mime: imageMime(extension),
+            assetKind: 'photo',
+            originChannel: 'agent-composer',
+            visibility: 'private',
+          }),
+        })
+        attachments.push({
+          fileId: uploaded.id,
+          filename: uploaded.originalName,
+          mimeType: imageMime(extension),
+          size: uploaded.bytes,
+          kind: 'image',
+        })
+      } else {
+        const imported = await this.importPath({
+          filePath: candidate.filePath,
+          sourceKind: 'manual-upload',
+          sourceKey: `agent:${randomUUID()}`,
+          originalName: basename(candidate.filename),
+          relativePath: candidate.filename,
+        })
+        await this.waitForMarkdown(imported.fileEntryId)
+        attachments.push({
+          fileId: imported.fileEntryId,
+          filename: basename(candidate.filename),
+          mimeType: 'text/plain',
+          size: fileStat.size,
+          kind: 'document',
+        })
+      }
+    }
+    return attachments
   }
 
   rename(fileId: string, displayName: string): Promise<FileCatalogDto> {
@@ -302,6 +363,22 @@ export class FilesGatewayBridge {
       throw new Error(typeof body?.error === 'string' ? body.error : `文件上传失败（${response.status}）`)
     }
     return response.json() as Promise<FileImportAcceptedDto>
+  }
+
+  private async waitForMarkdown(fileId: string): Promise<void> {
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      try {
+        await this.readMarkdown(fileId)
+        return
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'file_not_parsed') {
+          throw new Error(`附件解析失败：${error instanceof Error ? error.message : String(error)}`, { cause: error })
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+      }
+    }
+    throw new Error(`附件解析超时：${fileId}`)
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
