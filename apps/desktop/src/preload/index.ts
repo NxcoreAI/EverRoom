@@ -435,11 +435,25 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
+    openOriginal: (fileId: string) => invoke('files:open-original', fileId),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),
     importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
+    },
+    onImportProgress: (listener) => {
+      const handleProgress = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) => listener(progress)
+      ipcRenderer.on('files:import-progress', handleProgress)
+      return () => ipcRenderer.removeListener('files:import-progress', handleProgress)
+    },
+    listHighRiskReviews: () => invoke('files:high-risk-reviews:list'),
+    resolveHighRiskReview: (id: string, accepted: boolean) =>
+      invoke('files:high-risk-reviews:resolve', id, accepted),
+    onHighRiskReviewsChanged: (listener) => {
+      const handleChanged = () => listener()
+      ipcRenderer.on('files:high-risk-reviews:changed', handleChanged)
+      return () => ipcRenderer.removeListener('files:high-risk-reviews:changed', handleChanged)
     },
   },
   ingest: {

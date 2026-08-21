@@ -1127,7 +1127,7 @@ async function normalizeFileBytes(
   // U2 转换器：docx/xlsx/pptx/csv/html/eml -> md（类型随扩展名注册表）
   const converter = converterOfExtension(extension);
   if (converter) {
-    const markdown = await converter(buffer);
+    const markdown = await converter(buffer, filename);
     return {
       dataType: explicitDataType ?? dataTypeByExtension(extension)?.key ?? "document",
       detectedBy: explicitDataType ? "explicit" : "extension",

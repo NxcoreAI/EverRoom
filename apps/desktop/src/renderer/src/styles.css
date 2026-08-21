@@ -1424,6 +1424,35 @@ summary:focus-visible {
   white-space: nowrap;
 }
 
+.file-name-button {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-name-button small {
+  overflow: hidden;
+  color: var(--subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-name-button:hover strong,
+.file-name-button:focus-visible strong {
+  color: var(--accent);
+}
+
+.file-name-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .status-cell .status-dot {
   flex: 0 0 6px;
 }
@@ -1483,6 +1512,46 @@ summary:focus-visible {
   flex: 1;
   flex-direction: column;
   gap: 7px;
+}
+
+.file-import-progress {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.file-import-progress-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.file-import-progress-copy strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.file-import-progress-copy > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-import-progress-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+.file-import-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
 }
 
 .source-delete-progress-copy strong {
@@ -2409,7 +2478,7 @@ summary:focus-visible {
 
 .files-table .table-head,
 .files-table .table-row {
-  grid-template-columns: minmax(220px, 1.5fr) minmax(70px, 0.5fr) minmax(86px, 0.6fr) minmax(96px, 0.7fr) 132px;
+  grid-template-columns: minmax(220px, 1.5fr) minmax(70px, 0.5fr) minmax(86px, 0.6fr) minmax(96px, 0.7fr) 76px;
 }
 
 .file-recognition {

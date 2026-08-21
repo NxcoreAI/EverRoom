@@ -840,10 +840,16 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
+    /** 使用操作系统默认查看器打开文件本体。 */
+    openOriginal(fileId: string): Promise<void>
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
+    listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
+    resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
+    onHighRiskReviewsChanged(listener: () => void): () => void
   }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
@@ -878,6 +884,9 @@ import type {
   FileCatalogDto,
   FileDto,
   FileImportOutcome,
+  FileImportProgressEvent,
+  HighRiskImportResolution,
+  HighRiskImportReview,
   IngestEventDto,
   IngestPipelines,
 } from './ingest'

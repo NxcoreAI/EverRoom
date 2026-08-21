@@ -2,6 +2,13 @@ import mammoth from "mammoth";
 import TurndownService from "turndown";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
+import { extractText } from "unpdf";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { extname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { convertRawEmailToMarkdown } from "./email-content.js";
 import { IngestError } from "./types.js";
 
@@ -19,6 +26,85 @@ const turndown = new TurndownService({
 // 表格降级保底：GFM 表由 mammoth 输出 <table>，turndown 需显式开启规则
 turndown.keep(["sub", "sup"]);
 
+const execFileAsync = promisify(execFile);
+
+/**
+ * LibreOffice is only used for formats whose payload is not OOXML (or whose
+ * workbook/presentation container is not supported by the in-process parser).
+ * Keeping this as a subprocess preserves the gateway's deterministic parser
+ * contract while avoiding a native OLE dependency in the Node bundle.
+ */
+async function convertWithSoffice(
+  buffer: Buffer,
+  filename: string,
+  targetExtension: "html" | "xlsx" | "pptx",
+): Promise<Buffer> {
+  const workDirectory = await mkdtemp(join(tmpdir(), "everroom-office-"));
+  const inputPath = join(workDirectory, `input${extname(filename).toLowerCase() || ".bin"}`);
+  const profilePath = join(workDirectory, "profile");
+  await writeFile(inputPath, buffer);
+
+  const candidates = [
+    ...(process.env.EVERROOM_SOFFICE_PATH ? [process.env.EVERROOM_SOFFICE_PATH] : []),
+    "soffice",
+    "soffice.exe",
+    "libreoffice",
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    "/usr/bin/soffice",
+    "/usr/bin/libreoffice",
+    ...(process.env.PROGRAMFILES
+      ? [join(process.env.PROGRAMFILES, "LibreOffice", "program", "soffice.exe")]
+      : []),
+    ...(process.env["PROGRAMFILES(X86)"]
+      ? [join(process.env["PROGRAMFILES(X86)"], "LibreOffice", "program", "soffice.exe")]
+      : []),
+  ];
+  const args = [
+    "--headless",
+    "--nologo",
+    "--nodefault",
+    "--norestore",
+    "--nolockcheck",
+    `-env:UserInstallation=${pathToFileURL(profilePath).href}`,
+    "--convert-to", targetExtension,
+    "--outdir", workDirectory,
+    inputPath,
+  ];
+
+  try {
+    let converted = false;
+    for (const executable of [...new Set(candidates)]) {
+      try {
+        await execFileAsync(executable, args, { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 });
+        converted = true;
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new IngestError(`${filename} 转换失败：${detail}`, "convert_failed");
+      }
+    }
+    if (!converted) {
+      throw new IngestError(
+        `${filename} 需要 LibreOffice 才能解析旧版 Office 文件，请先安装 LibreOffice 或转存为新版格式`,
+        "convert_failed",
+      );
+    }
+
+    const outputName = `input.${targetExtension}`;
+    const outputPath = join(workDirectory, outputName);
+    try {
+      return await readFile(outputPath);
+    } catch {
+      const generated = (await readdir(workDirectory)).find((name) => name.toLowerCase().endsWith(`.${targetExtension}`));
+      if (!generated) throw new IngestError(`${filename} 转换后没有生成可读文件`, "convert_failed");
+      return readFile(join(workDirectory, generated));
+    }
+  } finally {
+    await rm(workDirectory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 /** docx → md：mammoth 半结构化 HTML → turndown。 */
 export async function docxToMarkdown(buffer: Buffer): Promise<string> {
   try {
@@ -29,6 +115,17 @@ export async function docxToMarkdown(buffer: Buffer): Promise<string> {
   } catch (error) {
     if (error instanceof IngestError) throw error;
     throw new IngestError(`docx 转换失败：${(error as Error).message}`, "convert_failed");
+  }
+}
+
+/** Word/Writer documents that need the OLE/ODF compatibility path. */
+export async function legacyWordToMarkdown(buffer: Buffer, filename: string): Promise<string> {
+  try {
+    const html = await convertWithSoffice(buffer, filename, "html");
+    return htmlToMarkdown(html);
+  } catch (error) {
+    if (error instanceof IngestError) throw error;
+    throw new IngestError(`${filename} 转换失败：${(error as Error).message}`, "convert_failed");
   }
 }
 
@@ -100,6 +197,17 @@ export async function xlsxToMarkdown(buffer: Buffer): Promise<string> {
   }
 }
 
+/** Excel workbooks outside the OOXML subset understood by ExcelJS. */
+export async function legacySpreadsheetToMarkdown(buffer: Buffer, filename: string): Promise<string> {
+  try {
+    const xlsx = await convertWithSoffice(buffer, filename, "xlsx");
+    return xlsxToMarkdown(xlsx);
+  } catch (error) {
+    if (error instanceof IngestError) throw error;
+    throw new IngestError(`${filename} 转换失败：${(error as Error).message}`, "convert_failed");
+  }
+}
+
 /** csv → md：首行当表头，RFC4180 引号规则解析。 */
 export function csvToMarkdown(buffer: Buffer): string {
   const text = buffer.toString("utf8");
@@ -158,7 +266,7 @@ export async function pptxToMarkdown(buffer: Buffer): Promise<string> {
     const parts: string[] = [];
     for (const name of slideNames) {
       const xml = await zip.files[name]!.async("string");
-      const texts = [...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+      const texts = [...xml.matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)]
         .map((match) => decodeXmlEntities(match[1] ?? "").trim())
         .filter((value) => value.length > 0);
       if (texts.length === 0) continue;
@@ -173,6 +281,35 @@ export async function pptxToMarkdown(buffer: Buffer): Promise<string> {
   } catch (error) {
     if (error instanceof IngestError) throw error;
     throw new IngestError(`pptx 转换失败：${(error as Error).message}`, "convert_failed");
+  }
+}
+
+/** PowerPoint files stored in the legacy binary or ODF container format. */
+export async function legacySlidesToMarkdown(buffer: Buffer, filename: string): Promise<string> {
+  try {
+    const pptx = await convertWithSoffice(buffer, filename, "pptx");
+    return pptxToMarkdown(pptx);
+  } catch (error) {
+    if (error instanceof IngestError) throw error;
+    throw new IngestError(`${filename} 转换失败：${(error as Error).message}`, "convert_failed");
+  }
+}
+
+/** PDF -> md: retain page boundaries so citations can refer back to the source. */
+export async function pdfToMarkdown(buffer: Buffer): Promise<string> {
+  try {
+    const { text } = await extractText(new Uint8Array(buffer), { mergePages: false });
+    const pages = Array.isArray(text) ? text : [text];
+    const markdown = pages
+      .map((page, index) => ({ page: index + 1, text: page.trim() }))
+      .filter((page) => page.text.length > 0)
+      .map((page) => `## 第 ${page.page} 页\n\n${page.text}`)
+      .join("\n\n");
+    if (!markdown.trim()) throw new IngestError("PDF 无可提取文本，扫描件请先执行 OCR", "empty_content");
+    return markdown;
+  } catch (error) {
+    if (error instanceof IngestError) throw error;
+    throw new IngestError(`PDF 转换失败：${(error as Error).message}`, "convert_failed");
   }
 }
 
@@ -192,11 +329,39 @@ function decodeXmlEntities(text: string): string {
 /** 扩展名 -> 转换器（U2 注册点：加一行 case 即新格式）。 */
 export function converterOfExtension(
   extension: string,
-): ((buffer: Buffer) => string | Promise<string>) | null {
+): ((buffer: Buffer, filename?: string) => string | Promise<string>) | null {
   switch (extension.trim().toLowerCase()) {
-    case "docx": return docxToMarkdown;
-    case "xlsx": return xlsxToMarkdown;
-    case "pptx": return pptxToMarkdown;
+    case "docx":
+    case "docm":
+    case "dotx":
+    case "dotm": return docxToMarkdown;
+    case "doc":
+    case "dot":
+    case "rtf":
+    case "odt": return (buffer, filename = `input.${extension.trim().toLowerCase()}`) => legacyWordToMarkdown(buffer, filename);
+    case "xlsx":
+    case "xlsm":
+    case "xltx":
+    case "xltm":
+    case "xlam": return xlsxToMarkdown;
+    case "xls":
+    case "xlsb":
+    case "xlt":
+    case "xla":
+    case "ods": return (buffer, filename = `input.${extension.trim().toLowerCase()}`) => legacySpreadsheetToMarkdown(buffer, filename);
+    case "pptx":
+    case "pptm":
+    case "potx":
+    case "potm":
+    case "ppsx":
+    case "ppsm":
+    case "sldx":
+    case "sldm": return pptxToMarkdown;
+    case "ppt":
+    case "pot":
+    case "pps":
+    case "odp": return (buffer, filename = `input.${extension.trim().toLowerCase()}`) => legacySlidesToMarkdown(buffer, filename);
+    case "pdf": return pdfToMarkdown;
     case "csv": return csvToMarkdown;
     case "eml": return emlToMarkdown;
     case "html":

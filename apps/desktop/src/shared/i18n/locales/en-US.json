@@ -9,7 +9,7 @@
   "dialog.exportPdf.button": "Export",
   "dialog.exportPdf.pdfDocument": "PDF document",
   "dialog.knowledgeMarkdown.title": "Choose Markdown files to classify",
-  "dialog.importFiles.title": "Choose files to add",
+  "dialog.importFiles.title": "Choose files or folders to add",
   "dialog.importFiles.documents": "Documents",
   "dialog.memoryMarkdown.title": "Choose Markdown files to import into memory",
   "error.requestFailed": "The request failed. Try again later.",
