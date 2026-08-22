@@ -215,7 +215,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [visualDetail, setVisualDetail] = useState<PerceptionNodeDetail | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<StatusFilter>('all')
-  const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('all')
+  // Audio is the primary reality-perception stream; visual and document
+  // captures remain available through the filter when explicitly selected.
+  const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('audio')
   const [search, setSearch] = useState('')
   const [activityRange, setActivityRange] = useState<ActivityRange>('3m')
   const [rangeTouched, setRangeTouched] = useState(false)
@@ -290,6 +292,20 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       void window.nxcore?.reality.unsubscribe()
     }
   }, [loadEvents])
+
+  useEffect(() => {
+    const focus = (incoming: Event) => {
+      const eventId = (incoming as CustomEvent<{ eventId?: string }>).detail?.eventId
+      if (!eventId) return
+      setSelectedDay(null)
+      setFilter('all')
+      setTypeFilter('all')
+      setSearch('')
+      setExpandedId(eventId)
+    }
+    window.addEventListener('nxcore:reality:focus-event', focus as EventListener)
+    return () => window.removeEventListener('nxcore:reality:focus-event', focus as EventListener)
+  }, [])
 
   useEffect(() => {
     void loadVisualNodes()

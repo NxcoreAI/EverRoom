@@ -991,6 +991,10 @@
   "onboarding.ready": "Ready",
   "onboarding.allReady": "Everything is ready",
   "onboarding.allReadyBody": "Your memory and Room are ready. You can start using EverRoom.",
+  "onboarding.existingRooms": "{count} Room(s) already exist",
+  "onboarding.existingRoomsBody": "You can create another Room, or skip to file recognition setup.",
+  "onboarding.existingRoomsSkip": "{count} Room(s) already exist, skip",
+  "onboarding.createLater": "Create later",
   "onboarding.enterEverRoom": "Enter EverRoom",
   "onboarding.next": "Next",
   "onboarding.successNext": "Turn the idea into a workspace that keeps moving",
@@ -1044,5 +1048,11 @@
   "onboarding.retry": "Retry",
   "settings.roomSetupTitle": "Room setup",
   "settings.roomSetupBody": "Reopen the Room guide to update its name, goal, and context scope.",
-  "settings.roomSetupAction": "Open Room guide"
+  "settings.roomSetupAction": "Open Room guide",
+  "knowledgePending.deferCreation": "Not now",
+  "knowledgePending.creationDeferred": "Creation deferred",
+  "knowledgePending.topicWillNotBeRecommendedAgain": "{name} will not be recommended for a Room again.",
+  "knowledgePending.deferredTopics": "Deferred topics",
+  "knowledgePending.restoreRecommendation": "Restore",
+  "knowledgePending.recommendationRestored": "Recommendation restored"
 }

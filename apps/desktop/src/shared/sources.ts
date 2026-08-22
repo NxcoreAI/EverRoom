@@ -545,6 +545,9 @@ export interface DiaryDayDetails {
     assetFileId: string | null
     assetKind: 'document' | 'screenshot' | 'photo' | 'audio' | 'other' | null
     mime: string | null
+    documentId?: string | null
+    roomId?: string | null
+    realityEventId?: string | null
   }>
 }
 
@@ -624,6 +627,7 @@ export interface NxcoreDesktopApi {
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
     registerConnection(input: { provider: 'gmail' | 'outlook' | 'google-calendar'; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
     disableConnection(id: string): Promise<void>
+    enableConnection(id: string): Promise<void>
     purgeConnection(id: string): Promise<void>
     triggerSync(id: string, mode: SyncMode): Promise<SyncRun>
     cancelRun(id: string): Promise<SyncRun>
@@ -885,6 +889,8 @@ export interface NxcoreDesktopApi {
     getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
     /** 用户确认创建（推荐态实体走完整晋升流程）。 */
     promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }>
+    suppressEntity(entityId: string): Promise<{ ok: boolean }>
+    restoreSuppressedEntity(entityId: string): Promise<{ ok: boolean }>
     /** 手动合并：from 并入 target。 */
     mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
     listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>

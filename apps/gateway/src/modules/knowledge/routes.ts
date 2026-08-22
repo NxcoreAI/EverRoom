@@ -150,6 +150,7 @@ const EntityStatusQuery = Type.Object({
     Type.Literal("promoting"),
     Type.Literal("room"),
     Type.Literal("archived"),
+    Type.Literal("suppressed"),
   ])),
 });
 
@@ -655,6 +656,18 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         return reply.code(202).send({ queued: result.queued, jobId: result.jobId });
       },
     );
+
+    app.post("/v1/knowledge/entities/:id/suppress", { schema: { tags: ["knowledge"], params: EntityIdParams } }, async (request, reply) => {
+      const result = service.suppressEntity(request.params.id);
+      if (!result.ok) return reply.code(result.error === "entity_not_found" ? 404 : 400).send(errorOf(result.error));
+      return { ok: true };
+    });
+
+    app.post("/v1/knowledge/entities/:id/restore", { schema: { tags: ["knowledge"], params: EntityIdParams } }, async (request, reply) => {
+      const result = service.restoreSuppressedEntity(request.params.id);
+      if (!result.ok) return reply.code(result.error === "entity_not_found" ? 404 : 400).send(errorOf(result.error));
+      return { ok: true };
+    });
 
     app.post(
       "/v1/knowledge/entities/:id/merge",

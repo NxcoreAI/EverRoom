@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Check,
   Languages,
   LoaderCircle,
@@ -325,6 +326,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
               {testError ? <p className="runtime-config-gate-error" role="alert"><PlugZap aria-hidden="true" />{testError}</p> : null}
 
               <div className="runtime-config-gate-button-row">
+                <button type="button" className="runtime-config-gate-secondary" onClick={() => { setFieldError(null); setTestError(null); setMode('login') }}>
+                  <ArrowLeft aria-hidden="true" />{t('surface:configGate.back')}
+                </button>
                 <button type="button" className="runtime-config-gate-primary" onClick={() => void saveManual()}>
                   <Check aria-hidden="true" />{t('surface:configGate.saveAndTest')}
                 </button>

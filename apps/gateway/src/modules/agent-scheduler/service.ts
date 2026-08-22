@@ -145,7 +145,10 @@ export class AgentSchedulerService {
   async runNow(id: string): Promise<{ runId: string }> {
     if (id === BUILTIN_ID) {
       const runId = this.diary.createRun(this.diary.currentDate(), "manual");
-      await this.diary.drain();
+      // Queue the diary generation and return immediately. Generation may
+      // scan many sources or call a model, so waiting here makes the desktop
+      // button appear frozen and can exceed the HTTP request timeout.
+      void this.diary.drain();
       return { runId };
     }
     const row = this.db.select().from(agentSchedules).where(eq(agentSchedules.id, id)).get();

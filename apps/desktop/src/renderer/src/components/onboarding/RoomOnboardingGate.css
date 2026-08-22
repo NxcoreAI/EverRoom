@@ -1,5 +1,5 @@
 .room-onboarding { position: fixed; inset: 0; z-index: 1001; overflow: auto; perspective: 1400px; background: #f6f7f9; color: #151a22; }
-.room-onboarding::before { position: fixed; z-index: 3; inset: 0; display: block; border-right: 2px solid color-mix(in srgb, var(--accent) 34%, var(--border)); background: var(--surface); box-shadow: 30px 0 58px rgb(21 26 34 / 24%), inset -1px 0 var(--border); content: ''; pointer-events: none; transform-origin: left center; transform-style: preserve-3d; backface-visibility: hidden; will-change: transform, opacity; animation: room-onboarding-page-turn 820ms cubic-bezier(.22, 1, .36, 1) both; }
+.room-onboarding::before { display: none; }
 .room-onboarding-header { display: flex; min-height: 64px; align-items: center; justify-content: space-between; padding: 0 clamp(22px, 4vw, 56px); border-bottom: 1px solid #e1e5eb; background: rgb(246 247 249 / 94%); backdrop-filter: blur(18px); }
 .room-onboarding-header strong { font-size: 15px; }
 .room-onboarding-actions, .room-onboarding-language, .room-onboarding-buttons { display: flex; align-items: center; }
@@ -39,6 +39,8 @@
 .room-onboarding-secondary { border-color: #ccd3dd; background: #fff; color: #344052; }
 .room-onboarding-primary svg { width: 16px; height: 16px; }
 .room-onboarding-create { width: 100%; margin-top: 5px; }
+.room-onboarding-form-actions { display: flex; gap: 10px; margin-top: 5px; }
+.room-onboarding-form-actions .room-onboarding-create { flex: 1; margin-top: 0; }
 .room-onboarding-preview { display: flex; min-height: 600px; flex-direction: column; justify-content: center; padding: 56px; border-left: 1px solid #e1e5eb; background: #f8faf9; }
 .room-onboarding-preview-top { display: flex; justify-content: space-between; color: #2c8b59; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-transform: uppercase; }
 .room-onboarding-preview h2 { margin: 28px 0 14px; overflow-wrap: anywhere; font-size: 30px; }

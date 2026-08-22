@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, Link2, Pencil, Trash2, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryAtomicItemDto, MemoryAtomicProvenanceDto, MemoryAtomicType } from '../../../../../shared/memory'
@@ -202,7 +202,8 @@ function AtomicDetail({ item, onSaved, onDeleted, onOpenDocument, onOpenConversa
   )
 }
 
-export function AtomicMemoryPane({ onOpenDocument, onOpenConversation }: {
+export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversation }: {
+  focusItemId?: string | null
   onOpenDocument?: (documentId: string) => void
   onOpenConversation?: (sessionId: string) => void
 } = {}) {
@@ -226,6 +227,12 @@ export function AtomicMemoryPane({ onOpenDocument, onOpenConversation }: {
   const total = data?.total ?? 0
   const pageStart = offset + 1
   const pageEnd = offset + items.length
+
+  useEffect(() => {
+    if (!focusItemId || !items.some((item) => item.id === focusItemId)) return
+    setExpandedId(focusItemId)
+    window.setTimeout(() => document.querySelector(`[data-memory-id="${CSS.escape(focusItemId)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0)
+  }, [focusItemId, items])
 
   if (failure && !data) {
     return <div className="mem-pane-error">{memoryFailureText(failure, t)}</div>
@@ -265,7 +272,7 @@ export function AtomicMemoryPane({ onOpenDocument, onOpenConversation }: {
       ) : (
         <ul className="mem-atomic-list">
           {items.map((item) => (
-            <li key={item.id} className="mem-atomic-item">
+      <li key={item.id} className="mem-atomic-item" data-memory-id={item.id}>
               <button
                 type="button"
                 className="mem-atomic-summary"

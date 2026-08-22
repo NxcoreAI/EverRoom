@@ -15,7 +15,10 @@ export class AgentSchedulerGatewayBridge {
     return this.request(`/v1/agent/schedules/${encodeURIComponent(id)}`, { method: 'PATCH', data: input })
   }
   runNow(id: string): Promise<{ runId: string }> {
-    return this.request(`/v1/agent/schedules/${encodeURIComponent(id)}/run`, { method: 'POST' })
+    // Fastify rejects a POST without a media type before route handling. Send
+    // an explicit empty JSON body so manual runs follow the same contract as
+    // the other scheduler mutations.
+    return this.request(`/v1/agent/schedules/${encodeURIComponent(id)}/run`, { method: 'POST', data: {} })
   }
   remove(id: string): Promise<void> {
     return this.request(`/v1/agent/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' })

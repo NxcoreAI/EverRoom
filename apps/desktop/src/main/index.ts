@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
+import { access } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
@@ -185,7 +186,7 @@ const RUNTIME_CONFIG_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
+  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -365,6 +366,8 @@ const KNOWLEDGE_CHANNELS = {
   listEntities: 'knowledge:entities:list',
   getEntity: 'knowledge:entities:get',
   promoteEntity: 'knowledge:entities:promote',
+  suppressEntity: 'knowledge:entities:suppress',
+  restoreSuppressedEntity: 'knowledge:entities:restore',
   mergeEntity: 'knowledge:entities:merge',
   listUnmatched: 'knowledge:unmatched:list',
   attachDoc: 'knowledge:docs:attach',
@@ -680,11 +683,14 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
       const expected = normalize(app.getPath(folder))
       return {
         folder,
-        connected: sources.some((source) => source.status !== 'disconnected' && normalize(source.rootPath) === expected),
+        connected: sources.some((source) => {
+          if (source.status === 'disconnected' || normalize(source.rootPath) !== expected) return false
+          try { accessSync(source.rootPath, fsConstants.R_OK); return true } catch { return false }
+        }),
       }
     })
   })
-  handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (event, folders: unknown) => {
+  handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (_event, folders: unknown) => {
     if (!Array.isArray(folders)) throw new Error('无效的默认文件夹配置。')
     if (folders.some((folder) => folder !== 'documents' && folder !== 'desktop')) {
       throw new Error('无效的默认文件夹配置。')
@@ -693,20 +699,10 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     const results: DefaultLocalFolderConnectionResult[] = []
     for (const folder of selected) {
       try {
-        let rootPath = app.getPath(folder)
-        if (process.platform === 'darwin') {
-          const picked = await showFolderDialog(event, {
-            title: `${desktopText('dialog.chooseFolder.title')} · ${folder === 'documents' ? 'Documents' : 'Desktop'}`,
-            buttonLabel: desktopText('dialog.chooseFolder.button'),
-            defaultPath: rootPath,
-            properties: ['openDirectory', 'createDirectory'],
-          })
-          if (picked.canceled || !picked.filePaths[0]) {
-            results.push({ folder, connected: false, error: '用户取消了文件夹选择。' })
-            continue
-          }
-          rootPath = picked.filePaths[0]
-        }
+        const rootPath = app.getPath(folder)
+        // Accessing the protected default directory is what lets macOS show
+        // its privacy prompt. Only custom folders use the folder picker above.
+        await access(rootPath, fsConstants.R_OK)
         await service.addLocalFolder(rootPath)
         results.push({ folder, connected: true })
       } catch (error) {
@@ -960,6 +956,7 @@ function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
   ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
   ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.enableConnection, (_event, id) => bridge.enableConnection(id))
   ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
   ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
   ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
@@ -1233,10 +1230,12 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
   handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
   handle(KNOWLEDGE_CHANNELS.getWikiGraph, (_event, roomId: string) => bridge.getWikiGraph(roomId))
-  handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived') =>
+  handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed') =>
     bridge.listEntities(status))
   handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.suppressEntity, (_event, entityId: string) => bridge.suppressEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.restoreSuppressedEntity, (_event, entityId: string) => bridge.restoreSuppressedEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
     bridge.mergeEntity(fromId, targetId))
   handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())

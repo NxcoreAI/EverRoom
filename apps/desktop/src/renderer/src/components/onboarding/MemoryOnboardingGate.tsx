@@ -50,6 +50,7 @@ interface MemoryOnboardingControls {
 interface MemoryOnboardingGateProps {
   children: (controls: MemoryOnboardingControls) => ReactNode
   onFinished?: () => void
+  onMemoryGenerated?: (item: MemoryAtomicItemDto) => void
   onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
   activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'ready'
 }
@@ -78,7 +79,7 @@ function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `memory-onboarding-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-export function MemoryOnboardingGate({ children, onFinished, onNavigateStage, activeStage = 'idle' }: MemoryOnboardingGateProps) {
+export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, onNavigateStage, activeStage = 'idle' }: MemoryOnboardingGateProps) {
   const { locale, setLocale, t, formatDate } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const storedMarker = readMemoryOnboardingMarker()
@@ -91,6 +92,7 @@ export function MemoryOnboardingGate({ children, onFinished, onNavigateStage, ac
   const [answers, setAnswers] = useState(['', '', ''])
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [generatedMemory, setGeneratedMemory] = useState<GeneratedMemory | null>(null)
+  const [canContinue, setCanContinue] = useState(false)
   const [pending, setPending] = useState<Extract<MemoryOnboardingMarker, { status: 'pending' }> | null>(() => {
     const marker = initialMarkerRef.current
     return marker?.status === 'pending' ? marker : null
@@ -100,6 +102,7 @@ export function MemoryOnboardingGate({ children, onFinished, onNavigateStage, ac
   const forceLocalDataCheckRef = useRef(false)
   const baselineIdsRef = useRef<Set<string>>(new Set())
   const foregroundStartedAtRef = useRef(0)
+  const continueStartedAtRef = useRef(0)
   const submitRequestIdRef = useRef<string | null>(null)
   const finishOnboarding = useCallback(() => {
     setMode('app')
@@ -111,17 +114,24 @@ export function MemoryOnboardingGate({ children, onFinished, onNavigateStage, ac
   }, [onFinished])
 
   const resetQuestions = useCallback(() => {
+    console.info('[onboarding] memory-open', { activeStage })
     setStep(0)
     setPageDirection('forward')
     setAnswers(['', '', ''])
     setFieldError(null)
     setGeneratedMemory(null)
+    setCanContinue(false)
     setPending(null)
     baselineIdsRef.current = new Set()
     foregroundStartedAtRef.current = 0
+    continueStartedAtRef.current = 0
     submitRequestIdRef.current = null
     setMode('questions')
-  }, [])
+  }, [activeStage])
+
+  useEffect(() => {
+    console.info('[onboarding] memory-mode', { mode, activeStage })
+  }, [activeStage, mode])
 
   useEffect(() => {
     let storedForceCheck = false
@@ -149,6 +159,7 @@ export function MemoryOnboardingGate({ children, onFinished, onNavigateStage, ac
       setPending(marker)
       submitRequestIdRef.current = marker.requestId
       foregroundStartedAtRef.current = Date.now()
+      continueStartedAtRef.current = Date.now()
       setMode('refining')
       return () => { cancelled = true }
     }
@@ -221,12 +232,24 @@ export function MemoryOnboardingGate({ children, onFinished, onNavigateStage, ac
     showResult: boolean,
   ) => {
     writeMemoryOnboardingMarker({ ...marker, status: 'completed', memoryId: item.id })
+    onMemoryGenerated?.(item)
     setPending(null)
     if (showResult) {
       setGeneratedMemory({ item, sessionId: marker.sessionId, capturedAt: marker.capturedAt })
       setMode('success')
     }
-  }, [])
+  }, [onMemoryGenerated])
+
+  useEffect(() => {
+    if (mode !== 'saving' && mode !== 'refining') {
+      setCanContinue(false)
+      return
+    }
+    if (!continueStartedAtRef.current) continueStartedAtRef.current = Date.now()
+    const remaining = Math.max(0, 3_000 - (Date.now() - continueStartedAtRef.current))
+    const timer = window.setTimeout(() => setCanContinue(true), remaining)
+    return () => window.clearTimeout(timer)
+  }, [mode])
 
   useEffect(() => {
     if (!pending) return
@@ -306,6 +329,7 @@ export function MemoryOnboardingGate({ children, onFinished, onNavigateStage, ac
     }
     setFieldError(null)
     setMode('saving')
+    continueStartedAtRef.current = Date.now()
     try {
       const baseline = await api.listAtomic({ limit: 100 })
       baselineIdsRef.current = new Set(baseline.items.map((item) => item.id))
@@ -497,6 +521,15 @@ export function MemoryOnboardingGate({ children, onFinished, onNavigateStage, ac
                 <span data-active={mode === 'refining'}><Sparkles aria-hidden="true" />{t('memory:onboarding.refiningMemory')}</span>
                 <span><Check aria-hidden="true" />{t('memory:onboarding.memoryGenerated')}</span>
               </div>
+              {mode === 'refining' && canContinue ? (
+                <button
+                  type="button"
+                  className="memory-onboarding-continue-later"
+                  onClick={() => navigateStage('room')}
+                >
+                  {t('memory:onboarding.continueNextStep')}<ChevronRight aria-hidden="true" />
+                </button>
+              ) : null}
             </div>
           ) : null}
 

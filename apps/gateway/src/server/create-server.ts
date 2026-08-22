@@ -671,20 +671,16 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     query: async ({ start, end }: { start: Date; end: Date }): Promise<DiarySource[]> => {
       if (!memoryService.enabled) return [];
       const items: Awaited<ReturnType<typeof memoryService.listAtomic>>["items"] = [];
-      let offset = 0;
-      let total = 0;
-      do {
-        const page = await memoryService.listAtomic({
-          limit: 200,
-          offset,
-          timeStart: start.toISOString(),
-          timeEnd: end.toISOString(),
-        });
-        items.push(...page.items);
-        total = page.total;
-        offset += page.items.length;
-        if (page.items.length === 0) break;
-      } while (items.length < total);
+      // Keep the diary manifest bounded. A large imported memory set can
+      // otherwise exhaust the Agent context before it returns JSON.
+      const page = await memoryService.listAtomic({
+        // MemoryCore caps atomic pagination at 100.
+        limit: 30,
+        offset: 0,
+        timeStart: start.toISOString(),
+        timeEnd: end.toISOString(),
+      });
+      items.push(...page.items);
       return items.map((item) => ({
         sourceId: `memory:${item.id}`,
         kind: "memory" as const,

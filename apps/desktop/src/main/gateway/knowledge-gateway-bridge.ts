@@ -65,7 +65,7 @@ export class KnowledgeGatewayBridge {
   }
 
   /** 候选实体列表（按状态筛；ready = 首页推荐池）。 */
-  listEntities(status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived'): Promise<{ items: KnowledgeEntityDto[] }> {
+  listEntities(status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed'): Promise<{ items: KnowledgeEntityDto[] }> {
     return this.request(`/v1/knowledge/entities?${new URLSearchParams({ status })}`)
   }
 
@@ -76,6 +76,14 @@ export class KnowledgeGatewayBridge {
   /** 手动转正：跳过阈值走晋升全流程（202 异步入队）。 */
   promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }> {
     return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/promote`, { method: 'POST' })
+  }
+
+  suppressEntity(entityId: string): Promise<{ ok: boolean }> {
+    return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/suppress`, { method: 'POST' })
+  }
+
+  restoreSuppressedEntity(entityId: string): Promise<{ ok: boolean }> {
+    return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/restore`, { method: 'POST' })
   }
 
   /** 手动合并：from（路径）并入 targetId。 */

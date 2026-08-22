@@ -92,6 +92,9 @@ export class NangoConnectorGatewayBridge {
   async disableConnection(id: string): Promise<void> {
     await this.request(`/v1/nango-connectors/connections/${this.id(id)}/disable`, { method: 'POST', data: {} })
   }
+  async enableConnection(id: string): Promise<void> {
+    await this.request(`/v1/nango-connectors/connections/${this.id(id)}/enable`, { method: 'POST', data: {} })
+  }
 
   async purgeConnection(id: string): Promise<void> {
     await this.request(`/v1/nango-connectors/connections/${this.id(id)}`, { method: 'DELETE' })

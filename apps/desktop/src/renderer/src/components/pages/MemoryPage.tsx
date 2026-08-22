@@ -31,7 +31,7 @@ const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'filter-rules', label: 'memory:memory.filterRules', level: '' },
 ]
 
-export function MemoryPage() {
+export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } = {}) {
   const { t } = useLocale()
   const overview = useMemoryOverview()
   const [tab, setTab] = useState<MemoryTabId>('overview')
@@ -169,7 +169,7 @@ export function MemoryPage() {
               : <p className="mem-loading">{t('memory:memory.loading')}</p>
           ) : null}
           {tab === 'atomic' ? (
-            <AtomicMemoryPane onOpenDocument={openDocument} onOpenConversation={openConversation} />
+            <AtomicMemoryPane focusItemId={focusAtomicId} onOpenDocument={openDocument} onOpenConversation={openConversation} />
           ) : null}
           {tab === 'scenario' ? <ScenarioPane /> : null}
           {tab === 'core' ? <CoreProfilePane /> : null}

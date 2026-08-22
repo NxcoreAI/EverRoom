@@ -290,7 +290,7 @@ function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse
   </main>
   ${failed ? '' : `<script>
     (() => {
-      const target = 'https://open.nxcore.ai';
+      const target = 'https://r.nxcore.ai';
       let seconds = 5;
       const countdown = document.getElementById('redirect-countdown');
       const timer = setInterval(() => {

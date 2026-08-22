@@ -23,7 +23,6 @@
 .folder-settings-onboarding-folder-panel { overflow: hidden; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--surface); }
 .folder-settings-onboarding-panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
 .folder-settings-onboarding-panel-heading strong { color: var(--text); font-size: 13px; }
-.folder-settings-onboarding-panel-heading small { color: var(--muted); font-size: 10px; }
 .folder-settings-onboarding-option { display: grid; min-height: 72px; grid-template-columns: 20px 32px minmax(0, 1fr) 16px; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .folder-settings-onboarding-option[data-connected='true'] { background: color-mix(in srgb, var(--icon-task) 7%, var(--surface)); cursor: default; }
 .folder-settings-onboarding-option input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
@@ -32,8 +31,8 @@
 .folder-settings-onboarding-folder-icon svg { width: 15px; height: 15px; }
 .folder-settings-onboarding-option > span:nth-child(3) { display: grid; min-width: 0; gap: 4px; }
 .folder-settings-onboarding-option strong { color: var(--text); font-size: 12px; }
-.folder-settings-onboarding-option small { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .folder-settings-onboarding-option > svg { width: 15px; height: 15px; color: var(--icon-task); }
+.folder-settings-onboarding-option > svg.folder-settings-onboarding-failed-icon { color: var(--danger); }
 .folder-settings-onboarding-custom-list { display: grid; gap: 8px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
 .folder-settings-onboarding-custom-list > span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .folder-settings-onboarding-custom-list > div { display: grid; grid-template-columns: 15px minmax(0, 1fr) 15px; align-items: center; gap: 8px; color: var(--text); }
@@ -46,9 +45,6 @@
 .folder-settings-onboarding-note { margin: 16px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .folder-settings-onboarding-error { min-height: 18px; margin: 10px 0 0; color: var(--danger); font-size: 11px; line-height: 1.4; }
 .folder-settings-onboarding-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 22px 44px 30px; }
-.folder-settings-onboarding-secondary { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; padding: 0 16px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); font-weight: 650; cursor: pointer; }
-.folder-settings-onboarding-secondary:hover { border-color: var(--muted); background: var(--hover); }
-.folder-settings-onboarding-secondary:disabled { cursor: wait; opacity: .55; }
 .folder-settings-onboarding-primary { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; border: 1px solid transparent; border-radius: 6px; background: var(--accent); color: var(--accent-contrast); font-weight: 650; cursor: pointer; }
 .folder-settings-onboarding-primary:hover { background: var(--accent-strong); }
 .folder-settings-onboarding-primary:disabled { cursor: not-allowed; opacity: .55; }
@@ -64,5 +60,5 @@
 .folder-settings-onboarding-loading-icon { width: 44px; height: 44px; color: var(--accent); animation: folder-settings-onboarding-spin 1s linear infinite; }
 .folder-settings-onboarding-spinner { animation: folder-settings-onboarding-spin 1s linear infinite; }
 @keyframes folder-settings-onboarding-spin { to { transform: rotate(360deg); } }
-@media (max-width: 760px) { .folder-settings-onboarding-main { min-height: auto; place-items: stretch; padding: 36px 18px 52px; } .folder-settings-onboarding-sequence { justify-content: center; flex-wrap: wrap; height: auto; } .folder-settings-onboarding-sequence span { padding: 0 5px; } .folder-settings-onboarding-card { width: 100%; } .folder-settings-onboarding-actions { padding: 20px 0 24px; flex-wrap: wrap; } .folder-settings-onboarding-primary, .folder-settings-onboarding-secondary { flex: 1 1 180px; } }
+@media (max-width: 760px) { .folder-settings-onboarding-main { min-height: auto; place-items: stretch; padding: 36px 18px 52px; } .folder-settings-onboarding-sequence { justify-content: center; flex-wrap: wrap; height: auto; } .folder-settings-onboarding-sequence span { padding: 0 5px; } .folder-settings-onboarding-card { width: 100%; } .folder-settings-onboarding-actions { padding: 20px 0 24px; flex-wrap: wrap; } .folder-settings-onboarding-primary { flex: 1 1 180px; } }
 @media (prefers-reduced-motion: reduce) { .folder-settings-onboarding * { animation: none !important; transition: none !important; } }

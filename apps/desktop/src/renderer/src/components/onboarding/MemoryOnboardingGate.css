@@ -139,6 +139,34 @@
   animation: memory-onboarding-enter 220ms ease-out both;
 }
 
+.memory-onboarding-continue-later {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 24px;
+  padding: 8px 11px;
+  border: 1px solid #d9dee6;
+  border-radius: 6px;
+  background: #fff;
+  color: #4f5b6b;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  animation: memory-onboarding-continue-in 420ms ease-out both;
+}
+
+.memory-onboarding-continue-later:hover { border-color: #aeb8c5; color: #1f2732; }
+.memory-onboarding-continue-later svg { width: 15px; height: 15px; }
+
+@keyframes memory-onboarding-continue-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-onboarding-continue-later { animation: none; }
+}
+
 .memory-onboarding-question-deck {
   position: relative;
   isolation: isolate;

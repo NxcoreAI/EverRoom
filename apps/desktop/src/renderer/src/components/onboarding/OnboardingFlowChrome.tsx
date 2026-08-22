@@ -31,11 +31,11 @@ export function OnboardingFlowChrome({ stage, onStageChange, children }: Onboard
         </div>
       </header>
       <nav className="onboarding-flow-sequence" aria-label={t('surface:settings.folderGuide.eyebrow')}>
+        {item('folder', t('surface:settings.folderGuide.eyebrow'))}
+        <ChevronRight aria-hidden="true" />
         {item('memory', t('memory:onboarding.memorySetup'))}
         <ChevronRight aria-hidden="true" />
         {item('room', t('contextRoom:onboarding.eyebrow'))}
-        <ChevronRight aria-hidden="true" />
-        {item('folder', t('surface:settings.folderGuide.eyebrow'))}
         <ChevronRight aria-hidden="true" />
         {item('ready', t('surface:settings.folderGuide.readyTitle'))}
       </nav>
@@ -45,5 +45,5 @@ export function OnboardingFlowChrome({ stage, onStageChange, children }: Onboard
 }
 
 function stageOrder(stage: OnboardingFlowStage): number {
-  return stage === 'idle' ? -1 : ({ memory: 0, room: 1, folder: 2, ready: 3 })[stage]
+  return stage === 'idle' ? -1 : ({ folder: 0, memory: 1, room: 2, ready: 3 })[stage]
 }

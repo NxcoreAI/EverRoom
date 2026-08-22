@@ -6,6 +6,7 @@ import {
   Languages,
   LoaderCircle,
   ShieldCheck,
+  X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -28,6 +29,7 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
   const { locale, setLocale, t } = useLocale()
   const [selectedFolders, setSelectedFolders] = useState<DefaultLocalFolder[]>([])
   const [connectedFolders, setConnectedFolders] = useState<DefaultLocalFolder[]>([])
+  const [failedFolders, setFailedFolders] = useState<DefaultLocalFolder[]>([])
   const [customFolders, setCustomFolders] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -39,11 +41,17 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
     [connectedFolders],
   )
   const hasConfiguredScope = allConnected || customFolders.length > 0
+  const hasPendingFolders = selectedFolders.some((folder) => !connectedFolders.includes(folder))
+
+  useEffect(() => {
+    console.info('[onboarding] folder-mode', { open, showReady, mode })
+  }, [mode, open, showReady])
 
   useEffect(() => {
     if (!open) return
     setSelectedFolders([])
     setConnectedFolders([])
+    setFailedFolders([])
     setCustomFolders([])
     setBusy(false)
     setMode(showReady ? 'ready' : 'form')
@@ -93,10 +101,7 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
   }
 
   const apply = async () => {
-    if (hasConfiguredScope) {
-      setMode('ready')
-      return
-    }
+    console.info('[onboarding] folder-apply', { hasConfiguredScope, hasPendingFolders, showReady })
     const api = window.nxcore?.sources
     if (!api?.connectDefaultLocalFolders) {
       setError(t('surface:settings.folderGuide.unavailable'))
@@ -109,11 +114,13 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
       if (pending.length > 0) {
         const results = await api.connectDefaultLocalFolders(pending)
         const successful = results.filter((result) => result.connected).map((result) => result.folder)
+        const failed = results.filter((result) => !result.connected).map((result) => result.folder)
         setConnectedFolders((current) => [...new Set([...current, ...successful])])
-        const failed = results.filter((result) => !result.connected)
+        setFailedFolders(failed)
         if (failed.length > 0) throw new Error(t('surface:settings.folderGuide.failed'))
       }
-      setMode('ready')
+      console.info('[onboarding] folder-apply-success', { destination: 'memory' })
+      onClose()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('surface:settings.folderGuide.failed'))
     } finally {
@@ -167,7 +174,6 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
               <div className="folder-settings-onboarding-folder-panel">
                 <div className="folder-settings-onboarding-panel-heading">
                   <strong>{t('surface:settings.folderGuide.scope')}</strong>
-                  <small>{hasConfiguredScope ? t('surface:settings.folderGuide.allReady') : t('surface:settings.folderGuide.scopeHint')}</small>
                 </div>
                 {DEFAULT_FOLDERS.map((folder) => {
                   const connected = connectedFolders.includes(folder)
@@ -175,8 +181,8 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
                     <label className="folder-settings-onboarding-option" key={folder} data-connected={String(connected)}>
                       <input type="checkbox" checked={selectedFolders.includes(folder)} onChange={(event) => toggleFolder(folder, event.target.checked)} disabled={busy || connected} />
                       <span className="folder-settings-onboarding-folder-icon"><FolderOpen aria-hidden="true" /></span>
-                      <span><strong>{t(`surface:settings.folderGuide.${folder}`)}</strong><small>{connected ? t('surface:settings.folderGuide.connected') : t(`surface:settings.folderGuide.${folder}Body`)}</small></span>
-                      <Check aria-hidden="true" />
+                      <span><strong>{t(`surface:settings.folderGuide.${folder}`)}</strong></span>
+                      {connected ? <Check aria-hidden="true" /> : <X className="folder-settings-onboarding-failed-icon" aria-hidden="true" />}
                     </label>
                   )
                 })}
@@ -195,10 +201,9 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
               <p className="folder-settings-onboarding-error" role="alert" aria-live="polite">{error ?? '\u00a0'}</p>
             </div>
             <footer className="folder-settings-onboarding-actions">
-              <button type="button" className="folder-settings-onboarding-secondary" onClick={onClose} disabled={busy}>{t('surface:settings.folderGuide.later')}</button>
               <button type="button" className="folder-settings-onboarding-primary" onClick={() => void apply()} disabled={busy || (!hasConfiguredScope && selectedFolders.length === 0)}>
                 {busy ? <LoaderCircle className="folder-settings-onboarding-spinner" aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
-                {busy ? t('surface:settings.folderGuide.saving') : hasConfiguredScope ? t('surface:settings.folderGuide.enter') : t('surface:settings.folderGuide.save')}
+                {busy ? t('surface:settings.folderGuide.saving') : hasPendingFolders ? t('surface:settings.folderGuide.save') : t('surface:settings.folderGuide.continue')}
                 {!busy ? <ChevronRight aria-hidden="true" /> : null}
               </button>
             </footer>

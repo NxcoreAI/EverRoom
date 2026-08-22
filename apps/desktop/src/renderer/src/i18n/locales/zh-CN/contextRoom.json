@@ -991,6 +991,10 @@
   "onboarding.ready": "已就绪",
   "onboarding.allReady": "都已就绪",
   "onboarding.allReadyBody": "记忆和 Room 都已准备好，可以开始使用 EverRoom。",
+  "onboarding.existingRooms": "已有 {count} 个 Room",
+  "onboarding.existingRoomsBody": "你可以继续创建新的 Room，也可以跳过并进入下一步文件识别设置。",
+  "onboarding.existingRoomsSkip": "已有 {count} 个 Room，跳过",
+  "onboarding.createLater": "稍后创建",
   "onboarding.enterEverRoom": "进入 EverRoom",
   "onboarding.next": "下一步",
   "onboarding.successNext": "把想法变成持续推进的工作空间",
@@ -1044,5 +1048,11 @@
   "onboarding.retry": "重试",
   "settings.roomSetupTitle": "Room 设置",
   "settings.roomSetupBody": "重新打开创建 Room 引导，调整名称、目标和上下文范围。",
-  "settings.roomSetupAction": "回到 Room 引导"
+  "settings.roomSetupAction": "回到 Room 引导",
+  "knowledgePending.deferCreation": "暂不创建",
+  "knowledgePending.creationDeferred": "已暂不创建",
+  "knowledgePending.topicWillNotBeRecommendedAgain": "“{name}”后续不会再次进入 Room 推荐。",
+  "knowledgePending.deferredTopics": "暂不创建的主题",
+  "knowledgePending.restoreRecommendation": "恢复推荐",
+  "knowledgePending.recommendationRestored": "已恢复推荐"
 }

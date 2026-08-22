@@ -9,6 +9,8 @@ import {
   Sparkles,
   Undo2,
   Upload,
+  EyeOff,
+  RotateCcw,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -66,6 +68,7 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
   const { t } = useLocale();
   const [recommended, setRecommended] = useState<KnowledgeEntityDto[]>([]);
   const [recent, setRecent] = useState<KnowledgeDecisionDto[]>([]);
+  const [suppressed, setSuppressed] = useState<KnowledgeEntityDto[]>([]);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -76,10 +79,11 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
     const knowledge = window.nxcore?.knowledge;
     if (!knowledge) return;
     try {
-      const [ready, promoting, rooms, recentData] = await Promise.all([
+      const [ready, promoting, rooms, suppressedData, recentData] = await Promise.all([
         knowledge.listEntities('ready'),
         knowledge.listEntities('promoting'),
         knowledge.listEntities('room'),
+        knowledge.listEntities('suppressed'),
         knowledge.listRecentDecisions(10),
       ]);
       const promotionActive = (entity: KnowledgeEntityDto) =>
@@ -98,6 +102,7 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
         ...failedFirst.filter((entity) => !activeIds.has(entity.id)).slice(0, RECOMMEND_LIMIT),
       ]);
       setRecent(recentData.items);
+      setSuppressed(suppressedData.items);
       setLoaded(true);
       const previous = activePromotionsRef.current;
       const completed = rooms.items.filter((entity) =>
@@ -188,6 +193,18 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
         showToast({ title: t('contextRoom:knowledgePending.creationFailed'), message: cause instanceof Error ? cause.message : undefined });
         throw cause;
       }
+    });
+
+  const deferCreate = (entity: KnowledgeEntityDto) =>
+    runBusy(`entity:${entity.id}:suppress`, async () => {
+      await window.nxcore?.knowledge?.suppressEntity(entity.id);
+      showToast({ title: t('contextRoom:knowledgePending.creationDeferred'), message: t('contextRoom:knowledgePending.topicWillNotBeRecommendedAgain', { name: entity.name }) });
+    });
+
+  const restoreCreate = (entity: KnowledgeEntityDto) =>
+    runBusy(`entity:${entity.id}:restore`, async () => {
+      await window.nxcore?.knowledge?.restoreSuppressedEntity(entity.id);
+      showToast({ title: t('contextRoom:knowledgePending.recommendationRestored'), message: entity.name });
     });
 
   const revert = (item: KnowledgeDecisionDto) =>
@@ -327,12 +344,37 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
                       ? promotion?.status === 'queued' ? 'contextRoom:knowledgePending.queued' : 'contextRoom:knowledgePending.creating'
                       : promotion?.status === 'failed' ? 'contextRoom:knowledgePending.retryCreation' : 'contextRoom:knowledgePending.create')}
                   </button>
+                  {!promotionActive ? (
+                    <button
+                      type="button"
+                      className="context-room-knowledge-defer"
+                      disabled={busy.has(`entity:${entity.id}:suppress`)}
+                      onClick={() => void deferCreate(entity)}
+                    >
+                      <EyeOff aria-hidden="true" />
+                      {t('contextRoom:knowledgePending.deferCreation')}
+                    </button>
+                  ) : null}
                 </footer>
               </article>
             );
           })}
         </div>
       )}
+
+      {suppressed.length > 0 ? (
+        <details className="context-room-knowledge-history context-room-knowledge-suppressed">
+          <summary><span>{t('contextRoom:knowledgePending.deferredTopics')}</span><small>{suppressed.length}</small><ChevronDown aria-hidden="true" /></summary>
+          <div className="context-room-knowledge-history-content">
+            {suppressed.map((entity) => (
+              <div key={entity.id} className="context-room-knowledge-recent-row">
+                <span className="context-room-knowledge-recent-title">{entity.name}</span>
+                <button type="button" className="context-room-knowledge-defer" disabled={busy.has(`entity:${entity.id}:restore`)} onClick={() => void restoreCreate(entity)}><RotateCcw aria-hidden="true" />{t('contextRoom:knowledgePending.restoreRecommendation')}</button>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
 
       {recent.length > 0 ? (
         <details className="context-room-knowledge-history">

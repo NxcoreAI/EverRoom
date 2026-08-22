@@ -850,7 +850,7 @@ export const entities = sqliteTable(
     /** 晋升时"转正登记"一次性综合产出（弱期为 NULL——依据句日志即事实源，ED7）。 */
     summary: text("summary"),
     status: text("status", {
-      enum: ["weak", "ready", "promoting", "room", "archived"],
+      enum: ["weak", "ready", "promoting", "room", "archived", "suppressed"],
     }).notNull().default("weak"),
     /** 晋升后回填 rooms.id。 */
     roomId: text("room_id"),

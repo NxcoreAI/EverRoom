@@ -15,7 +15,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { ProductBrand } from '@/components/ui/ProductBrand'
-import type { ContextRoomKind, ContextRoomRecord } from '@/components/context-room/ported/types'
+import type { ContextRoomRecord } from '@/components/context-room/ported/types'
 import { localizedRoomKind } from '@/components/context-room/ported/adapters'
 import { createRoomUsageGuide } from './roomUsageGuide'
 import {
@@ -30,7 +30,6 @@ type GateMode = 'checking' | 'app' | 'form' | 'creating' | 'success' | 'ready' |
 
 interface RoomOnboardingGateProps {
   children: (controls: { openRoomOnboarding: () => void }) => ReactNode
-  onOpenRoom: (room: { id: string; title: string; kind: ContextRoomKind }) => void
   suppressOnboarding?: boolean
   onFinished?: (reason?: 'created' | 'existing') => void
   onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
@@ -42,7 +41,7 @@ interface RoomOnboardingGateProps {
 // run so the form does not reopen after skip/create.
 const REPEATABLE_ROOM_ONBOARDING = false
 
-export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = false, onFinished, onNavigateStage, memoryReady = false, activeStage = 'idle' }: RoomOnboardingGateProps) {
+export function RoomOnboardingGate({ children, suppressOnboarding = false, onFinished, onNavigateStage, memoryReady = false, activeStage = 'idle' }: RoomOnboardingGateProps) {
   const { locale, setLocale, t } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const { state, backendReady, refreshFromBackend } = useContextRoomState()
@@ -60,6 +59,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
   const forceLocalDataCheckRef = useRef(false)
 
   const openRoomOnboarding = () => {
+    console.info('[onboarding] room-open', { activeStage, suppressOnboarding, roomCount: state.rooms.length })
     forceOpenRef.current = true
     setName('')
     setPurpose('')
@@ -68,8 +68,20 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
     setCreatedRoom(existingRoom ?? null)
     createdRoomIdRef.current = null
     setGuideCreated(existingRoom ? true : null)
-    setMode(existingRoom ? 'ready' : 'form')
+    setMode('form')
   }
+
+  // The shared onboarding stage bar can switch to Room before the nested gate
+  // has refreshed the opener ref. Make the explicit Room stage authoritative
+  // so it always opens this gate instead of revealing the workspace.
+  useEffect(() => {
+    console.info('[onboarding] room-mode', { mode, activeStage, suppressOnboarding, roomCount: state.rooms.length })
+  }, [activeStage, mode, state.rooms.length, suppressOnboarding])
+
+  useEffect(() => {
+    if (activeStage !== 'room' || suppressOnboarding) return
+    openRoomOnboarding()
+  }, [activeStage, suppressOnboarding])
 
   useEffect(() => {
     let storedForceCheck = false
@@ -102,7 +114,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
     if (state.rooms.length > 0 && (forceLocalDataCheck || !markerRef.current)) {
       setCreatedRoom(state.rooms[0] ?? null)
       setGuideCreated(true)
-      setMode('ready')
+      setMode('form')
       return
     }
     if (markerRef.current && !REPEATABLE_ROOM_ONBOARDING && !forceLocalDataCheck) {
@@ -123,7 +135,7 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
         if (refreshed.rooms.length > 0) {
           setCreatedRoom(refreshed.rooms[0] ?? null)
           setGuideCreated(true)
-          setMode('ready')
+          setMode('form')
         } else {
           setMode(shouldShowRoomOnboarding(backendReady, refreshed.rooms.length, forceLocalDataCheck ? null : markerRef.current) ? 'form' : 'app')
         }
@@ -136,20 +148,26 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
     if (state.rooms.length > 0) {
       setCreatedRoom(state.rooms[0] ?? null)
       setGuideCreated(true)
-      setMode('ready')
+      setMode('form')
     } else {
       setMode(shouldShowRoomOnboarding(backendReady, state.rooms.length, forceLocalDataCheck ? null : markerRef.current) ? 'form' : 'app')
     }
   }, [backendReady, checkRequest, refreshFromBackend, state.deletedRooms.length, state.rooms.length, suppressOnboarding])
 
-  const skip = () => {
+  const finishSkip = () => {
+    console.info('[onboarding] room-skip', { activeStage, destination: 'ready' })
     writeRoomOnboardingMarker({ status: 'skipped' })
     markerRef.current = { status: 'skipped' }
     setMode('app')
     onFinished?.('created')
   }
 
+  const skip = () => {
+    finishSkip()
+  }
+
   const finish = (reason: 'created' | 'existing' = 'created') => {
+    console.info('[onboarding] room-finish', { activeStage, reason, destination: 'ready' })
     setMode('app')
     onFinished?.(reason)
   }
@@ -256,7 +274,10 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
               <label className="room-onboarding-field"><span>{t('contextRoom:onboarding.name')}</span><input autoFocus maxLength={40} value={name} placeholder={t('contextRoom:onboarding.namePlaceholder')} onChange={(event) => { setName(event.target.value); setError(null) }} /><small>{name.length}/40</small></label>
               <label className="room-onboarding-field"><span>{t('contextRoom:onboarding.purpose')}</span><textarea required maxLength={2000} value={purpose} placeholder={t('contextRoom:onboarding.purposePlaceholder')} onChange={(event) => { setPurpose(event.target.value); setError(null) }} /></label>
               <p className="room-onboarding-error" aria-live="polite">{error ?? '\u00a0'}</p>
-              <button type="button" className="room-onboarding-primary room-onboarding-create" onClick={() => void createRoom()}>{t('contextRoom:onboarding.create')}</button>
+              <div className="room-onboarding-form-actions">
+                <button type="button" className="room-onboarding-secondary" onClick={skip}>{state.rooms.length > 0 || createdRoom ? t('contextRoom:onboarding.existingRoomsSkip', { count: Math.max(state.rooms.length, 1) }) : t('contextRoom:onboarding.createLater')}</button>
+                <button type="button" className="room-onboarding-primary room-onboarding-create" onClick={() => void createRoom()}>{t('contextRoom:onboarding.create')}</button>
+              </div>
             </div>
             <aside className="room-onboarding-preview">
               <h2>{name.trim() || t('contextRoom:onboarding.previewName')}</h2>
@@ -269,10 +290,10 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
         {mode === 'ready' && createdRoom ? (
           <section className="room-onboarding-ready" aria-labelledby="room-onboarding-ready-title">
             <Check className="room-onboarding-ready-icon" aria-hidden="true" />
-            <h1 id="room-onboarding-ready-title">{t('contextRoom:onboarding.allReady')}</h1>
-            <p>{t('contextRoom:onboarding.allReadyBody')}</p>
-            <button type="button" className="room-onboarding-primary" onClick={() => { onOpenRoom({ id: createdRoom.id, title: createdRoom.title, kind: createdRoom.kind }); finish('existing') }}>
-              {t('contextRoom:onboarding.enterEverRoom')}<ChevronRight aria-hidden="true" />
+            <h1 id="room-onboarding-ready-title">{t('contextRoom:onboarding.existingRooms', { count: Math.max(state.rooms.length, 1) })}</h1>
+            <p>{t('contextRoom:onboarding.existingRoomsBody')}</p>
+            <button type="button" className="room-onboarding-primary" onClick={finishSkip}>
+              {t('contextRoom:onboarding.skip')}<ChevronRight aria-hidden="true" />
             </button>
           </section>
         ) : null}
@@ -302,7 +323,11 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
                 </div>
               </div>
             </div>
-            <div className="room-onboarding-success-actions"><button type="button" className="room-onboarding-primary" onClick={() => { onOpenRoom({ id: createdRoom.id, title: createdRoom.title, kind: createdRoom.kind }); finish('created') }}>{t('contextRoom:onboarding.open')}<ChevronRight aria-hidden="true" /></button><button type="button" className="room-onboarding-secondary" onClick={() => finish('created')}>{t('contextRoom:onboarding.continue')}</button></div>
+            <div className="room-onboarding-success-actions">
+              <button type="button" className="room-onboarding-primary" onClick={() => finish('created')}>
+                {t('contextRoom:onboarding.continue')}<ChevronRight aria-hidden="true" />
+              </button>
+            </div>
           </section>
         ) : null}
       </main>

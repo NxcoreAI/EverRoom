@@ -38,6 +38,7 @@ export function PageCanvas({
   onNavigate,
   onFocusAgent,
   onOpenDocument,
+  memoryFocusId,
   onStartFullOnboarding,
 }: {
   page: PageId
@@ -56,6 +57,7 @@ export function PageCanvas({
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
+  memoryFocusId?: string | null
   onStartFullOnboarding?: () => void
 }) {
   const { t } = useLocale()
@@ -90,13 +92,17 @@ export function PageCanvas({
   if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage />
-  if (page === 'memory') content = <MemoryPage />
+  if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
   if (page === 'wiki') content = <WikiPage />
   if (page === 'connectors') content = <ConnectorSyncPage />
   if (page === 'diary') {
     content = (
       <Suspense fallback={<DiaryPageSkeleton />}>
-        <DiaryPage />
+        <DiaryPage
+          onNavigate={onNavigate}
+          onOpenDocument={onOpenDocument}
+          onFocusRealityEvent={(eventId) => window.dispatchEvent(new CustomEvent('nxcore:reality:focus-event', { detail: { eventId } }))}
+        />
       </Suspense>
     )
   }
