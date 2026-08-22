@@ -33,11 +33,16 @@ const EMPTY_SNAPSHOT: AgentStatusSnapshot = {
 const SPRITE_COLORS = ['#2f8d72', '#c28645', '#6673b8', '#bd6571', '#4f8eaa', '#8b6aad']
 const SPRITE_COLUMNS = ['20%', '50%', '80%']
 
-function spritePosition(index: number, count: number): { left: string; top: string } {
+function spritePosition(index: number, count: number, now: number, state: AgentWorkspaceState): { left: string; top: string; location: string } {
   const row = Math.floor(index / SPRITE_COLUMNS.length)
   const rows = Math.max(1, Math.ceil(count / SPRITE_COLUMNS.length))
-  const top = rows === 1 ? 60 : 38 + (row * 44) / (rows - 1)
-  return { left: SPRITE_COLUMNS[index % SPRITE_COLUMNS.length]!, top: `${top}%` }
+  const top = rows === 1 ? 62 : 45 + (row * 30) / (rows - 1)
+  if (state === 'running') return { left: ['36%', '50%', '64%'][index % 3]!, top: `${top}%`, location: 'work' }
+  const phase = (now / 1000 + index * 31) % 180
+  if (phase < 120) return { left: ['36%', '50%', '64%'][index % 3]!, top: `${top}%`, location: 'work' }
+  if (phase < 140) return { left: '88%', top: '27%', location: 'coffee' }
+  if (phase < 160) return { left: '12%', top: '29%', location: 'supply' }
+  return { left: '88%', top: '77%', location: 'reading' }
 }
 
 function elapsedLabel(date: string | null, t: Translate): string {
@@ -75,6 +80,7 @@ function OfficeSprite({
   agent,
   index,
   count,
+  now,
   selected,
   onSelect,
   t,
@@ -82,17 +88,19 @@ function OfficeSprite({
   agent: AgentWorkspaceStatus
   index: number
   count: number
+  now: number
   selected: boolean
   onSelect: () => void
   t: Translate
 }) {
-  const position = spritePosition(index, count)
+  const position = spritePosition(index, count, now, agent.state)
   const color = SPRITE_COLORS[index % SPRITE_COLORS.length]!
   return (
     <button
       type="button"
       className="office-sprite"
       data-state={agent.state}
+      data-location={position.location}
       data-selected={String(selected)}
       style={{ left: position.left, top: position.top, '--sprite-color': color } as CSSProperties}
       title={`${agent.name} · ${stateLabel(agent.state, t)}`}
@@ -108,11 +116,15 @@ function OfficeSprite({
 
 function OfficeScene({
   agents,
+  runningCount,
+  now,
   selectedAgentId,
   onSelect,
   t,
 }: {
   agents: AgentWorkspaceStatus[]
+  runningCount: number
+  now: number
   selectedAgentId: string | null
   onSelect: (agentId: string) => void
   t: Translate
@@ -122,7 +134,7 @@ function OfficeScene({
       <div className="office-wall" aria-hidden="true">
         <div className="office-window"><i /><i /><i /><i /></div>
         <div className="office-wall-shelf"><i /><i /><i /><i /></div>
-        <div className="office-clock"><i /></div>
+        <div className="office-clock" style={{ '--clock-minute-duration': `${runningCount > 0 ? Math.max(12, 180 / runningCount) : 180}s` } as CSSProperties} aria-label="Office clock"><i className="office-clock-hour" /><i className="office-clock-minute" /></div>
       </div>
       <div className="office-sign"><Activity aria-hidden="true" /> EVERROOM OFFICE</div>
 
@@ -138,6 +150,8 @@ function OfficeScene({
       <div className="office-workstations">
         <div className="office-zone-label"><Monitor aria-hidden="true" />{t('surface:agentStatus.agentWorkstations')}</div>
         <div className="office-desks">{agents.map((agent) => <i key={`seat-${agent.agentId}`} />)}</div>
+      </div>
+      <div className="office-agent-layer">
         {agents.map((agent, index) => (
           <OfficeSprite
             key={agent.agentId}
@@ -145,6 +159,7 @@ function OfficeScene({
             index={index}
             count={agents.length}
             selected={agent.agentId === selectedAgentId}
+            now={now}
             onSelect={() => onSelect(agent.agentId)}
             t={t}
           />
@@ -162,6 +177,7 @@ export function AgentStatusPage() {
   const [filter, setFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sceneNow, setSceneNow] = useState(() => Date.now())
 
   const refresh = useCallback(async (quiet = false) => {
     const api = window.nxcore?.agent
@@ -191,6 +207,11 @@ export function AgentStatusPage() {
     const timer = window.setInterval(() => void refresh(true), 3_000)
     return () => window.clearInterval(timer)
   }, [refresh])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setSceneNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const visibleAgents = useMemo(
     () => snapshot.agents.filter((agent) => filter === 'all' || agent.state === filter),
@@ -228,7 +249,7 @@ export function AgentStatusPage() {
       </section>
 
       <div className="agent-office-layout">
-        <OfficeScene agents={visibleAgents} selectedAgentId={selectedAgentId} onSelect={setSelectedAgentId} t={t} />
+        <OfficeScene agents={visibleAgents} runningCount={snapshot.summary.running} now={sceneNow} selectedAgentId={selectedAgentId} onSelect={setSelectedAgentId} t={t} />
       </div>
 
       <section className="agent-office-toolbar">
