@@ -79,6 +79,7 @@ jobs:
           pnpm build
           pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
 
       - name: Package macOS arm64
         run: pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never

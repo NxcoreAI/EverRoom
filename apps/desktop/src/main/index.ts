@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -91,6 +92,20 @@ import {
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 
 const APP_NAME = 'EverRoom'
+
+function loadPackagedEnvironment(): void {
+  if (!app.isPackaged) return
+  try {
+    const values = JSON.parse(readFileSync(join(process.resourcesPath, 'packaged-env.json'), 'utf8')) as Record<string, unknown>
+    for (const [name, value] of Object.entries(values)) {
+      if (typeof value === 'string' && !process.env[name]) process.env[name] = value
+    }
+  } catch (error) {
+    console.warn('Packaged environment file unavailable; using process environment.', error)
+  }
+}
+
+loadPackagedEnvironment()
 const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
 
 interface IpcRateLimitNotice {
