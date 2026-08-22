@@ -709,6 +709,8 @@ export interface NxcoreDesktopApi {
   memory: {
     overview(): Promise<MemoryOverviewDto>
     startOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResultDto>
+    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
+    onboardingFinished(): void
     listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
     searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
     updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>

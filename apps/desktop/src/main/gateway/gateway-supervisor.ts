@@ -86,8 +86,12 @@ export class GatewaySupervisor {
 
   constructor(
     private readonly dataDirectory: string,
-    /** 注入 gateway 子进程的额外环境变量(如托管 MemoryCore 的连接信息)。 */
-    private readonly extraEnvironment: Record<string, string> = {},
+    /**
+     * 注入 gateway 子进程的额外环境变量(如托管 MemoryCore 的连接信息)。
+     * 支持 getter:每次 start() 求值——惰性 spawn 的服务(cursor-completion)
+     * 在 respawn 时拿到最新 runtime config 派生的 env。
+     */
+    private readonly extraEnvironment: Record<string, string> | (() => Record<string, string>) = {},
     private readonly options: {
       devScript?: string
       packagedEntry?: string
@@ -95,6 +99,11 @@ export class GatewaySupervisor {
       devPortEnvironment?: string
     } = {},
   ) {}
+
+  /** 子进程是否已就绪(spawn 后且拿到 manifest);getConnection 未启动会抛。 */
+  isRunning(): boolean {
+    return this.connection !== null
+  }
 
   async start(): Promise<GatewayConnection> {
     if (this.connection) return this.connection
@@ -112,10 +121,11 @@ export class GatewaySupervisor {
     const command = app.isPackaged
       ? process.execPath
       : (process.env.NXCORE_GATEWAY_PACKAGE_MANAGER ?? 'pnpm')
+    const extra = typeof this.extraEnvironment === 'function' ? this.extraEnvironment() : this.extraEnvironment
     const environment = {
       ...process.env,
       NXCORE_GATEWAY_TOKEN: token,
-      ...this.extraEnvironment,
+      ...extra,
       ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     }
     const gatewayArguments = [

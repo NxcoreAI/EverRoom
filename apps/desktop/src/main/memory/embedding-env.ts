@@ -52,3 +52,43 @@ export function embeddingFieldsFromConfig(
   if (!fields.model || !fields.baseUrl || !fields.apiKey) return null
   return fields
 }
+
+/**
+ * runtime config primary 段 → MemoryCore TDAI_LLM_*(提炼管道主 LLM)。
+ * baseUrl/apiKey/model 三项全非空才算已配置;未配置返回 null(保持 .env 透传/
+ * MemoryCore 默认)。provider/maxTokens 等不在 MemoryCore 的 TDAI_LLM 表面内。
+ */
+export function memoryCoreLlmEnv(
+  config: Record<string, unknown> | undefined | null,
+): Record<string, string> | null {
+  const primary = config?.primary
+  const value = primary && typeof primary === 'object' && !Array.isArray(primary)
+    ? primary as Record<string, unknown>
+    : {}
+  const text = (key: string): string => {
+    const raw = value[key]
+    return typeof raw === 'string' ? raw.trim() : ''
+  }
+  const baseUrl = text('baseUrl')
+  const apiKey = text('apiKey')
+  const model = text('model')
+  if (!baseUrl || !apiKey || !model) return null
+  return {
+    TDAI_LLM_BASE_URL: baseUrl,
+    TDAI_LLM_API_KEY: apiKey,
+    TDAI_LLM_MODEL: model,
+  }
+}
+
+/**
+ * MemoryCore 子进程的 AI 覆盖 env(LLM + embedding 合并);两者皆未配置返回
+ * null(= 不覆盖,恢复 .env 透传)。调用方经 JSON 比较决定是否 restart。
+ */
+export function memoryCoreEnvironment(
+  config: Record<string, unknown> | undefined | null,
+  embeddingEnv: Record<string, string> | null,
+): Record<string, string> | null {
+  const llmEnv = memoryCoreLlmEnv(config)
+  if (llmEnv && embeddingEnv) return { ...llmEnv, ...embeddingEnv }
+  return llmEnv ?? embeddingEnv
+}

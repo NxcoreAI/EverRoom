@@ -152,6 +152,48 @@ describe('private transcription reality import', () => {
     expect(client.acknowledgeSync).toHaveBeenCalledWith(1)
   })
 
+  it('defers reality materialization behind the materialize gate until it opens', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-private-sync-'))
+    const client = {
+      status: vi.fn(async () => ({ authenticated: true, user: { id: 'user-1' } })),
+      listPrivateRecords: vi.fn(async () => ({
+        records: [{
+          cursor: 1,
+          operation: 'upsert',
+          recordId: sourceId,
+          recordType: 'transcription_source',
+          schemaVersion: 3,
+          payload: source().metadata,
+          revision: 1,
+          createdAt: '2026-08-16T16:40:08.068Z',
+          updatedAt: '2026-08-16T16:47:44.946Z',
+        }],
+        nextCursor: 1,
+      })),
+      acknowledgeSync: vi.fn(async () => undefined),
+    }
+    const reality = {
+      importEvent: vi.fn(async () => undefined),
+      discard: vi.fn(async () => undefined),
+    }
+    const service = new PrivateTranscriptionSyncService(
+      join(directory, 'state.json'),
+      client as never,
+      {} as never,
+      reality as never,
+    )
+    // 闸门闭而未开：sync 拉取照常，但物化（写 Reality/MemoryCore）挂起。
+    let release: (() => void) | null = null
+    service.setMaterializeGate(() => new Promise<void>((resolve) => { release = resolve }))
+    const pending = service.sync()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(reality.importEvent).not.toHaveBeenCalled()
+    // 开闸（记忆引导结束）：物化继续，事件落库。
+    release!()
+    await expect(pending).resolves.toMatchObject({ cursor: 1, synced: 1 })
+    expect(reality.importEvent).toHaveBeenCalledWith(expect.objectContaining({ id: sourceId }))
+  })
+
   it('uses the record ID when a historical SaaS row has a null event ID', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-private-sync-'))
     const client = {

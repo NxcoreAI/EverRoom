@@ -262,6 +262,8 @@ const api: NxcoreDesktopApi = {
   memory: {
     overview: () => invoke('memory:overview'),
     startOnboarding: (input: MemoryOnboardingInput) => invoke('memory:onboarding:start', input),
+    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
+    onboardingFinished: () => { ipcRenderer.send('memory:onboarding-finished') },
     listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
     searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
     updateAtomic: (id: string, content: string, background?: string) =>

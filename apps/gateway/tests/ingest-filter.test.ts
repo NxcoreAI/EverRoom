@@ -11,7 +11,8 @@ import { FilesService } from "../src/modules/files/service.js";
 import type { KnowledgeService } from "../src/modules/knowledge/service.js";
 import type { MemoryService } from "../src/modules/memory/service.js";
 import { IngestService } from "../src/modules/ingest/service.js";
-import { IngestFilterService, type FilterItem } from "../src/modules/ingest/filter-agent.js";
+import { IngestFilterService, parseVerdicts, type FilterItem } from "../src/modules/ingest/filter-agent.js";
+import { UnconfiguredAgentRuntime } from "@nxcore/agent-runtime";
 import type { IngestFilterVerdict } from "../src/infrastructure/database/schema.js";
 
 const temporaryDirectories: string[] = [];
@@ -254,7 +255,61 @@ describe("IngestFilterService 降级链", () => {
     // 直接用内部判定路径：通过 observe 走一遍（不拦截），阈值行为在 agent 输出侧生效
     void config;
   });
+
+  it("replaceRuntime(null) 后整批 fail-open（热应用降级）", async () => {    const config = {
+      enabled: true, mode: "enforce" as const, confidenceThreshold: 0.7,
+      batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [],
+      toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048,
+      insightEnabled: false, insightIntervalMs: 3_600_000,
+    };
+    const service = new IngestFilterService(null, null, config, silentLogger);
+    const failing = new UnconfiguredAgentRuntime();
+    service.replaceRuntime(failing);
+    // 占位 runtime 的 run 立即失败 → 走 LLM 降级（也无）→ 整批 fail-open
+    const outcome = await service.judgeBatch([{
+      eventId: "ing-1", title: "t", dataType: "mail", sourceKind: "mail", markdown: "ok",
+    }]);
+    expect(outcome.get("ing-1")?.kind).toBe("fail-open");
+    // 热应用清空 runtime：同样 fail-open（filter_runtime_unavailable 语义）
+    service.replaceRuntime(null);
+    const after = await service.judgeBatch([{
+      eventId: "ing-2", title: "t", dataType: "mail", sourceKind: "mail", markdown: "ok",
+    }]);
+    expect(after.get("ing-2")?.kind).toBe("fail-open");
+  });
 });
+
+describe("parseVerdicts 宽容解析", () => {
+  it("标准 JSON 数组照常解析", () => {
+    const verdicts = parseVerdicts(
+      '[{"informative":true,"reason":"r","category":"other","confidence":1}]',
+      1,
+    )
+    expect(verdicts).toEqual([{ informative: true, reason: "r", category: "other", confidence: 1 }])
+  })
+
+  it("LLM 丢外层数组括号（{...} {...} 拼接）时按数组恢复", () => {
+    const verdicts = parseVerdicts(
+      '{"informative":true,"reason":"交接文档","category":"other","confidence":1.0} {"informative":true,"reason":"RFB 协议","category":"other","confidence":1.0}',
+      2,
+    )
+    expect(verdicts).toHaveLength(2)
+    expect(verdicts[0]).toMatchObject({ informative: true, reason: "交接文档" })
+    expect(verdicts[1]).toMatchObject({ informative: true, reason: "RFB 协议" })
+  })
+
+  it("带围栏 + 丢括号的组合也恢复", () => {
+    const verdicts = parseVerdicts(
+      '```json\n{"informative":false,"reason":"寒暄","category":"trivial","confidence":0.9}\n```',
+      1,
+    )
+    expect(verdicts[0]).toMatchObject({ informative: false })
+  })
+
+  it("前言 + JSON 混排（无法安全恢复）仍抛错 → fail-open", () => {
+    expect(() => parseVerdicts('以下是判定：{"informative":true}', 1)).toThrow()
+  })
+})
 
 describe("过滤 prompt 偏好化注入", () => {
   const item: FilterItem = {

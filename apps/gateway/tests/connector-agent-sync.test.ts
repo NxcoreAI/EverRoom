@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { AgentRuntime, RuntimeEvent, RuntimeRun, StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import { UnconfiguredAgentRuntime, type AgentRuntime, type RuntimeEvent, type RuntimeRun, type StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import { desc, eq, isNull } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
@@ -63,6 +63,27 @@ function emailJob() {
 }
 
 describe("ConnectorSyncService Agent ingestion", () => {
+  it("replaceAgentRuntime swaps the runtime without double-attach defense", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "nxcore-replace-runtime-"));
+    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
+    });
+    const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
+    const service = new ConnectorSyncService(database.db, config, logger, async () => ({ data: {} }));
+    const first = new UnconfiguredAgentRuntime("connector-first");
+    service.attachAgentRuntime(first, { disposeRuntime: false });
+    // 双挂载防御只属于 attach
+    expect(() => service.attachAgentRuntime(new UnconfiguredAgentRuntime())).toThrow("already attached");
+    // 热应用替换：无异常、可反复替换
+    const second = new UnconfiguredAgentRuntime("connector-second");
+    expect(() => service.replaceAgentRuntime(second)).not.toThrow();
+    expect(() => service.replaceAgentRuntime(first)).not.toThrow();
+    await service.dispose();
+    database.sqlite.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
   it("derives a seven-day Gmail query and deterministically consumes every page", async () => {
     const directory = await mkdtemp(join(tmpdir(), "nxcore-gmail-snapshot-"));
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {

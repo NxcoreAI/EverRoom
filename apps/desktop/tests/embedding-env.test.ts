@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv } from '../src/main/memory/embedding-env'
+import {
+  embeddingFieldsFromConfig,
+  memoryCoreEmbeddingEnv,
+  memoryCoreEnvironment,
+  memoryCoreLlmEnv,
+} from '../src/main/memory/embedding-env'
 
 describe('memoryCoreEmbeddingEnv', () => {
   it('maps four fields onto TDAI_EMBEDDING_* with dimensions', () => {
@@ -45,5 +50,47 @@ describe('embeddingFieldsFromConfig', () => {
     expect(embeddingFieldsFromConfig({
       knowledge: { embedding: { provider: 'p', model: 'm', baseUrl: 'u', apiKey: '********' } },
     })?.apiKey).toBe('********')
+  })
+})
+
+describe('memoryCoreLlmEnv', () => {
+  it('maps primary section onto TDAI_LLM_*', () => {
+    expect(memoryCoreLlmEnv({
+      primary: { provider: 'openai', model: 'deepseek-v4-flash', baseUrl: 'https://api.example.com/v1', apiKey: 'sk-llm' },
+    })).toEqual({
+      TDAI_LLM_BASE_URL: 'https://api.example.com/v1',
+      TDAI_LLM_API_KEY: 'sk-llm',
+      TDAI_LLM_MODEL: 'deepseek-v4-flash',
+    })
+  })
+
+  it('returns null when model/baseUrl/apiKey incomplete', () => {
+    expect(memoryCoreLlmEnv({ primary: { baseUrl: 'u', apiKey: 'k', model: '' } })).toBeNull()
+    expect(memoryCoreLlmEnv({ primary: {} })).toBeNull()
+    expect(memoryCoreLlmEnv({})).toBeNull()
+    expect(memoryCoreLlmEnv(null)).toBeNull()
+  })
+})
+
+describe('memoryCoreEnvironment', () => {
+  it('merges llm + embedding env', () => {
+    const merged = memoryCoreEnvironment(
+      { primary: { baseUrl: 'https://api.example.com/v1', apiKey: 'sk-llm', model: 'm' } },
+      { TDAI_EMBEDDING_MODEL: 'vec' },
+    )
+    expect(merged).toMatchObject({
+      TDAI_LLM_MODEL: 'm',
+      TDAI_EMBEDDING_MODEL: 'vec',
+    })
+  })
+
+  it('passes through whichever side is configured; null when neither', () => {
+    expect(memoryCoreEnvironment({}, { TDAI_EMBEDDING_MODEL: 'vec' }))
+      .toEqual({ TDAI_EMBEDDING_MODEL: 'vec' })
+    expect(memoryCoreEnvironment(
+      { primary: { baseUrl: 'u', apiKey: 'k', model: 'm' } },
+      null,
+    )).toMatchObject({ TDAI_LLM_MODEL: 'm' })
+    expect(memoryCoreEnvironment({}, null)).toBeNull()
   })
 })

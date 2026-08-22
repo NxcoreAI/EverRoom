@@ -869,16 +869,19 @@ export function loadConfig(
   }
 
   if (rawConfig.agentRuntime === "pi") {
+    // AI 四要素全空 = 降级启动（等 runtime config 热应用，见 create-server 的
+    // applyRuntimeConfig；packaged app 无 .env，本就是常态）；部分填写 = 配置
+    // 事故，宁可早失败也不带半套配置起服务。
     const missing = [
       ["NXCORE_AI_PROVIDER", rawConfig.aiProvider],
       ["NXCORE_AI_MODEL", rawConfig.aiModel],
       ["NXCORE_AI_BASE_URL", rawConfig.aiBaseUrl],
       ["NXCORE_AI_API_KEY", rawConfig.aiApiKey],
     ].filter(([, value]) => !value).map(([name]) => name);
-    if (missing.length > 0) {
+    if (missing.length > 0 && missing.length < 4) {
       throw new Error(`Pi runtime requires: ${missing.join(", ")}`);
     }
-    validateAiEndpoint(rawConfig.aiBaseUrl);
+    if (missing.length === 0) validateAiEndpoint(rawConfig.aiBaseUrl);
   }
 
   if (rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel) {
@@ -1029,7 +1032,19 @@ export function loadConfig(
       }
     : null;
   if (cursorCompletionPi) {
-    validateAiEndpoint(cursorCompletionPi.baseUrl, "NXCORE_CURSOR_COMPLETION_AI_BASE_URL");
+    // 与 primary 同款降级规则：全空跳过（runtime config 兜底），部分填写报事故。
+    const cursorMissing = ([
+      ["NXCORE_CURSOR_COMPLETION_AI_PROVIDER", cursorCompletionPi.provider],
+      ["NXCORE_CURSOR_COMPLETION_AI_MODEL", cursorCompletionPi.model],
+      ["NXCORE_CURSOR_COMPLETION_AI_BASE_URL", cursorCompletionPi.baseUrl],
+      ["NXCORE_CURSOR_COMPLETION_AI_API_KEY", cursorCompletionPi.apiKey],
+    ] as const).filter(([, value]) => !value).map(([name]) => name);
+    if (cursorMissing.length > 0 && cursorMissing.length < 4) {
+      throw new Error(`Cursor completion Pi runtime requires: ${cursorMissing.join(", ")}`);
+    }
+    if (cursorMissing.length === 0) {
+      validateAiEndpoint(cursorCompletionPi.baseUrl, "NXCORE_CURSOR_COMPLETION_AI_BASE_URL");
+    }
   }
   if (rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel) {
     validateAiEndpoint(rawConfig.vlmBaseUrl, "NXCORE_VLM_BASE_URL");

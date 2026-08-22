@@ -21,6 +21,18 @@ import type {
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 /** 文档导入：切块 + 逐块 embedding + L0 落库，大文档远超普通查询超时。 */
 const DOCUMENT_IMPORT_TIMEOUT_MS = 120_000;
+/**
+ * 连接失败重试等待 + 上限：桌面主进程在 runtime config 变更后会重启
+ * MemoryCore（embedding env 注入），kill → 新进程过 health 探活之间有
+ * 1~3s 空窗；期间 renderer 轮询（如 memory:overview）会撞上 ECONNREFUSED
+ * 刷屏。只对连接类失败重试一次（1.5s 后），4xx/5xx/超时不重试。
+ */
+const CONNECT_RETRY_DELAY_MS = 1_500;
+
+function isConnectionFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch failed|ECONNREFUSED|ECONNRESET|EPIPE|socket hang up/i.test(message);
+}
 
 interface ApiResponseEnvelope<T> {
   code: number;
@@ -328,23 +340,41 @@ export class MemoryCoreClient {
     body: Record<string, unknown>,
     timeoutMs?: number,
   ): Promise<T | undefined> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs ?? this.timeoutMs);
+    const attempt = async (): Promise<Response> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs ?? this.timeoutMs);
+      try {
+        return await fetch(`${this.baseUrl}${path}`, {
+          method: "POST",
+          headers: this.headers,
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: "POST",
-        headers: this.headers,
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
+      response = await attempt();
     } catch (error) {
-      throw new MemoryCoreError(
-        "unreachable",
-        `MemoryCore ${path} unreachable: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    } finally {
-      clearTimeout(timeout);
+      if (isConnectionFailure(error)) {
+        // 重启空窗重试一次（见 CONNECT_RETRY_DELAY_MS 注释）；再失败按原样抛。
+        try {
+          await new Promise((resolve) => setTimeout(resolve, CONNECT_RETRY_DELAY_MS));
+          response = await attempt();
+        } catch (retryError) {
+          throw new MemoryCoreError(
+            "unreachable",
+            `MemoryCore ${path} unreachable: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+          );
+        }
+      } else {
+        throw new MemoryCoreError(
+          "unreachable",
+          `MemoryCore ${path} unreachable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
 
     if (!response.ok) {

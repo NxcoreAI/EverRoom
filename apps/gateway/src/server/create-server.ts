@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import type { FastifyError } from "fastify";
@@ -29,6 +29,10 @@ import {
   registerTranscriptionSummaryAgent,
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
+import { registerWebSearchAgentIfMissing } from "../modules/agent/runtime-factory.js";
+import { loadBuiltinAgentBundle } from "../modules/agent/builtin-bundles.js";
+import { OpenAiCompletionAgentRuntime } from "../modules/agent/openai-completion-runtime.js";
+import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
@@ -102,6 +106,19 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
   apply(config.webSearch as unknown as Record<string, unknown> | null, runtime.webSearch);
+  // webSearch：boot 时 config.webSearch 仅由 env 构造（config.ts 的
+  // NXCORE_WEB_SEARCH_API_KEY 门），env 未配时为 null 且 apply 无法从 null
+  // 构造——runtime 四要素齐全时直接构造，让云端下发的搜索配置真正生效。
+  const runtimeWebSearch = runtime.webSearch as Record<string, unknown> | undefined;
+  const webSearchText = (key: string): string =>
+    runtimeWebSearch && typeof runtimeWebSearch[key] === "string" ? (runtimeWebSearch[key] as string).trim() : "";
+  if (!config.webSearch && webSearchText("baseUrl") && webSearchText("apiKey") && webSearchText("model")) {
+    config.webSearch = {
+      baseUrl: webSearchText("baseUrl"),
+      apiKey: webSearchText("apiKey"),
+      model: webSearchText("model"),
+    };
+  }
   // VLM：runtime 三字段齐全可直接构造（否则 env 没配时 runtime.vlm 是死配置）；
   // 不齐全时保持补丁行为——env 已配的键由 apply 补，缺的键沿用 env 值。
   const runtimeVlm = runtime.vlm as Record<string, unknown> | undefined;
@@ -158,6 +175,21 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
     if (baseUrl && apiKey && model) {
       config.knowledge.embeddingLlm = { baseUrl, apiKey, model };
       config.knowledge.embeddingModel = model;
+    }
+  }
+  // 抽取 LLM（knowledge.llm）：runtime 四要素齐全时覆盖；未配置时回退
+  // runtime primary——env 时代 NXCORE_KNOWLEDGE_LLM_* 缺省回退 NXCORE_AI_*
+  // （config.ts ⑤ 段）的 runtime-config 等价物，否则 env 清理后 wiki 抽取
+  // 会静默降级为启发式聚类。
+  if (config.knowledge) {
+    const runtimeKnowledgeLlm = runtime.knowledge?.llm as Record<string, unknown> | undefined;
+    const llmText = (source: Record<string, unknown> | undefined, key: string): string =>
+      source && typeof source[key] === "string" ? (source[key] as string).trim() : "";
+    const llmBaseUrl = llmText(runtimeKnowledgeLlm, "baseUrl") || llmText(runtime.primary as Record<string, unknown> | undefined, "baseUrl");
+    const llmApiKey = llmText(runtimeKnowledgeLlm, "apiKey") || llmText(runtime.primary as Record<string, unknown> | undefined, "apiKey");
+    const llmModel = llmText(runtimeKnowledgeLlm, "model") || llmText(runtime.primary as Record<string, unknown> | undefined, "model");
+    if (llmBaseUrl && llmApiKey && llmModel) {
+      config.knowledge.llm = { baseUrl: llmBaseUrl, apiKey: llmApiKey, model: llmModel };
     }
   }
 }
@@ -486,6 +518,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
+  // ingest 过滤器/洞察 runtime 的统一构造（boot 与 onChange 共用；下方声明
+  // 后回填，emit 只从 HTTP handler 触发，届时早已初始化）。
+  let buildIngestFilterRuntime: () => AgentRuntime | null = () => null;
   runtimeConfigManager.onChange((snapshot) => {
     applyRuntimeConfig(config, snapshot.config);
     // embedding 端点热替换（runtime knowledge.embedding 覆盖 env）。
@@ -494,17 +529,67 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     fileClusteringService.replaceEmbedding(embedding?.client ?? null, embedding?.model ?? null);
     asrProvider = createAsrProvider(config, app.log);
     asrService.replaceProvider(asrProvider);
-    try {
-      const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
-      void agentService.replaceRuntime(primary.current);
-      const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
-      void transcriptionSummaryService.replaceRuntime(background.current);
-      for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
-        if (agentResolver.has(agentId)) agentResolver.reload(agentId);
-      }
-    } catch (error) {
-      app.log.error({ error: error instanceof Error ? error.message : String(error) }, "runtime config reload failed");
+    // webSearch：boot 时 env 未配、runtime config 保存后才注册的场景。
+    if (registerWebSearchAgentIfMissing(agentResolver, config)) {
+      app.log.info("web search agent registered from runtime config");
     }
+    // knowledge agent：boot 时 env 未配 knowledge.llm、runtime config
+    // （或 primary 回退）补齐后注册。
+    if (config.knowledge?.llm && !agentResolver.has(BUILTIN_AGENT_IDS.knowledge)) {
+      const id = BUILTIN_AGENT_IDS.knowledge;
+      const bundle = loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), id);
+      const directories = join(config.dataDir, "agent", "runtimes", id);
+      agentResolver.register({
+        id,
+        name: bundle.name,
+        description: bundle.description,
+        configDirectory: join(directories, "config"),
+        kind: "builtin",
+      }, () => {
+        const llm = config.knowledge?.llm;
+        if (!llm) return new UnconfiguredAgentRuntime(id);
+        return new OpenAiCompletionAgentRuntime({
+          runtimeId: id,
+          ...llm,
+          systemPrompt: bundle.systemPrompt,
+          skillPrompts: bundle.skillPrompts,
+          temperature: 0.1,
+          maxTokens: 4_096,
+          timeoutMs: 60_000,
+          sessionsDir: join(directories, "sessions"),
+          workingDirectory: join(directories, "workspace"),
+          agentDirectory: join(directories, "config"),
+        });
+      });
+      app.log.info("knowledge agent registered from runtime config");
+    }
+    void (async () => {
+      try {
+        const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
+        void agentService.replaceRuntime(primary.current);
+        const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
+        void transcriptionSummaryService.replaceRuntime(background.current);
+        for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
+          if (!agentResolver.has(agentId)) continue;
+          const { previous } = agentResolver.reload(agentId);
+          await previous?.dispose();
+        }
+        // 连接器同步 agent（初始 attach 见下方 registerConnectorSyncAgent 处）。
+        if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
+          const connector = agentResolver.reload(BUILTIN_AGENT_IDS.connectorSync);
+          cliConnectorSyncService.replaceAgentRuntime(connector.current);
+          await connector.previous?.dispose();
+        }
+        // 过滤器/洞察 job 持有的冻结 runtime 同步热替换。
+        const nextFilterRuntime = buildIngestFilterRuntime();
+        ingestFilterService?.replaceRuntime(nextFilterRuntime);
+        filterInsightJob?.replaceRuntime(nextFilterRuntime);
+        // 子 Agent 缓存作废（下次 acquire 以新 backgroundPi 重建）。
+        await subagentRuntimeManager.invalidate();
+      } catch (error) {
+        app.log.error({ error: error instanceof Error ? error.message : String(error) }, "runtime config reload failed");
+      }
+    })();
   });
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
@@ -603,7 +688,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     filePath: config.ingestFilter.rulesFile,
     maxBytes: config.ingestFilter.rulesMaxBytes,
   }, app.log);
-  const ingestFilterRuntime = config.ingestFilter.toolsEnabled
+  // boot 与 runtime config onChange 共用的构造器（回填给上方 onChange 闭包）。
+  buildIngestFilterRuntime = () => (config.ingestFilter.toolsEnabled
     ? createIngestFilterAgentRuntime(
         config,
         // 全局 wiki 作用域（§4.2 方案 A）：过滤是全局闸门，一批可横跨多 Room，
@@ -618,7 +704,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             }
           : undefined,
       )
-    : backgroundAgentRuntime;
+    : backgroundAgentRuntime);
+  const ingestFilterRuntime = buildIngestFilterRuntime();
   const ingestFilterService = config.ingestFilter.enabled
     ? new IngestFilterService(
       ingestFilterRuntime ?? backgroundAgentRuntime,

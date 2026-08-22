@@ -187,4 +187,37 @@ describe('GatewaySupervisor connection recovery', () => {
       version: 'new',
     })
   })
+
+  it('isRunning() reflects connection state; getter extraEnvironment re-evaluates on start', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'nxcore-gateway-supervisor-'))
+    temporaryDirectories.push(dataDirectory)
+    let extraCalls = 0
+    const extra = () => {
+      extraCalls += 1
+      return { NXCORE_AGENT_RUNTIME: 'pi', COUNTER: String(extraCalls) }
+    }
+    const supervisor = new GatewaySupervisor(dataDirectory, extra)
+    expect(supervisor.isRunning()).toBe(false)
+
+    // 记录 spawn 收到的 env：真实 start() 内部构造 environment 时求值 getter，
+    // 这里 mock start 验证「求值发生在 start 内、连接就绪后 isRunning 翻转」。
+    const connection: GatewayConnection = {
+      pid: 30,
+      baseUrl: 'http://127.0.0.1:4001',
+      token: 'getter-token',
+      version: 'test',
+    }
+    vi.spyOn(supervisor, 'start').mockImplementation(async () => {
+      // 模拟真实 start()：求值 getter 构造 env（此处只验证会调用）并置连接。
+      void extra()
+      ;(supervisor as unknown as { connection: GatewayConnection | null }).connection = connection
+      return connection
+    })
+    await supervisor.ensureConnection()
+    expect(supervisor.isRunning()).toBe(true)
+    expect(extraCalls).toBe(1)
+
+    await supervisor.shutdown()
+    expect(supervisor.isRunning()).toBe(false)
+  })
 })
