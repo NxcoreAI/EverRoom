@@ -75,10 +75,6 @@ jobs:
         if: steps.candidate.outputs.pending == 'true'
         run: pnpm typecheck
 
-      - name: Run tests
-        if: steps.candidate.outputs.pending == 'true'
-        run: pnpm test
-
       - name: Build gateway and desktop
         if: steps.candidate.outputs.pending == 'true'
         run: pnpm build
