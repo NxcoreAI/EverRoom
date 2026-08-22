@@ -61,6 +61,16 @@ export function RuntimeConfigSettingsSection() {
 
   const seedFromSnapshot = (next: RuntimeConfigSnapshot) => {
     setSnapshot(next)
+    // SaaS configuration is managed by the service. Do not seed its payload
+    // into editable form or JSON state in the renderer.
+    if (next.selectedSource === 'saas') {
+      setLlm(emptyAiFields())
+      setEmbedding(emptyAiFields())
+      setVlm(emptyAiFields())
+      setAsr(emptyAsrFields())
+      setJsonText('')
+      return
+    }
     setLlm(primaryFieldsFromSnapshot(next))
     setEmbedding(embeddingFieldsFromSnapshot(next))
     setVlm(vlmFieldsFromSnapshot(next))
@@ -179,7 +189,18 @@ export function RuntimeConfigSettingsSection() {
       <span>{t('surface:settings.rcSourceLabel')}</span>
       {([['user', 'rcSourceUser'], ['saas', 'rcSourceSaas'], ['default', 'rcSourceDefault']] as const).map(([source, key]) => <button key={source} type="button" className={snapshot?.selectedSource === source ? 'active' : ''} disabled={busy !== null || (source !== 'default' && !snapshot?.availableSources.includes(source))} onClick={() => void selectSource(source)}>{t(`surface:settings.${key}`)}{source !== 'default' && !snapshot?.availableSources.includes(source) ? t('surface:settings.rcSourceNotConfigured') : ''}</button>)}
     </div>
-
+    {snapshot?.selectedSource === 'saas' ? <div className="runtime-config-saas-safe-state">
+      <ShieldCheck aria-hidden="true" />
+      <div>
+        <strong>{t('surface:settings.rcSaasManagedTitle')}</strong>
+        <p>{t('surface:settings.rcSaasManagedBody')}</p>
+        <small>{t('surface:settings.rcSaasSecurityNote')}</small>
+        {message ? <p className="runtime-config-message"><Check aria-hidden="true" />{message}</p> : null}
+      </div>
+      <button type="button" className="secondary-button" onClick={() => void refreshSaas()} disabled={busy !== null}>
+        <RotateCcw aria-hidden="true" />{t('surface:settings.rcSaasRefresh')}
+      </button>
+    </div> : <>
     <div className="rc-tabs" role="tablist">
       {tabs.map((item) => <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} data-active={tab === item.id} onClick={() => setTab(item.id)}>
         {item.label}
@@ -254,5 +275,6 @@ export function RuntimeConfigSettingsSection() {
         <button type="button" className="primary-button" onClick={() => void saveJson()} disabled={busy !== null}><Save aria-hidden="true" />JSON</button>
       </div>
     </details>
+    </>}
   </section>
 }

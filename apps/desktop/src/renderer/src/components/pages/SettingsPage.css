@@ -103,6 +103,15 @@
 .runtime-config-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .runtime-config-actions svg, .runtime-config-message svg { width: 14px; height: 14px; }
 .runtime-config-message { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0 16px 14px; color: var(--muted); font-size: 11px; }
+.runtime-config-saas-safe-state { display: flex; align-items: flex-start; gap: 12px; margin: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); background: var(--surface); }
+.runtime-config-saas-safe-state > svg { flex: 0 0 auto; width: 18px; height: 18px; color: var(--accent); }
+.runtime-config-saas-safe-state > div { flex: 1; min-width: 0; }
+.runtime-config-saas-safe-state strong { display: block; color: var(--text); font-size: 13px; }
+.runtime-config-saas-safe-state p { margin: 5px 0 4px; font-size: 12px; }
+.runtime-config-saas-safe-state small { font-size: 11px; }
+.runtime-config-saas-safe-state .runtime-config-message { padding: 8px 0 0; }
+.runtime-config-saas-safe-state button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+.runtime-config-saas-safe-state button svg { width: 14px; height: 14px; }
 
 .token-usage-title-row {
   display: flex;

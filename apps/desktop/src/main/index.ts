@@ -780,30 +780,30 @@ function registerRuntimeConfigHandlers(client: SaasClient): void {
   handle(RUNTIME_CONFIG_CHANNELS.saveUser, async (_event, input: unknown) => {
     const snapshot = await runtimeConfigBridge?.saveUser(input)
     if (snapshot) void syncManagedChildProcesses(snapshot)
-    return snapshot
+    return runtimeConfigBridge?.get()
   })
   handle(RUNTIME_CONFIG_CHANNELS.clearUser, async () => {
     const snapshot = await runtimeConfigBridge?.clearUser()
     if (snapshot) void syncManagedChildProcesses(snapshot)
-    return snapshot
+    return runtimeConfigBridge?.get()
   })
   handle(RUNTIME_CONFIG_CHANNELS.refreshSaas, async () => {
     const config = await client.getRuntimeConfig()
     const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
     if (snapshot) void syncManagedChildProcesses(snapshot)
-    return snapshot
+    return runtimeConfigBridge?.get()
   })
   handle(RUNTIME_CONFIG_CHANNELS.clearSaas, async () => {
     const snapshot = await runtimeConfigBridge?.clearSaas()
     if (snapshot) void syncManagedChildProcesses(snapshot)
-    return snapshot
+    return runtimeConfigBridge?.get()
   })
   handle(RUNTIME_CONFIG_CHANNELS.test, () => runtimeConfigBridge?.test())
   handle(RUNTIME_CONFIG_CHANNELS.selectSource, async (_event, source: unknown) => {
     if (source !== 'user' && source !== 'saas' && source !== 'default') throw new Error('无效的运行时配置来源。')
     const snapshot = await runtimeConfigBridge?.selectSource(source)
     if (snapshot) void syncManagedChildProcesses(snapshot)
-    return snapshot
+    return runtimeConfigBridge?.get()
   })
 }
 
