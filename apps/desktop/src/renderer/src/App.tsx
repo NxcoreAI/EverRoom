@@ -456,14 +456,14 @@ export function App() {
     <MemoryOnboardingGate activeStage={fullOnboardingStage} onMemoryGenerated={setGeneratedMemoryNotice} onFinished={() => {
       logOnboarding('memory-finished', {
         stage: fullOnboardingStageRef.current,
-        destination: 'folder',
+        destination: 'room',
       })
       setMemoryReady(true)
       if (fullOnboardingStageRef.current !== 'memory') return
       manualMemoryOnboardingRef.current = false
-      fullOnboardingStageRef.current = 'folder'
-      setFullOnboardingStage('folder')
-      setFolderOnboardingOpen(true)
+      fullOnboardingStageRef.current = 'room'
+      setFullOnboardingStage('room')
+      setFolderOnboardingOpen(false)
       setSuppressRoomOnboarding(false)
       setActivePage('settings')
     }} onNavigateStage={switchOnboardingStage}>

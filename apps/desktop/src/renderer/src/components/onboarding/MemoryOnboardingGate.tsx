@@ -232,11 +232,14 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
     showResult: boolean,
   ) => {
     writeMemoryOnboardingMarker({ ...marker, status: 'completed', memoryId: item.id })
-    onMemoryGenerated?.(item)
     setPending(null)
     if (showResult) {
+      // 前台：直接在成功页展示生成结果；后台通知弹窗只留给用户已离开
+      // 等待页（gate 转 app 后仍在轮询）的完成场景，避免双展示。
       setGeneratedMemory({ item, sessionId: marker.sessionId, capturedAt: marker.capturedAt })
       setMode('success')
+    } else {
+      onMemoryGenerated?.(item)
     }
   }, [onMemoryGenerated])
 
