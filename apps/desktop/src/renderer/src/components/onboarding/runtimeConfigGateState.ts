@@ -12,18 +12,6 @@ export function isRuntimeConfigReady(snapshot: RuntimeConfigSnapshot | null): bo
   return snapshot?.primaryConfigured === true
 }
 
-export function readConfigGateSkipped(storage: Pick<Storage, 'getItem'> = window.localStorage): boolean {
-  return storage.getItem('everroom:runtime-config-gate-skipped') === '1'
-}
-
-export function writeConfigGateSkipped(
-  value: boolean,
-  storage: Pick<Storage, 'setItem' | 'removeItem'> = window.localStorage,
-): void {
-  if (value) storage.setItem('everroom:runtime-config-gate-skipped', '1')
-  else storage.removeItem('everroom:runtime-config-gate-skipped')
-}
-
 /**
  * gate 手动表单本地校验：primary 三要素必填；embedding 可选（填了必须填全）。
  * 校验逻辑复用共享模块（settings 页同语义）。参数带 provider 字段（表单形状）。

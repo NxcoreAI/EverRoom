@@ -119,6 +119,28 @@ describe('TranscriptionProcessingCoordinator', () => {
     expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ version: 1, jobs: {} })
   })
 
+  it('still processes a summary when record sync is temporarily unavailable', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
+    const { client, keyring, agent } = dependencies()
+    const sync = {
+      reconcileLocalTranscriptions: vi.fn(async () => { throw new Error('sync_unavailable') }),
+      flushPendingSources: vi.fn(async () => undefined),
+      sync: vi.fn(async () => { throw new Error('sync_unavailable') }),
+    }
+    const coordinator = new TranscriptionProcessingCoordinator(
+      join(directory, 'state.json'),
+      client as unknown as SaasClient,
+      keyring as unknown as AccountKeyringService,
+      agent as unknown as AgentGatewayBridge,
+      sync as never,
+    )
+
+    await processOne(coordinator)
+
+    expect(client.registerProcessorDevice).toHaveBeenCalledOnce()
+    expect(client.completeProcessingJob).toHaveBeenCalledOnce()
+  })
+
   it('processes a source whose record and Reality event use different IDs', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-processing-'))
     const { client, keyring, agent } = dependencies()

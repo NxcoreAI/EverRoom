@@ -10,6 +10,7 @@ export const BUILTIN_AGENT_IDS = {
   primary: "main",
   connectorSync: "connector-sync",
   transcriptionSummary: "transcription-summary",
+  diary: "diary",
   cursorCompletion: "cursor-completion",
   knowledge: "knowledge",
   webSearch: "web-search",

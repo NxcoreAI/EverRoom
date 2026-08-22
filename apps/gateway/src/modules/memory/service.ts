@@ -256,6 +256,7 @@ export interface MemoryImportDocumentResult {
  */
 export class MemoryService {
   private client: MemoryCoreClient | null;
+  private config: MemoryRuntimeConfig | null;
   /** md 导入的资产化通道（modules/files，U9 唯一字节入口）；未配置记忆时为 null。 */
   private readonly files: FilesService | null;
   private readonly db: GatewayDatabase | null;
@@ -267,6 +268,7 @@ export class MemoryService {
     /** md 导入的资产化落点：gateway 数据库（uploaded_files/parsed_contents）与对象库根。 */
     assets: { db: GatewayDatabase; dataDir: string } | null,
   ) {
+    this.config = config;
     this.client = config ? new MemoryClientWithTimeout(config) : null;
     this.files = assets ? new FilesService(assets.db, assets.dataDir) : null;
     this.db = assets?.db ?? null;
@@ -277,7 +279,16 @@ export class MemoryService {
   }
 
   replaceConfig(config: MemoryRuntimeConfig | null): void {
+    this.config = config;
     this.client = config ? new MemoryClientWithTimeout(config) : null;
+  }
+
+  /**
+   * Inject the local MemoryCore connection together with the active identity
+   * without persisting secrets in the runtime-config store.
+   */
+  injectConfig(config: MemoryRuntimeConfig | null): void {
+    this.replaceConfig(config);
   }
 
   async overview(): Promise<MemoryOverviewDto> {

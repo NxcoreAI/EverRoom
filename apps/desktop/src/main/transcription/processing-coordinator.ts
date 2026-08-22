@@ -14,7 +14,7 @@ import { getDesktopLocale } from '../desktop-locale'
 import type { PrivateTranscriptionSyncService } from './private-transcription-sync'
 import { summaryDetailMinimum } from './summary-quality'
 
-const POLL_INTERVAL_MS = 30_000
+const POLL_INTERVAL_MS = 5_000
 const LEASE_RENEW_INTERVAL_MS = 45_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -97,6 +97,14 @@ export class TranscriptionProcessingCoordinator {
     void this.tick()
   }
 
+  /** Wake the processor immediately after login or a new source publication. */
+  wake(): void {
+    if (this.stopped || this.running) return
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    void this.tick()
+  }
+
   stop(): void {
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
@@ -120,16 +128,34 @@ export class TranscriptionProcessingCoordinator {
     await this.initialize()
     const account = await this.client.status()
     if (!account.authenticated || !account.user || !account.device) return
-    await this.sync?.reconcileLocalTranscriptions()
-    await this.sync?.flushPendingSources()
-    await this.sync?.sync()
     const registrationKey = `${account.user.id}:${account.device.id}`
     if (this.registeredKey !== registrationKey) {
+      this.registeredKey = null
       await this.client.registerProcessorDevice()
       this.registeredKey = registrationKey
     }
 
-    const claim = await this.client.claimProcessingJob()
+    // Syncing and materializing cached records is useful, but it must not
+    // prevent the processor from claiming a waiting summary job. A malformed
+    // historical record or a transient sync failure should be retried while
+    // the desktop remains available.
+    try {
+      await this.sync?.reconcileLocalTranscriptions()
+      await this.sync?.flushPendingSources()
+      await this.sync?.sync()
+    } catch (error) {
+      console.warn('Background transcription sync deferred while processing.', error)
+    }
+
+    let claim: Awaited<ReturnType<SaasClient['claimProcessingJob']>>
+    try {
+      claim = await this.client.claimProcessingJob()
+    } catch (error) {
+      // Another desktop may have taken primary ownership, or the processor
+      // registration may have expired. Re-register on the next tick.
+      this.registeredKey = null
+      throw error
+    }
     if (!claim) return
     const { job, leaseToken } = claim
     const stored = this.state.jobs[job.id]
@@ -182,7 +208,11 @@ export class TranscriptionProcessingCoordinator {
       await this.client.completeProcessingJob(job.id, { ...result, leaseToken })
       delete this.state.jobs[job.id]
       await this.persist()
-      await this.sync?.sync()
+      try {
+        await this.sync?.sync()
+      } catch (error) {
+        console.warn('Completed transcription summary sync deferred.', error)
+      }
     } catch (error) {
       if (!resultReady) {
         await this.client.failProcessingJob(job.id, {

@@ -10,12 +10,13 @@ import {
   Home,
   AudioLines,
   NotebookPen,
+  ListTodo,
   PlugZap,
   Settings,
 } from 'lucide-react'
 import type { DesktopPageMode } from '../../../shared/page-mode'
 
-export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'settings'
+export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'schedules' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -58,6 +59,7 @@ export const navigationSections: NavigationSection[] = [
     items: [
       { id: 'office', label: 'surface:navigation.office', icon: Building2, tone: 'blue' },
       { id: 'diary', label: 'surface:navigation.diary', icon: NotebookPen, tone: 'blue' },
+      { id: 'schedules', label: 'surface:navigation.schedules', icon: ListTodo, tone: 'orange' },
     ],
   },
   {

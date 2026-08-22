@@ -84,6 +84,12 @@ export class DiaryAgentGenerator implements DiaryGenerator {
     this.runtime = runtime;
   }
 
+  async replaceRuntime(runtime: AgentRuntime): Promise<void> {
+    const previous = this.runtime;
+    this.runtime = runtime;
+    if (previous && previous !== runtime) await previous.dispose();
+  }
+
   tools(): PiAgentRuntimeTool[] {
     return [{
       name: "diary_source_read",

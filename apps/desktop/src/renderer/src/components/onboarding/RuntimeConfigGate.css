@@ -25,6 +25,9 @@
 }
 
 .runtime-config-gate-brand {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 15px;
   font-weight: 720;
 }
@@ -33,6 +36,7 @@
   display: flex;
   align-items: center;
   gap: 18px;
+  margin-left: auto;
 }
 
 .runtime-config-gate-language {
@@ -70,18 +74,6 @@
   color: #fff;
 }
 
-.runtime-config-gate-skip {
-  border: 0;
-  background: transparent;
-  color: #7c8798;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.runtime-config-gate-skip:hover {
-  color: #151a22;
-}
-
 .runtime-config-gate-main {
   display: grid;
   place-items: center;
@@ -96,15 +88,90 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   color: #536070;
   font-size: 14px;
 }
 
-.runtime-config-gate-status-only > svg {
-  width: 28px;
-  height: 28px;
-  color: #151a22;
+.runtime-config-gate-loader {
+  position: relative;
+  display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+}
+
+.runtime-config-gate-loader-ring {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  transform-origin: center;
+}
+
+.runtime-config-gate-loader-ring-outer {
+  width: 62px;
+  height: 62px;
+  border: 1px solid #d8dee7;
+  border-top-color: #b66e17;
+  animation: runtime-config-gate-orbit 1.8s linear infinite;
+}
+
+.runtime-config-gate-loader-core {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #e6b778;
+  border-radius: 50%;
+  background: #fff8ed;
+  color: #b66e17;
+  animation: runtime-config-gate-core-pulse 1.5s ease-in-out infinite;
+}
+
+.runtime-config-gate-loader-core svg {
+  width: 15px;
+  height: 15px;
+}
+
+.runtime-config-gate-loader-dots {
+  display: flex;
+  gap: 5px;
+  height: 8px;
+  align-items: center;
+}
+
+.runtime-config-gate-loader-dots i {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #b66e17;
+  animation: runtime-config-gate-dot 1.1s ease-in-out infinite;
+}
+
+.runtime-config-gate-loader-dots i:nth-child(2) { animation-delay: 140ms; }
+.runtime-config-gate-loader-dots i:nth-child(3) { animation-delay: 280ms; }
+
+@keyframes runtime-config-gate-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes runtime-config-gate-core-pulse {
+  0%, 100% { opacity: .68; transform: scale(.92); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes runtime-config-gate-dot {
+  0%, 60%, 100% { opacity: .3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-config-gate-loader-ring,
+  .runtime-config-gate-loader-core,
+  .runtime-config-gate-loader-dots i {
+    animation: none;
+  }
 }
 
 .runtime-config-gate-panel {
@@ -197,6 +264,83 @@
 
 .runtime-config-gate-login-row button {
   flex: 0 1 auto;
+}
+
+.runtime-config-gate-social-button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border: 1px solid #d8dee7;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.runtime-config-gate-brand-login-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+}
+
+.runtime-config-gate-brand-login-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.runtime-config-gate-brand-login-icon img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.runtime-config-gate-social-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.runtime-config-gate-apple-login {
+  border-color: #000;
+  background: #000;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+}
+
+.runtime-config-gate-apple-login:hover:not(:disabled) {
+  border-color: #282828;
+  background: #282828;
+}
+
+.runtime-config-gate-apple-login .runtime-config-gate-brand-login-icon img {
+  width: 15px;
+  height: 20px;
+}
+
+.runtime-config-gate-google-login {
+  border-color: #747775;
+  background: #fff;
+  color: #1f1f1f;
+  font-family: Roboto, Arial, sans-serif;
+  font-weight: 500;
+}
+
+.runtime-config-gate-google-login:hover:not(:disabled) {
+  border-color: #747775;
+  background: #f8faff;
+}
+
+.runtime-config-gate-google-login .runtime-config-gate-brand-login-icon img {
+  width: 18px;
+  height: 18px;
 }
 
 .runtime-config-gate-note {
@@ -363,7 +507,8 @@
   }
 
   .runtime-config-gate-primary,
-  .runtime-config-gate-secondary {
+  .runtime-config-gate-secondary,
+  .runtime-config-gate-social-button {
     justify-content: center;
   }
 }

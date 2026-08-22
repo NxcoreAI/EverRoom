@@ -25,6 +25,7 @@ import {
   createAgentResolver,
   createIngestFilterAgentRuntime,
   registerConnectorSyncAgent,
+  registerDiaryAgent,
   registerPrimaryAgent,
   registerTranscriptionSummaryAgent,
 } from "../modules/agent/runtime-factory.js";
@@ -70,6 +71,11 @@ import { perceptionRoutes } from "../modules/perception/routes.js";
 import { PerceptionService } from "../modules/perception/service.js";
 import { diaryRoutes } from "../modules/diary/routes.js";
 import { DiaryService } from "../modules/diary/service.js";
+import { AgentSchedulerService } from "../modules/agent-scheduler/service.js";
+import { agentSchedulerRoutes } from "../modules/agent-scheduler/routes.js";
+import { agentSchedulerMcpRoutes } from "../modules/agent-scheduler/mcp-routes.js";
+import { DiaryAgentGenerator } from "../modules/diary/agent-generator.js";
+import type { DiarySource } from "../modules/diary/types.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -90,6 +96,7 @@ import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import type { RuntimeConfig } from "../runtime-config.js";
 import { OpenAiCompatibleVlmClient } from "../modules/perception/vlm-client.js";
+import { isPrimaryConfigured as isRuntimePrimaryConfigured } from "../modules/runtime-config/validate.js";
 
 function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void {
   // runtime config（尤其默认文件）里的 "" 是「未配置」占位，不是「清空」指令；
@@ -226,8 +233,13 @@ export interface ServerOverrides {
 
 export async function createServer(config: GatewayConfig, overrides: ServerOverrides = {}) {
   const gatewayLogger = await createGatewayLogger(config.dataDir, config.logLevel);
+  // Fastify emits one INFO line for both sides of every request. Keep those
+  // access logs disabled by default; warn/error paths still reach the logger.
+  const gatewayHttpLogLevel = process.env.NXCORE_GATEWAY_HTTP_LOG_LEVEL?.trim().toLowerCase() ?? "warn";
+  const disableRequestLogging = gatewayHttpLogLevel !== "debug" && gatewayHttpLogLevel !== "info";
   const app = Fastify({
     loggerInstance: gatewayLogger.logger,
+    disableRequestLogging,
     routerOptions: {
       // knowledge 文件路由的 id 可能是 caller_ref（如 connector:provider:<uuid>:<docId>），
       // URL 编码后超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
@@ -238,7 +250,23 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
   const runtimeConfigManager = new RuntimeConfigManager(db);
-  applyRuntimeConfig(config, runtimeConfigManager.snapshot().config);
+  const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
+  applyRuntimeConfig(config, initialRuntimeSnapshot.config);
+  const redactedRuntimeSnapshot = runtimeConfigManager.snapshot(true);
+  const configSource = initialRuntimeSnapshot.selectedSource === "user"
+    ? "local"
+    : initialRuntimeSnapshot.selectedSource === "saas" ? "saas" : "env";
+  app.log.info({
+    event: "runtime_config.selected",
+    source: configSource,
+    runtimeSource: initialRuntimeSnapshot.selectedSource,
+    availableSources: initialRuntimeSnapshot.availableSources,
+    configVersion: initialRuntimeSnapshot.configVersion,
+    primaryConfigured: isRuntimePrimaryConfigured(initialRuntimeSnapshot.config),
+    memoryConfigured: Boolean(config.memory),
+    knowledgeConfigured: Boolean(config.knowledge),
+    configJson: JSON.stringify(redactedRuntimeSnapshot.config),
+  }, "runtime config selected");
   const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000 };
   // Nango 自举（必要时创建 API key、按 .env 凭据补建 Google/Notion integration）。
   // 桌面端 Gateway 先于托管 Nango ready（首次启动含依赖安装 + 构建），启动时同步
@@ -246,12 +274,25 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // ready（最长 10 分钟，覆盖冷启动）并自举，secret 惰性 getter 在完成前返回
   // 配置值，完成后自动切换到自举结果。
   let nangoSecretResolved: string | null = null;
-  const resolveNangoSecret = (): string => nangoSecretResolved ?? nangoConnectorConfig.nangoSecret;
+  const isNangoSecretFormatValid = (secret: string): boolean =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(secret.trim());
+  const configuredNangoSecretValid = isNangoSecretFormatValid(nangoConnectorConfig.nangoSecret);
+  const nangoBootstrapPending = process.env.NXCORE_NANGO_BOOTSTRAP_PENDING === "1";
+  const resolveNangoSecret = (): string =>
+    nangoSecretResolved ?? (configuredNangoSecretValid ? nangoConnectorConfig.nangoSecret : "");
+  const pollingIntervalMs = "pollingIntervalMs" in nangoConnectorConfig
+    ? nangoConnectorConfig.pollingIntervalMs
+    : 300_000;
   if (nangoConnectorConfig.enabled) {
     void bootstrapNangoWhenReady(nangoConnectorConfig)
       .then((secret) => {
-        nangoSecretResolved = secret;
-        app.log.info({ module: "nango-bootstrap" }, "Nango secret resolved after deferred bootstrap");
+        if (isNangoSecretFormatValid(secret)) {
+          nangoSecretResolved = secret;
+          nangoConnectorManager.startPolling(pollingIntervalMs);
+          app.log.info({ module: "nango-bootstrap" }, "Nango secret resolved after deferred bootstrap");
+        } else {
+          app.log.warn({ module: "nango-bootstrap" }, "Nango bootstrap returned no valid UUID v4 secret; connector polling remains disabled");
+        }
       })
       .catch((error) => {
         app.log.warn(
@@ -287,7 +328,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         nangoConnectorManager,
       )
     : undefined;
-  if (nangoConnectorConfig.enabled) nangoConnectorManager.startPolling("pollingIntervalMs" in nangoConnectorConfig ? nangoConnectorConfig.pollingIntervalMs : 300_000);
+  // When the configured value is a bootstrap placeholder, wait for the
+  // dashboard API key before polling. Nango rejects non-UUID secrets with a
+  // noisy 401 on every scheduled sync.
+  if (nangoConnectorConfig.enabled && configuredNangoSecretValid && !nangoBootstrapPending) {
+    nangoConnectorManager.startPolling(pollingIntervalMs);
+  }
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
@@ -344,7 +390,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(systemRoutes);
   await app.register(runtimeConfigRoutes(runtimeConfigManager));
   const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir });
-  runtimeConfigManager.onChange(() => memoryService.replaceConfig(config.memory));
   const contextRoomService = new ContextRoomService(db);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
@@ -522,6 +567,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 后回填，emit 只从 HTTP handler 触发，届时早已初始化）。
   let buildIngestFilterRuntime: () => AgentRuntime | null = () => null;
   runtimeConfigManager.onChange((snapshot) => {
+    app.log.info({
+      event: "runtime_config.selected",
+      source: snapshot.selectedSource,
+      availableSources: snapshot.availableSources,
+      configVersion: snapshot.configVersion,
+      primaryConfigured: isRuntimePrimaryConfigured(snapshot.config),
+      runtimeSections: Object.keys(snapshot.config).filter((key) =>
+        ["primary", "background", "cursorCompletion", "asr", "vlm", "webSearch", "memory", "knowledge"].includes(key)),
+    }, "runtime config selected");
     applyRuntimeConfig(config, snapshot.config);
     // embedding 端点热替换（runtime knowledge.embedding 覆盖 env）。
     const embedding = embeddingFromConfig(config);
@@ -606,7 +660,58 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     fileClusteringService.enqueue(fileEntryId, fileVersionId);
   });
   fileClusteringService.initialize();
-  const diaryService = new DiaryService(db, { logger: app.log });
+  const diaryGenerator = config.agentRuntime !== "fake" && config.backgroundPi
+    ? new DiaryAgentGenerator(config.backgroundPi.model || "diary-agent", app.log)
+    : null;
+  if (diaryGenerator) {
+    registerDiaryAgent(agentResolver, config, diaryGenerator);
+    diaryGenerator.attachRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.diary));
+  }
+  const diaryMemory = {
+    query: async ({ start, end }: { start: Date; end: Date }): Promise<DiarySource[]> => {
+      if (!memoryService.enabled) return [];
+      const items: Awaited<ReturnType<typeof memoryService.listAtomic>>["items"] = [];
+      let offset = 0;
+      let total = 0;
+      do {
+        const page = await memoryService.listAtomic({
+          limit: 200,
+          offset,
+          timeStart: start.toISOString(),
+          timeEnd: end.toISOString(),
+        });
+        items.push(...page.items);
+        total = page.total;
+        offset += page.items.length;
+        if (page.items.length === 0) break;
+      } while (items.length < total);
+      return items.map((item) => ({
+        sourceId: `memory:${item.id}`,
+        kind: "memory" as const,
+        version: item.updatedAt,
+        occurredAt: item.createdAt,
+        timeBasis: "memory_created",
+        fingerprint: JSON.stringify([item.id, item.updatedAt, item.content, item.background]),
+        evidenceSummary: item.content.slice(0, 500),
+        content: [item.content, item.background].filter(Boolean).join("\n\n"),
+      }));
+    },
+  };
+  const diaryService = new DiaryService(db, {
+    logger: app.log,
+    scheduleManagedExternally: true,
+    ...(diaryGenerator ? { generator: diaryGenerator } : {}),
+    memory: diaryMemory,
+  });
+  if (diaryGenerator) {
+    runtimeConfigManager.onChange(() => {
+      if (!agentResolver.has(BUILTIN_AGENT_IDS.diary)) return;
+      const { current } = agentResolver.reload(BUILTIN_AGENT_IDS.diary);
+      void diaryGenerator.replaceRuntime(current);
+    });
+  }
+  const agentSchedulerService = new AgentSchedulerService(db, diaryService, agentService);
+  agentSchedulerService.initialize();
   diaryService.initialize();
   const perceptionService = new PerceptionService(db, filesService, createVlmProvider(config), app.log, (at) => diaryService.markStaleAt(at));
   runtimeConfigManager.onChange(() => perceptionService.replaceVlm(createVlmProvider(config)));
@@ -649,6 +754,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await cliConnectorSyncService.dispose();
     await cliConnectorMarkdownService?.dispose();
     await perceptionService.dispose();
+    await agentSchedulerService.dispose();
     await diaryService.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
@@ -823,6 +929,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(realityRoutes(realityService));
   await app.register(perceptionRoutes(perceptionService));
   await app.register(diaryRoutes(diaryService));
+  await app.register(agentSchedulerRoutes(agentSchedulerService));
+  await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
   await app.register(nangoConnectorRoutes(nangoConnectorManager, nangoConnectorConfig.enabled, nangoConnectorAuthorization));
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   await app.register(cliConnectorRoutes(cliConnectorSyncService, ingestService, cliConnectorMarkdownService));

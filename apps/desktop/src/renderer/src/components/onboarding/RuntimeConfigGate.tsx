@@ -1,17 +1,16 @@
 import {
-  ArrowLeft,
   Check,
-  Cloud,
   Languages,
   LoaderCircle,
   PlugZap,
   RefreshCw,
   Settings2,
-  Sparkles,
 } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import type { RuntimeConfigSnapshot, RuntimeConfigTestResult } from '../../../../shared/sources'
+import appleLogo from '@/assets/apple-logo.svg'
+import googleLogo from '@/assets/google-logo.svg'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import { useLocale } from '@/i18n/LocaleContext'
 import {
@@ -22,8 +21,6 @@ import {
   isRuntimeConfigReady,
   manualConfigFieldError,
   primaryFieldsFromSnapshot,
-  readConfigGateSkipped,
-  writeConfigGateSkipped,
   type ManualAiConfigFields,
 } from './runtimeConfigGateState'
 import './RuntimeConfigGate.css'
@@ -34,7 +31,7 @@ import './RuntimeConfigGate.css'
  * gateway 连通测试（POST /v1/runtime-config/test）才放行进入应用。
  * 手动配置含 LLM（必填）与 embedding（可选，填了才测 /embeddings）两个 tab。
  */
-type GateMode = 'checking' | 'app' | 'choose' | 'login' | 'manual' | 'validating' | 'unavailable'
+type GateMode = 'checking' | 'app' | 'login' | 'manual' | 'validating' | 'unavailable'
 type ManualTab = 'llm' | 'embedding'
 
 /** 测试结果 → 用户可读错误；embedding 失败带专属前缀区分两 tab。 */
@@ -61,6 +58,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
   const check = useCallback(async () => {
     setMode('checking')
+    window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'checking' }))
     setTestError(null)
     const runtimeConfig = window.nxcore?.runtimeConfig
     if (!runtimeConfig) {
@@ -73,24 +71,40 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       setSnapshot(next)
       setFields(primaryFieldsFromSnapshot(next))
       setEmbedding(embeddingFieldsFromSnapshot(next))
-      if (isRuntimeConfigReady(next) || readConfigGateSkipped()) setMode('app')
-      else setMode('choose')
+      if (isRuntimeConfigReady(next)) {
+        setMode('app')
+        window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'ready' }))
+      } else {
+        setMode('login')
+        window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'missing' }))
+      }
     } catch {
       // gateway 未就绪：给重试入口，不静默放行。
       setMode('unavailable')
+      window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'error' }))
     }
   }, [])
 
   useEffect(() => { void check() }, [check, checkRequest])
 
-  const enterApp = () => {
-    writeConfigGateSkipped(false)
-    setMode('app')
-  }
+  useEffect(() => {
+    const onAccountChanged = (event: Event) => {
+      const next = (event as CustomEvent<{ authenticated?: unknown }>).detail
+      if (next?.authenticated === false) {
+        setTestError(null)
+        setMode('login')
+      }
+    }
+    window.addEventListener('everroom-account-status-changed', onAccountChanged)
+    return () => window.removeEventListener('everroom-account-status-changed', onAccountChanged)
+  }, [])
+
+  const enterApp = () => setMode('app')
 
   /** 连通测试通过才放行（primary 必须有效；embedding 配置了才要求有效）。失败留在来源页（login/manual），不弹回选择页。 */
   const validateAndEnter = async (next: RuntimeConfigSnapshot, from: 'login' | 'manual' = 'manual'): Promise<boolean> => {
     setMode('validating')
+    window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'testing' }))
     try {
       const result = await window.nxcore?.runtimeConfig?.test()
       if (result?.valid) {
@@ -102,6 +116,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
         }
         setSnapshot(next)
         enterApp()
+        window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'ready' }))
         return true
       }
       setTestError(configTestErrorMessage(result?.error, t))
@@ -118,12 +133,22 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     setOidcPending(provider)
     setTestError(null)
     try {
-      await window.nxcore.account.loginWithOidc(provider)
+      const account = await window.nxcore.account.loginWithOidc(provider)
+      window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: account }))
       // 登录钩子（main index）会把 SaaS runtime config 写进 gateway；
       // 这里再显式拉取一次确保 saas source 已保存，然后走连通测试。
       const next = await window.nxcore.runtimeConfig.refreshSaas()
       if (next && isRuntimeConfigReady(next)) {
-        await validateAndEnter(next, 'login')
+        const entered = await validateAndEnter(next, 'login')
+        if (entered) {
+          try {
+            window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
+            window.sessionStorage.setItem('everroom:post-login-room-check', '1')
+          } catch {
+            // Session storage is optional; mounted gates still receive the event.
+          }
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check')), 0)
+        }
       } else {
         // 登录成功但云端没下发有效配置：留在登录页展示原因，
         // 用户可重试或点「返回」去手动配置。
@@ -154,12 +179,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     }
   }
 
-  const skip = () => {
-    writeConfigGateSkipped(true)
-    setMode('app')
-  }
-
-  if (mode === 'app') return <>{children}</>
+  // Existing configuration should never be hidden behind the startup gate.
+  // The sidebar carries the short-lived checking/testing status instead.
+  if (mode === 'app' || mode === 'checking' || mode === 'validating') return <>{children}</>
 
   const updateField = (key: keyof ManualAiConfigFields, value: string) => {
     setFields((current) => ({ ...current, [key]: value }))
@@ -181,29 +203,13 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
             <button type="button" data-active={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
             <button type="button" data-active={locale === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
-          {mode !== 'validating' ? <button type="button" className="runtime-config-gate-skip" onClick={skip}>{t('surface:configGate.skipForNow')}</button> : null}
         </div>
       </header>
 
       <main className="runtime-config-gate-main">
         <section className="runtime-config-gate-stage" aria-live="polite">
-          {mode === 'checking' ? (
-            <div className="runtime-config-gate-status-only">
-              <Sparkles aria-hidden="true" />
-              <span>{t('surface:configGate.checking')}</span>
-            </div>
-          ) : null}
-
-          {mode === 'validating' ? (
-            <div className="runtime-config-gate-status-only">
-              <LoaderCircle className="spin" aria-hidden="true" />
-              <span>{t('surface:configGate.validating')}</span>
-            </div>
-          ) : null}
-
           {mode === 'unavailable' ? (
             <div className="runtime-config-gate-panel">
-              <span className="runtime-config-gate-kicker">{t('surface:configGate.title')}</span>
               <h1>{t('surface:configGate.unavailableTitle')}</h1>
               <p>{t('surface:configGate.unavailableBody')}</p>
               <div className="runtime-config-gate-button-row">
@@ -214,40 +220,21 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
             </div>
           ) : null}
 
-          {mode === 'choose' ? (
-            <div className="runtime-config-gate-panel">
-              <span className="runtime-config-gate-kicker">{t('surface:configGate.title')}</span>
-              <h1>{t('surface:configGate.heading')}</h1>
-              <p>{t('surface:configGate.body')}</p>
-
-              <div className="runtime-config-gate-options">
-                <button type="button" className="runtime-config-gate-option" onClick={() => setMode('login')}>
-                  <span className="runtime-config-gate-option-icon"><Cloud aria-hidden="true" /></span>
-                  <strong>{t('surface:configGate.signInOption')}</strong>
-                  <span>{t('surface:configGate.signInOptionBody')}</span>
-                </button>
-                <button type="button" className="runtime-config-gate-option" onClick={() => setMode('manual')}>
-                  <span className="runtime-config-gate-option-icon"><Settings2 aria-hidden="true" /></span>
-                  <strong>{t('surface:configGate.manualOption')}</strong>
-                  <span>{t('surface:configGate.manualOptionBody')}</span>
-                </button>
-              </div>
-            </div>
-          ) : null}
-
           {mode === 'login' ? (
             <div className="runtime-config-gate-panel">
-              <span className="runtime-config-gate-kicker">{t('surface:configGate.title')}</span>
               <h1>{t('surface:configGate.loginHeading')}</h1>
-              <p>{t('surface:configGate.loginBody')}</p>
 
               <div className="runtime-config-gate-button-row runtime-config-gate-login-row">
-                <button type="button" className="runtime-config-gate-secondary" disabled={oidcPending !== null} onClick={() => void loginWithOidc('apple')}>
-                  {oidcPending === 'apple' ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
+                <button type="button" className="runtime-config-gate-social-button runtime-config-gate-apple-login" disabled={oidcPending !== null} onClick={() => void loginWithOidc('apple')}>
+                  <span className="runtime-config-gate-brand-login-icon" aria-hidden="true">
+                    {oidcPending === 'apple' ? <LoaderCircle className="spin" /> : <img src={appleLogo} alt="" />}
+                  </span>
                   {t('surface:settings.signInWithApple')}
                 </button>
-                <button type="button" className="runtime-config-gate-secondary" disabled={oidcPending !== null} onClick={() => void loginWithOidc('google')}>
-                  {oidcPending === 'google' ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
+                <button type="button" className="runtime-config-gate-social-button runtime-config-gate-google-login" disabled={oidcPending !== null} onClick={() => void loginWithOidc('google')}>
+                  <span className="runtime-config-gate-brand-login-icon" aria-hidden="true">
+                    {oidcPending === 'google' ? <LoaderCircle className="spin" /> : <img src={googleLogo} alt="" />}
+                  </span>
                   {t('surface:settings.signInWithGoogle')}
                 </button>
               </div>
@@ -259,9 +246,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
               {testError ? <p className="runtime-config-gate-error" role="alert"><PlugZap aria-hidden="true" />{testError}</p> : null}
               <div className="runtime-config-gate-button-row">
-                <button type="button" className="runtime-config-gate-secondary" onClick={() => { setTestError(null); setMode('choose') }}>
-                  <ArrowLeft aria-hidden="true" />{t('surface:configGate.back')}
-                </button>
                 <button type="button" className="runtime-config-gate-secondary" onClick={() => { setTestError(null); setMode('manual') }}>
                   <Settings2 aria-hidden="true" />{t('surface:configGate.manualOption')}
                 </button>
@@ -271,7 +255,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
           {mode === 'manual' ? (
             <div className="runtime-config-gate-panel runtime-config-gate-panel-form">
-              <span className="runtime-config-gate-kicker">{t('surface:configGate.title')}</span>
               <h1>{t('surface:configGate.manualHeading')}</h1>
               <p>{t('surface:configGate.manualBody')}</p>
 
@@ -342,9 +325,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
               {testError ? <p className="runtime-config-gate-error" role="alert"><PlugZap aria-hidden="true" />{testError}</p> : null}
 
               <div className="runtime-config-gate-button-row">
-                <button type="button" className="runtime-config-gate-secondary" onClick={() => setMode('choose')}>
-                  <ArrowLeft aria-hidden="true" />{t('surface:configGate.back')}
-                </button>
                 <button type="button" className="runtime-config-gate-primary" onClick={() => void saveManual()}>
                   <Check aria-hidden="true" />{t('surface:configGate.saveAndTest')}
                 </button>

@@ -1302,6 +1302,32 @@ export const diarySchedules = sqliteTable("diary_schedules", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
 });
 
+/** User-managed Agent schedules. Built-in tasks (for example diary.daily)
+ * remain outside this table and are exposed by the scheduler as immutable
+ * records. */
+export const agentSchedules = sqliteTable(
+  "agent_schedules",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    prompt: text("prompt").notNull(),
+    scheduleType: text("schedule_type", { enum: ["daily"] }).notNull().default("daily"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    localTime: text("local_time").notNull().default("09:00"),
+    timezone: text("timezone").notNull().default("UTC"),
+    nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
+    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
+    lastStatus: text("last_status", { enum: ["pending", "running", "completed", "failed"] }),
+    lastError: text("last_error"),
+    configVersion: integer("config_version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("agent_schedules_due_idx").on(table.enabled, table.nextRunAt)],
+);
+
 export const diaryDays = sqliteTable(
   "diary_days",
   {

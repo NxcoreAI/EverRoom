@@ -203,6 +203,11 @@ export interface SyncResult {
 
 export type DefaultLocalFolder = 'documents' | 'desktop'
 
+export interface DefaultLocalFolderStatus {
+  folder: DefaultLocalFolder
+  connected: boolean
+}
+
 export interface DefaultLocalFolderConnectionResult {
   folder: DefaultLocalFolder
   connected: boolean
@@ -466,6 +471,24 @@ export interface DiarySettings {
   updatedAt: string
 }
 
+export interface AgentScheduledTask {
+  id: string
+  agentId: string
+  name: string
+  description: string
+  prompt?: string
+  builtin: boolean
+  enabled: boolean
+  scheduleType: 'daily'
+  localTime: string
+  timezone: string
+  nextRunAt: string | null
+  lastRunAt: string | null
+  lastStatus: 'pending' | 'running' | 'completed' | 'failed' | null
+  lastError: string | null
+  configVersion: number
+}
+
 export type DiaryRunStatus = 'pending' | 'running' | 'completed' | 'failed'
 
 export interface DiaryRun {
@@ -664,6 +687,13 @@ export interface NxcoreDesktopApi {
     days(start: string, end: string): Promise<DiaryDayDetails['day'][]>
     day(date: string): Promise<DiaryDayDetails | null>
   }
+  agentSchedules: {
+    list(): Promise<AgentScheduledTask[]>
+    create(input: { agentId: string; name: string; description?: string; prompt: string; localTime?: string; timezone?: string; enabled?: boolean }): Promise<AgentScheduledTask>
+    update(id: string, input: Partial<Pick<AgentScheduledTask, 'name' | 'description' | 'prompt' | 'enabled' | 'localTime' | 'timezone'>> & { configVersion: number }): Promise<AgentScheduledTask>
+    remove(id: string): Promise<void>
+    runNow(id: string): Promise<{ runId: string }>
+  }
   contextRooms: {
     list(): Promise<ContextRoomSnapshot>
     create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
@@ -824,6 +854,7 @@ export interface NxcoreDesktopApi {
     onChanged(listener: (event: SourceChangeEvent) => void): () => void
     showFile(id: string, fileId: string): Promise<void>
     addLocalFolder(): Promise<SyncResult | null>
+    listDefaultLocalFolders(): Promise<DefaultLocalFolderStatus[]>
     connectDefaultLocalFolders(folders: DefaultLocalFolder[]): Promise<DefaultLocalFolderConnectionResult[]>
     addGitHub(input: { repository: string; branch?: string; token?: string; syncIssues?: boolean }): Promise<SyncResult>
     addGoogleDocs(input: { documentIds: string[]; token: string }): Promise<SyncResult>

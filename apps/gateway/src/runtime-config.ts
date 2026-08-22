@@ -141,7 +141,17 @@ function validateConfig(value: unknown): RuntimeConfig {
   }
   if (config.memory !== undefined) {
     if (!config.memory || typeof config.memory !== "object" || Array.isArray(config.memory)) throw new Error("runtime_config_invalid:memory");
-    for (const key of Object.keys(config.memory as Record<string, unknown>)) if (!["enabled", "baseUrl", "apiKey", "serviceId", "teamId", "agentId", "userId"].includes(key)) throw new Error(`runtime_config_unknown_field:memory.${key}`);
+    const memory = config.memory as Record<string, unknown>;
+    for (const key of Object.keys(memory)) if (!["enabled", "baseUrl", "apiKey", "serviceId", "teamId", "agentId", "userId", "recallLimit", "charBudget", "timeoutMs"].includes(key)) throw new Error(`runtime_config_unknown_field:memory.${key}`);
+    if (memory.enabled !== undefined && typeof memory.enabled !== "boolean") throw new Error("runtime_config_invalid:memory.enabled");
+    for (const key of ["baseUrl", "apiKey", "serviceId", "teamId", "agentId", "userId"]) {
+      if (memory[key] !== undefined && typeof memory[key] !== "string") throw new Error(`runtime_config_invalid:memory.${key}`);
+    }
+    for (const [key, minimum, maximum] of [["recallLimit", 1, 50], ["charBudget", 200, 2_000_000], ["timeoutMs", 100, 120_000]] as const) {
+      if (memory[key] !== undefined && (!Number.isInteger(memory[key]) || (memory[key] as number) < minimum || (memory[key] as number) > maximum)) {
+        throw new Error(`runtime_config_invalid:memory.${key}`);
+      }
+    }
   }
   if (config.knowledge !== undefined) {
     if (!config.knowledge || typeof config.knowledge !== "object" || Array.isArray(config.knowledge)) throw new Error("runtime_config_invalid:knowledge");

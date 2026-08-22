@@ -39,6 +39,7 @@ export function Sidebar({
   const pageMode = window.nxcore?.pageMode ?? 'sources'
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>(INITIAL_GATEWAY_STATUS)
+  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<'checking' | 'testing' | null>(null)
   const gatewayStateRef = useRef<GatewayState>(INITIAL_GATEWAY_STATUS.state)
   const { account } = useAccount()
 
@@ -96,6 +97,15 @@ export function Sidebar({
       window.clearTimeout(timeout)
     }
   }, [t])
+
+  useEffect(() => {
+    const onRuntimeConfigStatus = (event: Event) => {
+      const status = (event as CustomEvent<string>).detail
+      setRuntimeConfigStatus(status === 'checking' || status === 'testing' ? status : null)
+    }
+    window.addEventListener('everroom-runtime-config-status', onRuntimeConfigStatus)
+    return () => window.removeEventListener('everroom-runtime-config-status', onRuntimeConfigStatus)
+  }, [])
 
   const toggleSection = (sectionId: string) => {
     setCollapsedSections((current) => {
@@ -160,7 +170,7 @@ export function Sidebar({
 
       <MemoryPipelineStatus onNavigate={onNavigate} />
       {/* Gateway 正常运行时保持安静，只在启动/异常/停止时提示。 */}
-      {gatewayStatus.state !== 'ready' ? (
+      {gatewayStatus.state !== 'ready' || runtimeConfigStatus ? (
       <div
         className="gateway-status"
         data-state={gatewayStatus.state}
@@ -171,7 +181,11 @@ export function Sidebar({
         <Server aria-hidden="true" />
         <span>
           <strong>Gateway</strong>
-          <small>{gatewayStatusLabel(gatewayStatus, t)}</small>
+          <small>{runtimeConfigStatus === 'checking'
+            ? t('surface:sidebar.runtimeConfigChecking')
+            : runtimeConfigStatus === 'testing'
+              ? t('surface:sidebar.runtimeConfigTesting')
+              : gatewayStatusLabel(gatewayStatus, t)}</small>
         </span>
         <i className="gateway-status-dot" aria-hidden="true" />
       </div>

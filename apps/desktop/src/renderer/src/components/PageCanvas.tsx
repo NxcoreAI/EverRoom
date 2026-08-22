@@ -13,6 +13,7 @@ import { SourcesPage } from './pages/SourcesPage'
 import { WikiPage } from './pages/WikiPage'
 import { ConnectorSyncPage } from './pages/ConnectorSyncPage'
 import { AgentStatusPage } from './pages/AgentStatusPage'
+import { AgentSchedulesPage } from './pages/AgentSchedulesPage'
 import { useLocale } from '@/i18n/LocaleContext'
 
 const ContextRoomPage = lazy(() =>
@@ -61,6 +62,7 @@ export function PageCanvas({
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
   if (page === 'office') content = <AgentStatusPage />
+  if (page === 'schedules') content = <AgentSchedulesPage />
   if (page === 'rooms') {
     content = (
       <Suspense fallback={<ContextRoomHomeSkeleton />}>

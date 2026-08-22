@@ -8,6 +8,19 @@ const http = createLoggedHttpClient('gateway-runtime-config')
 
 export type { RuntimeConfigTestResult }
 
+export interface RuntimeMemoryConfig {
+  enabled: boolean
+  baseUrl: string
+  apiKey: string
+  serviceId: string
+  teamId: string
+  agentId: string
+  userId: string
+  recallLimit: number
+  charBudget: number
+  timeoutMs?: number
+}
+
 export class RuntimeConfigBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
@@ -22,6 +35,14 @@ export class RuntimeConfigBridge {
     // application/x-www-form-urlencoded 头，Fastify 5 对不可解析的
     // content-type 直接 415。
     return this.request('/v1/runtime-config/test', { method: 'POST', data: {} })
+  }
+
+  injectMemory(config: RuntimeMemoryConfig): Promise<{ enabled: boolean }> {
+    return this.request('/v1/memory/config', { method: 'PUT', data: config })
+  }
+
+  disableMemory(): Promise<{ enabled: boolean }> {
+    return this.request('/v1/memory/config', { method: 'DELETE' })
   }
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {

@@ -44,7 +44,32 @@ function errorMessage(error: unknown): string {
   return isRateLimitMessage(message) ? desktopText('error.rateLimited.message') : message
 }
 
+function networkOperation(channel: string): string {
+  if (/agent.*session|session.*agent/i.test(channel)) return desktopText('error.network.agentSessions')
+  if (/runtime-config/i.test(channel)) return desktopText('error.network.runtimeConfig')
+  if (/gateway.*status/i.test(channel)) return desktopText('error.network.gatewayStatus')
+  if (/memory/i.test(channel)) return desktopText('error.network.memory')
+  if (/knowledge|wiki/i.test(channel)) return desktopText('error.network.knowledge')
+  if (/document/i.test(channel)) return desktopText('error.network.document')
+  if (/source|file/i.test(channel)) return desktopText('error.network.files')
+  if (/nango|connector/i.test(channel)) return desktopText('error.network.connectors')
+  return channel ? channel.replace(/^[^:]+:/, '').replace(/[-_]/g, ' ') : desktopText('error.network.service')
+}
+
+function networkErrorDetail(channel: string, error: unknown): Pick<DesktopRequestError, 'title' | 'message'> | null {
+  const raw = error instanceof Error ? error.message : String(error)
+  if (!/fetch failed|failed to fetch|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(raw)) return null
+  return {
+    title: desktopText('error.network.title'),
+    message: desktopText('error.network.message')
+      .replace('{operation}', networkOperation(channel))
+      .replace('{channel}', channel || 'unknown'),
+  }
+}
+
 function requestError(channel: string, error: unknown): DesktopRequestError {
+  const network = networkErrorDetail(channel, error)
+  if (network) return { channel, severity: 'error', ...network }
   const message = errorMessage(error)
   if (isRateLimitMessage(message)) {
     return { channel, severity: 'notice', title: desktopText('error.rateLimited.title'), message }
@@ -199,6 +224,13 @@ const api: NxcoreDesktopApi = {
     activeRun: () => invokeQuietly('diary:active-run'),
     days: (start, end) => invoke('diary:days', start, end),
     day: (date) => invoke('diary:day', date),
+  },
+  agentSchedules: {
+    list: () => invoke('agent-scheduler:list'),
+    create: (input) => invoke('agent-scheduler:create', input),
+    update: (id, input) => invoke('agent-scheduler:update', id, input),
+    remove: (id) => invoke('agent-scheduler:remove', id),
+    runNow: (id) => invoke('agent-scheduler:run-now', id),
   },
   contextRooms: {
     list: () => invokeQuietly('context-rooms:list'),
@@ -405,6 +437,7 @@ const api: NxcoreDesktopApi = {
     },
     showFile: (id, fileId) => invoke('sources:show-file', id, fileId),
     addLocalFolder: () => invoke('sources:add-local-folder'),
+    listDefaultLocalFolders: () => invoke('sources:list-default-local-folders'),
     connectDefaultLocalFolders: (folders) => invoke('sources:connect-default-local-folders', folders),
     addGitHub: (input) => invoke('sources:add-github', input),
     addGoogleDocs: (input) => invoke('sources:add-google-docs', input),

@@ -196,12 +196,12 @@ describe("MemoryCoreClient browse APIs", () => {
 });
 
 describe("MemoryCoreClient connection retry", () => {
-  it("retries once on connection failure (MemoryCore restart window) and succeeds", async () => {
+  it("retries through a MemoryCore restart window and succeeds", async () => {
     const client = new MemoryCoreClient(config);
     let calls = 0;
     const fetchMock = vi.fn(async () => {
       calls += 1;
-      if (calls === 1) throw new Error("fetch failed");
+      if (calls < 3) throw new Error("fetch failed");
       return new Response(JSON.stringify({ code: 0, message: "ok", data: { total: 3 } }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -210,16 +210,16 @@ describe("MemoryCoreClient connection retry", () => {
     vi.stubGlobal("fetch", fetchMock);
     const count = await client.countAtomic();
     expect(count).toBe(3);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 
-  it("reports unreachable after the single retry fails again", async () => {
+  it("reports unreachable after the retry window is exhausted", async () => {
     const client = new MemoryCoreClient(config);
     const fetchMock = vi.fn(async () => { throw new Error("fetch failed"); });
     vi.stubGlobal("fetch", fetchMock);
     await expect(client.countAtomic()).rejects.toMatchObject({ kind: "unreachable" });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     vi.unstubAllGlobals();
   });
 

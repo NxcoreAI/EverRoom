@@ -134,7 +134,11 @@ export async function ensureIntegration(
 export async function bootstrapNango(config: ConnectorConfig): Promise<string> {
   const baseUrl = config.nangoUrl;
   let secret = config.nangoSecret;
-  if (!(await secretWorks(baseUrl, secret))) {
+  // A desktop-managed instance starts with a temporary UUID solely to satisfy
+  // Gateway config validation. It cannot authenticate against Nango, so skip
+  // the probe and go straight to the local dashboard API-key bootstrap.
+  const bootstrapPending = process.env.NXCORE_NANGO_BOOTSTRAP_PENDING === "1";
+  if (bootstrapPending || !(await secretWorks(baseUrl, secret))) {
     const bootstrapped = await bootstrapApiKey(baseUrl);
     if (bootstrapped) {
       secret = bootstrapped;

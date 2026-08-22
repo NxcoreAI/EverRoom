@@ -78,7 +78,10 @@ function displayValue(value: unknown, key = ""): string {
       .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
       .replace(/([?&](?:token|signature|credential|secret|password)=)[^&#\s]+/gi, "$1[REDACTED]")
       .replace(/\s+/g, " ")
-      .slice(0, 500);
+      // The startup runtime snapshot is intentionally emitted as JSON so it
+      // can be copied during configuration debugging. It is already redacted
+      // before logging, so keep that one field intact.
+      .slice(0, key === "configJson" ? 20_000 : 500);
     return /[\s|=]/.test(text) ? JSON.stringify(text) : text;
   }
   if (Array.isArray(value)) return `[${value.length} items]`;

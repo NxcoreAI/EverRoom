@@ -22,12 +22,12 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 /** 文档导入：切块 + 逐块 embedding + L0 落库，大文档远超普通查询超时。 */
 const DOCUMENT_IMPORT_TIMEOUT_MS = 120_000;
 /**
- * 连接失败重试等待 + 上限：桌面主进程在 runtime config 变更后会重启
+ * 连接失败重试等待：桌面主进程在 runtime config 变更后会重启
  * MemoryCore（embedding env 注入），kill → 新进程过 health 探活之间有
  * 1~3s 空窗；期间 renderer 轮询（如 memory:overview）会撞上 ECONNREFUSED
- * 刷屏。只对连接类失败重试一次（1.5s 后），4xx/5xx/超时不重试。
+ * 刷屏。只对连接类失败重试两次（1s、2s 后），4xx/5xx/超时不重试。
  */
-const CONNECT_RETRY_DELAY_MS = 1_500;
+const CONNECT_RETRY_DELAYS_MS = [1_000, 2_000] as const;
 
 function isConnectionFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -354,27 +354,29 @@ export class MemoryCoreClient {
         clearTimeout(timeout);
       }
     };
-    let response: Response;
-    try {
-      response = await attempt();
-    } catch (error) {
-      if (isConnectionFailure(error)) {
-        // 重启空窗重试一次（见 CONNECT_RETRY_DELAY_MS 注释）；再失败按原样抛。
-        try {
-          await new Promise((resolve) => setTimeout(resolve, CONNECT_RETRY_DELAY_MS));
-          response = await attempt();
-        } catch (retryError) {
+    let response: Response | undefined;
+    let lastConnectionError: unknown;
+    for (let attemptNumber = 0; attemptNumber <= CONNECT_RETRY_DELAYS_MS.length; attemptNumber += 1) {
+      try {
+        response = await attempt();
+        break;
+      } catch (error) {
+        lastConnectionError = error;
+        const retryDelay = CONNECT_RETRY_DELAYS_MS[attemptNumber];
+        if (!isConnectionFailure(error) || retryDelay === undefined) {
           throw new MemoryCoreError(
             "unreachable",
-            `MemoryCore ${path} unreachable: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+            `MemoryCore ${path} unreachable: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
-      } else {
-        throw new MemoryCoreError(
-          "unreachable",
-          `MemoryCore ${path} unreachable: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        await new Promise((resolve) => setTimeout(resolve, retryDelay));
       }
+    }
+    if (!response) {
+      throw new MemoryCoreError(
+        "unreachable",
+        `MemoryCore ${path} unreachable: ${lastConnectionError instanceof Error ? lastConnectionError.message : String(lastConnectionError)}`,
+      );
     }
 
     if (!response.ok) {

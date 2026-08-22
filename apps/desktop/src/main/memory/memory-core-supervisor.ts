@@ -43,6 +43,27 @@ const DEFAULT_BASE_URL = `http://127.0.0.1:${MEMORY_CORE_PORT}`
 const STARTUP_TIMEOUT_MS = 120_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 
+type MemoryLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'off'
+
+function memoryLogLevel(): MemoryLogLevel {
+  const value = process.env.NXCORE_MEMORY_LOG_LEVEL?.trim().toLowerCase()
+  return value === 'debug' || value === 'info' || value === 'warn' || value === 'error' || value === 'off'
+    ? value
+    : 'warn'
+}
+
+function writeMemoryCoreOutput(level: MemoryLogLevel, chunk: string, stream: NodeJS.WriteStream): void {
+  if (level === 'off') return
+  for (const line of chunk.split(/(?<=\n)/)) {
+    if (!line) continue
+    const noisy = /\[observability\]|\[skill-perf\]|\[L1-count\]|REQUEST_(?:START|END)/i.test(line)
+    if (noisy && level !== 'debug') continue
+    const isError = /\b(?:ERROR|FATAL|WARN|warning|failed|failure|exception|unhandled)\b/i.test(line)
+    if (level === 'error' && !isError) continue
+    stream.write(`[memory-core] ${line}`)
+  }
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
@@ -117,8 +138,9 @@ export class MemoryCoreSupervisor {
     child.stdin.end()
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => process.stdout.write(`[memory-core] ${chunk}`))
-    child.stderr.on('data', (chunk: string) => process.stderr.write(`[memory-core] ${chunk}`))
+    const configuredLogLevel = memoryLogLevel()
+    child.stdout.on('data', (chunk: string) => writeMemoryCoreOutput(configuredLogLevel, chunk, process.stdout))
+    child.stderr.on('data', (chunk: string) => writeMemoryCoreOutput(configuredLogLevel, chunk, process.stderr))
     child.on('exit', (code, signal) => {
       this.child = null
       if (!this.stopping) {

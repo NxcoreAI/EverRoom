@@ -62,7 +62,7 @@ describe('SaasClient OIDC loopback callback', () => {
 
     const response = await requestLoopback(`/auth/callback?state=${encodeURIComponent(state)}&code=stub-authorization-code`)
     expect(response.status).toBe(200)
-    expect(response.body).toContain('登录成功')
+    expect(response.body).toContain('You are signed in')
 
     // code 交付后监听即关闭,浏览器可以安全关闭回调页。
     await expect(requestLoopback(`/auth/callback?code=another`)).rejects.toThrow()
@@ -99,7 +99,7 @@ describe('SaasClient OIDC loopback callback', () => {
 
     const response = await requestLoopback(`/auth/callback?state=${encodeURIComponent(state)}&error=access_denied&error_description=User+cancelled`)
     expect(response.status).toBe(400)
-    expect(response.body).toContain('登录未完成')
+    expect(response.body).toContain('Sign-in incomplete')
 
     await expect(loginPromise).rejects.toThrow('User cancelled')
   })

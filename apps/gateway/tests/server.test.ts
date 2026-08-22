@@ -161,6 +161,45 @@ describe("gateway server", () => {
     expect(response.statusCode).toBe(200);
   });
 
+  it("accepts runtime memory injection without persisting or resetting it", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const memory = {
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      apiKey: "runtime-memory-key",
+      serviceId: "service-from-saas",
+      teamId: "team-from-saas",
+      agentId: "agent-from-saas",
+      userId: "local-user",
+      recallLimit: 7,
+      charBudget: 4_000,
+    };
+
+    const injected = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
+    expect(injected.statusCode).toBe(200);
+    expect(injected.json()).toEqual({ enabled: true });
+    const persisted = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
+    expect(persisted.json<{ config: { memory?: { apiKey?: string } } }>().config.memory?.apiKey).toBe("");
+
+    // Runtime config persistence must not be used as the secret-bearing
+    // transport, and a later config event must leave the injected client live.
+    await app.inject({
+      method: "PUT",
+      url: "/v1/runtime-config/saas",
+      headers,
+      payload: { schemaVersion: 1, memory: { serviceId: "service-from-saas" } },
+    });
+    const stillEnabled = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
+    expect(stillEnabled.json()).toEqual({ enabled: true });
+
+    const disabled = await app.inject({ method: "DELETE", url: "/v1/memory/config", headers });
+    await app.close();
+    expect(disabled.statusCode).toBe(200);
+    expect(disabled.json()).toEqual({ enabled: false });
+  });
+
   it("serves persisted perception and diary settings with local visual nodes", async () => {
     const config = await testConfig();
     const app = await createServer(config);
@@ -203,6 +242,54 @@ describe("gateway server", () => {
     expect(nodes.json<{ items: unknown[] }>().items).toHaveLength(1);
     expect(updatedDiary.json()).toMatchObject({ enabled: true, localTime: "23:30", timezone: "UTC" });
     expect(diaryConflict.statusCode).toBe(409);
+  });
+
+  it("manages agent schedules and delegates the diary task to the scheduler", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    const initial = await app.inject({ method: "GET", url: "/v1/agent/schedules", headers });
+    expect(initial.statusCode).toBe(200);
+    const task = initial.json<Array<{ id: string; enabled: boolean; configVersion: number }>>()[0]!;
+    expect(task.id).toBe("diary.daily");
+
+    const updated = await app.inject({
+      method: "PATCH",
+      url: "/v1/agent/schedules/diary.daily",
+      headers,
+      payload: { enabled: !task.enabled, localTime: "08:15", timezone: "UTC", configVersion: task.configVersion },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id: "diary.daily", enabled: !task.enabled, localTime: "08:15", timezone: "UTC" });
+
+    const runNow = await app.inject({ method: "POST", url: "/v1/agent/schedules/diary.daily/run", headers });
+    expect(runNow.statusCode).toBe(202);
+    expect(runNow.json()).toMatchObject({ runId: expect.any(String) });
+
+    const missing = await app.inject({ method: "POST", url: "/v1/agent/schedules/missing/run", headers });
+    await app.close();
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it("supports user schedules while protecting built-in tasks and exposing MCP execution", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const created = await app.inject({
+      method: "POST", url: "/v1/agent/schedules", headers,
+      payload: { agentId: "primary", name: "整理收件箱", description: "测试任务", prompt: "整理今天的收件箱", localTime: "10:00", timezone: "UTC" },
+    });
+    const task = created.json<{ id: string; builtin: boolean }>();
+    const builtinDelete = await app.inject({ method: "DELETE", url: "/v1/agent/schedules/diary.daily", headers });
+    const mcpList = await app.inject({ method: "POST", url: "/v1/mcp/agent-schedules", headers, payload: { jsonrpc: "2.0", id: 1, method: "tools/list" } });
+    const deleted = await app.inject({ method: "DELETE", url: `/v1/agent/schedules/${task.id}`, headers });
+    await app.close();
+    expect(created.statusCode).toBe(201);
+    expect(task.builtin).toBe(false);
+    expect(builtinDelete.statusCode).toBe(409);
+    expect(mcpList.json<{ result: { tools: Array<{ name: string }> } }>().result.tools.map((tool) => tool.name)).toContain("agent_schedule_run");
+    expect(deleted.statusCode).toBe(204);
   });
 
   it("manages connector sync jobs without accepting a client owner id", async () => {

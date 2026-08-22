@@ -1,0 +1,17 @@
+schemaVersion: 1
+kind: builtin
+id: diary
+name: Diary Agent
+description: 将当天的现实来源与记忆整理为可追溯的时间轴日记
+runtime: pi
+systemPrompt: ./SYSTEM.md
+
+capabilities:
+  - diary.timeline
+  - diary.summarize
+
+tools:
+  - diary_source_read
+
+skills:
+  - ./skills/diary-timeline

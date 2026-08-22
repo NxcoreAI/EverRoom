@@ -20,6 +20,7 @@ import type { RealityTag } from '@nxcore/reality-contract'
 import type { AgentSession, AgentSessionSnapshot } from '@nxcore/agent-contract'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
+import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
 
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
@@ -251,10 +252,59 @@ interface LoopbackCallbackWaiter {
 function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse, handler: (callback: URL) => void): void {
   const callback = new URL(request.url ?? '/', `http://${request.headers.host ?? OIDC_LOOPBACK_HOST}`)
   const failed = callback.searchParams.has('error') || !callback.searchParams.has('code')
-  response.writeHead(failed ? 400 : 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-  response.end(failed
-    ? '<!doctype html><meta charset="utf-8"><title>EverRoom</title><body style="font-family:-apple-system,system-ui,sans-serif;text-align:center;padding-top:20vh"><h2>登录未完成</h2><p>请回到 EverRoom 应用重试。</p></body>'
-    : '<!doctype html><meta charset="utf-8"><title>EverRoom</title><body style="font-family:-apple-system,system-ui,sans-serif;text-align:center;padding-top:20vh"><h2>✅ 登录成功</h2><p>已返回 EverRoom 应用,本页面可以关闭。</p></body>')
+  response.writeHead(failed ? 400 : 200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:",
+  })
+  response.end(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EverRoom · ${failed ? 'Sign-in incomplete' : 'Signed in'}</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; min-height: 100vh; display: grid; place-items: center; background: #f7f8fa; color: #202124; }
+    main { width: min(420px, calc(100vw - 40px)); padding: 36px 34px 32px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 18px 48px rgba(16, 24, 40, .08); text-align: center; }
+    .brand { display: inline-flex; align-items: center; justify-content: center; }
+    .brand img { display: block; width: 164px; height: auto; }
+    .status { width: 52px; height: 52px; margin: 34px auto 20px; display: grid; place-items: center; border-radius: 50%; background: ${failed ? '#fff1f0' : '#edf8f1'}; color: ${failed ? '#d92d20' : '#15803d'}; font-size: 25px; font-weight: 700; }
+    h1 { margin: 0; font-size: 22px; line-height: 1.3; letter-spacing: -.025em; }
+    p { margin: 10px 0 0; color: #667085; font-size: 14px; line-height: 1.6; }
+    .hint { margin-top: 24px; padding-top: 18px; border-top: 1px solid #f0f1f3; color: #98a2b3; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">
+      <img src="${everroomFullLogo}" alt="EverRoom">
+    </div>
+    <div class="status" aria-hidden="true">${failed ? '!' : '&#10003;'}</div>
+    <h1>${failed ? 'Sign-in incomplete' : 'You are signed in'}</h1>
+    <p>${failed ? 'Return to EverRoom and try signing in again.' : 'Your account is connected. You can continue in EverRoom.'}</p>
+    ${failed
+      ? '<div class="hint">Return to EverRoom to try again</div>'
+      : '<div class="hint">Redirecting to the EverRoom website in <span id="redirect-countdown">5</span> seconds</div>'}
+  </main>
+  ${failed ? '' : `<script>
+    (() => {
+      const target = 'https://open.nxcore.ai';
+      let seconds = 5;
+      const countdown = document.getElementById('redirect-countdown');
+      const timer = setInterval(() => {
+        seconds -= 1;
+        if (countdown) countdown.textContent = String(seconds);
+        if (seconds <= 0) {
+          clearInterval(timer);
+          window.location.replace(target);
+        }
+      }, 1000);
+    })();
+  </script>`}
+</body>
+</html>`)
   // 响应先落盘再交给上层处理,保证随后的连接清理不会截断浏览器收到的页面。
   setImmediate(() => handler(callback))
 }

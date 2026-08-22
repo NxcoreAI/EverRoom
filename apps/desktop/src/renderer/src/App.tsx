@@ -16,6 +16,7 @@ import { TopBar } from '@/components/TopBar'
 import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGate'
 import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
 import { FolderSettingsOnboarding } from '@/components/onboarding/FolderSettingsOnboarding'
+import { OnboardingFlowChrome } from '@/components/onboarding/OnboardingFlowChrome'
 import { RuntimeConfigGate } from '@/components/onboarding/RuntimeConfigGate'
 import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
@@ -81,11 +82,13 @@ export function App() {
   const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
   const [suppressRoomOnboarding, setSuppressRoomOnboarding] = useState(false)
-  const [fullOnboardingStage, setFullOnboardingStage] = useState<'idle' | 'memory' | 'room' | 'folder'>('idle')
+  const [fullOnboardingStage, setFullOnboardingStage] = useState<'idle' | 'memory' | 'room' | 'folder' | 'ready'>('idle')
   const [folderOnboardingOpen, setFolderOnboardingOpen] = useState(false)
+  const [memoryReady, setMemoryReady] = useState(false)
   const manualMemoryOnboardingRef = useRef(false)
-  const fullOnboardingStageRef = useRef<'idle' | 'memory' | 'room' | 'folder'>('idle')
+  const fullOnboardingStageRef = useRef<'idle' | 'memory' | 'room' | 'folder' | 'ready'>('idle')
   const openRoomOnboardingRef = useRef<(() => void) | null>(null)
+  const openMemoryOnboardingRef = useRef<(() => void) | null>(null)
   const [theme] = useState<ThemeId>(readStoredTheme)
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
@@ -163,6 +166,35 @@ export function App() {
   }, [activePage])
 
   useEffect(() => {
+    const onAccountChanged = (event: Event) => {
+      const authenticated = (event as CustomEvent<{ authenticated?: unknown }>).detail?.authenticated === true
+      if (!authenticated) {
+        fullOnboardingStageRef.current = 'idle'
+        setFullOnboardingStage('idle')
+        setFolderOnboardingOpen(false)
+        setMemoryReady(false)
+        setSuppressRoomOnboarding(false)
+        manualMemoryOnboardingRef.current = false
+        return
+      }
+    }
+    const onPostLogin = () => {
+      fullOnboardingStageRef.current = 'memory'
+      setFullOnboardingStage('memory')
+      setFolderOnboardingOpen(false)
+      setMemoryReady(false)
+      setSuppressRoomOnboarding(true)
+      setActivePage('settings')
+    }
+    window.addEventListener('everroom-account-status-changed', onAccountChanged)
+    window.addEventListener('everroom-post-login-onboarding-check', onPostLogin)
+    return () => {
+      window.removeEventListener('everroom-account-status-changed', onAccountChanged)
+      window.removeEventListener('everroom-post-login-onboarding-check', onPostLogin)
+    }
+  }, [])
+
+  useEffect(() => {
     if (fullOnboardingStage !== 'room') return
     setActivePage('settings')
     let attempts = 0
@@ -181,6 +213,30 @@ export function App() {
     return () => {
       if (timer !== null) window.clearTimeout(timer)
     }
+  }, [fullOnboardingStage])
+
+  const switchOnboardingStage = useCallback((stage: 'idle' | 'memory' | 'room' | 'folder' | 'ready') => {
+    if (stage === 'idle') return
+    fullOnboardingStageRef.current = stage
+    setFullOnboardingStage(stage)
+    setFolderOnboardingOpen(stage === 'folder' || stage === 'ready')
+    setActivePage('settings')
+    if (stage === 'memory') {
+      setSuppressRoomOnboarding(true)
+      openRoomOnboardingRef.current = null
+      openMemoryOnboardingRef.current?.()
+    } else if (stage === 'room') {
+      setSuppressRoomOnboarding(false)
+      openRoomOnboardingRef.current?.()
+    } else {
+      setSuppressRoomOnboarding(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (fullOnboardingStage !== 'folder' && fullOnboardingStage !== 'ready') return
+    setActivePage('settings')
+    setFolderOnboardingOpen(true)
   }, [fullOnboardingStage])
 
   const openDocumentTarget = useCallback((target: {
@@ -384,31 +440,39 @@ export function App() {
     // 启动 gate（最外层）：未配置 AI runtime config 时先登录/手动配置，
     // 连通测试通过才进入后续 onboarding 与应用。
     <RuntimeConfigGate>
-    <MemoryOnboardingGate onFinished={() => {
+    <OnboardingFlowChrome stage={fullOnboardingStage} onStageChange={switchOnboardingStage}>
+    <MemoryOnboardingGate activeStage={fullOnboardingStage} onFinished={() => {
+      setMemoryReady(true)
       if (fullOnboardingStageRef.current !== 'memory') return
       manualMemoryOnboardingRef.current = false
       fullOnboardingStageRef.current = 'room'
       setFullOnboardingStage('room')
       setSuppressRoomOnboarding(true)
       setActivePage('settings')
-    }}>
-      {({ openMemoryOnboarding }) => (
+    }} onNavigateStage={switchOnboardingStage}>
+      {({ openMemoryOnboarding }) => {
+      openMemoryOnboardingRef.current = openMemoryOnboarding
+      return (
       <RoomOnboardingGate
+        activeStage={fullOnboardingStage}
         onOpenRoom={openContextRoomTab}
         suppressOnboarding={suppressRoomOnboarding}
+        onNavigateStage={switchOnboardingStage}
+        memoryReady={memoryReady}
         onFinished={() => {
           // 'room' = manual full-onboarding restart from Settings; 'idle' =
           // natural first run, where the gates open themselves and the stage
-          // machine is never advanced. Both paths must reach folder consent.
+          // machine is never advanced. Both paths must reach folder consent,
+          // including the existing-room path so permissions can be confirmed.
           if (fullOnboardingStageRef.current !== 'room' && fullOnboardingStageRef.current !== 'idle') return
           fullOnboardingStageRef.current = 'folder'
           setFullOnboardingStage('folder')
-          setFolderOnboardingOpen(true)
         }}
       >
       {({ openRoomOnboarding }) => {
         openRoomOnboardingRef.current = openRoomOnboarding
         return (
+      <>
       <div
       className="app-shell"
       data-agent-open={String(agentOpen)}
@@ -465,6 +529,7 @@ export function App() {
               agentNavigationTimerRef.current = null
             }
             manualMemoryOnboardingRef.current = true
+            setMemoryReady(false)
             fullOnboardingStageRef.current = 'memory'
             // Memory onboarding temporarily unmounts the nested Room gate.
             // Do not call the opener captured from that old instance later.
@@ -500,8 +565,12 @@ export function App() {
       <HighRiskImportReview />
       <AppToast />
       <AppErrorDialog />
+      </div>
       <FolderSettingsOnboarding
         open={folderOnboardingOpen}
+        memoryReady={memoryReady}
+        showReady={fullOnboardingStage === 'ready'}
+        onNavigateStage={switchOnboardingStage}
         onClose={() => {
           setFolderOnboardingOpen(false)
           fullOnboardingStageRef.current = 'idle'
@@ -510,12 +579,13 @@ export function App() {
           setSuppressRoomOnboarding(false)
         }}
       />
-      </div>
+      </>
       )
       }}
       </RoomOnboardingGate>
-      )}
+      )}}
     </MemoryOnboardingGate>
+    </OnboardingFlowChrome>
     </RuntimeConfigGate>
   )
 }

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
 import type {
@@ -26,7 +27,7 @@ import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
-import { RuntimeConfigBridge } from './gateway/runtime-config-bridge'
+import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
@@ -52,6 +53,7 @@ import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bri
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
+import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError } from './cloud/saas-client'
@@ -159,6 +161,7 @@ const SOURCE_CHANNELS = {
   changed: 'sources:changed',
   showFile: 'sources:show-file',
   addLocalFolder: 'sources:add-local-folder',
+  listDefaultLocalFolders: 'sources:list-default-local-folders',
   connectDefaultLocalFolders: 'sources:connect-default-local-folders',
   addGitHub: 'sources:add-github',
   addGoogleDocs: 'sources:add-google-docs',
@@ -425,6 +428,14 @@ const DIARY_CHANNELS = {
   day: 'diary:day',
 } as const
 
+const AGENT_SCHEDULER_CHANNELS = {
+  list: 'agent-scheduler:list',
+  create: 'agent-scheduler:create',
+  update: 'agent-scheduler:update',
+  remove: 'agent-scheduler:remove',
+  runNow: 'agent-scheduler:run-now',
+} as const
+
 // 窗口先显示、服务后台初始化:所有 IPC 通道提前挂上路由,处理器注册前先等待就绪。
 // IpcHandler 的 never 参数让任意签名的处理器都可直接注册。
 type IpcHandler = (event: Electron.IpcMainInvokeEvent, ...args: never[]) => unknown
@@ -480,6 +491,7 @@ function installIpcRouters(): void {
     SCREEN_CAPTURE_CHANNELS,
     PERCEPTION_CHANNELS,
     DIARY_CHANNELS,
+    AGENT_SCHEDULER_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -512,6 +524,7 @@ let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
 let diaryGatewayBridge: DiaryGatewayBridge | null = null
+let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
@@ -660,6 +673,17 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     const rootPath = result.filePaths[0]
     return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
   })
+  handle(SOURCE_CHANNELS.listDefaultLocalFolders, () => {
+    const sources = service.listSources().filter((source) => source.kind === 'local-folder')
+    const normalize = (value: string) => value.replace(/[\\/]+$/, '').toLowerCase()
+    return (['documents', 'desktop'] as const).map((folder) => {
+      const expected = normalize(app.getPath(folder))
+      return {
+        folder,
+        connected: sources.some((source) => source.status !== 'disconnected' && normalize(source.rootPath) === expected),
+      }
+    })
+  })
   handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (event, folders: unknown) => {
     if (!Array.isArray(folders)) throw new Error('无效的默认文件夹配置。')
     if (folders.some((folder) => folder !== 'documents' && folder !== 'desktop')) {
@@ -797,34 +821,95 @@ let memoryCoreAiEnvApplied: string | null = null
  * 并发由 syncManagedChildProcesses 统一串行化。
  */
 async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  const bridge = runtimeConfigBridge
   try {
     const supervisor = memoryCoreSupervisor
-    if (!supervisor?.getConnection()?.managed) return
+    const initialConnection = supervisor?.getConnection() ?? null
+    if (!supervisor || !initialConnection) {
+      // MemoryCoreSupervisor returns null for an explicitly configured
+      // external instance. In that mode Gateway already inherited the
+      // NXCORE_MEMORY_* env and must keep using it.
+      const externalMemory = process.env.NXCORE_MEMORY_ENABLED?.trim() !== 'false'
+        && (process.env.NXCORE_MEMORY_MANAGED?.trim() === 'false'
+          || Boolean(process.env.NXCORE_MEMORY_BASE_URL?.trim()
+            && process.env.NXCORE_MEMORY_BASE_URL.trim() !== 'http://127.0.0.1:8420'))
+      if (!externalMemory) await bridge?.disableMemory().catch(() => undefined)
+      return
+    }
     const fields = embeddingFieldsFromConfig(snapshot.config)
     let embeddingEnv: Record<string, string> | null = null
+    let applyAiEnvironment = true
     if (fields) {
       // /test 只在 embedding 四要素齐全时测 /embeddings 并带维度；这里复用一次。
-      const result = await runtimeConfigBridge?.test()
+      const result = await bridge?.test()
       if (!result?.embedding?.valid || !result.embedding.dimensions) {
         console.warn('[memory-core] embedding config saved but /embeddings test failed; keeping current env')
-        return
+        applyAiEnvironment = false
+      } else {
+        embeddingEnv = memoryCoreEmbeddingEnv(fields, result.embedding.dimensions)
       }
-      embeddingEnv = memoryCoreEmbeddingEnv(fields, result.embedding.dimensions)
     }
     const nextEnv = memoryCoreEnvironment(snapshot.config, embeddingEnv)
     const nextJson = nextEnv ? JSON.stringify(nextEnv) : null
-    if (nextJson === memoryCoreAiEnvApplied) return
-    const restarted = await supervisor.restart(nextEnv)
-    if (!restarted?.managed) {
-      // 复用模式（外部实例或残留进程占着 8420）：env 没真正应用，不标记
-      // applied——下次 sync 还会重试；提示用户有残留实例。
-      console.warn('[memory-core] instance at 8420 is not managed by this app; ai env NOT applied (stray process?)')
+    if (applyAiEnvironment && initialConnection.managed && nextJson !== memoryCoreAiEnvApplied) {
+      const restarted = await supervisor.restart(nextEnv)
+      if (!restarted?.managed) {
+        // 复用模式（外部实例或残留进程占着 8420）：env 没真正应用，不标记
+        // applied——下次 sync 还会重试；提示用户有残留实例。
+        console.warn('[memory-core] instance at 8420 is not managed by this app; ai env NOT applied (stray process?)')
+      } else {
+        memoryCoreAiEnvApplied = nextJson
+        console.info(`[memory-core] ai env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
+      }
+    }
+
+    const connection = supervisor.getConnection()
+    if (!connection) {
+      await bridge?.disableMemory().catch(() => undefined)
       return
     }
-    memoryCoreAiEnvApplied = nextJson
-    console.info(`[memory-core] ai env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
+    const runtimeMemory = snapshot.config.memory && typeof snapshot.config.memory === 'object'
+      ? snapshot.config.memory as Record<string, unknown>
+      : {}
+    // The bundled runtime-config file carries legacy placeholders. They must
+    // not override custom local identity values supplied through NXCORE_* env.
+    const runtimeMemoryPlaceholders: Record<string, string> = {
+      serviceId: 'everroom',
+      teamId: 'everroom',
+      agentId: 'everroom',
+      userId: 'local-user',
+    }
+    const envText = (name: string, fallback: string): string => process.env[name]?.trim() || fallback
+    const text = (name: string, fallback: string): string => {
+      const value = runtimeMemory[name]
+      const normalized = typeof value === 'string' ? value.trim() : ''
+      return normalized && normalized !== runtimeMemoryPlaceholders[name] ? normalized : fallback
+    }
+    const integer = (name: string, fallback: number): number => {
+      const value = runtimeMemory[name]
+      if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value
+      const parsed = Number.parseInt(process.env[name] ?? '', 10)
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+    }
+    const memoryConfig: RuntimeMemoryConfig = {
+      enabled: true,
+      baseUrl: connection.baseUrl,
+      apiKey: connection.apiKey,
+      serviceId: text('serviceId', envText('NXCORE_MEMORY_SERVICE_ID', 'everroom')),
+      teamId: text('teamId', envText('NXCORE_MEMORY_TEAM_ID', 'everroom')),
+      agentId: text('agentId', envText('NXCORE_MEMORY_AGENT_ID', 'pi-agent')),
+      userId: text('userId', envText('NXCORE_MEMORY_USER_ID', 'local-user')),
+      recallLimit: integer('NXCORE_MEMORY_RECALL_LIMIT', 5),
+      charBudget: integer('NXCORE_MEMORY_CHAR_BUDGET', 2_000),
+    }
+    const timeoutMs = runtimeMemory.timeoutMs
+    if (typeof timeoutMs === 'number' && Number.isInteger(timeoutMs) && timeoutMs >= 100) {
+      memoryConfig.timeoutMs = timeoutMs
+    }
+    await bridge?.injectMemory(memoryConfig)
   } catch (error) {
     console.error('[memory-core] failed to sync ai env:', error)
+    await bridge?.disableMemory().catch(() => undefined)
   }
 }
 
@@ -1575,6 +1660,26 @@ function registerPerceptionAndDiaryHandlers(): void {
     }
     return diaryGatewayBridge.day(date)
   })
+  handle(AGENT_SCHEDULER_CHANNELS.list, () => {
+    if (!agentSchedulerGatewayBridge) throw new Error('Agent 定时任务服务尚未就绪。')
+    return agentSchedulerGatewayBridge.list()
+  })
+  handle(AGENT_SCHEDULER_CHANNELS.create, (_event, input: unknown) => {
+    if (!agentSchedulerGatewayBridge || !input || typeof input !== 'object') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.create(input as never)
+  })
+  handle(AGENT_SCHEDULER_CHANNELS.update, (_event, id: unknown, input: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string' || !input || typeof input !== 'object') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.update(id, input as never)
+  })
+  handle(AGENT_SCHEDULER_CHANNELS.runNow, (_event, id: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.runNow(id)
+  })
+  handle(AGENT_SCHEDULER_CHANNELS.remove, (_event, id: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.remove(id)
+  })
 }
 
 function createWindow(): void {
@@ -1697,6 +1802,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     process.env.NXCORE_NANGO_CONNECTOR_URL?.trim() || process.env.NXCORE_NANGO_URL?.trim() || ''
   const configuredNangoSecret =
     process.env.NXCORE_NANGO_CONNECTOR_SECRET?.trim() || process.env.NXCORE_NANGO_SECRET?.trim() || ''
+  const nangoSecretIsUuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(configuredNangoSecret)
   try {
     if (connectorPageEnabled) {
       openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
@@ -1753,11 +1859,16 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         NXCORE_NANGO_CONNECTOR_URL: connectorPageEnabled
           ? ''
           : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl,
-        NXCORE_NANGO_CONNECTOR_SECRET: connectorPageEnabled ? '' : configuredNangoSecret,
+        NXCORE_NANGO_CONNECTOR_SECRET: connectorPageEnabled
+          ? ''
+          : nangoSupervisor && !nangoSecretIsUuidV4 ? randomUUID() : configuredNangoSecret,
+        NXCORE_NANGO_BOOTSTRAP_PENDING: !connectorPageEnabled && nangoSupervisor && !nangoSecretIsUuidV4 ? '1' : '0',
         NXCORE_NANGO_URL: connectorPageEnabled
           ? ''
           : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl,
-        NXCORE_NANGO_SECRET: connectorPageEnabled ? '' : configuredNangoSecret,
+        NXCORE_NANGO_SECRET: connectorPageEnabled
+          ? ''
+          : nangoSupervisor && !nangoSecretIsUuidV4 ? randomUUID() : configuredNangoSecret,
         ...(knowledge
           ? {
             NXCORE_KNOWLEDGE_ENABLED: 'true',
@@ -1783,6 +1894,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       .then((snapshot) => syncManagedChildProcesses(snapshot))
       .catch((error) => console.warn('[managed-children] startup runtime-config sync skipped:', error))
     diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
+    agentSchedulerGatewayBridge = new AgentSchedulerGatewayBridge(gatewaySupervisor)
     registerPerceptionAndDiaryHandlers()
     const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
     if (perceptionSettings?.captureEnabled) {
@@ -1936,6 +2048,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         lastAccountId = account.user?.id ?? null
         remoteAgentCommandClient?.start()
         agentStatusReporter?.reportNow()
+        transcriptionProcessingCoordinator?.wake()
       }
     })
     registerRuntimeConfigHandlers(saasClient)
@@ -1993,6 +2106,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     realityGatewayBridge = null
     perceptionGatewayBridge = null
     diaryGatewayBridge = null
+    agentSchedulerGatewayBridge = null
     connectorGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
@@ -2054,6 +2168,7 @@ app.on('before-quit', (event) => {
   realityGatewayBridge = null
   perceptionGatewayBridge = null
   diaryGatewayBridge = null
+  agentSchedulerGatewayBridge = null
   connectorGatewayBridge = null
   recordingStore = null
   saasClient = null

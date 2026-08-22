@@ -68,6 +68,7 @@ function emptyPayload(date: string, start: Date, end: Date): DiaryPayload {
 
 export class DiaryService {
   private readonly options: Required<Pick<DiaryServiceOptions, "ownerId" | "workerId" | "pollIntervalMs" | "leaseMs" | "maxAttempts">>;
+  private readonly scheduleManagedExternally: boolean;
   private readonly generator: DiaryGenerator;
   private readonly sourceCollector: DiarySourceCollector;
   private timer: NodeJS.Timeout | null = null;
@@ -81,6 +82,7 @@ export class DiaryService {
       leaseMs: options.leaseMs ?? 30_000,
       maxAttempts: options.maxAttempts ?? 5,
     };
+    this.scheduleManagedExternally = options.scheduleManagedExternally ?? false;
     this.generator = options.generator ?? defaultGenerator();
     this.sourceCollector = new DiarySourceCollector(db, options.memory, options.logger);
     this.now = options.now ?? (() => new Date());
@@ -237,6 +239,40 @@ export class DiaryService {
 
   getRun(id: string): typeof diaryRuns.$inferSelect | null { return this.db.select().from(diaryRuns).where(eq(diaryRuns.id, id)).get() ?? null; }
 
+  getLatestRun(): typeof diaryRuns.$inferSelect | null {
+    return this.db.select().from(diaryRuns).orderBy(desc(diaryRuns.createdAt)).get() ?? null;
+  }
+
+  currentDate(): string {
+    const settings = this.getSettings();
+    return dateInTimezone(this.now(), settings.timezone);
+  }
+
+  /** Queue the current local day as soon as scheduling is enabled.
+   * The configured daily time remains the later refresh point; it must not
+   * prevent the first version of today's diary from appearing during the day.
+   */
+  ensureCurrentDayRun(): string | null {
+    const settings = this.getSettings();
+    if (!settings.enabled) return null;
+    const date = dateInTimezone(this.now(), settings.timezone);
+    const day = this.db.select().from(diaryDays).where(eq(diaryDays.date, date)).get();
+    const latestRun = this.db.select().from(diaryRuns).where(eq(diaryRuns.date, date)).orderBy(desc(diaryRuns.createdAt)).get();
+    if (latestRun && (latestRun.status === "pending" || latestRun.status === "running")) return null;
+    // A day that was manually/previously generated before auto-generation was
+    // enabled must get one scheduled refresh, even if it already has an empty
+    // or stale version.
+    if (day && latestRun?.trigger === "scheduled" && latestRun.createdAt >= settings.updatedAt) return null;
+    return this.createRun(date, "scheduled");
+  }
+
+  advanceSchedule(now = this.now()): void {
+    const settings = this.getSettings();
+    if (!settings.enabled) return;
+    this.db.update(diarySchedules).set({ nextRunAt: this.nextSchedule(now, settings.localTime, settings.timezone), updatedAt: now })
+      .where(eq(diarySchedules.ownerId, this.options.ownerId)).run();
+  }
+
   getActiveRun(): typeof diaryRuns.$inferSelect | null {
     return this.db.select().from(diaryRuns).where(or(
       eq(diaryRuns.status, "pending"),
@@ -285,6 +321,7 @@ export class DiaryService {
   }
 
   private scheduleDueRuns(): void {
+    if (this.scheduleManagedExternally) return;
     const settings = this.getSettings();
     if (!settings.enabled) return;
     const now = this.now();
@@ -436,18 +473,25 @@ export class DiaryService {
 
   private async markChangedDaysStale(): Promise<void> {
     const ready = this.db.select().from(diaryDays).where(eq(diaryDays.status, "ready")).all();
+    const settings = this.getSettings();
+    const now = this.now();
+    const today = dateInTimezone(now, settings.timezone);
     for (const day of ready) {
       if (!day.currentVersionId || !day.sourceFingerprint) continue;
       const version = this.db.select().from(diaryVersions).where(eq(diaryVersions.id, day.currentVersionId)).get();
       if (!version) continue;
       const collectionState = { memoryFailed: false };
-      const current = await this.sourceCollector.collect(version.windowStart, version.windowEnd, collectionState);
+      const collectionEnd = day.date === today && now > version.windowEnd ? now : version.windowEnd;
+      const current = await this.sourceCollector.collect(version.windowStart, collectionEnd, collectionState);
       if (collectionState.memoryFailed) continue;
       const fingerprint = hash(current.map((source) => [source.sourceId, source.fingerprint]));
       if (fingerprint !== day.sourceFingerprint) {
         const result = this.db.update(diaryDays).set({ status: "stale", updatedAt: this.now() }).where(and(eq(diaryDays.date, day.date), eq(diaryDays.status, "ready"))).run();
         if (result.changes > 0) {
           this.logger?.info({ event: "diary.day.marked_stale", date: day.date, reason: "source_fingerprint", sourceCount: current.length }, "diary day marked stale");
+          // A changed ready day must immediately get a new run. Using the
+          // manual trigger bypasses the completed scheduled-run reuse rule.
+          if (settings.enabled) this.createRun(day.date, "manual");
         }
       }
     }

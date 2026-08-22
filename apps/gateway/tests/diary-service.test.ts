@@ -83,6 +83,19 @@ describe("DiaryService", () => {
     expect(service.getActiveRun()).toMatchObject({ id: firstRunId, status: "pending" });
   });
 
+  it("queues the current local day immediately when scheduled generation is enabled", async () => {
+    const { service } = await setup();
+    service.createRun("2026-08-20", "manual");
+    await service.drain();
+    service.updateSettings({ enabled: true, localTime: "23:30" });
+
+    const runId = service.ensureCurrentDayRun();
+
+    expect(runId).toEqual(expect.any(String));
+    expect(service.getRun(runId!)).toMatchObject({ date: "2026-08-20", trigger: "scheduled" });
+    expect(service.ensureCurrentDayRun()).toBeNull();
+  });
+
   it("limits source reads to the run manifest and marks a ready day stale after source changes", async () => {
     const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => {
       expect(await input.readSource("file:file-1")).toBe("first body");

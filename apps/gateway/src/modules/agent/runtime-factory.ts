@@ -203,16 +203,36 @@ export function createDiaryAgentRuntime(
   generator: DiaryAgentGenerator,
 ): AgentRuntime | null {
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const bundle = builtin(BUILTIN_AGENT_IDS.diary);
   const { memory: _memory, knowledge: _knowledge, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...pi,
+    runtimeId: `pi:${BUILTIN_AGENT_IDS.diary}`,
     maxTokens: config.diaryMaxTokens ?? Math.max(pi.maxTokens, 16_384),
     includeBashTool: false,
     maxToolCallsPerRun: 128,
+    runtimeRole: "internal",
+    skillsEnabled: true,
+    skillPrompts: bundle.skillPrompts,
+    systemPrompt: bundle.systemPrompt,
     sessionsDir: join(pi.sessionsDir, "diary"),
     workingDirectory: join(pi.workingDirectory, "diary"),
     agentDirectory: join(pi.agentDirectory, "diary"),
   }, { tools: generator.tools() });
+}
+
+export function registerDiaryAgent(
+  resolver: AgentResolver,
+  config: GatewayConfig,
+  generator: DiaryAgentGenerator,
+): void {
+  const bundle = builtin(BUILTIN_AGENT_IDS.diary);
+  resolver.register(definition(config, {
+    id: BUILTIN_AGENT_IDS.diary,
+    name: bundle.name,
+    description: bundle.description,
+  }), () => createDiaryAgentRuntime(config, generator)
+    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.diary));
 }
 
 export function createCursorCompletionRuntime(config: GatewayConfig): AgentRuntime {
