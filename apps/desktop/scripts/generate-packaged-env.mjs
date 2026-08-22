@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 const names = [
+  'NXCORE_AGENT_RUNTIME',
   'NXCORE_SAAS_API_URL',
   'NXCORE_KNOWLEDGE_ROUTER_ENABLED',
   'NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS',
@@ -9,6 +10,7 @@ const names = [
   'NXCORE_INGEST_FILTER_ENABLED',
   'NXCORE_INGEST_FILTER_MODE',
   'NXCORE_NANGO_URL',
+  'NXCORE_NANGO_SECRET',
   'NXCORE_NANGO_GMAIL_CONFIG_KEY',
   'NXCORE_NANGO_GOOGLE_CLIENT_ID',
   'NXCORE_NANGO_GOOGLE_CLIENT_SECRET',
