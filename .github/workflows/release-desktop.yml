@@ -129,254 +129,8 @@ jobs:
           compression-level: 0
           retention-days: 3
 
-  windows:
-    runs-on: windows-2025
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      NODE_OPTIONS: "--max-old-space-size=8192"
-
-    steps:
-      - name: Check out tagged commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Validate release tag
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:GITHUB_REF_NAME -notmatch '^desktop-v(\d+\.\d+\.\d+)(-nightly\.\d{8}\.\d+)?$') {
-            throw "Tag $env:GITHUB_REF_NAME is not a desktop release tag"
-          }
-          $tagVersion = $Matches[1]
-          $appVersion = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
-          if ($tagVersion -cne $appVersion) {
-            throw "Tag version $tagVersion does not match desktop version $appVersion"
-          }
-          git fetch origin main --no-tags
-          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Tagged commit must be on main'
-          }
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Check types
-        run: pnpm typecheck
-
-      - name: Build app and bundled runtimes
-        run: |
-          pnpm build
-          pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
-          pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
-
-      - name: Package Windows x64
-        run: pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never
-
-      - name: Audit package contents
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $resources = 'release/win-unpacked/resources'
-          $asar = Join-Path $resources 'app.asar'
-          if (-not (Test-Path $asar -PathType Leaf)) {
-            throw 'app.asar was not produced'
-          }
-          $forbidden = '(^|[\\/])(\.env($|\.)|(__tests__|tests?)([\\/]|$)|[^\\/]*(\.test|\.spec)\.[^\\/]+$|(test|spec)\.[^\\/]+$)|\.map$'
-
-          $looseFiles = Get-ChildItem $resources -File -Recurse | ForEach-Object FullName
-          $forbiddenLooseFiles = @($looseFiles | Where-Object { $_ -match $forbidden })
-          if ($forbiddenLooseFiles.Count -gt 0) {
-            $forbiddenLooseFiles | Write-Error
-            throw 'Forbidden loose files found in packaged resources'
-          }
-          $openConnectorRoot = (Resolve-Path (Join-Path $resources 'open-connector')).Path + [IO.Path]::DirectorySeparatorChar
-          $unexpectedLooseTypeScript = @($looseFiles | Where-Object {
-            $_ -match '\.(ts|tsx|mts|cts)$' -and -not $_.StartsWith($openConnectorRoot, [StringComparison]::OrdinalIgnoreCase)
-          })
-          if ($unexpectedLooseTypeScript.Count -gt 0) {
-            $unexpectedLooseTypeScript | Write-Error
-            throw 'Unexpected loose TypeScript files found in packaged resources'
-          }
-
-          $asarFiles = pnpm --filter @nxcore/desktop exec asar list (Resolve-Path $asar)
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to list app.asar'
-          }
-          $forbiddenAsarFiles = @($asarFiles | Where-Object { $_ -match $forbidden })
-          if ($forbiddenAsarFiles.Count -gt 0) {
-            $forbiddenAsarFiles | Write-Error
-            throw 'Forbidden files found in app.asar'
-          }
-          $allowedTypeScript = '[\\/]node_modules[\\/]@tencentdb-agent-memory[\\/](memory-tencentdb-v2|knowledge-service)[\\/]src[\\/]'
-          $unexpectedAsarTypeScript = @($asarFiles | Where-Object {
-            $_ -match '\.(ts|tsx|mts|cts)$' -and $_ -notmatch $allowedTypeScript
-          })
-          if ($unexpectedAsarTypeScript.Count -gt 0) {
-            $unexpectedAsarTypeScript | Write-Error
-            throw 'Unexpected TypeScript files found in app.asar'
-          }
-
-          foreach ($required in @(
-            'memory-tencentdb-v2[\\/]bin[\\/]memory-gateway.mjs',
-            'memory-tencentdb-v2[\\/]src[\\/]gateway[\\/]server.ts',
-            'knowledge-service[\\/]src[\\/]server.ts',
-            '@node-rs[\\/]jieba-win32-x64-msvc[\\/]jieba.win32-x64-msvc.node',
-            '@colbymchenry[\\/]codegraph-win32-x64'
-          )) {
-            if (-not ($asarFiles -match $required)) { throw "Missing packaged runtime entry: $required" }
-          }
-          foreach ($required in @(
-            "$resources/app.asar.unpacked/node_modules/@esbuild/win32-x64/esbuild.exe",
-            "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/win32-x64.node",
-            "$resources/open-connector/src/server/index.ts",
-            "$resources/open-connector/dist/web/index.html",
-            "$resources/oo/win32-x64/oo.exe"
-          )) {
-            if (-not (Test-Path $required -PathType Leaf)) { throw "Missing packaged runtime file: $required" }
-          }
-          & "$resources/oo/win32-x64/oo.exe" --version
-          if ($LASTEXITCODE -ne 0) { throw 'Packaged oo CLI failed to start' }
-
-      - name: Cold-start packaged app
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $testRoot = Join-Path $env:RUNNER_TEMP 'everroom-cold-start'
-          $env:APPDATA = Join-Path $testRoot 'Roaming'
-          $env:LOCALAPPDATA = Join-Path $testRoot 'Local'
-          $env:NXCORE_DATA_DIR = Join-Path $testRoot 'EverRoom'
-          New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA | Out-Null
-          $stdout = Join-Path $testRoot 'stdout.log'
-          $stderr = Join-Path $testRoot 'stderr.log'
-          $app = Start-Process -FilePath (Resolve-Path 'release/win-unpacked/EverRoom.exe') `
-            -ArgumentList '--disable-gpu' -WindowStyle Hidden -PassThru `
-            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-          try {
-            $deadline = [DateTime]::UtcNow.AddSeconds(120)
-            $gatewayReady = $false
-            $memoryReady = $false
-            $knowledgeReady = $false
-            while ([DateTime]::UtcNow -lt $deadline -and -not $app.HasExited) {
-              Start-Sleep -Milliseconds 500
-              try {
-                $memoryReady = (Invoke-WebRequest 'http://127.0.0.1:8420/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200
-              } catch {}
-              try {
-                $knowledgeReady = (Invoke-WebRequest 'http://127.0.0.1:8421/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200
-              } catch {}
-              $manifestPath = Join-Path $env:NXCORE_DATA_DIR 'runtime/gateway.json'
-              if (Test-Path $manifestPath -PathType Leaf) {
-                try {
-                  $gateway = Get-Content $manifestPath -Raw | ConvertFrom-Json
-                  $headers = @{ Authorization = "Bearer $($gateway.token)" }
-                  $gatewayReady = (Invoke-WebRequest "$($gateway.baseUrl)/v1/health/ready" -Headers $headers -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200
-                } catch {}
-              }
-              if ($gatewayReady -and $memoryReady -and $knowledgeReady) { break }
-            }
-            if (-not ($gatewayReady -and $memoryReady -and $knowledgeReady)) {
-              Get-Content $stdout -Tail 200 -ErrorAction SilentlyContinue
-              Get-Content $stderr -Tail 200 -ErrorAction SilentlyContinue | Write-Error
-              throw "Packaged app failed health checks: gateway=$gatewayReady memory=$memoryReady knowledge=$knowledgeReady"
-            }
-            Write-Host 'Packaged app cold-start health checks passed'
-          } finally {
-            if (-not $app.HasExited) {
-              $null = $app.CloseMainWindow()
-              if (-not $app.WaitForExit(10000)) { & taskkill.exe /PID $app.Id /T /F | Out-Null }
-            }
-          }
-
-      - name: Verify artifacts
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          function Get-PeMachine([string] $Path) {
-            $stream = [IO.File]::OpenRead((Resolve-Path $Path))
-            $reader = [IO.BinaryReader]::new($stream)
-            try {
-              $stream.Position = 0x3c
-              $peOffset = $reader.ReadInt32()
-              $stream.Position = $peOffset
-              if ($reader.ReadUInt32() -ne 0x00004550) {
-                throw "$Path is not a PE file"
-              }
-              return $reader.ReadUInt16()
-            } finally {
-              $reader.Dispose()
-              $stream.Dispose()
-            }
-          }
-
-          $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
-          $installer = Get-Item "release/EverRoom-$version-windows-x64.exe"
-          $app = Get-Item 'release/win-unpacked/EverRoom.exe'
-          if ((Get-PeMachine $app.FullName) -ne 0x8664) {
-            throw 'EverRoom.exe is not PE x64'
-          }
-
-          $sqliteRoot = 'release/win-unpacked/resources/gateway/node_modules/better-sqlite3'
-          $nativeModules = @(Get-ChildItem $sqliteRoot -Filter '*.node' -File -Recurse)
-          if ($nativeModules.Count -ne 1 -or $nativeModules[0].Name -cne 'win32-x64.node') {
-            throw "Expected only win32-x64.node, found: $($nativeModules.FullName -join ', ')"
-          }
-          if ((Get-PeMachine $nativeModules[0].FullName) -ne 0x8664) {
-            throw 'win32-x64.node is not PE x64'
-          }
-
-          $env:ELECTRON_RUN_AS_NODE = '1'
-          try {
-            $electron = (Resolve-Path 'apps/desktop/node_modules/electron/dist/electron.exe').Path
-            $sqliteEntry = (Resolve-Path "$sqliteRoot/lib/win32-x64.js").Path
-            $stdoutPath = Join-Path $env:RUNNER_TEMP 'sqlite-smoke.stdout.log'
-            $stderrPath = Join-Path $env:RUNNER_TEMP 'sqlite-smoke.stderr.log'
-            $script = "const Database=require(process.argv[1]);const db=new Database(':memory:');if(db.prepare('select 1 value').get().value!==1)process.exit(1);db.close();console.log('SQLite smoke test passed')"
-            $arguments = @('-e', ('"' + $script + '"'), ('"' + $sqliteEntry + '"'))
-            $process = Start-Process -FilePath $electron -ArgumentList $arguments -NoNewWindow -Wait -PassThru `
-              -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-            $standardOutput = [string](Get-Content $stdoutPath -Raw -ErrorAction SilentlyContinue)
-            $standardError = [string](Get-Content $stderrPath -Raw -ErrorAction SilentlyContinue)
-            if ($standardOutput) { Write-Host $standardOutput.TrimEnd() }
-            if ($standardError) { Write-Host $standardError.TrimEnd() }
-            if ($process.ExitCode -ne 0) {
-              throw "Electron failed the packaged SQLite smoke test (exit code $($process.ExitCode)): $standardError"
-            }
-          } finally {
-            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-          }
-
-          & 7z.exe t $installer.FullName
-          if ($LASTEXITCODE -ne 0) {
-            throw 'NSIS installer integrity check failed'
-          }
-          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content "$($installer.FullName).sha256" "$hash  $($installer.Name)" -Encoding ascii
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-assets
-          path: |
-            release/*.exe
-            release/*.sha256
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 3
-
   publish:
-    needs: [macos, windows]
+    needs: [macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -394,12 +148,6 @@ jobs:
           name: macos-assets
           path: release-assets
 
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: windows-assets
-          path: release-assets
-
       - name: Publish prerelease
         shell: bash
         env:
@@ -409,8 +157,6 @@ jobs:
           expected=(
             "release-assets/EverRoom-$version-arm64.dmg"
             "release-assets/EverRoom-$version-arm64.zip"
-            "release-assets/EverRoom-$version-windows-x64.exe"
-            "release-assets/EverRoom-$version-windows-x64.exe.sha256"
           )
           files=(release-assets/*)
           test "${#files[@]}" -eq "${#expected[@]}" || {
@@ -424,10 +170,10 @@ jobs:
             --verify-tag \
             --prerelease \
             --generate-notes \
-            --notes "Unsigned Apple Silicon and Windows x64 development builds. macOS Gatekeeper or Windows SmartScreen may require manual approval before first launch."
+            --notes "Unsigned Apple Silicon development builds. macOS Gatekeeper may require manual approval before first launch."
 
   notify:
-    needs: [macos, windows, publish]
+    needs: [macos, publish]
     if: always()
     runs-on: ubuntu-24.04
     permissions:
