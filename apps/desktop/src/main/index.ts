@@ -10,7 +10,7 @@ import type {
 } from '@nxcore/agent-contract'
 
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
-import type { PrivateTranscriptionSyncCompletedEvent } from '../shared/sources'
+import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -25,10 +25,13 @@ import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { RuntimeConfigBridge } from './gateway/runtime-config-bridge'
+import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
+import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv, memoryCoreEnvironment } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { IngestPipelines } from '../shared/ingest'
@@ -50,7 +53,7 @@ import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -152,6 +155,15 @@ const SOURCE_CHANNELS = {
 
 const GATEWAY_CHANNELS = {
   status: 'gateway:status',
+} as const
+const RUNTIME_CONFIG_CHANNELS = {
+  get: 'runtime-config:get',
+  saveUser: 'runtime-config:save-user',
+  clearUser: 'runtime-config:clear-user',
+  refreshSaas: 'runtime-config:refresh-saas',
+  clearSaas: 'runtime-config:clear-saas',
+  selectSource: 'runtime-config:select-source',
+  test: 'runtime-config:test',
 } as const
 
 const CONNECTOR_CHANNELS = {
@@ -296,6 +308,8 @@ const TRANSCRIPTION_CHANNELS = {
 const MEMORY_CHANNELS = {
   overview: 'memory:overview',
   startOnboarding: 'memory:onboarding:start',
+  /** 渲染层记忆引导结束（完成/跳过/放行）→ 解除云端同步延迟。 */
+  onboardingFinished: 'memory:onboarding-finished',
   listAtomic: 'memory:list-atomic',
   searchAtomic: 'memory:search-atomic',
   updateAtomic: 'memory:update-atomic',
@@ -431,6 +445,7 @@ function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
+    RUNTIME_CONFIG_CHANNELS,
     OPEN_CONNECTOR_CHANNELS,
     CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
@@ -468,6 +483,7 @@ function installIpcRouters(): void {
 
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
@@ -718,6 +734,124 @@ function registerGatewayHandlers(): void {
       : { state: 'starting', pid: null, baseUrl: null, version: null, message: null })
   ipcMain.handle(CONNECTOR_CHANNELS.runtimeStatus, () =>
     nangoSupervisor?.getStatus() ?? { state: 'starting', message: null })
+}
+
+function registerRuntimeConfigHandlers(client: SaasClient): void {
+  handle(RUNTIME_CONFIG_CHANNELS.get, () => runtimeConfigBridge?.get())
+  handle(RUNTIME_CONFIG_CHANNELS.saveUser, async (_event, input: unknown) => {
+    const snapshot = await runtimeConfigBridge?.saveUser(input)
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return snapshot
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.clearUser, async () => {
+    const snapshot = await runtimeConfigBridge?.clearUser()
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return snapshot
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.refreshSaas, async () => {
+    const config = await client.getRuntimeConfig()
+    const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return snapshot
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.clearSaas, async () => {
+    const snapshot = await runtimeConfigBridge?.clearSaas()
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return snapshot
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.test, () => runtimeConfigBridge?.test())
+  handle(RUNTIME_CONFIG_CHANNELS.selectSource, async (_event, source: unknown) => {
+    if (source !== 'user' && source !== 'saas' && source !== 'default') throw new Error('无效的运行时配置来源。')
+    const snapshot = await runtimeConfigBridge?.selectSource(source)
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return snapshot
+  })
+}
+
+/** 上次注入 MemoryCore 的 AI 覆盖 env（JSON 串比较），null = 未注入过。 */
+let memoryCoreAiEnvApplied: string | null = null
+
+/**
+ * runtime config 保存后同步 MemoryCore 的 AI 环境变量（LLM + embedding）：
+ * - primary 三要素（baseUrl/apiKey/model）→ TDAI_LLM_*（提炼管道主 LLM）；
+ * - knowledge.embedding 四要素齐全 → /test 拿真实向量维度 → TDAI_EMBEDDING_*。
+ * 两路皆未配置且之前注入过 → 重启清空（恢复 .env 透传）。
+ * 变化才重启（MemoryCore 无热加载），失败只记日志不影响保存结果。
+ * embedding 配了但 /embeddings 探测失败 → 保持现 env 不动。
+ * 非托管/未启动实例跳过（外部部署的 MemoryCore 由用户自行配置）。
+ * 并发由 syncManagedChildProcesses 统一串行化。
+ */
+async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  try {
+    const supervisor = memoryCoreSupervisor
+    if (!supervisor?.getConnection()?.managed) return
+    const fields = embeddingFieldsFromConfig(snapshot.config)
+    let embeddingEnv: Record<string, string> | null = null
+    if (fields) {
+      // /test 只在 embedding 四要素齐全时测 /embeddings 并带维度；这里复用一次。
+      const result = await runtimeConfigBridge?.test()
+      if (!result?.embedding?.valid || !result.embedding.dimensions) {
+        console.warn('[memory-core] embedding config saved but /embeddings test failed; keeping current env')
+        return
+      }
+      embeddingEnv = memoryCoreEmbeddingEnv(fields, result.embedding.dimensions)
+    }
+    const nextEnv = memoryCoreEnvironment(snapshot.config, embeddingEnv)
+    const nextJson = nextEnv ? JSON.stringify(nextEnv) : null
+    if (nextJson === memoryCoreAiEnvApplied) return
+    const restarted = await supervisor.restart(nextEnv)
+    if (!restarted?.managed) {
+      // 复用模式（外部实例或残留进程占着 8420）：env 没真正应用，不标记
+      // applied——下次 sync 还会重试；提示用户有残留实例。
+      console.warn('[memory-core] instance at 8420 is not managed by this app; ai env NOT applied (stray process?)')
+      return
+    }
+    memoryCoreAiEnvApplied = nextJson
+    console.info(`[memory-core] ai env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
+  } catch (error) {
+    console.error('[memory-core] failed to sync ai env:', error)
+  }
+}
+
+/** 补全服务子进程的 AI env 缓存：spawn 时经 getter 求值（惰性），配置变更时更新。 */
+let cursorCompletionAiEnv: Record<string, string> = {}
+let cursorCompletionAiEnvApplied: string = JSON.stringify({})
+
+/**
+ * runtime config 变更后同步补全服务子进程的 AI env：算新 env → 变化才动作。
+ * 已拉起的实例带旧 env——shutdown 后由下一次 renderer 请求惰性重生（带新 env）；
+ * 飞行中的补全流被杀是接受的取舍（秒级操作）。未拉起则只更新缓存。
+ */
+async function syncCursorCompletionEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  try {
+    const nextEnv = cursorCompletionEnvFromConfig(snapshot.config)
+    const nextJson = JSON.stringify(nextEnv)
+    cursorCompletionAiEnv = nextEnv
+    if (nextJson === cursorCompletionAiEnvApplied) return
+    cursorCompletionAiEnvApplied = nextJson
+    if (cursorCompletionSupervisor?.isRunning()) await cursorCompletionSupervisor.shutdown()
+    console.info(`[cursor-completion] ai env ${Object.keys(nextEnv).length ? 'updated' : 'cleared'} (instance will respawn on demand)`)
+  } catch (error) {
+    console.error('[cursor-completion] failed to sync ai env:', error)
+  }
+}
+
+/**
+ * 托管子进程（MemoryCore / 补全服务）的 runtime config 同步总入口。
+ * 所有 runtime config 变更路径（IPC 保存/清除、SaaS 下发、source 切换、
+ * 启动一次性 sync）统一走这里，避免再出现绕过某条子进程的路径。
+ * 整体串行化：并发触发（登录时 SaaS 恢复 + account watch 同秒各来一次）
+ * 排队执行，避免 MemoryCore 双 restart 竞态。
+ */
+let managedChildSyncQueue: Promise<void> = Promise.resolve()
+
+async function syncManagedChildProcesses(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  const run = managedChildSyncQueue.then(async () => {
+    await syncMemoryCoreEnvironment(snapshot)
+    await syncCursorCompletionEnvironment(snapshot)
+  })
+  managedChildSyncQueue = run.catch(() => undefined)
+  return run
 }
 
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
@@ -1114,8 +1248,43 @@ function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
   handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
 }
 
+/**
+ * 云端转写物化（materializeCached）延迟到记忆引导结束：
+ * 首登新设备上，materialize 会把云端历史转写经 ingest 写入 MemoryCore L0，
+ * 若先于 MemoryOnboardingGate 的 overview 判定完成，L0 非空会被误判为
+ * 「用户已完成记忆设置」而跳过引导。引导结束（完成/跳过/直接放行）或超时
+ * 后才放行；轮询同步（performSync）不受影响——只有启动时的一次性物化受控。
+ */
+let cloudMaterializeGateOpen = false
+const cloudMaterializeWaiters: Array<() => void> = []
+const CLOUD_MATERIALIZE_GATE_TIMEOUT_MS = 5 * 60_000
+
+function openCloudMaterializeGate(): void {
+  if (cloudMaterializeGateOpen) return
+  cloudMaterializeGateOpen = true
+  for (const release of cloudMaterializeWaiters.splice(0)) release()
+}
+
+/** 等待引导结束（或超时兜底）后才执行启动物化。 */
+async function waitForCloudMaterializeGate(): Promise<void> {
+  if (cloudMaterializeGateOpen) return
+  // 兜底超时：引导页卡死/异常时不让云端同步永远悬空。
+  const timeout = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      if (!cloudMaterializeGateOpen) {
+        console.warn('[private-sync] cloud materialize gate timed out; proceeding')
+        openCloudMaterializeGate()
+      }
+      resolve()
+    }, CLOUD_MATERIALIZE_GATE_TIMEOUT_MS)
+  })
+  const gate = new Promise<void>((resolve) => cloudMaterializeWaiters.push(resolve))
+  await Promise.race([gate, timeout])
+}
+
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
   handle(MEMORY_CHANNELS.overview, () => bridge.overview())
+  ipcMain.on(MEMORY_CHANNELS.onboardingFinished, () => openCloudMaterializeGate())
   handle(MEMORY_CHANNELS.startOnboarding, (_event, input: MemoryOnboardingInput) =>
     bridge.startOnboarding(input))
   handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
@@ -1550,6 +1719,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
+        // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
+        // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
+        NXCORE_AGENT_RUNTIME: 'pi',
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
@@ -1588,6 +1760,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     void screenshotOutbox.flush()
     perceptionGatewayBridge = new PerceptionGatewayBridge(gatewaySupervisor)
+    runtimeConfigBridge = new RuntimeConfigBridge(gatewaySupervisor)
+    // 冷启动 MemoryCore/补全服务只带 .env 透传；gateway 就绪后按已存 runtime
+    // config 补一次（把“每次冷启动回退 .env”的窗口收窄到 gateway ready 之前）。
+    // 现在这两个 sync 都是 no-op 风格：配置没变不会重启任何实例。
+    void runtimeConfigBridge.get()
+      .then((snapshot) => syncManagedChildProcesses(snapshot))
+      .catch((error) => console.warn('[managed-children] startup runtime-config sync skipped:', error))
     diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
     registerPerceptionAndDiaryHandlers()
     const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
@@ -1601,7 +1780,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     cursorCompletionSupervisor = new GatewaySupervisor(
       join(dataDirectory, 'cursor-completion-service'),
-      { NXCORE_MEMORY_ENABLED: 'false' },
+      // getter：惰性 respawn 时重新求值，拿到最新 runtime config 派生的 AI env。
+      () => ({
+        NXCORE_MEMORY_ENABLED: 'false',
+        NXCORE_AGENT_RUNTIME: 'pi',
+        ...cursorCompletionAiEnv,
+      }),
       {
         devScript: 'dev:cursor-completion',
         packagedEntry: 'cursor-completion-serve.js',
@@ -1656,6 +1840,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       realityGatewayBridge,
     )
     await privateTranscriptionSync.initialize()
+    // 云端历史转写的物化统一延迟到记忆引导结束（scheduler 登录即跑的首轮
+    // sync 与启动一次性 materializeCached 都经 materialize——闸门下沉到
+    // service 内，两条路都拦住），避免 L0 先被填充导致引导判定误跳过。
+    privateTranscriptionSync.setMaterializeGate(waitForCloudMaterializeGate)
     const publishSyncCompleted = () => {
       const event: PrivateTranscriptionSyncCompletedEvent = { completedAt: new Date().toISOString() }
       for (const target of BrowserWindow.getAllWindows()) {
@@ -1666,10 +1854,29 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     privateSyncScheduler = new PrivateSyncScheduler(privateTranscriptionSync, 15_000, publishSyncCompleted)
     const initialAccount = await saasClient.status().catch(() => null)
+    if (initialAccount?.authenticated) {
+      void saasClient.getRuntimeConfig()
+        .then(async (config) => {
+          const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
+          // SaaS 直调路径此前绕过 sync（只走 IPC handler 才同步子进程 env）。
+          if (snapshot) await syncManagedChildProcesses(snapshot)
+        })
+        .catch((error) => {
+          if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
+            void runtimeConfigBridge?.clearSaas()
+              .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+              .catch(() => undefined)
+          } else {
+            console.warn('Unable to restore SaaS runtime config', error)
+          }
+        })
+    }
     privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
     if (initialAccount?.authenticated) remoteAgentCommandClient.start()
     privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
-    void privateTranscriptionSync.materializeCached().catch((error) => {
+    // 物化闸门已下沉到 service.materialize（见 setMaterializeGate 注释），
+    // 这里只管启动一次性物化本身。
+    void privateTranscriptionSync?.materializeCached().catch((error) => {
       console.warn('Unable to import cached private transcriptions into Reality.', error)
     })
     transcriptionProcessingCoordinator = new TranscriptionProcessingCoordinator(
@@ -1688,6 +1895,22 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     let lastAccountId = initialAccount?.user?.id ?? null
     registerAccountHandlers(saasClient, (account) => {
+      if (account.authenticated) {
+        void saasClient?.getRuntimeConfig().then(async (config) => {
+          const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
+          if (snapshot) await syncManagedChildProcesses(snapshot)
+        }).catch((error) => {
+          if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
+            void runtimeConfigBridge?.clearSaas()
+              .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+              .catch(() => undefined)
+          } else console.warn('Unable to refresh SaaS runtime config', error)
+        })
+      } else {
+        void runtimeConfigBridge?.clearSaas()
+          .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+          .catch(() => undefined)
+      }
       privateSyncScheduler?.setAuthenticated(account.authenticated)
       if (!account.authenticated) {
         remoteAgentCommandClient?.stop()
@@ -1700,6 +1923,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         agentStatusReporter?.reportNow()
       }
     })
+    registerRuntimeConfigHandlers(saasClient)
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
     registerPrivateAudioHandlers(privateAudioSync)
@@ -1730,12 +1954,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
-    // Default folders are a global file-app source, not part of Room setup.
-    // Bootstrap in the background so a denied directory does not block startup.
-    void localDataService.bootstrapDefaultLocalFolders([
-      app.getPath('desktop'),
-      app.getPath('documents'),
-    ]).catch((error) => console.warn('Default local folder scan failed.', error))
+    // Default folders are only connected after the user consents in the
+    // folder onboarding dialog (sources:connect-default-local-folders).
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))

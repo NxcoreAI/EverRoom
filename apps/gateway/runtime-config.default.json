@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "primary": {
+    "provider": "",
+    "model": "",
+    "baseUrl": "",
+    "api": "openai-completions",
+    "apiKey": ""
+  },
+  "background": {
+    "provider": "",
+    "model": "",
+    "baseUrl": "",
+    "api": "openai-completions",
+    "apiKey": ""
+  },
+  "cursorCompletion": {
+    "provider": "",
+    "model": "",
+    "baseUrl": "",
+    "api": "openai-completions",
+    "apiKey": ""
+  },
+  "asr": {
+    "provider": "aliyun",
+    "baseUrl": "",
+    "model": "",
+    "apiKey": ""
+  },
+  "vlm": {
+    "provider": "",
+    "model": "",
+    "baseUrl": "",
+    "api": "openai-completions",
+    "apiKey": ""
+  },
+  "webSearch": {
+    "provider": "",
+    "model": "",
+    "baseUrl": "",
+    "api": "openai-completions",
+    "apiKey": ""
+  },
+  "memory": {
+    "enabled": false,
+    "baseUrl": "",
+    "apiKey": "",
+    "serviceId": "everroom",
+    "teamId": "everroom",
+    "agentId": "everroom",
+    "userId": "local-user"
+  },
+  "knowledge": {
+    "enabled": false,
+    "baseUrl": "",
+    "serviceId": "everroom",
+    "teamId": "everroom",
+    "wikiId": ""
+  }
+}

@@ -381,6 +381,34 @@ export interface PerceptionSettings {
   updatedAt: string
 }
 
+export interface RuntimeConfigSnapshot {
+  config: Record<string, unknown>
+  source: 'user' | 'saas' | 'default'
+  selectedSource: 'user' | 'saas' | 'default'
+  availableSources: Array<'user' | 'saas' | 'default'>
+  configVersion: number
+  updatedAt: string
+  /** primary AI 四要素（provider/model/baseUrl/apiKey）是否已填写（占位空串视为未配置）。 */
+  primaryConfigured?: boolean
+}
+
+export interface RuntimeConfigTestResult {
+  valid: boolean
+  error?: string
+  /** knowledge.embedding 四要素齐全时才返回的 /embeddings 连通测试结果。 */
+  embedding?: {
+    valid: boolean
+    error?: string
+    /** 成功时的向量维度(MemoryCore TDAI_EMBEDDING_DIMENSIONS 注入用)。 */
+    dimensions?: number
+  }
+  /** vlm 四要素齐全时才返回的 chat/completions 连通测试结果。 */
+  vlm?: {
+    valid: boolean
+    error?: string
+  }
+}
+
 export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo' | 'document' | 'file'
 export type VisualPerceptionStatus = 'disabled' | 'pending' | 'processing' | 'ready' | 'failed'
 
@@ -557,6 +585,15 @@ export interface NxcoreDesktopApi {
   gateway: {
     status(): Promise<GatewayStatus>
   }
+  runtimeConfig: {
+    get(): Promise<RuntimeConfigSnapshot>
+    saveUser(input: unknown): Promise<RuntimeConfigSnapshot>
+    clearUser(): Promise<RuntimeConfigSnapshot>
+    refreshSaas(): Promise<RuntimeConfigSnapshot | undefined>
+    clearSaas(): Promise<RuntimeConfigSnapshot | undefined>
+    selectSource(source: 'user' | 'saas' | 'default'): Promise<RuntimeConfigSnapshot | undefined>
+    test(): Promise<RuntimeConfigTestResult>
+  }
   nangoConnector: {
     runtimeStatus(): Promise<NangoRuntimeStatus>
     status(): Promise<ConnectorStatus>
@@ -672,6 +709,8 @@ export interface NxcoreDesktopApi {
   memory: {
     overview(): Promise<MemoryOverviewDto>
     startOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResultDto>
+    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
+    onboardingFinished(): void
     listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
     searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
     updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>

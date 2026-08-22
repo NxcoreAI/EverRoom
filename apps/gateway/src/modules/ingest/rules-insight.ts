@@ -46,11 +46,16 @@ export class FilterInsightJob {
 
   constructor(
     private readonly db: GatewayDatabase,
-    private readonly runtime: AgentRuntime | null,
+    private runtime: AgentRuntime | null,
     private readonly rules: FilterRulesStore,
     private readonly config: FilterInsightConfig,
     private readonly logger: Logger,
   ) {}
+
+  /** runtime config 热应用：换入新 runtime（runOnce 每轮读 this.runtime，换入即生效）。 */
+  replaceRuntime(runtime: AgentRuntime | null): void {
+    this.runtime = runtime;
+  }
 
   /** 启动：延迟 2 分钟首跑（避开启动风暴），此后每 intervalMs 一次。 */
   start(): void {

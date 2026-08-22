@@ -39,7 +39,7 @@ const CONTENT_PREVIEW_CHARS = 4_000;
 const AGENT_TIMEOUT_MS = 120_000;
 
 export class IngestFilterService {
-  private readonly runtime: AgentRuntime | null;
+  private runtime: AgentRuntime | null;
   private readonly llm: KnowledgeLlm | null;
   private readonly rules: FilterRulesStore | null;
   private readonly activeRuns = new Set<string>();
@@ -54,6 +54,11 @@ export class IngestFilterService {
     this.runtime = runtime;
     this.llm = agentResolver ? new KnowledgeLlm(agentResolver) : null;
     this.rules = rules ?? null;
+  }
+
+  /** runtime config 热应用：替换过滤器专用 runtime（null = fail-open 降级链接管）。 */
+  replaceRuntime(runtime: AgentRuntime | null): void {
+    this.runtime = runtime;
   }
 
   get enabled(): boolean {
@@ -241,15 +246,44 @@ function filterPrompt(items: FilterItem[], context: FilterPromptContext): string
   return sections.join("\n\n");
 }
 
-function parseVerdicts(content: string, expected: number): IngestFilterVerdict[] {
+/** 解析过滤器 verdict 数组（导出供单测）：剥围栏 → JSON.parse → 宽容恢复
+ * 丢外层括号的拼接对象 → 逐条 normalize + 长度截齐。 */
+export function parseVerdicts(content: string, expected: number): IngestFilterVerdict[] {
   const text = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`filter verdict unparsable: ${text.slice(0, 200)}`);
+    parsed = undefined;
+  }
+  if (parsed === undefined) {
+    // LLM 偶发丢外层数组括号："{...} {...}" 直接拼接，或单个 {...}（本身
+    // 合法 JSON 会走不到这，但组合场景统一在此恢复）。首个 { 前只有空白、
+    // 末个 } 后只有空白时，整体包 [...] 且对象间补逗号再解析；失败才判
+    // unparsable（fail-open 放行整批，宁漏勿错杀）。
+    const firstBrace = text.indexOf("{");
+    const lastBrace = text.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      const prefix = text.slice(0, firstBrace).trim();
+      const suffix = text.slice(lastBrace + 1).trim();
+      if (!prefix && !suffix) {
+        const body = text.slice(firstBrace, lastBrace + 1).replace(/\}\s*\{/g, "},{");
+        try {
+          parsed = JSON.parse(`[${body}]`);
+        } catch {
+          parsed = undefined;
+        }
+      }
+    }
+  }
+  // 单个裸对象（无数组包裹）也按单元素数组处理。
+  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+    parsed = [parsed];
   }
   if (!Array.isArray(parsed)) throw new Error("filter verdict is not an array");
+  if (parsed.length === 0 && expected > 0) {
+    throw new Error(`filter verdict unparsable: ${text.slice(0, 200)}`);
+  }
   return parsed.map(normalizeVerdict).slice(0, expected);
 }
 

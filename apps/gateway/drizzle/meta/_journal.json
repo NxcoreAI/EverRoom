@@ -158,6 +158,13 @@
     },
     {
       "idx": 23,
+      "version": "7",
+      "when": 1787320000000,
+      "tag": "0023_runtime_config_store",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
       "version": "6",
       "when": 1787331723837,
       "tag": "0023_wide_red_hulk",

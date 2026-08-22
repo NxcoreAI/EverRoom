@@ -218,6 +218,15 @@ const api: NxcoreDesktopApi = {
     getPairingSession: (id, options) => options?.quiet ? invokeQuietly('account:get-pairing-session', id) : invoke('account:get-pairing-session', id),
     approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
   },
+  runtimeConfig: {
+    get: () => invoke('runtime-config:get'),
+    saveUser: (input: unknown) => invoke('runtime-config:save-user', input),
+    clearUser: () => invoke('runtime-config:clear-user'),
+    refreshSaas: () => invoke('runtime-config:refresh-saas'),
+    clearSaas: () => invoke('runtime-config:clear-saas'),
+    selectSource: (source: 'user' | 'saas' | 'default') => invoke('runtime-config:select-source', source),
+    test: () => invoke('runtime-config:test'),
+  },
   asr: {
     requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
     openMicrophoneSettings: () => invoke('asr:open-microphone-settings'),
@@ -253,6 +262,8 @@ const api: NxcoreDesktopApi = {
   memory: {
     overview: () => invoke('memory:overview'),
     startOnboarding: (input: MemoryOnboardingInput) => invoke('memory:onboarding:start', input),
+    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
+    onboardingFinished: () => { ipcRenderer.send('memory:onboarding-finished') },
     listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
     searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
     updateAtomic: (id: string, content: string, background?: string) =>

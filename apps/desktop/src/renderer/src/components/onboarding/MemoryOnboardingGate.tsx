@@ -68,6 +68,9 @@ const TRACE_PLACEHOLDER_KEYS = [
 // Completed or skipped onboarding is reopened explicitly from Settings.
 const REPEATABLE_MEMORY_ONBOARDING = false
 const MEMORY_SUCCESS_DISPLAY_MS = 1_200
+// 首判 overview 自动重试：1s + 2s*4 ≈ 9s，覆盖登录时 MemoryCore 为应用
+// runtime config 重启的窗口（实测约 3s）；持续失败才落到 unavailable。
+const OVERVIEW_RETRY_ATTEMPTS = 5
 
 function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `memory-onboarding-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -97,6 +100,10 @@ export function MemoryOnboardingGate({ children, onFinished }: MemoryOnboardingG
   const submitRequestIdRef = useRef<string | null>(null)
   const finishOnboarding = useCallback(() => {
     setMode('app')
+    // 通知主进程引导结束：解除云端转写物化延迟（首登时 materialize 会把
+    // 云端历史写进 MemoryCore L0，若先于本 gate 的 overview 判定完成，
+    // 会被误判为「已完成记忆设置」而跳过引导）。
+    window.nxcore?.memory?.onboardingFinished?.()
     onFinished?.()
   }, [onFinished])
 
@@ -124,6 +131,9 @@ export function MemoryOnboardingGate({ children, onFinished }: MemoryOnboardingG
       return () => { cancelled = true }
     }
     if (marker && !REPEATABLE_MEMORY_ONBOARDING) {
+      // 历史 marker（skipped/completed）：引导早已结束，直接放行并解除
+      // 主进程的云端同步延迟。
+      window.nxcore?.memory?.onboardingFinished?.()
       setMode('app')
       return () => { cancelled = true }
     }
@@ -133,18 +143,38 @@ export function MemoryOnboardingGate({ children, onFinished }: MemoryOnboardingG
       setMode('unavailable')
       return () => { cancelled = true }
     }
-    api.overview()
-      .then((overview) => {
-        if (cancelled) return
-        setMode(REPEATABLE_MEMORY_ONBOARDING || memoryOverviewIsEmpty(overview) ? 'questions' : 'app')
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFailureContext('initial')
-          setMode('unavailable')
-        }
-      })
-    return () => { cancelled = true }
+    // 登录瞬间 MemoryCore 可能正为应用 runtime config 重启（约 3s 窗口）：
+    // 判定请求先自动重试一段时间，持续不可达才进 unavailable（用户重试）。
+    let attempt = 0
+    let timer: number | null = null
+    const attemptOverview = () => {
+      api.overview()
+        .then((overview) => {
+          if (cancelled) return
+          if (REPEATABLE_MEMORY_ONBOARDING || memoryOverviewIsEmpty(overview)) {
+            setMode('questions')
+          } else {
+            // 判定已有记忆（老设备/已完成过）：放行并解除云端同步延迟。
+            window.nxcore?.memory?.onboardingFinished?.()
+            setMode('app')
+          }
+        })
+        .catch(() => {
+          if (cancelled) return
+          attempt += 1
+          if (attempt >= OVERVIEW_RETRY_ATTEMPTS) {
+            setFailureContext('initial')
+            setMode('unavailable')
+            return
+          }
+          timer = window.setTimeout(attemptOverview, attempt === 1 ? 1_000 : 2_000)
+        })
+    }
+    attemptOverview()
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+    }
   }, [checkRequest])
 
   const findGeneratedMemory = useCallback(async (

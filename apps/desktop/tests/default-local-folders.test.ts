@@ -49,7 +49,7 @@ describe('default local folders', () => {
     }
   })
 
-  it('connects standard folders once and keeps a cleared folder available for rescanning', async () => {
+  it('does not rescan a cleared folder on restart without explicit consent', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-default-folders-'))
     temporaryDirectories.push(fixtureRoot)
     const dataDirectory = join(fixtureRoot, 'data')
@@ -63,41 +63,54 @@ describe('default local folders', () => {
     await writeFile(join(documents, 'manual.pdf'), 'pdf bytes')
     await writeFile(join(documents, 'node_modules', 'dependency', 'README.md'), '# Dependency')
 
+    // User consented (e.g. through the folder onboarding dialog), then cleared
+    // the Documents source from settings.
     const service = new LocalDataService(
       dataDirectory,
       new ConnectorRegistry().register(new LocalFolderConnector()),
     )
     await service.initialize()
-
+    let documentsSourceId = ''
     try {
-      await service.bootstrapDefaultLocalFolders([desktop, documents, downloads])
+      await service.connectLocalFolders([desktop, documents, downloads])
       const initialSources = service.listSources()
       expect(initialSources.map((source) => source.rootPath).sort()).toEqual(
         [desktop, documents, downloads].sort(),
       )
       const documentsSource = initialSources.find((source) => source.rootPath === documents)!
+      documentsSourceId = documentsSource.id
       expect(service.listFiles(documentsSource.id).map((file) => file.relativePath).sort()).toEqual([
         'manual.pdf',
         'notes.md',
         'proposal.docx',
       ])
-
       await service.disconnect(documentsSource.id, true)
-      await service.bootstrapDefaultLocalFolders([desktop, documents, downloads])
-      expect(service.listSources().map((source) => source.rootPath).sort()).toEqual(
+    } finally {
+      await service.shutdown()
+    }
+
+    // A restart must not force the cleared folder back online: startup no
+    // longer auto-connects anything, and only connected sources resync.
+    const restarted = new LocalDataService(
+      dataDirectory,
+      new ConnectorRegistry().register(new LocalFolderConnector()),
+    )
+    try {
+      await restarted.initialize()
+      expect(restarted.listSources().map((source) => source.rootPath).sort()).toEqual(
         [desktop, documents, downloads].sort(),
       )
-      expect(service.listSources().find((source) => source.rootPath === documents)).toMatchObject({
-        id: documentsSource.id,
+      expect(restarted.listSources().find((source) => source.rootPath === documents)).toMatchObject({
+        id: documentsSourceId,
         status: 'paused',
         fileCount: 0,
         versionCount: 0,
         totalBytes: 0,
         lastSyncedAt: null,
       })
-      expect(service.listFiles(documentsSource.id)).toEqual([])
+      expect(restarted.listFiles(documentsSourceId)).toEqual([])
     } finally {
-      await service.shutdown()
+      await restarted.shutdown()
     }
   })
 
@@ -123,7 +136,7 @@ describe('default local folders', () => {
     await service.initialize()
 
     try {
-      await service.bootstrapDefaultLocalFolders([documents])
+      await service.connectLocalFolders([documents])
       for (let attempt = 0; attempt < 100 && importLocalFile.mock.calls.length === 0; attempt += 1) {
         await new Promise((resolveWait) => setTimeout(resolveWait, 5))
       }

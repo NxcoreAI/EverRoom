@@ -765,21 +765,6 @@ export class LocalDataService {
     return results
   }
 
-  /**
-   * 首次启动时连接系统常用目录。标记先于扫描写入，确保用户后续删除或
-   * 暂停默认数据源后，不会在下次启动时被应用强制恢复。
-   */
-  async bootstrapDefaultLocalFolders(rootPaths: string[]): Promise<void> {
-    const now = new Date().toISOString()
-    const claimed = this.database.prepare(`
-      INSERT OR IGNORE INTO local_service_metadata (key, value, updated_at)
-      VALUES ('default_local_folders_v1', 'started', ?)
-    `).run(now).changes > 0
-    if (!claimed) return
-
-    await this.connectLocalFolders(rootPaths)
-  }
-
   async addConnection<TConfig>(
     kind: ConnectorKind,
     name: string,

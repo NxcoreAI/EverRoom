@@ -288,7 +288,7 @@ export class AgentService {
 
   constructor(
     private readonly db: GatewayDatabase,
-    private readonly runtime: AgentRuntime,
+    private runtime: AgentRuntime,
     readonly broker: AgentEventBroker,
     private readonly logger: AgentServiceLogger = silentLogger,
     private readonly roomRegistry?: AgentRoomRegistry,
@@ -297,6 +297,13 @@ export class AgentService {
     private readonly connectorMode: "direct" | "local" = "direct",
     private readonly disposeRuntime = true,
   ) {}
+
+  async replaceRuntime(runtime: AgentRuntime): Promise<void> {
+    const previous = this.runtime;
+    this.runtime = runtime;
+    await Promise.allSettled([...this.runtimeEventConsumers.values()]);
+    if (previous !== runtime) await previous.dispose();
+  }
 
   getUsage(range: AgentUsageRange): AgentUsageSnapshot {
     const now = Date.now()

@@ -107,13 +107,17 @@ export class PerceptionService {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly files: FilesService,
-    private readonly vlm: VisualInferenceClient | null,
+    private vlm: VisualInferenceClient | null,
     private readonly logger: FastifyBaseLogger,
     private readonly markDiaryStale?: (at: Date) => void,
   ) {}
 
   setReadySink(sink: ((evidence: VisualReadyEvidence) => Promise<void>) | null): void {
     this.readySink = sink;
+  }
+
+  replaceVlm(vlm: VisualInferenceClient | null): void {
+    this.vlm = vlm;
   }
 
   initialize(): void {

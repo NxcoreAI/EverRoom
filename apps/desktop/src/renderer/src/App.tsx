@@ -16,6 +16,7 @@ import { TopBar } from '@/components/TopBar'
 import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGate'
 import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
 import { FolderSettingsOnboarding } from '@/components/onboarding/FolderSettingsOnboarding'
+import { RuntimeConfigGate } from '@/components/onboarding/RuntimeConfigGate'
 import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
@@ -380,6 +381,9 @@ export function App() {
   }
 
   return (
+    // 启动 gate（最外层）：未配置 AI runtime config 时先登录/手动配置，
+    // 连通测试通过才进入后续 onboarding 与应用。
+    <RuntimeConfigGate>
     <MemoryOnboardingGate onFinished={() => {
       if (fullOnboardingStageRef.current !== 'memory') return
       manualMemoryOnboardingRef.current = false
@@ -393,7 +397,10 @@ export function App() {
         onOpenRoom={openContextRoomTab}
         suppressOnboarding={suppressRoomOnboarding}
         onFinished={() => {
-          if (fullOnboardingStageRef.current !== 'room') return
+          // 'room' = manual full-onboarding restart from Settings; 'idle' =
+          // natural first run, where the gates open themselves and the stage
+          // machine is never advanced. Both paths must reach folder consent.
+          if (fullOnboardingStageRef.current !== 'room' && fullOnboardingStageRef.current !== 'idle') return
           fullOnboardingStageRef.current = 'folder'
           setFullOnboardingStage('folder')
           setFolderOnboardingOpen(true)
@@ -509,5 +516,6 @@ export function App() {
       </RoomOnboardingGate>
       )}
     </MemoryOnboardingGate>
+    </RuntimeConfigGate>
   )
 }
