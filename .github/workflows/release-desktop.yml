@@ -136,6 +136,7 @@ jobs:
     runs-on: windows-2025
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      NODE_OPTIONS: "--max-old-space-size=8192"
 
     steps:
       - name: Check out tagged commit
