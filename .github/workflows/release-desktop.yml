@@ -18,6 +18,7 @@ jobs:
     runs-on: macos-14
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
       NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
       NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
       NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
@@ -25,6 +26,7 @@ jobs:
       NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
       NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
       NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
+      NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
       NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
       NXCORE_NANGO_GOOGLE_CLIENT_ID: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_ID }}
       NXCORE_NANGO_GOOGLE_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_SECRET }}
@@ -79,6 +81,7 @@ jobs:
           pnpm build
           pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
 
       - name: Package macOS arm64
         run: pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never

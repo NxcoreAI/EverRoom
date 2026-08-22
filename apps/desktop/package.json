@@ -104,6 +104,10 @@
     ],
     "extraResources": [
       {
+        "from": "build/packaged-env.json",
+        "to": "packaged-env.json"
+      },
+      {
         "from": "../gateway/dist",
         "to": "gateway",
         "filter": [
