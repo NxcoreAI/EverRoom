@@ -1,12 +1,12 @@
 {
   "name": "@nxcore/desktop",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/dev.mjs",
-    "build": "electron-vite build",
+    "build": "node scripts/prepare-nango-runtime.mjs && electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64"
@@ -132,6 +132,15 @@
         "to": "oo",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "build/nango-runtime",
+        "to": "nango",
+        "filter": [
+          "**/*",
+          "!**/.env*",
+          "!**/*.{map,ts,tsx,mts,cts}"
         ]
       }
     ],
