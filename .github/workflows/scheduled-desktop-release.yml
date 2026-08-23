@@ -43,6 +43,7 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
 
       - name: Inspect release candidate
         id: candidate

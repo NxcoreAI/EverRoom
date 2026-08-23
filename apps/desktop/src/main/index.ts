@@ -1836,6 +1836,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
       return null
     })
+    // Gateway 配置要求 URL 和 SECRET 成对出现；兼容旧版 Nango 变量名。
+    // The selected page owns the connector runtime. Explicitly clear the
+    // other connector's URL so a user-level env override cannot re-enable it.
+    // URL 为空时（packaged-env.json 缺失或 Nango 未就绪）SECRET 必须同步留空，
+    // 否则 Gateway 校验"URL/SECRET 成对"失败会以 code=1 退出，应用闪退。
+    const nangoUrl = connectorPageEnabled
+      ? ''
+      : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl
+    const nangoSecret = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4
+      ? randomUUID()
+      : nangoUrl ? configuredNangoSecret : ''
+    const nangoBootstrapPending = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4 ? '1' : '0'
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
@@ -1852,22 +1864,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
           }
           : {}),
-        // Gateway 配置要求 URL 和 SECRET 成对出现；兼容旧版 Nango 变量名。
-        // The selected page owns the connector runtime. Explicitly clear the
-        // other connector's URL so a user-level env override cannot re-enable it.
-        NXCORE_NANGO_CONNECTOR_URL: connectorPageEnabled
-          ? ''
-          : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl,
-        NXCORE_NANGO_CONNECTOR_SECRET: connectorPageEnabled
-          ? ''
-          : nangoSupervisor && !nangoSecretIsUuidV4 ? randomUUID() : configuredNangoSecret,
-        NXCORE_NANGO_BOOTSTRAP_PENDING: !connectorPageEnabled && nangoSupervisor && !nangoSecretIsUuidV4 ? '1' : '0',
-        NXCORE_NANGO_URL: connectorPageEnabled
-          ? ''
-          : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl,
-        NXCORE_NANGO_SECRET: connectorPageEnabled
-          ? ''
-          : nangoSupervisor && !nangoSecretIsUuidV4 ? randomUUID() : configuredNangoSecret,
+        NXCORE_NANGO_CONNECTOR_URL: nangoUrl,
+        NXCORE_NANGO_CONNECTOR_SECRET: nangoSecret,
+        NXCORE_NANGO_BOOTSTRAP_PENDING: nangoBootstrapPending,
+        NXCORE_NANGO_URL: nangoUrl,
+        NXCORE_NANGO_SECRET: nangoSecret,
         ...(knowledge
           ? {
             NXCORE_KNOWLEDGE_ENABLED: 'true',

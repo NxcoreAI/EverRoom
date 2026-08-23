@@ -19,12 +19,14 @@ import type { GatewaySupervisor } from './gateway-supervisor'
 import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 const REALITY_EVENT_CHANNEL = 'reality:event'
-const http = createLoggedHttpClient('gateway-reality', {}, { quiet: true })
+const http = createLoggedHttpClient('gateway-reality', { timeout: 10_000 }, { quiet: true })
 const RECOVERABLE_CONNECTION_ERROR_CODES = new Set([
   'ECONNREFUSED',
   'ECONNRESET',
   'EPIPE',
   'ERR_SOCKET_CLOSED',
+  // gateway 在 knowledge ingest 高峰期事件循环被同步任务卡住时，表现为 loopback 连接超时
+  'ETIMEDOUT',
 ])
 
 function isRecoverableConnectionError(error: unknown): boolean {
