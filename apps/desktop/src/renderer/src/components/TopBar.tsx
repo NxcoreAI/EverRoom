@@ -6,8 +6,6 @@ import {
   LockKeyhole,
   PanelRightClose,
   PanelRightOpen,
-  Plus,
-  RotateCcw,
   X,
 } from 'lucide-react'
 
@@ -23,8 +21,6 @@ export function TopBar({
   onActivateWorkbench,
   onActivateContextRoom,
   onCloseContextRoom,
-  onRestoreContextRoom,
-  canRestoreContextRoom,
   onToggleAgent,
   onToggleNav,
 }: {
@@ -35,8 +31,6 @@ export function TopBar({
   onActivateWorkbench: () => void
   onActivateContextRoom: (roomId: string) => void
   onCloseContextRoom: (roomId: string) => void
-  onRestoreContextRoom: () => void
-  canRestoreContextRoom: boolean
   onToggleAgent: () => void
   onToggleNav: () => void
 }) {
@@ -101,19 +95,6 @@ export function TopBar({
       </div>
 
       <div className="top-actions no-drag">
-        <button type="button" className="icon-button" title={t('surface:topBar.newTab')} aria-label={t('surface:topBar.newTab')}>
-          <Plus aria-hidden="true" strokeWidth={1.8} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          title={t('surface:topBar.restoreClosedTab')}
-          aria-label={t('surface:topBar.restoreClosedTab')}
-          disabled={!canRestoreContextRoom}
-          onClick={onRestoreContextRoom}
-        >
-          <RotateCcw aria-hidden="true" strokeWidth={1.8} />
-        </button>
         <button
           type="button"
           className="icon-button"

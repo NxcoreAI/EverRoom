@@ -44,7 +44,32 @@ function errorMessage(error: unknown): string {
   return isRateLimitMessage(message) ? desktopText('error.rateLimited.message') : message
 }
 
+function networkOperation(channel: string): string {
+  if (/agent.*session|session.*agent/i.test(channel)) return desktopText('error.network.agentSessions')
+  if (/runtime-config/i.test(channel)) return desktopText('error.network.runtimeConfig')
+  if (/gateway.*status/i.test(channel)) return desktopText('error.network.gatewayStatus')
+  if (/memory/i.test(channel)) return desktopText('error.network.memory')
+  if (/knowledge|wiki/i.test(channel)) return desktopText('error.network.knowledge')
+  if (/document/i.test(channel)) return desktopText('error.network.document')
+  if (/source|file/i.test(channel)) return desktopText('error.network.files')
+  if (/nango|connector/i.test(channel)) return desktopText('error.network.connectors')
+  return channel ? channel.replace(/^[^:]+:/, '').replace(/[-_]/g, ' ') : desktopText('error.network.service')
+}
+
+function networkErrorDetail(channel: string, error: unknown): Pick<DesktopRequestError, 'title' | 'message'> | null {
+  const raw = error instanceof Error ? error.message : String(error)
+  if (!/fetch failed|failed to fetch|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(raw)) return null
+  return {
+    title: desktopText('error.network.title'),
+    message: desktopText('error.network.message')
+      .replace('{operation}', networkOperation(channel))
+      .replace('{channel}', channel || 'unknown'),
+  }
+}
+
 function requestError(channel: string, error: unknown): DesktopRequestError {
+  const network = networkErrorDetail(channel, error)
+  if (network) return { channel, severity: 'error', ...network }
   const message = errorMessage(error)
   if (isRateLimitMessage(message)) {
     return { channel, severity: 'notice', title: desktopText('error.rateLimited.title'), message }
@@ -134,6 +159,7 @@ const api: NxcoreDesktopApi = {
     authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
     registerConnection: (input) => invoke('nango-connector:register-connection', input),
     disableConnection: (id) => invoke('nango-connector:disable-connection', id),
+    enableConnection: (id) => invoke('nango-connector:enable-connection', id),
     purgeConnection: (id) => invoke('nango-connector:purge-connection', id),
     triggerSync: (id, mode) => invoke('nango-connector:trigger-sync', id, mode),
     cancelRun: (id) => invoke('nango-connector:cancel-run', id),
@@ -200,6 +226,13 @@ const api: NxcoreDesktopApi = {
     days: (start, end) => invoke('diary:days', start, end),
     day: (date) => invoke('diary:day', date),
   },
+  agentSchedules: {
+    list: () => invoke('agent-scheduler:list'),
+    create: (input) => invoke('agent-scheduler:create', input),
+    update: (id, input) => invoke('agent-scheduler:update', id, input),
+    remove: (id) => invoke('agent-scheduler:remove', id),
+    runNow: (id) => invoke('agent-scheduler:run-now', id),
+  },
   contextRooms: {
     list: () => invokeQuietly('context-rooms:list'),
     create: (input: CreateContextRoomInput) => invokeQuietly('context-rooms:create', input),
@@ -217,6 +250,15 @@ const api: NxcoreDesktopApi = {
     createPairingSession: () => invoke('account:create-pairing-session'),
     getPairingSession: (id, options) => options?.quiet ? invokeQuietly('account:get-pairing-session', id) : invoke('account:get-pairing-session', id),
     approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
+  },
+  runtimeConfig: {
+    get: () => invoke('runtime-config:get'),
+    saveUser: (input: unknown) => invoke('runtime-config:save-user', input),
+    clearUser: () => invoke('runtime-config:clear-user'),
+    refreshSaas: () => invoke('runtime-config:refresh-saas'),
+    clearSaas: () => invoke('runtime-config:clear-saas'),
+    selectSource: (source: 'user' | 'saas' | 'default') => invoke('runtime-config:select-source', source),
+    test: () => invoke('runtime-config:test'),
   },
   asr: {
     requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
@@ -253,6 +295,8 @@ const api: NxcoreDesktopApi = {
   memory: {
     overview: () => invoke('memory:overview'),
     startOnboarding: (input: MemoryOnboardingInput) => invoke('memory:onboarding:start', input),
+    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
+    onboardingFinished: () => { ipcRenderer.send('memory:onboarding-finished') },
     listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
     searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
     updateAtomic: (id: string, content: string, background?: string) =>
@@ -403,6 +447,7 @@ const api: NxcoreDesktopApi = {
     },
     showFile: (id, fileId) => invoke('sources:show-file', id, fileId),
     addLocalFolder: () => invoke('sources:add-local-folder'),
+    listDefaultLocalFolders: () => invoke('sources:list-default-local-folders'),
     connectDefaultLocalFolders: (folders) => invoke('sources:connect-default-local-folders', folders),
     addGitHub: (input) => invoke('sources:add-github', input),
     addGoogleDocs: (input) => invoke('sources:add-google-docs', input),
@@ -421,9 +466,11 @@ const api: NxcoreDesktopApi = {
     readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
     listWikis: () => invoke('knowledge:wikis:list'),
     getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),
-    listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
+  listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
     getEntity: (entityId: string) => invoke('knowledge:entities:get', entityId),
-    promoteEntity: (entityId: string) => invoke('knowledge:entities:promote', entityId),
+  promoteEntity: (entityId: string) => invoke('knowledge:entities:promote', entityId),
+    suppressEntity: (entityId: string) => invoke('knowledge:entities:suppress', entityId),
+    restoreSuppressedEntity: (entityId: string) => invoke('knowledge:entities:restore', entityId),
     mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
     listUnmatched: () => invoke('knowledge:unmatched:list'),
     attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
@@ -444,11 +491,25 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
+    openOriginal: (fileId: string) => invoke('files:open-original', fileId),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),
     importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
+    },
+    onImportProgress: (listener) => {
+      const handleProgress = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) => listener(progress)
+      ipcRenderer.on('files:import-progress', handleProgress)
+      return () => ipcRenderer.removeListener('files:import-progress', handleProgress)
+    },
+    listHighRiskReviews: () => invoke('files:high-risk-reviews:list'),
+    resolveHighRiskReview: (id: string, accepted: boolean) =>
+      invoke('files:high-risk-reviews:resolve', id, accepted),
+    onHighRiskReviewsChanged: (listener) => {
+      const handleChanged = () => listener()
+      ipcRenderer.on('files:high-risk-reviews:changed', handleChanged)
+      return () => ipcRenderer.removeListener('files:high-risk-reviews:changed', handleChanged)
     },
   },
   ingest: {
@@ -458,6 +519,11 @@ const api: NxcoreDesktopApi = {
       sourceKind?: string
       sourceId?: string
     }) => invoke('ingest:events:list', query),
+    getFilterRules: () => invoke('ingest:filter-rules:get'),
+    updateFilterPreference: (content: string) =>
+      invoke('ingest:filter-rules:update-preference', content),
+    reinstateEvent: (eventId: string) => invoke('ingest:events:reinstate', eventId),
+    getEventContent: (eventId: string) => invoke('ingest:events:content', eventId),
   },
 }
 

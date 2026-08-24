@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import { PiAgentRuntime, type PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
-import type { AgentRuntime } from "@nxcore/agent-runtime";
+import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
@@ -54,6 +54,17 @@ function builtin(id: (typeof BUILTIN_AGENT_IDS)[keyof typeof BUILTIN_AGENT_IDS])
   return loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), id);
 }
 
+/**
+ * pi 配置四要素齐全才算可用（与 runtime-config 的 isPrimaryConfigured 同判据）。
+ * 未配置（pi 模式 + env 全空 + runtime config 尚未保存）返回占位 runtime，
+ * 见各工厂的降级分支。
+ */
+export function isPiRuntimeConfigured(
+  pi: { provider: string; model: string; baseUrl: string; apiKey: string } | null | undefined,
+): boolean {
+  return Boolean(pi && pi.provider && pi.model && pi.baseUrl && pi.apiKey);
+}
+
 function withAgentDirectories(
   config: GatewayConfig,
   agentId: string,
@@ -78,9 +89,11 @@ export function createAgentRuntime(
 ): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  if (!config.pi) throw new Error("Pi runtime configuration is missing");
+  // 降级启动：AI 未配置时返回占位 runtime（run 立即 runtime_config_not_ready），
+  // 等 runtime config 保存后 AgentResolver.reload 换成真实 Pi runtime。
+  if (!isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
   return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi),
+    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi!),
     runtimeRole: "user-facing",
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
@@ -110,8 +123,8 @@ export function createConnectorSyncAgentRuntime(
   connectorSync: ConnectorSyncService,
 ): AgentRuntime | null {
   const bundle = builtin(BUILTIN_AGENT_IDS.connectorSync);
-  if (config.agentRuntime === "fake" || !config.backgroundPi || !config.cliConnector) return null;
-  const { memory: _memory, ...pi } = config.backgroundPi;
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi) || !config.cliConnector) return null;
+  const { memory: _memory, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.connectorSync, {
       ...pi,
@@ -130,8 +143,10 @@ export function createConnectorSyncAgentRuntime(
 export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.transcriptionSummary);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  if (!config.backgroundPi) throw new Error("Background Pi runtime configuration is missing");
-  const { memory: _memory, ...pi } = config.backgroundPi;
+  if (!isPiRuntimeConfigured(config.backgroundPi)) {
+    return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.transcriptionSummary);
+  }
+  const { memory: _memory, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.transcriptionSummary, pi),
     runtimeRole: "internal",
@@ -142,17 +157,44 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
 }
 
 export function createContextRoomAgentRuntime(config: GatewayConfig): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !config.backgroundPi?.memory) return null;
-  const { knowledge: _knowledge, mcp: _mcp, ...pi } = config.backgroundPi;
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi) || !config.backgroundPi?.memory) return null;
+  const { knowledge: _knowledge, mcp: _mcp, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...pi,
     includeBashTool: false,
     builtinTools: [],
     maxToolCallsPerRun: 8,
-    sessionsDir: join(config.backgroundPi.sessionsDir, "context-room-create"),
-    workingDirectory: join(config.backgroundPi.workingDirectory, "context-room-create"),
-    agentDirectory: join(config.backgroundPi.agentDirectory, "context-room-create"),
+    sessionsDir: join(pi.sessionsDir, "context-room-create"),
+    workingDirectory: join(pi.workingDirectory, "context-room-create"),
+    agentDirectory: join(pi.agentDirectory, "context-room-create"),
   });
+}
+
+/**
+ * ingest 过滤器专用 Runtime（ingest-filter-agent-plan §4.2）：
+ * 独立目录（ingest-filter 子目录），memory + knowledge 集成但**只读工具**——
+ * memory_search / wiki_search / wiki_read，无任何写路径，无 bash，无内置工具。
+ *
+ * 记忆隔离（§4.1）由装配与 run 侧共同保证：这里不给 mcp、不给写工具；
+ * filter-agent.ts 的 run 显式传 captureMemory/recallMemory 双 false。
+ * 与 background runtime（显式剥 memory）不同：过滤器需要只读记忆检索。
+ */
+export function createIngestFilterAgentRuntime(
+  config: GatewayConfig,
+  resolveWikiIds?: (input: { roomId: string | null }) => Promise<string[]>,
+): AgentRuntime | null {
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: config.ingestFilter.maxToolCalls,
+    runtimeRole: "internal",
+    sessionsDir: join(pi.sessionsDir, "ingest-filter"),
+    workingDirectory: join(pi.workingDirectory, "ingest-filter"),
+    agentDirectory: join(pi.agentDirectory, "ingest-filter"),
+  }, resolveWikiIds ? { resolveKnowledgeWikiIds: resolveWikiIds } : {});
 }
 
 /** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
@@ -160,27 +202,47 @@ export function createDiaryAgentRuntime(
   config: GatewayConfig,
   generator: DiaryAgentGenerator,
 ): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !config.backgroundPi) return null;
-  const { memory: _memory, knowledge: _knowledge, ...pi } = config.backgroundPi;
+  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
+  const bundle = builtin(BUILTIN_AGENT_IDS.diary);
+  const { memory: _memory, knowledge: _knowledge, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...pi,
+    runtimeId: `pi:${BUILTIN_AGENT_IDS.diary}`,
     maxTokens: config.diaryMaxTokens ?? Math.max(pi.maxTokens, 16_384),
     includeBashTool: false,
     maxToolCallsPerRun: 128,
-    sessionsDir: join(config.backgroundPi.sessionsDir, "diary"),
-    workingDirectory: join(config.backgroundPi.workingDirectory, "diary"),
-    agentDirectory: join(config.backgroundPi.agentDirectory, "diary"),
+    runtimeRole: "internal",
+    skillsEnabled: true,
+    skillPrompts: bundle.skillPrompts,
+    systemPrompt: bundle.systemPrompt,
+    sessionsDir: join(pi.sessionsDir, "diary"),
+    workingDirectory: join(pi.workingDirectory, "diary"),
+    agentDirectory: join(pi.agentDirectory, "diary"),
   }, { tools: generator.tools() });
+}
+
+export function registerDiaryAgent(
+  resolver: AgentResolver,
+  config: GatewayConfig,
+  generator: DiaryAgentGenerator,
+): void {
+  const bundle = builtin(BUILTIN_AGENT_IDS.diary);
+  resolver.register(definition(config, {
+    id: BUILTIN_AGENT_IDS.diary,
+    name: bundle.name,
+    description: bundle.description,
+  }), () => createDiaryAgentRuntime(config, generator)
+    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.diary));
 }
 
 export function createCursorCompletionRuntime(config: GatewayConfig): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.cursorCompletion);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  if (!config.cursorCompletionPi) {
-    throw new Error("Cursor completion Pi runtime configuration is missing");
+  if (!isPiRuntimeConfigured(config.cursorCompletionPi)) {
+    return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.cursorCompletion);
   }
   return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.cursorCompletion, config.cursorCompletionPi),
+    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.cursorCompletion, config.cursorCompletionPi!),
     runtimeRole: "internal",
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
@@ -190,6 +252,9 @@ export function createCursorCompletionRuntime(config: GatewayConfig): AgentRunti
 
 export function createAgentResolver(config: GatewayConfig): AgentResolver {
   const resolver = new AgentResolver();
+  // 工厂闭包读「活」config（applyRuntimeConfig 原地 patch 的同一对象），
+  // 而不是捕获启动时快照——AgentResolver.reload 重跑工厂时才能拿到
+  // runtime config 热应用后的 knowledge.llm / webSearch。
   const knowledgeLlm = config.knowledge?.llm;
   if (knowledgeLlm) {
     const id = BUILTIN_AGENT_IDS.knowledge;
@@ -199,16 +264,20 @@ export function createAgentResolver(config: GatewayConfig): AgentResolver {
       id,
       name: bundle.name,
       description: bundle.description,
-    }), () => new OpenAiCompletionAgentRuntime({
+    }), () => {
+      const llm = config.knowledge?.llm;
+      if (!llm) return new UnconfiguredAgentRuntime(id);
+      return new OpenAiCompletionAgentRuntime({
       runtimeId: id,
-      ...knowledgeLlm,
+      ...llm,
       systemPrompt: bundle.systemPrompt,
       skillPrompts: bundle.skillPrompts,
       temperature: 0.1,
       maxTokens: 4_096,
       timeoutMs: 60_000,
       ...directories,
-    }));
+    });
+    });
   }
   if (config.webSearch) {
     const bundle = builtin(BUILTIN_AGENT_IDS.webSearch);
@@ -217,15 +286,45 @@ export function createAgentResolver(config: GatewayConfig): AgentResolver {
       id: BUILTIN_AGENT_IDS.webSearch,
       name: bundle.name,
       description: bundle.description,
-    }), () => new OpenAiCompletionAgentRuntime({
+    }), () => {
+      const webSearch = config.webSearch;
+      if (!webSearch) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.webSearch);
+      return new OpenAiCompletionAgentRuntime({
+        runtimeId: BUILTIN_AGENT_IDS.webSearch,
+        ...webSearch,
+        systemPrompt: bundle.systemPrompt,
+        requestOptions: { enable_search: true },
+        ...directories,
+      });
+    });
+  }
+  return resolver;
+}
+
+/**
+ * 动态注册 webSearch agent（boot 时 env 未配、runtime config 保存后才生效）。
+ * 与 createAgentResolver 的注册体一致；已注册时跳过。
+ */
+export function registerWebSearchAgentIfMissing(resolver: AgentResolver, config: GatewayConfig): boolean {
+  if (!config.webSearch || resolver.has(BUILTIN_AGENT_IDS.webSearch)) return false;
+  const bundle = builtin(BUILTIN_AGENT_IDS.webSearch);
+  const directories = agentDirectories(config, BUILTIN_AGENT_IDS.webSearch);
+  resolver.register(definition(config, {
+    id: BUILTIN_AGENT_IDS.webSearch,
+    name: bundle.name,
+    description: bundle.description,
+  }), () => {
+    const webSearch = config.webSearch;
+    if (!webSearch) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.webSearch);
+    return new OpenAiCompletionAgentRuntime({
       runtimeId: BUILTIN_AGENT_IDS.webSearch,
-      ...config.webSearch!,
+      ...webSearch,
       systemPrompt: bundle.systemPrompt,
       requestOptions: { enable_search: true },
       ...directories,
-    }));
-  }
-  return resolver;
+    });
+  });
+  return true;
 }
 
 export function registerPrimaryAgent(
@@ -261,7 +360,10 @@ export function registerConnectorSyncAgent(
     id: BUILTIN_AGENT_IDS.connectorSync,
     name: bundle.name,
     description: bundle.description,
-  }), () => createConnectorSyncAgentRuntime(config, connectorSync) ?? new FakeAgentRuntime());
+  }), () => createConnectorSyncAgentRuntime(config, connectorSync)
+    // 降级占位：注册守卫放行了但工厂因 AI 未配置返回 null（fake 模式除外），
+    // 同步请求得到 runtime_config_not_ready 而不是假成功。
+    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.connectorSync));
 }
 
 export function registerTranscriptionSummaryAgent(resolver: AgentResolver, config: GatewayConfig): void {

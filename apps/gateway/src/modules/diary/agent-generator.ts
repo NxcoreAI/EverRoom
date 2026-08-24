@@ -84,6 +84,12 @@ export class DiaryAgentGenerator implements DiaryGenerator {
     this.runtime = runtime;
   }
 
+  async replaceRuntime(runtime: AgentRuntime): Promise<void> {
+    const previous = this.runtime;
+    this.runtime = runtime;
+    if (previous && previous !== runtime) await previous.dispose();
+  }
+
   tools(): PiAgentRuntimeTool[] {
     return [{
       name: "diary_source_read",
@@ -206,6 +212,8 @@ function promptOf(input: DiaryGenerationInput): string {
     "先审阅完整元数据清单，只在确有必要时调用 diary_source_read。不要读取清单之外的数据。",
     "调用工具前后不要输出解释、计划或进度；所有工具调用完成后，最终消息必须只包含一个 JSON 对象。",
     "合并同一经历的多种来源，避免将视觉、录音、记忆或文档重复写成多个事件；不补写没有证据的事实。",
+    "短时间内连续发生且本质相同的动作（例如同一段录音中的连续清唱、同一文档的多次自动保存）只写成一个事件，用时间范围和 sourceRefs 表示持续过程；不要按每次保存或每个相邻片段逐条罗列。",
+    "UUID、块 ID、运行 ID、URL 参数、工具调用、系统提示、JSON 字段名和其他程序性元数据不是用户事件；不要把它们写进标题或摘要。",
     "优先复用来源清单中的 insightTags 和 keyPoints：entity 是实体候选，fact 是有证据的事实。knowledgeEntities 才是已经完成身份归并的 Knowledge 实体，写作时优先使用其规范名称，但不要补写证据未支持的关系。",
     "只输出 JSON 对象，不使用 Markdown。结构必须是 headline, summary, reflection, range, events, closing。",
     "events 每项必须包含 time, title, summary, sourceRefs，可选 endTime 和 tags。sourceRefs 至少一个且只能引用清单 sourceId。",

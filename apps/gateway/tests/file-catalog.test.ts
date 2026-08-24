@@ -103,11 +103,17 @@ describe("unified file catalog", () => {
     const test = await catalogForTest();
     const extensions = test.service.capabilities().map((item) => item.extension);
     expect(extensions).toContain(".docx");
+    expect(extensions).toContain(".doc");
+    expect(extensions).toContain(".docm");
+    expect(extensions).toContain(".xls");
+    expect(extensions).toContain(".xlsm");
+    expect(extensions).toContain(".ppt");
+    expect(extensions).toContain(".pptm");
+    expect(extensions).toContain(".pdf");
     expect(extensions).not.toContain(".json");
-    expect(extensions).not.toContain(".pdf");
     await expect(test.service.importFile({
-      sourceKind: "local-folder", sourceKey: "local:pdf", originalName: "ignored.pdf", buffer: Buffer.from("pdf"),
-    })).rejects.toThrow("不支持的文件格式");
+      sourceKind: "local-folder", sourceKey: "local:json", originalName: "ignored.json", buffer: Buffer.from("{}"),
+    })).rejects.toThrow("JSON 文件不会进入文件库");
     expect(test.sqlite.prepare("SELECT COUNT(*) count FROM file_entries").get()).toMatchObject({ count: 0 });
     test.sqlite.close();
   });

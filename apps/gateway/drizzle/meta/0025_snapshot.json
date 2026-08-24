@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e0015d47-96e8-46e2-aed6-fb1d9dcbcdd0",
-  "prevId": "f489d3b0-5af1-4a5d-af11-431e8c9b57b7",
+  "id": "afbc7120-0d89-4922-ade8-2a479071072e",
+  "prevId": "1a0ceb09-d930-49fe-93e6-ab85376ea41c",
   "tables": {
     "agent_events": {
       "name": "agent_events",
@@ -279,6 +279,143 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "agent_schedules": {
+      "name": "agent_schedules",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "agent_id": {
+          "name": "agent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "prompt": {
+          "name": "prompt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "schedule_type": {
+          "name": "schedule_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'daily'"
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "local_time": {
+          "name": "local_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'09:00'"
+        },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'UTC'"
+        },
+        "next_run_at": {
+          "name": "next_run_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_run_at": {
+          "name": "last_run_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_status": {
+          "name": "last_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "config_version": {
+          "name": "config_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "agent_schedules_due_idx": {
+          "name": "agent_schedules_due_idx",
+          "columns": [
+            "enabled",
+            "next_run_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -4011,7 +4148,7 @@
           "name": "content_json",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "content_schema_version": {
@@ -4063,289 +4200,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "document_yjs_checkpoints": {
-      "name": "document_yjs_checkpoints",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "through_version": {
-          "name": "through_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "doc_state": {
-          "name": "doc_state",
-          "type": "blob",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "schema_version": {
-          "name": "schema_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "document_yjs_checkpoints_document_version_idx": {
-          "name": "document_yjs_checkpoints_document_version_idx",
-          "columns": [
-            "document_id",
-            "through_version"
-          ],
-          "isUnique": true
-        },
-        "document_yjs_checkpoints_document_idx": {
-          "name": "document_yjs_checkpoints_document_idx",
-          "columns": [
-            "document_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "document_yjs_checkpoints_document_id_documents_id_fk": {
-          "name": "document_yjs_checkpoints_document_id_documents_id_fk",
-          "tableFrom": "document_yjs_checkpoints",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "document_yjs_updates": {
-      "name": "document_yjs_updates",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "update": {
-          "name": "update",
-          "type": "blob",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'commit'"
-        },
-        "content_hash": {
-          "name": "content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "document_yjs_updates_document_version_idx": {
-          "name": "document_yjs_updates_document_version_idx",
-          "columns": [
-            "document_id",
-            "version"
-          ],
-          "isUnique": true
-        },
-        "document_yjs_updates_document_idx": {
-          "name": "document_yjs_updates_document_idx",
-          "columns": [
-            "document_id",
-            "version"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "document_yjs_updates_document_id_documents_id_fk": {
-          "name": "document_yjs_updates_document_id_documents_id_fk",
-          "tableFrom": "document_yjs_updates",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "document_yjs_versions": {
-      "name": "document_yjs_versions",
-      "columns": {
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "update_id": {
-          "name": "update_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "checkpoint_id": {
-          "name": "checkpoint_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "backfilled": {
-          "name": "backfilled",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "document_yjs_versions_update_idx": {
-          "name": "document_yjs_versions_update_idx",
-          "columns": [
-            "update_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "document_yjs_versions_document_id_documents_id_fk": {
-          "name": "document_yjs_versions_document_id_documents_id_fk",
-          "tableFrom": "document_yjs_versions",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "document_yjs_versions_update_id_document_yjs_updates_id_fk": {
-          "name": "document_yjs_versions_update_id_document_yjs_updates_id_fk",
-          "tableFrom": "document_yjs_versions",
-          "tableTo": "document_yjs_updates",
-          "columnsFrom": [
-            "update_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "document_yjs_versions_checkpoint_id_document_yjs_checkpoints_id_fk": {
-          "name": "document_yjs_versions_checkpoint_id_document_yjs_checkpoints_id_fk",
-          "tableFrom": "document_yjs_versions",
-          "tableTo": "document_yjs_checkpoints",
-          "columnsFrom": [
-            "checkpoint_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "document_yjs_versions_document_id_version_pk": {
-          "columns": [
-            "document_id",
-            "version"
-          ],
-          "name": "document_yjs_versions_document_id_version_pk"
-        }
-      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -5488,6 +5342,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "reinstated_at": {
+          "name": "reinstated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "origin_channel": {
           "name": "origin_channel",
           "type": "text",
@@ -6481,6 +6342,53 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "runtime_config_store": {
+      "name": "runtime_config_store",
+      "columns": {
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "schema_version": {
+          "name": "schema_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "config_version": {
+          "name": "config_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
           "autoincrement": false
         }
       },

@@ -163,12 +163,9 @@ export class NangoSupervisor {
       return null
     }
 
-    // ponytail: 打包形态尚未把 nango 子模块打进 extraResources,先只支持 dev 托管。
-    if (app.isPackaged) {
-      this.runtimeState = 'disabled'
-      return null
-    }
-    const nangoDirectory = join(app.getAppPath(), '..', 'gateway', 'src', 'modules', 'connector')
+    const nangoDirectory = app.isPackaged
+      ? join(process.resourcesPath, 'nango')
+      : join(app.getAppPath(), '..', 'gateway', 'src', 'modules', 'connector')
 
     // 复用已在运行的实例(用户手动启动的 Nango 等)。
     if (await probe()) {
@@ -182,9 +179,13 @@ export class NangoSupervisor {
     if (!existsSync(join(nangoDirectory, 'package.json'))) {
       throw new Error(`Nango 子模块不存在: ${nangoDirectory}（试试 git submodule update --init）`)
     }
-    const tsxCli = join(nangoDirectory, 'node_modules', 'tsx', 'dist', 'cli.mjs')
-    if (!existsSync(tsxCli)) {
-      throw new Error('Nango 依赖未安装:请在 apps/gateway/src/modules/connector 下执行 npm install')
+    const serverEntry = join(nangoDirectory, 'packages', 'server', 'dist', 'server.js')
+    if (!existsSync(serverEntry)) {
+      throw new Error(
+        app.isPackaged
+          ? `Nango runtime 不完整: ${serverEntry}`
+          : 'Nango 依赖未安装:请在 apps/gateway/src/modules/connector 下执行 npm install',
+      )
     }
     // @embedded-postgres 的 macOS 二进制使用 major-only ICU 名称,而 npm 包只带完整版本名。
     // 依赖安装可能跳过 workspace postinstall,启动前补一次软链接避免 dyld 直接退出。
@@ -205,28 +206,30 @@ export class NangoSupervisor {
       )
       if (fix !== 0) throw new Error(`embedded-postgres 动态库准备失败（exit=${String(fix)}）`)
     }
-    // 同仓包(shared/utils/...)以 dist 解析，只构建 server 及其工程引用。
-    // 根 tsconfig 还包含 noEmit 的 Web 工程，会在每次启动时被判定为缺少输出并重复检查。
-    const build = await this.run(
-      'npm',
-      nangoDirectory,
-      ['exec', '--', 'tsc', '-b', 'packages/server/tsconfig.json'],
-      300_000,
-    )
-    if (build !== 0) throw new Error(`Nango 构建失败（exit=${build}）`)
+    // Packaged builds already contain compiled output. Rebuilding there would
+    // require npm, TypeScript and source files that are intentionally omitted.
+    if (!app.isPackaged) {
+      const build = await this.run(
+        'npm',
+        nangoDirectory,
+        ['exec', '--', 'tsc', '-b', 'packages/server/tsconfig.json'],
+        300_000,
+      )
+      if (build !== 0) throw new Error(`Nango 构建失败（exit=${build}）`)
+    }
 
     // logo 等静态资源由 server 从 webapp/dist 托管(NANGO_PUBLIC_SERVER_URL 指向 3003);
     // webapp 本体不跑,把 public/images 复制进 dist 即可让 logo 可访问。
     const webappImages = join(nangoDirectory, 'packages', 'webapp', 'public', 'images')
     const webappDistImages = join(nangoDirectory, 'packages', 'webapp', 'dist', 'images')
-    if (existsSync(webappImages) && !existsSync(join(webappDistImages, 'template-logos'))) {
+    if (!app.isPackaged && existsSync(webappImages) && !existsSync(join(webappDistImages, 'template-logos'))) {
       cpSync(webappImages, webappDistImages, { recursive: true })
     }
 
     const serverDirectory = join(nangoDirectory, 'packages', 'server')
     const child = spawn(
       process.execPath,
-      [tsxCli, '-r', 'dotenv/config', 'lib/server.ts'],
+      [serverEntry],
       {
         cwd: serverDirectory,
         env: {
@@ -312,13 +315,21 @@ export class NangoSupervisor {
     const connectUiDirectory = join(nangoDirectory, 'packages', 'connect-ui')
     try {
       if (!existsSync(join(connectUiDirectory, 'dist', 'index.html'))) {
+        if (app.isPackaged) {
+          throw new Error('Connect UI runtime 不完整: packages/connect-ui/dist/index.html')
+        }
         const build = await this.run('npm', nangoDirectory, ['run', 'build', '-w', '@nangohq/connect-ui'], 300_000)
         if (build !== 0) throw new Error(`Connect UI 构建失败（exit=${build}）`)
       }
+      // packaged builds nest node_modules under packages/ (root node_modules is
+      // dropped by electron-builder); dev mode keeps it at the repo root.
+      const serveBase = existsSync(join(nangoDirectory, 'node_modules', 'serve'))
+        ? join(nangoDirectory, 'node_modules')
+        : join(nangoDirectory, 'packages', 'node_modules')
       const child = spawn(
         process.execPath,
         [
-          join(nangoDirectory, 'node_modules', 'serve', 'build', 'main.js'),
+          join(serveBase, 'serve', 'build', 'main.js'),
           '-s',
           'dist',
           '-p',

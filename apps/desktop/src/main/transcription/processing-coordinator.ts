@@ -14,7 +14,7 @@ import { getDesktopLocale } from '../desktop-locale'
 import type { PrivateTranscriptionSyncService } from './private-transcription-sync'
 import { summaryDetailMinimum } from './summary-quality'
 
-const POLL_INTERVAL_MS = 30_000
+const POLL_INTERVAL_MS = 5_000
 const LEASE_RENEW_INTERVAL_MS = 45_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -97,6 +97,14 @@ export class TranscriptionProcessingCoordinator {
     void this.tick()
   }
 
+  /** Wake the processor immediately after login or a new source publication. */
+  wake(): void {
+    if (this.stopped || this.running) return
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    void this.tick()
+  }
+
   stop(): void {
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
@@ -120,16 +128,34 @@ export class TranscriptionProcessingCoordinator {
     await this.initialize()
     const account = await this.client.status()
     if (!account.authenticated || !account.user || !account.device) return
-    await this.sync?.reconcileLocalTranscriptions()
-    await this.sync?.flushPendingSources()
-    await this.sync?.sync()
     const registrationKey = `${account.user.id}:${account.device.id}`
     if (this.registeredKey !== registrationKey) {
+      this.registeredKey = null
       await this.client.registerProcessorDevice()
       this.registeredKey = registrationKey
     }
 
-    const claim = await this.client.claimProcessingJob()
+    // Syncing and materializing cached records is useful, but it must not
+    // prevent the processor from claiming a waiting summary job. A malformed
+    // historical record or a transient sync failure should be retried while
+    // the desktop remains available.
+    try {
+      await this.sync?.reconcileLocalTranscriptions()
+      await this.sync?.flushPendingSources()
+      await this.sync?.sync()
+    } catch (error) {
+      console.warn('Background transcription sync deferred while processing.', error)
+    }
+
+    let claim: Awaited<ReturnType<SaasClient['claimProcessingJob']>>
+    try {
+      claim = await this.client.claimProcessingJob()
+    } catch (error) {
+      // Another desktop may have taken primary ownership, or the processor
+      // registration may have expired. Re-register on the next tick.
+      this.registeredKey = null
+      throw error
+    }
     if (!claim) return
     const { job, leaseToken } = claim
     const stored = this.state.jobs[job.id]
@@ -182,7 +208,11 @@ export class TranscriptionProcessingCoordinator {
       await this.client.completeProcessingJob(job.id, { ...result, leaseToken })
       delete this.state.jobs[job.id]
       await this.persist()
-      await this.sync?.sync()
+      try {
+        await this.sync?.sync()
+      } catch (error) {
+        console.warn('Completed transcription summary sync deferred.', error)
+      }
     } catch (error) {
       if (!resultReady) {
         await this.client.failProcessingJob(job.id, {
@@ -228,9 +258,20 @@ function transcriptText(source: SourceRecord): string {
     })
   const text = lines.join('\n') || source.detailMarkdown?.trim() || ''
   if (!text) throw new Error('empty_transcription_source')
-  let limited = text
-  while (Buffer.byteLength(limited, 'utf8') > 480_000) limited = limited.slice(0, Math.floor(limited.length * 0.9))
-  return limited === text ? text : `${limited}\n\n[转写过长，已截断]`
+  // Gateway performs line-aware chunking. Keep the full source here so the
+  // final synthesis can still see the ending of long recordings.
+  const maxBytes = 1_900_000
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text
+  const marker = '\n\n[转写中间过长，已省略]\n\n'
+  const availableBytes = maxBytes - Buffer.byteLength(marker, 'utf8')
+  let headChars = Math.floor(text.length * 0.65)
+  let tailChars = Math.floor(text.length * 0.35)
+  while (Buffer.byteLength(text.slice(0, headChars), 'utf8')
+    + Buffer.byteLength(text.slice(-tailChars), 'utf8') > availableBytes) {
+    headChars = Math.floor(headChars * 0.95)
+    tailChars = Math.floor(tailChars * 0.95)
+  }
+  return `${text.slice(0, headChars)}${marker}${text.slice(-tailChars)}`
 }
 
 function parseSummary(raw: string, transcript: string): SummaryValue {
@@ -296,6 +337,19 @@ function parseSummary(raw: string, transcript: string): SummaryValue {
 function parseRepresentativeTags(value: unknown): SummaryTagValue[] {
   if (!Array.isArray(value)) throw new Error('invalid_agent_representativeTags')
   return value.slice(0, 12).map((item) => {
+    // Older/background models sometimes return a plain label. Preserve it as
+    // a low-confidence entity so the otherwise valid summary can be materialized.
+    if (typeof item === 'string') {
+      const label = item.trim().slice(0, 200)
+      if (!label) throw new Error('invalid_agent_representativeTag_label')
+      return {
+        kind: 'entity',
+        label,
+        entityType: 'other',
+        confidence: 0.5,
+        evidence: label,
+      }
+    }
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('invalid_agent_representativeTag')
     const tag = item as Record<string, unknown>
     if (tag.kind !== 'entity' && tag.kind !== 'fact') throw new Error('invalid_agent_representativeTag_kind')

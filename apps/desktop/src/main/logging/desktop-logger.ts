@@ -3,11 +3,30 @@ import { join } from 'node:path'
 
 import { captureSentryLog } from '../monitoring/sentry'
 
-type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 type ConsoleLevel = LogLevel | 'log'
 
-/** debug 级默认丢弃（轮询类日志防刷屏），设 NXCORE_DESKTOP_DEBUG=1 打开。 */
-const DEBUG_ENABLED = process.env.NXCORE_DESKTOP_DEBUG === '1'
+type LogThreshold = LogLevel | 'off'
+
+const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 }
+
+function parseThreshold(value: string | undefined, fallback: LogThreshold): LogThreshold {
+  const normalized = value?.trim().toLowerCase()
+  if (normalized === 'off' || normalized === 'none' || normalized === '0') return 'off'
+  if (normalized === 'debug' || normalized === 'info' || normalized === 'warn' || normalized === 'error') {
+    return normalized
+  }
+  return fallback
+}
+
+/**
+ * Desktop logging is configurable without rebuilding the app.
+ * HTTP defaults to warn because every successful request otherwise creates two lines.
+ */
+const DESKTOP_LOG_THRESHOLD = parseThreshold(process.env.NXCORE_DESKTOP_LOG_LEVEL, 'info')
+const HTTP_LOG_THRESHOLD = parseThreshold(process.env.NXCORE_DESKTOP_HTTP_LOG_LEVEL, 'warn')
+const CONSOLE_LOG_ENABLED = process.env.NXCORE_DESKTOP_LOG_CONSOLE !== '0'
+const FILE_LOG_ENABLED = process.env.NXCORE_DESKTOP_LOG_FILE !== '0'
 
 const LEVEL_LABEL: Record<LogLevel, string> = {
   debug: 'DEBUG',
@@ -108,6 +127,7 @@ function appendLogFile(
 }
 
 function writeToOriginalConsole(level: LogLevel, line: string): void {
+  if (!CONSOLE_LOG_ENABLED) return
   const stream = level === 'info' ? process.stdout : process.stderr
   stream.write(`${line}\n`)
 }
@@ -122,6 +142,8 @@ function installGlobalConsole(): void {
     const details = rest.length === 0 ? undefined : rest.length === 1 ? rest[0] : rest
     const now = new Date()
     const payload = details === undefined ? { event } : { event, details }
+    const threshold = desktopLogThreshold('console')
+    if (threshold === 'off' || LEVEL_ORDER[actualLevel] < LEVEL_ORDER[threshold]) return
     writeToOriginalConsole(actualLevel, formatConsoleLine(now, 'console', actualLevel, payload))
     appendLogFile(now, 'console', actualLevel, payload)
   }
@@ -154,6 +176,10 @@ export function configureDesktopLogger(dataDirectory: string): void {
   logsDirectory = join(dataDirectory, 'logs')
   const directory = logsDirectory
   installGlobalConsole()
+  if (!FILE_LOG_ENABLED) {
+    logsDirectory = null
+    return
+  }
   enqueue(async () => {
     await mkdir(directory, { recursive: true })
     await removeExpiredLogs(directory)
@@ -166,6 +192,10 @@ export function logDesktop(
   event: Record<string, unknown>,
 ): void {
   writeDesktopLog(module, level, event, true)
+}
+
+export function desktopLogThreshold(module: string): LogThreshold {
+  return module === 'axios' ? HTTP_LOG_THRESHOLD : DESKTOP_LOG_THRESHOLD
 }
 
 export function logLocalDesktop(
@@ -191,7 +221,8 @@ function writeDesktopLog(
   filePrefix = 'desktop',
 ): void {
   const now = new Date()
-  if (level === 'debug' && !DEBUG_ENABLED) return
+  const threshold = desktopLogThreshold(module)
+  if (threshold === 'off' || LEVEL_ORDER[level] < LEVEL_ORDER[threshold]) return
   writeToOriginalConsole(level, formatConsoleLine(now, module, level, event))
   if (captureRemote) captureSentryLog(module, level, event)
   appendLogFile(now, module, level, event, filePrefix)

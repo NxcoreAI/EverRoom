@@ -215,7 +215,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [visualDetail, setVisualDetail] = useState<PerceptionNodeDetail | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<StatusFilter>('all')
-  const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('all')
+  // Audio is the primary reality-perception stream; visual and document
+  // captures remain available through the filter when explicitly selected.
+  const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('audio')
   const [search, setSearch] = useState('')
   const [activityRange, setActivityRange] = useState<ActivityRange>('3m')
   const [rangeTouched, setRangeTouched] = useState(false)
@@ -292,6 +294,20 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   }, [loadEvents])
 
   useEffect(() => {
+    const focus = (incoming: Event) => {
+      const eventId = (incoming as CustomEvent<{ eventId?: string }>).detail?.eventId
+      if (!eventId) return
+      setSelectedDay(null)
+      setFilter('all')
+      setTypeFilter('all')
+      setSearch('')
+      setExpandedId(eventId)
+    }
+    window.addEventListener('nxcore:reality:focus-event', focus as EventListener)
+    return () => window.removeEventListener('nxcore:reality:focus-event', focus as EventListener)
+  }, [])
+
+  useEffect(() => {
     void loadVisualNodes()
     const timer = window.setInterval(() => void loadVisualNodes(true), 5_000)
     return () => window.clearInterval(timer)
@@ -307,6 +323,16 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     const timer = window.setInterval(() => void sync().catch(() => undefined), 15_000)
     return () => window.clearInterval(timer)
   }, [account?.authenticated, loadEvents])
+
+  // The main process also syncs in the background. Refresh the timeline as soon
+  // as that sync materializes a new summary instead of waiting for the interval.
+  useEffect(() => {
+    if (!window.nxcore) return
+    return window.nxcore.transcriptions.onSyncCompleted(() => {
+      void loadEvents()
+    })
+  }, [loadEvents])
+
   const selected = events.find((event) => event.id === expandedId) ?? null
   const timelineItems = useMemo<TimelineItem[]>(() => [
     ...events.map((event): TimelineItem => ({ kind: 'audio', id: event.id, startedAt: event.startedAt, event })),

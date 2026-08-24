@@ -96,6 +96,11 @@ export const nangoConnectorRoutes =
       manager.repository.disableConnection((req.params as any).id);
       return { ok: true };
     });
+    app.post("/v1/nango-connectors/connections/:id/enable", async (req, reply) => {
+      if (!enabled) return unavailable(reply);
+      manager.repository.enableConnection((req.params as any).id);
+      return { ok: true };
+    });
     app.delete("/v1/nango-connectors/connections/:id", async (req, reply) => {
       if (!enabled) return unavailable(reply);
       manager.repository.purgeConnection((req.params as any).id);

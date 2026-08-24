@@ -10,6 +10,7 @@ export const BUILTIN_AGENT_IDS = {
   primary: "main",
   connectorSync: "connector-sync",
   transcriptionSummary: "transcription-summary",
+  diary: "diary",
   cursorCompletion: "cursor-completion",
   knowledge: "knowledge",
   webSearch: "web-search",
@@ -156,6 +157,14 @@ export class AgentResolver {
     if (!registration) throw new Error(`Agent is not registered: ${agentId}`);
     registration.runtime ??= trackedRuntime(registration.createRuntime(), registration.activity);
     return registration.runtime;
+  }
+
+  reload(agentId: string): { previous: AgentRuntime | null; current: AgentRuntime } {
+    const registration = this.registrations.get(agentId);
+    if (!registration) throw new Error(`Agent is not registered: ${agentId}`);
+    const previous = registration.runtime;
+    registration.runtime = trackedRuntime(registration.createRuntime(), registration.activity);
+    return { previous, current: registration.runtime };
   }
 
   getDefinition(agentId: string): AgentDefinition {

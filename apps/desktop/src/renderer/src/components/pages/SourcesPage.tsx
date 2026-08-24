@@ -1,5 +1,5 @@
 import { HardDrive, Plus } from 'lucide-react'
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import type {
   DataSourceSummary,
@@ -13,6 +13,7 @@ import { PageHeader } from './PageHeader'
 import { ConnectSourceMenu, type ConnectorProviderId } from './sources/ConnectSourceMenu'
 import { EvidenceSearch } from './sources/EvidenceSearch'
 import { EvidenceViewer } from './sources/EvidenceViewer'
+import { FilterPreferenceGuideDialog } from './sources/FilterPreferenceGuideDialog'
 import { GitHubConnectDialog, type GitHubConnectionInput } from './sources/GitHubConnectDialog'
 import { MarkdownSourceDialog } from './sources/MarkdownSourceDialog'
 import { MarkdownPreviewDialog } from './sources/MarkdownPreviewDialog'
@@ -27,6 +28,21 @@ const EMPTY_GITHUB_FORM: GitHubConnectionInput = {
   branch: '',
   token: '',
   syncIssues: true,
+}
+
+/** 过滤偏好引导的"已引导过"记录（按 provider 类型，一生一次）。 */
+const GUIDE_STORAGE_KEY = 'nxcore:filter-guide:guided'
+function guidedProviders(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(GUIDE_STORAGE_KEY) ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+function markProviderGuided(provider: string): void {
+  try {
+    localStorage.setItem(GUIDE_STORAGE_KEY, JSON.stringify([...guidedProviders(), provider]))
+  } catch { /* 存储不可用时退化为每次都弹 */ }
 }
 
 type DeletionProgress = NonNullable<SourceChangeEvent['deletion']> & { sourceId: string }
@@ -63,6 +79,31 @@ export function SourcesPage() {
   // 授权确认由 gateway 在 status 轮询中完成（Nango 确认后自动注册连接），
   // 桌面端必须持续轮询 authorizationStatus 直到终态，否则连接永远不会登记。
   const [authorizationId, setAuthorizationId] = useState<string | null>(null)
+  const [guideProvider, setGuideProvider] = useState<string | null>(null)
+  const guided = useRef(guidedProviders())
+  // 引导关闭（偏好设置完成或跳过）→ 触发该 provider 连接的首同步。
+  // gateway 对授权新建的连接暂缓了首同步（deferFirstSync），等的就是这一刻；
+  // 手动触发失败不阻塞——轮询周期（默认 5 分钟）会兜底。
+  const closeGuide = useCallback(() => {
+    const provider = guideProvider
+    setGuideProvider(null)
+    if (!provider) return
+    void window.nxcore?.nangoConnector.status().then((status) => {
+      const connection = status.connections.find((item) => item.provider === provider)
+      if (!connection || connection.status !== 'active') return
+      const scopes = status.scopes.filter((item) => item.connectionId === connection.id)
+      return Promise.all(scopes.map((scope) => window.nxcore!.nangoConnector.triggerSync(scope.id, 'full')))
+    }).catch(() => undefined)
+  }, [guideProvider])
+  // connected 时若是该 provider 类型第一次连接——弹过滤偏好引导。
+  // "第一次"以 localStorage 记录为准（不依赖"当前有没有该类连接"：用户可能
+  // 在别的设备/早前连过，也可能授权期间切走页面错过了轮询瞬间）。
+  const maybeGuide = useCallback((provider: string) => {
+    if (!provider || guided.current.has(provider)) return
+    guided.current.add(provider)
+    markProviderGuided(provider)
+    setGuideProvider(provider)
+  }, [])
   useEffect(() => {
     if (!authorizationId) return
     let active = true
@@ -70,14 +111,31 @@ export function SourcesPage() {
       try {
         const next = await window.nxcore!.nangoConnector.authorizationStatus(authorizationId)
         if (!active) return
-        if (next.status === 'connected') { setAuthorizationId(null); setMessage(t('surface:sources.connectionCreatedSyncScopesAreBeingInitialized')) }
+        if (next.status === 'connected') {
+          setAuthorizationId(null)
+          setMessage(t('surface:sources.connectionCreatedSyncScopesAreBeingInitialized'))
+          maybeGuide(next.provider)
+        }
         else if (next.status !== 'pending') { setAuthorizationId(null); setMessage(next.error ?? t('surface:sources.authorizationWasNotCompleted')) }
       } catch { /* 网关暂不可达时继续等待 */ }
     }
     const timer = window.setInterval(() => void check(), 2_000)
     void check()
     return () => { active = false; window.clearInterval(timer) }
-  }, [authorizationId, t])
+  }, [authorizationId, maybeGuide, t])
+
+  // 存量连接补引导：页面挂载时扫一遍已有连接，某 provider 类型已连接但从未
+  // 引导过（旧版本连接的、或授权期间切走页面错过的）——补弹一次。
+  useEffect(() => {
+    void window.nxcore?.nangoConnector.status().then((status) => {
+      if (!status.enabled) return
+      for (const connection of status.connections) {
+        if (guided.current.has(connection.provider)) continue
+        maybeGuide(connection.provider)
+        break // 一次只弹一个，下一个来源页挂载时再补
+      }
+    }).catch(() => undefined)
+  }, [maybeGuide])
 
   const connectConnector = async (provider: ConnectorProviderId) => {
     setConnectMenuOpen(false)
@@ -300,6 +358,7 @@ export function SourcesPage() {
       {markdownPreview ? <MarkdownPreviewDialog preview={markdownPreview.data} onClose={() => setMarkdownPreview(null)} onShowFile={() => showFile(markdownPreview.sourceId, markdownPreview.fileId)} /> : null}
       {githubOpen ? <GitHubConnectDialog values={githubForm} busy={busyId === 'new'} onChange={setGithubForm} onClose={() => setGithubOpen(false)} onSubmit={(event) => void addGitHub(event)} /> : null}
       {markdownSource ? <MarkdownSourceDialog kind={markdownSource} value={markdownForm} busy={busyId === 'new'} onChange={setMarkdownForm} onClose={() => setMarkdownSource(null)} onSubmit={(event) => void addMarkdownSource(event)} /> : null}
+      {guideProvider ? <FilterPreferenceGuideDialog provider={guideProvider} onClose={closeGuide} /> : null}
     </div>
   )
 }

@@ -30,7 +30,9 @@ const SHUTDOWN_TIMEOUT_MS = 5_000
 // A dev hot reload may spend five seconds terminating the previous tsx process
 // before the replacement can publish its runtime manifest.
 const CONNECTION_RECOVERY_TIMEOUT_MS = 15_000
-const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 1_000 }, { quiet: true })
+// ingest 扇出期间 gateway 事件循环会被同步 sqlite 写入卡 >1s，1s 超时会把
+// 忙碌误判成宕机；这是状态轮询不是时延探测，放宽到 10s。
+const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 10_000 }, { quiet: true })
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -86,8 +88,12 @@ export class GatewaySupervisor {
 
   constructor(
     private readonly dataDirectory: string,
-    /** 注入 gateway 子进程的额外环境变量(如托管 MemoryCore 的连接信息)。 */
-    private readonly extraEnvironment: Record<string, string> = {},
+    /**
+     * 注入 gateway 子进程的额外环境变量(如托管 MemoryCore 的连接信息)。
+     * 支持 getter:每次 start() 求值——惰性 spawn 的服务(cursor-completion)
+     * 在 respawn 时拿到最新 runtime config 派生的 env。
+     */
+    private readonly extraEnvironment: Record<string, string> | (() => Record<string, string>) = {},
     private readonly options: {
       devScript?: string
       packagedEntry?: string
@@ -95,6 +101,11 @@ export class GatewaySupervisor {
       devPortEnvironment?: string
     } = {},
   ) {}
+
+  /** 子进程是否已就绪(spawn 后且拿到 manifest);getConnection 未启动会抛。 */
+  isRunning(): boolean {
+    return this.connection !== null
+  }
 
   async start(): Promise<GatewayConnection> {
     if (this.connection) return this.connection
@@ -112,10 +123,11 @@ export class GatewaySupervisor {
     const command = app.isPackaged
       ? process.execPath
       : (process.env.NXCORE_GATEWAY_PACKAGE_MANAGER ?? 'pnpm')
+    const extra = typeof this.extraEnvironment === 'function' ? this.extraEnvironment() : this.extraEnvironment
     const environment = {
       ...process.env,
       NXCORE_GATEWAY_TOKEN: token,
-      ...this.extraEnvironment,
+      ...extra,
       ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     }
     const gatewayArguments = [

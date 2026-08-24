@@ -27,7 +27,12 @@ function sourceRef(kind: string, id: string): string { return `${kind}:${id}`; }
 function textFromJson(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map(textFromJson).filter(Boolean).join(" ");
-  if (value && typeof value === "object") return Object.values(value).map(textFromJson).filter(Boolean).join(" ");
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  // Rich-text node attributes contain block UUIDs, marks, links, and editor
+  // metadata. Only the node text/content is diary evidence.
+  if (typeof record.text === "string") return record.text;
+  if (Array.isArray(record.content)) return record.content.map(textFromJson).filter(Boolean).join(" ");
   return "";
 }
 
@@ -51,8 +56,13 @@ export class DiarySourceCollector {
     const registeredVisualFileIds = new Set(this.db.select({ fileId: visualObservations.fileId })
       .from(visualObservations).all().map(({ fileId }) => fileId));
 
+    const latestDocumentVersions = new Map<string, typeof documentVersions.$inferSelect>();
     for (const row of this.db.select().from(documentVersions)
       .where(and(gte(documentVersions.createdAt, start), lt(documentVersions.createdAt, end))).all()) {
+      const previous = latestDocumentVersions.get(row.documentId);
+      if (!previous || row.createdAt > previous.createdAt) latestDocumentVersions.set(row.documentId, row);
+    }
+    for (const row of latestDocumentVersions.values()) {
       const doc = this.db.select().from(documents).where(eq(documents.id, row.documentId)).get();
       const materialized = this.yjsHistory.materialize(this.db, row.documentId, row.version);
       if (!materialized?.content) continue;
@@ -170,7 +180,11 @@ export class DiarySourceCollector {
       }
     }
 
-    if (this.memory?.query) {
+    // Atomic memory is derived context, not a second copy of today's timeline.
+    // Use it as a fallback only when no direct recording/document/file/event
+    // source exists for the day; otherwise imported historical facts swamp the
+    // real activity and create repetitive diary events.
+    if (rows.length === 0 && this.memory?.query) {
       try { rows.push(...await this.memory.query({ start, end })); }
       catch (error) {
         if (state) state.memoryFailed = true;

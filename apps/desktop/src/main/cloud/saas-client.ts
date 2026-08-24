@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { hostname } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 
@@ -19,6 +20,7 @@ import type { RealityTag } from '@nxcore/reality-contract'
 import type { AgentSession, AgentSessionSnapshot } from '@nxcore/agent-contract'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
+import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
 
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
@@ -31,6 +33,17 @@ const SUBSCRIPTION_RETRY_DELAY_MS = 30_000
 const http = createLoggedHttpClient('saas', { timeout: REQUEST_TIMEOUT_MS })
 
 export const OIDC_CALLBACK_URL = 'everroom://auth/callback'
+
+/**
+ * RFC 8252 本地回环回调:浏览器授权后直接 HTTP 302 到 127.0.0.1,不依赖自定义协议跳转。
+ * Chrome 会静默拦截无用户手势的自定义协议跳转(OAuth 重定向链内没有手势),
+ * 导致授权完成后无法自动跳回应用;回环 HTTP 回调是原生应用的标准解法。
+ * Logto 不支持通配端口,因此使用固定端口(env 可覆盖)。
+ */
+const OIDC_LOOPBACK_PORT = Number.parseInt(env('NXCORE_LOGTO_LOOPBACK_PORT', '53837'), 10) || 53837
+const OIDC_LOOPBACK_HOST = '127.0.0.1'
+const OIDC_LOOPBACK_PATH = '/auth/callback'
+const OIDC_LOOPBACK_REDIRECT_URI = `http://${OIDC_LOOPBACK_HOST}:${OIDC_LOOPBACK_PORT}${OIDC_LOOPBACK_PATH}`
 
 interface LoginResult {
   accessToken: string
@@ -83,6 +96,16 @@ export interface AgentStreamCredentials {
   url: string
   accessToken: string
   deviceId: string
+}
+
+export interface SaasRuntimeConfig {
+  schemaVersion: number
+  configVersion: number
+  source: 'global' | 'plan' | 'tenant' | 'user'
+  planCode: string
+  planName: string
+  updatedAt: string
+  config: Record<string, unknown>
 }
 
 export interface KeyringResponse {
@@ -214,9 +237,97 @@ interface PendingOidcLogin {
   state: string
   nonce: string
   codeVerifier: string
+  redirectUri: string
   resolve: (status: CloudAccountStatus) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
+}
+
+/** 一次本地回环回调监听:accept 交给上层 resolve/reject,finish 时关闭服务。 */
+interface LoopbackCallbackWaiter {
+  accept(callback: URL): void
+  finish(): void
+}
+
+function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse, handler: (callback: URL) => void): void {
+  const callback = new URL(request.url ?? '/', `http://${request.headers.host ?? OIDC_LOOPBACK_HOST}`)
+  const failed = callback.searchParams.has('error') || !callback.searchParams.has('code')
+  response.writeHead(failed ? 400 : 200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:",
+  })
+  response.end(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EverRoom · ${failed ? 'Sign-in incomplete' : 'Signed in'}</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; min-height: 100vh; display: grid; place-items: center; background: #f7f8fa; color: #202124; }
+    main { width: min(420px, calc(100vw - 40px)); padding: 36px 34px 32px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 18px 48px rgba(16, 24, 40, .08); text-align: center; }
+    .brand { display: inline-flex; align-items: center; justify-content: center; }
+    .brand img { display: block; width: 164px; height: auto; }
+    .status { width: 52px; height: 52px; margin: 34px auto 20px; display: grid; place-items: center; border-radius: 50%; background: ${failed ? '#fff1f0' : '#edf8f1'}; color: ${failed ? '#d92d20' : '#15803d'}; font-size: 25px; font-weight: 700; }
+    h1 { margin: 0; font-size: 22px; line-height: 1.3; letter-spacing: -.025em; }
+    p { margin: 10px 0 0; color: #667085; font-size: 14px; line-height: 1.6; }
+    .hint { margin-top: 24px; padding-top: 18px; border-top: 1px solid #f0f1f3; color: #98a2b3; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">
+      <img src="${everroomFullLogo}" alt="EverRoom">
+    </div>
+    <div class="status" aria-hidden="true">${failed ? '!' : '&#10003;'}</div>
+    <h1>${failed ? 'Sign-in incomplete' : 'You are signed in'}</h1>
+    <p>${failed ? 'Return to EverRoom and try signing in again.' : 'Your account is connected. You can continue in EverRoom.'}</p>
+    ${failed
+      ? '<div class="hint">Return to EverRoom to try again</div>'
+      : '<div class="hint">Redirecting to the EverRoom website in <span id="redirect-countdown">5</span> seconds</div>'}
+  </main>
+  ${failed ? '' : `<script>
+    (() => {
+      const target = 'https://r.nxcore.ai';
+      let seconds = 5;
+      const countdown = document.getElementById('redirect-countdown');
+      const timer = setInterval(() => {
+        seconds -= 1;
+        if (countdown) countdown.textContent = String(seconds);
+        if (seconds <= 0) {
+          clearInterval(timer);
+          window.location.replace(target);
+        }
+      }, 1000);
+    })();
+  </script>`}
+</body>
+</html>`)
+  // 响应先落盘再交给上层处理,保证随后的连接清理不会截断浏览器收到的页面。
+  setImmediate(() => handler(callback))
+}
+
+function startLoopbackCallbackServer(waiter: LoopbackCallbackWaiter): Promise<Server> {
+  return new Promise((resolveStart, rejectStart) => {
+    let settled = false
+    const server = createServer((request, response) => {
+      loopbackCallbackPage(request, response, (callback) => {
+        if (settled) return
+        settled = true
+        waiter.accept(callback)
+      })
+    })
+    server.once('error', rejectStart)
+    // 监听句柄不阻止进程退出;已建立的连接交给 closeIdleConnections 清理。
+    server.listen({ port: OIDC_LOOPBACK_PORT, host: OIDC_LOOPBACK_HOST, exclusive: true }, () => {
+      server.off('error', rejectStart)
+      server.on('error', () => undefined)
+      server.unref()
+      resolveStart(server)
+    })
+  })
 }
 
 export class SaasRequestError extends Error {
@@ -269,6 +380,8 @@ export class SaasClient {
   private subscriptionPromise: Promise<void> | null = null
   private initializePromise: Promise<void> | null = null
   private pendingOidcLogin: PendingOidcLogin | null = null
+  private loopbackRedirectSupported: boolean | null = null
+  private loopbackServer: Server | null = null
 
   readonly baseUrl: string
   readonly logtoIssuer: string
@@ -311,6 +424,11 @@ export class SaasClient {
     await this.initialize()
     this.requireLogin()
     return this.request<CloudDevice[]>('/app/devices')
+  }
+
+  async getRuntimeConfig(): Promise<SaasRuntimeConfig> {
+    await this.initialize()
+    return this.request<SaasRuntimeConfig>('/app/runtime-config')
   }
 
   async reportAgentStatus(input: {
@@ -360,9 +478,10 @@ export class SaasClient {
     const nonce = randomBase64Url()
     const codeVerifier = randomBase64Url(64)
     const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url')
+    const redirectUri = await this.resolveOidcRedirectUri()
     const authorizationUrl = new URL(`${this.logtoIssuer}/auth`)
     authorizationUrl.searchParams.set('client_id', this.logtoAppId)
-    authorizationUrl.searchParams.set('redirect_uri', OIDC_CALLBACK_URL)
+    authorizationUrl.searchParams.set('redirect_uri', redirectUri)
     authorizationUrl.searchParams.set('response_type', 'code')
     authorizationUrl.searchParams.set('scope', 'openid email name')
     authorizationUrl.searchParams.set('code_challenge', codeChallenge)
@@ -375,17 +494,29 @@ export class SaasClient {
       const timeout = setTimeout(() => {
         if (this.pendingOidcLogin?.state !== state) return
         this.pendingOidcLogin = null
+        this.stopLoopbackServer()
         rejectLogin(new Error('浏览器登录等待超时，请重试。'))
       }, OIDC_LOGIN_TIMEOUT_MS)
       this.pendingOidcLogin = {
         state,
         nonce,
         codeVerifier,
+        redirectUri,
         resolve: resolveLogin,
         reject: rejectLogin,
         timeout,
       }
     })
+
+    // 只有回环回调才需要提前起 HTTP 监听;everroom:// 沿用系统协议跳转。
+    if (redirectUri === OIDC_LOOPBACK_REDIRECT_URI) {
+      try {
+        await this.listenOidcLoopback()
+      } catch (error) {
+        this.cancelOidcLogin('无法启动本地回调监听。')
+        throw error
+      }
+    }
 
     try {
       await this.openExternal(authorizationUrl.toString())
@@ -396,6 +527,55 @@ export class SaasClient {
     return result
   }
 
+  /**
+   * Logto 后台注册了固定端口回环 redirect_uri 才走 HTTP 回调(每次登录探测一次并缓存),
+   * 否则回退到 everroom:// 自定义协议,保证未配置时登录流程不被破坏。
+   */
+  private async resolveOidcRedirectUri(): Promise<string> {
+    if (this.loopbackRedirectSupported !== null) {
+      return this.loopbackRedirectSupported ? OIDC_LOOPBACK_REDIRECT_URI : OIDC_CALLBACK_URL
+    }
+    try {
+      const probe = await http.get(`${this.logtoIssuer}/auth`, {
+        params: {
+          client_id: this.logtoAppId,
+          redirect_uri: OIDC_LOOPBACK_REDIRECT_URI,
+          response_type: 'code',
+          scope: 'openid email name',
+          code_challenge: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          code_challenge_method: 'S256',
+          state: 'probe',
+          nonce: 'probe',
+        },
+        validateStatus: () => true,
+        maxRedirects: 0,
+      })
+      this.loopbackRedirectSupported = probe.status !== 400
+    } catch {
+      this.loopbackRedirectSupported = false
+    }
+    return this.loopbackRedirectSupported ? OIDC_LOOPBACK_REDIRECT_URI : OIDC_CALLBACK_URL
+  }
+
+  private async listenOidcLoopback(): Promise<void> {
+    this.stopLoopbackServer()
+    const server = await startLoopbackCallbackServer({
+      accept: (callback) => this.handleOidcCallback(callback.toString()),
+      finish: () => this.stopLoopbackServer(),
+    })
+    this.loopbackServer = server
+  }
+
+  private stopLoopbackServer(): void {
+    const server = this.loopbackServer
+    this.loopbackServer = null
+    if (!server) return
+    // 浏览器(Node 19+ 与 Chrome 同)默认 keep-alive,close 只停监听不断空闲连接,
+    // closeIdleConnections 保证端口在登录结束后立即可复用。
+    server.close(() => undefined)
+    server.closeIdleConnections()
+  }
+
   handleOidcCallback(rawUrl: string): boolean {
     let callback: URL
     try {
@@ -403,9 +583,12 @@ export class SaasClient {
     } catch {
       return false
     }
-    if (callback.protocol !== 'everroom:' || callback.hostname !== 'auth' || callback.pathname !== '/callback') {
-      return false
-    }
+    const isLoopback = callback.protocol === 'http:' && callback.hostname === OIDC_LOOPBACK_HOST
+    if (
+      !isLoopback && (
+        callback.protocol !== 'everroom:' || callback.hostname !== 'auth' || callback.pathname !== '/callback'
+      )
+    ) return false
 
     const pending = this.pendingOidcLogin
     if (!pending) return true
@@ -432,6 +615,7 @@ export class SaasClient {
       return true
     }
 
+    this.stopLoopbackServer()
     void this.completeOidcLogin(code, pending)
     return true
   }
@@ -444,6 +628,7 @@ export class SaasClient {
   async logout(): Promise<CloudAccountStatus> {
     await this.initialize()
     this.cancelOidcLogin()
+    this.stopLoopbackServer()
     const refreshToken = await this.credentials.getPlainText(REFRESH_TOKEN_KEY)
     if (refreshToken) {
       await this.publicRequest('/app/auth/logout', {
@@ -735,7 +920,7 @@ export class SaasClient {
         grant_type: 'authorization_code',
         client_id: this.logtoAppId,
         code,
-        redirect_uri: OIDC_CALLBACK_URL,
+        redirect_uri: pending.redirectUri,
         code_verifier: pending.codeVerifier,
       }), {
         method: 'POST',
@@ -786,6 +971,7 @@ export class SaasClient {
     if (this.pendingOidcLogin !== pending) return
     clearTimeout(pending.timeout)
     this.pendingOidcLogin = null
+    this.stopLoopbackServer()
     pending.resolve(status)
   }
 
@@ -793,6 +979,7 @@ export class SaasClient {
     if (this.pendingOidcLogin !== pending) return
     clearTimeout(pending.timeout)
     this.pendingOidcLogin = null
+    this.stopLoopbackServer()
     pending.reject(error)
   }
 

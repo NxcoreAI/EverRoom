@@ -8,7 +8,6 @@ import {
   LoaderCircle,
   Languages,
   LockKeyhole,
-  LogIn,
   LogOut,
   Laptop,
   Mic,
@@ -19,7 +18,7 @@ import {
   Smartphone,
   WalletCards,
 } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
@@ -32,27 +31,28 @@ import {
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
-import type { AccountKeyringStatus, CloudDevice, DiarySettings, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
 import { TokenUsageSettingsSection } from '@/components/settings/TokenUsageSettingsSection'
+import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
+  { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
   { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', description: 'surface:settings.onboardingSetupDescription', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
-  { id: 'settings-diary', label: 'surface:settings.diarySchedule', description: 'surface:settings.navigationDiaryDescription', icon: CalendarClock },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
 ]
 
-type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
+type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | null
 type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, locale: AppLocale, t: Translate, rounding: 'down' | 'up' = 'down'): string {
@@ -100,8 +100,6 @@ function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): 
 export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
   const { locale, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
-  const [identifier, setIdentifier] = useState('')
-  const [password, setPassword] = useState('')
   const [pending, setPending] = useState<PendingAction>(null)
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
   const [cursorCompletionSettings, setCursorCompletionSettings] =
@@ -125,8 +123,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
   const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
   const [perceptionBusy, setPerceptionBusy] = useState(false)
-  const [diarySettings, setDiarySettings] = useState<DiarySettings | null>(null)
-  const [diaryBusy, setDiaryBusy] = useState(false)
   const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
   const [activeSetting, setActiveSetting] = useState(SETTINGS_NAV[0].id)
 
@@ -231,13 +227,11 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     void Promise.all([
       window.nxcore.screenCapture.status(),
       window.nxcore.screenCapture.perceptionSettings(),
-      window.nxcore.diary.settings(),
     ])
-      .then(([status, settings, diary]) => {
+      .then(([status, settings]) => {
         setScreenCaptureStatus(status)
         setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
         setPerceptionSettings(settings)
-        setDiarySettings(diary)
       })
       .catch(() => undefined)
   }, [])
@@ -263,20 +257,13 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     setPending(provider)
     try {
       setAccount(await window.nxcore.account.loginWithOidc(provider))
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setPending(null)
-    }
-  }
-
-  const loginWithPassword = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!window.nxcore) return
-    setPending('password')
-    try {
-      setAccount(await window.nxcore.account.login({ identifier, password }))
-      setPassword('')
+      try {
+        window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
+        window.sessionStorage.setItem('everroom:post-login-room-check', '1')
+      } catch {
+        // Session storage is optional; mounted gates still receive the event.
+      }
+      window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check'))
     } catch {
       // The preload request interceptor reports the error globally.
     } finally {
@@ -373,24 +360,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       // The preload request interceptor reports the error globally.
     } finally {
       setScreenCaptureBusy(false)
-    }
-  }
-
-  const updateDiarySettings = async (patch: Partial<Pick<DiarySettings, 'enabled' | 'localTime' | 'timezone'>>) => {
-    if (!window.nxcore || !diarySettings) return
-    setDiaryBusy(true)
-    try {
-      const settings = await window.nxcore.diary.updateSettings({
-        enabled: patch.enabled ?? diarySettings.enabled,
-        localTime: patch.localTime ?? diarySettings.localTime,
-        timezone: patch.timezone ?? diarySettings.timezone,
-        configVersion: diarySettings.configVersion,
-      })
-      setDiarySettings(settings)
-    } catch {
-      // The preload request interceptor reports configuration errors globally.
-    } finally {
-      setDiaryBusy(false)
     }
   }
 
@@ -658,39 +627,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                 : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
             </p>
 
-            <div className="cloud-login-divider"><span>{t('surface:settings.orUseYourAccountPassword')}</span></div>
-
-            <form className="cloud-login-form" onSubmit={loginWithPassword}>
-              <label>
-                <span>{t('surface:settings.emailOrPhone')}</span>
-                <input
-                  autoComplete="username"
-                  value={identifier}
-                  onChange={(event) => setIdentifier(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                <span>{t('surface:settings.password')}</span>
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                />
-              </label>
-              <button
-                className="primary-button"
-                type="submit"
-                disabled={isBusy || !identifier.trim() || !password}
-              >
-                {pending === 'password'
-                  ? <LoaderCircle className="spin" aria-hidden="true" />
-                  : <LogIn aria-hidden="true" />}
-                {t('surface:settings.signIn')}
-              </button>
-            </form>
           </div>
         )}
       </section>
@@ -730,6 +666,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
         <McpSettingsSection />
       </div>
+
+      <RuntimeConfigSettingsSection />
 
       <div id="settings-token-usage" className="settings-anchor-section settings-token-usage-group">
         <TokenUsageSettingsSection />
@@ -833,59 +771,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
             {t('surface:settings.captureCurrentWindow')}
           </button>
         </div>
-      </section>
-
-      <section id="settings-diary" className="reality-settings-section settings-anchor-section" aria-labelledby="diary-schedule-settings-title">
-        <header>
-          <span><CalendarClock aria-hidden="true" /></span>
-          <div>
-            <h2 id="diary-schedule-settings-title">{t('surface:settings.diarySchedule')}</h2>
-            <p>{t('surface:settings.diaryScheduleDescription')}</p>
-          </div>
-        </header>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.automaticDiaryGeneration')}</strong><small>{t('surface:settings.automaticDiaryGenerationDescription')}</small></div>
-          <button
-            className="settings-toggle"
-            type="button"
-            role="switch"
-            aria-label={t('surface:settings.automaticDiaryGeneration')}
-            aria-checked={Boolean(diarySettings?.enabled)}
-            disabled={diaryBusy || diarySettings === null}
-            data-active={String(Boolean(diarySettings?.enabled))}
-            onClick={() => void updateDiarySettings({ enabled: !diarySettings?.enabled })}
-          >
-            <span aria-hidden="true" />
-            {t(diarySettings?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
-          </button>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.diaryGenerationTime')}</strong><small>{t('surface:settings.diaryGenerationTimeDescription')}</small></div>
-          <input
-            type="time"
-            value={diarySettings?.localTime ?? '23:30'}
-            disabled={diaryBusy || diarySettings === null}
-            onChange={(event) => void updateDiarySettings({ localTime: event.target.value })}
-          />
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.diaryTimezone')}</strong><small>{t('surface:settings.diaryTimezoneDescription')}</small></div>
-          <select
-            value={diarySettings?.timezone ?? 'Asia/Shanghai'}
-            disabled={diaryBusy || diarySettings === null}
-            onChange={(event) => void updateDiarySettings({ timezone: event.target.value })}
-          >
-            {['Asia/Shanghai', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London', 'Europe/Berlin', 'America/Los_Angeles', 'America/New_York', 'UTC'].map((timezone) => (
-              <option key={timezone} value={timezone}>{timezone}</option>
-            ))}
-          </select>
-        </div>
-        {diarySettings?.enabled && diarySettings.nextRunAt ? (
-          <div className="reality-setting-row">
-            <div><strong>{t('surface:settings.nextDiaryGeneration')}</strong></div>
-            <time>{new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: diarySettings.timezone }).format(new Date(diarySettings.nextRunAt))}</time>
-          </div>
-        ) : null}
       </section>
 
         </main>

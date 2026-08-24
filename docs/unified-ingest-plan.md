@@ -37,7 +37,7 @@
 **目标**
 
 1. **单一入口** `POST /v1/ingest`：只收"有家"数据（本地路径或库表引用）；md 与 json 两种内容格式，任一入口进来的资料走同一条归一化管道；
-2. **格式扩展**：md / txt / html / csv / docx / xlsx / pptx / json（Tiptap 文档、会议纪要、generic 结构）→ 统一归一化为 markdown + 元数据；
+2. **格式扩展**：md / txt / html / csv / PDF / Word / Excel / PowerPoint / OpenDocument / json（Tiptap 文档、会议纪要、generic 结构）→ 统一归一化为 markdown + 元数据；
 3. **数据类型注册表**：`document / meeting-minutes / office-doc / spreadsheet / slides / html / …` 开放集合，类型由显式声明 > jsonType 映射 > 扩展名推导；
 4. **链路策略可配置**：每个数据类型可配置进入哪几条链路 `{room, wiki, memory}`（代码 defaults ⨝ 部署期配置文件，2026-08-19 修订：策略不是用户数据，无用户写入口），且单次请求可覆盖；
 5. **零原文存储**：原文的落盘/拷贝归调用方与既有上传链路，引擎只读不拥有；引擎自身仅持久化解析产物（归一化 md）与台账/策略（2026-08-18 拍板，定死）；
@@ -93,7 +93,7 @@
 | U3 | **策略快照随台账落库**：wiki 开关在**进入时**定死（ingest_events.pipelines），晋升/增量 ingest 读快照而非实时 policy | policy 事后变化不应让已进来的资料行为漂移；快照即审计 |
 | U4 | **类型注册表与 defaults 在代码、策略覆盖在配置文件**（2026-08-19 修订）：内置类型 = 识别规则 + 默认策略；覆盖项放 `<dataDir>/ingest-policies.json`，部署期改、重启生效 | 类型识别逻辑（扩展名/jsonType 映射）必须跟代码走；策略是部署配置而非用户数据，不开用户写入口 |
 | U5 | **旧端点降级为引擎薄别名，行为不变**：`/v1/knowledge/files` → `{room,wiki,memory:false}`；`/v1/memory/import/markdown` → `{memory}`；新语义只在新端点/新 UI 生效 | 存量调用方（两处桌面 UI、e2e）零回归；避免"旧入口突然开始产记忆"的行为漂移 |
-| U6 | **office/HTML 解析在 gateway 进程内做**（JS 库，见 §5.3），不引外部转换服务 | 本地优先单机部署；文件 ≤20MB 级转换是毫秒~秒级，不值得一个服务 |
+| U6 | **Office/PDF/HTML 解析由 gateway 编排**（JS 库 + 旧版 Office 的本机 LibreOffice 兼容路径，见 §5.3），不引外部转换服务 | 本地优先单机部署；文件 ≤20MB 级转换是毫秒~秒级，不值得一个服务 |
 | U7 | **归一化产物存全文（≤20MB），各链路消费时按自己的上限截断**：wiki 512KB（既有）、MemoryCore 2MB（fork 上限，超限截断+标注） | 现在 file-convert 在转换期就截到 512KB，记忆链路其实吃的是被截过的 md——统一后全文入解析产物，截断移到消费端，两条链路各得其所 |
 | U8 | **零原文存储（2026-08-18 拍板，定死）**：引擎只接收有路径或有库表引用的数据，不收无家字节/裸文本；原文的落盘与拷贝归调用方/既有上传链路；引擎自身只持久化解析产物（归一化 md，parsed_contents）+ ingest_events/policies | 引擎是纯编排层，不做第二存储所有者——上传存储已有归属，引擎收编=双写入口回归。粘贴内容由桌面端先落盘再传路径；连接器内容先入自己的表再传 ref |
 | U9 | **唯一字节入口 = 文件管理中心（modules/files）**：统一上传接口 `POST /v1/files` 是全系统接收文件字节的唯一通道；对象库 + uploaded_files/parsed_contents 从 knowledge 模块**移交** files 模块所有（模块搬家，表与磁盘零迁移）；knowledge/memory/ingest 一律经它存取 | 现状两个上传入口各自调 file-storage 原语 = 事实上的双写入口；收敛为一个模块一个 API，文件管理应用（§8）才有单一事实源可管理，U8 的"原文归别人管"才有正牌的"别人" |
@@ -113,13 +113,13 @@ interface DataTypeDef {
 
 | key | label | 识别 | 默认 {room, wiki, memory} | 默认的理由 |
 | --- | --- | --- | --- | --- |
-| `document` | 文档 | `.md` `.markdown` `.txt` | ✓ ✓ ✓ | 通用缺省类型：全链路 |
+| `document` | 文档 | `.md` `.markdown` `.txt` `.pdf` | ✓ ✓ ✓ | 通用缺省类型：全链路 |
 | `meeting-minutes` | 会议纪要 | jsonType=`meeting-minutes`（reality_events 适配器也发它） | ✓ ✓ ✓ | 纪要=典型多链路资料：实体（人物/议题）、知识页、事实记忆都要 |
-| `office-doc` | Office 文档 | `.docx`（`.doc` 提示转存） | ✓ ✓ ✓ | 与 document 同语义 |
-| `spreadsheet` | 表格 | `.xlsx` `.csv` | ✓ ✓ ✗ | 表格抽 L1 原子意义低（数值矩阵），实体与知识页仍有价值 |
-| `slides` | 幻灯片 | `.pptx` | ✓ ✓ ✗ | 同上（大纲文本进记忆噪音大） |
+| `office-doc` | Office 文档 | Word/Writer：`.doc/.docx/.docm/.dot*`、`.rtf/.odt` | ✓ ✓ ✓ | 与 document 同语义 |
+| `spreadsheet` | 表格 | Excel/Calc：`.xls/.xlsx/.xlsm/.xlsb/.xlt*`、`.xla*`、`.ods/.csv` | ✓ ✓ ✗ | 表格抽 L1 原子意义低（数值矩阵），实体与知识页仍有价值 |
+| `slides` | 幻灯片 | PowerPoint/Impress：`.ppt/.pptx/.pptm/.pot*/.pps*/.sld*`、`.odp` | ✓ ✓ ✗ | 同上（大纲文本进记忆噪音大） |
 | `html` | 网页 | `.html` `.htm` | ✓ ✓ ✗ | 网页剪藏噪音大，记忆默认关 |
-| （后续）`mail` / `cloud-doc` / `pdf` / `web-clip` | —— | 连接器信封 / `.pdf` / 剪藏 | —— | 注册表开放，加一行 + 一个 normalizer |
+| （后续）`mail` / `cloud-doc` / `web-clip` | —— | 连接器信封 / 剪藏 | —— | 注册表开放，加一行 + 一个 normalizer |
 
 - **识别优先级**：请求显式 `dataType` > `jsonType` 映射 > 扩展名注册表 > （都不中）md 嗅探成功 → `document`；未知扩展名且非 md/json → 422 `unsupported_type`（附支持列表）；
 - **未识别不猜**：不做 LLM 类型嗅探（U1 零 LLM）；json 载荷不带 jsonType 时按结构特征嗅探（`type:"doc"+content` → tiptap；有 `transcript|decisions|actionItems` → meeting-minutes；其余 → generic）。
@@ -191,12 +191,13 @@ md 内容即归一化输入（标题 = 显式 `title` > 文件名去扩展名，
 | `.xlsx` | exceljs | 每 sheet → md 表格（sheet 名作二级标题；行数 >500 截断标注） | 合并单元格展平 |
 | `.csv` | 内置（按分隔符切） | 单表 → md 表格 | 同上 |
 | `.pptx` | jszip + XML 遍历（`a:t` 文本游程） | 每页 → `## 第 N 页：标题` + 大纲文本 | 版式/图示丢失，标注 |
+| `.pdf` | unpdf（PDF.js） | 每页 → `## 第 N 页` + 文本层 | 扫描件无文本层时提示先 OCR |
 | `.txt` | 直通 | 内容即 md | —— |
 | `.html/.htm` | turndown | HTML → md | script/style 剥离 |
-| `.doc` / `.xls`(旧版二进制) | —— | —— | 422 提示转存为新版格式（不引重解析依赖） |
+| 旧版二进制与 ODF（`.doc/.xls/.ppt/.rtf/.odt/.ods/.odp` 等） | 本机 LibreOffice headless → OOXML/HTML → 上述转换器 | 与对应新版格式一致 | 缺少 LibreOffice 时返回明确的 `convert_failed` |
 
 - 上限沿用 `MAX_UPLOAD_BYTES = 20MB`；转换失败 → 422 `convert_failed`（错误码沿用 FileConvertError）；
-- 新依赖全部进 `apps/gateway`：mammoth、turndown、exceljs、jszip（纯 JS、无原生编译，Windows 免编译关注）。
+- 新依赖全部进 `apps/gateway`：mammoth、turndown、exceljs、jszip、unpdf（纯 JS、无原生编译，Windows 免编译关注）；旧版 Office 可选依赖本机 LibreOffice。
 
 ### 5.4 消费端截断（U7）
 
@@ -382,19 +383,19 @@ engine.ingest(input):                       // input.source = path | ref（此�
 | --- | --- | --- |
 | **F 文件中心**（先行，约 3~4 天） | modules/files 抽取（对象库 + 两表自 knowledge 移交）+ `POST /v1/files` 统一上传 + 管理 API + 删除级联与对象库 GC + knowledge/memory 改依赖 | 任何入口上传的字节都经 /v1/files 入库且幂等；两旧上传入口对外行为不变（内部换实现）；WikiPane/MemoryPage 读新端点正常 |
 | **U1 引擎核心**（约 1 周） | modules/ingest（md + 三种 json 的归一化、类型注册表、policy/台账、扇出）+ `/v1/ingest` 全套 REST + 旧端点别名 + knowledge/memory 两处小改 | 一次 POST /v1/ingest（json 会议纪要）：实体池出现候选实体 + MemoryPage 出现文档与派生 L1 + 台账可查；改策略后新上传行为随策略变；既有 e2e 全绿 |
-| **U2 格式扩展**（约 1 周） | office/html/csv/txt 转换器 + 扩展名识别 + 20MB 上限与消费端截断 + desktop 文件选择放宽 | docx/xlsx/pptx/csv 上传三链路产物正确；>512KB 内容 wiki 截断标注、>2MB 记忆截断标注；`.doc` 422 提示 |
+| **U2 格式扩展**（约 1 周） | office/pdf/html/csv/txt 转换器 + 扩展名识别 + 20MB 上限与消费端截断 + desktop 文件选择放宽 | Office/PDF/csv 上传三链路产物正确；>512KB 内容 wiki 截断标注、>2MB 记忆截断标注；旧版 Office 缺少 LibreOffice 时明确提示 |
 | **U3 桌面统一入口 + 文件管理页** | 统一导入对话框（类型+三开关）+ **文件管理页 FilesPage**（上传/列表/用途徽标/预览/删除/进入链路）+ 入口收敛 + 导入记录视图 | 三处入口同一对话框；文件页可见全部受管文件且用途徽标正确；导入记录可见各链路去向 |
-| **U4 连接器与扩展**（不承诺） | reality_events（ASR 实录）→ meeting-minutes 适配器；邮件/云盘信封；pdf | 连接器按 json 契约接入零引擎改动 |
+| **U4 连接器与扩展**（不承诺） | reality_events（ASR 实录）→ meeting-minutes 适配器；邮件/云盘信封 | 连接器按 json 契约接入零引擎改动 |
 
 ## 13. 风险与对策
 
 | 风险 | 对策 |
 | --- | --- |
-| office 转换保真度（表格/公式/图示丢失） | 转换说明标注 + 预览确认（U3 对话框先预览归一化 md 再提交）；doc/xls 老格式直接拒 |
+| Office/PDF 转换保真度（表格/公式/图示/扫描页丢失） | 转换说明标注 + 预览确认；旧版 Office 走 LibreOffice，扫描 PDF 无文本层时提示 OCR |
 | 大文件 × memory=on 的 L1 噪音（批量导入手册类文档） | 类型默认策略先保守（表格/幻灯片/网页 memory=off）；2MB 截断上限；MemoryCore 侧 L2/L3 都已排除文档派生（fork 91c967a） |
 | wiki 快照过滤与补账账本（evidence.rooms）交互 | link-only 源进账本标 skip 语义不变；补账按"本房本文件"判定，快照 off 的源永远不落 raw，账本不误跳 |
 | path 输入稳定性（文件被移动/删除） | 调用方负责内容有家（U8）；引擎读取失败明确 4xx + 台账记 failed；重试只需新路径，hash 判重保证不重复入链路 |
-| 新依赖供应链（mammoth/turndown/exceljs/jszip） | 全部纯 JS、主流维护中、无原生编译；pnpm 审计过再进 |
+| 新依赖供应链（mammoth/turndown/exceljs/jszip/unpdf） | 全部纯 JS、主流维护中、无原生编译；pnpm 审计过再进 |
 | MemoryCore 2MB/2000 块硬限 | 引擎消费端先截（§5.4），fork 拒绝时错误透传给台账 |
 | 类型识别错（csv 被当 document 等） | 识别规则全确定性可解释；UI 可改类型；台账记录识别依据，错案可追 |
 | 对象库 GC 误删（内容寻址 blob 被多文件共享） | 仅删引用计数为 0 的 blob；GC 为维护操作，可手动触发并输出删除报告 |

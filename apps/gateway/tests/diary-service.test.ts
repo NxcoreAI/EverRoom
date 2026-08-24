@@ -8,14 +8,15 @@ import {
   connectorCalendarEvents,
   connectorDocuments,
   connectorEmails,
-  diaryVersionSources,
-  documentVersions,
   documents,
+  documentVersions,
+  diaryVersionSources,
   entities,
   entityDocLinks,
   uploadedFiles,
   visualNodes,
   visualObservations,
+  roomDocumentLinks,
 } from "../src/infrastructure/database/schema.js";
 import { YjsHistoryService } from "../src/modules/documents/core/yjs-history-service.js";
 import { DiarySourceCollector } from "../src/modules/diary/source-collector.js";
@@ -46,6 +47,48 @@ afterEach(async () => {
 });
 
 describe("DiaryService", () => {
+  it("keeps only the latest document version and excludes rich-text UUID metadata", async () => {
+    const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => {
+      expect(input.sources).toHaveLength(1);
+      expect(input.sources[0]?.evidenceSummary).toContain("无限的故事");
+      expect(input.sources[0]?.evidenceSummary).toContain("名字的由来");
+      expect(input.sources[0]?.evidenceSummary).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27,}/i);
+      return {
+        headline: "文档记录", summary: "完成文档更新", reflection: "", range: input.range,
+        events: [{ time: input.sources[0]!.occurredAt, title: "编写文档", summary: input.sources[0]!.evidenceSummary, sourceRefs: [input.sources[0]!.sourceId] }],
+        closing: "",
+      };
+    });
+    const { database, service } = await setup({ model: "test", generate });
+    const documentId = "doc-infinite-story";
+    database.db.insert(documents).values({
+      id: documentId, title: "无限的故事", contentJson: {}, version: 2, status: "active", createdAt: NOW, updatedAt: NOW,
+    }).run();
+    database.db.insert(documentVersions).values([
+      {
+        id: "doc-version-old", documentId, version: 1, title: "无限的故事",
+        contentJson: { type: "doc", content: [{ type: "paragraph", attrs: { id: "11111111-1111-4111-8111-111111111111" }, content: [{ type: "text", text: "旧内容" }] }] },
+        createdAt: new Date("2026-08-20T10:00:00.000Z"),
+      },
+      {
+        id: "doc-version-latest", documentId, version: 2, title: "无限的故事",
+        contentJson: { type: "doc", content: [{ type: "heading", attrs: { id: "22222222-2222-4222-8222-222222222222" }, content: [{ type: "text", text: "名字的由来" }] }] },
+        createdAt: new Date("2026-08-20T11:00:00.000Z"),
+      },
+    ]).run();
+    database.db.insert(roomDocumentLinks).values({ roomId: "room-writing", documentId }).run();
+
+    service.createRun("2026-08-20");
+    await service.drain();
+
+    expect(generate).toHaveBeenCalledOnce();
+    expect(service.getDay("2026-08-20").sources[0]).toMatchObject({
+      documentId,
+      roomId: "room-writing",
+      realityEventId: null,
+    });
+  });
+
   it("creates an empty immutable version without invoking the generator when no sources exist", async () => {
     const generate = vi.fn(async () => { throw new Error("must not be called"); });
     const { service } = await setup({ generate });
@@ -85,6 +128,19 @@ describe("DiaryService", () => {
 
     expect(secondRunId).toBe(firstRunId);
     expect(service.getActiveRun()).toMatchObject({ id: firstRunId, status: "pending" });
+  });
+
+  it("queues the current local day immediately when scheduled generation is enabled", async () => {
+    const { service } = await setup();
+    service.createRun("2026-08-20", "manual");
+    await service.drain();
+    service.updateSettings({ enabled: true, localTime: "23:30" });
+
+    const runId = service.ensureCurrentDayRun();
+
+    expect(runId).toEqual(expect.any(String));
+    expect(service.getRun(runId!)).toMatchObject({ date: "2026-08-20", trigger: "scheduled" });
+    expect(service.ensureCurrentDayRun()).toBeNull();
   });
 
   it("limits source reads to the run manifest and marks a ready day stale after source changes", async () => {
@@ -335,12 +391,10 @@ describe("DiaryService", () => {
     );
     const documentSources = sources.filter((source) => source.kind === "document_version");
 
-    expect(documentSources.map((source) => source.content)).toEqual([
-      "doc paragraph text 第一版正文",
-      "doc paragraph text 第二版正文",
-    ]);
+    expect(documentSources.map((source) => source.content)).toEqual(["第二版正文"]);
+    expect(documentSources[0]?.sourceId).toBe("document_version:dv-2");
     expect(documentSources.some((source) => source.sourceId === "document_version:dv-broken")).toBe(false);
-    expect(documentSources.map((source) => source.fingerprint).length).toBe(2);
+    expect(documentSources.map((source) => source.fingerprint).length).toBe(1);
   });
 
   it("treats ranges as half-open and reads manifest summaries when full content is unavailable", async () => {

@@ -3,13 +3,14 @@ import {
   ChevronDown,
   Clock3,
   Inbox,
-  Link2,
   LoaderCircle,
   MessageCircle,
   RefreshCw,
   Sparkles,
   Undo2,
   Upload,
+  EyeOff,
+  RotateCcw,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -17,28 +18,12 @@ import { showToast } from '@/state/toast';
 import { useLocale } from '../../../../i18n/LocaleContext';
 import type { Translate } from '../../../../i18n/LocaleContext';
 import {
-  KNOWLEDGE_ENTITY_KINDS,
   type KnowledgeDecisionDto,
   type KnowledgeEntityDto,
   type KnowledgePromotionProgressDto,
-  type KnowledgeUnmatchedItemDto,
 } from '../../../../../../shared/knowledge';
 import { localizedUiText } from '../adapters';
 import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
-
-const SOURCE_KIND_LABELS: Record<string, string> = {
-  'everroom-doc': 'contextRoom:wiki.roomDocument',
-  'reality-event': 'contextRoom:wiki.meetingTranscript',
-  mail: 'contextRoom:display.email',
-  file: 'contextRoom:display.file',
-  'cloud-doc': 'contextRoom:wiki.cloudDocument',
-};
-
-const NEW_ENTITY = '__new__';
-
-function sourceKindLabel(kind: string): string {
-  return SOURCE_KIND_LABELS[kind] ?? kind;
-}
 
 function promotionPercent(progress: KnowledgePromotionProgressDto): number {
   if (progress.status === 'completed') return 100;
@@ -76,16 +61,14 @@ const RECOMMEND_LIMIT = 3;
 
 /**
  * 推荐 Room 面板（entity-room-plan 推荐确认制）：达阈值实体进 ready
- * 推荐池，用户确认后才创建 Room；未识别栏/最近归类保持人工治理入口。
+ * 推荐池，用户确认后才创建 Room；最近归类保留人工治理入口。
+ * 未识别栏已移除——不做人工挂载实体，资料证据自然累积进推荐池。
  */
 export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => void }) {
   const { t } = useLocale();
   const [recommended, setRecommended] = useState<KnowledgeEntityDto[]>([]);
-  const [attachPool, setAttachPool] = useState<KnowledgeEntityDto[]>([]);
-  const [unmatched, setUnmatched] = useState<KnowledgeUnmatchedItemDto[]>([]);
   const [recent, setRecent] = useState<KnowledgeDecisionDto[]>([]);
-  const [attachSelection, setAttachSelection] = useState<Record<string, string>>({});
-  const [attachDrafts, setAttachDrafts] = useState<Record<string, { name: string; kind: string }>>({});
+  const [suppressed, setSuppressed] = useState<KnowledgeEntityDto[]>([]);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -96,13 +79,11 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
     const knowledge = window.nxcore?.knowledge;
     if (!knowledge) return;
     try {
-      // ready = 推荐池；weak+room 仅供未识别栏挂载下拉（该区块不动）
-      const [ready, promoting, weak, rooms, unmatchedData, recentData] = await Promise.all([
+      const [ready, promoting, rooms, suppressedData, recentData] = await Promise.all([
         knowledge.listEntities('ready'),
         knowledge.listEntities('promoting'),
-        knowledge.listEntities('weak'),
         knowledge.listEntities('room'),
-        knowledge.listUnmatched(),
+        knowledge.listEntities('suppressed'),
         knowledge.listRecentDecisions(10),
       ]);
       const promotionActive = (entity: KnowledgeEntityDto) =>
@@ -120,9 +101,8 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
         ...activePromotions,
         ...failedFirst.filter((entity) => !activeIds.has(entity.id)).slice(0, RECOMMEND_LIMIT),
       ]);
-      setAttachPool([...weak.items, ...rooms.items]);
-      setUnmatched(unmatchedData.items);
       setRecent(recentData.items);
+      setSuppressed(suppressedData.items);
       setLoaded(true);
       const previous = activePromotionsRef.current;
       const completed = rooms.items.filter((entity) =>
@@ -215,30 +195,16 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
       }
     });
 
-  const attach = (item: KnowledgeUnmatchedItemDto) =>
-    runBusy(`attach:${item.decisionId}`, async () => {
-      const knowledge = window.nxcore?.knowledge;
-      if (!knowledge) return;
-      const selection = attachSelection[item.decisionId] ?? '';
-      const draft = attachDrafts[item.decisionId];
-      try {
-        if (selection === NEW_ENTITY) {
-          if (!draft?.name?.trim()) {
-            showToast({ title: t('contextRoom:knowledgePending.enterEntityName') });
-            return;
-          }
-          await knowledge.attachDoc(item.sourceKind, item.sourceId, {
-            createEntity: { name: draft.name.trim(), kind: draft.kind },
-          });
-          showToast({ title: t('contextRoom:knowledgePending.attached'), message: t('contextRoom:knowledgePending.manualEvidenceAddedForName', { name: draft.name.trim() }) });
-        } else if (selection) {
-          await knowledge.attachDoc(item.sourceKind, item.sourceId, { entityId: selection });
-          showToast({ title: t('contextRoom:knowledgePending.attached'), message: t('contextRoom:knowledgePending.resourceAddedAsManualEvidence') });
-        }
-      } catch (cause) {
-        showToast({ title: t('contextRoom:knowledgePending.attachmentFailed'), message: cause instanceof Error ? cause.message : undefined });
-        throw cause;
-      }
+  const deferCreate = (entity: KnowledgeEntityDto) =>
+    runBusy(`entity:${entity.id}:suppress`, async () => {
+      await window.nxcore?.knowledge?.suppressEntity(entity.id);
+      showToast({ title: t('contextRoom:knowledgePending.creationDeferred'), message: t('contextRoom:knowledgePending.topicWillNotBeRecommendedAgain', { name: entity.name }) });
+    });
+
+  const restoreCreate = (entity: KnowledgeEntityDto) =>
+    runBusy(`entity:${entity.id}:restore`, async () => {
+      await window.nxcore?.knowledge?.restoreSuppressedEntity(entity.id);
+      showToast({ title: t('contextRoom:knowledgePending.recommendationRestored'), message: entity.name });
     });
 
   const revert = (item: KnowledgeDecisionDto) =>
@@ -378,6 +344,17 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
                       ? promotion?.status === 'queued' ? 'contextRoom:knowledgePending.queued' : 'contextRoom:knowledgePending.creating'
                       : promotion?.status === 'failed' ? 'contextRoom:knowledgePending.retryCreation' : 'contextRoom:knowledgePending.create')}
                   </button>
+                  {!promotionActive ? (
+                    <button
+                      type="button"
+                      className="context-room-knowledge-defer"
+                      disabled={busy.has(`entity:${entity.id}:suppress`)}
+                      onClick={() => void deferCreate(entity)}
+                    >
+                      <EyeOff aria-hidden="true" />
+                      {t('contextRoom:knowledgePending.deferCreation')}
+                    </button>
+                  ) : null}
                 </footer>
               </article>
             );
@@ -385,79 +362,18 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
         </div>
       )}
 
-      {unmatched.length > 0 ? (
-        <div className="context-room-knowledge-list">
-          <h3 className="context-room-knowledge-group">{t('contextRoom:knowledgePending.unrecognizedResourcesWaitingForAttachment')}</h3>
-          {unmatched.map((item) => {
-            const selection = attachSelection[item.decisionId] ?? '';
-            const draft = attachDrafts[item.decisionId];
-            return (
-              <article key={item.decisionId} className="context-room-knowledge-card" data-state="unmatched">
-                <header>
-                  <strong>{item.title}</strong>
-                  <span className="context-room-knowledge-tag">{t(sourceKindLabel(item.sourceKind))}</span>
-                </header>
-                {item.reason ? <p className="context-room-knowledge-reason">{item.reason}</p> : null}
-                {item.summary ? <p className="context-room-knowledge-summary">{item.summary}</p> : null}
-                <div className="context-room-knowledge-attach">
-                  <Link2 aria-hidden="true" />
-                  <select
-                    className="context-room-knowledge-select"
-                    value={selection}
-                    onChange={(event) => setAttachSelection((current) => ({
-                      ...current,
-                      [item.decisionId]: event.target.value,
-                    }))}
-                  >
-                    <option value="">{t('contextRoom:knowledgePending.attachToEntity')}</option>
-                    {attachPool.map((entity) => (
-                      <option key={entity.id} value={entity.id}>
-                        {t('contextRoom:knowledgePending.entityWithStatus', { name: entity.name, status: t(entity.status === 'room' ? 'contextRoom:knowledgePending.promoted' : 'contextRoom:knowledgePending.incubating') })}
-                      </option>
-                    ))}
-                    <option value={NEW_ENTITY}>{t('contextRoom:knowledgePending.newEntity')}</option>
-                  </select>
-                  <button
-                    type="button"
-                    className="context-room-knowledge-confirm"
-                    disabled={!selection || busy.has(`attach:${item.decisionId}`)}
-                    onClick={() => void attach(item)}
-                  >
-                    {t('contextRoom:knowledgePending.attach')}
-                  </button>
-                </div>
-                {selection === NEW_ENTITY ? (
-                  <div className="context-room-knowledge-newentity">
-                    <input
-                      type="text"
-                      placeholder={t('contextRoom:knowledgePending.entityName')}
-                      value={draft?.name ?? ''}
-                      onChange={(event) => setAttachDrafts((current) => ({
-                        ...current,
-                        [item.decisionId]: {
-                          name: event.target.value,
-                          kind: current[item.decisionId]?.kind ?? KNOWLEDGE_ENTITY_KINDS[4],
-                        },
-                      }))}
-                    />
-                    <select
-                      className="context-room-knowledge-select"
-                      value={draft?.kind ?? KNOWLEDGE_ENTITY_KINDS[4]}
-                      onChange={(event) => setAttachDrafts((current) => ({
-                        ...current,
-                        [item.decisionId]: { name: current[item.decisionId]?.name ?? '', kind: event.target.value },
-                      }))}
-                    >
-                      {KNOWLEDGE_ENTITY_KINDS.map((kind) => (
-                        <option key={kind} value={kind}>{localizedUiText(kind, t)}</option>
-                      ))}
-                    </select>
-                  </div>
-                ) : null}
-              </article>
-            );
-          })}
-        </div>
+      {suppressed.length > 0 ? (
+        <details className="context-room-knowledge-history context-room-knowledge-suppressed">
+          <summary><span>{t('contextRoom:knowledgePending.deferredTopics')}</span><small>{suppressed.length}</small><ChevronDown aria-hidden="true" /></summary>
+          <div className="context-room-knowledge-history-content">
+            {suppressed.map((entity) => (
+              <div key={entity.id} className="context-room-knowledge-recent-row">
+                <span className="context-room-knowledge-recent-title">{entity.name}</span>
+                <button type="button" className="context-room-knowledge-defer" disabled={busy.has(`entity:${entity.id}:restore`)} onClick={() => void restoreCreate(entity)}><RotateCcw aria-hidden="true" />{t('contextRoom:knowledgePending.restoreRecommendation')}</button>
+              </div>
+            ))}
+          </div>
+        </details>
       ) : null}
 
       {recent.length > 0 ? (

@@ -33,6 +33,16 @@ export const gatewayMetadata = sqliteTable("gateway_metadata", {
     .$defaultFn(() => new Date()),
 });
 
+export const runtimeConfigStore = sqliteTable("runtime_config_store", {
+  source: text("source", { enum: ["user", "saas"] }).primaryKey(),
+  payload: text("payload", { mode: "json" }).notNull(),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  configVersion: integer("config_version").notNull().default(1),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const jobs = sqliteTable(
   "jobs",
   {
@@ -906,7 +916,7 @@ export const entities = sqliteTable(
     /** 晋升时"转正登记"一次性综合产出（弱期为 NULL——依据句日志即事实源，ED7）。 */
     summary: text("summary"),
     status: text("status", {
-      enum: ["weak", "ready", "promoting", "room", "archived"],
+      enum: ["weak", "ready", "promoting", "room", "archived", "suppressed"],
     }).notNull().default("weak"),
     /** 晋升后回填 rooms.id。 */
     roomId: text("room_id"),
@@ -1358,6 +1368,32 @@ export const diarySchedules = sqliteTable("diary_schedules", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
 });
 
+/** User-managed Agent schedules. Built-in tasks (for example diary.daily)
+ * remain outside this table and are exposed by the scheduler as immutable
+ * records. */
+export const agentSchedules = sqliteTable(
+  "agent_schedules",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    prompt: text("prompt").notNull(),
+    scheduleType: text("schedule_type", { enum: ["daily"] }).notNull().default("daily"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    localTime: text("local_time").notNull().default("09:00"),
+    timezone: text("timezone").notNull().default("UTC"),
+    nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
+    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
+    lastStatus: text("last_status", { enum: ["pending", "running", "completed", "failed"] }),
+    lastError: text("last_error"),
+    configVersion: integer("config_version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("agent_schedules_due_idx").on(table.enabled, table.nextRunAt)],
+);
+
 export const diaryDays = sqliteTable(
   "diary_days",
   {
@@ -1521,6 +1557,11 @@ export const ingestEvents = sqliteTable(
     /** 过滤器判定 json {informative, reason, category, confidence}（含 bypassed 的失败说明）。 */
     filterVerdict: text("filter_verdict", { mode: "json" })
       .$type<IngestFilterVerdict>(),
+    /**
+     * 误杀恢复时间戳（POST reinstate 写入）：用户明确表达"过滤器拦错了"的
+     * 精确记录——洞察 job 的误杀样本只认这列，不拿 verdict 近似。
+     */
+    reinstatedAt: integer("reinstated_at", { mode: "timestamp_ms" }),
     /** file | paste-file | connector | reality | everroom-doc | upload */
     originChannel: text("origin_channel").notNull().default("upload"),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),

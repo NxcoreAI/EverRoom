@@ -46,9 +46,13 @@ export class AsrService {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly inputDir: string,
-    private readonly provider: AsrProvider | null,
+    private provider: AsrProvider | null,
     private readonly logger?: Logger,
   ) {}
+
+  replaceProvider(provider: AsrProvider | null): void {
+    this.provider = provider;
+  }
 
   async dispose(): Promise<void> {
     await Promise.allSettled(this.inFlight);

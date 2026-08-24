@@ -8,7 +8,7 @@ import axios, {
   type CreateAxiosDefaults,
   type InternalAxiosRequestConfig,
 } from 'axios'
-import { logDesktop } from '../logging/desktop-logger'
+import { desktopLogThreshold, logDesktop } from '../logging/desktop-logger'
 
 interface RequestMetadata {
   requestId: string
@@ -54,6 +54,10 @@ function payloadSummary(data: unknown): string | undefined {
 }
 
 function log(level: 'debug' | 'info' | 'warn' | 'error', event: Record<string, unknown>): void {
+  const threshold = desktopLogThreshold('axios')
+  if (threshold === 'off') return
+  const order = { debug: 10, info: 20, warn: 30, error: 40 } as const
+  if (order[level] < order[threshold]) return
   logDesktop('axios', level, event)
 }
 

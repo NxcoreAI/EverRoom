@@ -989,6 +989,13 @@
   "onboarding.success": "Your first Room is created",
   "onboarding.successBody": "The context is in place. The file app will keep recognizing supported files in Documents and Desktop in the background; add other folders from Sources.",
   "onboarding.ready": "Ready",
+  "onboarding.allReady": "Everything is ready",
+  "onboarding.allReadyBody": "Your memory and Room are ready. You can start using EverRoom.",
+  "onboarding.existingRooms": "{count} Room(s) already exist",
+  "onboarding.existingRoomsBody": "You can create another Room, or skip to file recognition setup.",
+  "onboarding.existingRoomsSkip": "{count} Room(s) already exist, skip",
+  "onboarding.createLater": "Create later",
+  "onboarding.enterEverRoom": "Enter EverRoom",
   "onboarding.next": "Next",
   "onboarding.successNext": "Turn the idea into a workspace that keeps moving",
   "onboarding.memoryReady": "Room context connected",
@@ -1064,15 +1071,21 @@
   "documentHistory.removed": "Removed",
   "documentHistory.exitDiff": "Exit diff",
   "documentHistory.restore": "Restore this version",
-  "documentHistory.diffAria": "Document history diff"
-  ,"documentHistory.loading": "Loading..."
-  ,"documentHistory.loadEarlier": "Load earlier versions"
-  ,"documentHistory.earlierLoadingFailed": "Failed to load earlier history"
-  ,"documentHistory.truncated": "Document is large; showing a summary"
-  ,"documentHistory.restoreSucceeded": "Restored V{version}"
-  ,"documentHistory.restoreCreatedVersion": "Created new version V{version}"
-  ,"documentHistory.documentUpdated": "Document updated"
-  ,"documentHistory.refreshedBeforeRestore": "Refreshed to V{version}. Confirm the restore again."
-  ,"documentHistory.restoreFailed": "Restore failed"
-  ,"documentHistory.versionChangedRetry": "The document version changed. Refresh and try again."
+  "documentHistory.diffAria": "Document history diff",
+  "documentHistory.loading": "Loading...",
+  "documentHistory.loadEarlier": "Load earlier versions",
+  "documentHistory.earlierLoadingFailed": "Failed to load earlier history",
+  "documentHistory.truncated": "Document is large; showing a summary",
+  "documentHistory.restoreSucceeded": "Restored V{version}",
+  "documentHistory.restoreCreatedVersion": "Created new version V{version}",
+  "documentHistory.documentUpdated": "Document updated",
+  "documentHistory.refreshedBeforeRestore": "Refreshed to V{version}. Confirm the restore again.",
+  "documentHistory.restoreFailed": "Restore failed",
+  "documentHistory.versionChangedRetry": "The document version changed. Refresh and try again.",
+  "knowledgePending.deferCreation": "Not now",
+  "knowledgePending.creationDeferred": "Creation deferred",
+  "knowledgePending.topicWillNotBeRecommendedAgain": "{name} will not be recommended for a Room again.",
+  "knowledgePending.deferredTopics": "Deferred topics",
+  "knowledgePending.restoreRecommendation": "Restore",
+  "knowledgePending.recommendationRestored": "Recommendation restored"
 }

@@ -989,6 +989,13 @@
   "onboarding.success": "你的第一个 Room 已创建",
   "onboarding.successBody": "背景已经准备好。文件应用会在后台持续识别文稿和桌面中的支持格式；其他目录可在“数据源”中添加。",
   "onboarding.ready": "已就绪",
+  "onboarding.allReady": "都已就绪",
+  "onboarding.allReadyBody": "记忆和 Room 都已准备好，可以开始使用 EverRoom。",
+  "onboarding.existingRooms": "已有 {count} 个 Room",
+  "onboarding.existingRoomsBody": "你可以继续创建新的 Room，也可以跳过并进入下一步文件识别设置。",
+  "onboarding.existingRoomsSkip": "已有 {count} 个 Room，跳过",
+  "onboarding.createLater": "稍后创建",
+  "onboarding.enterEverRoom": "进入 EverRoom",
   "onboarding.next": "下一步",
   "onboarding.successNext": "把想法变成持续推进的工作空间",
   "onboarding.memoryReady": "Room 上下文已连接",
@@ -1064,15 +1071,21 @@
   "documentHistory.removed": "删除",
   "documentHistory.exitDiff": "退出 Diff",
   "documentHistory.restore": "回滚到此版本",
-  "documentHistory.diffAria": "历史版本对比"
-  ,"documentHistory.loading": "正在加载..."
-  ,"documentHistory.loadEarlier": "加载更早版本"
-  ,"documentHistory.earlierLoadingFailed": "更早历史加载失败"
-  ,"documentHistory.truncated": "文档较大，已切换为摘要"
-  ,"documentHistory.restoreSucceeded": "已回滚到 V{version}"
-  ,"documentHistory.restoreCreatedVersion": "已生成新版本 V{version}"
-  ,"documentHistory.documentUpdated": "文档已更新"
-  ,"documentHistory.refreshedBeforeRestore": "已刷新到 V{version}，请重新确认回滚"
-  ,"documentHistory.restoreFailed": "回滚失败"
-  ,"documentHistory.versionChangedRetry": "文档版本已经变化，请刷新后重试"
+  "documentHistory.diffAria": "历史版本对比",
+  "documentHistory.loading": "正在加载...",
+  "documentHistory.loadEarlier": "加载更早版本",
+  "documentHistory.earlierLoadingFailed": "更早历史加载失败",
+  "documentHistory.truncated": "文档较大，已切换为摘要",
+  "documentHistory.restoreSucceeded": "已回滚到 V{version}",
+  "documentHistory.restoreCreatedVersion": "已生成新版本 V{version}",
+  "documentHistory.documentUpdated": "文档已更新",
+  "documentHistory.refreshedBeforeRestore": "已刷新到 V{version}，请重新确认回滚",
+  "documentHistory.restoreFailed": "回滚失败",
+  "documentHistory.versionChangedRetry": "文档版本已经变化，请刷新后重试",
+  "knowledgePending.deferCreation": "暂不创建",
+  "knowledgePending.creationDeferred": "已暂不创建",
+  "knowledgePending.topicWillNotBeRecommendedAgain": "“{name}”后续不会再次进入 Room 推荐。",
+  "knowledgePending.deferredTopics": "暂不创建的主题",
+  "knowledgePending.restoreRecommendation": "恢复推荐",
+  "knowledgePending.recommendationRestored": "已恢复推荐"
 }
