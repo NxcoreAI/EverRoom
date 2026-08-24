@@ -283,6 +283,17 @@ export function agentRoutes(
                   affinity: Type.Literal("after"),
                 })),
               })),
+              attachments: Type.Optional(Type.Array(Type.Object({
+                fileId: Type.String({ minLength: 1, maxLength: 200 }),
+                fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),
+                fileName: Type.String({ minLength: 1, maxLength: 500 }),
+                content: Type.Optional(Type.String({ maxLength: 100_000 })),
+                status: Type.Optional(Type.Union([
+                  Type.Literal("processing"),
+                  Type.Literal("ready"),
+                ])),
+                contentHash: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+              }, { additionalProperties: false }), { maxItems: 5 })),
             })),
           }),
         },

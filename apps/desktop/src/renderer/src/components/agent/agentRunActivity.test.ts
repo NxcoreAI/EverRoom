@@ -2,7 +2,8 @@ import type { AgentEvent } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
 import { toolKind } from './AgentExecutionTimeline'
-import { agentToolLabel, agentToolStageText, agentToolSubject, reduceAgentRunActivity } from './agentRunActivity'
+import { agentToolLabel, agentToolResultSummary, agentToolStageText, agentToolSubject, reduceAgentRunActivity } from './agentRunActivity'
+import { translate } from '../../i18n/LocaleContext'
 
 function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): AgentEvent {
   return {
@@ -17,6 +18,20 @@ function event(seq: number, type: AgentEvent['type'], payload: unknown = {}): Ag
 }
 
 describe('Agent run activity', () => {
+  it('localizes generated tool status text without translating user-provided subjects', () => {
+    const t = (message: string, values?: Record<string, string | number>) => translate('en-US', message, values)
+    const tool = {
+      id: 'read-1', runId: 'run-1', name: 'read_file', args: { path: '配置.md' },
+      status: 'completed' as const, startedAt: new Date().toISOString(),
+    }
+    expect(agentToolLabel(tool, false, t)).toBe('Read file')
+    expect(agentToolLabel(tool, true, t)).toBe('File read')
+    expect(agentToolLabel({ ...tool, name: 'custom_tool' }, true, t)).toBe('Executed custom tool')
+    expect(agentToolResultSummary({ results: [1, 2] }, t)).toBe('2 results')
+    expect(agentToolStageText({ ...tool, status: 'stopped' }, t)).toBe('Stopped')
+    expect(agentToolSubject(tool)).toBe('配置.md')
+  })
+
   it('maps connector tools to distinct timeline presentations', () => {
     const tools = [
       { name: 'connector_search', args: { service: 'gmail', query: 'find messages' } },

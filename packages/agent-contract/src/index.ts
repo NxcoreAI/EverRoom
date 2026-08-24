@@ -314,7 +314,19 @@ export interface StartAgentRunInput {
     /** Explicit UI-confirmed target for a global Agent session. */
     selectedRoomId?: string | null;
     activeDocument?: AgentActiveDocumentContext;
+    /** Files uploaded from the conversation composer and parsed by the unified file engine. */
+    attachments?: AgentFileAttachment[];
   };
+}
+
+export interface AgentFileAttachment {
+  fileId: string;
+  /** Immutable file version selected when the attachment was uploaded. */
+  fileVersionId: string;
+  fileName: string;
+  content?: string;
+  status?: "processing" | "ready";
+  contentHash?: string;
 }
 
 export type PendingAgentIntentTargetCapability =

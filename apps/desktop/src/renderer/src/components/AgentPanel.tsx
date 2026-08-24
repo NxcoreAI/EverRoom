@@ -208,15 +208,31 @@ export function AgentPanel({
       .catch(() => handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key))
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
-  const sendPrompt = async (prompt: string, replaceRunId?: string) => {
-    if (!prompt.trim() || !agentAvailable) return
+  const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = []) => {
+    if ((!prompt.trim() && files.length === 0) || !agentAvailable) return
     const submittedPrompt = prompt.trim()
     const submittedContext = selectedText
     setDraft('')
     setSubmitting(true)
     try {
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
-      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId)
+      let attachments = undefined
+      if (files.length > 0) {
+        const filesApi = window.nxcore?.files
+        if (!filesApi) throw new Error('文件服务不可用，请稍后重试。')
+        const outcomes = await filesApi.importDropped(files, { pipelines: { room: false, wiki: false, memory: false }, ...(roomId ? { roomId } : {}) })
+        const imported = outcomes?.filter((item) => item.fileId && item.fileVersionId && !item.error) ?? []
+        if (imported.length !== files.length) {
+          throw new Error('部分文件上传或解析失败，请检查文件格式后重试。')
+        }
+        attachments = imported.map((item) => ({
+          fileId: item.fileId!,
+          fileVersionId: item.fileVersionId!,
+          fileName: item.filename,
+          status: 'processing' as const,
+        }))
+      }
+      await session.sendPrompt(submittedPrompt || '请分析我上传的文件。', submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
       setSelectedText('')
       setComposerResetKey((current) => current + 1)
     } catch {
@@ -292,7 +308,7 @@ export function AgentPanel({
       onChange={setDraft}
       onClearContext={() => setSelectedText('')}
       onStop={() => void session.stop()}
-      onSubmit={() => void sendPrompt(draft)}
+      onSubmit={(files) => void sendPrompt(draft, undefined, files)}
     />
   )
 

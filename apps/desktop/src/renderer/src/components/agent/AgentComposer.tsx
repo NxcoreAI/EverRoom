@@ -30,6 +30,7 @@ type VoiceState = 'idle' | 'requesting' | 'recording' | 'saving' | 'transcribing
 
 interface LocalAttachment {
   id: string
+  file: File
   name: string
   size: number
 }
@@ -64,7 +65,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onChange: (value: string) => void
   onClearContext: () => void
   onStop: () => void
-  onSubmit: () => void
+  onSubmit: (files: File[]) => void
 }>(function AgentComposer({
   active,
   available,
@@ -187,7 +188,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (available && voiceState === 'idle') onSubmit()
+    if (available && voiceState === 'idle') onSubmit(attachments.map(({ file }) => file))
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -195,7 +196,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       // IME candidate confirmation also emits Enter; only submit after composition ends.
       if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
       event.preventDefault()
-      if (available && voiceState === 'idle') onSubmit()
+      if (available && voiceState === 'idle') onSubmit(attachments.map(({ file }) => file))
     }
   }
 
@@ -204,7 +205,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     const known = new Set(attachments.map((file) => file.id))
     const candidates = files
       .filter((file) => ATTACHMENT_PATTERN.test(file.name) && file.size <= MAX_ATTACHMENT_SIZE)
-      .map((file) => ({ id: `${file.name}:${file.size}:${file.lastModified}`, name: file.name, size: file.size }))
+      .map((file) => ({ id: `${file.name}:${file.size}:${file.lastModified}`, file, name: file.name, size: file.size }))
       .filter((file) => !known.has(file.id))
     const accepted = candidates.slice(0, Math.max(0, MAX_ATTACHMENTS - attachments.length))
     const rejected = files.length - accepted.length
@@ -213,9 +214,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       title: t(rejected ? 'surface:agentComposer.someAttachmentsWereNotAdded' : 'surface:agentComposer.attachmentsAddedToTheComposer'),
       message: rejected
         ? t('surface:agentComposer.onlySupportedDocumentFormatsUpTo10Mb')
-        : t('surface:agentComposer.theCurrentAgentWorkflowDoesNotUploadAttachments'),
+        : t('surface:agentComposer.attachmentsAddedToTheComposer'),
     })
     event.target.value = ''
+  }
+
+  const addDroppedAttachments = (files: File[]) => {
+    const known = new Set(attachments.map((file) => file.id))
+    const candidates = files
+      .filter((file) => ATTACHMENT_PATTERN.test(file.name) && file.size <= MAX_ATTACHMENT_SIZE)
+      .map((file) => ({ id: `${file.name}:${file.size}:${file.lastModified}`, file, name: file.name, size: file.size }))
+      .filter((file) => !known.has(file.id))
+    const accepted = candidates.slice(0, Math.max(0, MAX_ATTACHMENTS - attachments.length))
+    if (accepted.length === 0) return
+    setAttachments((current) => [...current, ...accepted])
+    showToast({
+      title: t('surface:agentComposer.attachmentsAddedToTheComposer'),
+      message: t('surface:agentComposer.attachmentsAddedToTheComposer'),
+    })
   }
 
   const insertTranscript = (transcript: string) => {
@@ -358,7 +374,19 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           : ''
 
   return (
-    <form ref={shellRef} className="agent-composer-shell" onSubmit={submit}>
+    <form
+      ref={shellRef}
+      className="agent-composer-shell"
+      onSubmit={submit}
+      onDragOver={(event) => {
+        if (!controlsDisabled && event.dataTransfer.types.includes('Files')) event.preventDefault()
+      }}
+      onDrop={(event) => {
+        if (controlsDisabled) return
+        event.preventDefault()
+        addDroppedAttachments([...event.dataTransfer.files])
+      }}
+    >
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         <textarea
           ref={textareaRef}
@@ -444,7 +472,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || !value.trim() || loading || voiceBusy}>
+            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0) || loading || voiceBusy}>
               <ArrowUp aria-hidden="true" />
             </button>
           )}
