@@ -87,7 +87,9 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
     REPEATABLE_MEMORY_ONBOARDING && storedMarker?.status !== 'pending' ? null : storedMarker,
   )
   const [mode, setMode] = useState<GateMode>(() => {
-    if (initialMarkerRef.current?.status === 'pending') return 'refining'
+    // A restored pending request keeps polling in the background. Only an
+    // explicitly active Memory stage should block on the refining screen.
+    if (initialMarkerRef.current?.status === 'pending') return activeStage === 'memory' ? 'refining' : 'app'
     if (initialMarkerRef.current && !REPEATABLE_MEMORY_ONBOARDING) return 'app'
     return 'checking'
   })
@@ -164,12 +166,17 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
       submitRequestIdRef.current = marker.requestId
       foregroundStartedAtRef.current = Date.now()
       continueStartedAtRef.current = Date.now()
-      setMode('refining')
+      if (activeStage === 'memory') {
+        setMode('refining')
+      } else {
+        window.nxcore?.memory?.onboardingFinished?.()
+        setMode('app')
+      }
       return () => { cancelled = true }
     }
     if (marker && !REPEATABLE_MEMORY_ONBOARDING && !forceLocalDataCheck) {
       window.nxcore?.memory?.onboardingFinished?.()
-      setMode(marker.status === 'completed' ? 'ready' : 'app')
+      setMode('app')
       return () => { cancelled = true }
     }
     const api = window.nxcore?.memory
@@ -296,7 +303,16 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
 
   const skip = () => {
     writeMemoryOnboardingMarker({ status: 'skipped' })
+    initialMarkerRef.current = { status: 'skipped' }
     setPending(null)
+    finishOnboarding()
+  }
+
+  const continueWithExistingMemory = () => {
+    // Existing memory satisfies setup, but still needs a durable acknowledgement
+    // so a renderer reload does not reopen the ready screen on every launch.
+    writeMemoryOnboardingMarker({ status: 'skipped' })
+    initialMarkerRef.current = { status: 'skipped' }
     finishOnboarding()
   }
 
@@ -512,7 +528,7 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
               <p>{t('memory:onboarding.alreadyReadyBody')}</p>
               <div className="memory-onboarding-button-row">
                 <button type="button" className="memory-onboarding-secondary" onClick={resetQuestions}>{t('memory:onboarding.restart')}</button>
-                <button type="button" className="memory-onboarding-primary" onClick={finishOnboarding}>{t('memory:onboarding.continueToRoom')}<ChevronRight aria-hidden="true" /></button>
+                <button type="button" className="memory-onboarding-primary" onClick={continueWithExistingMemory}>{t('memory:onboarding.continueToRoom')}<ChevronRight aria-hidden="true" /></button>
               </div>
             </div>
           ) : null}
