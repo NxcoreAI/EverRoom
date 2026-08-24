@@ -174,6 +174,86 @@ describe("document core", () => {
     });
   });
 
+  it("returns grapheme-level spans for multiple edits inside one block", async () => {
+    const { db, commits } = await createCore();
+    const first = commits.create({
+      documentId: "doc-inline-diff",
+      roomId: "room-core",
+      title: "细粒度 Diff",
+      content: {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          attrs: { id: "block-1" },
+          content: [{ type: "text", text: "TypeScript 是微软开发的语言。它很好。" }],
+        }],
+      },
+      version: 1,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          attrs: { id: "block-1" },
+          content: [{ type: "text", text: "TypeScript 是微软维护的语言，它非常好。" }],
+        }],
+      },
+      expectedVersion: 1,
+      version: 2,
+    });
+
+    const block = new YjsHistoryService().diff(db, first.id, 1, 2)?.blocks[0];
+    expect(block?.textDiff).toEqual([
+      { type: "equal", text: "TypeScript 是微软" },
+      { type: "delete", text: "开发" },
+      { type: "insert", text: "维护" },
+      { type: "equal", text: "的语言" },
+      { type: "delete", text: "。" },
+      { type: "insert", text: "，" },
+      { type: "equal", text: "它" },
+      { type: "delete", text: "很" },
+      { type: "insert", text: "非常" },
+      { type: "equal", text: "好。" },
+    ]);
+  });
+
+  it("does not split emoji grapheme clusters in inline diffs", async () => {
+    const { db, commits } = await createCore();
+    const content = (text: string) => ({
+      type: "doc" as const,
+      content: [{
+        type: "paragraph",
+        attrs: { id: "block-1" },
+        content: [{ type: "text", text }],
+      }],
+    });
+    const first = commits.create({
+      documentId: "doc-emoji-inline-diff",
+      roomId: "room-core",
+      title: "Emoji Diff",
+      content: content("👩‍💻 works"),
+      version: 1,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: content("👩‍🔬 works"),
+      expectedVersion: 1,
+      version: 2,
+    });
+
+    expect(new YjsHistoryService().diff(db, first.id, 1, 2)?.blocks[0]?.textDiff).toEqual([
+      { type: "delete", text: "👩‍💻" },
+      { type: "insert", text: "👩‍🔬" },
+      { type: "equal", text: " works" },
+    ]);
+  });
+
   it("retains only checkpoint and current JSON snapshots while rebuilding older versions from Yjs", async () => {
     const { db, commits, repository } = await createCore();
     const first = commits.create({

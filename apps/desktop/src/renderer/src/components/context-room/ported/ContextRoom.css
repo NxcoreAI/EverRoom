@@ -2131,7 +2131,7 @@
 
 .context-room-history-diff-block.is-modified {
   border-left-color: #eab308;
-  background: rgb(254 249 195 / 72%);
+  background: transparent;
 }
 
 .context-room-history-diff-empty {
@@ -2477,24 +2477,27 @@
 }
 
 .document-history-diff-inline {
-  margin: 4px 0 8px 12px;
-  padding: 5px 8px;
-  border-left: 2px solid #eab308;
-  background: #fffbeb;
-  color: #713f12;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre-wrap;
+  display: inline;
+  margin: 0;
+  padding: 1px 2px;
+  border-radius: 2px;
+  color: inherit;
+  font: inherit;
+  letter-spacing: 0;
+  white-space: inherit;
 }
 
-.document-history-diff-added-line { color: #166534; }
-.document-history-diff-removed-line {
-  padding: 4px 8px;
-  border-left: 2px solid #ef4444;
-  background: #fef2f2;
+.document-history-diff-inline.is-inserted {
+  background: #bbf7d0;
+  color: #14532d;
+  text-decoration: none;
+}
+
+.document-history-diff-inline.is-deleted {
+  background: #fecaca;
   color: #991b1b;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-decoration: line-through;
-  white-space: pre-wrap;
+  text-decoration-thickness: 1px;
 }
 
 .context-room-embedded-cloud-doc > :last-child {

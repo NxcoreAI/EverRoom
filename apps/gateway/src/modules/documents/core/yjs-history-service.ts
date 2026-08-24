@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { TiptapJsonContent } from "@nxcore/agent-contract";
+import { diffArrays } from "diff";
 import { and, asc, desc, eq, gt, lte } from "drizzle-orm";
 import * as Y from "yjs";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
@@ -58,6 +59,10 @@ const CHECKPOINT_EVERY_VERSIONS = 100;
 const CHECKPOINT_MAX_UPDATE_BYTES = 4 * 1024 * 1024;
 const MAX_DIFF_BLOCKS = 2_000;
 const MAX_DIFF_LCS_CELLS = 250_000;
+const MAX_INLINE_DIFF_TEXT_LENGTH = 200_000;
+const MAX_INLINE_DIFF_EDIT_LENGTH = 4_000;
+const INLINE_DIFF_BUDGET_MS = 150;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function toBuffer(value: Uint8Array): Buffer {
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
@@ -226,7 +231,7 @@ function lcsPairs(before: HistoryBlock[], after: HistoryBlock[]): Array<[number,
   return pairs;
 }
 
-function inlineDiff(before: string, after: string): DocumentDiffSpan[] {
+function prefixSuffixDiff(before: string, after: string): DocumentDiffSpan[] {
   if (before === after) return before ? [{ type: "equal", text: before }] : [];
   let prefix = 0;
   while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
@@ -242,6 +247,29 @@ function inlineDiff(before: string, after: string): DocumentDiffSpan[] {
   if (after.length > prefix + suffix) spans.push({ type: "insert", text: after.slice(prefix, after.length - suffix) });
   if (suffix) spans.push({ type: "equal", text: after.slice(after.length - suffix) });
   return spans;
+}
+
+function inlineDiff(before: string, after: string, deadline = Date.now() + INLINE_DIFF_BUDGET_MS): DocumentDiffSpan[] {
+  if (before === after) return before ? [{ type: "equal", text: before }] : [];
+  if (before.length + after.length > MAX_INLINE_DIFF_TEXT_LENGTH || Date.now() >= deadline) {
+    return prefixSuffixDiff(before, after);
+  }
+
+  const beforeGraphemes = Array.from(GRAPHEME_SEGMENTER.segment(before), ({ segment }) => segment);
+  const afterGraphemes = Array.from(GRAPHEME_SEGMENTER.segment(after), ({ segment }) => segment);
+  const remainingMs = Math.max(1, deadline - Date.now());
+  const changes = diffArrays(beforeGraphemes, afterGraphemes, {
+    maxEditLength: MAX_INLINE_DIFF_EDIT_LENGTH,
+    timeout: remainingMs,
+  });
+  if (!changes) return prefixSuffixDiff(before, after);
+
+  return changes
+    .map<DocumentDiffSpan>((change) => ({
+      type: change.added ? "insert" : change.removed ? "delete" : "equal",
+      text: change.value.join(""),
+    }))
+    .filter((span) => span.text.length > 0);
 }
 
 export class YjsHistoryService {
@@ -472,6 +500,7 @@ export class YjsHistoryService {
     }
 
     const blocks: DocumentDiffBlock[] = [];
+    const inlineDiffDeadline = Date.now() + INLINE_DIFF_BUDGET_MS;
     afterBlocks.forEach((block, afterIndex) => {
       const match = matches.get(afterIndex);
       const previous = match ? beforeBlocks[match.beforeIndex] : undefined;
@@ -486,7 +515,7 @@ export class YjsHistoryService {
           path: block.path,
           ...(changed ? { before: previous.node, after: block.node } : {}),
           ...(changed ? {} : { after: block.node }),
-          textDiff: inlineDiff(previous.text, block.text),
+          textDiff: inlineDiff(previous.text, block.text, inlineDiffDeadline),
           ...(match?.unstable ? { unstableMatch: true } : {}),
         });
       }
