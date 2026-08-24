@@ -81,10 +81,82 @@ export function documentRoutes(service: DocumentService): FastifyPluginAsyncType
 
     app.get(
       "/v1/documents/:id/versions",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          querystring: Type.Object({
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+            beforeVersion: Type.Optional(Type.Integer({ minimum: 1 })),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return service.listVersions(request.params.id, request.query);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/documents/:id/versions/:version",
+      {
+        schema: {
+          tags: ["documents"],
+          params: Type.Object({
+            id: Type.String({ minLength: 1, maxLength: 128 }),
+            version: Type.Integer({ minimum: 1 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          const snapshot = service.getVersionSnapshot(request.params.id, request.params.version);
+          return snapshot ?? reply.code(404).send({ error: "VERSION_NOT_FOUND", message: "Document version not found" });
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/documents/:id/diff",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          querystring: Type.Object({
+            toVersion: Type.Integer({ minimum: 1 }),
+            fromVersion: Type.Optional(Type.Integer({ minimum: 1 })),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          const result = service.diff(
+            request.params.id,
+            request.query.fromVersion ?? null,
+            request.query.toVersion,
+          );
+          return result ?? reply.code(404).send({ error: "VERSION_NOT_FOUND", message: "Document version not found" });
+        } catch (error) {
+          if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/documents/:id/history/backfill/retry",
       { schema: { tags: ["documents"], params: IdParams } },
       async (request, reply) => {
         try {
-          return service.listVersions(request.params.id);
+          service.retryYjsHistoryBackfill(request.params.id);
+          return { queued: true, documentId: request.params.id };
         } catch (error) {
           if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
           throw error;

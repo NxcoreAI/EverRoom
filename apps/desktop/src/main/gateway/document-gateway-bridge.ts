@@ -9,6 +9,9 @@ import type {
   DocumentOperationStatus,
   DocumentOperationSummary,
   DocumentVersionSummary,
+  DocumentVersionListOptions,
+  DocumentVersionSnapshot,
+  DocumentDiffResult,
   ImportRoomDocumentInput,
   RoomDocument,
   ResolveDocumentBlockReferencesInput,
@@ -23,6 +26,7 @@ import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 export const DOCUMENT_EVENT_CHANNEL = 'documents:event'
 export const DOCUMENT_OPERATION_EVENT_CHANNEL = 'documents:operation-changed'
+export const DOCUMENT_READY_CHANNEL = 'documents:ready'
 
 interface Subscription {
   roomId: string
@@ -96,8 +100,22 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/backlinks${query}`)
   }
 
-  listVersions(documentId: string): Promise<DocumentVersionSummary[]> {
-    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/versions`)
+  listVersions(documentId: string, options: DocumentVersionListOptions = {}): Promise<DocumentVersionSummary[]> {
+    const query = new URLSearchParams()
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    if (options.beforeVersion !== undefined) query.set('beforeVersion', String(options.beforeVersion))
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/versions${suffix}`)
+  }
+
+  getVersionSnapshot(documentId: string, version: number): Promise<DocumentVersionSnapshot> {
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/versions/${String(version)}`)
+  }
+
+  getDiff(documentId: string, fromVersion: number | null, toVersion: number): Promise<DocumentDiffResult> {
+    const query = new URLSearchParams({ toVersion: String(toVersion) })
+    if (fromVersion !== null) query.set('fromVersion', String(fromVersion))
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/diff?${query.toString()}`)
   }
 
   restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument> {
@@ -137,8 +155,9 @@ export class DocumentGatewayBridge {
     }, true)
   }
 
-  getOperation(operationId: string): Promise<DocumentOperation> {
-    return this.request(`/v1/document-operations/${encodeURIComponent(operationId)}`)
+  getOperation(operationId: string, context?: { roomId: string; sessionId: string; runId: string }): Promise<DocumentOperation> {
+    const suffix = context ? `?${new URLSearchParams(context)}` : ''
+    return this.request(`/v1/document-operations/${encodeURIComponent(operationId)}${suffix}`)
   }
 
   executeOperationCommand(
@@ -218,6 +237,13 @@ export class DocumentGatewayBridge {
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     url.pathname = `/v1/documents/rooms/${encodeURIComponent(roomId)}/stream`
     const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${connection.token}` } })
+    socket.on('open', () => {
+      const subscription = this.subscriptions.get(contents.id)?.get(roomId)
+      if (!subscription || subscription.closed || contents.isDestroyed()) return
+      // The event stream is lossy. Every reconnect must trigger a REST baseline
+      // refresh so changes that happened while disconnected cannot be missed.
+      contents.send(DOCUMENT_READY_CHANNEL, roomId)
+    })
     socket.on('message', (data) => {
       if (contents.isDestroyed()) return
       try {
@@ -228,7 +254,7 @@ export class DocumentGatewayBridge {
           if (operationId) contents.send(DOCUMENT_OPERATION_EVENT_CHANNEL, operationId)
         }
       } catch {
-        // A reconnect refreshes the authoritative document list.
+        // The next valid event or reconnect baseline will repair the projection.
       }
     })
     socket.on('close', () => {

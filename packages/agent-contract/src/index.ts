@@ -460,6 +460,50 @@ export interface DocumentVersionSummary {
   contentSchemaVersion: number;
   sourceTransactionId: string | null;
   createdAt: string;
+  title?: string;
+  yjsBackfilled?: boolean;
+}
+
+export interface DocumentVersionListOptions {
+  limit?: number;
+  beforeVersion?: number;
+}
+
+export interface DocumentVersionSnapshot {
+  documentId: string;
+  version: number;
+  title: string;
+  contentJson: TiptapJsonContent;
+  contentSchemaVersion: number;
+  sourceTransactionId: string | null;
+  createdAt: string;
+  yjsBackfilled: boolean;
+}
+
+export interface DocumentDiffSpan {
+  type: "equal" | "insert" | "delete";
+  text: string;
+}
+
+export interface DocumentDiffBlock {
+  blockId: string;
+  status: "added" | "removed" | "modified" | "unchanged";
+  type: string;
+  path: number[];
+  before?: TiptapJsonContent;
+  after?: TiptapJsonContent;
+  textDiff: DocumentDiffSpan[];
+  unstableMatch?: boolean;
+}
+
+export interface DocumentDiffResult {
+  documentId: string;
+  fromVersion: number | null;
+  toVersion: number;
+  blocks: DocumentDiffBlock[];
+  yjsBackfilled: boolean;
+  truncated?: boolean;
+  truncatedReason?: "too_large";
 }
 
 export interface RestoreDocumentVersionInput {
@@ -546,6 +590,11 @@ export interface DocumentOperationCommandInput {
   expectedRevision: number;
   type: string;
   payload?: Record<string, unknown>;
+  context?: {
+    roomId: string;
+    sessionId: string;
+    runId: string;
+  };
 }
 
 export interface DocumentOperationCommandResult {

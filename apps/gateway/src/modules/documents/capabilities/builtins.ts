@@ -14,7 +14,7 @@ export function createBuiltinDocumentCapabilityRegistry(
   operations?: DocumentOperationService,
 ): DocumentCapabilityRegistry {
   const registry = new DocumentCapabilityRegistry(operations);
-  const reads = new DocumentReadAuthority();
+  const reads = new DocumentReadAuthority((documentId) => backend.get(documentId));
   for (const plugin of queryPlugins(backend, rooms, reads)) registry.register(plugin);
   for (const plugin of reviewPlugins(backend, operations, reads)) registry.register(plugin);
   registry.register(createPlugin(backend, operations));

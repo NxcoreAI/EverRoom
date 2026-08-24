@@ -46,7 +46,10 @@ export function RoomOnboardingGate({ children, onOpenRoom, suppressOnboarding = 
   const forceOpenRef = useRef(false)
   const initialBackendSyncRef = useRef<'idle' | 'loading' | 'done'>('idle')
   const createdRoomIdRef = useRef<string | null>(null)
-  const [mode, setMode] = useState<GateMode>('checking')
+  const [mode, setMode] = useState<GateMode>(() => {
+    if (suppressOnboarding || markerRef.current || state.rooms.length > 0 || state.deletedRooms.length > 0) return 'app'
+    return 'checking'
+  })
   const [name, setName] = useState('')
   const [purpose, setPurpose] = useState('')
   const [error, setError] = useState<string | null>(null)

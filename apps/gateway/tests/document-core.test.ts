@@ -4,11 +4,18 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { documents, documentVersions, jobs } from "../src/infrastructure/database/schema.js";
+import {
+  documentYjsUpdates,
+  documentYjsVersions,
+  documents,
+  documentVersions,
+  jobs,
+} from "../src/infrastructure/database/schema.js";
 import {
   DocumentCommitService,
   DocumentContentEngine,
   DocumentRepository,
+  YjsHistoryService,
 } from "../src/modules/documents/core/index.js";
 
 const temporaryDirectories: string[] = [];
@@ -133,6 +140,291 @@ describe("document core", () => {
     expect(repository.get("doc-cas")).toMatchObject({ title: "Current", version: 1 });
     expect(db.select().from(documentVersions).where(eq(documentVersions.documentId, "doc-cas")).all())
       .toHaveLength(1);
+  });
+
+  it("stores incremental Yjs history and materializes structured diffs", async () => {
+    const { db, commits } = await createCore();
+    const first = commits.create({
+      documentId: "doc-yjs",
+      roomId: "room-core",
+      title: "历史一",
+      content: { type: "doc", content: [{ type: "paragraph", attrs: { id: "block-1" }, content: [{ type: "text", text: "旧内容" }] }] },
+      version: 1,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: "历史二",
+      content: { type: "doc", content: [{ type: "paragraph", attrs: { id: "block-1" }, content: [{ type: "text", text: "新内容" }] }, { type: "paragraph", attrs: { id: "block-2" }, content: [{ type: "text", text: "新增" }] }] },
+      expectedVersion: 1,
+      version: 2,
+    });
+
+    expect(db.select().from(documentYjsUpdates).where(eq(documentYjsUpdates.documentId, first.id)).all()).toHaveLength(2);
+    expect(db.select().from(documentYjsVersions).where(eq(documentYjsVersions.documentId, first.id)).all()).toHaveLength(2);
+    const history = new YjsHistoryService();
+    expect(history.materialize(db, first.id, 1)?.content.content?.[0]).toMatchObject({ attrs: { id: "block-1" } });
+    expect(history.materialize(db, first.id, 2)?.content.content).toHaveLength(2);
+    expect(history.diff(db, first.id, 1, 2)).toMatchObject({
+      yjsBackfilled: true,
+      blocks: expect.arrayContaining([
+        expect.objectContaining({ blockId: "block-1", status: "modified" }),
+        expect.objectContaining({ blockId: "block-2", status: "added" }),
+      ]),
+    });
+  });
+
+  it("does not turn an insertion before legacy path-based blocks into edits", async () => {
+    const { db } = await createCore();
+    const history = new YjsHistoryService();
+    const v1 = {
+      type: "doc" as const,
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "A" }] },
+        { type: "paragraph", content: [{ type: "text", text: "B" }] },
+      ],
+    };
+    const v2 = {
+      type: "doc" as const,
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "X" }] },
+        { type: "paragraph", content: [{ type: "text", text: "A" }] },
+        { type: "paragraph", content: [{ type: "text", text: "B" }] },
+      ],
+    };
+    db.insert(documents).values({
+      id: "doc-legacy-diff",
+      title: "Legacy",
+      contentJson: v2,
+      version: 2,
+      status: "active",
+    }).run();
+    db.transaction((tx) => {
+      tx.insert(documentVersions).values([
+        { id: "doc-legacy-diff-v1", documentId: "doc-legacy-diff", version: 1, title: "Legacy", contentJson: v1 },
+        { id: "doc-legacy-diff-v2", documentId: "doc-legacy-diff", version: 2, title: "Legacy", contentJson: v2 },
+      ]).run();
+      history.writeCommit(tx, {
+        documentId: "doc-legacy-diff", version: 1, title: "Legacy", content: v1,
+        contentSchemaVersion: 1, now: new Date(1), backfilled: true,
+      });
+      history.writeCommit(tx, {
+        documentId: "doc-legacy-diff", version: 2, title: "Legacy", content: v2,
+        contentSchemaVersion: 1, now: new Date(2), backfilled: true,
+      });
+    });
+
+    const blocks = history.diff(db, "doc-legacy-diff", 1, 2)?.blocks.filter((block) => block.path.length === 1);
+    expect(blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "added", after: expect.objectContaining({ content: [expect.objectContaining({ text: "X" })] }) }),
+      expect.objectContaining({ status: "unchanged", after: expect.objectContaining({ content: [expect.objectContaining({ text: "A" })] }), textDiff: [{ type: "equal", text: "A" }] }),
+      expect.objectContaining({ status: "unchanged", after: expect.objectContaining({ content: [expect.objectContaining({ text: "B" })] }), textDiff: [{ type: "equal", text: "B" }] }),
+    ]));
+    expect(blocks?.some((block) => block.status === "modified")).toBe(false);
+  });
+
+  it("ignores regenerated stable block ids when the block content is unchanged", async () => {
+    const { db, commits } = await createCore();
+    const first = commits.create({
+      documentId: "doc-id-churn",
+      roomId: "room-core",
+      title: "ID churn",
+      content: {
+        type: "doc",
+        content: [{
+          type: "heading",
+          attrs: { id: "old-heading-id", level: 2 },
+          content: [{ type: "text", text: "Layered Architecture" }],
+        }],
+      },
+      version: 1,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: {
+        type: "doc",
+        content: [{
+          type: "heading",
+          attrs: { id: "new-heading-id", level: 2 },
+          content: [{ type: "text", text: "Layered Architecture" }],
+        }],
+      },
+      expectedVersion: 1,
+      version: 2,
+    });
+
+    const blocks = new YjsHistoryService().diff(db, first.id, 1, 2)?.blocks.filter((block) => block.path.length === 1);
+    expect(blocks).toHaveLength(1);
+    expect(blocks?.[0]).toMatchObject({ status: "unchanged", type: "heading" });
+  });
+
+  it("ignores TableOfContents metadata churn when heading text is unchanged", async () => {
+    const { db, commits } = await createCore();
+    const first = commits.create({
+      documentId: "doc-toc-metadata-churn",
+      roomId: "room-core",
+      title: "TOC metadata",
+      content: {
+        type: "doc",
+        content: [{
+          type: "heading",
+          attrs: { id: "heading-v1", level: 2 },
+          content: [{ type: "text", text: "安装 TypeScript" }],
+        }],
+      },
+      version: 1,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: {
+        type: "doc",
+        content: [{
+          type: "heading",
+          attrs: {
+            id: "heading-v2",
+            "data-toc-id": "heading-v2",
+            level: 2,
+          },
+          content: [{ type: "text", text: "安装 TypeScript" }],
+        }],
+      },
+      expectedVersion: 1,
+      version: 2,
+    });
+
+    const blocks = new YjsHistoryService().diff(db, first.id, 1, 2)?.blocks;
+    expect(blocks).toHaveLength(1);
+    expect(blocks?.[0]).toMatchObject({ status: "unchanged", type: "heading" });
+  });
+
+  it("ignores JSON property-order churn when block semantics are unchanged", async () => {
+    const { db, commits } = await createCore();
+    const first = commits.create({
+      documentId: "doc-property-order-churn",
+      roomId: "room-core",
+      title: "Property order",
+      content: {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          content: [
+            { type: "text", text: "安装完成后，你可以使用 " },
+            { type: "text", text: "tsc", marks: [{ type: "code" }] },
+            { type: "text", text: " 命令来编译 TypeScript 文件。" },
+          ],
+          attrs: { id: "paragraph-1" },
+        }],
+      },
+      version: 1,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          attrs: { id: "paragraph-1" },
+          content: [
+            { type: "text", text: "安装完成后，你可以使用 " },
+            { type: "text", marks: [{ type: "code" }], text: "tsc" },
+            { type: "text", text: " 命令来编译 TypeScript 文件。" },
+          ],
+        }],
+      },
+      expectedVersion: 1,
+      version: 2,
+    });
+
+    const blocks = new YjsHistoryService().diff(db, first.id, 1, 2)?.blocks;
+    expect(blocks).toHaveLength(1);
+    expect(blocks?.[0]).toMatchObject({ status: "unchanged", type: "paragraph" });
+  });
+
+  it("backfills legacy history in bounded, resumable batches", async () => {
+    const { db } = await createCore();
+    const history = new YjsHistoryService();
+    const content = (text: string) => ({
+      type: "doc" as const,
+      content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+    });
+    db.insert(documents).values({
+      id: "doc-bounded-backfill",
+      title: "旧历史",
+      contentJson: content("V3"),
+      version: 3,
+      status: "active",
+    }).run();
+    db.insert(documentVersions).values([1, 2, 3].map((version) => ({
+      id: `doc-bounded-backfill-v${version}`,
+      documentId: "doc-bounded-backfill",
+      version,
+      title: "旧历史",
+      contentJson: content(`V${version}`),
+    }))).run();
+
+    expect(history.backfillDocument(db, "doc-bounded-backfill", 1)).toBe(1);
+    expect(history.backfillDocument(db, "doc-bounded-backfill", 1)).toBe(1);
+    expect(history.backfillDocument(db, "doc-bounded-backfill", 1)).toBe(1);
+    expect(history.backfillDocument(db, "doc-bounded-backfill", 1)).toBe(0);
+    expect(db.select().from(documentYjsVersions).where(eq(documentYjsVersions.documentId, "doc-bounded-backfill")).all())
+      .toHaveLength(3);
+  });
+
+  it("returns a bounded summary instead of building an unbounded large diff", async () => {
+    const { commits, db } = await createCore();
+    const content = (prefix: string) => ({
+      type: "doc" as const,
+      content: Array.from({ length: 501 }, (_, index) => ({
+        type: "paragraph",
+        content: [{ type: "text", text: `${prefix}-${index}` }],
+      })),
+    });
+    const first = commits.create({
+      documentId: "doc-large-diff",
+      roomId: "room-core",
+      title: "大文档",
+      content: content("old"),
+      version: 1,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: content("new"),
+      expectedVersion: 1,
+      version: 2,
+    });
+
+    const result = new YjsHistoryService().diff(db, "doc-large-diff", 1, 2);
+    expect(result).toMatchObject({ truncated: true, truncatedReason: "too_large", blocks: [{ status: "modified" }] });
+  });
+
+  it("counts top-level blocks instead of inline text nodes for diff limits", async () => {
+    const { commits, db } = await createCore();
+    const content = {
+      type: "doc" as const,
+      content: Array.from({ length: 1_001 }, (_, index) => ({
+        type: "paragraph",
+        content: [{ type: "text", text: `line-${index}` }],
+      })),
+    };
+    const document = commits.create({
+      documentId: "doc-top-level-diff-limit",
+      roomId: "room-core",
+      title: "顶层块限制",
+      content,
+      version: 1,
+    });
+
+    const result = new YjsHistoryService().diff(db, document.id, null, 1);
+    expect(result?.truncated).toBeUndefined();
+    expect(result?.blocks).toHaveLength(1_001);
   });
 
   it("registers committed versions in the document outbox but skips version-zero drafts", async () => {

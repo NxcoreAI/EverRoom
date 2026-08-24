@@ -3,8 +3,11 @@ import type {
   DocumentBlockResolution,
   DocumentBlockSummary,
   DocumentVersionSummary,
+  DocumentVersionSnapshot,
+  DocumentDiffResult,
   ResolveDocumentBlockReferencesInput,
   RoomDocument,
+  TiptapJsonContent,
 } from "@nxcore/agent-contract";
 import { and, asc, eq } from "drizzle-orm";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
@@ -18,12 +21,14 @@ import {
 import { DocumentServiceError } from "../errors.js";
 import { DocumentContentEngine } from "./content-engine.js";
 import { DocumentRepository } from "./repository.js";
+import { YjsHistoryService } from "./yjs-history-service.js";
 
 export class DocumentQueryService {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly repository: DocumentRepository,
     private readonly engine: DocumentContentEngine,
+    private readonly yjsHistory: YjsHistoryService = new YjsHistoryService(),
   ) {}
 
   list(roomId: string, trashed = false): RoomDocument[] {
@@ -34,15 +39,55 @@ export class DocumentQueryService {
     return this.repository.get(documentId);
   }
 
-  listVersions(documentId: string): DocumentVersionSummary[] {
+  listVersions(documentId: string, options: { limit?: number; beforeVersion?: number } = {}): DocumentVersionSummary[] {
     if (!this.repository.get(documentId)) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-    return this.repository.listVersions(documentId).map((version) => ({
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 200);
+    const versions = this.repository.listVersions(documentId, {
+      limit,
+      ...(options.beforeVersion === undefined ? {} : { beforeVersion: options.beforeVersion }),
+    });
+    const yjsVersions = this.repository.listYjsVersionNumbers(
+      documentId,
+      versions.map((version) => version.version),
+    );
+    return versions.map((version) => ({
       documentId,
       version: version.version,
       contentSchemaVersion: version.contentSchemaVersion,
       sourceTransactionId: version.sourceTransactionId,
       createdAt: version.createdAt.toISOString(),
+      title: version.title,
+      yjsBackfilled: yjsVersions.get(version.version) ?? false,
     }));
+  }
+
+  getVersionSnapshot(documentId: string, version: number): DocumentVersionSnapshot | null {
+    const row = this.repository.getVersion(documentId, version);
+    if (!row) return null;
+    const materialized = this.yjsHistory.materialize(this.db, documentId, version);
+    return {
+      documentId,
+      version,
+      title: materialized?.title ?? row.title,
+      contentJson: materialized?.content ?? row.contentJson as TiptapJsonContent,
+      contentSchemaVersion: materialized?.schemaVersion ?? row.contentSchemaVersion,
+      sourceTransactionId: row.sourceTransactionId,
+      createdAt: row.createdAt.toISOString(),
+      yjsBackfilled: materialized?.yjsBackfilled ?? false,
+    };
+  }
+
+  diff(documentId: string, fromVersion: number | null, toVersion: number): DocumentDiffResult | null {
+    if (!this.repository.getVersion(documentId, toVersion)) {
+      throw new DocumentServiceError("VERSION_NOT_FOUND", "Document version not found", 404);
+    }
+    if (fromVersion !== null && !this.repository.getVersion(documentId, fromVersion)) {
+      throw new DocumentServiceError("VERSION_NOT_FOUND", "Document version not found", 404);
+    }
+    if (fromVersion !== null && fromVersion >= toVersion) {
+      throw new DocumentServiceError("INVALID_VERSION_RANGE", "fromVersion must be lower than toVersion", 400);
+    }
+    return this.yjsHistory.diff(this.db, documentId, fromVersion, toVersion);
   }
 
   listBlocks(documentId: string): DocumentBlockSummary[] {

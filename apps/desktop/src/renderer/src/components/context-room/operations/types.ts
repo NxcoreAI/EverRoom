@@ -66,6 +66,7 @@ export interface DocumentOperationCommand {
   expectedRevision: number
   type: string
   payload?: Record<string, unknown>
+  context?: { roomId: string; sessionId: string; runId: string }
 }
 
 export interface DocumentOperationCommandResult {
@@ -76,7 +77,8 @@ export interface DocumentOperationCommandResult {
 export interface OperationBridge {
   list(filters?: DocumentOperationListFilters): Promise<DocumentOperationSummary[]>
   start?(input: StartDocumentOperationInput): Promise<DocumentOperation>
-  get(operationId: string): Promise<DocumentOperation | null>
+  get(operationId: string, context?: { roomId: string; sessionId: string; runId: string }): Promise<DocumentOperation | null>
   command(operationId: string, command: DocumentOperationCommand): Promise<DocumentOperationCommandResult | null>
   subscribe?(listener: (operationId: string) => void): () => void
+  subscribeReady?(listener: () => void): () => void
 }

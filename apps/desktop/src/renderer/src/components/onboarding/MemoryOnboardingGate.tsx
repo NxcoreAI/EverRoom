@@ -80,7 +80,11 @@ export function MemoryOnboardingGate({ children, onFinished }: MemoryOnboardingG
   const initialMarkerRef = useRef<MemoryOnboardingMarker | null>(
     REPEATABLE_MEMORY_ONBOARDING && storedMarker?.status !== 'pending' ? null : storedMarker,
   )
-  const [mode, setMode] = useState<GateMode>('checking')
+  const [mode, setMode] = useState<GateMode>(() => {
+    if (initialMarkerRef.current?.status === 'pending') return 'refining'
+    if (initialMarkerRef.current && !REPEATABLE_MEMORY_ONBOARDING) return 'app'
+    return 'checking'
+  })
   const [step, setStep] = useState(0)
   const [pageDirection, setPageDirection] = useState<'forward' | 'backward'>('forward')
   const [answers, setAnswers] = useState(['', '', ''])

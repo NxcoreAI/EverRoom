@@ -1,6 +1,7 @@
 import {
   index,
   integer,
+  blob,
   primaryKey,
   real,
   sqliteTable,
@@ -642,6 +643,71 @@ export const documentVersions = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [uniqueIndex("doc_versions_document_version_idx").on(table.documentId, table.version)],
+);
+
+export const documentYjsCheckpoints = sqliteTable(
+  "document_yjs_checkpoints",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    throughVersion: integer("through_version").notNull(),
+    docState: blob("doc_state", { mode: "buffer" }).notNull(),
+    stateVector: blob("state_vector", { mode: "buffer" }).notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("document_yjs_checkpoints_document_version_idx").on(table.documentId, table.throughVersion),
+    index("document_yjs_checkpoints_document_idx").on(table.documentId),
+  ],
+);
+
+export const documentYjsUpdates = sqliteTable(
+  "document_yjs_updates",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    update: blob("update", { mode: "buffer" }).notNull(),
+    source: text("source").notNull().default("commit"),
+    contentHash: text("content_hash").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("document_yjs_updates_document_version_idx").on(table.documentId, table.version),
+    index("document_yjs_updates_document_idx").on(table.documentId, table.version),
+  ],
+);
+
+export const documentYjsVersions = sqliteTable(
+  "document_yjs_versions",
+  {
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    updateId: text("update_id")
+      .notNull()
+      .references(() => documentYjsUpdates.id, { onDelete: "cascade" }),
+    checkpointId: text("checkpoint_id").references(() => documentYjsCheckpoints.id, { onDelete: "set null" }),
+    stateVector: blob("state_vector", { mode: "buffer" }).notNull(),
+    backfilled: integer("backfilled", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.documentId, table.version] }),
+    index("document_yjs_versions_update_idx").on(table.updateId),
+  ],
 );
 
 export const documentOperations = sqliteTable(

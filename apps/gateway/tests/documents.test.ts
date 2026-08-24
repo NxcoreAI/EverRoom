@@ -48,6 +48,65 @@ afterEach(async () => {
 })
 
 describe('document transactions', () => {
+  it('rejects diffs that reference a missing history version', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-diff-validation',
+      roomId: 'room-1',
+      title: 'Diff 校验',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'V1' }] }] },
+    })
+
+    expect(() => service.diff(document.id, 999, document.version)).toThrowError(
+      expect.objectContaining({ code: 'VERSION_NOT_FOUND', statusCode: 404 }),
+    )
+    expect(() => service.diff(document.id, null, 999)).toThrowError(
+      expect.objectContaining({ code: 'VERSION_NOT_FOUND', statusCode: 404 }),
+    )
+  })
+
+  it('rejects reverse or identical diff version ranges', async () => {
+    const { service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-diff-range-validation',
+      roomId: 'room-1',
+      title: 'Diff 范围校验',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'V1' }] }] },
+    })
+    const saved = await service.save(document.id, {
+      baseVersion: document.version,
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'V2' }] }] },
+    })
+
+    expect(() => service.diff(document.id, saved.version, saved.version)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_VERSION_RANGE', statusCode: 400 }),
+    )
+    expect(() => service.diff(document.id, saved.version, document.version)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_VERSION_RANGE', statusCode: 400 }),
+    )
+    expect(service.diff(document.id, document.version, saved.version)).toBeTruthy()
+  })
+
+  it('requeues a failed history backfill with a clean attempt counter', async () => {
+    const { db, service } = await createHarness()
+    const document = await service.import({
+      id: 'doc-history-retry-route',
+      roomId: 'room-1',
+      title: '历史回填',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'V1' }] }] },
+    })
+
+    service.retryYjsHistoryBackfill(document.id)
+    db.update(jobs).set({
+      status: 'failed',
+      payload: { documentId: document.id, attempts: 5 },
+    }).where(eq(jobs.id, `document-history-backfill:${document.id}`)).run()
+    service.retryYjsHistoryBackfill(document.id)
+
+    expect(db.select().from(jobs).where(eq(jobs.id, `document-history-backfill:${document.id}`)).get())
+      .toMatchObject({ status: 'pending', payload: { documentId: document.id, attempts: 0 } })
+  })
+
   it('keeps Room mappings, content, and versions after the SQLite database is reopened', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-documents-persistence-test-'))
     temporaryDirectories.push(dataDir)
@@ -296,6 +355,7 @@ describe('document transactions', () => {
     ])
     expect(service.list('room-1', true)).toEqual([])
 
+    service.retryYjsHistoryBackfill(imported.id)
     await service.delete(imported.id)
     await service.deletePermanently(imported.id)
     unsubscribe()
@@ -307,6 +367,7 @@ describe('document transactions', () => {
     expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toEqual([
       expect.objectContaining({ status: 'pending', payload: expect.objectContaining({ documentId: imported.id }) }),
     ])
+    expect(db.select().from(jobs).all().some((job) => job.id === `document-history-backfill:${imported.id}`)).toBe(false)
     const events = frames.map((frame) => JSON.parse(frame))
     expect(events).toContainEqual(expect.objectContaining({
       event: expect.objectContaining({ type: 'document.changed' }),

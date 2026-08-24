@@ -1,4 +1,4 @@
-import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { DocumentDiffResult, DocumentVersionSnapshot, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import Image from '@tiptap/extension-image'
 import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
@@ -9,7 +9,7 @@ import { TextSelection } from '@tiptap/pm/state'
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react'
 import { Placeholder } from '@tiptap/extensions'
 import StarterKit from '@tiptap/starter-kit'
-import { LoaderCircle } from 'lucide-react'
+import { GitCompare, LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { stripDocumentTitle } from '@nxcore/document-model'
 
@@ -31,6 +31,7 @@ import {
   useDocumentCursorCompletion,
 } from './DocumentCursorCompletion'
 import { ensureStableBlockIds, StableBlockIds } from './StableBlockIds'
+import { DocumentHistoryDiffView } from './DocumentHistoryDiffView'
 import { useDocumentEditorOperations, useDocumentOperations } from '../../../operations'
 import {
   clearDocumentOperationReview,
@@ -152,6 +153,10 @@ function sameContent(left: TiptapJsonContent, right: TiptapJsonContent): boolean
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function isDocumentConflict(error: unknown): boolean {
+  return error instanceof Error && /DOCUMENT_CONFLICT|Document version has changed/i.test(error.message)
+}
+
 async function insertMarkdownBlocks(
   editor: Editor,
   state: StreamState,
@@ -244,6 +249,8 @@ export function TiptapDocumentEditor({
 }) {
   const { locale, t } = useLocale()
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
+  const documentIdRef = useRef(documentId)
+  documentIdRef.current = documentId
   const persistedName = backendDocument?.title ?? resource?.name ?? room.cloudDoc.title ?? room.title
   const initialDraft = useState(() => readDocumentDraftRecord(documentId))[0]
   const canRecoverInitialDraft = !backendDocument?.activeTransactionId
@@ -270,7 +277,11 @@ export function TiptapDocumentEditor({
   const recoveringDraft = useRef(canRecoverInitialDraft)
   const recoverySaveScheduled = useRef(false)
   const applyingRemote = useRef(false)
+  const initializingEditor = useRef(true)
+  const agentTransactionRef = useRef(backendDocument?.activeTransactionId ?? null)
+  const agentSaveInvalidationRef = useRef(0)
   const backendRef = useRef(backendDocument)
+  const editorRef = useRef<Editor | null>(null)
   const onBackendChangeRef = useRef(onBackendDocumentChange)
   const versionRef = useRef(backendDocument?.version ?? 0)
   const importedRef = useRef(Boolean(backendDocument))
@@ -278,6 +289,21 @@ export function TiptapDocumentEditor({
   const revealedContinuationOperationId = useRef<string | null>(null)
   const handledBlockFocusKey = useRef<string | null>(null)
   const [saveState, setSaveState] = useState(backendDocument?.status === 'draft' ? 'Agent 正在写入' : '已保存')
+  const [historyView, setHistoryView] = useState<{ snapshot: DocumentVersionSnapshot; diff: DocumentDiffResult } | null>(null)
+  const [restoringHistory, setRestoringHistory] = useState(false)
+  const historyRestoreRequestRef = useRef(0)
+  const [historyPanelCloseSignal, setHistoryPanelCloseSignal] = useState(0)
+  const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0)
+  const showHistoryDiff = useCallback((snapshot: DocumentVersionSnapshot, diff: DocumentDiffResult) => {
+    setHistoryView({ snapshot, diff })
+  }, [])
+  const clearHistoryDiff = useCallback(() => {
+    setHistoryView(null)
+  }, [])
+  const closeHistoryDiff = useCallback(() => {
+    setHistoryView(null)
+    setHistoryPanelCloseSignal((value) => value + 1)
+  }, [])
   const [tableOfContents, setTableOfContents] = useState<TableOfContentData>([])
   const [blockDragging, setBlockDragging] = useState(false)
   const [referencePickerOpen, setReferencePickerOpen] = useState(false)
@@ -291,6 +317,7 @@ export function TiptapDocumentEditor({
   const streamingDocument = documentOperations.streamingDocument
   const [settledStreamingOperationId, setSettledStreamingOperationId] = useState<string | null>(null)
   const activeStreamingOperationIds = useRef(new Set<string>())
+  const completedStreamingOperationIds = useRef(new Set<string>())
   if (streamingDocument?.active) activeStreamingOperationIds.current.add(streamingDocument.operationId)
   const streamingOperationWasActive = streamingDocument
     ? activeStreamingOperationIds.current.has(streamingDocument.operationId)
@@ -346,6 +373,7 @@ export function TiptapDocumentEditor({
     try {
       while (pendingSave.current) {
         const pending = pendingSave.current
+        const saveInvalidationAtStart = agentSaveInvalidationRef.current
         const documents = window.nxcore?.documents
         const currentDocument = backendRef.current
         if (!documents || !importedRef.current || !currentDocument) {
@@ -382,6 +410,15 @@ export function TiptapDocumentEditor({
             if (nextPending) writeDocumentDraft(documentId, nextPending.contentJson, updated.version, nextPending.title)
           }
         } catch (error) {
+          if (agentSaveInvalidationRef.current !== saveInvalidationAtStart) {
+            // An Agent commit completed while this stale user save was in
+            // flight. Its CAS conflict is expected; do not resurrect it.
+            pendingSave.current = null
+            if (backendRef.current) versionRef.current = backendRef.current.version
+            removeDocumentDraft(documentId)
+            setSaveState('已保存')
+            return
+          }
           const nextPending = pendingSave.current as {
             contentJson: TiptapJsonContent
             title: string
@@ -411,11 +448,98 @@ export function TiptapDocumentEditor({
     return versionRef.current
   }, [persistPendingSave])
 
+  const refreshAuthoritativeDocument = useCallback((document: RoomDocument): void => {
+    versionRef.current = document.version
+    backendRef.current = document
+    onBackendChangeRef.current(document)
+    setDocumentName(document.title)
+    const currentEditor = editorRef.current
+    if (!currentEditor || currentEditor.isDestroyed) return
+    applyingRemote.current = true
+    try {
+      setEditorContentPreservingView(
+        currentEditor,
+        stripDocumentTitle(document.contentJson).content,
+      )
+    } finally {
+      applyingRemote.current = false
+    }
+  }, [])
+
+  const restoreHistoryVersion = useCallback(async (): Promise<void> => {
+    const selectedHistory = historyView
+    const documents = window.nxcore?.documents
+    if (!selectedHistory || !documents || restoringHistory) return
+    const requestDocumentId = documentId
+    const requestId = historyRestoreRequestRef.current + 1
+    historyRestoreRequestRef.current = requestId
+    const isCurrentRequest = () => (
+      historyRestoreRequestRef.current === requestId
+      && documentIdRef.current === requestDocumentId
+    )
+    setRestoringHistory(true)
+    try {
+      // Finish a local debounce save before taking the CAS base version for restore.
+      await flushDocumentVersion()
+      if (!isCurrentRequest()) return
+      const latest = await documents.get(documentId)
+      if (!isCurrentRequest()) return
+      refreshAuthoritativeDocument(latest)
+      const restored = await documents.restoreVersion(
+        documentId,
+        selectedHistory.snapshot.version,
+        latest.version,
+      )
+      if (!isCurrentRequest()) return
+      setHistoryView(null)
+      removeDocumentDraft(documentId)
+      refreshAuthoritativeDocument(restored)
+      setHistoryRefreshSignal((value) => value + 1)
+      showToast({ title: t('contextRoom:documentHistory.restoreSucceeded', { version: selectedHistory.snapshot.version }), message: t('contextRoom:documentHistory.restoreCreatedVersion', { version: restored.version }) })
+    } catch (error: unknown) {
+      if (!isCurrentRequest()) return
+      if (isDocumentConflict(error)) {
+        try {
+          const latest = await documents.get(documentId)
+          if (!isCurrentRequest()) return
+          refreshAuthoritativeDocument(latest)
+          showToast({ title: t('contextRoom:documentHistory.documentUpdated'), message: t('contextRoom:documentHistory.refreshedBeforeRestore', { version: latest.version }) })
+          return
+        } catch {
+          // Fall through to the regular error toast when refresh also fails.
+        }
+      }
+      if (!isCurrentRequest()) return
+      showToast({ title: t('contextRoom:documentHistory.restoreFailed'), message: error instanceof Error ? error.message : t('contextRoom:documentHistory.versionChangedRetry') })
+    } finally {
+      if (isCurrentRequest()) setRestoringHistory(false)
+    }
+  }, [documentId, flushDocumentVersion, historyView, refreshAuthoritativeDocument, restoringHistory, t])
+
   const queueDocumentSave = (
     contentJson: TiptapJsonContent,
     delay = 300,
     title = documentNameRef.current,
   ): void => {
+    const currentDocument = backendRef.current
+    const currentBody = currentDocument
+      ? stripDocumentTitle(currentDocument.contentJson).content
+      : null
+    // ProseMirror extensions can emit a second update while applying a remote
+    // transaction. Do not turn an unchanged snapshot into another CAS write.
+    if (currentDocument
+      && currentDocument.title === title
+      && currentBody
+      && sameContent(currentBody, contentJson)
+      && !pendingSave.current
+      && !saveInFlight.current) {
+      return
+    }
+    if (pendingSave.current
+      && pendingSave.current.title === title
+      && sameContent(pendingSave.current.contentJson, contentJson)) {
+      return
+    }
     const revision = ++editRevision.current
     pendingSave.current = { contentJson, title, revision }
     writeDocumentDraft(documentId, contentJson, versionRef.current, title)
@@ -508,19 +632,22 @@ export function TiptapDocumentEditor({
       },
     },
     onUpdate: ({ editor: currentEditor }) => {
-      if (applyingRemote.current) return
+      if (applyingRemote.current || initializingEditor.current) return
       const currentDocument = backendRef.current
       if (currentDocument?.activeTransactionId || presentingStreamRef.current) return
       if (ensureStableBlockIds(currentEditor)) return
       queueDocumentSave(currentEditor.getJSON() as TiptapJsonContent)
     },
-    onCreate: ({ editor: currentEditor }) => {
-      ensureStableBlockIds(currentEditor)
+    onCreate: () => {
+      // Gateway owns canonical block identity at import/commit time. The
+      // initial mount must not mutate the document or create a new version.
+      initializingEditor.current = false
     },
   }, [documentId, locale])
   const visibleReviewOperation = documentOperations.atomicDiff?.review
   const visibleContinuationOperation = documentOperations.continuation?.review
-  const editorLocked = writing || documentOperations.locked
+  const historyDiffActive = historyView !== null
+  const editorLocked = writing || documentOperations.locked || historyDiffActive
   const selectionRewrite = useTiptapSelectionRewrite({
     editor,
     roomId: room.id,
@@ -539,6 +666,7 @@ export function TiptapDocumentEditor({
     },
     externallyLocked: editorLocked,
   })
+  editorRef.current = editor
   const cursorCompletionRunning = useDocumentCursorCompletion({
     editor,
     roomId: room.id,
@@ -551,6 +679,22 @@ export function TiptapDocumentEditor({
       && !selectionRewrite.preview),
   })
   const editorInteractions = useTransientEditorInteractions(editor, selectionRewrite.cancel)
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    editor.setEditable(!historyView && !writing && !documentOperations.locked)
+  }, [documentOperations.locked, editor, historyView, writing])
+
+  useEffect(() => {
+    historyRestoreRequestRef.current += 1
+    setHistoryView(null)
+    setRestoringHistory(false)
+  }, [documentId])
+
+  useEffect(() => {
+    if (!historyView || !backendDocument || historyView.diff.toVersion === backendDocument.version) return
+    setHistoryView(null)
+  }, [backendDocument, historyView])
 
   useEffect(() => onDocumentCursorCompletionSettingsChanged((settings) => {
     setCursorCompletionEnabled(settings.enabled)
@@ -634,6 +778,56 @@ export function TiptapDocumentEditor({
     editor,
     visibleContinuationOperation,
   ])
+
+  useEffect(() => {
+    if (!backendDocument) return
+    if (backendDocument.activeTransactionId) {
+      agentTransactionRef.current = backendDocument.activeTransactionId
+      return
+    }
+    if (!agentTransactionRef.current) return
+
+    // A completed Agent transaction is already the authoritative commit. Any
+    // debounce payload created while rendering its draft/stream is stale and
+    // must not be submitted as a second user save against the old version.
+    agentTransactionRef.current = null
+    agentSaveInvalidationRef.current += 1
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    pendingSave.current = null
+    versionRef.current = backendDocument.version
+    persistedEditRevision.current = editRevision.current
+    recoveringDraft.current = false
+    recoverySaveScheduled.current = false
+    removeDocumentDraft(documentId)
+    setSaveState('已保存')
+  }, [backendDocument, documentId])
+
+  useEffect(() => {
+    const operation = streamingDocument
+    if (!operation || operation.status !== 'completed') return
+    // Do not discard a normal user draft for an old completed operation. Only
+    // an operation observed as active in this editor session can invalidate
+    // the streamed save payload.
+    if (!activeStreamingOperationIds.current.has(operation.operationId)) return
+    if (completedStreamingOperationIds.current.has(operation.operationId)) return
+    completedStreamingOperationIds.current.add(operation.operationId)
+    agentSaveInvalidationRef.current += 1
+
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    pendingSave.current = null
+    if (backendRef.current) versionRef.current = backendRef.current.version
+    persistedEditRevision.current = editRevision.current
+    recoveringDraft.current = false
+    recoverySaveScheduled.current = false
+    removeDocumentDraft(documentId)
+    if (!writing) setSaveState('已保存')
+  }, [documentId, streamingDocument, writing])
 
   useEffect(() => {
     if (!editor) return
@@ -815,7 +1009,7 @@ export function TiptapDocumentEditor({
 
   useEffect(() => {
     if (!editor) return
-    const locked = writing || Boolean(visibleReviewOperation) || Boolean(visibleContinuationOperation)
+    const locked = editorLocked
     if (editor.isEditable === locked) editor.setEditable(!locked, false)
     setSaveState(writing
       ? 'Agent 正在写入'
@@ -855,7 +1049,7 @@ export function TiptapDocumentEditor({
         applyingRemote.current = false
       }
     }
-  }, [backendDocument, editor, presentingStream, visibleContinuationOperation, visibleReviewOperation, writing])
+  }, [backendDocument, editor, editorLocked, presentingStream, visibleContinuationOperation, visibleReviewOperation, writing])
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
@@ -997,7 +1191,7 @@ export function TiptapDocumentEditor({
       data-continuation-active={String(Boolean(visibleContinuationOperation))}
     >
       <div className="context-room-embedded-doc-status">
-        <b>{t(uiText(saveState))}</b>
+        <b>{historyDiffActive ? t('contextRoom:documentHistory.viewing') : t(uiText(saveState))}</b>
         {cursorCompletionRunning ? (
           <div
             className="context-room-cursor-completion-banner"
@@ -1016,6 +1210,12 @@ export function TiptapDocumentEditor({
             writing={writing}
             saving={saveState === '正在保存...'}
             onDeleteDocument={onDeleteDocument ? deleteCurrentDocument : undefined}
+            documentId={documentId}
+            onShowDiff={showHistoryDiff}
+            onClearDiff={clearHistoryDiff}
+            onCloseDiff={closeHistoryDiff}
+            historyPanelCloseSignal={historyPanelCloseSignal}
+            historyRefreshSignal={historyRefreshSignal}
           />
         ) : null}
       </div>
@@ -1047,30 +1247,65 @@ export function TiptapDocumentEditor({
         ref={editorInteractions.scrollRef}
         className="context-room-tiptap-scroll"
       >
-        <div className="context-room-document-title-block">
-          <textarea
-            ref={titleInputRef}
-            className="context-room-document-title-input"
-            aria-label={t('contextRoom:tiptapDocumentEditor.documentTitle')}
-            value={documentName}
-            disabled={editorLocked}
-            maxLength={120}
-            rows={1}
-            onChange={(event) => setDocumentName(event.target.value.replace(/[\r\n]+/g, ' '))}
-            onBlur={() => {
-              if (!editor || editorLocked) return
-              const title = documentName.trim() || t('contextRoom:documentOperationCenter.untitledDocument')
-              if (title !== documentName) setDocumentName(title)
-              queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0, title)
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') return
-              event.preventDefault()
-              event.currentTarget.blur()
-            }}
-          />
+        {historyView ? (
+          <div className="context-room-history-diff-banner" role="status">
+            <div className="context-room-history-diff-context">
+              <span className="context-room-history-diff-context-icon"><GitCompare aria-hidden="true" /></span>
+              <span><strong>{t('contextRoom:documentHistory.diffRange', { fromVersion: historyView.snapshot.version, toVersion: historyView.diff.toVersion })}</strong><small>{historyView.snapshot.title}</small></span>
+            </div>
+            <div className="context-room-history-diff-legend" aria-label={t('contextRoom:documentHistory.diffLegend')}>
+              <span className="is-added"><i />{t('contextRoom:documentHistory.added')}</span>
+              <span className="is-removed"><i />{t('contextRoom:documentHistory.removed')}</span>
+            </div>
+            <button className="context-room-history-diff-exit" type="button" onClick={closeHistoryDiff} title="退出历史 Diff">
+              <X aria-hidden="true" />{t('contextRoom:documentHistory.exitDiff')}
+            </button>
+            <button className="context-room-history-diff-restore" type="button" disabled={restoringHistory} onClick={() => void restoreHistoryVersion()}>
+              <RotateCcw aria-hidden="true" />{t('contextRoom:documentHistory.restore')}
+            </button>
+          </div>
+        ) : null}
+        {historyView ? (
+          editor ? (
+            <DocumentHistoryDiffView
+              editor={editor}
+              snapshot={historyView.snapshot}
+              diff={historyView.diff}
+              currentContent={backendDocument?.contentJson
+                ? stripDocumentTitle(backendDocument.contentJson).content
+                : undefined}
+            />
+          ) : null
+        ) : (
+          <>
+            <div className="context-room-document-title-block">
+              <textarea
+                ref={titleInputRef}
+                className="context-room-document-title-input"
+                aria-label={t('contextRoom:tiptapDocumentEditor.documentTitle')}
+                value={documentName}
+                disabled={editorLocked}
+                maxLength={120}
+                rows={1}
+                onChange={(event) => setDocumentName(event.target.value.replace(/[\r\n]+/g, ' '))}
+                onBlur={() => {
+                  if (!editor || editorLocked) return
+                  const title = documentName.trim() || t('contextRoom:documentOperationCenter.untitledDocument')
+                  if (title !== documentName) setDocumentName(title)
+                  queueDocumentSave(editor.getJSON() as TiptapJsonContent, 0, title)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return
+                  event.preventDefault()
+                  event.currentTarget.blur()
+                }}
+              />
+            </div>
+          </>
+        )}
+        <div className={historyView ? 'context-room-history-editor-source' : undefined}>
+          <EditorContent editor={editor} />
         </div>
-        <EditorContent editor={editor} />
       </div>
       {editor && !editorLocked ? (
         <>
