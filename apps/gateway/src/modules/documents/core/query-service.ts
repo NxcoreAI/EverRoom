@@ -65,6 +65,7 @@ export class DocumentQueryService {
     const row = this.repository.getVersion(documentId, version);
     if (!row) return null;
     const materialized = this.yjsHistory.materialize(this.db, documentId, version);
+    if (!materialized && row.contentJson === null) return null;
     return {
       documentId,
       version,

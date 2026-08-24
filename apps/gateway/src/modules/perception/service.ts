@@ -23,6 +23,7 @@ import {
   shouldGroupScreenshot,
   shouldRefreshRepresentative,
 } from "./visual-segmentation.js";
+import { YjsHistoryService } from "../documents/core/yjs-history-service.js";
 
 const RETRY_DELAYS_MS = [60_000, 300_000, 1_800_000, 7_200_000, 43_200_000];
 const LEASE_MS = 90_000;
@@ -103,6 +104,7 @@ export class PerceptionService {
   private readonly running = new Map<string, Promise<void>>();
   private readonly abortControllers = new Map<string, AbortController>();
   private readySink: ((evidence: VisualReadyEvidence) => Promise<void>) | null = null;
+  private readonly yjsHistory = new YjsHistoryService();
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -345,16 +347,18 @@ export class PerceptionService {
     ) ? [] : (
       this.db.select().from(documentVersions)
         .where(documentConditions.length ? and(...documentConditions) : undefined)
-        .orderBy(asc(documentVersions.createdAt)).all().map((version) => {
+        .orderBy(asc(documentVersions.createdAt)).all().flatMap((version) => {
           const document = this.db.select({ title: documents.title }).from(documents)
             .where(eq(documents.id, version.documentId)).get();
-          const content = textFromJson(version.contentJson);
-          return {
+          const materialized = this.yjsHistory.materialize(this.db, version.documentId, version.version);
+          if (!materialized?.content) return [];
+          const content = textFromJson(materialized.content);
+          return [{
             id: `document_version:${version.id}`,
             kind: "document",
             startAt: version.createdAt.toISOString(),
             endAt: version.createdAt.toISOString(),
-            title: version.title || document?.title || "文档",
+            title: materialized.title || document?.title || "文档",
             summary: content.slice(0, 240),
             status: "ready",
             eventType: null,
@@ -366,7 +370,7 @@ export class PerceptionService {
             error: null,
             sampleCount: 1,
             mediaFileId: null,
-          } satisfies PerceptionNodeDto;
+          } satisfies PerceptionNodeDto];
         })
       );
     const fileNodes: PerceptionNodeDto[] = (

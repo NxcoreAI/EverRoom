@@ -345,10 +345,13 @@ export class DocumentService {
         eq(documentVersions.version, version),
       )).get();
       if (!historical) throw new DocumentServiceError("VERSION_NOT_FOUND", "Document version not found", 404);
+      const historicalContent = this.yjsHistory.materialize(this.db, documentId, version)?.content
+        ?? historical.contentJson as TiptapJsonContent | null;
+      if (!historicalContent) throw new DocumentServiceError("VERSION_CONTENT_UNAVAILABLE", "Document version content is unavailable", 409);
       const nextVersion = document.version + 1;
       const coordination = this.onDocumentVersionCommitted?.(documentId, nextVersion);
       const content = normalizePersistedDocumentBody(
-        historical.contentJson as TiptapJsonContent,
+        historicalContent,
         historical.title,
       ).content;
       const restored = this.commitService.commit({
@@ -654,41 +657,45 @@ export class DocumentService {
       .from(documents)
       .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
       .orderBy(asc(documents.createdAt)).all();
-    this.db.transaction((tx) => {
-      for (const row of rows) {
-        const body = normalizePersistedDocumentBody(
-          row.document.contentJson as TiptapJsonContent,
-          row.document.title,
-        );
-        const normalized = this.contentEngine.normalizeStoredDocument(
-          body.content,
-          row.document.id,
-          row.roomId,
-          row.document.contentSchemaVersion,
-          row.document.version,
-        );
-        // Startup repair may rebuild derived projections, but it must never
-        // leave the document, snapshots, and Yjs chain partially repaired.
-        // Legacy normalization is applied atomically and the full Yjs chain
-        // is rebuilt from the resulting immutable snapshots.
-        if (body.changed || normalized.changed || row.document.contentSchemaVersion !== normalized.schemaVersion) {
-          tx.update(documents).set({
-            contentJson: normalized.content,
-            contentSchemaVersion: normalized.schemaVersion,
-          }).where(eq(documents.id, row.document.id)).run();
-          tx.update(documentVersions).set({
-            title: row.document.title,
-            contentJson: normalized.content,
-            contentSchemaVersion: normalized.schemaVersion,
-          }).where(and(
-            eq(documentVersions.documentId, row.document.id),
-            eq(documentVersions.version, row.document.version),
-          )).run();
-          this.yjsHistory.rebuildDocument(tx, row.document.id);
-        }
-        this.repository.replaceProjection(tx, row.document.id, normalized);
+    for (const row of rows) {
+      try {
+        this.db.transaction((tx) => {
+          const body = normalizePersistedDocumentBody(
+            row.document.contentJson as TiptapJsonContent,
+            row.document.title,
+          );
+          const normalized = this.contentEngine.normalizeStoredDocument(
+            body.content,
+            row.document.id,
+            row.roomId,
+            row.document.contentSchemaVersion,
+            row.document.version,
+          );
+          // Each document is repaired atomically so one unavailable history
+          // cannot leave partial writes or prevent healthy documents loading.
+          if (body.changed || normalized.changed || row.document.contentSchemaVersion !== normalized.schemaVersion) {
+            tx.update(documents).set({
+              contentJson: normalized.content,
+              contentSchemaVersion: normalized.schemaVersion,
+            }).where(eq(documents.id, row.document.id)).run();
+            tx.update(documentVersions).set({
+              title: row.document.title,
+              contentJson: normalized.content,
+              contentSchemaVersion: normalized.schemaVersion,
+            }).where(and(
+              eq(documentVersions.documentId, row.document.id),
+              eq(documentVersions.version, row.document.version),
+            )).run();
+            this.yjsHistory.rebuildDocument(tx, row.document.id);
+          }
+          this.repository.replaceProjection(tx, row.document.id, normalized);
+        });
+      } catch (error) {
+        try {
+          this.onAfterCommitError?.(error, row.document.id, row.document.version);
+        } catch {}
       }
-    });
+    }
   }
 
   private publish(

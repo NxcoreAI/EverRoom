@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
   documentYjsUpdates,
@@ -172,6 +172,76 @@ describe("document core", () => {
         expect.objectContaining({ blockId: "block-2", status: "added" }),
       ]),
     });
+  });
+
+  it("retains only checkpoint and current JSON snapshots while rebuilding older versions from Yjs", async () => {
+    const { db, commits, repository } = await createCore();
+    const first = commits.create({
+      documentId: "doc-snapshot-retention",
+      roomId: "room-core",
+      title: "快照保留",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "V1" }] }] },
+      version: 1,
+    });
+    const second = commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "V2" }] }] },
+      expectedVersion: 1,
+      version: 2,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "V3" }] }] },
+      expectedVersion: second.version,
+      version: 3,
+    });
+
+    expect(repository.getVersion(first.id, 2)?.contentJson).toBeNull();
+    const history = new YjsHistoryService();
+    expect(history.materialize(db, first.id, 2)?.content).toMatchObject({
+      content: [{ content: [{ text: "V2" }] }],
+    });
+    expect(history.materialize(db, first.id, 3)?.content).toMatchObject({
+      content: [{ content: [{ text: "V3" }] }],
+    });
+  });
+
+  it("fails closed when a released snapshot can no longer be reconstructed from Yjs", async () => {
+    const { db, commits } = await createCore();
+    const first = commits.create({
+      documentId: "doc-corrupt-compacted-history",
+      roomId: "room-core",
+      title: "损坏历史",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "V1" }] }] },
+      version: 1,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "V2" }] }] },
+      expectedVersion: 1,
+      version: 2,
+    });
+    commits.commit({
+      documentId: first.id,
+      roomId: first.roomId,
+      title: first.title,
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "V3" }] }] },
+      expectedVersion: 2,
+      version: 3,
+    });
+
+    db.update(documentYjsUpdates).set({ contentHash: "corrupt" })
+      .where(and(eq(documentYjsUpdates.documentId, first.id), eq(documentYjsUpdates.version, 2))).run();
+
+    const history = new YjsHistoryService();
+    expect(history.materialize(db, first.id, 2)).toBeNull();
+    expect(() => history.rebuildDocument(db, first.id)).toThrow(/version 2 cannot be reconstructed/);
   });
 
   it("does not turn an insertion before legacy path-based blocks into edits", async () => {

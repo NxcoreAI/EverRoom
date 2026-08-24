@@ -9,12 +9,16 @@ import {
   connectorDocuments,
   connectorEmails,
   diaryVersionSources,
+  documentVersions,
+  documents,
   entities,
   entityDocLinks,
   uploadedFiles,
   visualNodes,
   visualObservations,
 } from "../src/infrastructure/database/schema.js";
+import { YjsHistoryService } from "../src/modules/documents/core/yjs-history-service.js";
+import { DiarySourceCollector } from "../src/modules/diary/source-collector.js";
 import { DiaryService, type DiaryGenerator, type DiaryMemoryProvider } from "../src/modules/diary/service.js";
 
 const temporaryDirectories: string[] = [];
@@ -281,6 +285,62 @@ describe("DiaryService", () => {
     expect(query).toHaveBeenCalledOnce();
     expect(service.getRun(runId)?.status).toBe("completed");
     expect(service.listVersions("2026-08-20")[0]?.content.events).toEqual([]);
+  });
+
+  it("materializes document versions through Yjs and skips unrecoverable snapshots", async () => {
+    const { database } = await setup();
+    const occurredAt = new Date("2026-08-20T10:00:00.000Z");
+
+    database.db.insert(documents).values([
+      {
+        id: "doc-yjs", title: "项目记录", contentJson: { type: "doc" }, status: "active",
+        version: 2, createdAt: occurredAt, updatedAt: occurredAt,
+      },
+      {
+        id: "doc-broken", title: "损坏记录", contentJson: { type: "doc" }, status: "active",
+        version: 1, createdAt: occurredAt, updatedAt: occurredAt,
+      },
+    ]).run();
+    database.db.insert(documentVersions).values([
+      {
+        id: "dv-1", documentId: "doc-yjs", version: 1, title: "第一版",
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "第一版正文" }] }] },
+        createdAt: occurredAt,
+      },
+      {
+        id: "dv-2", documentId: "doc-yjs", version: 2, title: "第二版",
+        contentJson: null, createdAt: new Date(occurredAt.getTime() + 1_000),
+      },
+      {
+        id: "dv-broken", documentId: "doc-broken", version: 1, title: "损坏版本",
+        contentJson: null, createdAt: new Date(occurredAt.getTime() + 2_000),
+      },
+    ]).run();
+
+    const history = new YjsHistoryService();
+    history.writeCommit(database.db, {
+      documentId: "doc-yjs", version: 1, title: "第一版",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "第一版正文" }] }] },
+      contentSchemaVersion: 1, source: null, now: occurredAt,
+    });
+    history.writeCommit(database.db, {
+      documentId: "doc-yjs", version: 2, title: "第二版",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "第二版正文" }] }] },
+      contentSchemaVersion: 1, source: null, now: new Date(occurredAt.getTime() + 1_000),
+    });
+
+    const sources = await new DiarySourceCollector(database.db).collect(
+      new Date("2026-08-20T09:00:00.000Z"),
+      new Date("2026-08-20T11:00:00.000Z"),
+    );
+    const documentSources = sources.filter((source) => source.kind === "document_version");
+
+    expect(documentSources.map((source) => source.content)).toEqual([
+      "doc paragraph text 第一版正文",
+      "doc paragraph text 第二版正文",
+    ]);
+    expect(documentSources.some((source) => source.sourceId === "document_version:dv-broken")).toBe(false);
+    expect(documentSources.map((source) => source.fingerprint).length).toBe(2);
   });
 
   it("treats ranges as half-open and reads manifest summaries when full content is unavailable", async () => {

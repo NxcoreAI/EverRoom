@@ -297,6 +297,26 @@ export class YjsHistoryService {
       backfilled: input.backfilled ?? true,
       createdAt: input.now,
     }).run();
+    // Keep the current version materialized for fast reads. Once a newer
+    // version exists, release the previous non-checkpoint JSON snapshot; its
+    // authoritative content remains available through the Yjs chain.
+    if (input.version > 1) {
+      const previousVersion = tx.select({ checkpointId: documentYjsVersions.checkpointId })
+        .from(documentYjsVersions)
+        .where(and(
+          eq(documentYjsVersions.documentId, input.documentId),
+          eq(documentYjsVersions.version, input.version - 1),
+        )).get();
+      const previousMaterialized = previousVersion && !previousVersion.checkpointId
+        ? this.materialize(tx, input.documentId, input.version - 1)
+        : null;
+      if (previousVersion && !previousVersion.checkpointId && previousMaterialized?.yjsBackfilled) {
+        tx.update(documentVersions).set({ contentJson: null }).where(and(
+          eq(documentVersions.documentId, input.documentId),
+          eq(documentVersions.version, input.version - 1),
+        )).run();
+      }
+    }
   }
 
   materialize(db: GatewayDatabase, documentId: string, version: number): {
@@ -314,12 +334,13 @@ export class YjsHistoryService {
     try {
       state = this.loadState(db, documentId, version);
     } catch {
-      // The immutable doc_versions snapshot remains the recovery authority if
-      // an incremental Yjs row is truncated or otherwise corrupt.
+      // Retained JSON snapshots remain the recovery authority when an
+      // incremental Yjs row is truncated or otherwise corrupt.
       state = null;
     }
     const materialized = state ? readDocumentRoot(state.doc) : null;
     if (!materialized) {
+      if (versionRow.contentJson === null) return null;
       return {
         title: versionRow.title,
         content: versionRow.contentJson as TiptapJsonContent,
@@ -337,15 +358,15 @@ export class YjsHistoryService {
         eq(documentYjsUpdates.documentId, documentId),
         eq(documentYjsUpdates.version, version),
       )).get();
-    const canonicalHash = contentHash(
-      versionRow.title,
-      versionRow.contentJson as TiptapJsonContent,
-      versionRow.contentSchemaVersion,
-    );
     const materializedHash = contentHash(materialized.title, materialized.content, materialized.schemaVersion);
     if (!updateRow
       || updateRow.contentHash !== materializedHash
-      || materializedHash !== canonicalHash) {
+      || (versionRow.contentJson !== null && materializedHash !== contentHash(
+        versionRow.title,
+        versionRow.contentJson as TiptapJsonContent,
+        versionRow.contentSchemaVersion,
+      ))) {
+      if (versionRow.contentJson === null) return null;
       return {
         title: versionRow.title,
         content: versionRow.contentJson as TiptapJsonContent,
@@ -497,6 +518,14 @@ export class YjsHistoryService {
         .where(eq(documentYjsVersions.documentId, documentId))
         .all()
         .map((row) => row.version));
+      const recovered = new Map<number, TiptapJsonContent>();
+      for (const row of rows) {
+        const materialized = this.materialize(tx, documentId, row.version);
+        if (materialized?.content) recovered.set(row.version, materialized.content);
+        else if (row.contentJson === null) {
+          throw new Error(`Document history version ${row.version} cannot be reconstructed`);
+        }
+      }
       const hasCorruption = rows.some((row) => {
         if (!existingVersions.has(row.version)) return false;
         const materialized = this.materialize(tx, documentId, row.version);
@@ -515,7 +544,7 @@ export class YjsHistoryService {
           documentId,
           version: row.version,
           title: row.title,
-          content: row.contentJson as TiptapJsonContent,
+          content: recovered.get(row.version) ?? row.contentJson as TiptapJsonContent,
           contentSchemaVersion: row.contentSchemaVersion,
           source: row.sourceTransactionId,
           now: row.createdAt,
@@ -537,19 +566,29 @@ export class YjsHistoryService {
   }
 
   rebuildDocument(db: GatewayDatabase, documentId: string): void {
+    const snapshots = db.select().from(documentVersions)
+      .where(eq(documentVersions.documentId, documentId))
+      .orderBy(asc(documentVersions.version)).all()
+      .map((row) => ({
+        ...row,
+        content: row.contentJson !== null
+          ? row.contentJson as TiptapJsonContent
+          : this.materialize(db, documentId, row.version)?.content ?? null,
+      }));
+    const unavailable = snapshots.find((row) => row.content === null);
+    if (unavailable) {
+      throw new Error(`Document history version ${unavailable.version} cannot be reconstructed`);
+    }
     db.delete(documentYjsVersions).where(eq(documentYjsVersions.documentId, documentId)).run();
     db.delete(documentYjsUpdates).where(eq(documentYjsUpdates.documentId, documentId)).run();
     db.delete(documentYjsCheckpoints).where(eq(documentYjsCheckpoints.documentId, documentId)).run();
-    const versions = db.select().from(documentVersions)
-      .where(eq(documentVersions.documentId, documentId))
-      .orderBy(asc(documentVersions.version)).all();
     db.transaction((tx) => {
-      for (const row of versions) {
+      for (const row of snapshots) {
         this.writeCommit(tx, {
           documentId,
           version: row.version,
           title: row.title,
-          content: row.contentJson as TiptapJsonContent,
+          content: row.content as TiptapJsonContent,
           contentSchemaVersion: row.contentSchemaVersion,
           source: row.sourceTransactionId,
           now: row.createdAt,

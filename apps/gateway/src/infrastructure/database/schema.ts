@@ -635,7 +635,9 @@ export const documentVersions = sqliteTable(
       .references(() => documents.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
     title: text("title").notNull().default("无标题文档"),
-    contentJson: text("content_json", { mode: "json" }).notNull(),
+    // Only retained snapshots have a JSON body. Other versions are
+    // reconstructed from the Yjs history chain.
+    contentJson: text("content_json", { mode: "json" }),
     contentSchemaVersion: integer("content_schema_version").notNull().default(1),
     sourceTransactionId: text("source_transaction_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

@@ -10,6 +10,7 @@ import {
   documentBlocks,
   documentBlockReferences,
   documentVersions,
+  documentYjsUpdates,
   documents,
   jobs,
   roomDocumentLinks,
@@ -321,6 +322,54 @@ describe('document transactions', () => {
     ])
   })
 
+  it('isolates an unavailable history during startup repair', async () => {
+    const { db, service } = await createHarness()
+    const broken = await service.import({
+      id: 'doc-broken-startup-history', roomId: 'room-1', title: '损坏历史',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'V1' }] }] },
+    })
+    const second = await service.save(broken.id, {
+      baseVersion: broken.version,
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'V2' }] }] },
+    })
+    const third = await service.save(broken.id, {
+      baseVersion: second.version,
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'V3' }] }] },
+    })
+    const healthy = await service.import({
+      id: 'doc-healthy-startup-history', roomId: 'room-1', title: '健康文档',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '正常正文' }] }] },
+    })
+    const legacyContent = {
+      type: 'doc' as const,
+      content: [{ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: '旧标题' }] }],
+    }
+    db.update(documents).set({ contentJson: legacyContent }).where(eq(documents.id, broken.id)).run()
+    db.update(documentVersions).set({ contentJson: legacyContent })
+      .where(eq(documentVersions.documentId, broken.id)).run()
+    db.update(documentVersions).set({ contentJson: null })
+      .where(eq(documentVersions.version, second.version)).run()
+    db.update(documentYjsUpdates).set({ contentHash: 'corrupt' })
+      .where(eq(documentYjsUpdates.version, second.version)).run()
+
+    const repairErrors: Array<{ documentId: string; version: number }> = []
+    const reopened = new DocumentService(
+      db,
+      service.broker,
+      undefined,
+      undefined,
+      undefined,
+      (_error, documentId, version) => repairErrors.push({ documentId, version }),
+    )
+
+    expect(repairErrors).toEqual([{ documentId: broken.id, version: third.version }])
+    expect(reopened.get(healthy.id)?.contentJson).toMatchObject({
+      content: [{ content: [{ text: '正常正文' }] }],
+    })
+    expect((db.select().from(documents).where(eq(documents.id, broken.id)).get()
+      ?.contentJson as TiptapJsonContent).content?.[0]?.attrs?.level).toBe(3)
+  })
+
   it('moves a document to trash, restores it, and only removes stored content permanently', async () => {
     const { db, service } = await createHarness()
     const frames: string[] = []
@@ -628,6 +677,39 @@ describe('document transactions', () => {
     expect(service.listBlocks(imported.id)[0]).toMatchObject({
       blockId: importedBlockId,
       indexedVersion: 3,
+    })
+  })
+
+  it('restores a compacted intermediate version from Yjs history', async () => {
+    const { db, service } = await createHarness()
+    const imported = await service.import({
+      id: 'doc-compacted-version-restore', roomId: 'room-1', title: '压缩版本恢复',
+      contentJson: { type: 'doc', content: [{
+        type: 'paragraph', content: [{ type: 'text', text: '第一版' }],
+      }] },
+    })
+    const blockId = service.listBlocks(imported.id)[0]!.blockId
+    const second = await service.save(imported.id, {
+      baseVersion: imported.version,
+      contentJson: { type: 'doc', content: [{
+        type: 'paragraph', attrs: { id: blockId }, content: [{ type: 'text', text: '第二版' }],
+      }] },
+    })
+    const third = await service.save(imported.id, {
+      baseVersion: second.version,
+      contentJson: { type: 'doc', content: [{
+        type: 'paragraph', attrs: { id: blockId }, content: [{ type: 'text', text: '第三版' }],
+      }] },
+    })
+
+    expect(db.select().from(documentVersions).where(eq(documentVersions.documentId, imported.id)).all()
+      .find((version) => version.version === second.version)?.contentJson)
+      .toBeNull()
+
+    const restored = await service.restoreVersion(imported.id, second.version, third.version)
+    expect(restored).toMatchObject({
+      version: 4,
+      contentJson: { content: [{ content: [{ text: '第二版' }] }] },
     })
   })
 

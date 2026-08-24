@@ -14,6 +14,7 @@ import {
   visualProcessingJobs,
 } from "../src/infrastructure/database/schema.js";
 import { FilesService } from "../src/modules/files/service.js";
+import { YjsHistoryService } from "../src/modules/documents/core/yjs-history-service.js";
 import { PerceptionService, type VisualReadyEvidence } from "../src/modules/perception/service.js";
 import {
   MAX_SCREENSHOT_SEGMENT_MS,
@@ -132,6 +133,58 @@ describe("PerceptionService", () => {
     expect(service.list({ kind: "file" }).some((node) => node.kind === "screenshot")).toBe(false);
     expect(service.list({ status: "failed" })).toEqual([]);
     expect(service.list({ status: "ready" }).map((node) => node.kind)).toEqual(["document", "file"]);
+    await service.dispose();
+  });
+
+  it("materializes document versions from Yjs and skips unrecoverable snapshots", async () => {
+    const { database, service } = await setup(null);
+    const occurredAt = new Date("2026-08-20T11:00:00Z");
+
+    database.db.insert(documents).values([
+      {
+        id: "doc-yjs", title: "项目记录", contentJson: { type: "doc" }, status: "active",
+        version: 2, createdAt: occurredAt, updatedAt: occurredAt,
+      },
+      {
+        id: "doc-broken", title: "损坏记录", contentJson: { type: "doc" }, status: "active",
+        version: 1, createdAt: occurredAt, updatedAt: occurredAt,
+      },
+    ]).run();
+    database.db.insert(documentVersions).values([
+      {
+        id: "dv-1", documentId: "doc-yjs", version: 1, title: "第一版",
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "第一版正文" }] }] },
+        createdAt: occurredAt,
+      },
+      {
+        id: "dv-2", documentId: "doc-yjs", version: 2, title: "第二版",
+        contentJson: null, createdAt: new Date(occurredAt.getTime() + 1_000),
+      },
+      {
+        id: "dv-broken", documentId: "doc-broken", version: 1, title: "损坏版本",
+        contentJson: null, createdAt: new Date(occurredAt.getTime() + 2_000),
+      },
+    ]).run();
+
+    const history = new YjsHistoryService();
+    history.writeCommit(database.db, {
+      documentId: "doc-yjs", version: 1, title: "第一版",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "第一版正文" }] }] },
+      contentSchemaVersion: 1, source: null, now: occurredAt,
+    });
+    history.writeCommit(database.db, {
+      documentId: "doc-yjs", version: 2, title: "第二版",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "第二版正文" }] }] },
+      contentSchemaVersion: 1, source: null, now: new Date(occurredAt.getTime() + 1_000),
+    });
+
+    const documentsNodes = service.list({ kind: "document" });
+    expect(documentsNodes).toHaveLength(2);
+    expect(documentsNodes.map((node) => node.summary)).toEqual([
+      "doc paragraph text 第一版正文",
+      "doc paragraph text 第二版正文",
+    ]);
+    expect(documentsNodes.every((node) => node.id !== "document_version:dv-broken")).toBe(true);
     await service.dispose();
   });
 

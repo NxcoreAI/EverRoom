@@ -162,6 +162,13 @@
       "when": 1787546675772,
       "tag": "0023_slow_caretaker",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1787575087422,
+      "tag": "0024_slim_shen",
+      "breakpoints": true
     }
   ]
 }
