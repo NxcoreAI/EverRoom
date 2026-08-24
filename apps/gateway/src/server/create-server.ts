@@ -48,6 +48,8 @@ import { MemoryService } from "../modules/memory/service.js";
 import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { FileClusteringService } from "../modules/files/clustering-service.js";
+import { ClipperService } from "../modules/clipper/service.js";
+import { clipperRoutes } from "../modules/clipper/routes.js";
 import { EmbeddingClient } from "../modules/knowledge/embedding.js";
 import { ingestRoutes } from "../modules/ingest/routes.js";
 import { IngestService } from "../modules/ingest/service.js";
@@ -69,6 +71,9 @@ import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
 import { perceptionRoutes } from "../modules/perception/routes.js";
 import { PerceptionService } from "../modules/perception/service.js";
+import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
+import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
+import { createDocumentUnderstandingTools } from "../modules/document-understanding/tools.js";
 import { diaryRoutes } from "../modules/diary/routes.js";
 import { DiaryService } from "../modules/diary/service.js";
 import { AgentSchedulerService } from "../modules/agent-scheduler/service.js";
@@ -497,13 +502,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     subagentRuntimeManager,
     app.log,
   );
+  let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
   const recoveredSubagentInvocations = subagentOrchestrator.initialize();
   if (recoveredSubagentInvocations > 0) {
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
   }
   registerPrimaryAgent(agentResolver, config, documentMcpHost, {
     ...(subagentConfig.enabled
-      ? { tools: createSubagentPiTools(subagentRegistry, subagentOrchestrator) }
+      ? {
+          tools: createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
+            resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
+          }),
+        }
       : {}),
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
@@ -649,6 +659,30 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
   filesService.initializeCatalog();
+  const clipperService = new ClipperService(db, filesService, config.dataDir);
+  const documentUnderstandingService = new DocumentUnderstandingService(
+    db,
+    filesService,
+    createVlmProvider(config),
+    config.dataDir,
+  );
+  resolveFileMarkdown = async (fileId) => {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() <= deadline) {
+      const markdown = filesService.markdownOf(fileId)
+        ?? filesService.catalogMarkdownOf(fileId)
+        ?? documentUnderstandingService.markdownForFile(fileId);
+      if (markdown !== null) return markdown;
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+    return null;
+  };
+  runtimeConfigManager.onChange(() =>
+    documentUnderstandingService.replaceVisualProvider(createVlmProvider(config)));
+  subagentRuntimeManager.registerAgentTools(
+    "multimodal-document-parser",
+    () => createDocumentUnderstandingTools(documentUnderstandingService),
+  );
   cliConnectorSyncService.setFilesService(filesService);
   const fileClusteringService = new FileClusteringService(
     db,
@@ -778,6 +812,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
     deleteMemoryDocuments: (fileId) => memoryService.deleteDocumentsByCallerRef(fileId),
   }, fileClusteringService));
+  await app.register(clipperRoutes(clipperService));
+  await app.register(documentUnderstandingRoutes(documentUnderstandingService));
   // 统一理解引擎（U1）：接入面唯一，台账 + 三链路扇出（§7）。
   // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
   // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
@@ -855,15 +891,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
-  filesService.setVersionIngestor((input) => ingestService.ingest({
-    source: { ref: {
-      sourceKind: "file",
-      sourceId: input.fileEntryId,
-      sourceVersionId: input.fileVersionId,
-    } },
-    ...(input.pipelines ? { pipelines: input.pipelines } : {}),
-    ...(input.roomId ? { roomId: input.roomId } : {}),
-  }));
+  filesService.setVersionIngestor(async (input) => {
+    await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
+    return ingestService.ingest({
+      source: { ref: {
+        sourceKind: "file",
+        sourceId: input.fileEntryId,
+        sourceVersionId: input.fileVersionId,
+      } },
+      ...(input.pipelines ? { pipelines: input.pipelines } : {}),
+      ...(input.roomId ? { roomId: input.roomId } : {}),
+    });
+  });
   realityService.setReadySink(async (event) => {
     diaryService.markStaleAt(new Date(event.startedAt));
     const roomEnabled = knowledgeService.routerEnabled;

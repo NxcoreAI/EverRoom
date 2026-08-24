@@ -26,7 +26,7 @@ interface FolderSettingsOnboardingProps {
 const DEFAULT_FOLDERS: DefaultLocalFolder[] = ['documents', 'desktop']
 
 export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, showReady = false, onNavigateStage }: FolderSettingsOnboardingProps) {
-  const { locale, setLocale, t } = useLocale()
+  const { locale, preference, setLocale, t } = useLocale()
   const [selectedFolders, setSelectedFolders] = useState<DefaultLocalFolder[]>([])
   const [connectedFolders, setConnectedFolders] = useState<DefaultLocalFolder[]>([])
   const [failedFolders, setFailedFolders] = useState<DefaultLocalFolder[]>([])
@@ -137,8 +137,9 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
         <div className="folder-settings-onboarding-actions no-drag">
           <div className="folder-settings-onboarding-language" role="group" aria-label={t('contextRoom:onboarding.language')}>
             <Languages aria-hidden="true" />
-            <button type="button" data-active={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
-            <button type="button" data-active={locale === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
+            <button type="button" data-active={preference === 'system'} onClick={() => setLocale('system')}>{t('surface:settings.followSystem')}</button>
+            <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
+            <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
         </div>
       </header>

@@ -119,6 +119,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       expect(metadata.sourceKey).toMatch(/^manual:/)
       return new Response(JSON.stringify({
         fileEntryId: 'file-entry-1',
+        fileVersionId: 'file-version-1',
         versionDeduped: false,
         jobId: 'job-1',
       }), { headers: { 'Content-Type': 'application/json' } })
@@ -131,6 +132,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       expect.objectContaining({
         filename: 'notes/kept.md',
         fileId: 'file-entry-1',
+        fileVersionId: 'file-version-1',
         routeJobId: 'job-1',
         error: null,
       }),
@@ -187,5 +189,52 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       expect.any(String),
     )
     expect(manualResolver).not.toBeNull()
+  })
+})
+
+describe('FilesGatewayBridge.readMarkdown', () => {
+  it('waits for an asynchronously parsed file without surfacing intermediate 404s', async () => {
+    let attempts = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      attempts += 1
+      if (attempts === 1) return new Response(JSON.stringify({ error: 'file_not_parsed' }), { status: 404 })
+      return new Response(JSON.stringify({ markdown: '# Parsed PDF' }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    const supervisor = {
+      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
+    } as unknown as GatewaySupervisor
+
+    await expect(new FilesGatewayBridge(supervisor).readMarkdown('file-1', { waitMs: 1_000, pollMs: 100 }))
+      .resolves.toEqual({ markdown: '# Parsed PDF' })
+    expect(attempts).toBe(2)
+  })
+})
+
+describe('FilesGatewayBridge.createClipCapture', () => {
+  it('forwards the structured capture to the dedicated Clipper endpoint', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      expect(String(input)).toBe('http://gateway.test/v1/clipper/captures')
+      expect(init?.method).toBe('POST')
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        captureId: 'capture-1', sourceUrl: 'https://example.com/article?utm_source=test',
+        canonicalUrl: 'https://example.com/article', title: 'An article', markdown: '# An article',
+        assets: [],
+      })
+      return new Response(JSON.stringify({
+        fileEntryId: 'file-1', fileVersionId: 'version-1', jobId: 'job-1',
+        contentHash: 'a'.repeat(64), blobDeduped: false, versionDeduped: false, pendingAssetIds: [], capture: {},
+      }), { headers: { 'Content-Type': 'application/json' } })
+    })
+    const supervisor = {
+      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
+    } as unknown as GatewaySupervisor
+
+    await expect(new FilesGatewayBridge(supervisor).createClipCapture({
+      markdown: '# An article', title: 'An article', url: 'https://example.com/article?utm_source=test',
+      canonicalUrl: 'https://example.com/article', capturedAt: '2026-08-24T12:00:00.000Z', captureId: 'capture-1',
+      extractionMode: 'article', extractorVersion: 'test-1', assets: [],
+    })).resolves.toMatchObject({ fileEntryId: 'file-1', fileVersionId: 'version-1' })
   })
 })

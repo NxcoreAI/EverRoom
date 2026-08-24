@@ -1,0 +1,21 @@
+schemaVersion: 1
+id: multimodal-document-parser
+name: Multimodal Document Parser
+description: 解析 Office/PDF 文件版本，校验结构化证据并返回质量结论
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/parsing-workflow
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+
+policy:
+  allowedCallers: [primary-agent, internal-workflow]
+  maxConcurrency: 2
+  timeoutSeconds: 300
+  maxToolCalls: 20

@@ -2729,6 +2729,16 @@ summary:focus-visible {
 
 .file-category-detail { display: grid; gap: 14px; }
 
+.clipper-preview-dialog { width: min(860px, calc(100vw - 48px)); max-height: min(820px, calc(100vh - 48px)); }
+.clipper-preview-meta { display: flex; align-items: center; gap: 12px; min-height: 38px; padding: 0 20px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.clipper-preview-meta a { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--accent); text-decoration: none; }
+.clipper-preview-meta svg { width: 14px; height: 14px; }
+.clipper-preview-body { overflow: auto; padding: 22px 28px 34px; line-height: 1.7; }
+.clipper-preview-body img { display: block; max-width: 100%; height: auto; margin: 18px auto; }
+.clipper-preview-body pre { overflow: auto; padding: 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); }
+.clipper-missing-assets { display: grid; gap: 7px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.clipper-missing-assets a { color: var(--muted); font-size: 12px; }
+
 .file-category-detail-title {
   gap: 10px;
 }
@@ -2742,6 +2752,313 @@ summary:focus-visible {
   margin: 0;
   font-size: 16px;
   font-weight: 650;
+}
+
+/* Files archive: a calm, column-based masonry that keeps categories discoverable. */
+.files-page-drop-target {
+  --files-ink: #1d252b;
+  --files-paper: color-mix(in srgb, var(--surface) 94%, #f4f0e8);
+  --files-line: color-mix(in srgb, var(--border) 82%, #c8bca9);
+}
+
+.files-page-drop-target .page-header h1,
+.file-category-detail-title h2,
+.file-recognition-toolbar h2 {
+  font-family: "Avenir Next", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.file-recognition {
+  gap: 18px;
+}
+
+.file-recognition-toolbar {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--files-line);
+}
+
+.file-masonry {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.file-category-masonry {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.file-masonry-column {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 16px;
+}
+
+.file-category-card {
+  display: inline-flex;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 19px 19px 16px;
+  break-inside: avoid;
+  border: 1px solid var(--files-line);
+  border-radius: 14px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--surface) 98%, transparent), color-mix(in srgb, var(--files-paper) 90%, transparent));
+  box-shadow: 0 10px 25px rgba(36, 38, 33, 0.045);
+  color: var(--files-ink);
+  transition: transform 180ms var(--shell-motion-easing), box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.file-category-card:nth-child(3n + 1) { min-height: 248px; }
+.file-category-card:nth-child(3n + 2) { min-height: 204px; }
+.file-category-card:nth-child(3n) { min-height: 286px; }
+
+.file-category-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--files-line));
+  box-shadow: 0 16px 34px rgba(36, 38, 33, 0.09);
+  transform: translateY(-3px) rotate(-0.2deg);
+}
+
+.file-category-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.file-category-card-head {
+  align-items: flex-start;
+}
+
+.file-category-title-wrap strong {
+  font-family: "Avenir Next", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.file-category-icon {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  border-radius: 11px;
+}
+
+.file-category-icon svg { width: 18px; height: 18px; }
+
+.file-category-samples {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 9px;
+  margin-top: 5px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--files-line) 72%, transparent);
+}
+
+.file-category-sample {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.file-category-sample > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-category-more {
+  padding-left: 26px;
+  color: var(--subtle);
+}
+
+.file-category-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 13px;
+  color: var(--subtle);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.file-category-card-foot svg { width: 14px; height: 14px; }
+
+.file-category-detail {
+  gap: 18px;
+}
+
+.file-category-detail-title {
+  align-items: flex-start;
+}
+
+.file-category-detail-title h2 {
+  font-family: "Avenir Next", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  font-size: 24px;
+  font-weight: 650;
+}
+
+.file-file-masonry {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.file-document-card {
+  display: inline-flex;
+  width: 100%;
+  margin: 0;
+  padding: 16px;
+  break-inside: avoid;
+  flex-direction: column;
+  gap: 13px;
+  border: 1px solid var(--files-line);
+  border-radius: 13px;
+  background: var(--files-paper);
+  box-shadow: 0 7px 20px rgba(36, 38, 33, 0.04);
+  transition: transform 180ms var(--shell-motion-easing), box-shadow 180ms ease;
+}
+
+.file-document-card:hover {
+  box-shadow: 0 14px 30px rgba(36, 38, 33, 0.09);
+  transform: translateY(-2px);
+}
+
+.file-document-main {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.file-document-main:disabled { cursor: wait; opacity: 0.6; }
+
+.file-document-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent-soft) 75%, transparent);
+  color: var(--accent);
+}
+
+.file-document-icon svg { width: 18px; height: 18px; }
+
+.file-document-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.file-document-copy strong {
+  overflow: hidden;
+  font-family: "Avenir Next", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.file-document-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-document-preview {
+  display: grid;
+  gap: 6px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--files-line) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+}
+
+.file-document-preview span {
+  display: block;
+  height: 5px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+}
+
+.file-document-preview span:nth-child(1) { width: 82%; }
+.file-document-preview span:nth-child(2) { width: 94%; }
+.file-document-preview span:nth-child(3) { width: 58%; }
+
+.file-document-card:nth-child(3n + 1) .file-document-preview { padding-block: 16px; }
+.file-document-card:nth-child(3n + 2) .file-document-preview { padding-block: 24px; }
+
+.file-document-meta,
+.file-document-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--subtle);
+  font-size: 10px;
+}
+
+.file-document-meta { padding-top: 1px; }
+
+.file-document-status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-document-actions {
+  padding-top: 11px;
+  border-top: 1px solid color-mix(in srgb, var(--files-line) 72%, transparent);
+}
+
+.file-document-actions > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-document-actions .files-actions {
+  display: inline-flex;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.file-document-actions .icon-button {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+@media (max-width: 1100px) {
+  .file-masonry,
+  .file-category-masonry,
+  .file-file-masonry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .file-category-masonry,
+  .file-file-masonry { grid-template-columns: 1fr; }
+  .file-category-card,
+  .file-document-card { margin-bottom: 0; }
 }
 
 @media (max-width: 1360px) {

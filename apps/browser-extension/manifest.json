@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "EverRoom",
+  "version": "0.2.2",
+  "description": "Save the current page as Markdown to EverRoom on this computer.",
+  "permissions": ["storage", "activeTab", "contextMenus", "scripting"],
+  "host_permissions": ["http://127.0.0.1:47831/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "EverRoom",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["vendor/Readability.js", "content-script.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

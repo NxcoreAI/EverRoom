@@ -5,6 +5,7 @@ import i18n from './i18next'
 import { SUPPORTED_LOCALES, type AppLocale } from './resources'
 
 export type { AppLocale } from './resources'
+export type LocalePreference = AppLocale | 'system'
 
 const STORAGE_KEY = 'everroom:locale:v1'
 
@@ -22,14 +23,21 @@ export function resolveLocale(stored: string | null, browserLanguage: string): A
   return localeFromBrowser(browserLanguage)
 }
 
-function detectLocale(): AppLocale {
+function storedLocalePreference(): LocalePreference | null {
   let stored: string | null = null
   try {
     stored = window.localStorage.getItem(STORAGE_KEY)
   } catch {
     // Browser storage is optional.
   }
-  return resolveLocale(stored, window.navigator.language)
+  if (stored === 'system') return 'system'
+  return stored && SUPPORTED_LOCALES.includes(stored as AppLocale) ? stored as AppLocale : null
+}
+
+function detectLocale(): AppLocale {
+  const preference = storedLocalePreference()
+  const systemLocale = window.nxcore?.locale.system ?? window.navigator.language
+  return resolveLocale(preference === 'system' ? null : preference, systemLocale)
 }
 
 export function interpolate(message: string, values?: Record<string, string | number>): string {
@@ -49,7 +57,8 @@ export type Translate = (message: string, values?: Record<string, string | numbe
 
 interface LocaleContextValue {
   locale: AppLocale
-  setLocale: (locale: AppLocale) => void
+  preference: LocalePreference
+  setLocale: (locale: LocalePreference) => void
   t: Translate
   formatNumber: (value: number) => string
   formatDate: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string
@@ -63,25 +72,44 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     void i18n.changeLanguage(detected)
     return detected
   })
+  const [preference, setPreferenceState] = useState<LocalePreference>(() => storedLocalePreference() ?? 'system')
 
   useEffect(() => {
     void i18n.changeLanguage(locale)
     document.documentElement.lang = locale
     window.nxcore?.locale.set(locale)
-    try {
-      window.localStorage.setItem(STORAGE_KEY, locale)
-    } catch {
-      // Browser storage is optional.
-    }
   }, [locale])
+
+  useEffect(() => {
+    if (preference !== 'system') {
+      setLocaleState(preference)
+      return
+    }
+    let cancelled = false
+    setLocaleState(resolveLocale(null, window.nxcore?.locale.system ?? window.navigator.language))
+    void window.nxcore?.locale.getSystem().then((systemLocale) => {
+      if (cancelled || storedLocalePreference() !== 'system') return
+      const detected = resolveLocale(null, systemLocale)
+      setLocaleState(detected)
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [preference])
 
   const value = useMemo<LocaleContextValue>(() => ({
     locale,
-    setLocale: (nextLocale) => setLocaleState(nextLocale),
+    preference,
+    setLocale: (nextLocale) => {
+      setPreferenceState(nextLocale)
+      try {
+        window.localStorage.setItem(STORAGE_KEY, nextLocale)
+      } catch {
+        // Browser storage is optional.
+      }
+    },
     t: (message, values) => translate(locale, message, values),
     formatNumber: (number) => number.toLocaleString(locale),
     formatDate: (input, options) => new Intl.DateTimeFormat(locale, options).format(new Date(input)),
-  }), [locale])
+  }), [locale, preference])
 
   return (
     <I18nextProvider i18n={i18n}>

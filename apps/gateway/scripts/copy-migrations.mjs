@@ -1,4 +1,5 @@
-import { cp, mkdir } from "node:fs/promises";
+import { cp, mkdir, realpath, rm } from "node:fs/promises";
+import { dirname } from "node:path";
 
 await mkdir("dist/drizzle", { recursive: true });
 await cp("drizzle", "dist/drizzle", { recursive: true, force: true });
@@ -24,3 +25,35 @@ for (const entry of ["lib", "prebuilds", "LICENSE", "package.json"]) {
     force: true,
   });
 }
+
+// unpdf uses @napi-rs/canvas only for server-side PDF rendering. Keep the
+// native package external to the bundle and ship the current platform build.
+const canvasTarget = "dist/node_modules/@napi-rs";
+const canvasPackageSource = await realpath("node_modules/@napi-rs/canvas");
+const canvasSource = dirname(canvasPackageSource);
+await rm(canvasTarget, { recursive: true, force: true });
+await mkdir(canvasTarget, { recursive: true });
+await cp(canvasPackageSource, `${canvasTarget}/canvas`, {
+  recursive: true,
+  force: true,
+  dereference: true,
+});
+const platformKey = `${process.platform}-${process.arch}`;
+const platformPackage = {
+  "darwin-arm64": "canvas-darwin-arm64",
+  "darwin-x64": "canvas-darwin-x64",
+  "win32-x64": "canvas-win32-x64-msvc",
+  "win32-arm64": "canvas-win32-arm64-msvc",
+  "linux-x64": process.report.getReport().header.glibcVersionRuntime
+    ? "canvas-linux-x64-gnu"
+    : "canvas-linux-x64-musl",
+  "linux-arm64": process.report.getReport().header.glibcVersionRuntime
+    ? "canvas-linux-arm64-gnu"
+    : "canvas-linux-arm64-musl",
+}[platformKey];
+if (!platformPackage) throw new Error(`Unsupported @napi-rs/canvas platform: ${platformKey}`);
+await cp(`${canvasSource}/${platformPackage}`, `${canvasTarget}/${platformPackage}`, {
+  recursive: true,
+  force: true,
+  dereference: true,
+});

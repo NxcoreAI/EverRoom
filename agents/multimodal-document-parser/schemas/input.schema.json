@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "fileEntryId": { "type": "string", "minLength": 1 },
+    "fileVersionId": { "type": "string", "minLength": 1 },
+    "question": { "type": "string", "minLength": 1 },
+    "profile": { "type": "string", "enum": ["full", "text_only", "visual_review"] },
+    "localeHint": { "type": "string" },
+    "privacyPolicy": { "type": "string", "enum": ["local_only", "external_vlm_allowed"] },
+    "requestedOutputs": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["layout", "tables", "figures", "markdown"] },
+      "uniqueItems": true
+    }
+  },
+  "required": ["fileEntryId", "fileVersionId"],
+  "additionalProperties": false
+}

@@ -25,6 +25,8 @@ describe('renderer i18n', () => {
   it('falls back to Chinese only for Chinese system locales', () => {
     expect(resolveLocale(null, 'zh-Hans-CN')).toBe('zh-CN')
     expect(resolveLocale(null, 'en-GB')).toBe('en-US')
+    expect(resolveLocale('system', 'zh-CN')).toBe('zh-CN')
+    expect(resolveLocale('system', 'en-US')).toBe('en-US')
     expect(resolveLocale('unsupported', 'ja-JP')).toBe('en-US')
   })
 

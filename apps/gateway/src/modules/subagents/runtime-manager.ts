@@ -39,6 +39,7 @@ export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): P
 
 export class SubagentRuntimeManager {
   private readonly runtimes = new Map<string, AgentRuntime>();
+  private readonly agentTools = new Map<string, () => PiAgentRuntimeTool[]>();
 
   constructor(
     private readonly gatewayConfig: GatewayConfig,
@@ -51,6 +52,14 @@ export class SubagentRuntimeManager {
     const runtime = this.createRuntime(revision);
     this.runtimes.set(revision.id, runtime);
     return runtime;
+  }
+
+  /** Register Gateway-owned tools for one dispatch-only Agent identity. */
+  registerAgentTools(agentId: string, factory: () => PiAgentRuntimeTool[]): void {
+    if (this.runtimes.size > 0) {
+      throw new Error("subagent_tools_must_be_registered_before_runtime_acquire");
+    }
+    this.agentTools.set(agentId, factory);
   }
 
   async dispose(): Promise<void> {
@@ -77,8 +86,12 @@ export class SubagentRuntimeManager {
       return new UnconfiguredAgentRuntime(`subagent:${revision.id}`);
     }
     const config = this.buildPiConfig(base, revision);
+    const tools = [
+      ...(revision.manifest.skills.length > 0 ? [createSubagentSkillReadTool(revision)] : []),
+      ...(this.agentTools.get(revision.manifest.id)?.() ?? []),
+    ];
     return new PiAgentRuntime(config, {
-      tools: revision.manifest.skills.length > 0 ? [createSubagentSkillReadTool(revision)] : [],
+      tools,
     });
   }
 
