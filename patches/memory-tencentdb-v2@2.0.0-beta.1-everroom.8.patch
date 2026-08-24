@@ -1,0 +1,124 @@
+diff --git a/src/core/store/store-pool.ts b/src/core/store/store-pool.ts
+--- a/src/core/store/store-pool.ts
++++ b/src/core/store/store-pool.ts
+@@ -212,7 +212,7 @@ export class StorePool {
+ 
+     // 初始化 Store (建表/检查连接)
+     try {
+-      await pooledStore.store.init();
++      await pooledStore.store.init(pooledStore.embedding.getProviderInfo());
+     } catch (e) {
+       this.logger.warn(`${TAG} Store init failed for ${instanceId}: ${e}`);
+     }
+@@ -380,7 +380,9 @@ export class StorePool {
+         apiKey: embCfg.apiKey,
+         model: embCfg.model,
+         dimensions: embCfg.dimensions,
++        sendDimensions: embCfg.sendDimensions,
+         maxInputChars: embCfg.maxInputChars,
++        timeoutMs: embCfg.timeoutMs,
+       }, this.logger as StoreLogger);
+     }
+ 
+diff --git a/src/core/store/sqlite.ts b/src/core/store/sqlite.ts
+--- a/src/core/store/sqlite.ts
++++ b/src/core/store/sqlite.ts
+@@ -572,6 +572,23 @@ export class VectorStore implements IMemoryStore {
+     let reindexReason: string | undefined;
+ 
+     const savedMeta = this.readEmbeddingMeta();
++    const existingVecDims = this.getVecTableDimensions();
++    let vectorTablesDropped = false;
++
++    // The DDL is authoritative for write compatibility. Metadata can drift
++    // when an instance store was initialized without providerInfo.
++    if (this.dimensions > 0 && existingVecDims !== null && existingVecDims !== this.dimensions) {
++      const l1Count = this.tableRowCount("l1_records");
++      const l0Count = this.tableRowCount("l0_conversations");
++      reindexReason = `vec0 dimensions: ${existingVecDims} → ${this.dimensions}`;
++      this.logger?.info(
++        `${TAG} vec0 table dimension mismatch (existing=${existingVecDims}, ` +
++        `required=${this.dimensions}). Dropping vector tables for rebuild...`,
++      );
++      this.dropVectorTables();
++      vectorTablesDropped = true;
++      needsReindex = l1Count > 0 || l0Count > 0;
++    }
+ 
+     if (providerInfo) {
+       if (savedMeta) {
+@@ -579,7 +596,9 @@ export class VectorStore implements IMemoryStore {
+         const modelChanged = savedMeta.model !== providerInfo.model;
+         const dimsChanged = savedMeta.dimensions !== this.dimensions;
+ 
+-        if (providerChanged || modelChanged || dimsChanged) {
++        // A dimensions-only metadata mismatch does not require dropping when
++        // the actual vec0 DDL already matches the requested dimensions.
++        if (providerChanged || modelChanged || (dimsChanged && existingVecDims !== this.dimensions)) {
+           const reasons: string[] = [];
+           if (providerChanged) reasons.push(`provider: ${savedMeta.provider} → ${providerInfo.provider}`);
+           if (modelChanged) reasons.push(`model: ${savedMeta.model} → ${providerInfo.model}`);
+@@ -592,7 +611,7 @@ export class VectorStore implements IMemoryStore {
+           );
+ 
+           // Drop and re-create vector tables with new dimensions
+-          this.dropVectorTables();
++          if (!vectorTablesDropped) this.dropVectorTables();
+           needsReindex = true;
+         }
+       } else {
+@@ -604,14 +623,12 @@ export class VectorStore implements IMemoryStore {
+         //    with different dimensions) — must rebuild even if data tables are empty
+         const l1Count = this.tableRowCount("l1_records");
+         const l0Count = this.tableRowCount("l0_conversations");
+-        const existingVecDims = this.getVecTableDimensions();
+-
+         if (l1Count > 0 || l0Count > 0) {
+           this.logger?.info(
+             `${TAG} No embedding_meta found but existing data exists ` +
+             `(L1=${l1Count}, L0=${l0Count}). Dropping vector tables for safety...`,
+           );
+-          this.dropVectorTables();
++          if (!vectorTablesDropped) this.dropVectorTables();
+           needsReindex = true;
+           reindexReason = "legacy DB without embedding_meta — cannot verify vector compatibility";
+         } else if (existingVecDims !== null && existingVecDims !== this.dimensions) {
+@@ -622,7 +639,7 @@ export class VectorStore implements IMemoryStore {
+             `${TAG} vec0 table dimension mismatch (existing=${existingVecDims}, ` +
+             `required=${this.dimensions}). Dropping vector tables for rebuild...`,
+           );
+-          this.dropVectorTables();
++          if (!vectorTablesDropped) this.dropVectorTables();
+           // No needsReindex — there's no data to re-embed
+         }
+       }
+diff --git a/src/gateway/v2-router.ts b/src/gateway/v2-router.ts
+--- a/src/gateway/v2-router.ts
++++ b/src/gateway/v2-router.ts
+@@ -748,16 +748,24 @@ async function handleConversationAdd(body: unknown, auth: V2AuthContext, request
+       try { emb = await embedding.embed(msg.content); } catch (e) { console.warn(`[v2-router] L0 embedding failed:`, e); }
+     }
+ 
+-    await store.upsertL0(record, emb);
++    const stored = await store.upsertL0(record, emb);
++    if (!stored) {
++      deps.logger.warn(`${TAG} L0 write failed for ${id}; record was not accepted`);
++      continue;
++    }
+     acceptedIds.push(id);
+     acceptedRecords.push(record);
+   }
+ 
++  if (acceptedRecords.length === 0) {
++    return errorEnvelope(503, "All L0 writes failed", requestId);
++  }
++
+   // Notify pipeline: trigger async L1 extraction (service mode).
+   // Each role=user message counts as one conversation round for threshold/timer logic.
+   // teamId/agentId 透传给 captureAtomic 决定 hash slot 与锁粒度。
+   if (deps.notifyPipeline) {
+-    const rounds = messages.filter((m) => m.role === "user").length;
++    const rounds = acceptedRecords.filter((record) => record.role === "user").length;
+     if (rounds > 0) {
+       try {
+         await deps.notifyPipeline(auth.serviceId, session_id, rounds, iso?.teamId, iso?.agentId);
