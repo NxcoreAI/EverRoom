@@ -92,9 +92,25 @@ export function documentOperationRoutes(
 
     app.get(
       "/v1/document-operations/:id",
-      { schema: { tags: ["documents", "operations"], params: IdParams } },
-      async (request, reply) => operations.get(request.params.id)
-        ?? reply.code(404).send({ error: "operation_not_found", message: "Document operation not found" }),
+      { schema: {
+        tags: ["documents", "operations"],
+        params: IdParams,
+        querystring: Type.Object({
+          roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          sessionId: Type.String({ minLength: 1, maxLength: 128 }),
+          runId: Type.String({ minLength: 1, maxLength: 128 }),
+        }),
+      } },
+      async (request, reply) => {
+        const operation = operations.get(request.params.id);
+        if (!operation) return reply.code(404).send({ error: "operation_not_found", message: "Document operation not found" });
+        if (operation.roomId !== request.query.roomId
+          || operation.sessionId !== request.query.sessionId
+          || operation.runId !== request.query.runId) {
+          return reply.code(403).send({ error: "OPERATION_FORBIDDEN", message: "Operation belongs to another Agent run" });
+        }
+        return operation;
+      },
     );
 
     app.post(
@@ -108,11 +124,25 @@ export function documentOperationRoutes(
             expectedRevision: Type.Integer({ minimum: 1 }),
             type: Type.String({ minLength: 1, maxLength: 128 }),
             payload: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+            context: Type.Optional(Type.Object({
+              roomId: Type.String({ minLength: 1, maxLength: 128 }),
+              sessionId: Type.String({ minLength: 1, maxLength: 128 }),
+              runId: Type.String({ minLength: 1, maxLength: 128 }),
+            })),
           }),
         },
       },
       async (request, reply) => {
         try {
+          const operation = operations.get(request.params.id);
+          if (!operation) return reply.code(404).send({ error: "operation_not_found", message: "Document operation not found" });
+          const context = request.body.context;
+          if (!context
+            || context.roomId !== operation.roomId
+            || context.sessionId !== operation.sessionId
+            || context.runId !== operation.runId) {
+            return reply.code(403).send({ error: "OPERATION_FORBIDDEN", message: "Operation belongs to another Agent run" });
+          }
           return await operations.execute(
             request.params.id,
             request.body,

@@ -3,12 +3,13 @@ import type {
   RoomDocument,
   TiptapJsonContent,
 } from "@nxcore/agent-contract";
-import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import {
   documentBlockReferences,
   documentBlocks,
   documentVersions,
+  documentYjsVersions,
   documents,
   roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
@@ -65,10 +66,30 @@ export class DocumentRepository {
     )).get() ?? null;
   }
 
-  listVersions(documentId: string): DocumentVersionRow[] {
+  listVersions(documentId: string, options: { limit: number; beforeVersion?: number }): DocumentVersionRow[] {
+    const conditions = [eq(documentVersions.documentId, documentId)];
+    if (options.beforeVersion !== undefined) {
+      conditions.push(lt(documentVersions.version, options.beforeVersion));
+    }
     return this.db.select().from(documentVersions)
-      .where(eq(documentVersions.documentId, documentId))
-      .orderBy(desc(documentVersions.version)).all();
+      .where(and(...conditions))
+      .orderBy(desc(documentVersions.version))
+      .limit(options.limit)
+      .all();
+  }
+
+  listYjsVersionNumbers(documentId: string, versions: number[]): Map<number, boolean> {
+    if (versions.length === 0) return new Map();
+    const rows = this.db.select({
+      version: documentYjsVersions.version,
+      backfilled: documentYjsVersions.backfilled,
+    })
+      .from(documentYjsVersions)
+      .where(and(
+        eq(documentYjsVersions.documentId, documentId),
+        inArray(documentYjsVersions.version, versions),
+      )).all();
+    return new Map(rows.map((row) => [row.version, row.backfilled]));
   }
 
   listBlocks(document: RoomDocument): DocumentBlockSummary[] {

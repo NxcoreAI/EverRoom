@@ -202,11 +202,18 @@ export class DocumentOperationService {
         const leased = tx.update(documents).set({ activeTransactionId: id }).where(and(
           eq(documents.id, input.documentId),
           eq(documents.version, input.baseVersion),
+          isNull(documents.deletedAt),
           isNull(documents.activeTransactionId),
         )).run();
         if (leased.changes !== 1) {
           const current = tx.select().from(documents).where(eq(documents.id, input.documentId)).get();
           if (!current) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+          if (current.deletedAt) {
+            throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409, {
+              documentId: input.documentId,
+              retryable: false,
+            });
+          }
           if (current.activeTransactionId) {
             throw new DocumentServiceError("DOCUMENT_BUSY", "Document is busy", 409, {
               documentId: input.documentId,

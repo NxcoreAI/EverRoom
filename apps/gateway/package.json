@@ -37,10 +37,12 @@
     "@tiptap/extension-task-list": "^3.30.1",
     "@tiptap/markdown": "^3.30.1",
     "@tiptap/starter-kit": "^3.30.1",
-    "ali-oss": "^6.23.0",
+    "@tiptap/y-tiptap": "^3.0.9",
     "ajv": "^8.20.0",
+    "ali-oss": "^6.23.0",
     "axios": "^1.19.0",
     "better-sqlite3": "^13.0.3",
+    "diff": "^8.0.4",
     "drizzle-orm": "^0.45.2",
     "email-reply-parser": "^2.3.9",
     "exceljs": "^4.4.0",
@@ -63,7 +65,8 @@
     "unified": "^11.0.5",
     "unpdf": "^1.8.1",
     "ws": "^8.18.3",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "yjs": "^13.6.32"
   },
   "devDependencies": {
     "@types/ali-oss": "^6.23.3",

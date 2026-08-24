@@ -1,5 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import type { RoomDocument } from '@nxcore/agent-contract'
+import type { DocumentDiffResult, DocumentVersionSnapshot, RoomDocument } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
 import { ChevronRight, Download, Ellipsis, FileText, Trash2 } from 'lucide-react'
 import { useState } from 'react'
@@ -9,6 +9,7 @@ import { showToast } from '../../../../../state/toast'
 import { ActionConfirmDialog } from '../../components/shared'
 import { createDocxBlob, docxExportFileName } from './tiptapDocxExport'
 import { exportEditorPdf } from './tiptapPdfExport'
+import { DocumentHistoryPanel } from './DocumentHistoryPanel'
 
 export function markdownExportFileName(documentName: string, untitled = '无标题文档'): string {
   const safeName = documentName
@@ -44,6 +45,12 @@ export function TiptapDocumentActions({
   writing,
   saving,
   onDeleteDocument,
+  documentId,
+  onShowDiff,
+  onClearDiff,
+  onCloseDiff,
+  historyPanelCloseSignal,
+  historyRefreshSignal,
 }: {
   editor: Editor
   documentName: string
@@ -51,6 +58,12 @@ export function TiptapDocumentActions({
   writing: boolean
   saving: boolean
   onDeleteDocument?: (document: RoomDocument) => Promise<void>
+  documentId: string
+  onShowDiff: (snapshot: DocumentVersionSnapshot, diff: DocumentDiffResult) => void
+  onClearDiff: () => void
+  onCloseDiff: () => void
+  historyPanelCloseSignal: number
+  historyRefreshSignal: number
 }) {
   const { t } = useLocale()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -117,6 +130,15 @@ export function TiptapDocumentActions({
   const deleteDisabled = writing || saving || !backendDocument || !onDeleteDocument
   return (
     <div className="context-room-document-actions">
+      <DocumentHistoryPanel
+        documentId={documentId}
+        currentDocument={backendDocument}
+        onShowDiff={onShowDiff}
+        onClearDiff={onClearDiff}
+        onCloseDiff={onCloseDiff}
+        closeSignal={historyPanelCloseSignal}
+        refreshSignal={historyRefreshSignal}
+      />
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button type="button" aria-label={t('contextRoom:tiptapDocumentActions.moreDocumentActions')} title={t('contextRoom:tiptapDocumentActions.moreActions')}>

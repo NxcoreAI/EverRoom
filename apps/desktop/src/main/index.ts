@@ -1,9 +1,8 @@
-import { readFileSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { accessSync, constants as fsConstants, existsSync, readFileSync } from 'node:fs'
+import { access, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
-import { access } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { loadEnvFile } from 'node:process'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
 import type {
@@ -109,7 +108,6 @@ function loadPackagedEnvironment(): void {
 }
 
 loadPackagedEnvironment()
-const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
 
 interface IpcRateLimitNotice {
   __everroomRateLimited: true
@@ -126,7 +124,11 @@ async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRa
 }
 
 const appDataDirectory = app.getPath('appData')
-const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || join(appDataDirectory, APP_NAME)
+const defaultDataDirectory = join(appDataDirectory, APP_NAME)
+const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirectory, '.env')
+if (existsSync(envFilePath)) loadEnvFile(envFilePath)
+const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
+const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
 
 app.setPath('userData', dataDirectory)
 app.setName(APP_NAME)
@@ -251,6 +253,8 @@ const DOCUMENT_CHANNELS = {
   listBlocks: 'documents:list-blocks',
   listBlockBacklinks: 'documents:list-block-backlinks',
   listVersions: 'documents:list-versions',
+  getVersionSnapshot: 'documents:get-version-snapshot',
+  getDiff: 'documents:get-diff',
   restoreVersion: 'documents:restore-version',
   resolveBlockReferences: 'documents:resolve-block-references',
   listOperations: 'documents:list-operations',
@@ -1176,7 +1180,9 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: Documen
     listBlocks: (_event, documentId) => bridge.listBlocks(documentId),
     listBlockBacklinks: (_event, documentId, blockId) =>
       bridge.listBlockBacklinks(documentId, blockId),
-    listVersions: (_event, documentId) => bridge.listVersions(documentId),
+    listVersions: (_event, documentId, options) => bridge.listVersions(documentId, options),
+    getVersionSnapshot: (_event, documentId, version) => bridge.getVersionSnapshot(documentId, version),
+    getDiff: (_event, documentId, fromVersion, toVersion) => bridge.getDiff(documentId, fromVersion, toVersion),
     restoreVersion: (_event, documentId, version, baseVersion) =>
       bridge.restoreVersion(documentId, version, baseVersion),
     resolveBlockReferences: (_event, input) => bridge.resolveBlockReferences(input),
@@ -1185,7 +1191,7 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: Documen
       assertNoEmbeddedDocumentImages(input)
       return bridge.startOperation(input)
     },
-    getOperation: (_event, operationId) => bridge.getOperation(operationId),
+    getOperation: (_event, operationId, context) => bridge.getOperation(operationId, context),
     executeOperationCommand: (_event, operationId, input) =>
       bridge.executeOperationCommand(operationId, input),
     storeImage: (_event, documentId, input) => assets.storeImage(documentId, input),
