@@ -22,7 +22,7 @@ import type {
   TrustedMcpSession,
   UpdateAgentSessionInput,
 } from "@nxcore/agent-contract";
-import type { AgentRuntime, RuntimeEvent } from "@nxcore/agent-runtime";
+import type { AgentRuntime, RuntimeAttachment, RuntimeEvent } from "@nxcore/agent-runtime";
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -37,6 +37,7 @@ import {
 } from "../../infrastructure/database/schema.js";
 import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
+import type { FilesService } from "../files/service.js";
 
 export interface AgentServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
@@ -276,6 +277,7 @@ function selectedRunRoomId(
 }
 
 export class AgentService {
+  private filesService: FilesService | null = null;
   private readonly sequences = new Map<string, number>();
   private readonly executionContexts = new Map<string, {
     sessionId: string;
@@ -297,6 +299,10 @@ export class AgentService {
     private readonly connectorMode: "direct" | "local" = "direct",
     private readonly disposeRuntime = true,
   ) {}
+
+  setFilesService(files: FilesService): void {
+    this.filesService = files;
+  }
 
   async replaceRuntime(runtime: AgentRuntime): Promise<void> {
     const previous = this.runtime;
@@ -973,11 +979,13 @@ export class AgentService {
     let runtimeRun;
     try {
       const responseLanguage = normalizeAgentLocale(input.responseLanguage);
+      const attachments = await this.resolveAttachments(input.attachments);
       runtimeRun = await this.runtime.start({
         runId,
         sessionId,
         runtimeSessionRef: session.runtimeSessionRef,
         prompt: runtimePrompt(input, runPageLabel, this.connectorMode),
+        ...(attachments.length ? { attachments } : {}),
         ...(responseLanguage ? { responseLanguage } : {}),
         pageLabel: runPageLabel,
         roomId: runRoomId,
@@ -1004,6 +1012,39 @@ export class AgentService {
     this.runtimeEventConsumers.set(runId, consumer);
     void consumer.catch(() => undefined);
     return this.getRun(runId)!;
+  }
+
+  private async resolveAttachments(
+    references: StartAgentRunInput["attachments"],
+  ): Promise<RuntimeAttachment[]> {
+    if (!references?.length) return [];
+    if (!this.filesService) throw new Error("agent_attachments_unavailable");
+    return Promise.all(references.map(async (reference) => {
+      const content = reference.kind === "image"
+        ? (this.filesService!.isCatalogEntry(reference.fileId)
+            ? await this.filesService!.catalogContentOf(reference.fileId)
+            : await this.filesService!.contentOf(reference.fileId))
+        : null;
+      if (reference.kind === "image") {
+        if (!content) throw new Error("agent_attachment_not_found");
+        return {
+          filename: reference.filename,
+          mimeType: content.mime || reference.mimeType,
+          kind: reference.kind,
+          dataUrl: `data:${content.mime || reference.mimeType};base64,${content.buffer.toString("base64")}`,
+        };
+      }
+      const text = this.filesService!.isCatalogEntry(reference.fileId)
+        ? this.filesService!.catalogMarkdownOf(reference.fileId)
+        : this.filesService!.markdownOf(reference.fileId);
+      if (text === null) throw new Error("agent_attachment_not_parsed");
+      return {
+        filename: reference.filename,
+        mimeType: reference.mimeType,
+        kind: reference.kind,
+        text,
+      };
+    }));
   }
 
   async cancelRun(runId: string): Promise<AgentRun | null> {

@@ -252,8 +252,15 @@ export function agentRoutes(
           tags: ["agent"],
           params: SessionParams,
           body: Type.Object({
-            prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
+            prompt: Type.String({ maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            attachments: Type.Optional(Type.Array(Type.Object({
+              fileId: Type.String({ minLength: 1, maxLength: 200 }),
+              filename: Type.String({ minLength: 1, maxLength: 255 }),
+              mimeType: Type.String({ minLength: 1, maxLength: 120 }),
+              size: Type.Integer({ minimum: 1, maximum: 10 * 1024 * 1024 }),
+              kind: Type.Union([Type.Literal("document"), Type.Literal("image")]),
+            }), { maxItems: 5 })),
             replaceRunId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
             responseLanguage: Type.Optional(ResponseLanguage),
             captureMemory: Type.Optional(Type.Boolean()),

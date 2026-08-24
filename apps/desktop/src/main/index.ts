@@ -390,6 +390,7 @@ const FILES_CHANNELS = {
   openOriginal: 'files:open-original',
   pickAndImport: 'files:pick-and-import',
   importPathsOnce: 'files:import-paths-once',
+  importAgentAttachments: 'files:import-agent-attachments',
   importProgress: 'files:import-progress',
   listHighRiskReviews: 'files:high-risk-reviews:list',
   resolveHighRiskReview: 'files:high-risk-reviews:resolve',
@@ -1282,6 +1283,10 @@ function registerFilesHandlers(
     FILES_CHANNELS.importPathsOnce,
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       bridge.importPathsOnce(paths, options),
+  )
+  handle(
+    FILES_CHANNELS.importAgentAttachments,
+    (_event, paths: string[]) => bridge.importAgentAttachments(paths),
   )
   handle(FILES_CHANNELS.listHighRiskReviews, () => ({ items: highRiskImports.list() }))
   handle(

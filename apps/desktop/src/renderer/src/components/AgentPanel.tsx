@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
+import type { AgentAttachmentReference, AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -77,13 +77,26 @@ export function AgentPanel({
   const agentAvailable = Boolean(window.nxcore?.agent)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
 
-  const focusComposer = () => {
-    window.requestAnimationFrame(() => composerRef.current?.focus())
+  const focusComposer = (attention = false) => {
+    window.requestAnimationFrame(() => {
+      const composer = composerRef.current
+      composer?.focus()
+      if (!attention || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+
+      composer?.closest<HTMLElement>('.agent-prompt')?.animate?.(
+        [
+          { transform: 'scale(1)', boxShadow: '0 2px 12px rgba(15, 23, 42, 0.07)' },
+          { transform: 'scale(1.018)', boxShadow: '0 10px 28px rgba(59, 130, 246, 0.18)' },
+          { transform: 'scale(1)', boxShadow: '0 2px 12px rgba(15, 23, 42, 0.07)' },
+        ],
+        { duration: 460, easing: 'cubic-bezier(.22, 1, .36, 1)' },
+      )
+    })
   }
 
   useEffect(() => {
     if (!focusRequest) return
-    focusComposer()
+    focusComposer(true)
   }, [focusRequest])
 
   useEffect(() => {
@@ -208,15 +221,18 @@ export function AgentPanel({
       .catch(() => handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key))
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
-  const sendPrompt = async (prompt: string, replaceRunId?: string) => {
-    if (!prompt.trim() || !agentAvailable) return
-    const submittedPrompt = prompt.trim()
+  const sendPrompt = async (prompt: string, attachments: AgentAttachmentReference[] = [], replaceRunId?: string) => {
+    if ((!prompt.trim() && attachments.length === 0) || !agentAvailable) return
+    const submittedPrompt = [
+      prompt.trim(),
+      attachments.length ? `[附件：${attachments.map((attachment) => attachment.filename).join('、')}]` : '',
+    ].filter(Boolean).join('\n\n')
     const submittedContext = selectedText
     setDraft('')
     setSubmitting(true)
     try {
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
-      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId)
+      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
       setSelectedText('')
       setComposerResetKey((current) => current + 1)
     } catch {
@@ -292,7 +308,7 @@ export function AgentPanel({
       onChange={setDraft}
       onClearContext={() => setSelectedText('')}
       onStop={() => void session.stop()}
-      onSubmit={() => void sendPrompt(draft)}
+      onSubmit={(attachments) => void sendPrompt(draft, attachments)}
     />
   )
 
@@ -335,7 +351,7 @@ export function AgentPanel({
         loading={session.loading}
         messages={session.messages}
         onRejectDocumentIntent={focusComposer}
-        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
+        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, [], runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}
