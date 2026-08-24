@@ -888,7 +888,7 @@ export class IngestService {
       .where(eq(parsedContents.id, row.parsedId)).get();
     if (!parsed) throw new IngestError("归一化产物缺失，无法恢复", "parsed_missing", 410);
     this.db.update(ingestEvents)
-      .set({ filterStatus: "passed", updatedAt: new Date() })
+      .set({ filterStatus: "passed", reinstatedAt: new Date(), updatedAt: new Date() })
       .where(eq(ingestEvents.id, eventId)).run();
     await this.fanOut({
       eventId: row.id,
@@ -976,6 +976,17 @@ export class IngestService {
   getEvent(id: string): IngestEventDto | null {
     const row = this.db.select().from(ingestEvents).where(eq(ingestEvents.id, id)).get();
     return row ? toEventDto(row) : null;
+  }
+
+  /** 事件归一化产物全文（台账详情查看用；产物缺失 404 由调用方处理）。 */
+  getEventContent(id: string): { markdown: string; parsedAt: string } | null {
+    const row = this.db.select({ parsedId: ingestEvents.parsedId })
+      .from(ingestEvents).where(eq(ingestEvents.id, id)).get();
+    if (!row) return null;
+    const parsed = this.db.select().from(parsedContents)
+      .where(eq(parsedContents.id, row.parsedId)).get();
+    if (!parsed) return null;
+    return { markdown: parsed.markdown, parsedAt: parsed.parsedAt.toISOString() };
   }
 
   /** 台账取某源最新事件（wiki 快照判定 / 桌面端导入记录用）。 */
@@ -1127,7 +1138,7 @@ async function normalizeFileBytes(
   // U2 转换器：docx/xlsx/pptx/csv/html/eml -> md（类型随扩展名注册表）
   const converter = converterOfExtension(extension);
   if (converter) {
-    const markdown = await converter(buffer);
+    const markdown = await converter(buffer, filename);
     return {
       dataType: explicitDataType ?? dataTypeByExtension(extension)?.key ?? "document",
       detectedBy: explicitDataType ? "explicit" : "extension",

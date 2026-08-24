@@ -1,6 +1,7 @@
 import type { TiptapJsonContent } from '@nxcore/agent-contract'
 import { hasEmbeddedDocumentImages } from '@nxcore/document-model'
 import type { ImageOptions } from '@tiptap/extension-image'
+import i18n from '@/i18n/i18next'
 import type {
   DocumentImageMimeType,
   StoreDocumentImageInput,
@@ -58,9 +59,9 @@ export async function storeDocumentImageFile(
   documentId: string,
   storeImage: StoreDocumentImage,
 ): Promise<StoredDocumentImage> {
-  if (!DOCUMENT_IMAGE_MIME_TYPES.has(file.type)) throw new Error('请选择支持的图片文件。')
-  if (!file.size) throw new Error('图片内容为空。')
-  if (file.size > DOCUMENT_IMAGE_MAX_BYTES) throw new Error('图片不能超过 20 MB。')
+  if (!DOCUMENT_IMAGE_MIME_TYPES.has(file.type)) throw new Error(i18n.t('contextRoom:documentImage.selectSupportedImage'))
+  if (!file.size) throw new Error(i18n.t('contextRoom:documentImage.imageIsEmpty'))
+  if (file.size > DOCUMENT_IMAGE_MAX_BYTES) throw new Error(i18n.t('contextRoom:documentImage.imageTooLarge'))
   return storeImage(documentId, {
     fileName: file.name,
     mimeType: file.type as DocumentImageMimeType,

@@ -8,7 +8,6 @@ import {
   LoaderCircle,
   Languages,
   LockKeyhole,
-  LogIn,
   LogOut,
   Laptop,
   Mic,
@@ -19,7 +18,7 @@ import {
   Smartphone,
   WalletCards,
 } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 
 import { useAccount } from '@/state/AccountContext'
@@ -38,20 +37,22 @@ import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
 import { TokenUsageSettingsSection } from '@/components/settings/TokenUsageSettingsSection'
+import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
+  { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
-  { id: 'settings-memory', label: 'memory:settings.memorySetupTitle', description: 'memory:settings.memorySetupActionBody', icon: Sparkles },
+  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', description: 'surface:settings.onboardingSetupDescription', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
   { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
 ]
 
-type PendingAction = CloudOidcProvider | 'password' | 'refresh' | 'logout' | 'keyring' | 'sync' | null
+type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | null
 type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, locale: AppLocale, t: Translate, rounding: 'down' | 'up' = 'down'): string {
@@ -96,11 +97,9 @@ function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): 
   return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
 }
 
-export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboarding?: () => void }) {
+export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
   const { locale, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
-  const [identifier, setIdentifier] = useState('')
-  const [password, setPassword] = useState('')
   const [pending, setPending] = useState<PendingAction>(null)
   const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
   const [cursorCompletionSettings, setCursorCompletionSettings] =
@@ -258,20 +257,13 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
     setPending(provider)
     try {
       setAccount(await window.nxcore.account.loginWithOidc(provider))
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setPending(null)
-    }
-  }
-
-  const loginWithPassword = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!window.nxcore) return
-    setPending('password')
-    try {
-      setAccount(await window.nxcore.account.login({ identifier, password }))
-      setPassword('')
+      try {
+        window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
+        window.sessionStorage.setItem('everroom:post-login-room-check', '1')
+      } catch {
+        // Session storage is optional; mounted gates still receive the event.
+      }
+      window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check'))
     } catch {
       // The preload request interceptor reports the error globally.
     } finally {
@@ -437,21 +429,21 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
         </div>
       </section>
 
-      <section id="settings-memory" className="reality-settings-section settings-anchor-section" aria-labelledby="memory-settings-title">
+      <section id="settings-onboarding" className="reality-settings-section settings-anchor-section" aria-labelledby="onboarding-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
           <div>
-            <h2 id="memory-settings-title">{t('memory:settings.memorySetupTitle')}</h2>
-            <p>{t('memory:settings.memorySetupBody')}</p>
+            <h2 id="onboarding-settings-title">{t('surface:settings.onboardingSetupTitle')}</h2>
+            <p>{t('surface:settings.onboardingSetupBody')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
-            <strong>{t('memory:settings.memorySetupActionTitle')}</strong>
-            <small>{t('memory:settings.memorySetupActionBody')}</small>
+            <strong>{t('surface:settings.fullOnboardingActionTitle')}</strong>
+            <small>{t('surface:settings.fullOnboardingActionBody')}</small>
           </div>
-          <button type="button" className="primary-button" onClick={onStartMemoryOnboarding} disabled={!onStartMemoryOnboarding}>
-            <Sparkles aria-hidden="true" />{t('memory:onboarding.reopen')}
+          <button type="button" className="primary-button" onClick={onStartFullOnboarding} disabled={!onStartFullOnboarding}>
+            <Sparkles aria-hidden="true" />{t('surface:settings.fullOnboardingAction')}
           </button>
         </div>
       </section>
@@ -635,39 +627,6 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
                 : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
             </p>
 
-            <div className="cloud-login-divider"><span>{t('surface:settings.orUseYourAccountPassword')}</span></div>
-
-            <form className="cloud-login-form" onSubmit={loginWithPassword}>
-              <label>
-                <span>{t('surface:settings.emailOrPhone')}</span>
-                <input
-                  autoComplete="username"
-                  value={identifier}
-                  onChange={(event) => setIdentifier(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                <span>{t('surface:settings.password')}</span>
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                />
-              </label>
-              <button
-                className="primary-button"
-                type="submit"
-                disabled={isBusy || !identifier.trim() || !password}
-              >
-                {pending === 'password'
-                  ? <LoaderCircle className="spin" aria-hidden="true" />
-                  : <LogIn aria-hidden="true" />}
-                {t('surface:settings.signIn')}
-              </button>
-            </form>
           </div>
         )}
       </section>
@@ -707,6 +666,8 @@ export function SettingsPage({ onStartMemoryOnboarding }: { onStartMemoryOnboard
 
         <McpSettingsSection />
       </div>
+
+      <RuntimeConfigSettingsSection />
 
       <div id="settings-token-usage" className="settings-anchor-section settings-token-usage-group">
         <TokenUsageSettingsSection />

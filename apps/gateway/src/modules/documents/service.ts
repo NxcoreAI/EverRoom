@@ -37,7 +37,7 @@ import {
   type AtomicDocumentCreateInput,
   type AtomicDocumentCommitInput,
 } from "./core/index.js";
-import { agentDocumentMarkdown } from "./agent-markdown.js";
+import { agentDocumentMarkdown, sanitizeAgentDocumentTables } from "./agent-markdown.js";
 
 export { DocumentServiceError } from "./errors.js";
 
@@ -199,9 +199,10 @@ function normalizeCompleteAgentDocumentBody(
 ): { content: TiptapJsonContent; changed: boolean } {
   const agentNormalized = normalizeAgentDocumentBody(source, title);
   const persisted = normalizePersistedDocumentBody(agentNormalized.content, title);
+  const tables = sanitizeAgentDocumentTables(persisted.content);
   return {
-    content: persisted.content,
-    changed: agentNormalized.changed || persisted.changed,
+    content: tables.content,
+    changed: agentNormalized.changed || persisted.changed || tables.changed,
   };
 }
 
@@ -500,7 +501,10 @@ export class DocumentService {
   normalizeAgentDocumentChunk(title: string, markdown: string): string {
     if (!markdown) return markdown;
     const normalized = normalizeAgentDocumentBody(this.parseMarkdown(markdown), title);
-    return normalized.changed ? agentDocumentMarkdown.serialize(normalized.content) : markdown;
+    const tables = sanitizeAgentDocumentTables(normalized.content);
+    return normalized.changed || tables.changed
+      ? agentDocumentMarkdown.serialize(tables.content)
+      : markdown;
   }
 
   prepareAgentDocumentFinalize(input: {

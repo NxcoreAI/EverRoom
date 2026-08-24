@@ -5,6 +5,7 @@ import type { KnowledgeFileDto } from '../src/shared/knowledge'
 import { consumeDocumentFocusRequest } from '../src/renderer/src/components/context-room/ported/documentFocus'
 import {
   createContextRoomResourceLibrary,
+  createContextRoomFileItem,
   formatBytes,
   knowledgeFileStatusLabel,
 } from '../src/renderer/src/components/context-room/ported/resources'
@@ -41,6 +42,33 @@ function knowledgeFile(id: string, name: string): KnowledgeFileDto {
 }
 
 describe('Context Room document resource mapping', () => {
+  it('localizes generated file metadata and Office previews', () => {
+    const item = createContextRoomFileItem({
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      modifiedAt: new Date('2026-08-15T09:00:00.000Z'),
+      name: 'plan.xlsx',
+      path: '/Users/test/plan.xlsx',
+      size: 2048,
+    }, 'en-US')
+    const localizedRoom = { ...room, fileItems: [item] }
+    const library = createContextRoomResourceLibrary(localizedRoom, [], [], 'en-US')
+    const resource = library.resources.find((candidate) => candidate.kind === 'office-file')
+
+    expect(item.summary).toBe('From the Everroom PC file system: /Users/test/plan.xlsx')
+    expect(item.source).toBe('File system /Users/test/plan.xlsx')
+    expect(resource).toMatchObject({
+      kind: 'office-file',
+      preview: {
+        columns: ['Item', 'Owner', 'Status', 'Updated'],
+        rows: [
+          ['Release materials', 'Lin Wei', 'In progress', 'Today'],
+          ['Source traceability', 'Zhou Ming', 'Pending confirmation', 'Yesterday'],
+          ['Beta package', 'Lu Yuan', 'Planned', '07-30'],
+        ],
+      },
+    })
+  })
+
   it('shows only Gateway documents in the cloud document folder', () => {
     const document = backendDocument('gateway-doc-1', '真实文档')
     const library = createContextRoomResourceLibrary(room, [document])

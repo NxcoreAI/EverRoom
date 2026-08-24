@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRun, AgentSession, TrustedMcpSession } from "@nxcore/agent-contract";
 import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
@@ -27,7 +27,7 @@ async function testConfig(): Promise<GatewayConfig> {
     pi: null,
     cursorCompletionPi: null,
     knowledge: null,
-    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [] },
+    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
     backgroundPi: null,
     asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
@@ -37,6 +37,7 @@ async function testConfig(): Promise<GatewayConfig> {
 }
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -64,6 +65,139 @@ describe("gateway server", () => {
 
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
+  }, 10_000);
+
+  it("keeps memory routes enabled without a Pi runtime", async () => {
+    const config = await testConfig();
+    config.memory = {
+      baseUrl: "http://127.0.0.1:8420",
+      apiKey: "memory-key",
+      serviceId: "everroom",
+      teamId: "everroom",
+      agentId: "pi-agent",
+      userId: "local-user",
+      recallLimit: 5,
+      charBudget: 2_000,
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      code: 0,
+      message: "ok",
+      data: { items: [], total: 0 },
+    }), { headers: { "content-type": "application/json" } })));
+    const app = await createServer(config);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/memory/atomic?limit=1&offset=0",
+      headers: { authorization: `Bearer ${config.authToken}` },
+    });
+    await app.close();
+
+    expect(config.pi).toBeNull();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ items: [], total: 0 });
+  });
+
+  it("keeps env-backed memory config when runtime config default only has empty placeholders", async () => {
+    const config = await testConfig();
+    config.memory = {
+      baseUrl: "http://127.0.0.1:8420",
+      apiKey: "memory-key",
+      serviceId: "everroom",
+      teamId: "everroom",
+      agentId: "pi-agent",
+      userId: "local-user",
+      recallLimit: 5,
+      charBudget: 2_000,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
+      const url = String(input);
+      const data = url.includes("/v2/pipeline/status")
+        ? { l1: {}, l2: {}, l3: {} }
+        : url.includes("/v3/core/read")
+          ? { content: null, version: 0, created_at: "", updated_at: "" }
+          : { total: 0 };
+      return new Response(JSON.stringify({ code: 0, message: "ok", data }), {
+        headers: { "content-type": "application/json" },
+      });
+    }));
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    // 启动时 applyRuntimeConfig 会拿 runtime-config.default.json（全空串占位）
+    // 覆盖 config；空串若被当作有效值，baseUrl 会被清成 ""，fetch 将收到
+    // 相对路径 /v3/atomic/count 并抛 Failed to parse URL（memory_unreachable）。
+    expect(config.memory?.baseUrl).toBe("http://127.0.0.1:8420");
+    let response = await app.inject({
+      method: "GET",
+      url: "/v1/memory/overview",
+      headers,
+    });
+    expect(response.statusCode).toBe(200);
+
+    // SaaS 下发的 memory 段（云端凭据指向本地自管 MemoryCore）不得覆盖 env：
+    // 本地实例的 apiKey 由主进程每次启动随机轮换，云端值必然 401。
+    await app.inject({
+      method: "PUT",
+      url: "/v1/runtime-config/saas",
+      headers,
+      payload: {
+        schemaVersion: 1,
+        memory: {
+          enabled: true,
+          baseUrl: "http://127.0.0.1:8420",
+          apiKey: "sk-mem-cloud-delivered-wrong-key",
+        },
+      },
+    });
+    expect(config.memory?.apiKey).toBe("memory-key");
+    response = await app.inject({
+      method: "GET",
+      url: "/v1/memory/overview",
+      headers,
+    });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+  });
+
+  it("accepts runtime memory injection without persisting or resetting it", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const memory = {
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8420",
+      apiKey: "runtime-memory-key",
+      serviceId: "service-from-saas",
+      teamId: "team-from-saas",
+      agentId: "agent-from-saas",
+      userId: "local-user",
+      recallLimit: 7,
+      charBudget: 4_000,
+    };
+
+    const injected = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
+    expect(injected.statusCode).toBe(200);
+    expect(injected.json()).toEqual({ enabled: true });
+    const persisted = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
+    expect(persisted.json<{ config: { memory?: { apiKey?: string } } }>().config.memory?.apiKey).toBe("");
+
+    // Runtime config persistence must not be used as the secret-bearing
+    // transport, and a later config event must leave the injected client live.
+    await app.inject({
+      method: "PUT",
+      url: "/v1/runtime-config/saas",
+      headers,
+      payload: { schemaVersion: 1, memory: { serviceId: "service-from-saas" } },
+    });
+    const stillEnabled = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
+    expect(stillEnabled.json()).toEqual({ enabled: true });
+
+    const disabled = await app.inject({ method: "DELETE", url: "/v1/memory/config", headers });
+    await app.close();
+    expect(disabled.statusCode).toBe(200);
+    expect(disabled.json()).toEqual({ enabled: false });
   });
 
   it("serves persisted perception and diary settings with local visual nodes", async () => {
@@ -108,6 +242,54 @@ describe("gateway server", () => {
     expect(nodes.json<{ items: unknown[] }>().items).toHaveLength(1);
     expect(updatedDiary.json()).toMatchObject({ enabled: true, localTime: "23:30", timezone: "UTC" });
     expect(diaryConflict.statusCode).toBe(409);
+  });
+
+  it("manages agent schedules and delegates the diary task to the scheduler", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    const initial = await app.inject({ method: "GET", url: "/v1/agent/schedules", headers });
+    expect(initial.statusCode).toBe(200);
+    const task = initial.json<Array<{ id: string; enabled: boolean; configVersion: number }>>()[0]!;
+    expect(task.id).toBe("diary.daily");
+
+    const updated = await app.inject({
+      method: "PATCH",
+      url: "/v1/agent/schedules/diary.daily",
+      headers,
+      payload: { enabled: !task.enabled, localTime: "08:15", timezone: "UTC", configVersion: task.configVersion },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id: "diary.daily", enabled: !task.enabled, localTime: "08:15", timezone: "UTC" });
+
+    const runNow = await app.inject({ method: "POST", url: "/v1/agent/schedules/diary.daily/run", headers });
+    expect(runNow.statusCode).toBe(202);
+    expect(runNow.json()).toMatchObject({ runId: expect.any(String) });
+
+    const missing = await app.inject({ method: "POST", url: "/v1/agent/schedules/missing/run", headers });
+    await app.close();
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it("supports user schedules while protecting built-in tasks and exposing MCP execution", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const created = await app.inject({
+      method: "POST", url: "/v1/agent/schedules", headers,
+      payload: { agentId: "primary", name: "整理收件箱", description: "测试任务", prompt: "整理今天的收件箱", localTime: "10:00", timezone: "UTC" },
+    });
+    const task = created.json<{ id: string; builtin: boolean }>();
+    const builtinDelete = await app.inject({ method: "DELETE", url: "/v1/agent/schedules/diary.daily", headers });
+    const mcpList = await app.inject({ method: "POST", url: "/v1/mcp/agent-schedules", headers, payload: { jsonrpc: "2.0", id: 1, method: "tools/list" } });
+    const deleted = await app.inject({ method: "DELETE", url: `/v1/agent/schedules/${task.id}`, headers });
+    await app.close();
+    expect(created.statusCode).toBe(201);
+    expect(task.builtin).toBe(false);
+    expect(builtinDelete.statusCode).toBe(409);
+    expect(mcpList.json<{ result: { tools: Array<{ name: string }> } }>().result.tools.map((tool) => tool.name)).toContain("agent_schedule_run");
+    expect(deleted.statusCode).toBe(204);
   });
 
   it("manages connector sync jobs without accepting a client owner id", async () => {
@@ -530,5 +712,117 @@ describe("gateway server", () => {
     expect(markerEntry).toMatchObject({ msg: "log persistence test" });
     expect(markerEntry?.time).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
     expect(requestEntry?.res?.statusCode).toBe(200);
+  });
+
+  it("serves runtime-config snapshots with configured flag and connection test", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    // 默认 runtime config 全是空串占位 → primaryConfigured=false
+    const initial = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toMatchObject({ primaryConfigured: false });
+
+    // 写入完整 primary 配置（user source）→ primaryConfigured=true
+    const saved = await app.inject({
+      method: "PUT",
+      url: "/v1/runtime-config/user",
+      headers,
+      payload: {
+        schemaVersion: 1,
+        primary: {
+          provider: "openai-compatible",
+          model: "test-model",
+          baseUrl: "http://127.0.0.1:9/v1",
+          apiKey: "user-key",
+          api: "openai-completions",
+        },
+        knowledge: {
+          embedding: {
+            provider: "openai-compatible",
+            model: "text-embedding-test",
+            baseUrl: "http://127.0.0.1:9/v1",
+            apiKey: "embed-key",
+          },
+        },
+        vlm: {
+          provider: "openai-compatible",
+          model: "vlm-test-model",
+          baseUrl: "http://127.0.0.1:9/v1",
+          apiKey: "vlm-key",
+        },
+        asr: {
+          provider: "aliyun",
+          model: "asr-test-model",
+          baseUrl: "https://dashscope.aliyuncs.com/api/v1",
+          apiKey: "asr-key",
+          oss: {
+            region: "oss-cn-beijing",
+            bucket: "test-bucket",
+            accessKeyId: "ak",
+            accessKeySecret: "sk",
+          },
+        },
+      },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({ primaryConfigured: true, selectedSource: "user" });
+
+    // embedding apiKey 落库后在快照中脱敏（********），provider/model 不脱敏。
+    const snapshot = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
+    expect(snapshot.statusCode).toBe(200);
+    expect(snapshot.json()).toMatchObject({
+      config: {
+        knowledge: {
+          embedding: {
+            model: "text-embedding-test",
+            apiKey: "********",
+          },
+        },
+      },
+    });
+
+    // 连通测试端点：配置完整但端点不可达 → valid=false 且带 unreachable 原因。
+    // bridge 实际发 POST 带 {} body（axios 空 body POST 会补 form-urlencoded
+    // 头触发 415，见 runtime-config-bridge 注释）。
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connection refused"); }));
+    const test = await app.inject({ method: "POST", url: "/v1/runtime-config/test", headers, payload: {} });
+    vi.unstubAllGlobals();
+    expect(test.statusCode).toBe(200);
+    const body = test.json<{ valid: boolean; error?: string }>();
+    expect(body.valid).toBe(false);
+    expect(body.error).toContain("runtime_config_test_unreachable");
+
+    // 端点恢复 2xx → valid=true（primary/vlm 走 /chat/completions，embedding
+    // 走 /embeddings 并返回向量维度）。
+    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/embeddings")) {
+        return new Response(
+          JSON.stringify({ data: [{ embedding: Array.from({ length: 8 }, () => 0.1) }] }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    }));
+    const ok = await app.inject({ method: "POST", url: "/v1/runtime-config/test", headers, payload: {} });
+    vi.unstubAllGlobals();
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({
+      valid: true,
+      embedding: { valid: true, dimensions: 8 },
+      vlm: { valid: true },
+    });
+
+    await app.inject({ method: "DELETE", url: "/v1/runtime-config/user", headers });
+    // 清空 user source 后 embedding 未配置 → /test 不带 embedding 字段。
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    const cleared = await app.inject({ method: "POST", url: "/v1/runtime-config/test", headers, payload: {} });
+    vi.unstubAllGlobals();
+    const clearedBody = cleared.json<{ valid: boolean; embedding?: unknown }>();
+    expect(clearedBody.valid).toBe(false);
+    expect(clearedBody.embedding).toBeUndefined();
+    await app.close();
   });
 });

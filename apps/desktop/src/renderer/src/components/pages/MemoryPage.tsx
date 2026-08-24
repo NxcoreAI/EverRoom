@@ -6,6 +6,8 @@ import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
 import { ConversationPane } from './memory/ConversationPane'
 import { CoreProfilePane } from './memory/CoreProfilePane'
 import { DocumentPane } from './memory/DocumentPane'
+import { FilterRulesPane } from './memory/FilterRulesPane'
+import { IngestLedgerPane } from './memory/IngestLedgerPane'
 import { MemoryDisabledView, MemoryUnreachableView } from './memory/MemoryStatusViews'
 import type { MemorySearchResult } from './memory/MemorySearchResults'
 import { MemorySearchResults } from './memory/MemorySearchResults'
@@ -23,9 +25,13 @@ const TABS: Array<{ id: MemoryTabId; label: string; level: string }> = [
   { id: 'atomic', label: 'memory:memory.atomicMemory', level: 'L1' },
   { id: 'scenario', label: 'memory:memory.scenarios', level: 'L2' },
   { id: 'core', label: 'memory:memory.profile', level: 'L3' },
+  // 导入记录 = 统一引擎台账（全源进入记录 + 过滤闸状态，误杀恢复入口）
+  { id: 'ledger', label: 'memory:memory.ledger', level: '' },
+  // 过滤规则 = 过滤器判定偏好（用户偏好可编辑 + 系统洞察只读）
+  { id: 'filter-rules', label: 'memory:memory.filterRules', level: '' },
 ]
 
-export function MemoryPage() {
+export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } = {}) {
   const { t } = useLocale()
   const overview = useMemoryOverview()
   const [tab, setTab] = useState<MemoryTabId>('overview')
@@ -163,10 +169,12 @@ export function MemoryPage() {
               : <p className="mem-loading">{t('memory:memory.loading')}</p>
           ) : null}
           {tab === 'atomic' ? (
-            <AtomicMemoryPane onOpenDocument={openDocument} onOpenConversation={openConversation} />
+            <AtomicMemoryPane focusItemId={focusAtomicId} onOpenDocument={openDocument} onOpenConversation={openConversation} />
           ) : null}
           {tab === 'scenario' ? <ScenarioPane /> : null}
           {tab === 'core' ? <CoreProfilePane /> : null}
+          {tab === 'ledger' ? <IngestLedgerPane /> : null}
+          {tab === 'filter-rules' ? <FilterRulesPane /> : null}
           {tab === 'conversation' ? (
             <ConversationPane focusSessionId={conversationFocus} />
           ) : null}

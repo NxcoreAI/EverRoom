@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
-import { uiText } from '../../adapters';
+import { localizedUiText, uiText } from '../../adapters';
 import { EntityFactGraphCanvas } from '../EntityFactGraphCanvas';
 import { createEntityFactGraphData } from '../entityFactGraphModel';
 import { ActionConfirmDialog } from '../shared';
@@ -123,7 +123,7 @@ export function MemoryPane({
                 <small>{selectedMeta}</small>
               </span>
             </header>
-            <p>{selectedNode.description}</p>
+            <p>{localizedUiText(selectedNode.description, t)}</p>
             <section>
               <div className="context-room-memory-detail-section-head">
                 <span>{t(selectedMemory ? 'contextRoom:memory.sources' : 'contextRoom:memory.relatedMemories')}</span>
@@ -154,8 +154,8 @@ export function MemoryPane({
                           <MessageSquareText aria-hidden="true" />
                         </span>
                         <span>
-                          <b>{fact.description}</b>
-                          <small>{fact.label}</small>
+                          <b>{localizedUiText(fact.description, t)}</b>
+                          <small>{t(uiText(fact.label))}</small>
                         </span>
                       </button>
                     ))}

@@ -10069,6 +10069,32 @@
   cursor: not-allowed;
 }
 
+.context-room-knowledge-defer {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-room-knowledge-defer:hover:not(:disabled) {
+  border-color: var(--cr-blue);
+  color: var(--cr-text);
+}
+
+.context-room-knowledge-defer:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.context-room-knowledge-defer svg { width: 13px; height: 13px; }
+
 .context-room-knowledge-create {
   display: inline-flex;
   height: 30px;

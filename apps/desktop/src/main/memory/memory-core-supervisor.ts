@@ -26,12 +26,43 @@ export interface MemoryCoreConnection {
   managed: boolean
 }
 
+export interface MemoryCoreStartOptions {
+  /** 重启时复用的 apiKey(不传则随机生成)。 */
+  apiKey?: string
+  /**
+   * AI 覆盖环境变量(TDAI_LLM_* + TDAI_EMBEDDING_*),在 ...process.env 与
+   * llmEnvironment 之后展开,覆盖 .env 透传值;null/undefined = 不覆盖(沿用进程 env)。
+   */
+  aiEnvironment?: Record<string, string> | null
+}
+
 const PACKAGE_NAME = '@tencentdb-agent-memory/memory-tencentdb-v2'
 const MEMORY_CORE_PORT = 8420
 const DEFAULT_BASE_URL = `http://127.0.0.1:${MEMORY_CORE_PORT}`
 // 全新数据目录 + 多服务并行冷启动（tsx 编译争抢 IO）时 30s 不够，实测可超一分钟。
 const STARTUP_TIMEOUT_MS = 120_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
+
+type MemoryLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'off'
+
+function memoryLogLevel(): MemoryLogLevel {
+  const value = process.env.NXCORE_MEMORY_LOG_LEVEL?.trim().toLowerCase()
+  return value === 'debug' || value === 'info' || value === 'warn' || value === 'error' || value === 'off'
+    ? value
+    : 'warn'
+}
+
+function writeMemoryCoreOutput(level: MemoryLogLevel, chunk: string, stream: NodeJS.WriteStream): void {
+  if (level === 'off') return
+  for (const line of chunk.split(/(?<=\n)/)) {
+    if (!line) continue
+    const noisy = /\[observability\]|\[skill-perf\]|\[L1-count\]|REQUEST_(?:START|END)/i.test(line)
+    if (noisy && level !== 'debug') continue
+    const isError = /\b(?:ERROR|FATAL|WARN|warning|failed|failure|exception|unhandled)\b/i.test(line)
+    if (level === 'error' && !isError) continue
+    stream.write(`[memory-core] ${line}`)
+  }
+}
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -45,7 +76,7 @@ export class MemoryCoreSupervisor {
 
   constructor(private readonly dataDirectory: string) {}
 
-  async start(): Promise<MemoryCoreConnection | null> {
+  async start(options: MemoryCoreStartOptions = {}): Promise<MemoryCoreConnection | null> {
     if (this.connection) return this.connection
 
     if (process.env.NXCORE_MEMORY_MANAGED === 'false' || process.env.NXCORE_MEMORY_ENABLED === 'false') {
@@ -65,7 +96,9 @@ export class MemoryCoreSupervisor {
       return this.connection
     }
 
-    const apiKey = randomBytes(24).toString('base64url')
+    // 重启场景复用旧 apiKey：gateway env 里的 NXCORE_MEMORY_API_KEY 不变，
+    // 免去重启后 gateway 侧 401。
+    const apiKey = options.apiKey ?? randomBytes(24).toString('base64url')
     const entryPath = this.resolveEntry()
     await mkdir(this.dataDirectory, { recursive: true })
     // 数据目录收进应用数据(KS 的 knowledge/ 同款约定):不设 TDAI_DATA_DIR 时
@@ -81,6 +114,10 @@ export class MemoryCoreSupervisor {
       [entryPath],
       {
         cwd: dataDir,
+        // detached 让子进程成为进程组组长：shutdown 可整组 kill（tsx wrapper
+        // fork 的孙进程才不会残留占端口）。Electron 主进程退出不连带子进程
+        // 组——退出清理仍靠 shutdown() 的显式调用。
+        detached: true,
         env: {
           ...process.env,
           TDAI_GATEWAY_HOST: '127.0.0.1',
@@ -90,6 +127,7 @@ export class MemoryCoreSupervisor {
           LOG_PATH: logDirectory,
           ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
           ...this.llmEnvironment(),
+          ...(options.aiEnvironment ?? {}),
         },
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -100,8 +138,9 @@ export class MemoryCoreSupervisor {
     child.stdin.end()
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => process.stdout.write(`[memory-core] ${chunk}`))
-    child.stderr.on('data', (chunk: string) => process.stderr.write(`[memory-core] ${chunk}`))
+    const configuredLogLevel = memoryLogLevel()
+    child.stdout.on('data', (chunk: string) => writeMemoryCoreOutput(configuredLogLevel, chunk, process.stdout))
+    child.stderr.on('data', (chunk: string) => writeMemoryCoreOutput(configuredLogLevel, chunk, process.stderr))
     child.on('exit', (code, signal) => {
       this.child = null
       if (!this.stopping) {
@@ -127,6 +166,18 @@ export class MemoryCoreSupervisor {
     return this.connection
   }
 
+  /**
+   * 重启托管实例以应用新的 AI 环境(MemoryCore 启动时解析配置,无热加载)。
+   * 复用旧 apiKey,busy/外部/复用模式不重启。失败抛出,连接置空。
+   */
+  async restart(aiEnvironment: Record<string, string> | null): Promise<MemoryCoreConnection | null> {
+    const connection = this.connection
+    if (!connection?.managed) return connection
+    const apiKey = connection.apiKey
+    await this.shutdown()
+    return this.start({ apiKey, aiEnvironment: aiEnvironment ?? undefined })
+  }
+
   getLastError(): string | null {
     return this.lastError
   }
@@ -137,6 +188,17 @@ export class MemoryCoreSupervisor {
     if (!child) return
 
     this.stopping = true
+    // 杀整棵进程树（负 PID）：dev 模式入口是 tsx wrapper，SIGTERM 只杀
+    // wrapper 时它 fork 的 gateway 孙进程会残留并占住 8420，下一轮
+    // start() 的 probe 会误判「复用外部实例」，带新 env 的重启被吞掉。
+    const processGroupKill = (): boolean => {
+      try {
+        return process.kill(-child.pid!, 'SIGTERM')
+      } catch {
+        // 进程组 kill 不可用（如非组长）退回单进程 kill。
+        return this.killChild(child, 'SIGTERM')
+      }
+    }
     await new Promise<void>((resolve) => {
       let settled = false
       const finish = (): void => {
@@ -146,12 +208,17 @@ export class MemoryCoreSupervisor {
         resolve()
       }
       const timeout = setTimeout(() => {
+        try { process.kill(-child.pid!, 'SIGKILL') } catch { /* 已死 */ }
         this.killChild(child, 'SIGKILL')
         finish()
       }, SHUTDOWN_TIMEOUT_MS)
       child.once('exit', finish)
-      if (!this.killChild(child, 'SIGTERM')) finish()
+      if (!processGroupKill()) finish()
     })
+    // 孙进程可能比 wrapper 晚退出几百毫秒：等待端口释放，避免 start() 的
+    // probe 抢在残留进程死亡前把它当成「可复用实例」。
+    const deadline = Date.now() + 3_000
+    while (Date.now() < deadline && await this.probe()) await delay(100)
     this.child = null
     this.lastError = null
   }
@@ -169,6 +236,9 @@ export class MemoryCoreSupervisor {
     if (baseUrl) environment.TDAI_LLM_BASE_URL = baseUrl
     if (apiKey) environment.TDAI_LLM_API_KEY = apiKey
     if (model) environment.TDAI_LLM_MODEL = model
+    // 提炼输出预算保持 .env-only 可选:不设则 fork 默认(见 .env 注释)。
+    const maxTokens = process.env.TDAI_LLM_MAX_TOKENS?.trim()
+    if (maxTokens) environment.TDAI_LLM_MAX_TOKENS = maxTokens
     return environment
   }
 

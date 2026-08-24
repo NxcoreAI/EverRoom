@@ -3,6 +3,20 @@ import { Type } from "@sinclair/typebox";
 import { MemoryGatewayError } from "./errors.js";
 import type { MemoryService } from "./service.js";
 
+const RuntimeMemoryConfigBody = Type.Object({
+  enabled: Type.Optional(Type.Boolean()),
+  baseUrl: Type.String({ minLength: 1, maxLength: 2_000 }),
+  // External MemoryCore instances may intentionally run without auth.
+  apiKey: Type.String({ maxLength: 4_000 }),
+  serviceId: Type.String({ minLength: 1, maxLength: 200 }),
+  teamId: Type.String({ minLength: 1, maxLength: 200 }),
+  agentId: Type.String({ minLength: 1, maxLength: 200 }),
+  userId: Type.String({ minLength: 1, maxLength: 200 }),
+  recallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
+  charBudget: Type.Integer({ minimum: 200, maximum: 2_000_000 }),
+  timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 120_000 })),
+});
+
 const AtomicType = Type.Union([
   Type.Literal("episodic"),
   Type.Literal("persona"),
@@ -143,6 +157,21 @@ const ProvenanceDtoSchema = Type.Object({
 
 export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox {
   return async (app) => {
+    app.put("/v1/memory/config", {
+      schema: { tags: ["memory"], body: RuntimeMemoryConfigBody },
+    }, async (request) => {
+      const { enabled = true, ...memoryConfig } = request.body;
+      service.injectConfig(enabled ? memoryConfig : null);
+      return { enabled: service.enabled };
+    });
+
+    app.delete("/v1/memory/config", {
+      schema: { tags: ["memory"] },
+    }, async () => {
+      service.injectConfig(null);
+      return { enabled: false };
+    });
+
     app.get(
       "/v1/memory/overview",
       { schema: { tags: ["memory"] } },

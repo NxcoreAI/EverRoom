@@ -72,6 +72,7 @@ import {
   documentStreamRevealDelay,
   isAgentDocumentAwaitingContent,
   isEmptyTiptapParagraph,
+  isEmptyTiptapTable,
   MarkdownBlockBuffer,
   operationStreamChunksToApply,
   revealTiptapNode,
@@ -163,7 +164,9 @@ async function insertMarkdownBlocks(
   const nodes: TiptapJsonContent[] = []
   for (const markdown of markdownBlocks) {
     const parsed = editor.storage.markdown.manager.parse(markdown) as TiptapJsonContent
-    const parsedNodes = (parsed.content ?? []).filter((node) => !isEmptyTiptapParagraph(node))
+    const parsedNodes = (parsed.content ?? []).filter((node) => (
+      !isEmptyTiptapParagraph(node) && !isEmptyTiptapTable(node)
+    ))
     const stable = assignStableBlockIds(parsedNodes, operationId, state.ordinal)
     state.ordinal = stable.nextOrdinal
     nodes.push(...stable.nodes)
@@ -248,7 +251,7 @@ export function TiptapDocumentEditor({
   const initialDocument = useState(() => {
     const source = canRecoverInitialDraft
       ? initialDraft!.content
-      : backendDocument?.contentJson ?? readDocumentDraft(documentId) ?? createRoomDocumentContent(room, persistedName)
+      : backendDocument?.contentJson ?? readDocumentDraft(documentId) ?? createRoomDocumentContent(room, persistedName, t)
     return stripDocumentTitle(source as TiptapJsonContent)
   })[0]
   const initialContent = initialDocument.content as JSONContent
@@ -539,6 +542,7 @@ export function TiptapDocumentEditor({
   const cursorCompletionRunning = useDocumentCursorCompletion({
     editor,
     roomId: room.id,
+    roomTitle: room.title,
     documentName,
     enabled: Boolean(editor
       && !editorLocked

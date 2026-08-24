@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { PageId } from '@/data/navigation'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
+import { uiText } from '@/components/context-room/ported/adapters'
 import { useLocale, type AppLocale } from '@/i18n/LocaleContext'
 import type { DiaryDayDetails } from '../../../../shared/sources'
 
@@ -213,7 +214,7 @@ export function HomePage({
                     <span className="workspace-home-item-mark" data-tone={room.tone} aria-hidden="true" />
                     <span>
                       <strong>{room.title}</strong>
-                      <small>{room.kind} · {room.stats.docs} {t('surface:home.documents')}</small>
+                      <small>{t(uiText(room.kind))} · {room.stats.docs} {t('surface:home.documents')}</small>
                     </span>
                     <ChevronRight aria-hidden="true" strokeWidth={1.8} />
                   </button>

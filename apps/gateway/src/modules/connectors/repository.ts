@@ -85,6 +85,12 @@ export class ConnectorRepository {
         .run(now(), id);
     })();
   }
+  enableConnection(id: string) {
+    this.sqlite.transaction(() => {
+      this.sqlite.prepare("UPDATE connector_connections SET status='active',updated_at=? WHERE id=?").run(now(), id);
+      this.sqlite.prepare("UPDATE sync_scopes SET state='idle',updated_at=? WHERE connection_id=? AND state='disabled'").run(now(), id);
+    })();
+  }
   purgeConnection(id: string) {
     this.sqlite.transaction(() => {
       for (const table of ["sync_failures", "sync_runs", "mail_memberships"]) {

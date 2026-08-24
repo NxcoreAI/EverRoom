@@ -1,0 +1,62 @@
+.high-risk-import-review {
+  position: fixed;
+  z-index: 899;
+  right: 24px;
+  bottom: 92px;
+  display: grid;
+  width: min(390px, calc(100vw - 32px));
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--warning, #a56300) 42%, var(--border-strong));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 97%, transparent);
+  box-shadow: 0 12px 34px rgba(20, 23, 27, 0.16);
+  backdrop-filter: blur(16px);
+}
+
+.high-risk-import-review-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning, #a56300) 12%, var(--surface-alt));
+  color: var(--warning, #a56300);
+}
+
+.high-risk-import-review-icon svg { width: 16px; height: 16px; }
+.high-risk-import-review-copy { display: grid; min-width: 0; gap: 4px; }
+.high-risk-import-review-copy strong { font-size: 12px; }
+.high-risk-import-review-copy small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.high-risk-import-review-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 5px; }
+
+.high-risk-import-review-actions button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.high-risk-import-review-actions button:first-child {
+  border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--border-strong));
+  background: var(--accent-strong);
+  color: var(--on-accent, #fff);
+}
+
+.high-risk-import-review-actions button:hover:not(:disabled) { filter: brightness(.97); }
+.high-risk-import-review-actions button:disabled { cursor: wait; opacity: .58; }
+.high-risk-import-review-actions svg { width: 13px; height: 13px; }
+
+@media (max-width: 620px) {
+  .high-risk-import-review { right: 16px; bottom: 84px; }
+}

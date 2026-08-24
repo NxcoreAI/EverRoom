@@ -1,0 +1,33 @@
+.schedules-page { padding: 34px 42px 48px; overflow: auto; }
+.schedules-page-header, .schedule-form-header, .schedules-actions, .schedule-card, .schedule-card-title, .schedule-card-actions, .schedule-form-actions { display: flex; align-items: center; }
+.schedules-page-header { justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+.schedules-page-header h1 { margin: 7px 0 5px; font-size: 26px; letter-spacing: 0; }
+.schedules-page-header p { margin: 0; color: var(--muted); font-size: 12px; }
+.eyebrow { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); font-size: 11px; font-weight: 650; }
+.eyebrow svg { width: 15px; }
+.schedules-actions { gap: 8px; }
+.schedules-error { margin-bottom: 16px; padding: 11px 14px; border: 1px solid color-mix(in srgb, #b5493a 35%, var(--border)); color: #b5493a; font-size: 12px; }
+.schedule-list { display: grid; gap: 10px; max-width: 980px; }
+.schedule-card { justify-content: space-between; gap: 20px; padding: 16px 18px; border: 1px solid var(--border); background: var(--surface); }
+.schedule-card-copy { min-width: 0; }
+.schedule-card-title { gap: 8px; }
+.schedule-card-title h2 { margin: 0; font-size: 14px; }
+.schedule-card-title code, .schedule-badge { padding: 2px 6px; border: 1px solid var(--border); color: var(--muted); font: 10px ui-monospace, monospace; }
+.schedule-badge { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); font-family: inherit; }
+.schedule-card-copy p { margin: 7px 0 5px; color: var(--muted); font-size: 11px; white-space: pre-wrap; }
+.schedule-card-copy small { color: var(--subtle); font-size: 10px; }
+.schedule-card-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.icon-button { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+.icon-button:hover { color: var(--text); border-color: var(--border-strong); }
+.icon-button svg { width: 14px; height: 14px; }
+.icon-button.danger:hover { color: #b5493a; }
+.schedule-form { max-width: 980px; margin-bottom: 16px; padding: 18px; border: 1px solid var(--border-strong); background: var(--surface); }
+.schedule-form-header { justify-content: space-between; margin-bottom: 16px; }
+.schedule-form-header h2 { margin: 0; font-size: 15px; }
+.schedule-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.schedule-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
+.schedule-form-grid input, .schedule-form-grid textarea { width: 100%; box-sizing: border-box; padding: 8px 9px; border: 1px solid var(--border); background: var(--background); color: var(--text); font: inherit; font-size: 12px; }
+.schedule-form-wide { grid-column: 1 / -1; }
+.schedule-form-actions { justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.schedules-empty { display: flex; min-height: 150px; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 12px; }
+@media (max-width: 760px) { .schedules-page { padding: 24px 18px; } .schedules-page-header, .schedule-card { align-items: stretch; flex-direction: column; } .schedule-card-actions { justify-content: flex-start; } .schedule-form-grid { grid-template-columns: 1fr; } .schedule-form-wide { grid-column: auto; } }

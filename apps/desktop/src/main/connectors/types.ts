@@ -40,6 +40,7 @@ export interface Connector<TConfig = unknown> {
   watch?(
     connection: ConnectorConnection<TConfig>,
     onChange: () => void,
+    onError?: () => void,
   ): ConnectorSubscription | null
   resolveLocalPath?(
     connection: ConnectorConnection<TConfig>,

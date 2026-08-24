@@ -29,7 +29,7 @@ export const DATA_TYPES: DataTypeDef[] = [
   {
     key: "document",
     label: "文档",
-    matchExtensions: ["md", "markdown", "txt"],
+    matchExtensions: ["md", "markdown", "txt", "pdf"],
     defaults: { room: true, wiki: true, memory: true },
   },
   {
@@ -48,19 +48,19 @@ export const DATA_TYPES: DataTypeDef[] = [
   {
     key: "office-doc",
     label: "Office 文档",
-    matchExtensions: ["docx"],
+    matchExtensions: ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt"],
     defaults: { room: true, wiki: true, memory: true },
   },
   {
     key: "spreadsheet",
     label: "表格",
-    matchExtensions: ["xlsx", "csv"],
+    matchExtensions: ["xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "xltm", "xla", "xlam", "ods", "csv"],
     defaults: { room: true, wiki: true, memory: false },
   },
   {
     key: "slides",
     label: "幻灯片",
-    matchExtensions: ["pptx"],
+    matchExtensions: ["ppt", "pptx", "pptm", "pot", "potx", "potm", "pps", "ppsx", "ppsm", "sldx", "sldm", "odp"],
     defaults: { room: true, wiki: true, memory: false },
   },
   {

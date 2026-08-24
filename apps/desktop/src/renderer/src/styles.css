@@ -8,6 +8,7 @@ body,
   width: 100%;
   height: 100%;
   margin: 0;
+  overscroll-behavior-x: none;
 }
 
 body {
@@ -755,6 +756,7 @@ summary:focus-visible {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  overscroll-behavior-x: none;
   background: var(--bg);
 }
 
@@ -1422,6 +1424,35 @@ summary:focus-visible {
   white-space: nowrap;
 }
 
+.file-name-button {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-name-button small {
+  overflow: hidden;
+  color: var(--subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-name-button:hover strong,
+.file-name-button:focus-visible strong {
+  color: var(--accent);
+}
+
+.file-name-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .status-cell .status-dot {
   flex: 0 0 6px;
 }
@@ -1481,6 +1512,46 @@ summary:focus-visible {
   flex: 1;
   flex-direction: column;
   gap: 7px;
+}
+
+.file-import-progress {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.file-import-progress-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.file-import-progress-copy strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.file-import-progress-copy > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-import-progress-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+.file-import-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
 }
 
 .source-delete-progress-copy strong {
@@ -2407,7 +2478,7 @@ summary:focus-visible {
 
 .files-table .table-head,
 .files-table .table-row {
-  grid-template-columns: minmax(220px, 1.5fr) minmax(70px, 0.5fr) minmax(86px, 0.6fr) minmax(96px, 0.7fr) 132px;
+  grid-template-columns: minmax(220px, 1.5fr) minmax(70px, 0.5fr) minmax(86px, 0.6fr) minmax(96px, 0.7fr) 76px;
 }
 
 .file-recognition {
@@ -2689,6 +2760,139 @@ summary:focus-visible {
 .ingest-table .table-head,
 .ingest-table .table-row {
   grid-template-columns: minmax(200px, 1.5fr) minmax(84px, 0.6fr) minmax(130px, 0.9fr) minmax(84px, 0.6fr) minmax(88px, 0.6fr);
+}
+
+/* 过滤闸状态列（导入记录）：被拦的醒目 + 恢复入口，其余弱化 */
+.filter-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.filter-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.filter-badge.filtered {
+  color: #b23b32;
+  background: rgba(178, 59, 50, 0.12);
+  font-weight: 600;
+}
+
+.filter-badge.pending {
+  color: var(--muted);
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.filter-badge.bypassed {
+  color: #a06b00;
+  background: rgba(160, 107, 0, 0.1);
+}
+
+.filter-badge.plain {
+  color: var(--subtle);
+}
+
+/* 首次连接引导（过滤偏好）：解释 + 示例 + 当场编辑 */
+.filter-guide-dialog {
+  max-width: 620px;
+}
+
+.filter-guide-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+.filter-guide-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 18px;
+}
+
+.filter-guide-lead {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.filter-guide-body h3 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.filter-guide-example {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  background: rgba(127, 127, 127, 0.06);
+  border-radius: 8px;
+}
+
+.filter-guide-editor {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: inherit;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  resize: vertical;
+}
+
+.filter-guide-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.filter-guide-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 18px 16px;
+}
+
+.filter-guide-foot .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.filter-guide-foot .ghost:hover {
+  color: var(--accent);
+}
+
+.filter-guide-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.files-outcomes .table-head,
+.files-outcomes .table-row {
+  grid-template-columns: minmax(200px, 1.4fr) minmax(84px, 0.6fr) minmax(150px, 1fr) minmax(84px, 0.6fr) minmax(0, 1fr);
 }
 
 .files-actions {

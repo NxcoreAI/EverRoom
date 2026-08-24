@@ -76,7 +76,7 @@ export interface KnowledgeWikiGraphDto {
 export const KNOWLEDGE_ENTITY_KINDS = ['人物', '项目', '主题', '长期目标', '议题', '事件'] as const
 
 /** ready = 推荐态（达阈值等用户确认创建，entity-room-plan 推荐确认制）。 */
-export type KnowledgeEntityStatus = 'weak' | 'ready' | 'promoting' | 'room' | 'archived'
+export type KnowledgeEntityStatus = 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed'
 
 export interface KnowledgePromotionProgressDto {
   jobId: string

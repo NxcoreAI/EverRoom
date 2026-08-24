@@ -465,7 +465,7 @@ export function ResourceTree({
                         {resource.kind === 'knowledge-file' ? <Paperclip aria-hidden="true" /> : null}
                         {resource.kind !== 'office-file' && resource.kind !== 'knowledge-file' ? <FileText aria-hidden="true" /> : null}
                         {resource.kind === 'knowledge-file' ? (
-                          <span><b>{resource.name}</b><small title={resource.updatedAt}>{`${resource.statusLabel} · ${resource.sizeLabel}`}</small></span>
+                          <span><b>{resource.name}</b><small title={resource.updatedAt}>{`${t(uiText(resource.statusLabel))} · ${resource.sizeLabel}`}</small></span>
                         ) : (
                           <span><b>{resource.name}</b><small>{resource.updatedAt}</small></span>
                         )}

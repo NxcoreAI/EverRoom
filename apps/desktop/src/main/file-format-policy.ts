@@ -6,6 +6,61 @@ export const LOCAL_PARSEABLE_EXTENSIONS = new Set([
   '.txt',
 ])
 
+/** Office, compatible OpenDocument, and PDF formats treated as safe documents. */
+export const OFFICE_FILE_EXTENSIONS = new Set([
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.docm',
+  '.dot',
+  '.dotx',
+  '.dotm',
+  '.rtf',
+  '.odt',
+  '.xls',
+  '.xlsx',
+  '.xlsm',
+  '.xlsb',
+  '.xlt',
+  '.xltx',
+  '.xltm',
+  '.xla',
+  '.xlam',
+  '.ods',
+  '.ppt',
+  '.pptx',
+  '.pptm',
+  '.pot',
+  '.potx',
+  '.potm',
+  '.pps',
+  '.ppsx',
+  '.ppsm',
+  '.sldx',
+  '.sldm',
+  '.odp',
+])
+
+/** Gateway-supported formats that a local folder connector may discover. */
+export const LOCAL_AUTO_SCAN_EXTENSIONS = new Set([
+  ...OFFICE_FILE_EXTENSIONS,
+  '.md',
+  '.markdown',
+  '.mdx',
+  '.txt',
+  '.text',
+  '.csv',
+  '.html',
+  '.htm',
+])
+
+/** Office/OpenDocument and PDF files can enter a batch without confirmation. */
+export function isLowRiskFileExtension(extension: string): boolean {
+  return OFFICE_FILE_EXTENSIONS.has(extension.toLowerCase())
+}
+
+export const HIGH_RISK_FILE_BATCH_THRESHOLD = 100
+
 /** JSON 只允许走内部结构化入口，外部目录扫描永远不读取或入库。 */
 export const LOCAL_NEVER_SCAN_EXTENSIONS = new Set(['.json'])
 

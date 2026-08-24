@@ -709,6 +709,7 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
+        ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
         context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel),
       })

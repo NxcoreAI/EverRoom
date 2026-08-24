@@ -7,6 +7,7 @@ import {
   DoorOpen,
   Languages,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react'
 import {
@@ -34,7 +35,7 @@ import {
 } from './memoryOnboardingState'
 import './MemoryOnboardingGate.css'
 
-type GateMode = 'checking' | 'app' | 'questions' | 'saving' | 'refining' | 'success' | 'unavailable'
+type GateMode = 'checking' | 'app' | 'questions' | 'saving' | 'refining' | 'success' | 'ready' | 'unavailable'
 
 interface GeneratedMemory {
   item: MemoryAtomicItemDto
@@ -48,7 +49,10 @@ interface MemoryOnboardingControls {
 
 interface MemoryOnboardingGateProps {
   children: (controls: MemoryOnboardingControls) => ReactNode
-  onEnterHome: () => void
+  onFinished?: () => void
+  onMemoryGenerated?: (item: MemoryAtomicItemDto) => void
+  onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
+  activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'ready'
 }
 
 const MEMORY_TYPE_KEYS: Record<string, string> = {
@@ -67,13 +71,15 @@ const TRACE_PLACEHOLDER_KEYS = [
 // A pending generation is still recovered instead of starting a duplicate run.
 // Completed or skipped onboarding is reopened explicitly from Settings.
 const REPEATABLE_MEMORY_ONBOARDING = false
-const MEMORY_SUCCESS_DISPLAY_MS = 1_200
+// 首判 overview 自动重试：1s + 2s*4 ≈ 9s，覆盖登录时 MemoryCore 为应用
+// runtime config 重启的窗口（实测约 3s）；持续失败才落到 unavailable。
+const OVERVIEW_RETRY_ATTEMPTS = 5
 
 function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `memory-onboarding-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboardingGateProps) {
+export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, onNavigateStage, activeStage = 'idle' }: MemoryOnboardingGateProps) {
   const { locale, setLocale, t, formatDate } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const storedMarker = readMemoryOnboardingMarker()
@@ -86,39 +92,80 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
   const [answers, setAnswers] = useState(['', '', ''])
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [generatedMemory, setGeneratedMemory] = useState<GeneratedMemory | null>(null)
+  const [canContinue, setCanContinue] = useState(false)
   const [pending, setPending] = useState<Extract<MemoryOnboardingMarker, { status: 'pending' }> | null>(() => {
     const marker = initialMarkerRef.current
     return marker?.status === 'pending' ? marker : null
   })
   const [checkRequest, setCheckRequest] = useState(0)
   const [failureContext, setFailureContext] = useState<'initial' | 'submit'>('initial')
+  const forceLocalDataCheckRef = useRef(false)
   const baselineIdsRef = useRef<Set<string>>(new Set())
   const foregroundStartedAtRef = useRef(0)
+  const continueStartedAtRef = useRef(0)
   const submitRequestIdRef = useRef<string | null>(null)
+  const finishOnboarding = useCallback(() => {
+    setMode('app')
+    // 通知主进程引导结束：解除云端转写物化延迟（首登时 materialize 会把
+    // 云端历史写进 MemoryCore L0，若先于本 gate 的 overview 判定完成，
+    // 会被误判为「已完成记忆设置」而跳过引导）。
+    window.nxcore?.memory?.onboardingFinished?.()
+    onFinished?.()
+  }, [onFinished])
 
   const resetQuestions = useCallback(() => {
+    console.info('[onboarding] memory-open', { activeStage })
     setStep(0)
     setPageDirection('forward')
     setAnswers(['', '', ''])
     setFieldError(null)
     setGeneratedMemory(null)
+    setCanContinue(false)
     setPending(null)
     baselineIdsRef.current = new Set()
     foregroundStartedAtRef.current = 0
+    continueStartedAtRef.current = 0
     submitRequestIdRef.current = null
     setMode('questions')
+  }, [activeStage])
+
+  useEffect(() => {
+    console.info('[onboarding] memory-mode', { mode, activeStage })
+  }, [activeStage, mode])
+
+  useEffect(() => {
+    let storedForceCheck = false
+    try {
+      storedForceCheck = window.sessionStorage.getItem('everroom:post-login-memory-check') === '1'
+      if (storedForceCheck) window.sessionStorage.removeItem('everroom:post-login-memory-check')
+    } catch {
+      // Session storage is optional.
+    }
+    const forceLocalDataCheck = () => {
+      forceLocalDataCheckRef.current = true
+      setCheckRequest((value) => value + 1)
+    }
+    window.addEventListener('everroom-post-login-onboarding-check', forceLocalDataCheck)
+    if (storedForceCheck) setCheckRequest((value) => value + 1)
+    return () => window.removeEventListener('everroom-post-login-onboarding-check', forceLocalDataCheck)
   }, [])
 
   useEffect(() => {
     let cancelled = false
     const marker = initialMarkerRef.current
+    const forceLocalDataCheck = forceLocalDataCheckRef.current
+    forceLocalDataCheckRef.current = false
     if (marker?.status === 'pending') {
       setPending(marker)
-      setMode('app')
+      submitRequestIdRef.current = marker.requestId
+      foregroundStartedAtRef.current = Date.now()
+      continueStartedAtRef.current = Date.now()
+      setMode('refining')
       return () => { cancelled = true }
     }
-    if (marker && !REPEATABLE_MEMORY_ONBOARDING) {
-      setMode('app')
+    if (marker && !REPEATABLE_MEMORY_ONBOARDING && !forceLocalDataCheck) {
+      window.nxcore?.memory?.onboardingFinished?.()
+      setMode(marker.status === 'completed' ? 'ready' : 'app')
       return () => { cancelled = true }
     }
     const api = window.nxcore?.memory
@@ -127,18 +174,38 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
       setMode('unavailable')
       return () => { cancelled = true }
     }
-    api.overview()
-      .then((overview) => {
-        if (cancelled) return
-        setMode(REPEATABLE_MEMORY_ONBOARDING || memoryOverviewIsEmpty(overview) ? 'questions' : 'app')
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFailureContext('initial')
-          setMode('unavailable')
-        }
-      })
-    return () => { cancelled = true }
+    // 登录瞬间 MemoryCore 可能正为应用 runtime config 重启（约 3s 窗口）：
+    // 判定请求先自动重试一段时间，持续不可达才进 unavailable（用户重试）。
+    let attempt = 0
+    let timer: number | null = null
+    const attemptOverview = () => {
+      api.overview()
+        .then((overview) => {
+          if (cancelled) return
+          if (REPEATABLE_MEMORY_ONBOARDING || memoryOverviewIsEmpty(overview)) {
+            setMode('questions')
+          } else {
+            // 已有记忆时给用户选择：继续进入，或重新完成一遍引导。
+            window.nxcore?.memory?.onboardingFinished?.()
+            setMode('ready')
+          }
+        })
+        .catch(() => {
+          if (cancelled) return
+          attempt += 1
+          if (attempt >= OVERVIEW_RETRY_ATTEMPTS) {
+            setFailureContext('initial')
+            setMode('unavailable')
+            return
+          }
+          timer = window.setTimeout(attemptOverview, attempt === 1 ? 1_000 : 2_000)
+        })
+    }
+    attemptOverview()
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+    }
   }, [checkRequest])
 
   const findGeneratedMemory = useCallback(async (
@@ -167,10 +234,25 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
     writeMemoryOnboardingMarker({ ...marker, status: 'completed', memoryId: item.id })
     setPending(null)
     if (showResult) {
+      // 前台：直接在成功页展示生成结果；后台通知弹窗只留给用户已离开
+      // 等待页（gate 转 app 后仍在轮询）的完成场景，避免双展示。
       setGeneratedMemory({ item, sessionId: marker.sessionId, capturedAt: marker.capturedAt })
       setMode('success')
+    } else {
+      onMemoryGenerated?.(item)
     }
-  }, [])
+  }, [onMemoryGenerated])
+
+  useEffect(() => {
+    if (mode !== 'saving' && mode !== 'refining') {
+      setCanContinue(false)
+      return
+    }
+    if (!continueStartedAtRef.current) continueStartedAtRef.current = Date.now()
+    const remaining = Math.max(0, 3_000 - (Date.now() - continueStartedAtRef.current))
+    const timer = window.setTimeout(() => setCanContinue(true), remaining)
+    return () => window.clearTimeout(timer)
+  }, [mode])
 
   useEffect(() => {
     if (!pending) return
@@ -191,8 +273,8 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
       }
 
       if (foreground && Date.now() - foregroundStartedAtRef.current >= MEMORY_ONBOARDING_FOREGROUND_TIMEOUT_MS) {
-        setMode('app')
-        onEnterHome()
+        setFailureContext('submit')
+        setMode('unavailable')
         return
       }
       timer = window.setTimeout(
@@ -206,22 +288,17 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
       cancelled = true
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [completeWithMemory, findGeneratedMemory, mode, onEnterHome, pending])
-
-  useEffect(() => {
-    if (mode !== 'success' || !generatedMemory) return
-    const timer = window.setTimeout(() => {
-      setMode('app')
-      onEnterHome()
-    }, MEMORY_SUCCESS_DISPLAY_MS)
-    return () => window.clearTimeout(timer)
-  }, [generatedMemory, mode, onEnterHome])
+  }, [completeWithMemory, findGeneratedMemory, finishOnboarding, mode, pending])
 
   const skip = () => {
     writeMemoryOnboardingMarker({ status: 'skipped' })
     setPending(null)
+    finishOnboarding()
+  }
+
+  const navigateStage = (stage: 'room' | 'folder' | 'ready') => {
     setMode('app')
-    onEnterHome()
+    onNavigateStage?.(stage)
   }
 
   const updateAnswer = (value: string) => {
@@ -255,6 +332,7 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
     }
     setFieldError(null)
     setMode('saving')
+    continueStartedAtRef.current = Date.now()
     try {
       const baseline = await api.listAtomic({ limit: 100 })
       baselineIdsRef.current = new Set(baseline.items.map((item) => item.id))
@@ -301,7 +379,7 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
     },
   ], [t])
 
-  if (mode === 'app') return <>{children({ openMemoryOnboarding: resetQuestions })}</>
+  if (mode === 'app' || (activeStage !== 'idle' && activeStage !== 'memory')) return <>{children({ openMemoryOnboarding: resetQuestions })}</>
 
   const activeQuestion = questions[step]
   const visibleAnswers = answers.map((answer) => answer.trim())
@@ -317,11 +395,6 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
     <div className="memory-onboarding" data-mode={mode} data-mac-desktop={String(isMacDesktop)}>
       <header className="memory-onboarding-header drag-region">
         <ProductBrand className="memory-onboarding-brand" />
-        <nav className="memory-onboarding-sequence no-drag" aria-label={t('memory:onboarding.memorySetup')}>
-          <span data-state="active"><BrainCircuit aria-hidden="true" />{t('memory:onboarding.memorySetup')}</span>
-          <ChevronRight aria-hidden="true" />
-          <span data-state="upcoming"><DoorOpen aria-hidden="true" />{t('contextRoom:onboarding.eyebrow')}</span>
-        </nav>
         <div className="memory-onboarding-actions no-drag">
           <div className="memory-onboarding-language" role="group" aria-label={t('memory:onboarding.language')}>
             <Languages aria-hidden="true" />
@@ -333,6 +406,15 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
       </header>
 
       <main className="memory-onboarding-main">
+        <nav className="memory-onboarding-sequence" aria-label={t('memory:onboarding.memorySetup')}>
+          <span data-state="active"><BrainCircuit aria-hidden="true" />{t('memory:onboarding.memorySetup')}</span>
+          <ChevronRight aria-hidden="true" />
+          <span role="button" tabIndex={0} data-state="upcoming" onClick={() => navigateStage('room')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') navigateStage('room') }}><DoorOpen aria-hidden="true" />{t('contextRoom:onboarding.eyebrow')}</span>
+          <ChevronRight aria-hidden="true" />
+          <span role="button" tabIndex={0} data-state="upcoming" onClick={() => navigateStage('folder')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') navigateStage('folder') }}><ShieldCheck aria-hidden="true" />{t('surface:settings.folderGuide.eyebrow')}</span>
+          <ChevronRight aria-hidden="true" />
+          <span role="button" tabIndex={0} data-state="upcoming" onClick={() => navigateStage('ready')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') navigateStage('ready') }}><Check aria-hidden="true" />{t('surface:settings.folderGuide.readyTitle')}</span>
+        </nav>
         <section className="memory-onboarding-stage" aria-live="polite">
           {mode === 'checking' ? (
             <div className="memory-onboarding-status-only">
@@ -343,7 +425,6 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
 
           {mode === 'unavailable' ? (
             <div className="memory-onboarding-service-state">
-              <span className="memory-onboarding-kicker">{t('memory:onboarding.memorySetup')}</span>
               <h1>{t('memory:onboarding.serviceNotReady')}</h1>
               <p>{t('memory:onboarding.serviceNotReadyBody')}</p>
               <div className="memory-onboarding-button-row">
@@ -365,7 +446,6 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
               <article className="memory-onboarding-question" data-direction={pageDirection} key={step}>
                 <header className="memory-onboarding-card-header">
                   <div>
-                    <span className="memory-onboarding-kicker">{t('memory:onboarding.buildFirstMemory')}</span>
                     <span className="memory-onboarding-step-label">{t('memory:onboarding.stepCount', { current: step + 1, total: 3 })}</span>
                   </div>
                   <div className="memory-onboarding-page-number" aria-hidden="true">
@@ -421,10 +501,21 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
             </div>
           ) : null}
 
+          {mode === 'ready' ? (
+            <div className="memory-onboarding-ready">
+              <Check className="memory-onboarding-ready-icon" aria-hidden="true" />
+              <h1>{t('memory:onboarding.alreadyReadyTitle')}</h1>
+              <p>{t('memory:onboarding.alreadyReadyBody')}</p>
+              <div className="memory-onboarding-button-row">
+                <button type="button" className="memory-onboarding-secondary" onClick={resetQuestions}>{t('memory:onboarding.restart')}</button>
+                <button type="button" className="memory-onboarding-primary" onClick={finishOnboarding}>{t('memory:onboarding.continueToRoom')}<ChevronRight aria-hidden="true" /></button>
+              </div>
+            </div>
+          ) : null}
+
           {(mode === 'saving' || mode === 'refining') ? (
             <div className="memory-onboarding-generating">
               <div className="memory-onboarding-generation-mark" aria-hidden="true"><Sparkles /></div>
-              <span className="memory-onboarding-kicker">{t('memory:onboarding.buildFirstMemory')}</span>
               <h1>{statusLabel}</h1>
               <p>{mode === 'saving' ? t('memory:onboarding.savingBody') : t('memory:onboarding.refiningBody')}</p>
               <div className="memory-onboarding-loading-dots" aria-hidden="true"><i /><i /><i /></div>
@@ -433,12 +524,20 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
                 <span data-active={mode === 'refining'}><Sparkles aria-hidden="true" />{t('memory:onboarding.refiningMemory')}</span>
                 <span><Check aria-hidden="true" />{t('memory:onboarding.memoryGenerated')}</span>
               </div>
+              {mode === 'refining' && canContinue ? (
+                <button
+                  type="button"
+                  className="memory-onboarding-continue-later"
+                  onClick={() => navigateStage('room')}
+                >
+                  {t('memory:onboarding.continueNextStep')}<ChevronRight aria-hidden="true" />
+                </button>
+              ) : null}
             </div>
           ) : null}
 
           {mode === 'success' && generatedMemory ? (
             <div className="memory-onboarding-success">
-              <span className="memory-onboarding-kicker">{t('memory:onboarding.memoryGenerated')}</span>
               <h1>{t('memory:onboarding.readyTitle')}</h1>
               <p>{t('memory:onboarding.readyBody')}</p>
               <article className="memory-onboarding-result">
@@ -449,6 +548,11 @@ export function MemoryOnboardingGate({ children, onEnterHome }: MemoryOnboarding
                 <p>{generatedMemory.item.content}</p>
                 <footer>{t('memory:onboarding.sourceSummary', { session: generatedMemory.sessionId.slice(0, 24), time: formatDate(generatedMemory.capturedAt, { dateStyle: 'medium', timeStyle: 'short' }) })}</footer>
               </article>
+              <div className="memory-onboarding-button-row memory-onboarding-success-actions">
+                <button type="button" className="memory-onboarding-primary" onClick={finishOnboarding}>
+                  {t('memory:onboarding.continueToRoom')}<ChevronRight aria-hidden="true" />
+                </button>
+              </div>
             </div>
           ) : null}
         </section>

@@ -2,7 +2,7 @@ import { AlertCircle, LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { PerceptionNodeDetail } from '../../../../shared/sources'
+import type { PerceptionNodeDetail, RealityTag } from '../../../../shared/sources'
 import { useLocale } from '../../i18n/LocaleContext'
 
 const SYSTEM_PERCEPTION_KEYS: Record<string, string> = {
@@ -14,6 +14,21 @@ const SYSTEM_PERCEPTION_KEYS: Record<string, string> = {
 export function perceptionDisplayText(value: string, t: (key: string) => string): string {
   const key = SYSTEM_PERCEPTION_KEYS[value]
   return key ? t(key) : value
+}
+
+const ENTITY_TYPE_KEYS: Record<NonNullable<RealityTag['entityType']>, string> = {
+  person: 'diaryReality:reality.entityType.person',
+  organization: 'diaryReality:reality.entityType.organization',
+  project: 'diaryReality:reality.entityType.project',
+  product: 'diaryReality:reality.entityType.product',
+  place: 'diaryReality:reality.entityType.place',
+  other: 'diaryReality:reality.entityType.other',
+}
+
+export function realityTagKindLabel(tag: RealityTag, t: (key: string) => string): string {
+  if (tag.kind !== 'entity') return t('diaryReality:reality.fact')
+  const key = tag.entityType ? ENTITY_TYPE_KEYS[tag.entityType] : undefined
+  return key ? t(key) : t('diaryReality:reality.entity')
 }
 
 export function VisualDetail({ node }: { node: PerceptionNodeDetail }) {
@@ -62,7 +77,7 @@ export function VisualDetail({ node }: { node: PerceptionNodeDetail }) {
           <span>{t('diaryReality:visualPerception.entitiesAndFacts')}</span>
           {node.insightTags.length > 0 ? (
             <div className="visual-perception-tags">
-              {node.insightTags.map((tag) => <span key={`${tag.kind}:${tag.label}`} data-kind={tag.kind}>{tag.label}</span>)}
+              {node.insightTags.map((tag) => <span key={`${tag.kind}:${tag.label}`} data-kind={tag.kind} title={tag.label}>{realityTagKindLabel(tag, perceptionT)} · {tag.label}</span>)}
             </div>
           ) : <p className="visual-perception-muted">{t('diaryReality:visualPerception.noRepresentativeTags')}</p>}
         </section>

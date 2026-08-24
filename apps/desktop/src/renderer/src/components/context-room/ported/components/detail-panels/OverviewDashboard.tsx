@@ -17,7 +17,7 @@ import { useMemo, useState } from 'react';
 import { useLocale, type Translate } from '../../../../../i18n/LocaleContext';
 
 import { createContextRoomResourceLibrary } from '../../resources';
-import { localizedUiText } from '../../adapters';
+import { localizedUiText, uiText } from '../../adapters';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { useRoomUpdatedTime } from '../../roomUpdatedTime';
 import { roomKindIcon, roomKindTone } from '../utils';
@@ -127,7 +127,7 @@ export function OverviewDashboard({
     entities: room.generatedContext?.entities.length
       ? room.generatedContext.entities.map((entity) => ({
           label: entity.name,
-          description: `${entity.kind} · ${entity.description}`,
+          description: `${t(uiText(entity.kind))} · ${entity.description}`,
         }))
       : room.people.map((person) => ({ label: person.name, description: person.role })),
   };
@@ -163,7 +163,7 @@ export function OverviewDashboard({
           <h1>{room.title}</h1>
           <p><CalendarDays aria-hidden="true" />{t('contextRoom:overviewDashboard.updatedTime', { time: updatedTime })} <i /> {t('contextRoom:overviewDashboard.countResources', { count: backendDocuments.length + room.materials.length + room.fileItems.length })}</p>
         </div>
-        <b>{room.status}</b>
+        <b>{t(uiText(room.status))}</b>
       </header>
 
       <div className="context-room-dashboard-grid">

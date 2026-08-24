@@ -434,6 +434,11 @@ export class KnowledgeService {
     });
   }
 
+  /** runtime config 变更后替换消歧 tie-break 的 embedding 端点（null = 关闭）。 */
+  replaceEmbedding(embedding: { client: EmbeddingClient; model: string } | null): void {
+    this.router.replaceEmbedding(embedding);
+  }
+
   /** supervisor 生命周期钩子：崩溃恢复清扫 + 启动 worker 轮询。 */
   start(): void {
     // 存量 file 决策迁移到确定性身份（一次性，失败不阻塞启动）
@@ -1805,7 +1810,7 @@ export class KnowledgeService {
   // ───────────────────────── 候选实体与未识别栏（entity-room-plan §4.7/§7） ─────────────────────────
 
   /** 候选实体列表（默认 weak；ready = 推荐池，首页"推荐 Room"数据源）。 */
-  listCandidateEntities(status: "weak" | "ready" | "promoting" | "room" | "archived" = "weak"): Array<{
+  listCandidateEntities(status: "weak" | "ready" | "promoting" | "room" | "archived" | "suppressed" = "weak"): Array<{
     id: string;
     name: string;
     kind: string;
@@ -1837,6 +1842,22 @@ export class KnowledgeService {
         updatedAt: entity.updatedAt,
         promotion: this.promotionProgress(entity.id),
       }));
+  }
+
+  suppressEntity(entityId: string): { ok: true } | { ok: false; error: string } {
+    const entity = this.entityRegistry.getEntity(entityId);
+    if (!entity) return { ok: false, error: "entity_not_found" };
+    if (entity.status !== "weak" && entity.status !== "ready") return { ok: false, error: "entity_not_suppressible" };
+    this.entityRegistry.suppress(entityId);
+    return { ok: true };
+  }
+
+  restoreSuppressedEntity(entityId: string): { ok: true } | { ok: false; error: string } {
+    const entity = this.entityRegistry.getEntity(entityId);
+    if (!entity) return { ok: false, error: "entity_not_found" };
+    if (entity.status !== "suppressed") return { ok: false, error: "entity_not_suppressed" };
+    this.entityRegistry.restoreSuppressed(entityId);
+    return { ok: true };
   }
 
   /** 实体详情：链接资料 + 依据句 + 归属 Room（可解释性，验收 6）。 */

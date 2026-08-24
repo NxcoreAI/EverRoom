@@ -1,10 +1,12 @@
-import type { IngestEventDto } from '../../shared/ingest'
+import type { IngestEventDto, IngestFilterRulesDto } from '../../shared/ingest'
 import type { GatewaySupervisor } from './gateway-supervisor'
 
 /**
  * 统一理解引擎的台账读取面（unified-ingest-plan §9，导入记录页数据源）。
  * 策略不在桌面端管理：defaults 在 gateway 代码注册表，覆盖走部署期配置文件
  * （<dataDir>/ingest-policies.json），REST 只有只读展示。
+ * 过滤规则文档例外（ingest-filter-agent-plan §4.3）：偏好段是用户地盘，
+ * 桌面端可读可写（记忆页「过滤规则」入口）。
  */
 export class IngestGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
@@ -22,6 +24,29 @@ export class IngestGatewayBridge {
     if (query.sourceId) params.set('sourceId', query.sourceId)
     const suffix = params.size > 0 ? `?${params}` : ''
     return this.request(`/v1/ingest${suffix}`)
+  }
+
+  /** 过滤规则文档（用户偏好段 + 系统洞察段）。 */
+  getFilterRules(): Promise<IngestFilterRulesDto> {
+    return this.request('/v1/ingest/filter/rules')
+  }
+
+  /** 只重写用户偏好段（系统洞察段由洞察 job 维护，用户只读）。 */
+  updateFilterPreference(content: string): Promise<IngestFilterRulesDto> {
+    return this.request('/v1/ingest/filter/rules/preference', {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    })
+  }
+
+  /** 误杀恢复：filtered 事件重新放行三链路扇出（同时落 reinstated_at 精确标记）。 */
+  reinstateEvent(eventId: string): Promise<IngestEventDto> {
+    return this.request(`/v1/ingest/${encodeURIComponent(eventId)}/reinstate`, { method: 'POST' })
+  }
+
+  /** 事件归一化产物全文（台账详情查看——被过滤条目"到底拦了什么"）。 */
+  getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }> {
+    return this.request(`/v1/ingest/${encodeURIComponent(eventId)}/content`)
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

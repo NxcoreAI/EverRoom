@@ -19,8 +19,41 @@ export function uiText(value?: string | null) {
 
 export function localizedUiText(value: string | null | undefined, t: Translate): string {
   if (!value) return ''
+  const generatedDocumentSource = /^来自《(.+)》$/u.exec(value)
+  if (generatedDocumentSource) {
+    return t('contextRoom:display.fromDocument', { title: generatedDocumentSource[1]! })
+  }
+  const editedContent = /^(.+)（已编辑）$/u.exec(value)
+  if (editedContent) {
+    return t('contextRoom:display.editedContent', { content: editedContent[1]! })
+  }
   const key = CONTEXT_ROOM_DISPLAY_KEYS[value]
   return key ? t(key) : value
+}
+
+/** Localizes Room kind values from both the persisted Chinese enum and older API aliases. */
+export function localizedRoomKind(value: string | null | undefined, t: Translate): string {
+  if (!value) return ''
+  const aliases: Record<string, string> = {
+    person: '人物',
+    people: '人物',
+    project: '项目',
+    topic: '主题',
+    goal: '长期目标',
+    'long-term-goal': '长期目标',
+    issue: '议题',
+    event: '事件',
+  }
+  return localizedUiText(aliases[value.trim().toLowerCase()] ?? value, t)
+}
+
+/** The generated overview is the detail page's authoritative Room summary. */
+export function localizedRoomSummary(
+  background: string | null | undefined,
+  generatedOverview: string | null | undefined,
+  t: Translate,
+): string {
+  return localizedUiText(generatedOverview?.trim() || background, t)
 }
 
 const CONTEXT_ROOM_DISPLAY_KEYS: Record<string, string> = {
@@ -36,6 +69,7 @@ const CONTEXT_ROOM_DISPLAY_KEYS: Record<string, string> = {
   '会议': 'contextRoom:display.meeting',
   '文件': 'contextRoom:display.file',
   'Room': 'contextRoom:display.room',
+  '关联对象': 'contextRoom:display.relatedObject',
   '候选': 'contextRoom:display.candidate',
   '未开始': 'contextRoom:display.notStarted',
   '进行中': 'contextRoom:display.inProgress',
@@ -79,6 +113,15 @@ const CONTEXT_ROOM_DISPLAY_KEYS: Record<string, string> = {
   '刚刚': 'contextRoom:display.justNow',
   '暂无': 'contextRoom:display.none',
   '待排期': 'contextRoom:display.toBeScheduled',
+  '草稿': 'contextRoom:display.draft',
+  '活跃': 'contextRoom:display.active',
+  '陆远': 'contextRoom:objectDetail.defaultOwnerName',
+  '当前 Room 关联实体': 'contextRoom:memory.currentRoomRelatedEntity',
+  '已沉淀': 'contextRoom:wiki.captured',
+  '用户确认·入库中': 'contextRoom:wiki.userConfirmedImporting',
+  '归类中': 'contextRoom:wiki.classifying',
+  '已撤销': 'contextRoom:wiki.reverted',
+  '处理中': 'contextRoom:wiki.processing',
   'Agent 正在写入': 'contextRoom:display.agentWriting',
   'Agent 正在续写': 'contextRoom:display.agentContinuing',
   '正在审阅改动': 'contextRoom:display.reviewingChanges',
@@ -94,4 +137,7 @@ const CONTEXT_ROOM_DISPLAY_KEYS: Record<string, string> = {
   '待补充 Room 的背景和资料范围。': 'contextRoom:portedContextRoom.defaultBackground',
   '明确目标并聚合相关资料。': 'contextRoom:portedContextRoom.defaultGoal',
   'Room 已创建，等待补充资料。': 'contextRoom:portedContextRoom.defaultBriefStatus',
+  '资料归类时判定为新主题，自动创建的 Room。': 'contextRoom:portedContextRoom.autoCreatedBackground',
+  '确认归属并补充背景。': 'contextRoom:portedContextRoom.autoCreatedGoal',
+  '自动创建，等待认领。': 'contextRoom:portedContextRoom.autoCreatedBriefStatus',
 }

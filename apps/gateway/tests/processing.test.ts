@@ -23,7 +23,7 @@ describe("TranscriptionSummaryService", () => {
       jobId: "job-1",
       sourceRecordId: "source-1",
       transcript: "这是待总结的转写内容。",
-    })).resolves.toEqual({ content: '{"title":"周会"}' });
+    })).resolves.toEqual({ content: '{"title":"周会","eventType":"OTHER","actionItems":[],"representativeTags":[]}' });
 
     expect(runtime.start).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "transcription-summary:job-1",
@@ -79,5 +79,27 @@ describe("TranscriptionSummaryService", () => {
     expect(prompt).toContain("250 至 700 个中文字符")
     expect(prompt).toContain("6 至 12 条")
     expect(prompt).toContain("250 至 700 个中文字符")
+  });
+
+  it("uses chunk extraction and a final synthesis for long transcripts", async () => {
+    const runtime = {
+      start: vi.fn(async () => ({ runId: "run", runtimeSessionRef: "/tmp/background-session", events: events() })),
+      deleteSession: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined),
+    } as unknown as AgentRuntime;
+    const service = new TranscriptionSummaryService(runtime);
+
+    await service.summarize({
+      jobId: "job-very-long",
+      sourceRecordId: "source-very-long",
+      transcript: Array.from({ length: 40 }, (_, index) => `[${String(index).padStart(2, "0")}:00] 发言人：第 ${index} 段包含决定、行动项和背景信息。`.repeat(35)).join("\n"),
+    });
+
+    const calls = (runtime.start as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.length).toBeGreaterThan(2);
+    expect(calls[0]![0].prompt).toContain("这是第 1/");
+    expect(calls.at(-1)![0].prompt).toContain("全篇记忆重建");
+    expect(calls.at(-1)![0].prompt).toContain("partial-summaries");
+    expect(runtime.deleteSession).toHaveBeenCalledTimes(calls.length);
   });
 });

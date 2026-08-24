@@ -1,12 +1,12 @@
 {
   "name": "@nxcore/desktop",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/dev.mjs",
-    "build": "electron-vite build",
+    "build": "node scripts/prepare-nango-runtime.mjs && electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64"
@@ -104,6 +104,10 @@
     ],
     "extraResources": [
       {
+        "from": "build/packaged-env.json",
+        "to": "packaged-env.json"
+      },
+      {
         "from": "../gateway/dist",
         "to": "gateway",
         "filter": [
@@ -129,6 +133,15 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "build/nango-runtime",
+        "to": "nango",
+        "filter": [
+          "**/*",
+          "!**/.env*",
+          "!**/*.{map,ts,tsx,mts,cts}"
+        ]
       }
     ],
     "mac": {
@@ -137,7 +150,9 @@
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
-        "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac."
+        "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac.",
+        "NSDocumentsFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
+        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app."
       },
       "target": [
         "dmg",

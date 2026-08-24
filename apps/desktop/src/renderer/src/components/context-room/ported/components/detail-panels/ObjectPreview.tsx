@@ -2,7 +2,7 @@ import { CheckSquare2, ChevronRight, Mail, Mic } from 'lucide-react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
-import { uiText } from '../../adapters';
+import { localizedUiText, uiText } from '../../adapters';
 import { roomKindIcon, roomKindTone } from '../utils';
 
 function EmptyState({ children }: { children: string }) {
@@ -26,7 +26,7 @@ export function ObjectPreview({
   selection: WorkspaceObjectPreview;
   onOpenRoom: (roomId: string) => void;
 }) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   if (selection.kind === 'related-room') {
     const relatedRoom = rooms.find((item) => item.id === selection.id);
     if (!relatedRoom) return <EmptyState>{t('contextRoom:objectPreview.relatedRoomNotFound')}</EmptyState>;
@@ -47,7 +47,7 @@ export function ObjectPreview({
             <dt>{t('contextRoom:objectPreview.relationshipBasis')}</dt>
             <dd>
               {sharedPeople.length
-                ? t('contextRoom:objectPreview.sharedPeoplePeople', { people: sharedPeople.map((person) => person.name).join('、') })
+                ? t('contextRoom:objectPreview.sharedPeoplePeople', { people: sharedPeople.map((person) => person.name).join(locale === 'zh-CN' ? '、' : ', ') })
                 : t('contextRoom:objectPreview.bothAreKindRooms', { kind: t(uiText(room.kind)) })}
             </dd>
           </div>
@@ -121,11 +121,11 @@ export function ObjectPreview({
           </div>
           <div>
             <dt>{t('contextRoom:objectPreview.attendees')}</dt>
-            <dd>{meeting.attendees?.join('、') || t('contextRoom:objectPreview.notRecorded')}</dd>
+            <dd>{meeting.attendees?.join(locale === 'zh-CN' ? '、' : ', ') || t('contextRoom:objectPreview.notRecorded')}</dd>
           </div>
           <div>
             <dt>{t('contextRoom:objectPreview.meetingNotes')}</dt>
-            <dd>{meeting.summary}</dd>
+            <dd>{localizedUiText(meeting.summary, t)}</dd>
           </div>
         </dl>
       </article>
@@ -150,7 +150,7 @@ export function ObjectPreview({
         </div>
         <div>
           <dt>{t('contextRoom:objectPreview.emailBody')}</dt>
-          <dd>{mail.summary}</dd>
+          <dd>{localizedUiText(mail.summary, t)}</dd>
         </div>
       </dl>
     </article>

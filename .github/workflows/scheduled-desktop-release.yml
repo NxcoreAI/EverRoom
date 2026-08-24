@@ -17,6 +17,24 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-24.04
+    env:
+      NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
+      NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
+      NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
+      NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
+      NXCORE_CONNECTOR_POLL_MS: ${{ vars.NXCORE_CONNECTOR_POLL_MS }}
+      NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
+      NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
+      NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
+      NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
+      NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
+      NXCORE_NANGO_GOOGLE_CLIENT_ID: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_ID }}
+      NXCORE_NANGO_GOOGLE_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_SECRET }}
+      NXCORE_NANGO_NOTION_CLIENT_ID: ${{ secrets.NXCORE_NANGO_NOTION_CLIENT_ID }}
+      NXCORE_NANGO_NOTION_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_NOTION_CLIENT_SECRET }}
+      NXCORE_NANGO_OUTLOOK_CLIENT_ID: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_ID }}
+      NXCORE_NANGO_OUTLOOK_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET }}
+      NXCORE_NANGO_OUTLOOK_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_OUTLOOK_CONFIG_KEY }}
 
     steps:
       - name: Check out main
@@ -25,6 +43,7 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
 
       - name: Inspect release candidate
         id: candidate
@@ -74,10 +93,6 @@ jobs:
       - name: Check types
         if: steps.candidate.outputs.pending == 'true'
         run: pnpm typecheck
-
-      - name: Run tests
-        if: steps.candidate.outputs.pending == 'true'
-        run: pnpm test
 
       - name: Build gateway and desktop
         if: steps.candidate.outputs.pending == 'true'

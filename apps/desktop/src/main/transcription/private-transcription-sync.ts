@@ -276,6 +276,17 @@ export class PrivateTranscriptionSyncService {
   private loaded = false
   private state: StoredSyncState = { accounts: {} }
   private syncing: Promise<PrivateTranscriptionSyncResult> | null = null
+  /**
+   * 物化闸门（可选）：materialize 写 Reality/MemoryCore 前等待其放行。
+   * 用途：首登设备上云端历史转写若先于记忆引导的 overview 判定写入
+   * MemoryCore L0，会被误判「已完成记忆设置」跳过引导——由桌面主进程
+   * 注入「等记忆引导结束」的 gate。null/未设 = 不拦截。
+   */
+  private materializeGate: (() => Promise<void>) | null = null
+
+  setMaterializeGate(gate: (() => Promise<void>) | null): void {
+    this.materializeGate = gate
+  }
 
   constructor(
     private readonly filePath: string,
@@ -507,6 +518,9 @@ export class PrivateTranscriptionSyncService {
   }
 
   private async materialize(current: StoredSyncState['accounts'][string]): Promise<void> {
+    // 首登时云端历史转写写入会先于记忆引导判定污染 L0（见 setMaterializeGate
+    // 注释）——物化前先等闸门。等待期间只是延迟写入，不丢数据。
+    await this.materializeGate?.()
     const materialized = current.materialized ?? {}
     const invalidSummaryReports = current.invalidSummaryReports ?? {}
     const summaries = new Map<string, PrivateTranscriptionRecord>()

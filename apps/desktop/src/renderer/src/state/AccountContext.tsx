@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { CloudAccountStatus } from '../../../shared/sources'
 
@@ -11,7 +11,13 @@ interface AccountContextValue {
 const AccountContext = createContext<AccountContextValue | null>(null)
 
 export function AccountProvider({ children }: { children: ReactNode }) {
-  const [account, setAccount] = useState<CloudAccountStatus | null>(null)
+  const [account, setAccountState] = useState<CloudAccountStatus | null>(null)
+  const statusRequestRef = useRef(0)
+
+  const setAccount = useCallback((next: CloudAccountStatus) => {
+    setAccountState(next)
+    window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: next }))
+  }, [])
 
   const refreshAccount = useCallback(async () => {
     const next = window.nxcore
@@ -23,13 +29,24 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!window.nxcore) {
-      setAccount({ authenticated: false, apiBaseUrl: '' })
+      setAccountState({ authenticated: false, apiBaseUrl: '' })
       return
     }
-    void window.nxcore.account.status({ quiet: true }).then(setAccount).catch(() => undefined)
+    const onAccountChanged = (event: Event) => {
+      const next = (event as CustomEvent<CloudAccountStatus>).detail
+      if (!next || typeof next !== 'object' || typeof next.authenticated !== 'boolean') return
+      statusRequestRef.current += 1
+      setAccountState(next)
+    }
+    window.addEventListener('everroom-account-status-changed', onAccountChanged)
+    const requestId = ++statusRequestRef.current
+    void window.nxcore.account.status({ quiet: true }).then((next) => {
+      if (statusRequestRef.current === requestId) setAccountState(next)
+    }).catch(() => undefined)
+    return () => window.removeEventListener('everroom-account-status-changed', onAccountChanged)
   }, [])
 
-  const value = useMemo(() => ({ account, refreshAccount, setAccount }), [account, refreshAccount])
+  const value = useMemo(() => ({ account, refreshAccount, setAccount }), [account, refreshAccount, setAccount])
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>
 }
 
