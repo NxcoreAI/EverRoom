@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /Users/zyt/.local/state/fnm_multishells/56332_1787212133535/bin/npx -y pnpm@11.15.1 "$@"

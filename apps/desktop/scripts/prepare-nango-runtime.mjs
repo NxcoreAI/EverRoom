@@ -89,6 +89,13 @@ for (const name of required) {
   }
 }
 
+// server 从 packages/webapp/dist 静态托管 /images（logo 等），webapp 本体
+// 不打包——只把 public/images 复制进 dist，与 dev 下 nango-supervisor 的做法一致。
+const webappImages = join(connectorRoot, 'packages', 'webapp', 'public', 'images')
+if (existsSync(webappImages)) {
+  cpSync(webappImages, join(stagingRoot, 'packages', 'webapp', 'dist', 'images'), { recursive: true })
+}
+
 // pnpm handles the copied `file:` workspace packages without npm Arborist's
 // `edgesOut` crash (npm 10/11 can fail when no lockfile exists for this graph).
 // --node-linker=hoisted: pnpm's default symlink layout points into this staging
@@ -111,9 +118,22 @@ rmSync(join(stagingRoot, 'node_modules'), { recursive: true, force: true })
 // major-only (libzstd.1.dylib); duplicate the files at build time — real
 // copies, because cpSync re-points copied symlinks at the (deleted) staging
 // tmpdir and the runtime fix script can't see packages/node_modules anyway.
-for (const platform of ['darwin-arm64', 'darwin-x64', 'win32-x64']) {
-  const libDir = join(stagingRoot, 'packages', 'node_modules', '@embedded-postgres', platform, 'native', 'lib')
-  if (!existsSync(libDir)) continue
+// There can be several copies (hoisted + nested under embedded-postgres's
+// own node_modules) — patch every @embedded-postgres/<platform>/native/lib.
+const findLibDirs = (directory) =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name === '@embedded-postgres') {
+        return readdirSync(path)
+          .filter((platform) => existsSync(join(path, platform, 'native', 'lib')))
+          .map((platform) => join(path, platform, 'native', 'lib'))
+      }
+      return findLibDirs(path)
+    }
+    return []
+  })
+for (const libDir of findLibDirs(join(stagingRoot, 'packages', 'node_modules'))) {
   for (const file of readdirSync(libDir)) {
     const m = file.match(/^(lib.+)\.(\d+)\.\d+(\.\d+)?\.(dylib|so)$/)
     if (!m) continue

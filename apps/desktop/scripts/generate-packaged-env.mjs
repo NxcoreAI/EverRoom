@@ -21,10 +21,14 @@ const names = [
   'NXCORE_NANGO_OUTLOOK_CONFIG_KEY',
 ]
 
+// GitHub vars 可能连引号一起存（vars.X = "pi"），剥掉包裹引号再下发，
+// 否则 gateway 的整数/布尔解析在打包版里直接崩（Invalid NXCORE_NANGO_CONNECTOR_POLL_MS）。
+const value = (name) => process.env[name].replace(/^"(.*)"$/, '$1')
+
 const missing = names.filter((name) => !process.env[name])
 if (missing.length) throw new Error(`Missing packaged environment variables: ${missing.join(', ')}`)
 
 const output = resolve(process.cwd(), 'build', 'packaged-env.json')
 await mkdir(dirname(output), { recursive: true })
-await writeFile(output, `${JSON.stringify(Object.fromEntries(names.map((name) => [name, process.env[name]])), null, 2)}\n`)
+await writeFile(output, `${JSON.stringify(Object.fromEntries(names.map((name) => [name, value(name)])), null, 2)}\n`)
 console.log(`Wrote ${names.length} packaged environment variables to ${output}`)
