@@ -13,7 +13,7 @@ import { entities, entityDocLinks, rooms } from "../../infrastructure/database/s
 import { blendCentroid, decodeCentroid, encodeCentroid } from "./embedding.js";
 import { ENTITY_KINDS, type EntityKind } from "./llm.js";
 
-export type EntityStatus = "weak" | "ready" | "promoting" | "room" | "archived";
+export type EntityStatus = "weak" | "ready" | "promoting" | "room" | "archived" | "suppressed";
 export type LinkRole = "primary" | "mention" | "manual";
 export type SourceKind = "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc" | "calendar-event" | "connector-record";
 
@@ -461,6 +461,19 @@ export class EntityRegistry {
     this.db.update(entities).set({ status, updatedAt: new Date() })
       .where(and(eq(entities.id, entityId), eq(entities.status, "promoting")))
       .run();
+  }
+
+  /** 用户暂不创建：保留实体和证据，但从推荐/自动晋升候选中移除。 */
+  suppress(entityId: string): EntityRow | null {
+    this.db.update(entities).set({ status: "suppressed", roomId: null, updatedAt: new Date() })
+      .where(and(eq(entities.id, entityId), inArray(entities.status, ["weak", "ready"]))).run();
+    return this.getEntity(entityId);
+  }
+
+  restoreSuppressed(entityId: string): EntityRow | null {
+    this.db.update(entities).set({ status: "ready", updatedAt: new Date() })
+      .where(and(eq(entities.id, entityId), eq(entities.status, "suppressed"))).run();
+    return this.getEntity(entityId);
   }
 
   /** 质心推进（③″ 消歧用）：best-effort，失败由调用方吞掉。 */

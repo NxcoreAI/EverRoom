@@ -1,0 +1,46 @@
+.memory-generated-dialog {
+  position: fixed;
+  z-index: 1000;
+  top: 50%;
+  left: 50%;
+  width: min(440px, calc(100vw - 32px));
+  padding: 28px 30px 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgb(20 24 30 / 22%);
+  transform: translate(-50%, -50%);
+  animation: memory-generated-dialog-in 240ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.memory-generated-dialog-mark {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--surface-alt);
+  color: var(--accent-strong);
+}
+
+.memory-generated-dialog-mark svg { width: 20px; height: 20px; }
+.memory-generated-dialog-eyebrow { display: block; margin-top: 18px; color: var(--muted); font-size: 11px; }
+.memory-generated-dialog h2 { margin: 6px 0 8px; font-size: 21px; line-height: 1.25; }
+.memory-generated-dialog p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.memory-generated-dialog blockquote { margin: 18px 0 22px; padding: 12px 14px; border-left: 2px solid var(--accent-strong); color: var(--text); font-size: 13px; line-height: 1.6; }
+.memory-generated-dialog-close { position: absolute; top: 14px; right: 14px; display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+.memory-generated-dialog-close:hover { background: var(--hover); color: var(--text); }
+.memory-generated-dialog-close svg { width: 16px; height: 16px; }
+.memory-generated-dialog-action { display: inline-flex; align-items: center; gap: 7px; padding: 9px 13px; border: 1px solid var(--accent-strong); border-radius: 6px; background: var(--accent-strong); color: var(--surface); font: inherit; font-size: 12px; cursor: pointer; }
+.memory-generated-dialog-action:hover { filter: brightness(1.06); }
+.memory-generated-dialog-action svg { width: 15px; height: 15px; }
+
+@keyframes memory-generated-dialog-in {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)) scale(.98); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-generated-dialog { animation: none; }
+}

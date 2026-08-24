@@ -25,10 +25,11 @@ describe('LocalFolderConnector scan policy', () => {
     await mkdir(join(rootPath, 'project', 'node_modules', 'dependency'), { recursive: true })
     await mkdir(join(rootPath, 'project', 'dist'), { recursive: true })
     await mkdir(join(rootPath, 'project', '.git'), { recursive: true })
+    await writeFile(join(rootPath, 'project', 'proposal.docx'), 'office bytes')
     await writeFile(join(rootPath, 'project', 'notes.md'), '# Notes')
-    await writeFile(join(rootPath, 'project', 'node_modules', 'dependency', 'README.md'), '# Dependency')
+    await writeFile(join(rootPath, 'project', 'node_modules', 'dependency', 'README.docx'), 'office bytes')
     await writeFile(join(rootPath, 'project', 'dist', 'generated.txt'), 'generated')
-    await writeFile(join(rootPath, 'project', 'document.pdf'), 'unsupported')
+    await writeFile(join(rootPath, 'project', 'document.pdf'), 'pdf bytes')
     await writeFile(join(rootPath, 'project', 'data.json'), '{}')
 
     const result = await new LocalFolderConnector().scan({
@@ -38,7 +39,11 @@ describe('LocalFolderConnector scan policy', () => {
       config: { rootPath },
     })
 
-    expect(result.items.map((item) => item.path)).toEqual(['project/notes.md'])
+    expect(result.items.map((item) => item.path)).toEqual([
+      'project/document.pdf',
+      'project/notes.md',
+      'project/proposal.docx',
+    ])
     expect(result.failed).toBe(0)
   })
 })

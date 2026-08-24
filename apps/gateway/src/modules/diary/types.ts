@@ -56,6 +56,7 @@ export interface DiaryServiceOptions {
   pollIntervalMs?: number;
   leaseMs?: number;
   maxAttempts?: number;
+  scheduleManagedExternally?: boolean;
   now?: () => Date;
   logger?: Logger;
 }

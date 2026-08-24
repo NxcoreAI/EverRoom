@@ -7,6 +7,7 @@ import type {
 } from "@nxcore/agent-contract";
 
 export { AsyncEventQueue } from "./async-event-queue.js";
+export { UnconfiguredAgentRuntime } from "./unconfigured-runtime.js";
 
 export interface RuntimeEvent<T = unknown> {
   type: AgentEventType;

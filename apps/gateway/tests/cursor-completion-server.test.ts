@@ -26,7 +26,7 @@ async function testConfig(): Promise<GatewayConfig> {
     cursorCompletionPi: null,
     backgroundPi: null,
     knowledge: null,
-    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [] },
+    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
     asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
@@ -64,6 +64,10 @@ describe("cursor completion process server", () => {
         captureMemory: false,
         recallMemory: false,
         toolsEnabled: false,
+        context: {
+          selectedRoomId: "room-1",
+          rooms: [{ id: "room-1", title: "测试 Room" }],
+        },
       },
     });
     expect(runResponse.statusCode).toBe(202);

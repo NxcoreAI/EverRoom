@@ -195,6 +195,48 @@ describe("MemoryCoreClient browse APIs", () => {
   });
 });
 
+describe("MemoryCoreClient connection retry", () => {
+  it("retries through a MemoryCore restart window and succeeds", async () => {
+    const client = new MemoryCoreClient(config);
+    let calls = 0;
+    const fetchMock = vi.fn(async () => {
+      calls += 1;
+      if (calls < 3) throw new Error("fetch failed");
+      return new Response(JSON.stringify({ code: 0, message: "ok", data: { total: 3 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const count = await client.countAtomic();
+    expect(count).toBe(3);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    vi.unstubAllGlobals();
+  });
+
+  it("reports unreachable after the retry window is exhausted", async () => {
+    const client = new MemoryCoreClient(config);
+    const fetchMock = vi.fn(async () => { throw new Error("fetch failed"); });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(client.countAtomic()).rejects.toMatchObject({ kind: "unreachable" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    vi.unstubAllGlobals();
+  });
+
+  it("does not retry non-connection errors (abort/timeout)", async () => {
+    const client = new MemoryCoreClient(config);
+    const fetchMock = vi.fn(async () => {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      throw error;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(client.countAtomic()).rejects.toMatchObject({ kind: "unreachable" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("formatRecallResult", () => {
   it("returns null when nothing was recalled", () => {
     expect(formatRecallResult({ atomicItems: [], coreContent: null, scenarios: [] }, 2000)).toBeNull();

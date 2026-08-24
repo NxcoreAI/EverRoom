@@ -1,9 +1,10 @@
-import { ArrowLeft, ChevronRight, Eye, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Pencil, Search, Trash2, Upload, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, HardDrive, Search, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 
 import type {
   FileCatalogDto,
   FileImportOutcome,
+  FileImportProgressEvent,
   IngestEventDto,
   IngestPipelines,
 } from '../../../../shared/ingest'
@@ -14,13 +15,6 @@ import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 type FilesView = 'files' | 'events'
-
-interface FilePreview {
-  fileId: string
-  name: string
-  markdown: string | null
-  error: string | null
-}
 
 const PIPELINE_KEYS: { key: keyof IngestPipelines; label: string }[] = [
   { key: 'room', label: 'surface:files.room' },
@@ -92,9 +86,9 @@ export function FilesPage() {
   const [loading, setLoading] = useState(Boolean(filesApi) && !fileCatalogCache.complete)
   const [events, setEvents] = useState<IngestEventDto[]>([])
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<FileImportProgressEvent | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [preview, setPreview] = useState<FilePreview | null>(null)
   const [selectedCategoryKey, setSelectedCategoryKey] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -163,7 +157,8 @@ export function FilesPage() {
   const loadEvents = useCallback(async () => {
     if (!ingestApi) return
     try {
-      setEvents((await ingestApi.listEvents({ limit: 100 })).items)
+      // 文件页只看文件源台账（全源台账在记忆页「导入记录」——那是理解引擎的观测面）
+      setEvents((await ingestApi.listEvents({ limit: 100, sourceKind: 'file' })).items)
     } catch {
     }
   }, [ingestApi])
@@ -188,6 +183,13 @@ export function FilesPage() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [loadEvents, loadFiles])
+
+  useEffect(() => {
+    if (!filesApi || typeof filesApi.onImportProgress !== 'function') return
+    return filesApi.onImportProgress((progress) => {
+      setImportProgress(progress.status === 'completed' ? null : progress)
+    })
+  }, [filesApi])
 
   const classifiedFilesByCategory = useMemo(() => groupCatalogFiles(files), [files])
 
@@ -226,11 +228,50 @@ export function FilesPage() {
       setMessage(error instanceof Error ? error.message : t('surface:files.importFailedTryAgainLater'))
     } finally {
       setImporting(false)
+      setImportProgress(null)
     }
   }
 
   const isFileDrag = (event: DragEvent<HTMLDivElement>): boolean =>
     Array.from(event.dataTransfer.types).includes('Files')
+
+  /** Some desktop drag sources expose directories through items but leave files empty. */
+  const droppedFilesFromEvent = async (event: DragEvent<HTMLDivElement>): Promise<File[]> => {
+    const files = new Set<File>(Array.from(event.dataTransfer.files))
+    const readEntry = async (entry: unknown): Promise<void> => {
+      if (!entry || typeof entry !== 'object') return
+      const value = entry as {
+        isFile?: boolean
+        isDirectory?: boolean
+        file?: (success: (file: File) => void, failure?: () => void) => void
+        createReader?: () => { readEntries: (success: (entries: unknown[]) => void, failure?: () => void) => void }
+      }
+      if (value.isFile && value.file) {
+        await new Promise<void>((resolve) => value.file!(
+          (file) => { files.add(file); resolve() },
+          () => resolve(),
+        ))
+        return
+      }
+      if (!value.isDirectory || !value.createReader) return
+      const reader = value.createReader()
+      while (true) {
+        const entries = await new Promise<unknown[]>((resolve) => reader.readEntries(resolve, () => resolve([])))
+        if (entries.length === 0) break
+        await Promise.all(entries.map((child) => readEntry(child)))
+      }
+    }
+    for (const item of Array.from(event.dataTransfer.items)) {
+      if (item.kind !== 'file') continue
+      const file = item.getAsFile()
+      if (file) files.add(file)
+      const entry = (item as DataTransferItem & {
+        webkitGetAsEntry?: () => unknown
+      }).webkitGetAsEntry?.()
+      if (entry) await readEntry(entry)
+    }
+    return [...files]
+  }
 
   const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
     if (!isFileDrag(event)) return
@@ -261,14 +302,21 @@ export function FilesPage() {
     dragDepth.current = 0
     setDragActive(false)
     if (!filesApi || importing) return
-    const droppedFiles = Array.from(event.dataTransfer.files)
+    const droppedFiles = await droppedFilesFromEvent(event)
     if (droppedFiles.length === 0) return
     setImporting(true)
     setMessage(null)
     try {
       const result = await filesApi.importDropped(droppedFiles)
       if (result.length === 0) {
-        setMessage(t('surface:files.noSupportedFilesFound'))
+        try {
+          const pendingReviews = await filesApi.listHighRiskReviews()
+          setMessage(pendingReviews.items.length > 0
+            ? t('surface:files.highRiskFilesWaitingForConfirmation')
+            : t('surface:files.noSupportedFilesFound'))
+        } catch {
+          setMessage(t('surface:files.noSupportedFilesFound'))
+        }
         return
       }
       await applyImportResults(result)
@@ -276,6 +324,7 @@ export function FilesPage() {
       setMessage(error instanceof Error ? error.message : t('surface:files.importFailedTryAgainLater'))
     } finally {
       setImporting(false)
+      setImportProgress(null)
     }
   }
 
@@ -291,35 +340,21 @@ export function FilesPage() {
     }
   }
 
-  const openPreview = async (file: FileCatalogDto) => {
-    if (!filesApi) return
-    setPreview({ fileId: file.id, name: file.sharedTitle, markdown: null, error: null })
-    try {
-      const result = await filesApi.readMarkdown(file.id)
-      setPreview({ fileId: file.id, name: file.sharedTitle, markdown: result.markdown, error: null })
-    } catch (error) {
-      setPreview({
-        fileId: file.id,
-        name: file.sharedTitle,
-        markdown: null,
-        error: error instanceof Error ? error.message : t('surface:files.unableToReadParsedOutput'),
-      })
-    }
-  }
-
-  const renameFile = (file: FileCatalogDto) => {
-    if (!filesApi) return
-    const nextName = window.prompt(t('surface:files.fileDisplayName'), file.sharedTitle)
-    if (nextName === null || !nextName.trim() || nextName.trim() === file.sharedTitle) return
-    void runFileAction(file.id, () => file.clusterId
-      ? filesApi.pinClusterTitle(file.clusterId, nextName.trim())
-      : filesApi.rename(file.id, nextName.trim()))
-  }
-
   const deleteFile = (file: FileCatalogDto) => {
     if (!filesApi) return
     if (!window.confirm(t('surface:files.deleteNameThisAlsoRemovesItsRoomEvidence', { name: file.originalName }))) return
     void runFileAction(file.id, () => filesApi.delete(file.id))
+  }
+
+  const openOriginal = (file: FileCatalogDto) => {
+    if (!filesApi) return
+    void runFileAction(file.id, async () => {
+      try {
+        await filesApi.openOriginal(file.id)
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : t('surface:files.unableToOpenOriginal'))
+      }
+    })
   }
 
   return (
@@ -352,7 +387,25 @@ export function FilesPage() {
       {!filesApi ? (
         <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:files.importFilesInTheDesktopApp')}</strong><span>{t('surface:files.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div>
       ) : null}
-      {message ? <div className="source-feedback" role="status">{message}</div> : null}
+      {importProgress ? (
+        <div className="source-feedback file-import-progress" role="status" aria-live="polite">
+          <div className="file-import-progress-copy">
+            <strong>{t('surface:files.importingFiles')}</strong>
+            <span>{importProgress.filename ?? t('surface:files.preparingImport')}</span>
+            <div
+              className="file-import-progress-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={importProgress.total}
+              aria-valuenow={importProgress.completed}
+              aria-label={t('surface:files.importProgressCount', { completed: importProgress.completed, total: importProgress.total })}
+            >
+              <span style={{ width: `${importProgress.total > 0 ? (importProgress.completed / importProgress.total) * 100 : 0}%` }} />
+            </div>
+          </div>
+          <b>{t('surface:files.importProgressCount', { completed: importProgress.completed, total: importProgress.total })}</b>
+        </div>
+      ) : message ? <div className="source-feedback" role="status">{message}</div> : null}
 
       {view === 'files' && filesApi ? (
         <section className="file-recognition" aria-labelledby="file-recognition-heading">
@@ -437,14 +490,17 @@ export function FilesPage() {
                 <div className="table-head"><span>{t('surface:files.name')}</span><span>{t('surface:files.size')}</span><span>{t('surface:files.status')}</span><span>{t('surface:files.imported')}</span><span className="files-actions-column">{t('surface:files.actions')}</span></div>
                 {selectedCategory.files.map(({ file }) => (
                   <div key={file.id} className="table-row">
-                    <span className="name-cell"><strong title={file.contentHash}>{file.sharedTitle}</strong><small>{file.originalName} · {file.sourceLabel}</small></span>
+                    <span className="name-cell">
+                      <button type="button" className="file-name-button" title={t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openOriginal(file)}>
+                        <strong title={file.contentHash}>{file.sharedTitle}</strong>
+                        <small>{file.originalName} · {file.sourceLabel}</small>
+                      </button>
+                    </span>
                     <span>{formatBytes(file.bytes)}</span>
                     <span className="status-cell"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? '原件不可用' : '处理中'}</span>
                     <span>{formatDate(file.updatedAt, locale, t)}</span>
                     <span className="files-actions">
-                      <button type="button" className="icon-button" aria-label={t('surface:files.previewName', { name: file.originalName })} title={t('surface:files.previewParsedOutput')} disabled={!file.parsed || busyId === file.id} onClick={() => void openPreview(file)}><Eye aria-hidden="true" strokeWidth={1.8} /></button>
-                      <button type="button" className="icon-button" aria-label={t('surface:files.renameName', { name: file.originalName })} title={t('surface:files.rename')} disabled={busyId === file.id} onClick={() => renameFile(file)}><Pencil aria-hidden="true" strokeWidth={1.8} /></button>
-                      <button type="button" className="icon-button" aria-label={t('surface:files.revealName', { name: file.originalName })} title={t('surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => void filesApi.reveal(file.id).catch(() => undefined)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button>
+                      <button type="button" className="icon-button" aria-label={t('surface:files.openOriginalName', { name: file.originalName })} title={t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openOriginal(file)}><ExternalLink aria-hidden="true" strokeWidth={1.8} /></button>
                       <button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button>
                     </span>
                   </div>
@@ -477,23 +533,6 @@ export function FilesPage() {
         </div>
       ) : null}
 
-      {preview ? (
-        <div className="evidence-dialog-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.currentTarget === event.target) setPreview(null)
-        }}>
-          <section className="evidence-dialog files-preview" role="dialog" aria-modal="true" aria-labelledby="files-preview-title">
-            <header className="evidence-dialog-head">
-              <div><span>{t('surface:files.parsedOutput')}</span><h2 id="files-preview-title">{preview.name}</h2><small>{t('surface:files.normalizedMarkdownTruncatedByConsumersAsNeeded')}</small></div>
-              <button type="button" className="icon-button" title={t('surface:files.close')} aria-label={t('surface:files.close')} onClick={() => setPreview(null)}><X aria-hidden="true" strokeWidth={1.8} /></button>
-            </header>
-            <div className="evidence-dialog-body files-preview-body">
-              {preview.error ? <div className="files-preview-error">{preview.error}</div> : null}
-              {!preview.error && preview.markdown === null ? <div className="files-preview-error">{t('surface:files.loading')}</div> : null}
-              {preview.markdown !== null ? <pre>{preview.markdown}</pre> : null}
-            </div>
-          </section>
-        </div>
-      ) : null}
     </div>
   )
 }

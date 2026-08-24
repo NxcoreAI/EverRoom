@@ -13,6 +13,7 @@ import { SourcesPage } from './pages/SourcesPage'
 import { WikiPage } from './pages/WikiPage'
 import { ConnectorSyncPage } from './pages/ConnectorSyncPage'
 import { AgentStatusPage } from './pages/AgentStatusPage'
+import { AgentSchedulesPage } from './pages/AgentSchedulesPage'
 import { useLocale } from '@/i18n/LocaleContext'
 
 const ContextRoomPage = lazy(() =>
@@ -37,8 +38,8 @@ export function PageCanvas({
   onNavigate,
   onFocusAgent,
   onOpenDocument,
-  onStartMemoryOnboarding,
-  onStartRoomOnboarding,
+  memoryFocusId,
+  onStartFullOnboarding,
 }: {
   page: PageId
   activeContextRoomId: string | null
@@ -56,13 +57,14 @@ export function PageCanvas({
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
-  onStartMemoryOnboarding?: () => void
-  onStartRoomOnboarding?: () => void
+  memoryFocusId?: string | null
+  onStartFullOnboarding?: () => void
 }) {
   const { t } = useLocale()
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
   if (page === 'office') content = <AgentStatusPage />
+  if (page === 'schedules') content = <AgentSchedulesPage />
   if (page === 'rooms') {
     content = (
       <Suspense fallback={<ContextRoomHomeSkeleton />}>
@@ -90,17 +92,21 @@ export function PageCanvas({
   if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage />
-  if (page === 'memory') content = <MemoryPage />
+  if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
   if (page === 'wiki') content = <WikiPage />
   if (page === 'connectors') content = <ConnectorSyncPage />
   if (page === 'diary') {
     content = (
       <Suspense fallback={<DiaryPageSkeleton />}>
-        <DiaryPage />
+        <DiaryPage
+          onNavigate={onNavigate}
+          onOpenDocument={onOpenDocument}
+          onFocusRealityEvent={(eventId) => window.dispatchEvent(new CustomEvent('nxcore:reality:focus-event', { detail: { eventId } }))}
+        />
       </Suspense>
     )
   }
-  if (page === 'settings') content = <SettingsPage onStartMemoryOnboarding={onStartMemoryOnboarding} onStartRoomOnboarding={onStartRoomOnboarding} />
+  if (page === 'settings') content = <SettingsPage onStartFullOnboarding={onStartFullOnboarding} />
   return (
     <>
       <div

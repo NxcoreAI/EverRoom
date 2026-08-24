@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
+import { access } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
 import type {
@@ -9,8 +12,8 @@ import type {
   StartDocumentOperationInput,
 } from '@nxcore/agent-contract'
 
-import type { CloudAccountStatus, DefaultLocalFolder } from '../shared/sources'
-import type { PrivateTranscriptionSyncCompletedEvent } from '../shared/sources'
+import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
+import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -18,15 +21,20 @@ import { GitHubConnector, type GitHubConfig } from './connectors/github-connecto
 import { GoogleDocsConnector, type GoogleDocsConfig } from './connectors/google-docs-connector'
 import { NotionConnector, type NotionConfig } from './connectors/notion-connector'
 import { LocalDataService } from './core/local-data-service'
+import { LOCAL_AUTO_SCAN_EXTENSIONS } from './file-format-policy'
+import { HighRiskImportCoordinator } from './high-risk-import-coordinator'
 import { CredentialStore } from './security/credential-store'
 import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
+import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
+import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv, memoryCoreEnvironment } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { IngestPipelines } from '../shared/ingest'
@@ -46,9 +54,10 @@ import { ConnectorSyncGatewayBridge } from './gateway/connector-sync-gateway-bri
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
+import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { RecordingStore } from './recording/recording-store'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AsrCoordinator } from './asr/asr-coordinator'
@@ -86,6 +95,20 @@ import {
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 
 const APP_NAME = 'EverRoom'
+
+function loadPackagedEnvironment(): void {
+  if (!app.isPackaged) return
+  try {
+    const values = JSON.parse(readFileSync(join(process.resourcesPath, 'packaged-env.json'), 'utf8')) as Record<string, unknown>
+    for (const [name, value] of Object.entries(values)) {
+      if (typeof value === 'string' && !process.env[name]) process.env[name] = value
+    }
+  } catch (error) {
+    console.warn('Packaged environment file unavailable; using process environment.', error)
+  }
+}
+
+loadPackagedEnvironment()
 const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
 
 interface IpcRateLimitNotice {
@@ -139,6 +162,7 @@ const SOURCE_CHANNELS = {
   changed: 'sources:changed',
   showFile: 'sources:show-file',
   addLocalFolder: 'sources:add-local-folder',
+  listDefaultLocalFolders: 'sources:list-default-local-folders',
   connectDefaultLocalFolders: 'sources:connect-default-local-folders',
   addGitHub: 'sources:add-github',
   addGoogleDocs: 'sources:add-google-docs',
@@ -151,9 +175,18 @@ const SOURCE_CHANNELS = {
 const GATEWAY_CHANNELS = {
   status: 'gateway:status',
 } as const
+const RUNTIME_CONFIG_CHANNELS = {
+  get: 'runtime-config:get',
+  saveUser: 'runtime-config:save-user',
+  clearUser: 'runtime-config:clear-user',
+  refreshSaas: 'runtime-config:refresh-saas',
+  clearSaas: 'runtime-config:clear-saas',
+  selectSource: 'runtime-config:select-source',
+  test: 'runtime-config:test',
+} as const
 
 const CONNECTOR_CHANNELS = {
-  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
+  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', registerConnection: 'nango-connector:register-connection', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', armFault: 'nango-connector:arm-fault',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -294,6 +327,8 @@ const TRANSCRIPTION_CHANNELS = {
 const MEMORY_CHANNELS = {
   overview: 'memory:overview',
   startOnboarding: 'memory:onboarding:start',
+  /** 渲染层记忆引导结束（完成/跳过/放行）→ 解除云端同步延迟。 */
+  onboardingFinished: 'memory:onboarding-finished',
   listAtomic: 'memory:list-atomic',
   searchAtomic: 'memory:search-atomic',
   updateAtomic: 'memory:update-atomic',
@@ -331,6 +366,8 @@ const KNOWLEDGE_CHANNELS = {
   listEntities: 'knowledge:entities:list',
   getEntity: 'knowledge:entities:get',
   promoteEntity: 'knowledge:entities:promote',
+  suppressEntity: 'knowledge:entities:suppress',
+  restoreSuppressedEntity: 'knowledge:entities:restore',
   mergeEntity: 'knowledge:entities:merge',
   listUnmatched: 'knowledge:unmatched:list',
   attachDoc: 'knowledge:docs:attach',
@@ -350,13 +387,22 @@ const FILES_CHANNELS = {
   pinClusterTitle: 'files:pin-cluster-title',
   delete: 'files:delete',
   reveal: 'files:reveal',
+  openOriginal: 'files:open-original',
   pickAndImport: 'files:pick-and-import',
   importPathsOnce: 'files:import-paths-once',
   importAgentAttachments: 'files:import-agent-attachments',
+  importProgress: 'files:import-progress',
+  listHighRiskReviews: 'files:high-risk-reviews:list',
+  resolveHighRiskReview: 'files:high-risk-reviews:resolve',
+  highRiskReviewsChanged: 'files:high-risk-reviews:changed',
 } as const
 
 const INGEST_CHANNELS = {
   listEvents: 'ingest:events:list',
+  getFilterRules: 'ingest:filter-rules:get',
+  updateFilterPreference: 'ingest:filter-rules:update-preference',
+  reinstateEvent: 'ingest:events:reinstate',
+  getEventContent: 'ingest:events:content',
 } as const
 
 const SCREEN_CAPTURE_CHANNELS = {
@@ -384,6 +430,14 @@ const DIARY_CHANNELS = {
   activeRun: 'diary:active-run',
   days: 'diary:days',
   day: 'diary:day',
+} as const
+
+const AGENT_SCHEDULER_CHANNELS = {
+  list: 'agent-scheduler:list',
+  create: 'agent-scheduler:create',
+  update: 'agent-scheduler:update',
+  remove: 'agent-scheduler:remove',
+  runNow: 'agent-scheduler:run-now',
 } as const
 
 // 窗口先显示、服务后台初始化:所有 IPC 通道提前挂上路由,处理器注册前先等待就绪。
@@ -421,6 +475,7 @@ function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
     GATEWAY_CHANNELS,
+    RUNTIME_CONFIG_CHANNELS,
     OPEN_CONNECTOR_CHANNELS,
     CONNECTOR_SYNC_CHANNELS,
     CONTEXT_ROOM_CHANNELS,
@@ -440,6 +495,7 @@ function installIpcRouters(): void {
     SCREEN_CAPTURE_CHANNELS,
     PERCEPTION_CHANNELS,
     DIARY_CHANNELS,
+    AGENT_SCHEDULER_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -458,6 +514,7 @@ function installIpcRouters(): void {
 
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
 let openConnectorSupervisor: OpenConnectorSupervisor | null = null
@@ -471,6 +528,7 @@ let documentGatewayBridge: DocumentGatewayBridge | null = null
 let realityGatewayBridge: RealityGatewayBridge | null = null
 let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
 let diaryGatewayBridge: DiaryGatewayBridge | null = null
+let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
@@ -601,8 +659,17 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     },
   )
 
-  handle(SOURCE_CHANNELS.addLocalFolder, async () => {
-    const result = await dialog.showOpenDialog({
+  const showFolderDialog = (
+    event: Electron.IpcMainInvokeEvent,
+    options: Electron.OpenDialogOptions,
+  ) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    if (parent && !parent.isDestroyed()) return dialog.showOpenDialog(parent, options)
+    return dialog.showOpenDialog(options)
+  }
+
+  handle(SOURCE_CHANNELS.addLocalFolder, async (event) => {
+    const result = await showFolderDialog(event, {
       title: desktopText('dialog.chooseFolder.title'),
       buttonLabel: desktopText('dialog.chooseFolder.button'),
       properties: ['openDirectory', 'createDirectory'],
@@ -610,38 +677,37 @@ function registerSourceHandlers(service: LocalDataService, credentials: Credenti
     const rootPath = result.filePaths[0]
     return result.canceled || !rootPath ? null : service.addLocalFolder(rootPath)
   })
+  handle(SOURCE_CHANNELS.listDefaultLocalFolders, () => {
+    const sources = service.listSources().filter((source) => source.kind === 'local-folder')
+    const normalize = (value: string) => value.replace(/[\\/]+$/, '').toLowerCase()
+    return (['documents', 'desktop'] as const).map((folder) => {
+      const expected = normalize(app.getPath(folder))
+      return {
+        folder,
+        connected: sources.some((source) => {
+          if (source.status === 'disconnected' || normalize(source.rootPath) !== expected) return false
+          try { accessSync(source.rootPath, fsConstants.R_OK); return true } catch { return false }
+        }),
+      }
+    })
+  })
   handle(SOURCE_CHANNELS.connectDefaultLocalFolders, async (_event, folders: unknown) => {
     if (!Array.isArray(folders)) throw new Error('无效的默认文件夹配置。')
     if (folders.some((folder) => folder !== 'documents' && folder !== 'desktop')) {
       throw new Error('无效的默认文件夹配置。')
     }
-    const selected = folders as DefaultLocalFolder[]
-    const unique = [...new Set(selected)]
-    const results: Array<{ folder: DefaultLocalFolder; connected: boolean; error?: string }> = []
-    for (const folder of unique) {
+    const selected = [...new Set(folders as DefaultLocalFolder[])]
+    const results: DefaultLocalFolderConnectionResult[] = []
+    for (const folder of selected) {
       try {
-        let rootPath = app.getPath(folder)
-        if (process.platform === 'darwin') {
-          const picked = await dialog.showOpenDialog({
-            title: `${desktopText('dialog.chooseFolder.title')} · ${folder === 'documents' ? 'Documents' : 'Desktop'}`,
-            buttonLabel: desktopText('dialog.chooseFolder.button'),
-            defaultPath: rootPath,
-            properties: ['openDirectory', 'createDirectory'],
-          })
-          if (picked.canceled || !picked.filePaths[0]) {
-            results.push({ folder, connected: false, error: '用户取消了文件夹授权。' })
-            continue
-          }
-          rootPath = picked.filePaths[0]
-        }
+        const rootPath = app.getPath(folder)
+        // Accessing the protected default directory is what lets macOS show
+        // its privacy prompt. Only custom folders use the folder picker above.
+        await access(rootPath, fsConstants.R_OK)
         await service.addLocalFolder(rootPath)
         results.push({ folder, connected: true })
       } catch (error) {
-        results.push({
-          folder,
-          connected: false,
-          error: error instanceof Error ? error.message : String(error),
-        })
+        results.push({ folder, connected: false, error: error instanceof Error ? error.message : String(error) })
       }
     }
     return results
@@ -706,12 +772,192 @@ function registerGatewayHandlers(): void {
     nangoSupervisor?.getStatus() ?? { state: 'starting', message: null })
 }
 
+function registerRuntimeConfigHandlers(client: SaasClient): void {
+  handle(RUNTIME_CONFIG_CHANNELS.get, () => runtimeConfigBridge?.get())
+  handle(RUNTIME_CONFIG_CHANNELS.saveUser, async (_event, input: unknown) => {
+    const snapshot = await runtimeConfigBridge?.saveUser(input)
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return runtimeConfigBridge?.get()
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.clearUser, async () => {
+    const snapshot = await runtimeConfigBridge?.clearUser()
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return runtimeConfigBridge?.get()
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.refreshSaas, async () => {
+    const config = await client.getRuntimeConfig()
+    const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return runtimeConfigBridge?.get()
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.clearSaas, async () => {
+    const snapshot = await runtimeConfigBridge?.clearSaas()
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return runtimeConfigBridge?.get()
+  })
+  handle(RUNTIME_CONFIG_CHANNELS.test, () => runtimeConfigBridge?.test())
+  handle(RUNTIME_CONFIG_CHANNELS.selectSource, async (_event, source: unknown) => {
+    if (source !== 'user' && source !== 'saas' && source !== 'default') throw new Error('无效的运行时配置来源。')
+    const snapshot = await runtimeConfigBridge?.selectSource(source)
+    if (snapshot) void syncManagedChildProcesses(snapshot)
+    return runtimeConfigBridge?.get()
+  })
+}
+
+/** 上次注入 MemoryCore 的 AI 覆盖 env（JSON 串比较），null = 未注入过。 */
+let memoryCoreAiEnvApplied: string | null = null
+
+/**
+ * runtime config 保存后同步 MemoryCore 的 AI 环境变量（LLM + embedding）：
+ * - primary 三要素（baseUrl/apiKey/model）→ TDAI_LLM_*（提炼管道主 LLM）；
+ * - knowledge.embedding 四要素齐全 → /test 拿真实向量维度 → TDAI_EMBEDDING_*。
+ * 两路皆未配置且之前注入过 → 重启清空（恢复 .env 透传）。
+ * 变化才重启（MemoryCore 无热加载），失败只记日志不影响保存结果。
+ * embedding 配了但 /embeddings 探测失败 → 保持现 env 不动。
+ * 非托管/未启动实例跳过（外部部署的 MemoryCore 由用户自行配置）。
+ * 并发由 syncManagedChildProcesses 统一串行化。
+ */
+async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  const bridge = runtimeConfigBridge
+  try {
+    const supervisor = memoryCoreSupervisor
+    const initialConnection = supervisor?.getConnection() ?? null
+    if (!supervisor || !initialConnection) {
+      // MemoryCoreSupervisor returns null for an explicitly configured
+      // external instance. In that mode Gateway already inherited the
+      // NXCORE_MEMORY_* env and must keep using it.
+      const externalMemory = process.env.NXCORE_MEMORY_ENABLED?.trim() !== 'false'
+        && (process.env.NXCORE_MEMORY_MANAGED?.trim() === 'false'
+          || Boolean(process.env.NXCORE_MEMORY_BASE_URL?.trim()
+            && process.env.NXCORE_MEMORY_BASE_URL.trim() !== 'http://127.0.0.1:8420'))
+      if (!externalMemory) await bridge?.disableMemory().catch(() => undefined)
+      return
+    }
+    const fields = embeddingFieldsFromConfig(snapshot.config)
+    let embeddingEnv: Record<string, string> | null = null
+    let applyAiEnvironment = true
+    if (fields) {
+      // /test 只在 embedding 四要素齐全时测 /embeddings 并带维度；这里复用一次。
+      const result = await bridge?.test()
+      if (!result?.embedding?.valid || !result.embedding.dimensions) {
+        console.warn('[memory-core] embedding config saved but /embeddings test failed; keeping current env')
+        applyAiEnvironment = false
+      } else {
+        embeddingEnv = memoryCoreEmbeddingEnv(fields, result.embedding.dimensions)
+      }
+    }
+    const nextEnv = memoryCoreEnvironment(snapshot.config, embeddingEnv)
+    const nextJson = nextEnv ? JSON.stringify(nextEnv) : null
+    if (applyAiEnvironment && initialConnection.managed && nextJson !== memoryCoreAiEnvApplied) {
+      const restarted = await supervisor.restart(nextEnv)
+      if (!restarted?.managed) {
+        // 复用模式（外部实例或残留进程占着 8420）：env 没真正应用，不标记
+        // applied——下次 sync 还会重试；提示用户有残留实例。
+        console.warn('[memory-core] instance at 8420 is not managed by this app; ai env NOT applied (stray process?)')
+      } else {
+        memoryCoreAiEnvApplied = nextJson
+        console.info(`[memory-core] ai env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
+      }
+    }
+
+    const connection = supervisor.getConnection()
+    if (!connection) {
+      await bridge?.disableMemory().catch(() => undefined)
+      return
+    }
+    const runtimeMemory = snapshot.config.memory && typeof snapshot.config.memory === 'object'
+      ? snapshot.config.memory as Record<string, unknown>
+      : {}
+    // The bundled runtime-config file carries legacy placeholders. They must
+    // not override custom local identity values supplied through NXCORE_* env.
+    const runtimeMemoryPlaceholders: Record<string, string> = {
+      serviceId: 'everroom',
+      teamId: 'everroom',
+      agentId: 'everroom',
+      userId: 'local-user',
+    }
+    const envText = (name: string, fallback: string): string => process.env[name]?.trim() || fallback
+    const text = (name: string, fallback: string): string => {
+      const value = runtimeMemory[name]
+      const normalized = typeof value === 'string' ? value.trim() : ''
+      return normalized && normalized !== runtimeMemoryPlaceholders[name] ? normalized : fallback
+    }
+    const integer = (name: string, fallback: number): number => {
+      const value = runtimeMemory[name]
+      if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value
+      const parsed = Number.parseInt(process.env[name] ?? '', 10)
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+    }
+    const memoryConfig: RuntimeMemoryConfig = {
+      enabled: true,
+      baseUrl: connection.baseUrl,
+      apiKey: connection.apiKey,
+      serviceId: text('serviceId', envText('NXCORE_MEMORY_SERVICE_ID', 'everroom')),
+      teamId: text('teamId', envText('NXCORE_MEMORY_TEAM_ID', 'everroom')),
+      agentId: text('agentId', envText('NXCORE_MEMORY_AGENT_ID', 'pi-agent')),
+      userId: text('userId', envText('NXCORE_MEMORY_USER_ID', 'local-user')),
+      recallLimit: integer('NXCORE_MEMORY_RECALL_LIMIT', 5),
+      charBudget: integer('NXCORE_MEMORY_CHAR_BUDGET', 2_000),
+    }
+    const timeoutMs = runtimeMemory.timeoutMs
+    if (typeof timeoutMs === 'number' && Number.isInteger(timeoutMs) && timeoutMs >= 100) {
+      memoryConfig.timeoutMs = timeoutMs
+    }
+    await bridge?.injectMemory(memoryConfig)
+  } catch (error) {
+    console.error('[memory-core] failed to sync ai env:', error)
+    await bridge?.disableMemory().catch(() => undefined)
+  }
+}
+
+/** 补全服务子进程的 AI env 缓存：spawn 时经 getter 求值（惰性），配置变更时更新。 */
+let cursorCompletionAiEnv: Record<string, string> = {}
+let cursorCompletionAiEnvApplied: string = JSON.stringify({})
+
+/**
+ * runtime config 变更后同步补全服务子进程的 AI env：算新 env → 变化才动作。
+ * 已拉起的实例带旧 env——shutdown 后由下一次 renderer 请求惰性重生（带新 env）；
+ * 飞行中的补全流被杀是接受的取舍（秒级操作）。未拉起则只更新缓存。
+ */
+async function syncCursorCompletionEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  try {
+    const nextEnv = cursorCompletionEnvFromConfig(snapshot.config)
+    const nextJson = JSON.stringify(nextEnv)
+    cursorCompletionAiEnv = nextEnv
+    if (nextJson === cursorCompletionAiEnvApplied) return
+    cursorCompletionAiEnvApplied = nextJson
+    if (cursorCompletionSupervisor?.isRunning()) await cursorCompletionSupervisor.shutdown()
+    console.info(`[cursor-completion] ai env ${Object.keys(nextEnv).length ? 'updated' : 'cleared'} (instance will respawn on demand)`)
+  } catch (error) {
+    console.error('[cursor-completion] failed to sync ai env:', error)
+  }
+}
+
+/**
+ * 托管子进程（MemoryCore / 补全服务）的 runtime config 同步总入口。
+ * 所有 runtime config 变更路径（IPC 保存/清除、SaaS 下发、source 切换、
+ * 启动一次性 sync）统一走这里，避免再出现绕过某条子进程的路径。
+ * 整体串行化：并发触发（登录时 SaaS 恢复 + account watch 同秒各来一次）
+ * 排队执行，避免 MemoryCore 双 restart 竞态。
+ */
+let managedChildSyncQueue: Promise<void> = Promise.resolve()
+
+async function syncManagedChildProcesses(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  const run = managedChildSyncQueue.then(async () => {
+    await syncMemoryCoreEnvironment(snapshot)
+    await syncCursorCompletionEnvironment(snapshot)
+  })
+  managedChildSyncQueue = run.catch(() => undefined)
+  return run
+}
+
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
   ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
   ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
   ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
   ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
+  ipcMain.handle(CONNECTOR_CHANNELS.enableConnection, (_event, id) => bridge.enableConnection(id))
   ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
   ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
   ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
@@ -985,10 +1231,12 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
   handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
   handle(KNOWLEDGE_CHANNELS.getWikiGraph, (_event, roomId: string) => bridge.getWikiGraph(roomId))
-  handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived') =>
+  handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed') =>
     bridge.listEntities(status))
   handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.suppressEntity, (_event, entityId: string) => bridge.suppressEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.restoreSuppressedEntity, (_event, entityId: string) => bridge.restoreSuppressedEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
     bridge.mergeEntity(fromId, targetId))
   handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())
@@ -1002,7 +1250,15 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
 }
 
-function registerFilesHandlers(bridge: FilesGatewayBridge): void {
+function registerFilesHandlers(
+  bridge: FilesGatewayBridge,
+  highRiskImports: HighRiskImportCoordinator,
+): void {
+  highRiskImports.onChanged(() => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(FILES_CHANNELS.highRiskReviewsChanged)
+    }
+  })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
   handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
   handle(FILES_CHANNELS.readMarkdown, (_event, fileId: string) => bridge.readMarkdown(fileId))
@@ -1013,6 +1269,12 @@ function registerFilesHandlers(bridge: FilesGatewayBridge): void {
     bridge.pinClusterTitle(clusterId, sharedTitle))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
+  handle(FILES_CHANNELS.openOriginal, (_event, fileId: string) => bridge.openOriginal(fileId))
+  bridge.onImportProgress((event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(FILES_CHANNELS.importProgress, event)
+    }
+  })
   handle(
     FILES_CHANNELS.pickAndImport,
     (_event, options?: { pipelines?: IngestPipelines; roomId?: string }) => bridge.pickAndImport(options),
@@ -1026,6 +1288,16 @@ function registerFilesHandlers(bridge: FilesGatewayBridge): void {
     FILES_CHANNELS.importAgentAttachments,
     (_event, paths: string[]) => bridge.importAgentAttachments(paths),
   )
+  handle(FILES_CHANNELS.listHighRiskReviews, () => ({ items: highRiskImports.list() }))
+  handle(
+    FILES_CHANNELS.resolveHighRiskReview,
+    (_event, id: unknown, accepted: unknown) => {
+      if (typeof id !== 'string' || id.length < 1 || id.length > 100 || typeof accepted !== 'boolean') {
+        throw new Error('无效的高风险文件确认请求。')
+      }
+      return highRiskImports.resolve(id, accepted)
+    },
+  )
 }
 
 function registerIngestHandlers(bridge: IngestGatewayBridge): void {
@@ -1034,6 +1306,16 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
     (_event, query: { limit?: number; offset?: number; sourceKind?: string; sourceId?: string }) =>
       bridge.listEvents(query),
   )
+  // 过滤规则文档（记忆页「过滤规则」入口）：偏好段可读写，洞察段只读。
+  handle(INGEST_CHANNELS.getFilterRules, () => bridge.getFilterRules())
+  handle(
+    INGEST_CHANNELS.updateFilterPreference,
+    (_event, content: string) => bridge.updateFilterPreference(content),
+  )
+  // 误杀恢复（导入记录页「恢复」按钮）
+  handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
+  // 事件详情：归一化产物全文
+  handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
 }
 
 function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator): void {
@@ -1070,8 +1352,43 @@ function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
   handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
 }
 
+/**
+ * 云端转写物化（materializeCached）延迟到记忆引导结束：
+ * 首登新设备上，materialize 会把云端历史转写经 ingest 写入 MemoryCore L0，
+ * 若先于 MemoryOnboardingGate 的 overview 判定完成，L0 非空会被误判为
+ * 「用户已完成记忆设置」而跳过引导。引导结束（完成/跳过/直接放行）或超时
+ * 后才放行；轮询同步（performSync）不受影响——只有启动时的一次性物化受控。
+ */
+let cloudMaterializeGateOpen = false
+const cloudMaterializeWaiters: Array<() => void> = []
+const CLOUD_MATERIALIZE_GATE_TIMEOUT_MS = 5 * 60_000
+
+function openCloudMaterializeGate(): void {
+  if (cloudMaterializeGateOpen) return
+  cloudMaterializeGateOpen = true
+  for (const release of cloudMaterializeWaiters.splice(0)) release()
+}
+
+/** 等待引导结束（或超时兜底）后才执行启动物化。 */
+async function waitForCloudMaterializeGate(): Promise<void> {
+  if (cloudMaterializeGateOpen) return
+  // 兜底超时：引导页卡死/异常时不让云端同步永远悬空。
+  const timeout = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      if (!cloudMaterializeGateOpen) {
+        console.warn('[private-sync] cloud materialize gate timed out; proceeding')
+        openCloudMaterializeGate()
+      }
+      resolve()
+    }, CLOUD_MATERIALIZE_GATE_TIMEOUT_MS)
+  })
+  const gate = new Promise<void>((resolve) => cloudMaterializeWaiters.push(resolve))
+  await Promise.race([gate, timeout])
+}
+
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
   handle(MEMORY_CHANNELS.overview, () => bridge.overview())
+  ipcMain.on(MEMORY_CHANNELS.onboardingFinished, () => openCloudMaterializeGate())
   handle(MEMORY_CHANNELS.startOnboarding, (_event, input: MemoryOnboardingInput) =>
     bridge.startOnboarding(input))
   handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
@@ -1347,6 +1664,26 @@ function registerPerceptionAndDiaryHandlers(): void {
     }
     return diaryGatewayBridge.day(date)
   })
+  handle(AGENT_SCHEDULER_CHANNELS.list, () => {
+    if (!agentSchedulerGatewayBridge) throw new Error('Agent 定时任务服务尚未就绪。')
+    return agentSchedulerGatewayBridge.list()
+  })
+  handle(AGENT_SCHEDULER_CHANNELS.create, (_event, input: unknown) => {
+    if (!agentSchedulerGatewayBridge || !input || typeof input !== 'object') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.create(input as never)
+  })
+  handle(AGENT_SCHEDULER_CHANNELS.update, (_event, id: unknown, input: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string' || !input || typeof input !== 'object') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.update(id, input as never)
+  })
+  handle(AGENT_SCHEDULER_CHANNELS.runNow, (_event, id: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.runNow(id)
+  })
+  handle(AGENT_SCHEDULER_CHANNELS.remove, (_event, id: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.remove(id)
+  })
 }
 
 function createWindow(): void {
@@ -1469,6 +1806,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     process.env.NXCORE_NANGO_CONNECTOR_URL?.trim() || process.env.NXCORE_NANGO_URL?.trim() || ''
   const configuredNangoSecret =
     process.env.NXCORE_NANGO_CONNECTOR_SECRET?.trim() || process.env.NXCORE_NANGO_SECRET?.trim() || ''
+  const nangoSecretIsUuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(configuredNangoSecret)
   try {
     if (connectorPageEnabled) {
       openConnectorSupervisor = new OpenConnectorSupervisor(join(dataDirectory, 'open-connector'))
@@ -1503,9 +1841,24 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
       return null
     })
+    // Gateway 配置要求 URL 和 SECRET 成对出现；兼容旧版 Nango 变量名。
+    // The selected page owns the connector runtime. Explicitly clear the
+    // other connector's URL so a user-level env override cannot re-enable it.
+    // URL 为空时（packaged-env.json 缺失或 Nango 未就绪）SECRET 必须同步留空，
+    // 否则 Gateway 校验"URL/SECRET 成对"失败会以 code=1 退出，应用闪退。
+    const nangoUrl = connectorPageEnabled
+      ? ''
+      : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl
+    const nangoSecret = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4
+      ? randomUUID()
+      : nangoUrl ? configuredNangoSecret : ''
+    const nangoBootstrapPending = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4 ? '1' : '0'
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
+        // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
+        // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
+        NXCORE_AGENT_RUNTIME: 'pi',
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
@@ -1516,17 +1869,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
           }
           : {}),
-        // Gateway 配置要求 URL 和 SECRET 成对出现；兼容旧版 Nango 变量名。
-        // The selected page owns the connector runtime. Explicitly clear the
-        // other connector's URL so a user-level env override cannot re-enable it.
-        NXCORE_NANGO_CONNECTOR_URL: connectorPageEnabled
-          ? ''
-          : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl,
-        NXCORE_NANGO_CONNECTOR_SECRET: connectorPageEnabled ? '' : configuredNangoSecret,
-        NXCORE_NANGO_URL: connectorPageEnabled
-          ? ''
-          : nangoSupervisor?.gatewayBaseUrl() ?? configuredNangoUrl,
-        NXCORE_NANGO_SECRET: connectorPageEnabled ? '' : configuredNangoSecret,
+        NXCORE_NANGO_CONNECTOR_URL: nangoUrl,
+        NXCORE_NANGO_CONNECTOR_SECRET: nangoSecret,
+        NXCORE_NANGO_BOOTSTRAP_PENDING: nangoBootstrapPending,
+        NXCORE_NANGO_URL: nangoUrl,
+        NXCORE_NANGO_SECRET: nangoSecret,
         ...(knowledge
           ? {
             NXCORE_KNOWLEDGE_ENABLED: 'true',
@@ -1544,7 +1891,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     void screenshotOutbox.flush()
     perceptionGatewayBridge = new PerceptionGatewayBridge(gatewaySupervisor)
+    runtimeConfigBridge = new RuntimeConfigBridge(gatewaySupervisor)
+    // 冷启动 MemoryCore/补全服务只带 .env 透传；gateway 就绪后按已存 runtime
+    // config 补一次（把“每次冷启动回退 .env”的窗口收窄到 gateway ready 之前）。
+    // 现在这两个 sync 都是 no-op 风格：配置没变不会重启任何实例。
+    void runtimeConfigBridge.get()
+      .then((snapshot) => syncManagedChildProcesses(snapshot))
+      .catch((error) => console.warn('[managed-children] startup runtime-config sync skipped:', error))
     diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
+    agentSchedulerGatewayBridge = new AgentSchedulerGatewayBridge(gatewaySupervisor)
     registerPerceptionAndDiaryHandlers()
     const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
     if (perceptionSettings?.captureEnabled) {
@@ -1557,7 +1912,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     cursorCompletionSupervisor = new GatewaySupervisor(
       join(dataDirectory, 'cursor-completion-service'),
-      { NXCORE_MEMORY_ENABLED: 'false' },
+      // getter：惰性 respawn 时重新求值，拿到最新 runtime config 派生的 AI env。
+      () => ({
+        NXCORE_MEMORY_ENABLED: 'false',
+        NXCORE_AGENT_RUNTIME: 'pi',
+        ...cursorCompletionAiEnv,
+      }),
       {
         devScript: 'dev:cursor-completion',
         packagedEntry: 'cursor-completion-serve.js',
@@ -1578,8 +1938,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
-    const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor)
-    registerFilesHandlers(filesGatewayBridge)
+    const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'))
+    await highRiskImports.initialize()
+    const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)
+    registerFilesHandlers(filesGatewayBridge, highRiskImports)
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
     await credentials.initialize()
@@ -1610,6 +1972,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       realityGatewayBridge,
     )
     await privateTranscriptionSync.initialize()
+    // 云端历史转写的物化统一延迟到记忆引导结束（scheduler 登录即跑的首轮
+    // sync 与启动一次性 materializeCached 都经 materialize——闸门下沉到
+    // service 内，两条路都拦住），避免 L0 先被填充导致引导判定误跳过。
+    privateTranscriptionSync.setMaterializeGate(waitForCloudMaterializeGate)
     const publishSyncCompleted = () => {
       const event: PrivateTranscriptionSyncCompletedEvent = { completedAt: new Date().toISOString() }
       for (const target of BrowserWindow.getAllWindows()) {
@@ -1620,10 +1986,29 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     privateSyncScheduler = new PrivateSyncScheduler(privateTranscriptionSync, 15_000, publishSyncCompleted)
     const initialAccount = await saasClient.status().catch(() => null)
+    if (initialAccount?.authenticated) {
+      void saasClient.getRuntimeConfig()
+        .then(async (config) => {
+          const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
+          // SaaS 直调路径此前绕过 sync（只走 IPC handler 才同步子进程 env）。
+          if (snapshot) await syncManagedChildProcesses(snapshot)
+        })
+        .catch((error) => {
+          if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
+            void runtimeConfigBridge?.clearSaas()
+              .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+              .catch(() => undefined)
+          } else {
+            console.warn('Unable to restore SaaS runtime config', error)
+          }
+        })
+    }
     privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
     if (initialAccount?.authenticated) remoteAgentCommandClient.start()
     privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
-    void privateTranscriptionSync.materializeCached().catch((error) => {
+    // 物化闸门已下沉到 service.materialize（见 setMaterializeGate 注释），
+    // 这里只管启动一次性物化本身。
+    void privateTranscriptionSync?.materializeCached().catch((error) => {
       console.warn('Unable to import cached private transcriptions into Reality.', error)
     })
     transcriptionProcessingCoordinator = new TranscriptionProcessingCoordinator(
@@ -1642,6 +2027,22 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     for (const url of queuedProtocolUrls.splice(0)) saasClient.handleOidcCallback(url)
     let lastAccountId = initialAccount?.user?.id ?? null
     registerAccountHandlers(saasClient, (account) => {
+      if (account.authenticated) {
+        void saasClient?.getRuntimeConfig().then(async (config) => {
+          const snapshot = await runtimeConfigBridge?.saveSaas(config.config)
+          if (snapshot) await syncManagedChildProcesses(snapshot)
+        }).catch((error) => {
+          if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
+            void runtimeConfigBridge?.clearSaas()
+              .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+              .catch(() => undefined)
+          } else console.warn('Unable to refresh SaaS runtime config', error)
+        })
+      } else {
+        void runtimeConfigBridge?.clearSaas()
+          .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
+          .catch(() => undefined)
+      }
       privateSyncScheduler?.setAuthenticated(account.authenticated)
       if (!account.authenticated) {
         remoteAgentCommandClient?.stop()
@@ -1652,8 +2053,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         lastAccountId = account.user?.id ?? null
         remoteAgentCommandClient?.start()
         agentStatusReporter?.reportNow()
+        transcriptionProcessingCoordinator?.wake()
       }
     })
+    registerRuntimeConfigHandlers(saasClient)
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
     registerPrivateAudioHandlers(privateAudioSync)
@@ -1664,7 +2067,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return { items: [] }
     })
     const autoScanExtensions = new Set(fileCapabilities.items
-      .filter((item) => item.autoScan)
+      .filter((item) => item.autoScan && LOCAL_AUTO_SCAN_EXTENSIONS.has(item.extension.toLowerCase()))
       .map((item) => item.extension.toLowerCase()))
     const connectorImportExtensions = new Set(fileCapabilities.items
       .filter((item) => item.connectorImport)
@@ -1680,9 +2083,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       filesGatewayBridge,
       autoScanExtensions,
       connectorImportExtensions,
+      highRiskImports,
     )
     await localDataService.initialize()
     registerSourceHandlers(localDataService, credentials)
+    // Default folders are only connected after the user consents in the
+    // folder onboarding dialog (sources:connect-default-local-folders).
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
@@ -1705,6 +2111,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     realityGatewayBridge = null
     perceptionGatewayBridge = null
     diaryGatewayBridge = null
+    agentSchedulerGatewayBridge = null
     connectorGatewayBridge = null
     await recordingStore?.dispose()
     recordingStore = null
@@ -1766,6 +2173,7 @@ app.on('before-quit', (event) => {
   realityGatewayBridge = null
   perceptionGatewayBridge = null
   diaryGatewayBridge = null
+  agentSchedulerGatewayBridge = null
   connectorGatewayBridge = null
   recordingStore = null
   saasClient = null

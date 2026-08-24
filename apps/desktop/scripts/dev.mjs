@@ -24,7 +24,7 @@ function prepareMacElectron() {
   const brandedApp = join(cacheDirectory, 'EverRoom.app')
   const markerPath = join(cacheDirectory, 'build.json')
   const marker = JSON.stringify({
-    brandingVersion: 5,
+    brandingVersion: 6,
     electronExecutable,
     electronPlistModifiedAt: statSync(sourcePlist).mtimeMs,
     iconModifiedAt: statSync(iconPath).mtimeMs,
@@ -47,6 +47,8 @@ function prepareMacElectron() {
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIconFile icon.icns', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSMicrophoneUsageDescription EverRoom needs microphone access to record and transcribe your voice.', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSAudioCaptureUsageDescription EverRoom needs system audio access to record and transcribe audio playing on this Mac.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDocumentsFolderUsageDescription string EverRoom needs access to selected folders to recognize supported documents in the file app.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDesktopFolderUsageDescription string EverRoom needs access to selected folders to recognize supported documents in the file app.', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes array', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0 dict', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLName string com.nxcore.everroom.auth', plistPath])

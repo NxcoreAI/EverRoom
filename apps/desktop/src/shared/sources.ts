@@ -204,6 +204,11 @@ export interface SyncResult {
 
 export type DefaultLocalFolder = 'documents' | 'desktop'
 
+export interface DefaultLocalFolderStatus {
+  folder: DefaultLocalFolder
+  connected: boolean
+}
+
 export interface DefaultLocalFolderConnectionResult {
   folder: DefaultLocalFolder
   connected: boolean
@@ -382,7 +387,35 @@ export interface PerceptionSettings {
   updatedAt: string
 }
 
-export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo'
+export interface RuntimeConfigSnapshot {
+  config: Record<string, unknown>
+  source: 'user' | 'saas' | 'default'
+  selectedSource: 'user' | 'saas' | 'default'
+  availableSources: Array<'user' | 'saas' | 'default'>
+  configVersion: number
+  updatedAt: string
+  /** primary AI 四要素（provider/model/baseUrl/apiKey）是否已填写（占位空串视为未配置）。 */
+  primaryConfigured?: boolean
+}
+
+export interface RuntimeConfigTestResult {
+  valid: boolean
+  error?: string
+  /** knowledge.embedding 四要素齐全时才返回的 /embeddings 连通测试结果。 */
+  embedding?: {
+    valid: boolean
+    error?: string
+    /** 成功时的向量维度(MemoryCore TDAI_EMBEDDING_DIMENSIONS 注入用)。 */
+    dimensions?: number
+  }
+  /** vlm 四要素齐全时才返回的 chat/completions 连通测试结果。 */
+  vlm?: {
+    valid: boolean
+    error?: string
+  }
+}
+
+export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo' | 'document' | 'file'
 export type VisualPerceptionStatus = 'disabled' | 'pending' | 'processing' | 'ready' | 'failed'
 
 export interface PerceptionNode {
@@ -437,6 +470,24 @@ export interface DiarySettings {
   configVersion: number
   createdAt: string
   updatedAt: string
+}
+
+export interface AgentScheduledTask {
+  id: string
+  agentId: string
+  name: string
+  description: string
+  prompt?: string
+  builtin: boolean
+  enabled: boolean
+  scheduleType: 'daily'
+  localTime: string
+  timezone: string
+  nextRunAt: string | null
+  lastRunAt: string | null
+  lastStatus: 'pending' | 'running' | 'completed' | 'failed' | null
+  lastError: string | null
+  configVersion: number
 }
 
 export type DiaryRunStatus = 'pending' | 'running' | 'completed' | 'failed'
@@ -495,6 +546,9 @@ export interface DiaryDayDetails {
     assetFileId: string | null
     assetKind: 'document' | 'screenshot' | 'photo' | 'audio' | 'other' | null
     mime: string | null
+    documentId?: string | null
+    roomId?: string | null
+    realityEventId?: string | null
   }>
 }
 
@@ -558,6 +612,15 @@ export interface NxcoreDesktopApi {
   gateway: {
     status(): Promise<GatewayStatus>
   }
+  runtimeConfig: {
+    get(): Promise<RuntimeConfigSnapshot>
+    saveUser(input: unknown): Promise<RuntimeConfigSnapshot>
+    clearUser(): Promise<RuntimeConfigSnapshot>
+    refreshSaas(): Promise<RuntimeConfigSnapshot | undefined>
+    clearSaas(): Promise<RuntimeConfigSnapshot | undefined>
+    selectSource(source: 'user' | 'saas' | 'default'): Promise<RuntimeConfigSnapshot | undefined>
+    test(): Promise<RuntimeConfigTestResult>
+  }
   nangoConnector: {
     runtimeStatus(): Promise<NangoRuntimeStatus>
     status(): Promise<ConnectorStatus>
@@ -565,6 +628,7 @@ export interface NxcoreDesktopApi {
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
     registerConnection(input: { provider: 'gmail' | 'outlook' | 'google-calendar'; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
     disableConnection(id: string): Promise<void>
+    enableConnection(id: string): Promise<void>
     purgeConnection(id: string): Promise<void>
     triggerSync(id: string, mode: SyncMode): Promise<SyncRun>
     cancelRun(id: string): Promise<SyncRun>
@@ -628,6 +692,13 @@ export interface NxcoreDesktopApi {
     days(start: string, end: string): Promise<DiaryDayDetails['day'][]>
     day(date: string): Promise<DiaryDayDetails | null>
   }
+  agentSchedules: {
+    list(): Promise<AgentScheduledTask[]>
+    create(input: { agentId: string; name: string; description?: string; prompt: string; localTime?: string; timezone?: string; enabled?: boolean }): Promise<AgentScheduledTask>
+    update(id: string, input: Partial<Pick<AgentScheduledTask, 'name' | 'description' | 'prompt' | 'enabled' | 'localTime' | 'timezone'>> & { configVersion: number }): Promise<AgentScheduledTask>
+    remove(id: string): Promise<void>
+    runNow(id: string): Promise<{ runId: string }>
+  }
   contextRooms: {
     list(): Promise<ContextRoomSnapshot>
     create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
@@ -673,6 +744,8 @@ export interface NxcoreDesktopApi {
   memory: {
     overview(): Promise<MemoryOverviewDto>
     startOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResultDto>
+    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
+    onboardingFinished(): void
     listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
     searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
     updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
@@ -786,6 +859,7 @@ export interface NxcoreDesktopApi {
     onChanged(listener: (event: SourceChangeEvent) => void): () => void
     showFile(id: string, fileId: string): Promise<void>
     addLocalFolder(): Promise<SyncResult | null>
+    listDefaultLocalFolders(): Promise<DefaultLocalFolderStatus[]>
     connectDefaultLocalFolders(folders: DefaultLocalFolder[]): Promise<DefaultLocalFolderConnectionResult[]>
     addGitHub(input: { repository: string; branch?: string; token?: string; syncIssues?: boolean }): Promise<SyncResult>
     addGoogleDocs(input: { documentIds: string[]; token: string }): Promise<SyncResult>
@@ -816,6 +890,8 @@ export interface NxcoreDesktopApi {
     getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
     /** 用户确认创建（推荐态实体走完整晋升流程）。 */
     promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }>
+    suppressEntity(entityId: string): Promise<{ ok: boolean }>
+    restoreSuppressedEntity(entityId: string): Promise<{ ok: boolean }>
     /** 手动合并：from 并入 target。 */
     mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
     listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>
@@ -841,11 +917,17 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
+    /** 使用操作系统默认查看器打开文件本体。 */
+    openOriginal(fileId: string): Promise<void>
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
+    onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
+    listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
+    resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
+    onHighRiskReviewsChanged(listener: () => void): () => void
   }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
@@ -855,6 +937,14 @@ export interface NxcoreDesktopApi {
       sourceKind?: string
       sourceId?: string
     }): Promise<{ items: IngestEventDto[]; total: number }>
+    /** 过滤规则文档（记忆页「过滤规则」入口）：偏好段 + 洞察段。 */
+    getFilterRules(): Promise<IngestFilterRulesDto>
+    /** 只重写用户偏好段（洞察段由系统维护）。 */
+    updateFilterPreference(content: string): Promise<IngestFilterRulesDto>
+    /** 误杀恢复：filtered 事件重新放行扇出（FilesPage「恢复」按钮）。 */
+    reinstateEvent(eventId: string): Promise<IngestEventDto>
+    /** 事件归一化产物全文（台账详情查看）。 */
+    getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }>
   }
 }
 import type {
@@ -880,7 +970,11 @@ import type {
   FileCatalogDto,
   FileDto,
   FileImportOutcome,
+  FileImportProgressEvent,
+  HighRiskImportResolution,
+  HighRiskImportReview,
   IngestEventDto,
+  IngestFilterRulesDto,
   IngestPipelines,
 } from './ingest'
 import type { McpServersSnapshot } from './mcp'

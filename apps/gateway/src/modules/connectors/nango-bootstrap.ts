@@ -2,7 +2,9 @@ import axios, { type AxiosInstance } from "axios";
 
 import type { ConnectorConfig } from "./types.js";
 
-const READY_TIMEOUT_MS = 180_000;
+// 桌面端 Nango 托管启动包含首次依赖安装 + server 构建(各 300s 超时),
+// Gateway 先于 Nango ready;此窗口需覆盖冷启动全程,取 10 分钟。
+const READY_TIMEOUT_MS = 600_000;
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
@@ -132,7 +134,11 @@ export async function ensureIntegration(
 export async function bootstrapNango(config: ConnectorConfig): Promise<string> {
   const baseUrl = config.nangoUrl;
   let secret = config.nangoSecret;
-  if (!(await secretWorks(baseUrl, secret))) {
+  // A desktop-managed instance starts with a temporary UUID solely to satisfy
+  // Gateway config validation. It cannot authenticate against Nango, so skip
+  // the probe and go straight to the local dashboard API-key bootstrap.
+  const bootstrapPending = process.env.NXCORE_NANGO_BOOTSTRAP_PENDING === "1";
+  if (bootstrapPending || !(await secretWorks(baseUrl, secret))) {
     const bootstrapped = await bootstrapApiKey(baseUrl);
     if (bootstrapped) {
       secret = bootstrapped;

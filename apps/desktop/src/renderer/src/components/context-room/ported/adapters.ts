@@ -31,6 +31,22 @@ export function localizedUiText(value: string | null | undefined, t: Translate):
   return key ? t(key) : value
 }
 
+/** Localizes Room kind values from both the persisted Chinese enum and older API aliases. */
+export function localizedRoomKind(value: string | null | undefined, t: Translate): string {
+  if (!value) return ''
+  const aliases: Record<string, string> = {
+    person: '人物',
+    people: '人物',
+    project: '项目',
+    topic: '主题',
+    goal: '长期目标',
+    'long-term-goal': '长期目标',
+    issue: '议题',
+    event: '事件',
+  }
+  return localizedUiText(aliases[value.trim().toLowerCase()] ?? value, t)
+}
+
 /** The generated overview is the detail page's authoritative Room summary. */
 export function localizedRoomSummary(
   background: string | null | undefined,

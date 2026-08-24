@@ -135,6 +135,12 @@ const RawConfigSchema = Type.Object(
     ingestFilterBatchSize: Type.Integer({ minimum: 1, maximum: 20 }),
     ingestFilterBatchDelayMs: Type.Integer({ minimum: 0 }),
     ingestFilterExemptSourceKinds: Type.String(),
+    ingestFilterToolsEnabled: Type.Boolean(),
+    ingestFilterMaxToolCalls: Type.Integer({ minimum: 0, maximum: 128 }),
+    ingestFilterRulesFile: Type.String(),
+    ingestFilterRulesMaxBytes: Type.Integer({ minimum: 256, maximum: 65_536 }),
+    ingestFilterInsightEnabled: Type.Boolean(),
+    ingestFilterInsightIntervalMs: Type.Integer({ minimum: 60_000 }),
   },
   { additionalProperties: false },
 );
@@ -241,6 +247,18 @@ export interface IngestFilterConfig {
   batchDelayMs: number;
   /** 豁免 sourceKind（用户手写/录音转写内容默认豁免，agent 不判生死）。 */
   exemptSourceKinds: string[];
+  /** 只读 wiki/记忆工具总开关（false = 零工具纯 prompt，现行为）。 */
+  toolsEnabled: boolean;
+  /** 单 run 工具调用上限（过滤器专用 runtime 用）。 */
+  maxToolCalls: number;
+  /** 部署覆盖层规则文档路径。 */
+  rulesFile: string;
+  /** 单段注入截断上限（字节）。 */
+  rulesMaxBytes: number;
+  /** 洞察维护 job 开关。 */
+  insightEnabled: boolean;
+  /** 洞察刷新周期 ms。 */
+  insightIntervalMs: number;
 }
 
 export interface OpenConnectorCliConfig {
@@ -667,7 +685,7 @@ export function loadConfig(
     aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "8192"),
     aiBackgroundMaxTokens: parsePositiveInteger(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
-      env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "4096",
+      env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
     ),
     diaryMaxTokens: parsePositiveInteger(
       "NXCORE_DIARY_MAX_TOKENS",
@@ -821,6 +839,26 @@ export function loadConfig(
     ),
     ingestFilterExemptSourceKinds: env.NXCORE_INGEST_FILTER_EXEMPT_SOURCE_KINDS?.trim()
       ?? "everroom-doc,reality-event",
+    ingestFilterToolsEnabled: env.NXCORE_INGEST_FILTER_TOOLS_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_INGEST_FILTER_TOOLS_ENABLED", env.NXCORE_INGEST_FILTER_TOOLS_ENABLED.trim()),
+    ingestFilterMaxToolCalls: parsePositiveInteger(
+      "NXCORE_INGEST_FILTER_MAX_TOOL_CALLS",
+      env.NXCORE_INGEST_FILTER_MAX_TOOL_CALLS ?? "8",
+    ),
+    ingestFilterRulesFile: env.NXCORE_INGEST_FILTER_RULES_FILE?.trim()
+      || join(dataDir, "ingest", "filter-rules.md"),
+    ingestFilterRulesMaxBytes: parsePositiveInteger(
+      "NXCORE_INGEST_FILTER_RULES_MAX_BYTES",
+      env.NXCORE_INGEST_FILTER_RULES_MAX_BYTES ?? "2048",
+    ),
+    ingestFilterInsightEnabled: env.NXCORE_INGEST_FILTER_INSIGHT_ENABLED == null
+      ? true
+      : parseBoolean("NXCORE_INGEST_FILTER_INSIGHT_ENABLED", env.NXCORE_INGEST_FILTER_INSIGHT_ENABLED.trim()),
+    ingestFilterInsightIntervalMs: parseNonNegativeInteger(
+      "NXCORE_INGEST_FILTER_INSIGHT_INTERVAL_MS",
+      env.NXCORE_INGEST_FILTER_INSIGHT_INTERVAL_MS ?? "3600000",
+    ),
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -831,16 +869,19 @@ export function loadConfig(
   }
 
   if (rawConfig.agentRuntime === "pi") {
+    // AI 四要素全空 = 降级启动（等 runtime config 热应用，见 create-server 的
+    // applyRuntimeConfig；packaged app 无 .env，本就是常态）；部分填写 = 配置
+    // 事故，宁可早失败也不带半套配置起服务。
     const missing = [
       ["NXCORE_AI_PROVIDER", rawConfig.aiProvider],
       ["NXCORE_AI_MODEL", rawConfig.aiModel],
       ["NXCORE_AI_BASE_URL", rawConfig.aiBaseUrl],
       ["NXCORE_AI_API_KEY", rawConfig.aiApiKey],
     ].filter(([, value]) => !value).map(([name]) => name);
-    if (missing.length > 0) {
+    if (missing.length > 0 && missing.length < 4) {
       throw new Error(`Pi runtime requires: ${missing.join(", ")}`);
     }
-    validateAiEndpoint(rawConfig.aiBaseUrl);
+    if (missing.length === 0) validateAiEndpoint(rawConfig.aiBaseUrl);
   }
 
   if (rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel) {
@@ -991,7 +1032,22 @@ export function loadConfig(
       }
     : null;
   if (cursorCompletionPi) {
-    validateAiEndpoint(cursorCompletionPi.baseUrl, "NXCORE_CURSOR_COMPLETION_AI_BASE_URL");
+    // 与 primary 同款降级规则：全空跳过（runtime config 兜底），部分填写报事故。
+    const cursorMissing = ([
+      ["NXCORE_CURSOR_COMPLETION_AI_PROVIDER", cursorCompletionPi.provider],
+      ["NXCORE_CURSOR_COMPLETION_AI_MODEL", cursorCompletionPi.model],
+      ["NXCORE_CURSOR_COMPLETION_AI_BASE_URL", cursorCompletionPi.baseUrl],
+      ["NXCORE_CURSOR_COMPLETION_AI_API_KEY", cursorCompletionPi.apiKey],
+    ] as const).filter(([, value]) => !value).map(([name]) => name);
+    if (cursorMissing.length > 0 && cursorMissing.length < 4) {
+      throw new Error(`Cursor completion Pi runtime requires: ${cursorMissing.join(", ")}`);
+    }
+    if (cursorMissing.length === 0) {
+      validateAiEndpoint(cursorCompletionPi.baseUrl, "NXCORE_CURSOR_COMPLETION_AI_BASE_URL");
+    }
+  }
+  if (rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel) {
+    validateAiEndpoint(rawConfig.vlmBaseUrl, "NXCORE_VLM_BASE_URL");
   }
   const cliConnectorUrl = env.NXCORE_CLI_CONNECTOR_URL?.trim();
   if (cliConnectorUrl) validateConnectorEndpoint("NXCORE_CLI_CONNECTOR_URL", cliConnectorUrl);
@@ -1104,6 +1160,12 @@ export function loadConfig(
         .split(",")
         .map((kind) => kind.trim())
         .filter(Boolean),
+      toolsEnabled: rawConfig.ingestFilterToolsEnabled,
+      maxToolCalls: rawConfig.ingestFilterMaxToolCalls,
+      rulesFile: rawConfig.ingestFilterRulesFile,
+      rulesMaxBytes: rawConfig.ingestFilterRulesMaxBytes,
+      insightEnabled: rawConfig.ingestFilterInsightEnabled,
+      insightIntervalMs: rawConfig.ingestFilterInsightIntervalMs,
     },
   };
 }

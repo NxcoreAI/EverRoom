@@ -144,7 +144,7 @@ describe("loadConfig", () => {
     });
     expect(config.backgroundPi).toMatchObject({
       model: "deepseek-chat",
-      maxTokens: 4096,
+      maxTokens: 8192,
     });
     expect(config.diaryMaxTokens).toBe(16384);
     expect(config.cursorCompletionPi).toMatchObject({
@@ -228,11 +228,32 @@ describe("loadConfig", () => {
     expect(config.diaryMaxTokens).toBe(12288);
   });
 
-  it("rejects incomplete or unsafe Pi endpoint configuration", () => {
+  it("boots degraded when all primary AI env vars are empty and rejects partial configuration", () => {
+    // 全空 = 降级启动（runtime config 接管），pi 对象保留空字段作为
+    // applyRuntimeConfig 的原地 patch 目标。
+    const degraded = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+    });
+    expect(degraded.pi).toMatchObject({
+      provider: "",
+      model: "",
+      baseUrl: "",
+      apiKey: "",
+    });
+    expect(degraded.cursorCompletionPi).toMatchObject({
+      provider: "",
+      model: "",
+      baseUrl: "",
+      apiKey: "",
+    });
+
+    // 部分填写 = 配置事故，仍早失败。
     expect(() => loadConfig(["--token", "0123456789abcdef"], {
       NXCORE_AGENT_RUNTIME: "pi",
-    })).toThrow("Pi runtime requires");
+      NXCORE_AI_PROVIDER: "openai",
+    })).toThrow("Pi runtime requires: NXCORE_AI_MODEL, NXCORE_AI_BASE_URL, NXCORE_AI_API_KEY");
 
+    // 四要素全齐 + 非 HTTP(S) URL → URL 校验照旧。
     expect(() => loadConfig(["--token", "0123456789abcdef"], {
       NXCORE_AGENT_RUNTIME: "pi",
       NXCORE_AI_PROVIDER: "openai",
@@ -240,6 +261,19 @@ describe("loadConfig", () => {
       NXCORE_AI_BASE_URL: "file:///tmp/model",
       NXCORE_AI_API_KEY: "test-key",
     })).toThrow("expected an absolute HTTP(S) URL");
+  });
+
+  it("rejects partially-filled cursor completion AI configuration but tolerates fully-empty", () => {
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_CURSOR_COMPLETION_AI_MODEL: "qwen-flash",
+    })).toThrow("Cursor completion Pi runtime requires");
+
+    // 补全段全空（primary 也全空）→ 不抛，字段为空串占位。
+    const degraded = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_RUNTIME: "pi",
+    });
+    expect(degraded.cursorCompletionPi?.baseUrl).toBe("");
   });
 
   it("loads VLM configuration only when all required values are present", () => {

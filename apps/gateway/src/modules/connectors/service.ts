@@ -326,6 +326,15 @@ export class ConnectorSyncService {
     this.disposeAgentRuntime = options.disposeRuntime ?? true;
   }
 
+  /**
+   * runtime config 热应用：替换同步 agent runtime（不做双挂载防御，
+   * 旧实例的 dispose 由调用方决定——onChange 路径经 AgentResolver.reload
+   * 返回的 previous 自行处置）。
+   */
+  replaceAgentRuntime(runtime: AgentRuntime): void {
+    this.agentRuntime = runtime;
+  }
+
   setFilesService(service: FilesService): void {
     this.filesService = service;
     for (const row of this.db.select().from(connectorDocuments).where(isNull(connectorDocuments.deletedAt)).all()) {

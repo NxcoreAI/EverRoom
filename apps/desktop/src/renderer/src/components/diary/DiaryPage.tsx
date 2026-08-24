@@ -1,5 +1,6 @@
 import {
   CalendarCheck2,
+  ArrowUpRight,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -30,6 +31,7 @@ import {
   type CSSProperties,
 } from 'react'
 import { showToast } from '@/state/toast'
+import type { PageId } from '@/data/navigation'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import type { DiaryDayDetails } from '../../../../shared/sources'
 import { DiaryContentSkeleton, DiaryPageSkeleton } from './DiaryPageSkeleton'
@@ -68,6 +70,9 @@ interface DiaryEvent {
     duration: number
     transcript: string
   }
+  sourceTarget?:
+    | { type: 'document'; documentId: string; roomId: string }
+    | { type: 'recording'; eventId: string }
 }
 
 interface DiaryDay {
@@ -215,7 +220,14 @@ function toDiaryDay(
               count: images.length,
             }),
           }
-        : eventPresentation(event.sourceRefs[0], t)
+          : eventPresentation(event.sourceRefs[0], t)
+      const sourceTarget = event.sourceRefs.map((sourceRef) => details.sources.find((source) => source.sourceId === sourceRef))
+        .map((source) => source?.documentId && source.roomId
+          ? { type: 'document' as const, documentId: source.documentId, roomId: source.roomId }
+          : source?.realityEventId
+            ? { type: 'recording' as const, eventId: source.realityEventId }
+            : null)
+        .find((target): target is NonNullable<typeof target> => target !== null)
       return {
         time: formatClock(event.time, locale),
         ...(event.endTime && formatClock(event.endTime, locale) !== formatClock(event.time, locale)
@@ -224,6 +236,7 @@ function toDiaryDay(
         ...presentation,
         title: event.title,
         description: event.summary,
+        ...(sourceTarget ? { sourceTarget } : {}),
         ...(images ? { images } : {}),
       }
     }),
@@ -659,7 +672,10 @@ function DiaryImageLightbox({
   )
 }
 
-function DiaryTimeline({ events }: { events: DiaryEvent[] }) {
+function DiaryTimeline({ events, onOpenSource }: {
+  events: DiaryEvent[]
+  onOpenSource: (target: NonNullable<DiaryEvent['sourceTarget']>) => void
+}) {
   const { t } = useLocale()
   const [previewImage, setPreviewImage] = useState<DiaryImagePreview | null>(null)
 
@@ -686,6 +702,18 @@ function DiaryTimeline({ events }: { events: DiaryEvent[] }) {
               <div className="diary-event-label"><EventIcon aria-hidden="true" />{event.label}</div>
               <h3>{event.title}</h3>
               <p>{event.description}</p>
+              {event.sourceTarget ? (
+                <button
+                  type="button"
+                  className="diary-event-source-button"
+                  title={t(event.sourceTarget.type === 'document' ? 'diaryReality:diary.openDocumentSource' : 'diaryReality:diary.openRecordingSource')}
+                  aria-label={t(event.sourceTarget.type === 'document' ? 'diaryReality:diary.openDocumentSource' : 'diaryReality:diary.openRecordingSource')}
+                  onClick={() => onOpenSource(event.sourceTarget!)}
+                >
+                  <ArrowUpRight aria-hidden="true" />
+                  <span>{t('diaryReality:diary.viewSource')}</span>
+                </button>
+              ) : null}
               {event.detail ? <div className="diary-event-detail">{event.detail}</div> : null}
               {event.metrics ? (
                 <div className="diary-event-metrics">
@@ -738,7 +766,11 @@ function DiaryClosing({ thought, meta }: { thought: string; meta: string }) {
   )
 }
 
-export function DiaryPage() {
+export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
+  onNavigate?: (page: PageId) => void
+  onOpenDocument?: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
+  onFocusRealityEvent?: (eventId: string) => void
+}) {
   const { locale, t } = useLocale()
   const pageRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLElement>(null)
@@ -756,6 +788,14 @@ export function DiaryPage() {
   const selectedKey = toDateKey(selectedDate)
   const diary = generatedDays[selectedKey]
   const diaryLoading = loadingDate === selectedKey
+  const openSource = useCallback((target: NonNullable<DiaryEvent['sourceTarget']>) => {
+    if (target.type === 'document') {
+      onOpenDocument?.({ roomId: target.roomId, documentId: target.documentId })
+      return
+    }
+    onFocusRealityEvent?.(target.eventId)
+    onNavigate?.('recording')
+  }, [onFocusRealityEvent, onNavigate, onOpenDocument])
 
   useEffect(() => {
     if (!window.nxcore) return
@@ -1121,7 +1161,7 @@ export function DiaryPage() {
                 <div><span>{t('diaryReality:diary.dayTrace')}</span><h2>{formatActivityCount(diary?.events.length ?? 0, t)}</h2></div>
                 <time>{diary?.range ?? t('diaryReality:diary.noActivity')}</time>
               </header>
-              <DiaryTimeline events={diary?.events ?? []} />
+              <DiaryTimeline events={diary?.events ?? []} onOpenSource={openSource} />
               {diary?.closing ? <DiaryClosing thought={diary.closing.thought} meta={diary.closing.meta} /> : null}
             </section>
           </>

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gte, isNull, lte, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, lt, or } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -8,6 +8,8 @@ import {
   diarySchedules,
   diaryVersionSources,
   diaryVersions,
+  documentVersions,
+  roomDocumentLinks,
   uploadedFiles,
   type DiaryPayload,
 } from "../../infrastructure/database/schema.js";
@@ -68,10 +70,12 @@ function emptyPayload(date: string, start: Date, end: Date): DiaryPayload {
 
 export class DiaryService {
   private readonly options: Required<Pick<DiaryServiceOptions, "ownerId" | "workerId" | "pollIntervalMs" | "leaseMs" | "maxAttempts">>;
+  private readonly scheduleManagedExternally: boolean;
   private readonly generator: DiaryGenerator;
   private readonly sourceCollector: DiarySourceCollector;
   private timer: NodeJS.Timeout | null = null;
   private drainPromise: Promise<void> | null = null;
+  private readonly refreshTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(private readonly db: GatewayDatabase, options: DiaryServiceOptions = {}) {
     this.options = {
@@ -81,6 +85,7 @@ export class DiaryService {
       leaseMs: options.leaseMs ?? 30_000,
       maxAttempts: options.maxAttempts ?? 5,
     };
+    this.scheduleManagedExternally = options.scheduleManagedExternally ?? false;
     this.generator = options.generator ?? defaultGenerator();
     this.sourceCollector = new DiarySourceCollector(db, options.memory, options.logger);
     this.now = options.now ?? (() => new Date());
@@ -109,6 +114,8 @@ export class DiaryService {
   async dispose(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    for (const timer of this.refreshTimers.values()) clearTimeout(timer);
+    this.refreshTimers.clear();
     await this.drainPromise;
   }
 
@@ -172,6 +179,9 @@ export class DiaryService {
     sources: Array<typeof diaryVersionSources.$inferSelect & {
       assetKind: typeof uploadedFiles.$inferSelect["assetKind"] | null;
       mime: string | null;
+      documentId: string | null;
+      roomId: string | null;
+      realityEventId: string | null;
     }>;
   } {
     const day = this.db.select().from(diaryDays).where(eq(diaryDays.date, date)).get() ?? null;
@@ -184,9 +194,36 @@ export class DiaryService {
         .orderBy(asc(diaryVersionSources.occurredAt)).all()
       : [];
     const filesById = new Map(this.db.select().from(uploadedFiles).all().map((file) => [file.id, file]));
+    const documentVersionIds = sourceRows
+      .filter((source) => source.sourceId.startsWith("document_version:"))
+      .map((source) => source.sourceId.slice("document_version:".length));
+    const documentTargets = new Map<string, { documentId: string; roomId: string | null }>();
+    if (documentVersionIds.length) {
+      const versions = this.db.select({ versionId: documentVersions.id, documentId: documentVersions.documentId })
+        .from(documentVersions)
+        .where(inArray(documentVersions.id, documentVersionIds)).all();
+      for (const version of versions) {
+        const room = this.db.select({ roomId: roomDocumentLinks.roomId })
+          .from(roomDocumentLinks)
+          .where(eq(roomDocumentLinks.documentId, version.documentId))
+          .orderBy(asc(roomDocumentLinks.linkedAt)).get();
+        documentTargets.set(version.versionId, { documentId: version.documentId, roomId: room?.roomId ?? null });
+      }
+    }
     const sources = sourceRows.map((source) => {
       const file = source.assetFileId ? filesById.get(source.assetFileId) : undefined;
-      return { ...source, assetKind: file?.assetKind ?? null, mime: file?.mime ?? null };
+      const documentTarget = documentTargets.get(source.sourceId.slice("document_version:".length));
+      const realityEventId = source.sourceId.startsWith("recording:")
+        ? source.sourceId.slice("recording:".length)
+        : null;
+      return {
+        ...source,
+        assetKind: file?.assetKind ?? null,
+        mime: file?.mime ?? null,
+        documentId: documentTarget?.documentId ?? null,
+        roomId: documentTarget?.roomId ?? null,
+        realityEventId,
+      };
     });
     return { day, versions, currentVersion, sources };
   }
@@ -237,6 +274,40 @@ export class DiaryService {
 
   getRun(id: string): typeof diaryRuns.$inferSelect | null { return this.db.select().from(diaryRuns).where(eq(diaryRuns.id, id)).get() ?? null; }
 
+  getLatestRun(): typeof diaryRuns.$inferSelect | null {
+    return this.db.select().from(diaryRuns).orderBy(desc(diaryRuns.createdAt)).get() ?? null;
+  }
+
+  currentDate(): string {
+    const settings = this.getSettings();
+    return dateInTimezone(this.now(), settings.timezone);
+  }
+
+  /** Queue the current local day as soon as scheduling is enabled.
+   * The configured daily time remains the later refresh point; it must not
+   * prevent the first version of today's diary from appearing during the day.
+   */
+  ensureCurrentDayRun(): string | null {
+    const settings = this.getSettings();
+    if (!settings.enabled) return null;
+    const date = dateInTimezone(this.now(), settings.timezone);
+    const day = this.db.select().from(diaryDays).where(eq(diaryDays.date, date)).get();
+    const latestRun = this.db.select().from(diaryRuns).where(eq(diaryRuns.date, date)).orderBy(desc(diaryRuns.createdAt)).get();
+    if (latestRun && (latestRun.status === "pending" || latestRun.status === "running")) return null;
+    // A day that was manually/previously generated before auto-generation was
+    // enabled must get one scheduled refresh, even if it already has an empty
+    // or stale version.
+    if (day && latestRun?.trigger === "scheduled" && latestRun.createdAt >= settings.updatedAt) return null;
+    return this.createRun(date, "scheduled");
+  }
+
+  advanceSchedule(now = this.now()): void {
+    const settings = this.getSettings();
+    if (!settings.enabled) return;
+    this.db.update(diarySchedules).set({ nextRunAt: this.nextSchedule(now, settings.localTime, settings.timezone), updatedAt: now })
+      .where(eq(diarySchedules.ownerId, this.options.ownerId)).run();
+  }
+
   getActiveRun(): typeof diaryRuns.$inferSelect | null {
     return this.db.select().from(diaryRuns).where(or(
       eq(diaryRuns.status, "pending"),
@@ -245,12 +316,25 @@ export class DiaryService {
   }
 
   markStaleAt(occurredAt: Date): void {
-    const date = dateInTimezone(occurredAt, this.getSettings().timezone);
+    const settings = this.getSettings();
+    if (!settings.enabled) return;
+    const date = dateInTimezone(occurredAt, settings.timezone);
     const result = this.db.update(diaryDays).set({ status: "stale", updatedAt: this.now() })
       .where(and(eq(diaryDays.date, date), eq(diaryDays.status, "ready"))).run();
     if (result.changes > 0) {
       this.logger?.info({ event: "diary.day.marked_stale", date, reason: "source_event", occurredAt: occurredAt.toISOString() }, "diary day marked stale");
     }
+    // Source sinks can fire several times while a recording/perception job is
+    // being finalized. Coalesce them into one refresh and let createRun reuse
+    // an already pending/running run.
+    if (this.refreshTimers.has(date)) return;
+    const timer = setTimeout(() => {
+      this.refreshTimers.delete(date);
+      this.createRun(date, "manual");
+      void this.drain();
+    }, 1_000);
+    timer.unref();
+    this.refreshTimers.set(date, timer);
   }
 
   async drain(): Promise<void> {
@@ -285,6 +369,7 @@ export class DiaryService {
   }
 
   private scheduleDueRuns(): void {
+    if (this.scheduleManagedExternally) return;
     const settings = this.getSettings();
     if (!settings.enabled) return;
     const now = this.now();
@@ -436,18 +521,25 @@ export class DiaryService {
 
   private async markChangedDaysStale(): Promise<void> {
     const ready = this.db.select().from(diaryDays).where(eq(diaryDays.status, "ready")).all();
+    const settings = this.getSettings();
+    const now = this.now();
+    const today = dateInTimezone(now, settings.timezone);
     for (const day of ready) {
       if (!day.currentVersionId || !day.sourceFingerprint) continue;
       const version = this.db.select().from(diaryVersions).where(eq(diaryVersions.id, day.currentVersionId)).get();
       if (!version) continue;
       const collectionState = { memoryFailed: false };
-      const current = await this.sourceCollector.collect(version.windowStart, version.windowEnd, collectionState);
+      const collectionEnd = day.date === today && now > version.windowEnd ? now : version.windowEnd;
+      const current = await this.sourceCollector.collect(version.windowStart, collectionEnd, collectionState);
       if (collectionState.memoryFailed) continue;
       const fingerprint = hash(current.map((source) => [source.sourceId, source.fingerprint]));
       if (fingerprint !== day.sourceFingerprint) {
         const result = this.db.update(diaryDays).set({ status: "stale", updatedAt: this.now() }).where(and(eq(diaryDays.date, day.date), eq(diaryDays.status, "ready"))).run();
         if (result.changes > 0) {
           this.logger?.info({ event: "diary.day.marked_stale", date: day.date, reason: "source_fingerprint", sourceCount: current.length }, "diary day marked stale");
+          // A changed ready day must immediately get a new run. Using the
+          // manual trigger bypasses the completed scheduled-run reuse rule.
+          if (settings.enabled) this.createRun(day.date, "manual");
         }
       }
     }

@@ -456,6 +456,29 @@
   border-bottom: 1px solid var(--diary-line);
 }
 
+.diary-event-source-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.55rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, #8b5cf6);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.diary-event-source-button svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.diary-event-source-button:hover {
+  text-decoration: underline;
+}
+
 .diary-timeline-event:last-child .diary-event-content {
   border-bottom: 0;
 }

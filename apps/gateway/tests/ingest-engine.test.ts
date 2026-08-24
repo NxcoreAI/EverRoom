@@ -43,6 +43,7 @@ import {
 } from "../src/modules/ingest/policy.js";
 import { truncateUtf8 } from "../src/modules/ingest/normalizers.js";
 import { IngestError } from "../src/modules/ingest/types.js";
+import { converterOfExtension } from "../src/modules/ingest/converters.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -107,6 +108,29 @@ async function tempFile(name: string, content: string): Promise<string> {
   const path = join(dir, name);
   await writeFile(path, content, "utf8");
   return path;
+}
+
+function minimalPdf(text: string): Buffer {
+  const escaped = text.replace(/([\\()])/g, "\\$1");
+  const stream = `BT /F1 12 Tf 72 720 Td (${escaped}) Tj ET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(body));
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(body);
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(body, "ascii");
 }
 
 // ───────────────────────── 策略层 ─────────────────────────
@@ -907,6 +931,31 @@ describe("连接器接入：归一化直传共用台账与扇出", () => {
 // ───────────────────────── U2 格式转换（office/html/csv → md） ─────────────────────────
 
 describe("U2 格式扩展：确定性转换器", () => {
+  it("为 Word、Excel、PowerPoint 全部常用变体和 PDF 注册转换器", () => {
+    const extensions = [
+      "doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt",
+      "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "xltm", "xla", "xlam", "ods",
+      "ppt", "pptx", "pptm", "pot", "potx", "potm", "pps", "ppsx", "ppsm", "sldx", "sldm", "odp",
+      "pdf",
+    ];
+    for (const extension of extensions) expect(converterOfExtension(extension), extension).not.toBeNull();
+  });
+
+  it("pdf → 按页保留边界的 md", async () => {
+    const test = await engineForTest();
+    const dir = await mkdtemp(join(tmpdir(), "nxcore-ingest-pdf-"));
+    temporaryDirectories.push(dir);
+    const path = join(dir, "quarterly-report.pdf");
+    await writeFile(path, minimalPdf("Quarterly report body"));
+
+    const result = await test.service.ingest({ source: { path } });
+    expect(result).toMatchObject({ dataType: "document", detectedBy: "extension", title: "quarterly-report" });
+    const submitted = (test.knowledge.submitEnvelope as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(submitted.markdown).toContain("## 第 1 页");
+    expect(submitted.markdown).toContain("Quarterly report body");
+    test.sqlite.close();
+  });
+
   it("csv → GFM 表（spreadsheet 类型，memory 默认关）", async () => {
     const test = await engineForTest();
     const path = await tempFile("名单.csv", "姓名,角色\n甲,负责人\n乙,评审");

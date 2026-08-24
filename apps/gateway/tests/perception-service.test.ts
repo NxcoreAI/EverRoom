@@ -1,10 +1,18 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatabase, type DatabaseClient } from "../src/infrastructure/database/client.js";
-import { visualNodes, visualProcessingJobs } from "../src/infrastructure/database/schema.js";
+import {
+  documentVersions,
+  documents,
+  parsedContents,
+  uploadedFiles,
+  visualNodes,
+  visualProcessingJobs,
+} from "../src/infrastructure/database/schema.js";
 import { FilesService } from "../src/modules/files/service.js";
 import { PerceptionService, type VisualReadyEvidence } from "../src/modules/perception/service.js";
 import {
@@ -64,6 +72,67 @@ describe("PerceptionService", () => {
       expect.objectContaining({ status: "completed", attempt: 0 }),
     ]);
     service.dispose();
+  });
+
+  it("lists collected documents and files on the unified perception timeline", async () => {
+    const { database, files, service } = await setup(null);
+    const occurredAt = new Date("2026-08-20T11:00:00Z");
+
+    database.db.insert(documents).values({
+      id: "doc-1",
+      title: "项目记录",
+      contentJson: { type: "doc" },
+      status: "active",
+      version: 1,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    }).run();
+    database.db.insert(documentVersions).values({
+      id: "doc-version-1",
+      documentId: "doc-1",
+      version: 1,
+      title: "项目记录（第一版）",
+      contentJson: { blocks: [{ text: "记录了本次项目进展" }] },
+      createdAt: occurredAt,
+    }).run();
+
+    const file = await files.upload({
+      filename: "会议纪要.md",
+      buffer: Buffer.from("会议纪要正文"),
+      mime: "text/markdown",
+      capturedAt: new Date("2026-08-20T12:00:00Z"),
+    });
+    const parsedId = "parsed-file-1";
+    database.db.insert(parsedContents).values({
+      id: parsedId,
+      contentHash: "parsed-file-hash",
+      parserVersion: "1",
+      markdown: "会议纪要正文",
+      parsedAt: new Date("2026-08-20T12:00:01Z"),
+    }).run();
+    database.db.update(uploadedFiles).set({ currentParsedId: parsedId }).where(eq(uploadedFiles.id, file.fileId)).run();
+
+    const screenshot = await files.upload({ filename: "screen.jpg", buffer: Buffer.from("screen"), mime: "image/jpeg" });
+    service.registerObservation({
+      fileId: screenshot.fileId,
+      kind: "screenshot",
+      capturedAt: new Date("2026-08-20T13:00:00Z"),
+      perceptualHash: "0000000000000000",
+    });
+
+    const all = service.list({});
+    expect(all.map((node) => node.kind)).toEqual(["document", "file", "screenshot"]);
+    expect(service.list({ kind: "document" })).toEqual([
+      expect.objectContaining({ id: "document_version:doc-version-1", kind: "document", title: "项目记录（第一版）" }),
+    ]);
+    expect(service.list({ kind: "file" })).toEqual([
+      expect.objectContaining({ id: `file:${file.fileId}`, kind: "file", title: "会议纪要.md", summary: "会议纪要正文" }),
+    ]);
+    expect(service.list({ kind: "document" }).some((node) => node.kind === "screenshot")).toBe(false);
+    expect(service.list({ kind: "file" }).some((node) => node.kind === "screenshot")).toBe(false);
+    expect(service.list({ status: "failed" })).toEqual([]);
+    expect(service.list({ status: "ready" }).map((node) => node.kind)).toEqual(["document", "file"]);
+    await service.dispose();
   });
 
   it("groups similar consecutive screenshots and invokes VLM only for the new node", async () => {

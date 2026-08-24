@@ -21,6 +21,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: recursive
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -38,13 +39,11 @@ jobs:
         id: typecheck
         continue-on-error: true
         run: pnpm typecheck
-        continue-on-error: true
 
       - name: Run tests
         id: tests
         continue-on-error: true
-        run: pnpm test
-        continue-on-error: true
+        run: pnpm test:ci
 
       - name: Build gateway and desktop
         id: build

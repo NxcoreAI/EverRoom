@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { UnconfiguredAgentRuntime } from "@nxcore/agent-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GatewayConfig, SubagentFrameworkConfig } from "../src/config.js";
 import { createDatabase } from "../src/infrastructure/database/client.js";
@@ -197,4 +198,30 @@ describe("filesystem subagent framework", () => {
     await orchestrator.dispose();
     fixture.database.sqlite.close();
   }, 15_000);
+
+  it("degrades to UnconfiguredAgentRuntime when pi fields are empty and invalidate() clears the cache", async () => {
+    const fixture = await createFixture({});
+    await fixture.registry.initialize();
+    // pi 模式 + 空字段（env 全空 + runtime config 未保存的降级启动态）。
+    const gatewayConfig = {
+      agentRuntime: "pi",
+      pi: {
+        provider: "", model: "", baseUrl: "", apiKey: "",
+        api: "openai-completions", maxTokens: 8192, contextWindow: 128000,
+        temperature: 0.3, reasoning: "medium",
+      },
+    } as unknown as GatewayConfig;
+    const runtimeManager = new SubagentRuntimeManager(gatewayConfig, fixture.config);
+    const researcher = fixture.registry.get("researcher");
+    expect(researcher).not.toBeNull();
+    const runtime = runtimeManager.acquire(researcher!.revision);
+    expect(runtime).toBeInstanceOf(UnconfiguredAgentRuntime);
+    // 缓存命中：同一 revision 拿到同一实例
+    expect(runtimeManager.acquire(researcher!.revision)).toBe(runtime);
+    // 热应用后作废缓存：下次 acquire 重建（仍是占位——config 没变）
+    await runtimeManager.invalidate();
+    const rebuilt = runtimeManager.acquire(researcher!.revision);
+    expect(rebuilt).not.toBe(runtime);
+    fixture.database.sqlite.close();
+  });
 });
