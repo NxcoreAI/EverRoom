@@ -38,11 +38,13 @@ export function DocumentHistoryDiffView({
   editor,
   snapshot,
   diff,
+  currentTitle,
   currentContent,
 }: {
   editor: Editor
   snapshot: DocumentVersionSnapshot
   diff: DocumentDiffResult
+  currentTitle: string
   currentContent?: TiptapJsonContent
 }) {
   const { t } = useLocale()
@@ -83,13 +85,19 @@ export function DocumentHistoryDiffView({
     if (!output.length) appendSerializedBlock(contentRef.current, editor, afterContent, 'unchanged')
   }, [currentContent, diff, editor, snapshot])
 
+  const titleChanged = snapshot.title !== currentTitle
+
   return (
     <div className="context-room-history-diff-view" role="region" aria-label={t('contextRoom:documentHistory.diffAria')}>
       <div className="context-room-history-diff-column-header">
         {t('contextRoom:documentHistory.diffRange', { fromVersion: snapshot.version, toVersion: diff.toVersion })}
         {diff.truncated ? ` · ${t('contextRoom:documentHistory.truncated')}` : ''}
       </div>
-      <div ref={contentRef} className="context-room-history-diff-content context-room-history-diff-scroll" />
+      <div className="context-room-history-diff-title-block">
+        <h1 className={titleChanged ? 'is-removed' : 'is-unchanged'}>{snapshot.title}</h1>
+        {titleChanged ? <h1 className="is-added">{currentTitle}</h1> : null}
+      </div>
+      <div ref={contentRef} className="context-room-history-diff-content" />
     </div>
   )
 }

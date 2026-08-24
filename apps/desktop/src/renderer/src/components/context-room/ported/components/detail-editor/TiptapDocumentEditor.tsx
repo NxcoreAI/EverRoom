@@ -1271,6 +1271,7 @@ export function TiptapDocumentEditor({
               editor={editor}
               snapshot={historyView.snapshot}
               diff={historyView.diff}
+              currentTitle={backendDocument?.title ?? documentName}
               currentContent={backendDocument?.contentJson
                 ? stripDocumentTitle(backendDocument.contentJson).content
                 : undefined}
