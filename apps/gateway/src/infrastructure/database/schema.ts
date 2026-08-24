@@ -656,7 +656,6 @@ export const documentYjsCheckpoints = sqliteTable(
       .references(() => documents.id, { onDelete: "cascade" }),
     throughVersion: integer("through_version").notNull(),
     docState: blob("doc_state", { mode: "buffer" }).notNull(),
-    stateVector: blob("state_vector", { mode: "buffer" }).notNull(),
     schemaVersion: integer("schema_version").notNull().default(1),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -700,7 +699,6 @@ export const documentYjsVersions = sqliteTable(
       .notNull()
       .references(() => documentYjsUpdates.id, { onDelete: "cascade" }),
     checkpointId: text("checkpoint_id").references(() => documentYjsCheckpoints.id, { onDelete: "set null" }),
-    stateVector: blob("state_vector", { mode: "buffer" }).notNull(),
     backfilled: integer("backfilled", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()

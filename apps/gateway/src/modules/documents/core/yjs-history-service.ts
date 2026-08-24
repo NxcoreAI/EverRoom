@@ -40,7 +40,6 @@ export interface DocumentDiffResult {
 
 interface StoredYjsState {
   doc: Y.Doc;
-  stateVector: Uint8Array | null;
 }
 
 interface CommitHistoryInput {
@@ -257,10 +256,9 @@ export class YjsHistoryService {
       }
     }
     const doc = previous?.doc ?? new Y.Doc();
-    const previousStateVector = previous?.stateVector ?? null;
+    const previousStateVector = previous ? Y.encodeStateVector(previous.doc) : null;
     doc.transact(() => setDocumentRoot(doc, input));
     const update = Y.encodeStateAsUpdate(doc, previousStateVector ?? undefined);
-    const stateVector = Y.encodeStateVector(doc);
     const updateId = randomUUID();
     const shouldCheckpoint = historyBroken
       || input.version === 1
@@ -269,12 +267,13 @@ export class YjsHistoryService {
     let checkpointId: string | null = null;
     if (shouldCheckpoint) {
       checkpointId = randomUUID();
+      const checkpointDoc = new Y.Doc();
+      checkpointDoc.transact(() => setDocumentRoot(checkpointDoc, input));
       tx.insert(documentYjsCheckpoints).values({
         id: checkpointId,
         documentId: input.documentId,
         throughVersion: input.version,
-        docState: toBuffer(Y.encodeStateAsUpdate(doc)),
-        stateVector: toBuffer(stateVector),
+        docState: toBuffer(Y.encodeStateAsUpdate(checkpointDoc)),
         schemaVersion: input.contentSchemaVersion,
         createdAt: input.now,
       }).run();
@@ -293,7 +292,6 @@ export class YjsHistoryService {
       version: input.version,
       updateId,
       checkpointId,
-      stateVector: toBuffer(stateVector),
       backfilled: input.backfilled ?? true,
       createdAt: input.now,
     }).run();
@@ -606,11 +604,9 @@ export class YjsHistoryService {
     )).orderBy(desc(documentYjsCheckpoints.throughVersion)).get();
     const doc = new Y.Doc();
     let fromVersion = 0;
-    let stateVector: Uint8Array | null = null;
     if (checkpoint) {
       Y.applyUpdate(doc, toUint8Array(checkpoint.docState));
       fromVersion = checkpoint.throughVersion;
-      stateVector = toUint8Array(checkpoint.stateVector);
     }
     const updates = db.select().from(documentYjsUpdates).where(and(
       eq(documentYjsUpdates.documentId, documentId),
@@ -619,6 +615,6 @@ export class YjsHistoryService {
     )).orderBy(asc(documentYjsUpdates.version)).all();
     if (!checkpoint && updates.length === 0) return null;
     for (const row of updates) Y.applyUpdate(doc, toUint8Array(row.update));
-    return { doc, stateVector: Y.encodeStateVector(doc) ?? stateVector };
+    return { doc };
   }
 }

@@ -169,6 +169,13 @@
       "when": 1787575087422,
       "tag": "0024_slim_shen",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1787577820465,
+      "tag": "0025_exotic_wendell_rand",
+      "breakpoints": true
     }
   ]
 }
