@@ -89,6 +89,13 @@ for (const name of required) {
   }
 }
 
+// server 从 packages/webapp/dist 静态托管 /images（logo 等），webapp 本体
+// 不打包——只把 public/images 复制进 dist，与 dev 下 nango-supervisor 的做法一致。
+const webappImages = join(connectorRoot, 'packages', 'webapp', 'public', 'images')
+if (existsSync(webappImages)) {
+  cpSync(webappImages, join(stagingRoot, 'packages', 'webapp', 'dist', 'images'), { recursive: true })
+}
+
 // pnpm handles the copied `file:` workspace packages without npm Arborist's
 // `edgesOut` crash (npm 10/11 can fail when no lockfile exists for this graph).
 // --node-linker=hoisted: pnpm's default symlink layout points into this staging
