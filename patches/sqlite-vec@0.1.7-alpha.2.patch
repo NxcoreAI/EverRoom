@@ -1,0 +1,48 @@
+diff --git a/index.cjs b/index.cjs
+index e3836a1c592012731b6554ba5a34b2cebf979536..25b2baab7e224ffb4fa41993dcbfdf14537bd022 100755
+--- a/index.cjs
++++ b/index.cjs
+@@ -38,12 +38,18 @@ function getLoadablePath() {
+     );
+   }
+   const packageName = platformPackageName(platform, arch);
+-  const loadablePath = join(
++  let loadablePath = join(
+     __dirname,
+     "..",
+     packageName,
+     `${ENTRYPOINT_BASE_NAME}.${extensionSuffix(platform)}`
+   );
++  // Electron: sqlite3_load_extension dlopens this library directly (not via
++  // process.dlopen), so a .dylib packed inside app.asar cannot be loaded.
++  // Point at the on-disk copy that asarUnpack extracts to app.asar.unpacked.
++  if (loadablePath.includes("app.asar") && !loadablePath.includes("app.asar.unpacked")) {
++    loadablePath = loadablePath.replace("app.asar", "app.asar.unpacked");
++  }
+   if (!statSync(loadablePath, { throwIfNoEntry: false })) {
+     throw new Error(extensionNotFoundErrorMessage(packageName));
+   }
+diff --git a/index.mjs b/index.mjs
+index e693cf33d5cbc2d7dcaf9e9a5f417bd0f43d2cef..a399b3e0000000000000000000000000000000000 100755
+--- a/index.mjs
++++ b/index.mjs
+@@ -38,12 +38,18 @@ function getLoadablePath() {
+     );
+   }
+   const packageName = platformPackageName(platform, arch);
+-  const loadablePath = join(
++  let loadablePath = join(
+     fileURLToPath(new URL(join("."), import.meta.url)),
+     "..",
+     packageName,
+     `${ENTRYPOINT_BASE_NAME}.${extensionSuffix(platform)}`
+   );
++  // Electron: sqlite3_load_extension dlopens this library directly (not via
++  // process.dlopen), so a .dylib packed inside app.asar cannot be loaded.
++  // Point at the on-disk copy that asarUnpack extracts to app.asar.unpacked.
++  if (loadablePath.includes("app.asar") && !loadablePath.includes("app.asar.unpacked")) {
++    loadablePath = loadablePath.replace("app.asar", "app.asar.unpacked");
++  }
+   if (!statSync(loadablePath, { throwIfNoEntry: false })) {
+     throw new Error(extensionNotFoundErrorMessage(packageName));
+   }

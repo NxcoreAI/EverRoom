@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, globSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -14,12 +14,16 @@ if (!existsSync(join(connectorRoot, 'package.json'))) {
   throw new Error(`Nango submodule is missing: ${connectorRoot}`)
 }
 
-const run = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: 'inherit' })
+const run = (command, args, cwd) => execFileSync(command, args, {
+  cwd,
+  stdio: 'inherit',
+  shell: process.platform === 'win32',
+})
 
 // CI checks out the submodule fresh without its own node_modules; the build
 // steps below (tsc, connect-ui vite build) need the connector's deps.
 if (!existsSync(join(connectorRoot, 'node_modules'))) {
-  run('npm', ['ci', '--no-audit', '--no-fund'], connectorRoot)
+  run('npm', ['ci', '--force', '--no-audit', '--no-fund'], connectorRoot)
 }
 
 // Build Nango once, then copy only its compiled packages and production dependencies.
@@ -109,7 +113,10 @@ run('pnpm', ['install', '--prod', '--force', '--ignore-scripts', '--no-frozen-lo
 cpSync(join(stagingRoot, 'node_modules'), join(stagingRoot, 'packages', 'node_modules'), { recursive: true })
 // .bin holds CLI symlinks whose relative targets dangle after the copy;
 // the runtime spawns servers directly, never via .bin executables.
-execFileSync('find', [join(stagingRoot, 'packages', 'node_modules'), '-type', 'd', '-name', '.bin', '-exec', 'rm', '-rf', '{}', '+'])
+const packagedNodeModules = join(stagingRoot, 'packages', 'node_modules')
+for (const directory of globSync('**/.bin', { cwd: packagedNodeModules })) {
+  rmSync(join(packagedNodeModules, directory), { recursive: true, force: true })
+}
 // Root node_modules is dropped by electron-builder anyway; deleting it here
 // avoids copying ~1G of dead weight into the package and re-scanning it.
 rmSync(join(stagingRoot, 'node_modules'), { recursive: true, force: true })
