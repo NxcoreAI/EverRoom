@@ -14,13 +14,16 @@ if (!existsSync(join(connectorRoot, 'package.json'))) {
   throw new Error(`Nango submodule is missing: ${connectorRoot}`)
 }
 
-const executable = (command) => process.platform === 'win32' ? `${command}.cmd` : command
-const run = (command, args, cwd) => execFileSync(executable(command), args, { cwd, stdio: 'inherit' })
+const run = (command, args, cwd) => execFileSync(command, args, {
+  cwd,
+  stdio: 'inherit',
+  shell: process.platform === 'win32',
+})
 
 // CI checks out the submodule fresh without its own node_modules; the build
 // steps below (tsc, connect-ui vite build) need the connector's deps.
 if (!existsSync(join(connectorRoot, 'node_modules'))) {
-  run('npm', ['ci', '--no-audit', '--no-fund'], connectorRoot)
+  run('npm', ['ci', '--force', '--no-audit', '--no-fund'], connectorRoot)
 }
 
 // Build Nango once, then copy only its compiled packages and production dependencies.
