@@ -71,6 +71,7 @@ import {
   countTiptapTextCharacters,
   documentStreamCharactersPerFrame,
   documentStreamRevealDelay,
+  documentStreamRevealLimits,
   isAgentDocumentAwaitingContent,
   isEmptyTiptapParagraph,
   isEmptyTiptapTable,
@@ -185,7 +186,6 @@ async function insertMarkdownBlocks(
 
   for (const node of nodes) {
     if (state.closed || editor.isDestroyed) return false
-    const nodeCharacters = countTiptapTextCharacters(node)
     const nodeText = Array.from(tiptapTextContent(node))
     const initialDocumentSize = editor.state.doc.content.size
     const json = editor.getJSON()
@@ -195,12 +195,12 @@ async function insertMarkdownBlocks(
       ? initialDocumentSize - trailingNode.nodeSize
       : initialDocumentSize
     let previewTo = initialDocumentSize
-    const frameCount = Math.max(1, Math.ceil(nodeCharacters / charactersPerFrame))
+    const revealLimits = documentStreamRevealLimits(node, charactersPerFrame)
 
-    for (let frame = 1; frame <= frameCount; frame += 1) {
+    for (let frameIndex = 0; frameIndex < revealLimits.length; frameIndex += 1) {
       if (state.closed || editor.isDestroyed) return false
-      const revealedCharacters = Math.min(nodeCharacters, frame * charactersPerFrame)
-      const previousCharacters = Math.max(0, (frame - 1) * charactersPerFrame)
+      const revealedCharacters = revealLimits[frameIndex]!
+      const previousCharacters = frameIndex === 0 ? 0 : revealLimits[frameIndex - 1]!
       const preview = revealTiptapNode(node, revealedCharacters)
       const proseMirrorNode = editor.schema.nodeFromJSON(preview as JSONContent)
       applyingRemote.current = true
@@ -208,7 +208,7 @@ async function insertMarkdownBlocks(
         const transaction = editor.state.tr
           .replaceWith(previewFrom, previewTo, proseMirrorNode)
           .setMeta('preventUpdate', true)
-        if (frame > 1) transaction.setMeta('addToHistory', false)
+        if (frameIndex > 0) transaction.setMeta('addToHistory', false)
         const followingStream = shouldFollowStream()
         if (followingStream && editor.view.hasFocus()) {
           transaction
@@ -223,7 +223,7 @@ async function insertMarkdownBlocks(
       }
       const revealedText = nodeText.slice(previousCharacters, revealedCharacters).join('')
       await wait(documentStreamRevealDelay(
-        frame === frameCount ? `${revealedText}\n` : revealedText,
+        frameIndex === revealLimits.length - 1 ? `${revealedText}\n` : revealedText,
       ))
     }
   }

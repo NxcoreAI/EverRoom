@@ -89,6 +89,24 @@ export function documentStreamCharactersPerFrame(totalCharacters: number): numbe
   )
 }
 
+export function documentStreamRevealLimits(
+  node: TiptapJsonContent,
+  charactersPerFrame: number,
+): number[] {
+  const totalCharacters = countTiptapTextCharacters(node)
+  // Partial table trees are not rectangular. prosemirror-tables repairs those
+  // intermediate frames, changing their size and leaving repaired cells behind
+  // when the next frame replaces the unrepaired range.
+  if (node.type === 'table' || totalCharacters === 0) return [totalCharacters]
+
+  const safeCharactersPerFrame = Math.max(1, Math.floor(charactersPerFrame))
+  const frameCount = Math.max(1, Math.ceil(totalCharacters / safeCharactersPerFrame))
+  return Array.from(
+    { length: frameCount },
+    (_, index) => Math.min(totalCharacters, (index + 1) * safeCharactersPerFrame),
+  )
+}
+
 export function documentStreamRevealDelay(
   revealedText: string,
   random: () => number = Math.random,
