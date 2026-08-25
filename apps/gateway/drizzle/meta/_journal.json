@@ -197,6 +197,13 @@
       "when": 1787561702156,
       "tag": "0028_mighty_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1787580711823,
+      "tag": "0029_long_ikaris",
+      "breakpoints": true
     }
   ]
 }

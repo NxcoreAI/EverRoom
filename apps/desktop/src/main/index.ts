@@ -128,7 +128,11 @@ async function rateLimitAware<T>(operation: () => Promise<T>): Promise<T | IpcRa
 }
 
 const appDataDirectory = app.getPath('appData')
-const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || join(appDataDirectory, APP_NAME)
+const defaultDataDirectory = join(appDataDirectory, APP_NAME)
+const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirectory, '.env')
+if (existsSync(envFilePath)) loadEnvFile(envFilePath)
+const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
+const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
 const resolvedDataDirectory = resolve(dataDirectory)
 
 app.setPath('userData', dataDirectory)

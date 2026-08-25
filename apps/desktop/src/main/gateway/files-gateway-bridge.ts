@@ -2,6 +2,7 @@ import { dialog, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { basename, extname, relative, resolve, sep } from 'node:path'
+import type { AgentAttachmentReference } from '@nxcore/agent-contract'
 import type {
   FileDto,
   FileCatalogDto,

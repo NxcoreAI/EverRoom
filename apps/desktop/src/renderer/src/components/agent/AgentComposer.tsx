@@ -1,4 +1,4 @@
-import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, FileText, LoaderCircle, Mic, Plus, Square, X } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -7,17 +7,22 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
 
-import type { AgentAttachmentReference } from '@nxcore/agent-contract'
+import { loadRealitySettings } from '@/state/realitySettings'
 import { showToast } from '@/state/toast'
-import { useLocale } from '@/i18n/LocaleContext'
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
-const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.docx,.xlsx,.pptx,.html,.htm,.gif,.jpeg,.jpg,.png,.webp'
-const ACCEPTED_ATTACHMENT_PATTERN = /\.(txt|md|csv|docx|xlsx|pptx|html?|gif|jpe?g|png|webp)$/i
+const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.json,.pdf,.docx,.xlsx,.pptx'
+const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
+const MAX_ATTACHMENTS = 5
+const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
+const MIN_RECORDING_MS = 10_000
+const ASR_POLL_MS = 2_000
+const ASR_TIMEOUT_MS = 30 * 60 * 1000
+const AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
 const TEXTAREA_MIN_HEIGHT = 42
 const TEXTAREA_MAX_HEIGHT = 180
 
@@ -43,6 +48,10 @@ function formatFileSize(size: number): string {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+function errorMessage(error: unknown, t: Translate): string {
+  return error instanceof Error ? error.message : t('surface:agentComposer.transcriptionFailedTryAgain')
 }
 
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
@@ -71,20 +80,32 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onSubmit,
 }, ref) {
   const { t } = useLocale()
-  const [attachments, setAttachments] = useState<AgentAttachmentReference[]>([])
-  const [importing, setImporting] = useState(false)
-  const [dragging, setDragging] = useState(false)
+  const [attachments, setAttachments] = useState<LocalAttachment[]>([])
+  const [voiceState, setVoiceState] = useState<VoiceState>('idle')
+  const [elapsed, setElapsed] = useState(0)
   const shellRef = useRef<HTMLFormElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const recordingIdRef = useRef<string | null>(null)
+  const recordingStartedAtRef = useRef<number | null>(null)
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const voiceOperationRef = useRef(0)
+  const cancelledRef = useRef(false)
+  const mountedRef = useRef(true)
+  const valueRef = useRef(value)
+  const insertionPointRef = useRef(0)
   const composingRef = useRef(false)
 
+  valueRef.current = value
   useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement)
 
   const resizeTextarea = () => {
     const textarea = textareaRef.current
     if (!textarea) return
-    const stickToBottom = document.activeElement === textarea && textarea.selectionEnd === textarea.value.length
+    const stickToBottom = document.activeElement === textarea
+      && textarea.selectionEnd === textarea.value.length
     const previousScrollTop = textarea.scrollTop
     textarea.style.height = '0px'
     const contentHeight = textarea.scrollHeight
@@ -94,14 +115,19 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     textarea.scrollTop = stickToBottom ? textarea.scrollHeight : previousScrollTop
   }
 
-  useLayoutEffect(() => resizeTextarea(), [attachments.length, value])
+  useLayoutEffect(() => {
+    resizeTextarea()
+  }, [attachments.length, value])
 
   useEffect(() => {
     const shell = shellRef.current
     const prompt = shell?.querySelector<HTMLElement>('.agent-prompt')
     const frame = shell?.parentElement
     if (!shell || !prompt || !frame) return undefined
-    const syncHeight = () => frame.style.setProperty('--agent-composer-height', `${shell.getBoundingClientRect().height}px`)
+
+    const syncHeight = () => {
+      frame.style.setProperty('--agent-composer-height', `${shell.getBoundingClientRect().height}px`)
+    }
     let promptWidth = prompt.getBoundingClientRect().width
     const promptObserver = new ResizeObserver(([entry]) => {
       if (Math.abs(entry.contentRect.width - promptWidth) < 0.5) return
@@ -112,6 +138,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     promptObserver.observe(prompt)
     shellObserver.observe(shell)
     syncHeight()
+
     return () => {
       promptObserver.disconnect()
       shellObserver.disconnect()
@@ -119,9 +146,37 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     }
   }, [])
 
+  const releaseMedia = () => {
+    voiceOperationRef.current += 1
+    const recorder = recorderRef.current
+    cancelledRef.current = true
+    if (recorder?.state === 'recording') recorder.stop()
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    recorderRef.current = null
+    streamRef.current = null
+    recordingStartedAtRef.current = null
+  }
+
+  const cancelRecording = () => {
+    const id = recordingIdRef.current
+    releaseMedia()
+    recordingIdRef.current = null
+    if (id) void window.nxcore?.asr.cancelRecording(id).catch(() => undefined)
+  }
+
   useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      cancelRecording()
+    }
+  }, [])
+
+  useEffect(() => {
+    cancelRecording()
     setAttachments([])
-    setDragging(false)
+    setElapsed(0)
+    setVoiceState('idle')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [resetKey])
 
@@ -197,20 +252,126 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     })
   }
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (available && !active && !importing && (value.trim() || attachments.length)) onSubmit(attachments)
+  const startRecording = async () => {
+    if (!window.nxcore?.asr) {
+      showToast({ title: t('surface:agentComposer.recordingUnavailable'), message: t('surface:agentComposer.voiceTranscriptionIsAvailableOnlyInTheEverroom') })
+      return
+    }
+    setVoiceState('requesting')
+    setElapsed(0)
+    cancelledRef.current = false
+    const operation = ++voiceOperationRef.current
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (voiceOperationRef.current !== operation || !mountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
+      streamRef.current = stream
+      const mimeType = supportedAudioMimeType()
+      const { id } = await window.nxcore.asr.beginRecording(mimeType || 'audio/webm')
+      if (voiceOperationRef.current !== operation || !mountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop())
+        await window.nxcore.asr.cancelRecording(id).catch(() => undefined)
+        return
+      }
+      recordingIdRef.current = id
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+      recorderRef.current = recorder
+      recordingStartedAtRef.current = Date.now()
+      writeQueueRef.current = Promise.resolve()
+      recorder.addEventListener('dataavailable', (audioEvent) => {
+        if (!audioEvent.data.size || cancelledRef.current) return
+        writeQueueRef.current = writeQueueRef.current.then(async () => {
+          const chunk = new Uint8Array(await audioEvent.data.arrayBuffer())
+          await window.nxcore?.asr.appendRecording(id, chunk)
+        })
+      })
+      recorder.start(1_000)
+      setVoiceState('recording')
+    } catch (error) {
+      if (voiceOperationRef.current !== operation || !mountedRef.current) return
+      cancelRecording()
+      setVoiceState('idle')
+      showToast({ title: t('surface:agentComposer.couldNotStartRecording'), message: errorMessage(error, t) })
+    }
   }
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== 'Enter' || event.shiftKey) return
-    if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
-    event.preventDefault()
-    if (available && !active && !importing && (value.trim() || attachments.length)) onSubmit(attachments)
+  const stopRecording = async () => {
+    const recorder = recorderRef.current
+    const id = recordingIdRef.current
+    if (!recorder || !id || !window.nxcore?.asr) return
+    const operation = voiceOperationRef.current
+    insertionPointRef.current = textareaRef.current?.selectionStart ?? valueRef.current.length
+    setVoiceState('saving')
+    try {
+      if (recorder.state !== 'inactive') {
+        await new Promise<void>((resolve, reject) => {
+          recorder.addEventListener('stop', () => resolve(), { once: true })
+          recorder.addEventListener('error', () => reject(new Error(t('surface:agentComposer.recordingDeviceError'))), { once: true })
+          recorder.stop()
+        })
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+      recorderRef.current = null
+      await writeQueueRef.current
+      if (voiceOperationRef.current !== operation || !mountedRef.current) return
+      const durationMs = Math.max(0, Date.now() - (recordingStartedAtRef.current ?? Date.now()))
+      recordingStartedAtRef.current = null
+      if (durationMs < MIN_RECORDING_MS) {
+        recordingIdRef.current = null
+        await window.nxcore.asr.cancelRecording(id)
+        setVoiceState('idle')
+        setElapsed(0)
+        showToast({ title: t('surface:agentComposer.recordingTooShort'), message: t('surface:agentComposer.aRecordingMustBeAtLeast10Seconds') })
+        return
+      }
+
+      const { filePath } = await window.nxcore.asr.finishRecording(id)
+      recordingIdRef.current = null
+      setVoiceState('transcribing')
+      const settings = loadRealitySettings()
+      let job = await window.nxcore.asr.createJob({
+        filePath,
+        mode: settings.mode === 'cloud' ? 'cloud' : 'local',
+        recordingId: id,
+        durationMs,
+        languageHints: settings.languages,
+        diarizationEnabled: false,
+      })
+      const deadline = Date.now() + ASR_TIMEOUT_MS
+      while (job.status === 'pending' || job.status === 'running') {
+        if (Date.now() >= deadline) throw new Error(t('surface:agentComposer.transcriptionTimedOut'))
+        await new Promise((resolve) => window.setTimeout(resolve, ASR_POLL_MS))
+        if (voiceOperationRef.current !== operation || !mountedRef.current) return
+        job = await window.nxcore.asr.getJob(job.id)
+      }
+      if (voiceOperationRef.current !== operation || !mountedRef.current) return
+      if (job.status !== 'completed' || !job.result) throw new Error(job.error ?? t('surface:agentComposer.transcriptionIncomplete'))
+      insertTranscript(job.result.transcript)
+      setElapsed(0)
+      setVoiceState('idle')
+    } catch (error) {
+      if (voiceOperationRef.current !== operation || !mountedRef.current) return
+      cancelRecording()
+      setVoiceState('idle')
+      showToast({ title: t('surface:agentComposer.voiceTranscriptionFailed'), message: errorMessage(error, t) })
+    }
   }
 
-  const controlsDisabled = active || !available || importing
-  const canSubmit = Boolean(value.trim() || attachments.length)
+  const voiceBusy = voiceState !== 'idle'
+  // 会话快照加载时保留本地附件和录音状态。
+  const controlsDisabled = active || !available
+  const voiceLabel = voiceState === 'recording'
+    ? t('surface:agentComposer.recordingDuration', { duration: formatDuration(elapsed) })
+    : voiceState === 'requesting'
+      ? t('surface:agentComposer.requestingMicrophone')
+      : voiceState === 'saving'
+        ? t('surface:agentComposer.savingRecording')
+        : voiceState === 'transcribing'
+          ? t('surface:agentComposer.transcribing')
+          : ''
 
   return (
     <form
@@ -237,7 +398,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               : t('surface:agentComposer.syncingRoomData')}
           rows={2}
           value={value}
-          disabled={!available || active || importing}
+          disabled={!available || active || voiceState === 'saving' || voiceState === 'transcribing'}
           onChange={(event) => onChange(event.target.value)}
           onCompositionStart={() => { composingRef.current = true }}
           onCompositionEnd={() => { composingRef.current = false }}
@@ -246,15 +407,15 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         {attachments.length > 0 ? (
           <div className="agent-attachments" aria-label={t('surface:agentComposer.localAttachments')}>
             {attachments.map((file) => (
-              <span key={file.fileId} className="agent-attachment">
+              <span key={file.id} className="agent-attachment">
                 <FileText aria-hidden="true" />
-                <span title={file.filename}>{file.filename}</span>
+                <span title={file.name}>{file.name}</span>
                 <small>{formatFileSize(file.size)}</small>
                 <button
                   type="button"
-                  aria-label={t('surface:agentComposer.removeName', { name: file.filename })}
+                  aria-label={t('surface:agentComposer.removeName', { name: file.name })}
                   title={t('surface:agentComposer.removeAttachment')}
-                  onClick={() => setAttachments((current) => current.filter((item) => item.fileId !== file.fileId))}
+                  onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))}
                 >
                   <X aria-hidden="true" />
                 </button>
@@ -277,11 +438,27 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             className="agent-prompt-tool"
             title={t('surface:agentComposer.addAttachment')}
             aria-label={t('surface:agentComposer.addAttachment')}
-            disabled={controlsDisabled}
+            disabled={controlsDisabled || voiceBusy}
             onClick={() => fileInputRef.current?.click()}
           >
-            {importing ? <LoaderCircle className="spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+            <Plus aria-hidden="true" />
           </button>
+          <button
+            type="button"
+            className="agent-prompt-tool agent-prompt-voice"
+            data-recording={String(voiceState === 'recording')}
+            title={t(voiceState === 'recording' ? 'surface:agentComposer.stopRecording' : 'surface:agentComposer.voiceInput')}
+            aria-label={t(voiceState === 'recording' ? 'surface:agentComposer.stopRecording' : 'surface:agentComposer.voiceInput')}
+            disabled={controlsDisabled || (voiceBusy && voiceState !== 'recording')}
+            onClick={voiceState === 'recording' ? stopRecording : startRecording}
+          >
+            {voiceState === 'recording'
+              ? <Square aria-hidden="true" />
+              : voiceBusy
+                ? <LoaderCircle className="spin" aria-hidden="true" />
+                : <Mic aria-hidden="true" />}
+          </button>
+          {voiceLabel ? <span className="agent-voice-status" role="status">{voiceLabel}</span> : null}
           <span className="agent-composer-context" title={contextSummary}>
             <span>{contextSummary}</span>
             {hasSelectedText ? (

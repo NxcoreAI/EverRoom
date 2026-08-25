@@ -1,6 +1,5 @@
 import type {
   AgentEvent,
-  AgentAttachmentReference,
   AgentActiveDocumentContext,
   AgentFileAttachment,
   AgentMessage,
@@ -692,7 +691,6 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
-        ...(attachments?.length ? { attachments } : {}),
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
         context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments),

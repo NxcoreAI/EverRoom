@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentAttachmentReference, AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
+import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -364,7 +364,7 @@ export function AgentPanel({
         loading={session.loading}
         messages={session.messages}
         onRejectDocumentIntent={focusComposer}
-        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, [], runId)}
+        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}
