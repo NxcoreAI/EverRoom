@@ -508,6 +508,7 @@ const api: NxcoreDesktopApi = {
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
     listClipCaptures: (limit?: number, offset?: number) => invoke('files:clipper-captures:list', limit, offset),
+    getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),
     get: (fileId: string) => invoke('files:get', fileId),
     readMarkdown: (fileId: string, options?: { waitMs?: number; pollMs?: number }) =>
       invoke('files:read-markdown', fileId, options),

@@ -1221,6 +1221,31 @@ export const clipperAssets = sqliteTable(
     status: text("status", { enum: ["pending", "stored", "failed"] }).notNull().default("pending"),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
+    visualStatus: text("visual_status", {
+      enum: ["pending", "processing", "ready", "skipped", "failed"],
+    }).notNull().default("pending"),
+    visualKind: text("visual_kind", {
+      enum: ["photo", "illustration", "chart", "diagram", "screenshot", "logo", "decoration", "other"],
+    }),
+    visualSummary: text("visual_summary"),
+    visualOcrText: text("visual_ocr_text"),
+    visualKeyPoints: text("visual_key_points", { mode: "json" }).$type<string[]>(),
+    visualEntities: text("visual_entities", { mode: "json" }).$type<Array<{
+      name: string;
+      kind: string;
+      evidence: string;
+    }>>(),
+    visualRelevance: real("visual_relevance"),
+    visualQuality: real("visual_quality"),
+    visualContentRole: text("visual_content_role", {
+      enum: ["primary", "supporting", "noise"],
+    }),
+    visualNoiseReason: text("visual_noise_reason", {
+      enum: ["none", "emoji", "qr_code", "advertisement", "avatar", "logo", "social_widget", "navigation", "decoration", "tracking", "other"],
+    }),
+    visualModel: text("visual_model"),
+    visualPromptVersion: text("visual_prompt_version"),
+    coverScore: real("cover_score"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
@@ -1230,6 +1255,29 @@ export const clipperAssets = sqliteTable(
     index("clipper_assets_hash_idx").on(table.contentHash),
   ],
 );
+
+/**
+ * 网页剪藏的规范化产物。displayMarkdown 忠实用于阅读；semanticMarkdown
+ * 融合图片 VLM 描述，仅供 Memory/Knowledge 下游消费。
+ */
+export const clipperArtifacts = sqliteTable("clipper_artifacts", {
+  captureId: text("capture_id").primaryKey().references(() => clipperCaptures.id, { onDelete: "cascade" }),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  displayMarkdown: text("display_markdown").notNull(),
+  semanticMarkdown: text("semantic_markdown").notNull(),
+  excerpt: text("excerpt").notNull().default(""),
+  coverAssetId: text("cover_asset_id"),
+  parseStatus: text("parse_status", {
+    enum: ["pending", "processing", "ready", "partial", "failed"],
+  }).notNull().default("pending"),
+  visualStatus: text("visual_status", {
+    enum: ["pending", "processing", "ready", "partial", "skipped", "failed"],
+  }).notNull().default("pending"),
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
 
 /**
  * 文件版本的结构化多模态解析产物。第一阶段将完整 Canonical Artifact

@@ -12,6 +12,22 @@ const sendMessage = (message) => new Promise((resolve) => {
   chrome.runtime.sendMessage(message, (result) => resolve(chrome.runtime.lastError ? null : result));
 });
 
+function assetOrigins(assets) {
+  return [...new Set((assets || []).flatMap((asset) => {
+    try { return [`${new URL(asset.originalUrl).origin}/*`]; } catch { return []; }
+  }))];
+}
+
+async function requestAssetPermissions(assets) {
+  const missing = [];
+  for (const origin of assetOrigins(assets)) {
+    if (!(await chrome.permissions.contains({ origins: [origin] }))) missing.push(origin);
+  }
+  if (missing.length > 0) {
+    try { await chrome.permissions.request({ origins: missing }); } catch { /* Page-context fallback remains available. */ }
+  }
+}
+
 function applyLocale() {
   document.documentElement.lang = locale;
   connect.textContent = t('connect');
@@ -52,7 +68,11 @@ send.addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return setStatus(t('noActivePage'));
   setStatus(t('extracting'));
-  const result = await sendMessage({ type: 'everroom:capture', tabId: tab.id });
+  const extracted = await sendMessage({ type: 'everroom:extract-capture', tabId: tab.id });
+  if (extracted?.ok) await requestAssetPermissions(extracted.capture?.assets);
+  const result = extracted?.ok
+    ? await sendMessage({ type: 'everroom:submit-capture', tabId: tab.id, capture: extracted.capture })
+    : extracted;
   setStatus(result?.ok
     ? result.capture?.failedAssetCount ? t('savedPartial') : t('saved')
     : result?.code === 'restricted_page'
@@ -67,6 +87,8 @@ retry.addEventListener('click', async () => {
   if (!extensionContext || retry.disabled) return;
   retry.disabled = true;
   setStatus(t('retrying'));
+  const stored = await chrome.storage.local.get(['retryCapture']);
+  await requestAssetPermissions(stored.retryCapture?.capture?.assets);
   const result = await sendMessage({ type: 'everroom:retry-last' });
   setStatus(result?.ok ? t('retryFinished') : `${t('retryFailed')} (${result?.code || 'unknown'}).`);
   retry.disabled = !result?.capture?.failedAssetCount;

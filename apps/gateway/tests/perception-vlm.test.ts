@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   OpenAiCompatibleVlmClient,
+  parseClipImageAnalysis,
   parseDocumentOcr,
   parseVisualInference,
 } from "../src/modules/perception/vlm-client.js";
@@ -58,6 +59,19 @@ describe("visual inference parser", () => {
       text: "bad",
       blocks: [{ type: "paragraph", text: "bad", bbox: [0.2, 0.2, 1.2, 0.3], confidence: 1 }],
     })).toThrow("normalized");
+  });
+
+  it("validates blog image roles and their noise reasons", () => {
+    const base = {
+      kind: "other", summary: "可见一个关注二维码", ocrText: "关注公众号", keyPoints: [], entities: [],
+      relevance: 0.1, quality: 0.8,
+    };
+    expect(parseClipImageAnalysis({ ...base, contentRole: "noise", noiseReason: "qr_code" }))
+      .toMatchObject({ contentRole: "noise", noiseReason: "qr_code" });
+    expect(() => parseClipImageAnalysis({ ...base, contentRole: "noise", noiseReason: "none" }))
+      .toThrow("match contentRole");
+    expect(() => parseClipImageAnalysis({ ...base, contentRole: "primary", noiseReason: "advertisement" }))
+      .toThrow("match contentRole");
   });
 
   it("uses one non-stored multimodal request without leaking local paths", async () => {

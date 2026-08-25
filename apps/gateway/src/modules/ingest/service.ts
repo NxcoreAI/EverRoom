@@ -570,7 +570,11 @@ export class IngestService {
     const eventId = `ing-${randomUUID().slice(0, 12)}`;
 
     // 过滤闸（第一级）：开启且不豁免 → 记 pending 不扇出，去抖批送 agent 判定
-    const filterGate = this.filter && this.filter.enabled && !this.filter.exempt(unit.sourceKind);
+    // A user-authored web clip is an explicit save intent. It must be normalized
+    // and fan out to Memory/Knowledge even when the generic noise filter is on.
+    const filterGate = this.filter && this.filter.enabled
+      && unit.origin !== "web-clipper"
+      && !this.filter.exempt(unit.sourceKind);
     if (filterGate) {
       this.db.insert(ingestEvents).values({
         id: eventId,

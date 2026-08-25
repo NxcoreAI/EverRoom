@@ -404,6 +404,7 @@ const KNOWLEDGE_CHANNELS = {
 const FILES_CHANNELS = {
   list: 'files:list',
   listClipCaptures: 'files:clipper-captures:list',
+  getClipCaptureDetail: 'files:clipper-captures:detail',
   get: 'files:get',
   readMarkdown: 'files:read-markdown',
   readDataUrl: 'files:read-data-url',
@@ -1331,6 +1332,7 @@ function registerFilesHandlers(
   })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
   handle(FILES_CHANNELS.listClipCaptures, (_event, limit?: number, offset?: number) => bridge.listClipCaptures(limit, offset))
+  handle(FILES_CHANNELS.getClipCaptureDetail, (_event, captureId: string) => bridge.getClipCaptureDetail(captureId))
   handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
   handle(
     FILES_CHANNELS.readMarkdown,

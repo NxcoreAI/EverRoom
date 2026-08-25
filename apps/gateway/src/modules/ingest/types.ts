@@ -136,6 +136,7 @@ export type OriginChannel =
   | "connector"
   | "reality"
   | "everroom-doc"
+  | "web-clipper"
   | "upload";
 
 /** 引擎接受的源形态（U8 定死：只收有家数据——本地路径或库表引用）。 */

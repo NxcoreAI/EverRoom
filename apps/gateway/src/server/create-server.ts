@@ -74,7 +74,10 @@ import { perceptionRoutes } from "../modules/perception/routes.js";
 import { PerceptionService } from "../modules/perception/service.js";
 import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
 import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
-import { createDocumentUnderstandingTools } from "../modules/document-understanding/tools.js";
+import {
+  createDocumentAnalysisResultValidator,
+  createDocumentUnderstandingTools,
+} from "../modules/document-understanding/tools.js";
 import { diaryRoutes } from "../modules/diary/routes.js";
 import { DiaryService } from "../modules/diary/service.js";
 import { AgentSchedulerService } from "../modules/agent-scheduler/service.js";
@@ -660,7 +663,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
   filesService.initializeCatalog();
-  const clipperService = new ClipperService(db, filesService, config.dataDir);
+  const clipperService = new ClipperService(db, filesService, config.dataDir, createVlmProvider(config));
+  await clipperService.initialize();
   const documentUnderstandingService = new DocumentUnderstandingService(
     db,
     filesService,
@@ -678,11 +682,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
     return null;
   };
-  runtimeConfigManager.onChange(() =>
-    documentUnderstandingService.replaceVisualProvider(createVlmProvider(config)));
+  runtimeConfigManager.onChange(() => {
+    const visualProvider = createVlmProvider(config);
+    documentUnderstandingService.replaceVisualProvider(visualProvider);
+    clipperService.replaceVisualProvider(visualProvider);
+  });
   subagentRuntimeManager.registerAgentTools(
     "multimodal-document-parser",
     () => createDocumentUnderstandingTools(documentUnderstandingService),
+  );
+  subagentRuntimeManager.registerAgentResultValidator(
+    "multimodal-document-parser",
+    createDocumentAnalysisResultValidator(documentUnderstandingService),
   );
   cliConnectorSyncService.setFilesService(filesService);
   const fileClusteringService = new FileClusteringService(
@@ -771,6 +782,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
+    await clipperService.dispose();
     await filesService.dispose();
     await fileClusteringService.dispose();
     await nangoConnectorManager.dispose();
@@ -896,6 +908,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ingestService.recoverPendingFilters();
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
+    const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);
     return ingestService.ingest({
       source: { ref: {
         sourceKind: "file",
@@ -904,6 +917,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       } },
       ...(input.pipelines ? { pipelines: input.pipelines } : {}),
       ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(versionContext?.entry.sourceKind === "web-clipper" ? { originChannel: "web-clipper" as const } : {}),
     });
   });
   realityService.setReadySink(async (event) => {

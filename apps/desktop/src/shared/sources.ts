@@ -926,6 +926,7 @@ export interface NxcoreDesktopApi {
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
     listClipCaptures(limit?: number, offset?: number): Promise<{ items: BrowserExtensionClipperCapture[]; total: number }>
+    getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>

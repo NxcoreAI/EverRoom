@@ -204,6 +204,20 @@
       "when": 1787580711823,
       "tag": "0029_long_ikaris",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1787636596260,
+      "tag": "0030_odd_cardiac",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1787650775832,
+      "tag": "0031_acoustic_doctor_spectrum",
+      "breakpoints": true
     }
   ]
 }

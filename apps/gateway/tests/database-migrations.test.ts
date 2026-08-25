@@ -44,6 +44,22 @@ describe("database migrations", () => {
 
     beforeMerge.sqlite.exec("DROP TABLE runtime_config_store");
     beforeMerge.sqlite.exec("DROP TABLE agent_schedules");
+    beforeMerge.sqlite.exec("DROP TABLE clipper_artifacts");
+    for (const column of [
+      "visual_status",
+      "visual_kind",
+      "visual_summary",
+      "visual_ocr_text",
+      "visual_key_points",
+      "visual_entities",
+      "visual_relevance",
+      "visual_quality",
+      "visual_content_role",
+      "visual_noise_reason",
+      "visual_model",
+      "visual_prompt_version",
+      "cover_score",
+    ]) beforeMerge.sqlite.exec(`ALTER TABLE clipper_assets DROP COLUMN ${column}`);
     beforeMerge.sqlite.exec("ALTER TABLE ingest_events DROP COLUMN reinstated_at");
     beforeMerge.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(1787320000000);
     beforeMerge.sqlite.prepare(

@@ -154,6 +154,10 @@ export class FilesGatewayBridge {
     return this.request(`/v1/clipper/captures?${query}`)
   }
 
+  getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture> {
+    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}`)
+  }
+
   catalog(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
     return this.request(`/v1/files/catalog?${query}`)
