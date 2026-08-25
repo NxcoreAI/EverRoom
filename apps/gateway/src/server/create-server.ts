@@ -628,6 +628,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
       app.log.info("knowledge agent registered from runtime config");
     }
+    // 抽取/判定 LLM 同步热替换：KnowledgeService 构造于 runtime config 到达
+    // 之前，boot 时 llm 冻结为 null——不替换的话路由永远走「未识别」出口。
+    if (config.knowledge?.llm) {
+      knowledgeService.replaceLlm(config.knowledge.llm);
+    }
     void (async () => {
       try {
         const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);

@@ -42,6 +42,11 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+export interface KnowledgeServiceStartOptions {
+  /** runtime config 派生的 LLM_* 覆盖（primary 段三要素）；未传走 .env 透传。 */
+  aiEnvironment?: Record<string, string>
+}
+
 export class KnowledgeServiceSupervisor {
   private child: ChildProcessWithoutNullStreams | null = null
   private connection: KnowledgeServiceConnection | null = null
@@ -50,7 +55,7 @@ export class KnowledgeServiceSupervisor {
 
   constructor(private readonly dataDirectory: string) {}
 
-  async start(): Promise<KnowledgeServiceConnection | null> {
+  async start(options: KnowledgeServiceStartOptions = {}): Promise<KnowledgeServiceConnection | null> {
     if (this.connection) return this.connection
 
     if (
@@ -95,6 +100,7 @@ export class KnowledgeServiceSupervisor {
           // 服务默认 debug;托管实例跟随桌面日志级别。
           LOG_LEVEL: process.env.NXCORE_KNOWLEDGE_LOG_LEVEL?.trim() ?? 'info',
           ...this.llmEnvironment(),
+          ...(options.aiEnvironment ?? {}),
           ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
         },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -136,6 +142,14 @@ export class KnowledgeServiceSupervisor {
 
   getConnection(): KnowledgeServiceConnection | null {
     return this.connection
+  }
+
+  /** runtime config 变更后带新 LLM env 重启托管实例；复用/外部实例原样返回。 */
+  async restart(aiEnvironment: Record<string, string> | null): Promise<KnowledgeServiceConnection | null> {
+    const connection = this.connection
+    if (!connection?.managed) return connection
+    await this.shutdown()
+    return this.start({ aiEnvironment: aiEnvironment ?? undefined })
   }
 
   getLastError(): string | null {
