@@ -248,27 +248,9 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number,
-              event: 'APPROVE',
+              event: 'COMMENT',
               body: result.review,
             });
-
-            const { data: reviewed } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number,
-            });
-            if (reviewed.merged || reviewed.auto_merge) return;
-
-            await github.graphql(`
-              mutation EnableAutoMerge($pullRequestId: ID!) {
-                enablePullRequestAutoMerge(input: {
-                  pullRequestId: $pullRequestId,
-                  mergeMethod: MERGE
-                }) {
-                  pullRequest { autoMergeRequest { enabledAt } }
-                }
-              }
-            `, { pullRequestId: reviewed.node_id });
 
   issue:
     if: github.event_name == 'issues' && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)

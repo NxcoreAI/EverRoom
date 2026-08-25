@@ -44,4 +44,8 @@ jobs:
         run: pnpm test:ci
 
       - name: Build gateway and desktop
-        run: pnpm build
+        env:
+          SENTRY_AUTH_TOKEN: ""
+        run: |
+          pnpm --filter @nxcore/gateway build
+          pnpm --filter @nxcore/desktop exec electron-vite build
