@@ -45,7 +45,7 @@ function gateTestError(result: RuntimeConfigTestResult | undefined, t: (key: str
 }
 
 export function RuntimeConfigGate({ children }: { children: ReactNode }) {
-  const { locale, setLocale, t } = useLocale()
+  const { locale, preference, setLocale, t } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const [mode, setMode] = useState<GateMode>('checking')
   const [snapshot, setSnapshot] = useState<RuntimeConfigSnapshot | null>(null)
@@ -201,8 +201,9 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
         <div className="runtime-config-gate-actions no-drag">
           <div className="runtime-config-gate-language" role="group" aria-label={t('surface:configGate.language')}>
             <Languages aria-hidden="true" />
-            <button type="button" data-active={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
-            <button type="button" data-active={locale === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
+            <button type="button" data-active={preference === 'system'} onClick={() => setLocale('system')}>{t('surface:settings.followSystem')}</button>
+            <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
+            <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
         </div>
       </header>

@@ -1,7 +1,7 @@
 import type {
   AgentEvent,
-  AgentAttachmentReference,
   AgentActiveDocumentContext,
+  AgentFileAttachment,
   AgentMessage,
   AgentRoomReference,
   AgentSession,
@@ -630,7 +630,7 @@ export function useAgentSession(
     selectedRoomId?: string,
     activeDocument?: AgentActiveDocumentContext | null,
     replaceRunId?: string,
-    attachments?: AgentAttachmentReference[],
+    attachments?: AgentFileAttachment[],
   ): Promise<string | null> => {
     const message = prompt.trim()
     if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
@@ -691,10 +691,9 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
-        ...(attachments?.length ? { attachments } : {}),
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments),
       })
       const updatedAt = new Date().toISOString()
       const runCompleted = terminalRunIdsRef.current.has(run.id)

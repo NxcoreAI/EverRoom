@@ -75,6 +75,7 @@
 
 .settings-content[data-active-setting='settings-account'] > #settings-account,
 .settings-content[data-active-setting='settings-interface'] > #settings-interface,
+.settings-content[data-active-setting='settings-data'] > #settings-data,
 .settings-content[data-active-setting='settings-onboarding'] > #settings-onboarding,
 .settings-content[data-active-setting='settings-memory'] > #settings-memory,
 .settings-content[data-active-setting='settings-editor'] > #settings-editor,
@@ -93,6 +94,24 @@
 }
 
 .settings-content[data-active-setting='settings-runtime-config'] > #settings-runtime-config { display: block; }
+.settings-content[data-active-setting='settings-extensions'] > #settings-extensions { display: block; }
+.browser-extension-settings { min-height: 320px; }
+.browser-extension-status-row { display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--border); }
+.browser-extension-status-row > div:last-child { display: grid; gap: 4px; min-width: 0; }
+.browser-extension-status-row strong { font-size: 13px; }
+.browser-extension-status-row small, .browser-extension-note, .browser-extension-error { color: var(--muted); font-size: 11px; }
+.browser-extension-status-indicator { width: 11px; height: 11px; flex: 0 0 auto; border-radius: 50%; background: var(--subtle); }
+.browser-extension-status-indicator[data-state='paired'] { background: #2c9a6c; box-shadow: 0 0 0 4px color-mix(in srgb, #2c9a6c 16%, transparent); }
+.browser-extension-pairing-panel { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 16px; background: var(--surface-alt); }
+.browser-extension-pairing-panel > div:first-child { display: grid; gap: 3px; flex: 1 1 200px; }
+.browser-extension-pairing-panel small { color: var(--muted); font-size: 10px; }
+.browser-extension-pairing-panel code, .browser-extension-last-message code { padding: 4px 7px; border-radius: 4px; color: var(--text); background: var(--surface); font: 10px ui-monospace, monospace; }
+.browser-extension-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px; }
+.browser-extension-actions button, .browser-extension-pairing-panel button { display: inline-flex; align-items: center; gap: 7px; }
+.browser-extension-actions svg, .browser-extension-pairing-panel svg { width: 14px; height: 14px; }
+.browser-extension-note { margin: 0; padding: 0 16px 14px; }
+.browser-extension-error { margin: 0; padding: 0 16px 14px; color: var(--danger, #b64f4f); }
+.browser-extension-last-message { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 10px; }
 .runtime-config-meta { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 16px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
 .runtime-config-source-selector { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .runtime-config-source-selector button { border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; color: var(--text); background: var(--surface); cursor: pointer; font-size: 12px; }
