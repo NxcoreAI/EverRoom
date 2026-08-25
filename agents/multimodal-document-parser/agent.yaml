@@ -13,6 +13,7 @@ skills:
 mcp: []
 
 inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
 
 policy:
   allowedCallers: [primary-agent, internal-workflow]

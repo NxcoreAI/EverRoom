@@ -10,74 +10,6 @@ function dispatchKey(runId: string, agentId: string, task: string, input: unknow
     .digest("hex");
 }
 
-function parseJsonObject(value: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function extractJsonObject(value: string): Record<string, unknown> | null {
-  const direct = parseJsonObject(value.trim());
-  if (direct) return direct;
-
-  for (const match of value.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
-    const parsed = parseJsonObject(match[1]?.trim() ?? "");
-    if (parsed) return parsed;
-  }
-
-  for (let start = value.indexOf("{"); start >= 0; start = value.indexOf("{", start + 1)) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let index = start; index < value.length; index += 1) {
-      const character = value[index]!;
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (character === "\\") escaped = true;
-        else if (character === '"') inString = false;
-        continue;
-      }
-      if (character === '"') {
-        inString = true;
-      } else if (character === "{") {
-        depth += 1;
-      } else if (character === "}") {
-        depth -= 1;
-        if (depth === 0) {
-          const parsed = parseJsonObject(value.slice(start, index + 1));
-          if (parsed) return parsed;
-          break;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function normalizeDocumentSummary(result: { text: string; structuredOutput?: unknown } | null): {
-  summary: string | null;
-  outputFormat: "structured" | "text" | null;
-  warning?: "unstructured_subagent_output";
-} {
-  const structured = result?.structuredOutput !== null
-    && typeof result?.structuredOutput === "object"
-    && !Array.isArray(result.structuredOutput)
-    ? result.structuredOutput as Record<string, unknown>
-    : extractJsonObject(result?.text ?? "");
-  if (typeof structured?.summary === "string" && structured.summary.trim()) {
-    return { summary: structured.summary.trim(), outputFormat: "structured" };
-  }
-  const text = result?.text.trim() ?? "";
-  return text
-    ? { summary: text, outputFormat: "text", warning: "unstructured_subagent_output" }
-    : { summary: null, outputFormat: null };
-}
-
 export function createSubagentPiTools(
   registry: SubagentRegistry,
   orchestrator: SubagentOrchestrator,
@@ -241,15 +173,20 @@ export function createSubagentPiTools(
           parentRunId: run.runId,
           ...(signal ? { signal } : {}),
         });
-        const normalized = normalizeDocumentSummary(invocation.result);
+        const structured = invocation.result?.structuredOutput as {
+          summary?: unknown;
+          facts?: unknown;
+          missingFields?: unknown;
+        } | undefined;
         return {
           content: JSON.stringify({
             invocationId: invocation.id,
             agentId: invocation.agentDefinitionId,
             status: invocation.status,
-            summary: normalized.summary,
-            outputFormat: normalized.outputFormat,
-            ...(normalized.warning ? { warning: normalized.warning } : {}),
+            summary: typeof structured?.summary === "string" ? structured.summary : null,
+            facts: Array.isArray(structured?.facts) ? structured.facts : null,
+            missingFields: Array.isArray(structured?.missingFields) ? structured.missingFields : null,
+            outputFormat: structured ? "structured" : null,
             result: invocation.result,
             error: invocation.errorMessage,
           }),
