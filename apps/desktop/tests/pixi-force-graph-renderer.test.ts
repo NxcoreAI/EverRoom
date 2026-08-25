@@ -576,6 +576,7 @@ describe('PixiForceGraphRenderer', () => {
       'lineStyle:1.2,12173514,0.8',
       'moveTo:11,22',
       'lineTo:33,44',
+      'lineStyle:1.2,12173514,0.8',
       'moveTo:33,44',
       'lineTo:55,66',
     ])

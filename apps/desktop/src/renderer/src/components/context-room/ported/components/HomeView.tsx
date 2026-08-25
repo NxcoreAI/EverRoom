@@ -2,6 +2,8 @@ import {
   ArrowRight,
   FileText,
   Layers3,
+  Link2,
+  Maximize2,
   Plus,
   RotateCcw,
   Search,
@@ -18,6 +20,8 @@ import { KnowledgePendingPanel } from './KnowledgePendingPanel';
 import { RoomCard } from './RoomCard';
 import { RoomForm, RoomLifecycleDialogs, type DraftRoom } from './RoomDialogs';
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from './RoomGraphCanvas';
+import { CreateRoomRelationDialog, RoomRelationInspector } from './RoomRelationControls';
+import { useRoomRelationGraph } from '../hooks/useRoomRelationGraph';
 import {
   RoomRecommendationDialog,
   RoomRecommendations,
@@ -35,33 +39,97 @@ function RoomGraph({
 }) {
   const { t } = useLocale();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
+  const [relationType, setRelationType] = useState('all');
+  const [strength, setStrength] = useState('all');
+  const [graphQuery, setGraphQuery] = useState('');
+  const [showIsolated, setShowIsolated] = useState(true);
+  const [visibility, setVisibility] = useState<'active' | 'hidden'>('active');
+  const [createRelationOpen, setCreateRelationOpen] = useState(false);
   const graphRef = useRef<RoomGraphCanvasHandle>(null);
+  const { error, graph, loading, reload } = useRoomRelationGraph(null, visibility);
+  const filteredEdges = useMemo(() => (graph?.edges ?? []).filter((edge) => {
+    if (strength !== 'all' && edge.strength !== strength) return false;
+    if (relationType === 'manual') return edge.origin !== 'auto';
+    return relationType === 'all' || edge.type === relationType;
+  }), [graph?.edges, relationType, strength]);
+  const connectedIds = useMemo(() => new Set(filteredEdges.flatMap((edge) => [edge.sourceRoomId, edge.targetRoomId])), [filteredEdges]);
+  const graphRooms = useMemo(() => {
+    const normalized = graphQuery.trim().toLowerCase();
+    return rooms.filter((room) => {
+      if (!showIsolated && !connectedIds.has(room.id)) return false;
+      return !normalized || room.title.toLowerCase().includes(normalized);
+    });
+  }, [connectedIds, graphQuery, rooms, showIsolated]);
+  const graphRoomIds = useMemo(() => new Set(graphRooms.map((room) => room.id)), [graphRooms]);
+  const visibleEdges = useMemo(() => filteredEdges.filter((edge) => (
+    graphRoomIds.has(edge.sourceRoomId) && graphRoomIds.has(edge.targetRoomId)
+  )), [filteredEdges, graphRoomIds]);
   const selected = rooms.find((room) => room.id === selectedId);
+  const selectedRelation = (graph?.edges ?? []).find((edge) => edge.id === selectedRelationId) ?? null;
 
   return (
     <section className="context-room-home-section context-room-home-graph-section">
-      <div className="context-room-home-section-title">
-        <span>{t('contextRoom:home.relations')}</span>
-        <h2>{t('contextRoom:home.roomRelationshipGraph')}</h2>
-      </div>
-      <div className={`context-room-room-graph-layout${selected ? ' is-selected' : ''}`}>
-        <div className="context-room-room-graph-canvas">
-          <RoomGraphCanvas
-            ref={graphRef}
-            rooms={rooms}
-            selectedId={selectedId}
-            onSelectRoom={setSelectedId}
-            onOpenRoom={onOpen}
-          />
-          <button
-            type="button"
-            className="context-room-graph-fit-button"
-            onClick={() => void graphRef.current?.fitView()}
-          >
-            {t('contextRoom:home.fitToCanvas')}
-          </button>
+      <div className="context-room-home-section-title context-room-graph-heading">
+        <div><span>{t('contextRoom:home.relations')}</span><h2>{t('contextRoom:home.roomRelationshipGraph')}</h2></div>
+        <div className="context-room-graph-index-state" data-status={error ? 'degraded' : graph?.indexing.status ?? 'building'}>
+          {error
+            ? t('contextRoom:relations.indexDegraded')
+            : graph?.indexing.status === 'building'
+              ? t('contextRoom:relations.indexBuilding', { count: graph.indexing.pendingSources })
+              : graph?.indexing.status === 'degraded'
+                ? t('contextRoom:relations.indexDegraded')
+                : t('contextRoom:relations.indexReady')}
         </div>
-        {selected ? (
+      </div>
+      <div className="context-room-room-graph-toolbar">
+        <label className="context-room-home-search">
+          <Search aria-hidden="true" />
+          <input type="search" value={graphQuery} placeholder={t('contextRoom:relations.searchRooms')} onChange={(event) => setGraphQuery(event.target.value)} />
+        </label>
+        <select aria-label={t('contextRoom:relations.filterType')} value={relationType} onChange={(event) => setRelationType(event.target.value)}>
+          <option value="all">{t('contextRoom:relations.allTypes')}</option>
+          <option value="shared_evidence">{t('contextRoom:relations.type.shared_evidence')}</option>
+          <option value="shared_entity">{t('contextRoom:relations.type.shared_entity')}</option>
+          <option value="mixed">{t('contextRoom:relations.type.mixed')}</option>
+          <option value="manual">{t('contextRoom:relations.manualRelations')}</option>
+        </select>
+        <select aria-label={t('contextRoom:relations.filterStrength')} value={strength} onChange={(event) => setStrength(event.target.value)}>
+          <option value="all">{t('contextRoom:relations.allStrengths')}</option>
+          <option value="weak">{t('contextRoom:relations.strength.weak')}</option>
+          <option value="medium">{t('contextRoom:relations.strength.medium')}</option>
+          <option value="strong">{t('contextRoom:relations.strength.strong')}</option>
+        </select>
+        <label className="context-room-graph-toggle"><input type="checkbox" checked={showIsolated} onChange={(event) => setShowIsolated(event.target.checked)} />{t('contextRoom:relations.showIsolated')}</label>
+        <button type="button" className="context-room-graph-tool-button" aria-pressed={visibility === 'hidden'} onClick={() => setVisibility((current) => current === 'active' ? 'hidden' : 'active')}>
+          {t(visibility === 'hidden' ? 'contextRoom:relations.showActive' : 'contextRoom:relations.showHidden')}
+        </button>
+        <button type="button" className="context-room-graph-tool-button" disabled={!selectedId} onClick={() => setCreateRelationOpen(true)}>
+          <Link2 aria-hidden="true" />{t('contextRoom:relations.newRelation')}
+        </button>
+        <button type="button" className="context-room-graph-icon-button" aria-label={t('contextRoom:home.fitToCanvas')} title={t('contextRoom:home.fitToCanvas')} onClick={() => void graphRef.current?.fitView()}>
+          <Maximize2 aria-hidden="true" />
+        </button>
+      </div>
+      <div className={`context-room-room-graph-layout${selected || selectedRelation ? ' is-selected' : ''}`}>
+        <div className="context-room-room-graph-canvas">
+          {loading && !graph ? <div className="context-room-graph-state">{t('contextRoom:relations.loadingGraph')}</div> : (
+            <RoomGraphCanvas
+              ref={graphRef}
+              rooms={graphRooms}
+              relations={visibleEdges}
+              selectedId={selectedId}
+              selectedRelationId={selectedRelationId}
+              onSelectRoom={(roomId) => { setSelectedRelationId(null); setSelectedId(roomId); }}
+              onSelectRelation={(relationId) => { setSelectedId(null); setSelectedRelationId(relationId); }}
+              onOpenRoom={onOpen}
+            />
+          )}
+          {error ? <div className="context-room-graph-degraded">{t('contextRoom:relations.degradedNoSyntheticEdges')}</div> : null}
+        </div>
+        {selectedRelation ? (
+          <RoomRelationInspector relation={selectedRelation} rooms={rooms} onClose={() => setSelectedRelationId(null)} onChanged={reload} />
+        ) : selected ? (
           <aside className="context-room-room-graph-drawer">
             <button
               type="button"
@@ -116,6 +184,13 @@ function RoomGraph({
           </aside>
         ) : null}
       </div>
+      <CreateRoomRelationDialog
+        open={createRelationOpen}
+        fromRoomId={selectedId}
+        rooms={rooms}
+        onOpenChange={setCreateRelationOpen}
+        onCreated={async (relation) => { await reload(); setSelectedId(null); setSelectedRelationId(relation.id); }}
+      />
     </section>
   );
 }

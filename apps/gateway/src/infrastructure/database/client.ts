@@ -203,6 +203,58 @@ function adoptKnowledgeScoringMigration(sqlite: Database.Database, migrationsDir
     .run(createHash("sha256").update(migrationSql).digest("hex"), entry.when);
 }
 
+/** Adopt the Room relation projection migration when a repaired branch cursor
+ * lost its marker but all additive tables and indexes are already complete. */
+function adoptRoomRelationsMigration(sqlite: Database.Database, migrationsDir: string): void {
+  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
+  ).get(type, name));
+  if (!hasObject("table", "__drizzle_migrations")) return;
+  const requiredTables: Record<string, string[]> = {
+    room_source_memberships: [
+      "id", "room_id", "source_kind", "source_id", "source_version", "evidence_group_key",
+      "role", "effective_weight", "quality_level", "trusted", "scoring_version", "entity_indexed",
+    ],
+    room_entity_mentions: [
+      "id", "room_id", "entity_id", "source_kind", "source_id", "source_version",
+      "evidence_group_key", "salience", "relevance_factor", "quality_level", "trusted",
+    ],
+    room_relations: [
+      "id", "room_a_id", "room_b_id", "auto_score", "auto_type", "strength",
+      "shared_source_count", "shared_entity_count", "direct_mention_count", "scoring_version",
+      "pinned", "hidden", "manual_type", "manual_from_room_id", "manual_to_room_id",
+    ],
+  };
+  for (const [table, expectedColumns] of Object.entries(requiredTables)) {
+    if (!hasObject("table", table)) return;
+    const columns = new Set(
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    if (!expectedColumns.every((column) => columns.has(column))) return;
+  }
+  for (const index of [
+    "room_source_memberships_room_source_idx",
+    "room_source_memberships_source_idx",
+    "room_source_memberships_group_idx",
+    "room_source_memberships_room_idx",
+    "room_entity_mentions_room_entity_source_idx",
+    "room_entity_mentions_entity_idx",
+    "room_entity_mentions_room_idx",
+    "room_entity_mentions_source_idx",
+    "room_relations_pair_idx",
+    "room_relations_room_a_idx",
+    "room_relations_room_b_idx",
+    "room_relations_updated_idx",
+  ]) if (!hasObject("index", index)) return;
+
+  const entry = readMigrationJournal(migrationsDir).find((item) => item.tag === "0028_room_relations");
+  if (!entry?.tag || typeof entry.when !== "number") return;
+  if (sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(entry.when)) return;
+  const migrationSql = readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8");
+  sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+    .run(createHash("sha256").update(migrationSql).digest("hex"), entry.when);
+}
+
 /** Repair installs whose migration cursor advanced across the diary/perception
  * branch without applying its schema (a transient merge produced this state). */
 function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migrationsDir: string): void {
@@ -258,6 +310,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   adoptKnowledgeScoringMigration(sqlite, migrationsDir);
+  adoptRoomRelationsMigration(sqlite, migrationsDir);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");

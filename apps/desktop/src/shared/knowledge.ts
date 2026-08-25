@@ -11,6 +11,85 @@ export interface KnowledgeRoomDto {
   updatedAt: string
 }
 
+export type KnowledgeRoomRelationVisibility = 'active' | 'hidden' | 'all'
+export type KnowledgeRoomRelationStrength = 'weak' | 'medium' | 'strong'
+export type KnowledgeRoomRelationManualType =
+  | 'related'
+  | 'depends_on'
+  | 'part_of'
+  | 'supports'
+  | 'blocks'
+  | 'owns'
+  | 'custom'
+
+export interface KnowledgeRoomRelationReasonDto {
+  kind: 'shared_source' | 'direct_mention' | 'shared_entity'
+  contribution: number
+  key: string
+  label: string
+  sourceKind?: string
+  sourceId?: string
+  entityId?: string
+  evidence?: string | null
+}
+
+export interface KnowledgeRoomRelationDto {
+  id: string
+  sourceRoomId: string
+  targetRoomId: string
+  directed: boolean
+  type: 'shared_evidence' | 'shared_entity' | 'mixed' | KnowledgeRoomRelationManualType
+  origin: 'auto' | 'manual' | 'hybrid'
+  score: number
+  strength: KnowledgeRoomRelationStrength
+  sharedSourceCount: number
+  sharedEntityCount: number
+  directMentionCount: number
+  pinned: boolean
+  hidden: boolean
+  label: string | null
+  note: string | null
+  topReasons: KnowledgeRoomRelationReasonDto[]
+  updatedAt: string
+}
+
+export interface KnowledgeRoomGraphDto {
+  revision: number
+  generatedAt: string
+  indexing: {
+    status: 'ready' | 'building' | 'degraded'
+    pendingSources: number
+  }
+  nodes: Array<{
+    id: string
+    title: string
+    kind: string
+    origin: string
+    updatedAt: string
+  }>
+  edges: KnowledgeRoomRelationDto[]
+}
+
+export interface CreateKnowledgeRoomRelationInput {
+  fromRoomId: string
+  toRoomId: string
+  type: KnowledgeRoomRelationManualType
+  directed?: boolean
+  label?: string | null
+  note?: string | null
+}
+
+export interface UpdateKnowledgeRoomRelationInput {
+  type?: KnowledgeRoomRelationManualType
+  directed?: boolean
+  fromRoomId?: string
+  toRoomId?: string
+  label?: string | null
+  note?: string | null
+  pinned?: boolean
+  hidden?: boolean
+}
+
 export interface KnowledgeRoomContextDto {
   roomId: string
   generatedAt: string

@@ -33,6 +33,83 @@ const WikiDto = Type.Object({
 
 const RoomIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) });
 
+const RelationVisibilityQuery = Type.Object({
+  visibility: Type.Optional(Type.Union([Type.Literal("active"), Type.Literal("hidden"), Type.Literal("all")])),
+});
+
+const RoomRelationReasonDto = Type.Object({
+  kind: Type.Union([Type.Literal("shared_source"), Type.Literal("direct_mention"), Type.Literal("shared_entity")]),
+  contribution: Type.Number(),
+  key: Type.String(),
+  label: Type.String(),
+  sourceKind: Type.Optional(Type.String()),
+  sourceId: Type.Optional(Type.String()),
+  entityId: Type.Optional(Type.String()),
+  evidence: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+});
+
+const RoomRelationDto = Type.Object({
+  id: Type.String(),
+  sourceRoomId: Type.String(),
+  targetRoomId: Type.String(),
+  directed: Type.Boolean(),
+  type: Type.String(),
+  origin: Type.Union([Type.Literal("auto"), Type.Literal("manual"), Type.Literal("hybrid")]),
+  score: Type.Number(),
+  strength: Type.Union([Type.Literal("weak"), Type.Literal("medium"), Type.Literal("strong")]),
+  sharedSourceCount: Type.Integer(),
+  sharedEntityCount: Type.Integer(),
+  directMentionCount: Type.Integer(),
+  pinned: Type.Boolean(),
+  hidden: Type.Boolean(),
+  label: Type.Union([Type.String(), Type.Null()]),
+  note: Type.Union([Type.String(), Type.Null()]),
+  topReasons: Type.Array(RoomRelationReasonDto),
+  updatedAt: Type.String(),
+});
+
+const RoomGraphResponse = Type.Object({
+  revision: Type.Integer(),
+  generatedAt: Type.String(),
+  indexing: Type.Object({
+    status: Type.Union([Type.Literal("ready"), Type.Literal("building"), Type.Literal("degraded")]),
+    pendingSources: Type.Integer(),
+  }),
+  nodes: Type.Array(Type.Object({
+    id: Type.String(),
+    title: Type.String(),
+    kind: Type.String(),
+    origin: Type.String(),
+    updatedAt: Type.String(),
+  })),
+  edges: Type.Array(RoomRelationDto),
+});
+
+const ManualRelationType = Type.Union([
+  Type.Literal("related"), Type.Literal("depends_on"), Type.Literal("part_of"),
+  Type.Literal("supports"), Type.Literal("blocks"), Type.Literal("owns"), Type.Literal("custom"),
+]);
+
+const CreateRoomRelationBody = Type.Object({
+  fromRoomId: Type.String({ minLength: 1, maxLength: 200 }),
+  toRoomId: Type.String({ minLength: 1, maxLength: 200 }),
+  type: ManualRelationType,
+  directed: Type.Optional(Type.Boolean()),
+  label: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
+  note: Type.Optional(Type.Union([Type.String({ maxLength: 1_000 }), Type.Null()])),
+});
+
+const UpdateRoomRelationBody = Type.Partial(Type.Object({
+  type: ManualRelationType,
+  directed: Type.Boolean(),
+  fromRoomId: Type.String({ minLength: 1, maxLength: 200 }),
+  toRoomId: Type.String({ minLength: 1, maxLength: 200 }),
+  label: Type.Union([Type.String({ maxLength: 120 }), Type.Null()]),
+  note: Type.Union([Type.String({ maxLength: 1_000 }), Type.Null()]),
+  pinned: Type.Boolean(),
+  hidden: Type.Boolean(),
+}));
+
 /** wiki 页面目录项（KS page/ls 透传，ref=path）。 */
 const WikiPageDto = Type.Object({
   id: Type.String(),
@@ -346,6 +423,108 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           updatedAt: iso(room.updatedAt),
         })),
       }),
+    );
+
+    app.get(
+      "/v1/knowledge/room-graph",
+      {
+        schema: {
+          tags: ["knowledge"],
+          querystring: RelationVisibilityQuery,
+          response: { 200: RoomGraphResponse },
+        },
+      },
+      async (request) => service.roomGraph(request.query.visibility ?? "active"),
+    );
+
+    app.get(
+      "/v1/knowledge/rooms/:id/relations",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: RoomIdParams,
+          querystring: RelationVisibilityQuery,
+          response: { 200: RoomGraphResponse, 404: Type.Object({ error: Type.String() }) },
+        },
+      },
+      async (request, reply) => {
+        const graph = service.roomRelations(request.params.id, request.query.visibility ?? "active");
+        return graph ?? reply.code(404).send(errorOf("room_not_found"));
+      },
+    );
+
+    app.get(
+      "/v1/knowledge/room-relations/:id/evidence",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          querystring: Type.Object({
+            offset: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+          }),
+          response: {
+            200: Type.Object({ items: Type.Array(RoomRelationReasonDto), total: Type.Integer() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => service.roomRelationEvidence(
+        request.params.id,
+        request.query.offset ?? 0,
+        request.query.limit ?? 50,
+      ) ?? reply.code(404).send(errorOf("room_relation_not_found")),
+    );
+
+    app.post(
+      "/v1/knowledge/room-relations",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: CreateRoomRelationBody,
+          response: { 201: RoomRelationDto, 400: Type.Object({ error: Type.String() }) },
+        },
+      },
+      async (request, reply) => {
+        const relation = service.createRoomRelation(request.body);
+        return relation
+          ? reply.code(201).send(relation)
+          : reply.code(400).send(errorOf("invalid_room_relation"));
+      },
+    );
+
+    app.patch(
+      "/v1/knowledge/room-relations/:id",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          body: UpdateRoomRelationBody,
+          response: { 200: RoomRelationDto, 404: Type.Object({ error: Type.String() }) },
+        },
+      },
+      async (request, reply) => service.updateRoomRelation(request.params.id, request.body)
+        ?? reply.code(404).send(errorOf("room_relation_not_found")),
+    );
+
+    app.delete(
+      "/v1/knowledge/room-relations/:id/manual",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          response: {
+            200: Type.Object({ relation: Type.Union([RoomRelationDto, Type.Null()]) }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const relation = service.removeManualRoomRelation(request.params.id);
+        return relation === undefined
+          ? reply.code(404).send(errorOf("room_relation_not_found"))
+          : { relation };
+      },
     );
 
     app.post(

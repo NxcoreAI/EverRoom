@@ -1004,6 +1004,116 @@ export const entityDocLinks = sqliteTable(
   ],
 );
 
+/**
+ * Room relation source projection. This is deliberately separate from
+ * entity_doc_links: relation indexing must not change routing or recommendation
+ * scores. One source can belong to multiple Rooms, while a mail thread remains
+ * one evidence group.
+ */
+export const roomSourceMemberships = sqliteTable(
+  "room_source_memberships",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    sourceKind: text("source_kind", {
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+    }).notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceVersion: integer("source_version").notNull(),
+    sourceTitle: text("source_title"),
+    evidenceGroupKey: text("evidence_group_key").notNull(),
+    role: text("role", { enum: ["entry", "primary", "mention", "manual", "rule"] }).notNull(),
+    effectiveWeight: real("effective_weight").notNull().default(0),
+    qualityLevel: text("quality_level", {
+      enum: ["excluded", "uncertain", "low", "normal", "high"],
+    }).notNull().default("excluded"),
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
+    scoreReasons: text("score_reasons", { mode: "json" }).$type<string[]>(),
+    scoringVersion: integer("scoring_version").notNull().default(1),
+    /** Entity extraction completed for this source version, including an empty result. */
+    entityIndexed: integer("entity_indexed", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_source_memberships_room_source_idx").on(table.roomId, table.sourceKind, table.sourceId),
+    index("room_source_memberships_source_idx").on(table.sourceKind, table.sourceId),
+    index("room_source_memberships_group_idx").on(table.evidenceGroupKey),
+    index("room_source_memberships_room_idx").on(table.roomId),
+  ],
+);
+
+/** Normalized entities mentioned by a Room's source material. */
+export const roomEntityMentions = sqliteTable(
+  "room_entity_mentions",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    entityId: text("entity_id").notNull(),
+    sourceKind: text("source_kind", {
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+    }).notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceVersion: integer("source_version").notNull(),
+    evidenceGroupKey: text("evidence_group_key").notNull(),
+    salience: real("salience").notNull().default(0),
+    relevanceFactor: real("relevance_factor").notNull().default(0),
+    qualityLevel: text("quality_level", {
+      enum: ["excluded", "uncertain", "low", "normal", "high"],
+    }).notNull().default("excluded"),
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
+    evidence: text("evidence"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_entity_mentions_room_entity_source_idx").on(
+      table.roomId,
+      table.entityId,
+      table.sourceKind,
+      table.sourceId,
+    ),
+    index("room_entity_mentions_entity_idx").on(table.entityId),
+    index("room_entity_mentions_room_idx").on(table.roomId),
+    index("room_entity_mentions_source_idx").on(table.sourceKind, table.sourceId),
+  ],
+);
+
+/** Materialized, explainable Room-to-Room relations plus user overrides. */
+export const roomRelations = sqliteTable(
+  "room_relations",
+  {
+    id: text("id").primaryKey(),
+    roomAId: text("room_a_id").notNull(),
+    roomBId: text("room_b_id").notNull(),
+    autoScore: real("auto_score").notNull().default(0),
+    autoType: text("auto_type", { enum: ["shared_evidence", "shared_entity", "mixed"] }),
+    strength: text("strength", { enum: ["weak", "medium", "strong"] }),
+    sharedSourceCount: integer("shared_source_count").notNull().default(0),
+    sharedEntityCount: integer("shared_entity_count").notNull().default(0),
+    directMentionCount: integer("direct_mention_count").notNull().default(0),
+    topReasons: text("top_reasons", { mode: "json" }).$type<Array<Record<string, unknown>>>(),
+    scoringVersion: integer("scoring_version").notNull().default(1),
+    pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
+    hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
+    manualType: text("manual_type", {
+      enum: ["related", "depends_on", "part_of", "supports", "blocks", "owns", "custom"],
+    }),
+    manualFromRoomId: text("manual_from_room_id"),
+    manualToRoomId: text("manual_to_room_id"),
+    manualLabel: text("manual_label"),
+    manualNote: text("manual_note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_relations_pair_idx").on(table.roomAId, table.roomBId),
+    index("room_relations_room_a_idx").on(table.roomAId),
+    index("room_relations_room_b_idx").on(table.roomBId),
+    index("room_relations_updated_idx").on(table.updatedAt),
+  ],
+);
+
 /** Room ↔ wiki 映射；懒创建（第一份文档路由到该 Room 时才 ensure，见 plan D1）。 */
 export const roomWikis = sqliteTable("room_wikis", {
   roomId: text("room_id").primaryKey(),

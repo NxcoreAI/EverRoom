@@ -450,6 +450,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       routerEnabled: config.knowledge?.routerEnabled ?? false,
       entityPromoteScore: config.knowledge?.entityPromoteScore ?? 2.4,
       entityPromoteSources: config.knowledge?.entityPromoteSources ?? 3,
+      roomRelationMinScore: config.knowledge?.roomRelationMinScore ?? 1,
       mergeAutoDice: config.knowledge?.mergeAutoDice ?? 0.75,
       mergeJudgeDice: config.knowledge?.mergeJudgeDice ?? 0.6,
       llm: config.knowledge?.llm ?? null,

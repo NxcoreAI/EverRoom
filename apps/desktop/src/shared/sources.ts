@@ -82,7 +82,12 @@ import type {
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
   KnowledgeRoomContextDto,
+  KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
+  KnowledgeRoomRelationDto,
+  KnowledgeRoomRelationVisibility,
+  CreateKnowledgeRoomRelationInput,
+  UpdateKnowledgeRoomRelationInput,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
   KnowledgeWikiGraphDto,
@@ -878,6 +883,15 @@ export interface NxcoreDesktopApi {
     getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto>
     upsertRoom(input: { id: string; title: string; kind?: string }): Promise<KnowledgeRoomDto>
     deleteRoom(roomId: string): Promise<void>
+    getRoomGraph(visibility?: KnowledgeRoomRelationVisibility): Promise<KnowledgeRoomGraphDto>
+    getRoomRelations(roomId: string, visibility?: KnowledgeRoomRelationVisibility): Promise<KnowledgeRoomGraphDto>
+    getRoomRelationEvidence(relationId: string, offset?: number, limit?: number): Promise<{
+      items: import('./knowledge').KnowledgeRoomRelationReasonDto[]
+      total: number
+    }>
+    createRoomRelation(input: CreateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
+    updateRoomRelation(relationId: string, input: UpdateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
+    removeManualRoomRelation(relationId: string): Promise<{ relation: KnowledgeRoomRelationDto | null }>
     listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
     readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }>
     /** 全部 Room 的 wiki 映射（Wiki 应用清单）。 */

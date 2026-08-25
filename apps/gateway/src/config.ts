@@ -121,6 +121,7 @@ const RawConfigSchema = Type.Object(
     knowledgeRouterEnabled: Type.Boolean(),
     knowledgeEntityPromoteScore: Type.Number({ exclusiveMinimum: 0 }),
     knowledgeEntityPromoteSources: Type.Integer({ minimum: 1 }),
+    knowledgeRoomRelationMinScore: Type.Number({ exclusiveMinimum: 0 }),
     knowledgeEntityMergeAutoDice: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
     knowledgeEntityMergeJudgeDice: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
     knowledgeLlmBaseUrl: Type.String(),
@@ -216,6 +217,8 @@ export interface PiRuntimeConfig {
   entityPromoteScore: number;
   /** 晋升最小资料数（防单份资料多角色刷分）。 */
   entityPromoteSources: number;
+  /** Minimum score for an automatically visible Room relation. */
+  roomRelationMinScore: number;
   /** 弱-弱确定性自动合并线（免 LLM 判定）。 */
   mergeAutoDice: number;
   /** LLM 同一性判定带下限（[judge, auto) 走判定）。 */
@@ -807,6 +810,10 @@ export function loadConfig(
       "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES",
       env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES ?? "3",
     ),
+    knowledgeRoomRelationMinScore: parsePositiveNumber(
+      "NXCORE_KNOWLEDGE_ROOM_RELATION_MIN_SCORE",
+      env.NXCORE_KNOWLEDGE_ROOM_RELATION_MIN_SCORE ?? "1.0",
+    ),
     knowledgeEntityMergeAutoDice: parseFraction(
       "NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE",
       env.NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE ?? "0.75",
@@ -961,6 +968,7 @@ export function loadConfig(
         routerEnabled: rawConfig.knowledgeRouterEnabled,
         entityPromoteScore: rawConfig.knowledgeEntityPromoteScore,
         entityPromoteSources: rawConfig.knowledgeEntityPromoteSources,
+        roomRelationMinScore: rawConfig.knowledgeRoomRelationMinScore,
         mergeAutoDice: rawConfig.knowledgeEntityMergeAutoDice,
         mergeJudgeDice: rawConfig.knowledgeEntityMergeJudgeDice,
         llm: knowledgeLlmBaseUrl && knowledgeLlmApiKey && knowledgeLlmModel

@@ -462,6 +462,13 @@ const api: NxcoreDesktopApi = {
     getRoomContext: (roomId) => invoke('knowledge:rooms:context', roomId),
     upsertRoom: (input) => invoke('knowledge:rooms:upsert', input),
     deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
+    getRoomGraph: (visibility) => invoke('knowledge:room-graph:get', visibility),
+    getRoomRelations: (roomId, visibility) => invoke('knowledge:room-relations:list', roomId, visibility),
+    getRoomRelationEvidence: (relationId, offset, limit) =>
+      invoke('knowledge:room-relations:evidence', relationId, offset, limit),
+    createRoomRelation: (input) => invoke('knowledge:room-relations:create', input),
+    updateRoomRelation: (relationId, input) => invoke('knowledge:room-relations:update', relationId, input),
+    removeManualRoomRelation: (relationId) => invoke('knowledge:room-relations:remove-manual', relationId),
     listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
     readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
     listWikis: () => invoke('knowledge:wikis:list'),

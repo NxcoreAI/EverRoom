@@ -43,6 +43,15 @@ import { bundledAgentDefinitionsDir } from "../../config.js";
 import { KsAdminClient, KsBusyError, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
 import { KnowledgeRouter } from "./router.js";
+import {
+  ROOM_RELATION_INDEX_JOB_TYPE,
+  RoomRelationRegistry,
+  type RelationIndexInput,
+  type RoomGraphDto,
+  type RoomRelationDto,
+  type RoomRelationManualType,
+  type RoomRelationVisibility,
+} from "./room-relations.js";
 
 export interface KnowledgeServiceConfig {
   baseUrl: string;
@@ -69,6 +78,8 @@ export interface KnowledgeServiceConfig {
   /** embedding 端点；null 或 embeddingModel 空 = 关闭（消歧回退证据分）。 */
   embeddingLlm: KnowledgeLlmConfig | null;
   embeddingModel: string;
+  /** Minimum automatic Room relation score (default 1.0). */
+  roomRelationMinScore?: number;
 }
 
 export interface KnowledgeServiceLogger {
@@ -152,6 +163,13 @@ interface PromoteJobPayload {
   /** 手动转正（REST）：审计用，执行路径与自动晋升一致。 */
   manual?: boolean;
   previousStatus?: "weak" | "ready";
+}
+
+interface RelationIndexJobPayload {
+  sourceKind: SourceKind;
+  sourceId: string;
+  sourceVersion: number;
+  roomIds: string[];
 }
 
 export type PromotionStage =
@@ -378,6 +396,7 @@ export class KnowledgeService {
   private readonly ks: KsAdminClient;
   private readonly registry: RoomWikiRegistry;
   private readonly entityRegistry: EntityRegistry;
+  private readonly relationRegistry: RoomRelationRegistry;
   private readonly router: KnowledgeRouter;
   private readonly llm: KnowledgeLlm | null;
   private readonly roomContextCache = new Map<string, { key: string; value: RoomContextSummary }>();
@@ -411,6 +430,7 @@ export class KnowledgeService {
       promoteScore: config.entityPromoteScore,
       promoteSources: config.entityPromoteSources,
     });
+    this.relationRegistry = new RoomRelationRegistry(this.db, config.roomRelationMinScore ?? 1);
     this.ownedAgentResolver = config.llm && !agentResolver
       ? createKnowledgeAgentResolver(config.dataDir, config.llm)
       : null;
@@ -454,7 +474,7 @@ export class KnowledgeService {
     const recoveredJobs = this.db.update(jobs).set({ status: "pending", updatedAt: new Date() })
       .where(and(
         eq(jobs.status, "running"),
-        inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE, PROMOTE_JOB_TYPE]),
+        inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE, PROMOTE_JOB_TYPE, ROOM_RELATION_INDEX_JOB_TYPE]),
       )).run() as { changes: number | bigint };
     if (Number(recoveredJobs.changes) > 0) {
       this.logger.warn(
@@ -494,6 +514,25 @@ export class KnowledgeService {
         "knowledge evidence rescored with V2 rules",
       );
     }
+    const relationBackfill = this.relationRegistry.rebuildFromFacts();
+    const pendingRelationDocuments = this.relationRegistry.pendingDocumentIndexes();
+    if (pendingRelationDocuments.length > 0) {
+      this.relationRegistry.markIndexing(this.llm ? "building" : "degraded");
+      if (this.llm) {
+        for (const pending of pendingRelationDocuments) {
+          this.insertJob(ROOM_RELATION_INDEX_JOB_TYPE, {
+            sourceKind: "everroom-doc",
+            sourceId: pending.sourceId,
+            sourceVersion: pending.sourceVersion,
+            roomIds: pending.roomIds,
+          });
+        }
+      }
+    }
+    this.logger.info(
+      { event: "knowledge.room_relations.backfilled", ...relationBackfill },
+      "Room relation projections rebuilt from durable facts",
+    );
     if (this.drainTimer || !this.config.roomWikisEnabled) return;
     this.drainTimer = setInterval(() => this.wake(), 1_000);
     this.drainTimer.unref();
@@ -1012,7 +1051,7 @@ export class KnowledgeService {
 
   private insertJob(
     type: string,
-    payload: IngestJobPayload | RouteJobPayload | CleanupJobPayload | PromoteJobPayload,
+    payload: IngestJobPayload | RouteJobPayload | CleanupJobPayload | PromoteJobPayload | RelationIndexJobPayload,
     result?: Record<string, unknown>,
   ): string {
     if (type !== PROMOTE_JOB_TYPE) {
@@ -1173,6 +1212,8 @@ export class KnowledgeService {
         await this.runIngestJob(job.payload as IngestJobPayload);
       } else if (job.type === ROUTE_JOB_TYPE) {
         await this.runRouteJob(job.payload as RouteJobPayload);
+      } else if (job.type === ROOM_RELATION_INDEX_JOB_TYPE) {
+        await this.runRelationIndexJob(job.payload as RelationIndexJobPayload);
       } else if (job.type === PROMOTE_JOB_TYPE) {
         await this.runPromotionJob(job.id, job.payload as PromoteJobPayload);
       } else {
@@ -1284,6 +1325,12 @@ export class KnowledgeService {
           decisionId: result.decisionId,
         });
       }
+      this.insertJob(ROOM_RELATION_INDEX_JOB_TYPE, {
+        sourceKind: envelope.ref.kind,
+        sourceId: envelope.ref.id,
+        sourceVersion: envelope.ref.version,
+        roomIds: result.roomIds,
+      });
     }
     this.logger.info(
       {
@@ -1296,6 +1343,82 @@ export class KnowledgeService {
       },
       `route decision: ${result.disposition}`,
     );
+  }
+
+  /** Relation projection is asynchronous and never changes routing or recommendation state. */
+  private async runRelationIndexJob(payload: RelationIndexJobPayload): Promise<void> {
+    const activeRoomIds = this.db.select({ id: rooms.id }).from(rooms)
+      .where(and(inArray(rooms.id, payload.roomIds), isNull(rooms.deletedAt))).all().map((room) => room.id);
+    if (activeRoomIds.length === 0) {
+      this.relationRegistry.removeSource(payload.sourceKind, payload.sourceId);
+      return;
+    }
+    const decision = this.db.select().from(routeDecisions).where(and(
+      eq(routeDecisions.sourceKind, payload.sourceKind),
+      eq(routeDecisions.sourceId, payload.sourceId),
+      eq(routeDecisions.sourceVersion, payload.sourceVersion),
+    )).orderBy(desc(routeDecisions.createdAt)).get();
+    const evidence = (decision?.evidence ?? {}) as {
+      entities?: Array<{ entityId?: unknown; role?: unknown; salience?: unknown; evidence?: unknown }>;
+    };
+    let sourceTitle = decision?.sourceTitle ?? payload.sourceId;
+    let mentions: RelationIndexInput["mentions"] = [];
+    if (Array.isArray(evidence.entities)) {
+      mentions = evidence.entities.flatMap((item) => typeof item.entityId === "string" ? [{
+        entityId: item.entityId,
+        salience: typeof item.salience === "number" ? item.salience : 0.5,
+        evidence: typeof item.evidence === "string" ? item.evidence : null,
+      }] : []);
+    }
+    if (mentions.length === 0 && this.llm) {
+      let envelope: DocEnvelope | null = null;
+      if (payload.sourceKind === "everroom-doc") {
+        const document = this.getDocument(payload.sourceId);
+        if (!document || document.version !== payload.sourceVersion) return;
+        sourceTitle = document.title;
+        envelope = buildDocumentEnvelope({ ...document, roomId: activeRoomIds[0]! });
+      } else if (decision?.sourceMarkdown) {
+        envelope = {
+          ref: { kind: payload.sourceKind, id: payload.sourceId, version: payload.sourceVersion },
+          title: decision.sourceTitle ?? payload.sourceId,
+          markdown: decision.sourceMarkdown,
+        };
+      }
+      if (envelope) {
+        const extracted = await this.llm.extract(envelope.title, envelope.markdown);
+        mentions = extracted.entities.map((item) => ({
+          entityId: this.relationRegistry.resolveMentionEntity(item.name, item.kind),
+          salience: item.salience,
+          evidence: item.evidence || null,
+        }));
+      }
+    } else if (mentions.length === 0) {
+      this.relationRegistry.markIndexing("degraded");
+    }
+    const roomRoles: RelationIndexInput["roomRoles"] = {};
+    for (const roomId of activeRoomIds) {
+      roomRoles[roomId] = decision?.decidedBy === "entry"
+        ? "entry"
+        : decision?.decidedBy === "rule"
+          ? "rule"
+          : decision?.decidedBy === "user" ? "manual" : "primary";
+    }
+    for (const item of evidence.entities ?? []) {
+      if (typeof item.entityId !== "string") continue;
+      const entity = this.entityRegistry.getEntity(item.entityId);
+      if (entity?.roomId && activeRoomIds.includes(entity.roomId)) {
+        roomRoles[entity.roomId] = item.role === "mention" ? "mention" : item.role === "manual" ? "manual" : "primary";
+      }
+    }
+    this.relationRegistry.replaceSource({
+      sourceKind: payload.sourceKind,
+      sourceId: payload.sourceId,
+      sourceVersion: payload.sourceVersion,
+      sourceTitle,
+      roomIds: activeRoomIds,
+      roomRoles,
+      mentions,
+    });
   }
 
   private async runIngestJob(payload: IngestJobPayload): Promise<void> {
@@ -1366,6 +1489,7 @@ export class KnowledgeService {
       // 不让慢 Wiki 阻塞其他 Room 的创建。
       const queued = this.enqueueEntityBacklog(entity.id);
       this.setPromotionProgress(jobId, "importing_documents", `已安排 ${String(queued)} 份资料后台导入`, 0, queued, entity.roomId);
+      this.enqueueEntityRelationBacklog(entity.id, entity.roomId);
       return;
     }
     if (entity.status !== "weak" && entity.status !== "ready" && entity.status !== "promoting") return;
@@ -1384,7 +1508,9 @@ export class KnowledgeService {
         fromId: entity.id,
         reason: collision.reason,
       });
+      this.relationRegistry.rewriteEntity(entity.id, collision.target.id);
       const queued = this.enqueueEntityBacklog(collision.target.id);
+      if (collision.target.roomId) this.enqueueEntityRelationBacklog(collision.target.id, collision.target.roomId);
       this.setPromotionProgress(
         jobId,
         "importing_documents",
@@ -1424,11 +1550,34 @@ export class KnowledgeService {
     // 资料沉淀拆为 per-room 串行的普通 ingest job。Room 创建在这里即可完成，
     // 后台 Wiki 处理不会继续占用高优先级 promotion worker。
     const queued = this.enqueueEntityBacklog(entity.id);
+    this.enqueueEntityRelationBacklog(entity.id, roomId);
     this.setPromotionProgress(jobId, "importing_documents", `已安排 ${String(queued)} 份资料后台导入`, 0, queued, roomId);
     this.logger.info(
       { event: "knowledge.entity.promoted", entityId: entity.id, roomId, name: registration.name, manual: payload.manual ?? false },
       "weak entity promoted to room",
     );
+  }
+
+  private enqueueEntityRelationBacklog(entityId: string, roomId: string): void {
+    for (const link of this.entityRegistry.linksOfEntity(entityId)) {
+      const decision = this.db.select().from(routeDecisions).where(and(
+        eq(routeDecisions.sourceKind, link.sourceKind),
+        eq(routeDecisions.sourceId, link.sourceId),
+      )).orderBy(desc(routeDecisions.createdAt)).get();
+      const evidence = (decision?.evidence ?? {}) as { rooms?: Array<{ roomId?: unknown }>; linkOnlyRooms?: unknown[] };
+      const roomIds = new Set<string>([roomId]);
+      if (decision?.primaryRoomId) roomIds.add(decision.primaryRoomId);
+      for (const linked of decision?.linkedRoomIds ?? []) roomIds.add(linked);
+      for (const entry of evidence.rooms ?? []) if (typeof entry.roomId === "string") roomIds.add(entry.roomId);
+      for (const linked of evidence.linkOnlyRooms ?? []) if (typeof linked === "string") roomIds.add(linked);
+      this.insertJob(ROOM_RELATION_INDEX_JOB_TYPE, {
+        sourceKind: link.sourceKind,
+        sourceId: link.sourceId,
+        sourceVersion: link.sourceVersion,
+        roomIds: [...roomIds],
+      });
+    }
+    this.wake();
   }
 
   /**
@@ -1754,6 +1903,7 @@ export class KnowledgeService {
 
   private async runCleanupJob(payload: CleanupJobPayload): Promise<void> {
     this.entityRegistry.removeSourceLinks(payload.sourceKind, payload.sourceId);
+    this.relationRegistry.removeSource(payload.sourceKind, payload.sourceId);
     const decisions = this.db.select().from(routeDecisions)
       .where(and(
         eq(routeDecisions.sourceKind, payload.sourceKind),
@@ -1998,7 +2148,7 @@ export class KnowledgeService {
   /** 热重载或重复补账可能留下完全相同的活动任务；保留最早一条即可。 */
   private deduplicatePendingJobs(): number {
     const pending = this.db.select().from(jobs)
-      .where(and(eq(jobs.status, "pending"), inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE])))
+      .where(and(eq(jobs.status, "pending"), inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE, ROOM_RELATION_INDEX_JOB_TYPE])))
       .orderBy(asc(jobs.createdAt))
       .all();
     const canonicalByPayload = new Map<string, string>();
@@ -2126,6 +2276,7 @@ export class KnowledgeService {
     }
 
     this.entityRegistry.mergeEntities({ intoId: into.id, fromId: from.id, reason: "用户手动合并" });
+    this.relationRegistry.rewriteEntity(from.id, into.id);
     await this.ingestEntityBacklog(into.id);
     return { ok: true };
   }
@@ -2399,6 +2550,37 @@ export class KnowledgeService {
 
   // ───────────────────────── Room 注册表（plan §3.1/§7.2） ─────────────────────────
 
+  roomGraph(visibility: RoomRelationVisibility = "active"): RoomGraphDto {
+    return this.relationRegistry.graph(visibility);
+  }
+
+  roomRelations(roomId: string, visibility: RoomRelationVisibility = "active"): RoomGraphDto | null {
+    return this.relationRegistry.relationsOfRoom(roomId, visibility);
+  }
+
+  roomRelationEvidence(id: string, offset = 0, limit = 50) {
+    return this.relationRegistry.relationEvidence(id, offset, limit);
+  }
+
+  createRoomRelation(input: {
+    fromRoomId: string;
+    toRoomId: string;
+    type: RoomRelationManualType;
+    directed?: boolean;
+    label?: string | null;
+    note?: string | null;
+  }): RoomRelationDto | null {
+    return this.relationRegistry.createManual(input);
+  }
+
+  updateRoomRelation(id: string, input: Parameters<RoomRelationRegistry["updateManual"]>[1]): RoomRelationDto | null {
+    return this.relationRegistry.updateManual(id, input);
+  }
+
+  removeManualRoomRelation(id: string): RoomRelationDto | null | undefined {
+    return this.relationRegistry.removeManual(id);
+  }
+
   listRooms(origin?: "user" | "auto"): Array<{
     id: string;
     title: string;
@@ -2492,6 +2674,7 @@ export class KnowledgeService {
         addAliases: row!.aliases ?? [],
       });
     }
+    this.relationRegistry.recomputeAll();
     return this.toRoomDto(row!);
   }
 
@@ -2502,6 +2685,7 @@ export class KnowledgeService {
     void this.retireRoomWiki(roomId, "渲染器上报删除");
     this.db.update(entitiesTable).set({ status: "archived", updatedAt: new Date() })
       .where(eq(entitiesTable.roomId, roomId)).run();
+    this.relationRegistry.recomputeAll();
     return true;
   }
 

@@ -1,4 +1,4 @@
-import { findNearestGraphNode } from './pixiForceGraphHitTesting'
+import { findNearestGraphEdge, findNearestGraphNode } from './pixiForceGraphHitTesting'
 import { createPixiForceGraphLabelManager } from './pixiForceGraphLabels'
 import type {
   PixiForceGraphDependencies,
@@ -117,6 +117,7 @@ export function createPixiForceGraphRenderer(
     && nodes[options.selectedIndex]
     ? options.selectedIndex
     : null
+  let selectedEdgeId = options.selectedEdgeId ?? null
   const sprites = nodes.map((node, index) => {
     const sprite = new dependencies.Sprite(texture)
     sprite.anchor?.set(0.5)
@@ -146,7 +147,7 @@ export function createPixiForceGraphRenderer(
   const focusAlpha = 0.16
   const alphaLerp = 0.22
 
-  const drawEdge = (edge: (typeof edges)[number]) => {
+  const drawEdge = (edge: (typeof edges)[number], arrow = edge.directed) => {
     const sourceX = positions[edge.source * 2]
     const sourceY = positions[edge.source * 2 + 1]
     const targetX = positions[edge.target * 2]
@@ -154,6 +155,20 @@ export function createPixiForceGraphRenderer(
     if (![sourceX, sourceY, targetX, targetY].every(Number.isFinite)) return
     edgeGraphics.moveTo(sourceX!, sourceY!)
     edgeGraphics.lineTo(targetX!, targetY!)
+    if (arrow) {
+      const angle = Math.atan2(targetY! - sourceY!, targetX! - sourceX!)
+      const targetRadius = positiveDimension(nodes[edge.target]?.radius ?? nodeRadius, nodeRadius)
+      const tipX = targetX! - Math.cos(angle) * (targetRadius + 2)
+      const tipY = targetY! - Math.sin(angle) * (targetRadius + 2)
+      const size = 7 / Math.max(0.65, viewport.scale?.x ?? 1)
+      edgeGraphics.beginFill(edge.color ?? edgeColor)
+      edgeGraphics.drawPolygon([
+        tipX, tipY,
+        tipX - Math.cos(angle - Math.PI / 5) * size, tipY - Math.sin(angle - Math.PI / 5) * size,
+        tipX - Math.cos(angle + Math.PI / 5) * size, tipY - Math.sin(angle + Math.PI / 5) * size,
+      ])
+      edgeGraphics.endFill()
+    }
   }
 
   const setHoveredIndex = (nextIndex: number | null) => {
@@ -203,7 +218,26 @@ export function createPixiForceGraphRenderer(
     if (event.button !== undefined && event.button !== 0) return
     const point = worldPoint(event)
     const hit = hitTest(point.x, point.y)
-    if (hit === null || hit === undefined) return
+    if (hit === undefined) return
+    if (hit === null) {
+      const edgeIndex = findNearestGraphEdge({
+        edges,
+        positions,
+        revision: options.revision,
+        scale: viewport.scale?.x ?? 1,
+        x: point.x,
+        y: point.y,
+      })
+      if (edgeIndex !== null && edgeIndex !== undefined) {
+        const edgeId = edges[edgeIndex]?.id
+        if (edgeId) {
+          selectedEdgeId = edgeId
+          options.onEdgeSelect?.(edgeId)
+          event.stopImmediatePropagation?.()
+        }
+      }
+      return
+    }
     dragIndex = hit
     dragStart = point
     dragMoved = false
@@ -260,8 +294,15 @@ export function createPixiForceGraphRenderer(
       sprite.alpha = Math.abs(targetAlpha - nextAlpha) < 0.01 ? targetAlpha : nextAlpha
     }
     edgeGraphics.clear()
-    edgeGraphics.lineStyle(edgeWidth, edgeColor, hoveredIndex === null ? edgeAlpha : 0.08)
-    for (const edge of edges) drawEdge(edge)
+    for (const edge of edges) {
+      const selected = Boolean(edge.id && edge.id === selectedEdgeId)
+      edgeGraphics.lineStyle(
+        selected ? Math.max(edgeWidth * 2.2, edge.width ?? 0) : edge.width ?? edgeWidth,
+        selected ? highlightEdgeColor : edge.color ?? edgeColor,
+        selected ? 1 : (hoveredIndex === null ? edge.alpha ?? edgeAlpha : 0.08),
+      )
+      drawEdge(edge)
+    }
     if (hoveredIndex !== null) {
       edgeGraphics.lineStyle(edgeWidth * 1.7, highlightEdgeColor, 1)
       for (const edge of edges) {
@@ -333,6 +374,9 @@ export function createPixiForceGraphRenderer(
       selectedIndex = nextIndex !== null && sprites[nextIndex] ? nextIndex : null
       if (selectedIndex !== null) sprites[selectedIndex]!.tint = selectedColor
       particleContainer.update?.()
+    },
+    setSelectedEdgeId(nextId) {
+      selectedEdgeId = nextId
     },
     setHoveredIndex,
     destroy() {
