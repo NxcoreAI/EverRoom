@@ -126,7 +126,8 @@
         "from": "../gateway/dist/node_modules/@napi-rs",
         "to": "gateway/node_modules/@napi-rs",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/*.d.ts"
         ]
       },
       {
