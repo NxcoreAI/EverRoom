@@ -284,6 +284,7 @@ export function TiptapDocumentEditor({
   const editorRef = useRef<Editor | null>(null)
   const onBackendChangeRef = useRef(onBackendDocumentChange)
   const versionRef = useRef(backendDocument?.version ?? 0)
+  const appliedDocumentVersionRef = useRef(backendDocument?.version ?? 0)
   const importedRef = useRef(Boolean(backendDocument))
   const revealedAtomicOperationId = useRef<string | null>(null)
   const revealedContinuationOperationId = useRef<string | null>(null)
@@ -312,8 +313,9 @@ export function TiptapDocumentEditor({
   )
   const roomDocuments = useRoomDocumentsState()
   const { activateDocument } = useActiveDocument()
-  const { setOperationPresentationPending } = useDocumentOperations()
+  const { appliedDocumentsById, setOperationPresentationPending } = useDocumentOperations()
   const documentOperations = useDocumentEditorOperations(documentId)
+  const appliedDocument = appliedDocumentsById[documentId]
   const streamingDocument = documentOperations.streamingDocument
   const [settledStreamingOperationId, setSettledStreamingOperationId] = useState<string | null>(null)
   const activeStreamingOperationIds = useRef(new Set<string>())
@@ -374,6 +376,7 @@ export function TiptapDocumentEditor({
       while (pendingSave.current) {
         const pending = pendingSave.current
         const saveInvalidationAtStart = agentSaveInvalidationRef.current
+        const saveVersionAtStart = versionRef.current
         const documents = window.nxcore?.documents
         const currentDocument = backendRef.current
         if (!documents || !importedRef.current || !currentDocument) {
@@ -410,7 +413,8 @@ export function TiptapDocumentEditor({
             if (nextPending) writeDocumentDraft(documentId, nextPending.contentJson, updated.version, nextPending.title)
           }
         } catch (error) {
-          if (agentSaveInvalidationRef.current !== saveInvalidationAtStart) {
+          if (agentSaveInvalidationRef.current !== saveInvalidationAtStart
+            || (backendRef.current?.version ?? 0) > saveVersionAtStart) {
             // An Agent commit completed while this stale user save was in
             // flight. Its CAS conflict is expected; do not resurrect it.
             pendingSave.current = null
@@ -465,6 +469,25 @@ export function TiptapDocumentEditor({
       applyingRemote.current = false
     }
   }, [])
+
+  const invalidatePendingSaveForAgentDocument = useCallback((document: RoomDocument): void => {
+    appliedDocumentVersionRef.current = Math.max(appliedDocumentVersionRef.current, document.version)
+    agentSaveInvalidationRef.current += 1
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    pendingSave.current = null
+    versionRef.current = document.version
+    backendRef.current = document
+    persistedEditRevision.current = editRevision.current
+    recoveringDraft.current = false
+    recoverySaveScheduled.current = false
+    removeDocumentDraft(documentId)
+    onBackendChangeRef.current(document)
+    setDocumentName(document.title)
+    setSaveState('已保存')
+  }, [documentId])
 
   const restoreHistoryVersion = useCallback(async (): Promise<void> => {
     const selectedHistory = historyView
@@ -655,17 +678,26 @@ export function TiptapDocumentEditor({
     documentName,
     prepareDocument: flushDocumentVersion,
     onDocumentApplied: (document) => {
-      applyingRemote.current = true
-      try {
-        versionRef.current = document.version
-        backendRef.current = document
-        onBackendChangeRef.current(document)
-      } finally {
-        applyingRemote.current = false
-      }
+      invalidatePendingSaveForAgentDocument(document)
     },
     externallyLocked: editorLocked,
   })
+
+  useEffect(() => {
+    if (!appliedDocument || appliedDocument.version <= appliedDocumentVersionRef.current) return
+    invalidatePendingSaveForAgentDocument(appliedDocument)
+    const currentEditor = editorRef.current
+    if (!currentEditor || currentEditor.isDestroyed) return
+    applyingRemote.current = true
+    try {
+      setEditorContentPreservingView(
+        currentEditor,
+        stripDocumentTitle(appliedDocument.contentJson).content,
+      )
+    } finally {
+      applyingRemote.current = false
+    }
+  }, [appliedDocument, invalidatePendingSaveForAgentDocument])
   editorRef.current = editor
   const cursorCompletionRunning = useDocumentCursorCompletion({
     editor,
