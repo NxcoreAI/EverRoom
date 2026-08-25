@@ -36,6 +36,7 @@ import { OpenAiCompletionAgentRuntime } from "../modules/agent/openai-completion
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
+import { RoomDuplicateService } from "../modules/context-rooms/duplicate-service.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
@@ -464,7 +465,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
     app.log,
     agentResolver,
-  );  const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
+  );
+  const roomDuplicateService = new RoomDuplicateService(db, {
+    judgeIdentity: (a, b) => knowledgeService.judgeRoomIdentity(a, b),
+    mergeKnowledge: (sourceRoomId, targetRoomId) => knowledgeService.mergeRoomKnowledge(sourceRoomId, targetRoomId),
+    rebuildRelations: () => knowledgeService.rebuildRoomRelations(),
+    wikiFileCount: (roomId) => knowledgeService.roomWikiFileCount(roomId),
+  });
+  contextRoomService.setDuplicateService(roomDuplicateService);
+  knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
+  roomDuplicateService.initialize();
+  const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
   let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
   registerConnectorSyncAgent(agentResolver, config, cliConnectorSyncService);
   if (agentResolver.has(BUILTIN_AGENT_IDS.connectorSync)) {
@@ -790,6 +801,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await perceptionService.dispose();
     await agentSchedulerService.dispose();
     await diaryService.dispose();
+    roomDuplicateService.dispose();
     knowledgeService.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
@@ -799,7 +811,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator)));
   await app.register(subagentRoutes(subagentOrchestrator));
   await app.register(mcpRoutes(config));
-  await app.register(contextRoomRoutes(contextRoomService));
+  await app.register(contextRoomRoutes(contextRoomService, roomDuplicateService));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));
   await app.register(documentOperationRoutes(

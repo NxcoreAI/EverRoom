@@ -64,6 +64,7 @@ const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
 export interface AgentRoomRegistry {
   listReferences(): AgentRoomReference[];
   isActive(roomId: string): boolean;
+  resolveRoomId?(roomId: string): string | null;
 }
 
 export interface AgentDocumentRegistry {
@@ -76,6 +77,13 @@ export interface AgentDocumentRegistry {
 function normalizeRoomId(roomId: string | null | undefined): string | null {
   const normalized = roomId?.trim();
   return normalized ? normalized : null;
+}
+
+function resolveRoomId(registry: AgentRoomRegistry | undefined, roomId: string | null | undefined): string | null {
+  const normalized = normalizeRoomId(roomId);
+  if (!normalized) return null;
+  if (!registry) return normalized;
+  return registry.resolveRoomId?.(normalized) ?? (registry.isActive(normalized) ? normalized : null);
 }
 
 function requestsWorkspaceDocument(prompt: string): boolean {
@@ -135,6 +143,7 @@ function toRun(row: typeof agentRuns.$inferSelect): AgentRun {
   return {
     id: row.id,
     sessionId: row.sessionId,
+    roomId: normalizeRoomId(row.roomId),
     status: row.status,
     prompt: row.prompt,
     lastEventSeq: row.lastEventSeq,
@@ -310,13 +319,13 @@ function selectedRunRoomId(
   const selectedRoomId = input.context?.selectedRoomId?.trim()
     || input.context?.activeDocument?.roomId.trim();
   if (!selectedRoomId) return null;
-  const selectedExists = registry
-    ? registry.isActive(selectedRoomId)
-    : availableRooms(input).some((room) => room.id === selectedRoomId);
-  if (!selectedExists) {
+  const resolved = registry
+    ? resolveRoomId(registry, selectedRoomId)
+    : availableRooms(input).some((room) => room.id === selectedRoomId) ? selectedRoomId : null;
+  if (!resolved) {
     throw new Error("agent_room_not_available");
   }
-  return selectedRoomId;
+  return resolved;
 }
 
 export class AgentService {
@@ -675,8 +684,11 @@ export class AgentService {
       eq(agentRuns.sessionId, input.sessionId),
     )).get();
     if (!run) throw new Error("pending_agent_intent_source_not_found");
-    const allowedRoomIds = [...new Set(input.allowedRoomIds.map((id) => id.trim()).filter(Boolean))];
-    if (allowedRoomIds.length === 0 || allowedRoomIds.some((id) => !this.roomRegistry?.isActive(id))) {
+    const allowedRoomIds = [...new Set(input.allowedRoomIds.flatMap((id) => {
+      const resolved = resolveRoomId(this.roomRegistry, id);
+      return resolved ? [resolved] : [];
+    }))];
+    if (allowedRoomIds.length === 0) {
       throw new Error("pending_agent_intent_resource_not_allowed");
     }
     const allowedDocumentIds = [...new Set((input.allowedDocumentIds ?? []).map((id) => id.trim()).filter(Boolean))];
@@ -710,9 +722,9 @@ export class AgentService {
     const now = new Date();
     if (intent.consumedAt) throw new Error("pending_agent_intent_consumed");
     if (intent.expiresAt <= now) throw new Error("pending_agent_intent_expired");
-    const roomId = input.roomId.trim();
+    const roomId = resolveRoomId(this.roomRegistry, input.roomId);
     const documentId = input.documentId?.trim();
-    if (!roomId || !intent.allowedRoomIds.includes(roomId) || !this.roomRegistry?.isActive(roomId)) {
+    if (!roomId || !intent.allowedRoomIds.includes(roomId)) {
       throw new Error("pending_agent_intent_resource_not_allowed");
     }
     if (documentId && !intent.allowedDocumentIds.includes(documentId)) {
@@ -793,12 +805,12 @@ export class AgentService {
       eq(agentRuns.id, runId),
       eq(agentRuns.sessionId, agentSessionId),
     )).get();
-    const room = roomId.trim();
+    const room = resolveRoomId(this.roomRegistry, roomId);
     if (!session || !run) throw new Error("mcp_agent_context_not_found");
     if (run.status !== "accepted" && run.status !== "running") {
       throw new Error("mcp_agent_context_not_active");
     }
-    if (!room || !this.roomRegistry?.isActive(room)) throw new Error("mcp_agent_room_not_available");
+    if (!room) throw new Error("mcp_agent_room_not_available");
     const execution = this.executionContexts.get(runId);
     if (!execution || execution.sessionId !== agentSessionId || execution.roomId !== room) {
       throw new Error("mcp_agent_context_mismatch");
@@ -829,21 +841,22 @@ export class AgentService {
       eq(agentRuns.sessionId, input.agentSessionId),
     )).get();
     const execution = this.executionContexts.get(input.runId);
+    const roomId = resolveRoomId(this.roomRegistry, input.roomId);
     const activeContextMatches = Boolean(run
       && (run.status === "accepted" || run.status === "running")
       && execution
       && execution.sessionId === input.agentSessionId
-      && execution.roomId === input.roomId);
+      && execution.roomId === roomId);
     const completedSelectionRewriteMatches = Boolean(session
       && run?.status === "completed"
       && input.capabilityId === "document.selection-rewrite"
       && execution?.sessionId === input.agentSessionId
-      && execution.roomId === normalizeRoomId(input.roomId)
+      && execution.roomId === roomId
       && run.completedAt
       && Date.now() - run.completedAt.getTime() <= SELECTION_REWRITE_OPERATION_GRACE_MS);
     if (!session || !run
       || (!activeContextMatches && !completedSelectionRewriteMatches)
-      || !this.roomRegistry?.isActive(input.roomId)) {
+      || !roomId) {
       throw new Error("agent_operation_context_invalid");
     }
   }
@@ -914,6 +927,7 @@ export class AgentService {
       id: runId,
       sessionId,
       idempotencyKey: input.idempotencyKey,
+      roomId: runRoomId,
       status: "accepted",
       prompt: input.prompt,
       lastEventSeq: 0,

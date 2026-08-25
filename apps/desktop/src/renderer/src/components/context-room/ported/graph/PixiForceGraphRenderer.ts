@@ -1,5 +1,6 @@
 import { findNearestGraphEdge, findNearestGraphNode } from './pixiForceGraphHitTesting'
 import { createPixiForceGraphLabelManager } from './pixiForceGraphLabels'
+import { createPixiForceGraphEdgeLabelManager } from './pixiForceGraphEdgeLabels'
 import type {
   PixiForceGraphDependencies,
   PixiForceGraphRenderer,
@@ -99,7 +100,17 @@ export function createPixiForceGraphRenderer(
     scaleThreshold: positiveDimension(options.labelScaleThreshold ?? 0.75, 0.75),
     viewport,
   })
+  const edgeLabelManager = createPixiForceGraphEdgeLabelManager({
+    baseResolution: renderResolution,
+    dependencies,
+    edges,
+    maxLabels: Math.max(1, Math.floor(options.maxVisibleEdgeLabels ?? 180)),
+    positions,
+    scaleThreshold: positiveDimension(options.edgeLabelScaleThreshold ?? 0.85, 0.85),
+    viewport,
+  })
   viewport.addChild(labelManager.layer)
+  viewport.addChild(edgeLabelManager.layer)
 
   // One generated texture is shared by every node sprite. Per-node radii use
   // sprite scale so texture generation remains constant regardless of graph size.
@@ -208,7 +219,7 @@ export function createPixiForceGraphRenderer(
     const point = worldPoint(event)
     if (dragIndex !== null) {
       if (dragStart && Math.hypot(point.x - dragStart.x, point.y - dragStart.y) > 3) dragMoved = true
-      options.onNodeDrag?.(dragIndex, point.x, point.y)
+      if (dragMoved) options.onNodeDrag?.(dragIndex, point.x, point.y)
       return
     }
     const hit = hitTest(point.x, point.y)
@@ -245,7 +256,6 @@ export function createPixiForceGraphRenderer(
     event.stopImmediatePropagation?.()
     setHoveredIndex(hit)
     viewport.cursor = 'grabbing'
-    options.onNodeDrag?.(hit, point.x, point.y)
   }
   const releaseDrag = () => {
     if (dragIndex === null) return
@@ -254,7 +264,7 @@ export function createPixiForceGraphRenderer(
     dragStart = null
     viewport.plugins?.resume('drag')
     viewport.cursor = hoveredIndex === null ? 'grab' : 'pointer'
-    options.onNodeRelease?.(releasedIndex)
+    if (dragMoved) options.onNodeRelease?.(releasedIndex)
     if (!dragMoved) {
       const selectedAt = Date.now()
       options.onNodeSelect?.(releasedIndex)
@@ -310,6 +320,7 @@ export function createPixiForceGraphRenderer(
       }
     }
     labelManager.update(hoveredIndex)
+    edgeLabelManager.update(hoveredIndex, selectedEdgeId)
     const endRevision = options.revision?.() ?? startRevision
     if (startRevision !== endRevision || (endRevision & 1) === 1) return
     // A concurrent Worker tick may invalidate this read. Keep the most recent
@@ -398,9 +409,11 @@ export function createPixiForceGraphRenderer(
       viewport.removeChild?.(edgeGraphics)
       viewport.removeChild?.(particleContainer)
       viewport.removeChild?.(labelManager.layer)
+      viewport.removeChild?.(edgeLabelManager.layer)
       particleContainer.destroy({ children: false })
       edgeGraphics.destroy()
       labelManager.destroy()
+      edgeLabelManager.destroy()
       app.stage.removeChild?.(viewport)
       viewport.destroy({ children: false })
       texture.destroy(true)

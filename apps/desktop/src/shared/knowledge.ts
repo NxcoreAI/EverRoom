@@ -190,6 +190,14 @@ export interface KnowledgeEntityDto {
   firstEvidence: string | null
   lastLinkedAt: string | null
   updatedAt: string
+  existingRoomMatch: {
+    roomId: string
+    roomTitle: string
+    entityId: string
+    confidence: 'high' | 'medium'
+    score: number
+    reasons: string[]
+  } | null
   promotion: KnowledgePromotionProgressDto | null
 }
 

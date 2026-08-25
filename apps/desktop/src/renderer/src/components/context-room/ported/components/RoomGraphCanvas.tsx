@@ -19,6 +19,7 @@ import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
 import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import { uiText } from '../adapters'
+import { relationTypeLabel } from './RoomRelationControls'
 
 export interface RoomGraphCanvasHandle {
   fitView(): Promise<void>
@@ -79,12 +80,13 @@ function RoomGraphCanvasComponent(
           id: edge.id,
           source,
           target,
+          label: edge.label?.trim() || relationTypeLabel(edge.type, t),
           directed: edge.directed,
           color: edge.origin === 'auto' ? 0x929ba8 : 0x3d6ff6,
           width: edge.strength === 'strong' ? 3 : edge.strength === 'medium' ? 2.1 : 1.25,
           alpha: edge.strength === 'strong' ? 0.92 : edge.strength === 'medium' ? 0.72 : 0.5,
         }]
-  }), [relations, nodeIndex])
+  }), [relations, nodeIndex, t])
   const layoutEdges = useMemo(() => relations.flatMap((edge) => (
     nodeIndex.has(edge.sourceRoomId) && nodeIndex.has(edge.targetRoomId)
       ? [{ source: edge.sourceRoomId, target: edge.targetRoomId }]
@@ -121,8 +123,22 @@ function RoomGraphCanvasComponent(
         })),
         edges: layoutEdges,
         options: compact
-          ? { collisionPadding: 8, linkDistance: 105, manyBodyStrength: -230 }
-          : undefined,
+          ? {
+              collisionPadding: 8,
+              collisionStrength: 0.72,
+              linkDistance: 105,
+              linkStrength: 0.22,
+              manyBodyStrength: -105,
+              velocityDecay: 0.56,
+            }
+          : {
+              collisionPadding: 10,
+              collisionStrength: 0.78,
+              linkDistance: 118,
+              linkStrength: 0.24,
+              manyBodyStrength: -135,
+              velocityDecay: 0.54,
+            },
       })
     } catch (error) {
       console.error('Failed to initialize Room force graph layout', error)

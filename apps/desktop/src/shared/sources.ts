@@ -26,6 +26,12 @@ import type {
   ContextRoomSnapshot,
   CreateContextRoomInput,
   CreateContextRoomResult,
+  RoomDuplicateCandidate,
+  RoomDuplicateCandidateStatus,
+  RoomDuplicateCheckInput,
+  RoomDuplicateCheckResult,
+  RoomMergeOperation,
+  RoomMergePreview,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   DocumentEventFrame,
@@ -728,6 +734,14 @@ export interface NxcoreDesktopApi {
     list(): Promise<ContextRoomSnapshot>
     create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
     syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
+    checkDuplicates(input: RoomDuplicateCheckInput): Promise<RoomDuplicateCheckResult>
+    listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }>
+    updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate>
+    previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview>
+    startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string }): Promise<RoomMergeOperation>
+    getMergeOperation(id: string): Promise<RoomMergeOperation>
+    retryMerge(id: string): Promise<RoomMergeOperation>
+    cancelMerge(id: string): Promise<RoomMergeOperation>
   }
   account: {
     status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>
@@ -926,7 +940,7 @@ export interface NxcoreDesktopApi {
     listEntities(status: KnowledgeEntityStatus): Promise<{ items: KnowledgeEntityDto[] }>
     getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
     /** 用户确认创建（推荐态实体走完整晋升流程）。 */
-    promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }>
+    promoteEntity(entityId: string, options?: { forceNew?: boolean }): Promise<{ queued: boolean; jobId: string }>
     promoteEntities(entityIds: string[]): Promise<{ items: import('./knowledge').KnowledgeBatchPromoteResultDto[] }>
     suppressEntity(entityId: string): Promise<{ ok: boolean }>
     suppressEntities(entityIds: string[]): Promise<{ items: import('./knowledge').KnowledgeBatchSuppressResultDto[] }>

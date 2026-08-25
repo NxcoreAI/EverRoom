@@ -7,7 +7,7 @@ import type {
   CreateContextRoomResult,
   SaveContextRoomSnapshotInput,
 } from "@nxcore/agent-contract";
-import { asc, eq, isNull, notInArray } from "drizzle-orm";
+import { and, asc, eq, isNull, notInArray } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { contextRooms } from "../../infrastructure/database/schema.js";
 import {
@@ -15,11 +15,14 @@ import {
   type ContextRoomEnricher,
   type ContextRoomEnrichment,
 } from "./agent-enricher.js";
+import type { RoomDuplicateService } from "./duplicate-service.js";
 
 function snapshotItem(row: typeof contextRooms.$inferSelect): ContextRoomSnapshotItem {
   return {
     ...roomReference(row),
     data: row.data,
+    ...(row.lifecycle !== "active" ? { lifecycle: row.lifecycle } : {}),
+    ...(row.mergedIntoRoomId ? { mergedIntoRoomId: row.mergedIntoRoomId } : {}),
   };
 }
 
@@ -226,11 +229,16 @@ function newRoomData(input: {
 
 export class ContextRoomService {
   private readonly pendingCreations = new Map<string, Promise<CreateContextRoomResult>>();
+  private duplicateService: RoomDuplicateService | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
     private readonly enricher?: ContextRoomEnricher,
   ) {}
+
+  setDuplicateService(service: RoomDuplicateService): void {
+    this.duplicateService = service;
+  }
 
   getSnapshot(): ContextRoomSnapshot {
     const rows = this.db.select().from(contextRooms)
@@ -240,26 +248,45 @@ export class ContextRoomService {
       !latest || room.updatedAt > latest ? room.updatedAt : latest
     ), null);
     return {
-      rooms: rows.filter((room) => room.deletedAt === null).map(snapshotItem),
-      deletedRooms: rows.filter((room) => room.deletedAt !== null).map(snapshotItem),
+      rooms: rows.filter((room) => room.deletedAt === null && room.lifecycle === "active").map(snapshotItem),
+      deletedRooms: rows.filter((room) => room.deletedAt !== null && room.lifecycle === "active").map(snapshotItem),
       updatedAt: updatedAt?.toISOString() ?? null,
     };
   }
 
   listReferences(): AgentRoomReference[] {
     return this.db.select().from(contextRooms)
-      .where(isNull(contextRooms.deletedAt))
+      .where(and(isNull(contextRooms.deletedAt), eq(contextRooms.lifecycle, "active")))
       .orderBy(asc(contextRooms.position), asc(contextRooms.createdAt))
       .all()
       .map(roomReference);
   }
 
+  resolveRoomId(roomId: string): string | null {
+    let current = roomId.trim();
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const room = this.db.select({
+        id: contextRooms.id,
+        lifecycle: contextRooms.lifecycle,
+        mergedIntoRoomId: contextRooms.mergedIntoRoomId,
+        deletedAt: contextRooms.deletedAt,
+      }).from(contextRooms).where(eq(contextRooms.id, current)).get();
+      if (!room || room.deletedAt) return null;
+      if (room.lifecycle === "active") return room.id;
+      if (room.lifecycle !== "merged" || !room.mergedIntoRoomId) return null;
+      current = room.mergedIntoRoomId;
+    }
+    return null;
+  }
+
   isActive(roomId: string): boolean {
-    const room = this.db.select({ deletedAt: contextRooms.deletedAt })
+    const room = this.db.select({ deletedAt: contextRooms.deletedAt, lifecycle: contextRooms.lifecycle })
       .from(contextRooms)
       .where(eq(contextRooms.id, roomId))
       .get();
-    return Boolean(room && room.deletedAt === null);
+    return Boolean(room && room.deletedAt === null && room.lifecycle === "active");
   }
 
   async createRoom(input: CreateContextRoomInput): Promise<CreateContextRoomResult> {
@@ -267,12 +294,17 @@ export class ContextRoomService {
     if (!title) throw new Error("context_room_title_required");
     const description = optionalText(input.description, 2_000);
     if (!description) throw new Error("context_room_description_required");
+    const duplicateOverrideAccepted = await this.duplicateService?.assertCreationAllowed({
+      title,
+      description,
+      ...(input.duplicateOverrideToken ? { duplicateOverrideToken: input.duplicateOverrideToken } : {}),
+    }) ?? false;
     const titleKey = title.toLocaleLowerCase();
     const existing = this.db.select().from(contextRooms)
-      .where(isNull(contextRooms.deletedAt))
+      .where(and(isNull(contextRooms.deletedAt), eq(contextRooms.lifecycle, "active")))
       .all()
       .find((room) => room.title.trim().toLocaleLowerCase() === titleKey);
-    if (existing) return { room: snapshotItem(existing), created: false };
+    if (existing && !duplicateOverrideAccepted) return { room: snapshotItem(existing), created: false };
 
     const pending = this.pendingCreations.get(titleKey);
     if (pending) return pending.then((result) => ({ ...result, created: false }));
@@ -299,10 +331,12 @@ export class ContextRoomService {
       kind: enrichment.kind,
       data: newRoomData({ id, title, description, enrichment, now: now.toISOString() }),
       position,
+      lifecycle: "active",
       deletedAt: null,
       createdAt: now,
       updatedAt: now,
     }).returning().get();
+    this.duplicateService?.requestRebuild();
     return { room: snapshotItem(inserted), created: true };
   }
 
@@ -318,19 +352,31 @@ export class ContextRoomService {
     }
 
     const now = new Date();
+    const protectedIds = new Set(this.db.select({ id: contextRooms.id, lifecycle: contextRooms.lifecycle })
+      .from(contextRooms).all().filter((room) => room.lifecycle !== "active").map((room) => room.id));
     this.db.transaction((tx) => {
       if (ids.length === 0) {
-        tx.delete(contextRooms).run();
+        tx.delete(contextRooms).where(eq(contextRooms.lifecycle, "active")).run();
       } else {
-        tx.delete(contextRooms).where(notInArray(contextRooms.id, ids)).run();
+        tx.delete(contextRooms).where(and(
+          eq(contextRooms.lifecycle, "active"),
+          notInArray(contextRooms.id, ids),
+        )).run();
       }
       const upsert = (room: ContextRoomSnapshotItem, position: number, deletedAt: Date | null) => {
+        if (protectedIds.has(room.id)) return;
+        const current = this.db.select({ data: contextRooms.data }).from(contextRooms)
+          .where(eq(contextRooms.id, room.id)).get();
+        const currentMergeAt = optionalText(current?.data.lastMergeAt, 40);
+        const incomingMergeAt = optionalText(room.data.lastMergeAt, 40);
+        if (currentMergeAt && currentMergeAt !== incomingMergeAt) return;
         tx.insert(contextRooms).values({
           id: room.id,
           title: room.title,
           kind: room.kind ?? null,
           data: room.data,
           position,
+          lifecycle: "active",
           deletedAt,
           createdAt: now,
           updatedAt: now,
@@ -341,6 +387,7 @@ export class ContextRoomService {
             kind: room.kind ?? null,
             data: room.data,
             position,
+            lifecycle: "active",
             deletedAt,
             updatedAt: now,
           },
@@ -349,6 +396,7 @@ export class ContextRoomService {
       active.forEach((room, position) => upsert(room, position, null));
       deleted.forEach((room, position) => upsert(room, position, now));
     });
+    this.duplicateService?.requestRebuild();
     return this.getSnapshot();
   }
 }

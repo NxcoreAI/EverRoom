@@ -134,6 +134,7 @@ export interface PixiForceGraphNode {
 
 export interface PixiForceGraphEdge {
   id?: string
+  label?: string
   source: number
   target: number
   directed?: boolean
@@ -160,6 +161,8 @@ export interface PixiForceGraphRendererOptions {
   highlightEdgeColor?: number | string
   labelScaleThreshold?: number
   maxVisibleLabels?: number
+  edgeLabelScaleThreshold?: number
+  maxVisibleEdgeLabels?: number
   revision?: () => number
   selectedColor?: number | string
   selectedIndex?: number | null

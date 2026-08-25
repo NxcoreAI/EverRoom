@@ -292,10 +292,14 @@ export function PortedContextRoom({
     <HomeView
       rooms={state.rooms}
       deletedRooms={state.deletedRooms}
-      onCreateRoom={async (draft) => {
+      onCreateRoom={async (draft, duplicateOverrideToken) => {
         const api = window.nxcore?.contextRooms
         if (!api?.create) throw new Error(t('contextRoom:roomDialogs.serviceUnavailable'))
-        const result = await api.create({ title: draft.name, description: draft.description })
+        const result = await api.create({
+          title: draft.name,
+          description: draft.description,
+          ...(duplicateOverrideToken ? { duplicateOverrideToken } : {}),
+        })
         const refreshed = await refreshFromBackend()
         const room = refreshed?.rooms.find((item) => item.id === result.room.id)
         if (!room) throw new Error(t('contextRoom:roomDialogs.createFailed'))
@@ -321,6 +325,7 @@ export function PortedContextRoom({
       onOpenDetail={openRoom}
       onShowAll={() => setHomeView('all')}
       onFocusAgent={onFocusAgent}
+      onRefreshRooms={async () => { await refreshFromBackend() }}
     />
   )
 }

@@ -366,7 +366,11 @@ export class EntityRegistry {
   listEntities(status?: EntityStatus): EntityRow[] {
     const query = this.db.select().from(entities);
     const rows = status ? query.where(eq(entities.status, status)) : query;
-    return rows.orderBy(desc(entities.updatedAt)).all().map(toEntityRow);
+    return (status === "ready"
+      ? rows.orderBy(desc(entities.evidenceScore), desc(entities.updatedAt))
+      : rows.orderBy(desc(entities.updatedAt)))
+      .all()
+      .map(toEntityRow);
   }
 
   /**

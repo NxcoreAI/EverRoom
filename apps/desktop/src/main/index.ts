@@ -236,6 +236,14 @@ const CONTEXT_ROOM_CHANNELS = {
   list: 'context-rooms:list',
   create: 'context-rooms:create',
   syncSnapshot: 'context-rooms:sync-snapshot',
+  checkDuplicates: 'context-rooms:check-duplicates',
+  listDuplicateCandidates: 'context-rooms:list-duplicate-candidates',
+  updateDuplicateCandidate: 'context-rooms:update-duplicate-candidate',
+  previewMerge: 'context-rooms:preview-merge',
+  startMerge: 'context-rooms:start-merge',
+  getMergeOperation: 'context-rooms:get-merge-operation',
+  retryMerge: 'context-rooms:retry-merge',
+  cancelMerge: 'context-rooms:cancel-merge',
 } as const
 
 const AGENT_CHANNELS = {
@@ -1193,6 +1201,14 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
   handle(CONTEXT_ROOM_CHANNELS.create, (_event, input) => bridge.create(input))
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
+  handle(CONTEXT_ROOM_CHANNELS.checkDuplicates, (_event, input) => bridge.checkDuplicates(input))
+  handle(CONTEXT_ROOM_CHANNELS.listDuplicateCandidates, (_event, status) => bridge.listDuplicateCandidates(status))
+  handle(CONTEXT_ROOM_CHANNELS.updateDuplicateCandidate, (_event, id, status) => bridge.updateDuplicateCandidate(id, status))
+  handle(CONTEXT_ROOM_CHANNELS.previewMerge, (_event, sourceRoomId, targetRoomId) => bridge.previewMerge(sourceRoomId, targetRoomId))
+  handle(CONTEXT_ROOM_CHANNELS.startMerge, (_event, input) => bridge.startMerge(input))
+  handle(CONTEXT_ROOM_CHANNELS.getMergeOperation, (_event, id) => bridge.getMergeOperation(id))
+  handle(CONTEXT_ROOM_CHANNELS.retryMerge, (_event, id) => bridge.retryMerge(id))
+  handle(CONTEXT_ROOM_CHANNELS.cancelMerge, (_event, id) => bridge.cancelMerge(id))
 }
 
 function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
@@ -1321,7 +1337,7 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed') =>
     bridge.listEntities(status))
   handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
-  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string, options?: { forceNew?: boolean }) => bridge.promoteEntity(entityId, options))
   handle(KNOWLEDGE_CHANNELS.promoteEntities, (_event, entityIds: string[]) => bridge.promoteEntities(entityIds))
   handle(KNOWLEDGE_CHANNELS.suppressEntity, (_event, entityId: string) => bridge.suppressEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.suppressEntities, (_event, entityIds: string[]) => bridge.suppressEntities(entityIds))

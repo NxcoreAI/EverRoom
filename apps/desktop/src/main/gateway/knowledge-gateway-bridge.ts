@@ -119,8 +119,9 @@ export class KnowledgeGatewayBridge {
   }
 
   /** 手动转正：跳过阈值走晋升全流程（202 异步入队）。 */
-  promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }> {
-    return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/promote`, { method: 'POST' })
+  promoteEntity(entityId: string, options?: { forceNew?: boolean }): Promise<{ queued: boolean; jobId: string }> {
+    const query = options?.forceNew ? '?forceNew=true' : ''
+    return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/promote${query}`, { method: 'POST' })
   }
 
   promoteEntities(entityIds: string[]) {

@@ -13,7 +13,14 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
 
 import { KnowledgePendingPanel } from '../src/renderer/src/components/context-room/ported/components/KnowledgePendingPanel'
 
-function entity(id: string, evidenceScore: number) {
+function entity(id: string, evidenceScore: number, existingRoomMatch: {
+  roomId: string
+  roomTitle: string
+  entityId: string
+  confidence: 'high' | 'medium'
+  score: number
+  reasons: string[]
+} | null = null) {
   return {
     id,
     name: `推荐 ${id}`,
@@ -33,6 +40,7 @@ function entity(id: string, evidenceScore: number) {
     firstEvidence: '推荐依据',
     lastLinkedAt: null,
     updatedAt: '2026-08-20T00:00:00.000Z',
+    existingRoomMatch,
   }
 }
 
@@ -42,12 +50,14 @@ function installKnowledgeApi(items: ReturnType<typeof entity>[]) {
     items: [{ decisionId: 'recent-1', title: '最近归类资料', roomTitle: '已有 Room' }],
   })
   const clearInterval = vi.fn()
+  const mergeEntity = vi.fn().mockResolvedValue({ ok: true })
 
   vi.stubGlobal('window', {
     nxcore: {
       knowledge: {
         listEntities,
         listRecentDecisions,
+        mergeEntity,
       },
     },
     setInterval: vi.fn(() => 1),
@@ -57,7 +67,7 @@ function installKnowledgeApi(items: ReturnType<typeof entity>[]) {
     dispatchEvent: vi.fn(),
   })
 
-  return { clearInterval, listEntities, listRecentDecisions }
+  return { clearInterval, listEntities, listRecentDecisions, mergeEntity }
 }
 
 describe('Context Room recommendations', () => {
@@ -85,7 +95,13 @@ describe('Context Room recommendations', () => {
   })
 
   it('renders only ready recommendations as creation cards', async () => {
-    installKnowledgeApi([entity('room-a', 2), entity('room-b', 3)])
+    const lowerStrongRecommendation = entity('room-a', 2)
+    const higherStandardRecommendation = {
+      ...entity('room-b', 3),
+      strongSourceCount: 0,
+      readinessPath: 'standard' as const,
+    }
+    installKnowledgeApi([lowerStrongRecommendation, higherStandardRecommendation])
 
     await act(async () => {
       renderer = TestRenderer.create(<KnowledgePendingPanel />)
@@ -95,5 +111,52 @@ describe('Context Room recommendations', () => {
     expect(cards).toHaveLength(2)
     expect(cards[0].findByType('strong').children).toContain('推荐 room-b')
     expect(renderer!.root.findAllByProps({ className: 'context-room-knowledge-empty' })).toHaveLength(0)
+  })
+
+  it('shows only the three highest-scoring Room creation recommendations', async () => {
+    installKnowledgeApi([
+      entity('score-1', 1),
+      entity('score-5', 5),
+      entity('score-2', 2),
+      entity('score-4', 4),
+      entity('score-3', 3),
+    ])
+
+    await act(async () => {
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={() => {}} />)
+    })
+
+    const cards = renderer!.root.findAllByProps({ 'data-state': 'recommended' })
+    expect(cards).toHaveLength(3)
+    expect(cards.map((card) => card.findByType('strong').children[0])).toEqual([
+      '推荐 score-5',
+      '推荐 score-4',
+      '推荐 score-3',
+    ])
+    expect(renderer!.root.findAllByProps({ className: 'context-room-knowledge-showmore' })).toHaveLength(0)
+  })
+
+  it('requires an explicit reuse action for a high-confidence existing Room match', async () => {
+    const matched = entity('candidate', 3, {
+      roomId: 'room-existing',
+      roomTitle: '校园生活',
+      entityId: 'entity-existing',
+      confidence: 'high',
+      score: 1,
+      reasons: ['exact_name_or_alias'],
+    })
+    const api = installKnowledgeApi([matched])
+
+    await act(async () => {
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={() => {}} />)
+    })
+
+    expect(JSON.stringify(renderer!.toJSON())).toContain('加入已有 Room')
+    expect(renderer!.root.findAllByProps({ 'aria-label': '选择 推荐 candidate' })).toHaveLength(0)
+    const reuseButton = renderer!.root.findByProps({ 'aria-label': '加入已有 Room' })
+    await act(async () => {
+      reuseButton!.props.onClick()
+    })
+    expect(api.mergeEntity).toHaveBeenCalledWith('candidate', 'entity-existing')
   })
 })

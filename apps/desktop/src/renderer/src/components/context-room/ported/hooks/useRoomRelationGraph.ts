@@ -15,7 +15,7 @@ export function useRoomRelationGraph(
   const requestRef = useRef(0)
 
   const reload = useCallback(async () => {
-    const api = window.nxcore?.knowledge
+    const api = typeof window === 'undefined' ? undefined : window.nxcore?.knowledge
     if (!api?.getRoomGraph || !api.getRoomRelations) {
       setError('service_unavailable')
       setLoading(false)
@@ -41,12 +41,11 @@ export function useRoomRelationGraph(
   useEffect(() => {
     setLoading(true)
     void reload()
-    const interval = window.setInterval(() => void reload(), 5_000)
+    if (typeof window === 'undefined') return () => { requestRef.current += 1 }
     const onChanged = () => void reload()
     window.addEventListener('everroom:knowledge-changed', onChanged)
     return () => {
       requestRef.current += 1
-      window.clearInterval(interval)
       window.removeEventListener('everroom:knowledge-changed', onChanged)
     }
   }, [reload])

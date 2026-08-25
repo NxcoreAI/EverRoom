@@ -15,6 +15,7 @@ import {
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   agentSessions,
+  contextRooms,
   documents,
   pendingAgentIntents,
   roomDocumentLinks,
@@ -251,6 +252,29 @@ describe('Agent Room selection', () => {
       ],
     })
     expect(session.roomId).toBeNull()
+    sqlite.close()
+  })
+
+  it('resolves a merged Room id to the active target for new Agent runs', async () => {
+    const { db, rooms, runtime, service, sqlite } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [
+        { id: 'room-source', title: '旧 Room', data: { id: 'room-source', title: '旧 Room' } },
+        { id: 'room-target', title: '主 Room', data: { id: 'room-target', title: '主 Room' } },
+      ],
+      deletedRooms: [],
+    })
+    db.update(contextRooms).set({ lifecycle: 'merged', mergedIntoRoomId: 'room-target' })
+      .where(eq(contextRooms.id, 'room-source')).run()
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '继续整理',
+      idempotencyKey: 'merged-room-run',
+      context: { selectedRoomId: 'room-source' },
+    })
+
+    expect(runtime.starts[0]?.roomId).toBe('room-target')
     sqlite.close()
   })
 

@@ -5,6 +5,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
   CreateContextRoomInput,
+  RoomDuplicateCheckInput,
+  RoomDuplicateCandidateStatus,
   SaveContextRoomSnapshotInput,
 } from '@nxcore/agent-contract'
 import type {
@@ -262,6 +264,17 @@ const api: NxcoreDesktopApi = {
     create: (input: CreateContextRoomInput) => invokeQuietly('context-rooms:create', input),
     syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
       invokeQuietly('context-rooms:sync-snapshot', input),
+    checkDuplicates: (input: RoomDuplicateCheckInput) => invokeQuietly('context-rooms:check-duplicates', input),
+    listDuplicateCandidates: (status?: RoomDuplicateCandidateStatus) =>
+      invokeQuietly('context-rooms:list-duplicate-candidates', status),
+    updateDuplicateCandidate: (id: string, status: 'related' | 'distinct') =>
+      invokeQuietly('context-rooms:update-duplicate-candidate', id, status),
+    previewMerge: (sourceRoomId: string, targetRoomId: string) =>
+      invokeQuietly('context-rooms:preview-merge', sourceRoomId, targetRoomId),
+    startMerge: (input) => invokeQuietly('context-rooms:start-merge', input),
+    getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
+    retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
+    cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
@@ -499,7 +512,7 @@ const api: NxcoreDesktopApi = {
     getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),
   listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
     getEntity: (entityId: string) => invoke('knowledge:entities:get', entityId),
-  promoteEntity: (entityId: string) => invoke('knowledge:entities:promote', entityId),
+  promoteEntity: (entityId: string, options?: { forceNew?: boolean }) => invoke('knowledge:entities:promote', entityId, options),
     promoteEntities: (entityIds: string[]) => invoke('knowledge:entities:promote-batch', entityIds),
     suppressEntity: (entityId: string) => invoke('knowledge:entities:suppress', entityId),
     suppressEntities: (entityIds: string[]) => invoke('knowledge:entities:suppress-batch', entityIds),

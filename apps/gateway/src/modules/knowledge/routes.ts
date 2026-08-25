@@ -209,6 +209,17 @@ const EntityDto = Type.Object({
   firstEvidence: Type.Union([Type.String(), Type.Null()]),
   lastLinkedAt: Type.Union([Type.String(), Type.Null()]),
   updatedAt: Type.String(),
+  existingRoomMatch: Type.Union([
+    Type.Object({
+      roomId: Type.String(),
+      roomTitle: Type.String(),
+      entityId: Type.String(),
+      confidence: Type.Union([Type.Literal("high"), Type.Literal("medium")]),
+      score: Type.Number(),
+      reasons: Type.Array(Type.String()),
+    }),
+    Type.Null(),
+  ]),
   promotion: Type.Union([
     Type.Object({
       jobId: Type.String(),
@@ -235,6 +246,10 @@ const EntityStatusQuery = Type.Object({
     Type.Literal("archived"),
     Type.Literal("suppressed"),
   ])),
+});
+
+const PromoteEntityQuery = Type.Object({
+  forceNew: Type.Optional(Type.Boolean()),
 });
 
 const EntityIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
@@ -903,6 +918,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         schema: {
           tags: ["knowledge"],
           params: EntityIdParams,
+          querystring: PromoteEntityQuery,
           response: {
             202: Type.Object({ queued: Type.Boolean(), jobId: Type.String() }),
             400: Type.Object({ error: Type.String() }),
@@ -911,7 +927,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         },
       },
       async (request, reply) => {
-        const result = service.promoteEntity(request.params.id);
+        const result = service.promoteEntity(request.params.id, { forceNew: request.query.forceNew === true });
         if (!result.ok) {
           const status = result.error === "entity_not_found" ? 404 : 400;
           return reply.code(status).send(errorOf(result.error));

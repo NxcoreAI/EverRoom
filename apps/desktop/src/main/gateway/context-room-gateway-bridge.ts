@@ -2,6 +2,12 @@ import type {
   ContextRoomSnapshot,
   CreateContextRoomInput,
   CreateContextRoomResult,
+  RoomDuplicateCandidate,
+  RoomDuplicateCandidateStatus,
+  RoomDuplicateCheckInput,
+  RoomDuplicateCheckResult,
+  RoomMergeOperation,
+  RoomMergePreview,
   SaveContextRoomSnapshotInput,
 } from '@nxcore/agent-contract'
 
@@ -26,6 +32,43 @@ export class ContextRoomGatewayBridge {
       method: 'PUT',
       body: JSON.stringify(input),
     })
+  }
+
+  checkDuplicates(input: RoomDuplicateCheckInput): Promise<RoomDuplicateCheckResult> {
+    return this.request('/v1/context-rooms/duplicate-check', { method: 'POST', body: JSON.stringify(input) })
+  }
+
+  listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }> {
+    const query = status ? `?status=${encodeURIComponent(status)}` : ''
+    return this.request(`/v1/context-rooms/duplicate-candidates${query}`)
+  }
+
+  updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate> {
+    return this.request(`/v1/context-rooms/duplicate-candidates/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify({ status }),
+    })
+  }
+
+  previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview> {
+    return this.request('/v1/context-rooms/merge-preview', {
+      method: 'POST', body: JSON.stringify({ sourceRoomId, targetRoomId }),
+    })
+  }
+
+  startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string }): Promise<RoomMergeOperation> {
+    return this.request('/v1/context-rooms/merge-operations', { method: 'POST', body: JSON.stringify(input) })
+  }
+
+  getMergeOperation(id: string): Promise<RoomMergeOperation> {
+    return this.request(`/v1/context-rooms/merge-operations/${encodeURIComponent(id)}`)
+  }
+
+  retryMerge(id: string): Promise<RoomMergeOperation> {
+    return this.request(`/v1/context-rooms/merge-operations/${encodeURIComponent(id)}/retry`, { method: 'POST' })
+  }
+
+  cancelMerge(id: string): Promise<RoomMergeOperation> {
+    return this.request(`/v1/context-rooms/merge-operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

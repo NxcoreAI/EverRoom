@@ -173,7 +173,8 @@ export class RoomRelationRegistry {
       .orderBy(desc(roomSourceMemberships.sourceVersion))
       .get();
     if (current && current.sourceVersion > input.sourceVersion) return false;
-    const activeRoomIds = new Set(this.db.select({ id: rooms.id }).from(rooms).where(isNull(rooms.deletedAt)).all().map((room) => room.id));
+    const activeRoomIds = new Set(this.db.select({ id: rooms.id }).from(rooms)
+      .where(and(isNull(rooms.deletedAt), eq(rooms.lifecycle, "active"))).all().map((room) => room.id));
     const roomIds = [...new Set(input.roomIds)].filter((roomId) => activeRoomIds.has(roomId));
     const now = new Date();
     this.db.transaction((tx) => {
@@ -242,7 +243,8 @@ export class RoomRelationRegistry {
 
   /** Backfill durable projections without importing the old heuristic graph. */
   rebuildFromFacts(): { memberships: number; mentions: number; pendingDocuments: number } {
-    const activeRooms = new Set(this.db.select({ id: rooms.id }).from(rooms).where(isNull(rooms.deletedAt)).all().map((room) => room.id));
+    const activeRooms = new Set(this.db.select({ id: rooms.id }).from(rooms)
+      .where(and(isNull(rooms.deletedAt), eq(rooms.lifecycle, "active"))).all().map((room) => room.id));
     const documentRows = this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
       .from(roomDocumentLinks)
       .innerJoin(documents, eq(documents.id, roomDocumentLinks.documentId))
@@ -402,7 +404,8 @@ export class RoomRelationRegistry {
   }
 
   recomputeAll(): number {
-    const roomRows = this.db.select().from(rooms).where(isNull(rooms.deletedAt)).all();
+    const roomRows = this.db.select().from(rooms)
+      .where(and(isNull(rooms.deletedAt), eq(rooms.lifecycle, "active"))).all();
     const activeIds = new Set(roomRows.map((room) => room.id));
     const homeRoomByEntity = new Map(roomRows.flatMap((room) => room.entityId ? [[room.entityId, room.id] as const] : []));
     const accumulators = new Map<string, RelationAccumulator>();
@@ -567,7 +570,8 @@ export class RoomRelationRegistry {
   }
 
   graph(visibility: RoomRelationVisibility = "active"): RoomGraphDto {
-    const roomRows = this.db.select().from(rooms).where(isNull(rooms.deletedAt)).all();
+    const roomRows = this.db.select().from(rooms)
+      .where(and(isNull(rooms.deletedAt), eq(rooms.lifecycle, "active"))).all();
     const roomIds = new Set(roomRows.map((room) => room.id));
     const pendingSources = this.db.select({ id: jobs.id }).from(jobs)
       .where(and(eq(jobs.type, ROOM_RELATION_INDEX_JOB_TYPE), inArray(jobs.status, ["pending", "running"]))).all().length;
@@ -613,7 +617,11 @@ export class RoomRelationRegistry {
   }): RoomRelationDto | null {
     if (input.fromRoomId === input.toRoomId) return null;
     const found = this.db.select({ id: rooms.id }).from(rooms)
-      .where(and(inArray(rooms.id, [input.fromRoomId, input.toRoomId]), isNull(rooms.deletedAt))).all();
+      .where(and(
+        inArray(rooms.id, [input.fromRoomId, input.toRoomId]),
+        isNull(rooms.deletedAt),
+        eq(rooms.lifecycle, "active"),
+      )).all();
     if (found.length !== 2) return null;
     const [roomAId, roomBId] = canonicalPair(input.fromRoomId, input.toRoomId);
     const id = relationId(roomAId, roomBId);

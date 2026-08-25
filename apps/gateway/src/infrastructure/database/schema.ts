@@ -499,6 +499,9 @@ export const contextRooms = sqliteTable(
     kind: text("kind"),
     data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     position: integer("position").notNull().default(0),
+    lifecycle: text("lifecycle", { enum: ["active", "merging", "merged"] }).notNull().default("active"),
+    mergedIntoRoomId: text("merged_into_room_id"),
+    mergedAt: integer("merged_at", { mode: "timestamp_ms" }),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -521,6 +524,8 @@ export const agentRuns = sqliteTable(
       .notNull()
       .references(() => agentSessions.id, { onDelete: "cascade" }),
     idempotencyKey: text("idempotency_key").notNull(),
+    /** Persisted per-run Room attribution. Sessions may span multiple Rooms. */
+    roomId: text("room_id"),
     status: text("status", {
       enum: ["accepted", "running", "completed", "failed", "cancelled", "interrupted"],
     })
@@ -885,6 +890,9 @@ export const rooms = sqliteTable("rooms", {
   aliases: text("aliases", { mode: "json" }).$type<string[]>(),
   /** Room 的户口实体（ED4：现有 Room 一律种子化为已晋升实体；渲染器上报时同步维护）。 */
   entityId: text("entity_id"),
+  lifecycle: text("lifecycle", { enum: ["active", "merging", "merged"] }).notNull().default("active"),
+  mergedIntoRoomId: text("merged_into_room_id"),
+  mergedAt: integer("merged_at", { mode: "timestamp_ms" }),
   /** 软删除（null = 存活）：候选池/auto 同步/wiki 挂载全部过滤。 */
   deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -894,6 +902,103 @@ export const rooms = sqliteTable("rooms", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/** Durable Room-pair duplicate assessment. Formal Rooms are never auto-merged. */
+export const roomDuplicateCandidates = sqliteTable(
+  "room_duplicate_candidates",
+  {
+    id: text("id").primaryKey(),
+    roomAId: text("room_a_id").notNull(),
+    roomBId: text("room_b_id").notNull(),
+    nameScore: real("name_score").notNull().default(0),
+    centroidScore: real("centroid_score").notNull().default(0),
+    contentOverlap: real("content_overlap").notNull().default(0),
+    entityOverlap: real("entity_overlap").notNull().default(0),
+    duplicateScore: real("duplicate_score").notNull().default(0),
+    confidence: text("confidence", { enum: ["high", "medium", "related", "distinct", "pending"] }).notNull(),
+    llmVerdict: text("llm_verdict", { enum: ["same", "different", "unavailable"] }),
+    reasons: text("reasons", { mode: "json" }).$type<string[]>().notNull(),
+    status: text("status", { enum: ["open", "related", "distinct", "merged"] }).notNull().default("open"),
+    evidenceRevision: text("evidence_revision").notNull(),
+    scoringVersion: integer("scoring_version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_duplicate_candidates_pair_idx").on(table.roomAId, table.roomBId),
+    index("room_duplicate_candidates_status_idx").on(table.status, table.confidence),
+    index("room_duplicate_candidates_room_a_idx").on(table.roomAId),
+    index("room_duplicate_candidates_room_b_idx").on(table.roomBId),
+  ],
+);
+
+/** User-confirmed, irreversible Room merge orchestration state. */
+export const roomMergeOperations = sqliteTable(
+  "room_merge_operations",
+  {
+    id: text("id").primaryKey(),
+    sourceRoomId: text("source_room_id").notNull(),
+    targetRoomId: text("target_room_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    status: text("status", { enum: ["queued", "running", "completed", "failed", "cancelled"] }).notNull().default("queued"),
+    stage: text("stage").notNull().default("queued"),
+    progress: integer("progress").notNull().default(0),
+    commitReached: integer("commit_reached", { mode: "boolean" }).notNull().default(false),
+    impact: text("impact", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    error: text("error"),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_merge_operations_idempotency_idx").on(table.idempotencyKey),
+    index("room_merge_operations_rooms_idx").on(table.sourceRoomId, table.targetRoomId),
+    index("room_merge_operations_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+/** Execution journal used for crash recovery before the irreversible commit point. */
+export const roomMergeItems = sqliteTable(
+  "room_merge_items",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull().references(() => roomMergeOperations.id, { onDelete: "cascade" }),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull(),
+    beforeRoomId: text("before_room_id"),
+    afterRoomId: text("after_room_id"),
+    beforeValue: text("before_value", { mode: "json" }).$type<Record<string, unknown>>(),
+    fingerprint: text("fingerprint"),
+    status: text("status", { enum: ["pending", "moved", "folded", "skipped"] }).notNull().default("pending"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_merge_items_operation_resource_idx").on(table.operationId, table.resourceType, table.resourceId),
+    index("room_merge_items_operation_idx").on(table.operationId, table.status),
+  ],
+);
+
+/** Gateway-owned provenance for memories that can be attributed to one Room. */
+export const roomMemoryAttributions = sqliteTable(
+  "room_memory_attributions",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    memoryId: text("memory_id").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceId: text("source_id"),
+    confidence: text("confidence", { enum: ["explicit", "derived"] }).notNull().default("explicit"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_memory_attributions_memory_idx").on(table.memoryId),
+    index("room_memory_attributions_room_idx").on(table.roomId),
+  ],
+);
 
 /**
  * 实体注册表（entity-room-plan §3.1）：弱 Room 的本体，也是 Room 的"户口"。

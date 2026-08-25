@@ -1,9 +1,10 @@
 import {
-  forceCenter,
   forceCollide,
   forceLink,
   forceManyBody,
   forceSimulation,
+  forceX,
+  forceY,
   type Simulation,
   type SimulationLinkDatum,
   type SimulationNodeDatum,
@@ -19,6 +20,49 @@ interface SimulationNode extends SimulationNodeDatum {
 interface SimulationEdge extends SimulationLinkDatum<SimulationNode> {
   source: string | SimulationNode
   target: string | SimulationNode
+}
+
+function nodeBounds(node: SimulationNode, width: number, height: number, padding: number) {
+  const xMargin = Math.min(node.radius + padding, width / 2)
+  const yMargin = Math.min(node.radius + padding, height / 2)
+  return {
+    maxX: width - xMargin,
+    maxY: height - yMargin,
+    minX: xMargin,
+    minY: yMargin,
+  }
+}
+
+function createBoundsForce(
+  getWidth: () => number,
+  getHeight: () => number,
+  padding: number,
+) {
+  let simulationNodes: SimulationNode[] = []
+  const force = () => {
+    const width = getWidth()
+    const height = getHeight()
+    for (const node of simulationNodes) {
+      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue
+      const { maxX, maxY, minX, minY } = nodeBounds(node, width, height, padding)
+      const projectedX = node.x! + (node.vx ?? 0)
+      const projectedY = node.y! + (node.vy ?? 0)
+      if (projectedX < minX) {
+        node.vx = minX - node.x!
+      } else if (projectedX > maxX) {
+        node.vx = maxX - node.x!
+      }
+      if (projectedY < minY) {
+        node.vy = minY - node.y!
+      } else if (projectedY > maxY) {
+        node.vy = maxY - node.y!
+      }
+    }
+  }
+  force.initialize = (nodes: SimulationNode[]) => {
+    simulationNodes = nodes
+  }
+  return force
 }
 
 export interface ForceGraphSimulation {
@@ -74,7 +118,9 @@ export function createForceGraphSimulation({
   let height = options.height
   let simulation: Simulation<SimulationNode, SimulationEdge>
 
-  const center = forceCenter<SimulationNode>(width / 2, height / 2)
+  const centerX = forceX<SimulationNode>(width / 2)
+    .strength(options.centerStrength)
+  const centerY = forceY<SimulationNode>(height / 2)
     .strength(options.centerStrength)
   const links = forceLink<SimulationNode, SimulationEdge>(simulationEdges)
     .id((node) => node.id)
@@ -89,7 +135,9 @@ export function createForceGraphSimulation({
       .strength(options.collisionStrength)
       .iterations(2))
     .force('link', links)
-    .force('center', center)
+    .force('center-x', centerX)
+    .force('center-y', centerY)
+    .force('bounds', createBoundsForce(() => width, () => height, options.collisionPadding))
     .on('tick', () => publish(simulationNodes))
     .on('end', settled)
 
@@ -99,27 +147,39 @@ export function createForceGraphSimulation({
     drag(id, x, y) {
       const node = nodeById.get(id)
       if (!node || !Number.isFinite(x) || !Number.isFinite(y)) return
-      node.fx = x
-      node.fy = y
-      node.x = x
-      node.y = y
-      simulation.alphaTarget(0.3).restart()
+      const { maxX, maxY, minX, minY } = nodeBounds(
+        node,
+        width,
+        height,
+        options.collisionPadding,
+      )
+      const boundedX = Math.min(maxX, Math.max(minX, x))
+      const boundedY = Math.min(maxY, Math.max(minY, y))
+      node.fx = boundedX
+      node.fy = boundedY
+      node.x = boundedX
+      node.y = boundedY
+      simulation.alphaTarget(0.08).restart()
     },
     release(id) {
       const node = nodeById.get(id)
       if (!node) return
       node.fx = null
       node.fy = null
-      simulation.alphaTarget(0).alpha(Math.max(simulation.alpha(), 0.3)).restart()
+      simulation.alphaTarget(0).alpha(Math.max(simulation.alpha(), 0.12)).restart()
     },
     reheat(alpha = 0.5) {
       simulation.alpha(Math.max(0, Math.min(1, alpha))).restart()
     },
     resize(nextWidth, nextHeight) {
-      width = Math.max(1, nextWidth)
-      height = Math.max(1, nextHeight)
-      center.x(width / 2).y(height / 2)
-      simulation.alpha(0.35).restart()
+      const resizedWidth = Math.max(1, nextWidth)
+      const resizedHeight = Math.max(1, nextHeight)
+      if (resizedWidth === width && resizedHeight === height) return
+      width = resizedWidth
+      height = resizedHeight
+      centerX.x(width / 2)
+      centerY.y(height / 2)
+      simulation.alpha(Math.max(simulation.alpha(), 0.08)).restart()
     },
     step(iterations = 1) {
       simulation.stop().tick(Math.max(1, iterations))

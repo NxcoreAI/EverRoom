@@ -11,6 +11,7 @@ import {
   ingestEvents,
   jobs,
   roomDocumentLinks,
+  roomEntityMentions,
   roomWikis,
   routeDecisions,
   routingRules,
@@ -19,7 +20,7 @@ import {
 } from "../../infrastructure/database/schema.js";
 import { FilesService } from "../files/service.js";
 import { fileIdOf } from "../files/storage.js";
-import { EmbeddingClient } from "./embedding.js";
+import { cosineSimilarity, decodeCentroid, EmbeddingClient } from "./embedding.js";
 import {
   EntityRegistry,
   type EntityLinkRow,
@@ -162,7 +163,18 @@ interface PromoteJobPayload {
   entityId: string;
   /** 手动转正（REST）：审计用，执行路径与自动晋升一致。 */
   manual?: boolean;
+  /** 用户已在中置信重复提示中明确选择继续新建。 */
+  forceNew?: boolean;
   previousStatus?: "weak" | "ready";
+}
+
+export interface ExistingRoomMatch {
+  roomId: string;
+  roomTitle: string;
+  entityId: string;
+  confidence: "high" | "medium";
+  score: number;
+  reasons: string[];
 }
 
 interface RelationIndexJobPayload {
@@ -412,6 +424,7 @@ export class KnowledgeService {
   private drainRequested = false;
   private promotionDraining = false;
   private promotionDrainRequested = false;
+  private roomDuplicateIndexTrigger: (() => void) | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -459,6 +472,10 @@ export class KnowledgeService {
   /** runtime config 变更后替换消歧 tie-break 的 embedding 端点（null = 关闭）。 */
   replaceEmbedding(embedding: { client: EmbeddingClient; model: string } | null): void {
     this.router.replaceEmbedding(embedding);
+  }
+
+  setRoomDuplicateIndexTrigger(trigger: () => void): void {
+    this.roomDuplicateIndexTrigger = trigger;
   }
 
   /** supervisor 生命周期钩子：崩溃恢复清扫 + 启动 worker 轮询。 */
@@ -549,7 +566,21 @@ export class KnowledgeService {
 
   /** Room 当前 wiki 解析（会话级挂载用，plan §6.1）。 */
   resolveRoomWikiId(roomId: string): string | null {
-    return this.registry.resolveRoomWikiId(roomId);
+    return this.registry.resolveRoomWikiId(this.canonicalRoomId(roomId));
+  }
+
+  private canonicalRoomId(roomId: string): string {
+    let current = roomId.trim();
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const row = this.db.select({ lifecycle: rooms.lifecycle, mergedIntoRoomId: rooms.mergedIntoRoomId })
+        .from(rooms).where(eq(rooms.id, current)).get();
+      if (!row || row.lifecycle === "active") return current;
+      if (row.lifecycle !== "merged" || !row.mergedIntoRoomId) return current;
+      current = row.mergedIntoRoomId;
+    }
+    return roomId.trim();
   }
 
   /** 路由开关透出（REST 层据此决定外部信封入口是否可用）。 */
@@ -575,6 +606,59 @@ export class KnowledgeService {
     return this.registry.listRoomWikis();
   }
 
+  /** Room duplicate service reuses the existing identity judge; it never auto-merges Rooms. */
+  async judgeRoomIdentity(
+    a: { name: string; aliases: string[]; kind: string; evidenceSamples: string[] },
+    b: { name: string; aliases: string[]; kind: string; evidenceSamples: string[] },
+  ): Promise<{ same: boolean; reason: string }> {
+    if (!this.llm) throw new Error("knowledge_identity_judge_unavailable");
+    return this.llm.judgeEntityIdentity(a, b);
+  }
+
+  /** Page count is used only by the user-facing merge impact preview. */
+  async roomWikiFileCount(roomId: string): Promise<number> {
+    const pages = await this.listRoomWikiPages(roomId);
+    return pages.pageCount ?? pages.items.length;
+  }
+
+  /**
+   * Finalize the Knowledge projection after the local ownership transaction.
+   * The source wiki is retired and every target document is queued for a fresh,
+   * authoritative target-wiki ingest. No reverse snapshot is retained.
+   */
+  async mergeRoomKnowledge(sourceRoomId: string, targetRoomId: string): Promise<void> {
+    const source = this.db.select().from(rooms).where(eq(rooms.id, sourceRoomId)).get();
+    const target = this.db.select().from(rooms).where(eq(rooms.id, targetRoomId)).get();
+    if (source?.entityId && target?.entityId && source.entityId !== target.entityId) {
+      this.entityRegistry.mergeEntities({
+        intoId: target.entityId,
+        fromId: source.entityId,
+        reason: "user_confirmed_room_merge",
+      });
+      this.relationRegistry.rewriteEntity(source.entityId, target.entityId);
+    } else if (source?.entityId && target && !target.entityId) {
+      this.db.update(rooms).set({ entityId: source.entityId, updatedAt: new Date() })
+        .where(eq(rooms.id, targetRoomId)).run();
+      this.db.update(entitiesTable).set({ roomId: targetRoomId, updatedAt: new Date() })
+        .where(eq(entitiesTable.id, source.entityId)).run();
+    }
+
+    this.db.update(roomWikis).set({ status: "archived" })
+      .where(eq(roomWikis.roomId, sourceRoomId)).run();
+    if (this.config.roomWikisEnabled) {
+      const documentIds = this.db.select({ id: roomDocumentLinks.documentId }).from(roomDocumentLinks)
+        .where(eq(roomDocumentLinks.roomId, targetRoomId)).all().map((item) => item.id);
+      for (const documentId of documentIds) this.routeDocumentNow(documentId);
+    }
+    this.relationRegistry.rebuildFromFacts();
+    this.roomContextCache.delete(sourceRoomId);
+    this.roomContextCache.delete(targetRoomId);
+  }
+
+  rebuildRoomRelations(): void {
+    this.relationRegistry.rebuildFromFacts();
+  }
+
   // ───────────────────────── Wiki 页面读取（渲染器 Wiki Tab 数据源） ─────────────────────────
 
   /**
@@ -582,7 +666,7 @@ export class KnowledgeService {
    * Room 尚无 wiki（懒创建未触发）返回 status="none"，Tab 显示"尚无沉淀"。
    */
   async listRoomWikiPages(roomId: string): Promise<{ status: string; items: KsWikiPageItem[]; pageCount: number | null }> {
-    const knowledgeId = this.registry.resolveRoomWikiId(roomId);
+    const knowledgeId = this.resolveRoomWikiId(roomId);
     if (!knowledgeId) return { status: "none", items: [], pageCount: null };
     const wiki = await this.ks.getWiki(knowledgeId);
     if (!wiki) return { status: "none", items: [], pageCount: null };
@@ -593,7 +677,7 @@ export class KnowledgeService {
 
   /** 读单页 Markdown 全文（ref = page/ls 的 path）；无 wiki 或页面缺失返回 null。 */
   async readRoomWikiPage(roomId: string, ref: string): Promise<string | null> {
-    const knowledgeId = this.registry.resolveRoomWikiId(roomId);
+    const knowledgeId = this.resolveRoomWikiId(roomId);
     if (!knowledgeId) return null;
     const item = await this.ks.readPage(knowledgeId, ref);
     if (!item || item.not_found) return null;
@@ -608,7 +692,7 @@ export class KnowledgeService {
     nodes: Array<{ id: string; title: string; path: string; inLinks: number }>;
     edges: Array<{ source: string; target: string }>;
   }> {
-    const knowledgeId = this.registry.resolveRoomWikiId(roomId);
+    const knowledgeId = this.resolveRoomWikiId(roomId);
     if (!knowledgeId) return { nodes: [], edges: [] };
     try {
       const wiki = await this.ks.getWiki(knowledgeId);
@@ -652,6 +736,7 @@ export class KnowledgeService {
     confidence: number | null;
     uploadedAt: Date;
   }> {
+    roomId = this.canonicalRoomId(roomId);
     const decisions = this.db.select().from(routeDecisions)
       .where(and(eq(routeDecisions.sourceKind, "file"), eq(routeDecisions.primaryRoomId, roomId)))
       .orderBy(desc(routeDecisions.createdAt))
@@ -1117,11 +1202,11 @@ export class KnowledgeService {
     const candidates = this.db.select().from(jobs)
       .where(and(
         eq(jobs.status, "pending"),
-        inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE]),
+        inArray(jobs.type, [INGEST_JOB_TYPE, ROUTE_JOB_TYPE, CLEANUP_JOB_TYPE, ROOM_RELATION_INDEX_JOB_TYPE]),
       ))
       // Room 的资料沉淀和清理先于连接器批量路由，缩短新 Room 可用时间。
       .orderBy(
-        sql`case when ${jobs.type} = ${INGEST_JOB_TYPE} then 0 when ${jobs.type} = ${CLEANUP_JOB_TYPE} then 1 else 2 end`,
+        sql`case when ${jobs.type} = ${INGEST_JOB_TYPE} then 0 when ${jobs.type} = ${CLEANUP_JOB_TYPE} then 1 when ${jobs.type} = ${ROOM_RELATION_INDEX_JOB_TYPE} then 2 else 3 end`,
         asc(jobs.createdAt),
       )
       .limit(100)
@@ -1232,6 +1317,7 @@ export class KnowledgeService {
       }).where(eq(jobs.id, job.id)).run();
       this.retryAfter.delete(job.id);
       this.transientAttempts.delete(job.id);
+      this.roomDuplicateIndexTrigger?.();
     } catch (error) {
       if (error instanceof KsBusyError) {
         // 409 busy：回 pending 退避重试（per-wiki 串行约束的来源）。
@@ -1496,7 +1582,9 @@ export class KnowledgeService {
     if (!this.entityRegistry.claimForPromotion(entity.id)) return; // 并行晋升在处理：静默退出
 
     // 步骤 2：同名扫描——撞已晋升实体（Dice ≥ judge 线）→ LLM 同一性判定
-    const collision = await this.scanPromotedCollision(entity);
+    const collision = payload.forceNew
+      ? { outcome: "promote" as const, target: null, reason: "用户确认保留为独立 Room" }
+      : await this.scanPromotedCollision(entity);
     if (collision.outcome === "hold") {
       // 判定失败：保留 promoting 与任务进度，交给 worker 退避重试。
       throw new Error(`promotion identity judge failed for entity ${entity.id}`);
@@ -1957,6 +2045,68 @@ export class KnowledgeService {
 
   // ───────────────────────── 候选实体与未识别栏（entity-room-plan §4.7/§7） ─────────────────────────
 
+  private existingRoomMatch(entity: EntityRow): ExistingRoomMatch | null {
+    if (entity.status === "room" || entity.status === "archived" || entity.roomId) return null;
+    const sourceGroups = new Set(this.entityRegistry.linksOfEntity(entity.id)
+      .filter((link) => link.trusted && (link.qualityLevel === "normal" || link.qualityLevel === "high"))
+      .map((link) => link.evidenceGroupKey));
+    const activeRooms = new Map(this.db.select().from(rooms)
+      .where(and(isNull(rooms.deletedAt), eq(rooms.lifecycle, "active"))).all()
+      .map((room) => [room.id, room]));
+    const trustedMentions = this.db.select().from(roomEntityMentions).all()
+      .filter((mention) => mention.trusted && (mention.qualityLevel === "normal" || mention.qualityLevel === "high"));
+    const sourceEntityIds = new Set(trustedMentions
+      .filter((mention) => sourceGroups.has(mention.evidenceGroupKey))
+      .map((mention) => mention.entityId));
+
+    let best: ExistingRoomMatch | null = null;
+    for (const target of this.entityRegistry.listEntities("room")) {
+      if (!target.roomId) continue;
+      const room = activeRooms.get(target.roomId);
+      if (!room) continue;
+
+      let nameScore = 0;
+      for (const name of [entity.name, ...entity.aliases]) {
+        nameScore = Math.max(nameScore, bestMatch(name, [target.name, ...target.aliases])?.score ?? 0);
+      }
+      const centroidScore = entity.centroid && target.centroid && entity.centroidModel === target.centroidModel
+        ? Math.max(0, cosineSimilarity(decodeCentroid(entity.centroid), decodeCentroid(target.centroid)))
+        : 0;
+      const targetGroups = new Set(this.entityRegistry.linksOfEntity(target.id)
+        .filter((link) => link.trusted && (link.qualityLevel === "normal" || link.qualityLevel === "high"))
+        .map((link) => link.evidenceGroupKey));
+      const overlapBase = Math.min(sourceGroups.size, targetGroups.size);
+      const contentOverlap = overlapBase > 0
+        ? [...sourceGroups].filter((group) => targetGroups.has(group)).length / overlapBase
+        : 0;
+      const targetEntityIds = new Set(trustedMentions
+        .filter((mention) => mention.roomId === room.id)
+        .map((mention) => mention.entityId));
+      let entityIntersection = 0;
+      for (const entityId of sourceEntityIds) if (targetEntityIds.has(entityId)) entityIntersection += 1;
+      const entityUnion = sourceEntityIds.size + targetEntityIds.size - entityIntersection;
+      const entityOverlap = entityUnion > 0 ? entityIntersection / entityUnion : 0;
+      const score = Math.round((nameScore * 0.3 + centroidScore * 0.3 + contentOverlap * 0.25 + entityOverlap * 0.15) * 10_000) / 10_000;
+      const sameKind = entity.kind === target.kind;
+      const exactName = nameScore === 1;
+      const confidence = sameKind && (exactName || (score >= 0.82 && (contentOverlap >= 0.5 || entityOverlap >= 0.35)))
+        ? "high"
+        : sameKind && score >= 0.68 ? "medium" : null;
+      if (!confidence) continue;
+      const reasons = [
+        ...(exactName ? ["exact_name_or_alias"] : nameScore >= 0.6 ? ["similar_name_or_alias"] : []),
+        ...(centroidScore >= 0.82 ? ["similar_centroid"] : []),
+        ...(contentOverlap >= 0.35 ? ["shared_evidence"] : []),
+        ...(entityOverlap >= 0.4 ? ["shared_entities"] : []),
+      ];
+      const match = { roomId: room.id, roomTitle: room.title, entityId: target.id, confidence, score, reasons } satisfies ExistingRoomMatch;
+      if (!best || confidence === "high" && best.confidence !== "high" || confidence === best.confidence && score > best.score) {
+        best = match;
+      }
+    }
+    return best;
+  }
+
   /** 候选实体列表（默认 weak；ready = 推荐池，首页"推荐 Room"数据源）。 */
   listCandidateEntities(status: "weak" | "ready" | "promoting" | "room" | "archived" | "suppressed" = "weak"): Array<{
     id: string;
@@ -1978,6 +2128,7 @@ export class KnowledgeService {
     lastLinkedAt: Date | null;
     updatedAt: Date;
     promotion: PromotionProgress | null;
+    existingRoomMatch: ExistingRoomMatch | null;
   }> {
     return this.entityRegistry.listEntities(status)
       .slice(0, LIST_PAGE_SIZE)
@@ -2007,6 +2158,7 @@ export class KnowledgeService {
         lastLinkedAt: entity.lastLinkedAt,
         updatedAt: entity.updatedAt,
         promotion: this.promotionProgress(entity.id),
+        existingRoomMatch: this.existingRoomMatch(entity),
       };
       });
   }
@@ -2197,7 +2349,7 @@ export class KnowledgeService {
    * 晋升流程（含同名扫描与 LLM 转正登记）。用户出手即是明确信号——
    * 不设阈值门槛（ED8 修订：建 Room 收回用户确认权）。
    */
-  promoteEntity(entityId: string): { ok: true; queued: boolean; jobId: string } | { ok: false; error: string } {
+  promoteEntity(entityId: string, options?: { forceNew?: boolean }): { ok: true; queued: boolean; jobId: string } | { ok: false; error: string } {
     const entity = this.entityRegistry.getEntity(entityId);
     if (!entity) return { ok: false, error: "entity_not_found" };
     const active = this.activePromotionJob(entityId);
@@ -2205,9 +2357,16 @@ export class KnowledgeService {
     if (entity.status !== "weak" && entity.status !== "ready") {
       return { ok: false, error: "entity_not_promotable" };
     }
+    const existingRoomMatch = this.existingRoomMatch(entity);
+    if (existingRoomMatch?.confidence === "high") {
+      return { ok: false, error: "existing_room_match_high_confidence" };
+    }
+    if (existingRoomMatch && !options?.forceNew) {
+      return { ok: false, error: "existing_room_review_required" };
+    }
     const jobId = this.insertJob(
       PROMOTE_JOB_TYPE,
-      { entityId, manual: true, previousStatus: entity.status },
+      { entityId, manual: true, forceNew: options?.forceNew === true, previousStatus: entity.status },
       { stage: "queued", message: "已加入 Room 创建队列", current: 0, total: 5 },
     );
     this.entityRegistry.claimForPromotion(entityId);
@@ -2229,6 +2388,9 @@ export class KnowledgeService {
       if (!entity) return { entityId, status: "rejected" as const, jobId: null, error: "entity_not_found" };
       if (entity.status !== "ready") {
         return { entityId, status: "rejected" as const, jobId: null, error: "recommendation_below_threshold" };
+      }
+      if (this.existingRoomMatch(entity)) {
+        return { entityId, status: "rejected" as const, jobId: null, error: "existing_room_review_required" };
       }
       const promoted = this.promoteEntity(entityId);
       if (!promoted.ok) return { entityId, status: "rejected" as const, jobId: null, error: promoted.error };
@@ -2268,16 +2430,21 @@ export class KnowledgeService {
     const into = this.entityRegistry.getEntity(intoId);
     if (!from || !into) return { ok: false, error: "entity_not_found" };
     if (from.id === into.id) return { ok: false, error: "cannot_merge_into_self" };
-
-    // Room 级合并：from 的 Room 软删 + wiki 归档（渲染器同步收起），
-    // 目标 Room 的内容经 backlog 重建（from 的源迁过去重新沉淀）。
-    if (from.roomId && from.roomId !== into.roomId) {
-      await this.retireRoomWiki(from.roomId, `实体合并：${from.name} → ${into.name}`);
+    if (from.roomId) {
+      return { ok: false, error: "room_merge_confirmation_required" };
     }
 
+    // 仅候选实体可以复用已有 Room。Room 对 Room 必须走不可撤销合并的
+    // preview + 用户确认流程，不能从旧实体治理接口旁路执行。
     this.entityRegistry.mergeEntities({ intoId: into.id, fromId: from.id, reason: "用户手动合并" });
     this.relationRegistry.rewriteEntity(from.id, into.id);
-    await this.ingestEntityBacklog(into.id);
+    if (into.roomId) {
+      this.enqueueEntityBacklog(into.id);
+      this.enqueueEntityRelationBacklog(into.id, into.roomId);
+      this.wake();
+    } else {
+      await this.ingestEntityBacklog(into.id);
+    }
     return { ok: true };
   }
 
@@ -2555,7 +2722,7 @@ export class KnowledgeService {
   }
 
   roomRelations(roomId: string, visibility: RoomRelationVisibility = "active"): RoomGraphDto | null {
-    return this.relationRegistry.relationsOfRoom(roomId, visibility);
+    return this.relationRegistry.relationsOfRoom(this.canonicalRoomId(roomId), visibility);
   }
 
   roomRelationEvidence(id: string, offset = 0, limit = 50) {
@@ -2570,15 +2737,25 @@ export class KnowledgeService {
     label?: string | null;
     note?: string | null;
   }): RoomRelationDto | null {
-    return this.relationRegistry.createManual(input);
+    const relation = this.relationRegistry.createManual({
+      ...input,
+      fromRoomId: this.canonicalRoomId(input.fromRoomId),
+      toRoomId: this.canonicalRoomId(input.toRoomId),
+    });
+    this.roomDuplicateIndexTrigger?.();
+    return relation;
   }
 
   updateRoomRelation(id: string, input: Parameters<RoomRelationRegistry["updateManual"]>[1]): RoomRelationDto | null {
-    return this.relationRegistry.updateManual(id, input);
+    const relation = this.relationRegistry.updateManual(id, input);
+    this.roomDuplicateIndexTrigger?.();
+    return relation;
   }
 
   removeManualRoomRelation(id: string): RoomRelationDto | null | undefined {
-    return this.relationRegistry.removeManual(id);
+    const relation = this.relationRegistry.removeManual(id);
+    this.roomDuplicateIndexTrigger?.();
+    return relation;
   }
 
   listRooms(origin?: "user" | "auto"): Array<{
@@ -2591,7 +2768,7 @@ export class KnowledgeService {
     createdAt: Date;
     updatedAt: Date;
   }> {
-    const conditions = [isNull(rooms.deletedAt)];
+    const conditions = [isNull(rooms.deletedAt), eq(rooms.lifecycle, "active")];
     if (origin) conditions.push(eq(rooms.origin, origin));
     return this.db.select().from(rooms)
       .where(and(...conditions))
@@ -2639,6 +2816,10 @@ export class KnowledgeService {
   } {
     const now = new Date();
     const existing = this.db.select().from(rooms).where(eq(rooms.id, input.id)).get();
+    if (existing && existing.lifecycle !== "active") {
+      const canonical = this.db.select().from(rooms).where(eq(rooms.id, this.canonicalRoomId(input.id))).get();
+      return this.toRoomDto(canonical ?? existing);
+    }
     if (!existing) {
       this.db.insert(rooms).values({
         id: input.id,
@@ -2675,6 +2856,7 @@ export class KnowledgeService {
       });
     }
     this.relationRegistry.recomputeAll();
+    this.roomDuplicateIndexTrigger?.();
     return this.toRoomDto(row!);
   }
 
@@ -2686,6 +2868,7 @@ export class KnowledgeService {
     this.db.update(entitiesTable).set({ status: "archived", updatedAt: new Date() })
       .where(eq(entitiesTable.roomId, roomId)).run();
     this.relationRegistry.recomputeAll();
+    this.roomDuplicateIndexTrigger?.();
     return true;
   }
 
@@ -2697,6 +2880,7 @@ export class KnowledgeService {
     updatedAt: Date;
     ingested: boolean;
   }> {
+    roomId = this.canonicalRoomId(roomId);
     const docs = this.db.select({ document: documents, linkedAt: roomDocumentLinks.linkedAt })
       .from(roomDocumentLinks)
       .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
@@ -2734,6 +2918,7 @@ export class KnowledgeService {
 
   /** Room 详情投影：资料集合是事实源，LLM 只负责汇总，不直接改用户 Room 数据。 */
   async roomContext(roomId: string): Promise<RoomContextSummary> {
+    roomId = this.canonicalRoomId(roomId);
     const rows = this.db.select({ document: documents })
       .from(roomDocumentLinks)
       .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))

@@ -421,6 +421,32 @@ async function registryForTest() {
 }
 
 describe("实体注册表：V2 证据聚合", () => {
+  it("ready 推荐按证据总分从高到低返回", async () => {
+    const { registry, sqlite } = await registryForTest();
+    const higher = registry.createEntity({ name: "高分推荐", kind: "项目" });
+    registry.upsertLink({
+      entityId: higher.id, sourceKind: "everroom-doc", sourceId: "high-a", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "核心方案", decidedBy: "resolution",
+    });
+    registry.upsertLink({
+      entityId: higher.id, sourceKind: "file", sourceId: "high-b", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "执行材料", decidedBy: "resolution",
+    });
+
+    const lower = registry.createEntity({ name: "低分推荐", kind: "项目" });
+    registry.upsertLink({
+      entityId: lower.id, sourceKind: "cloud-doc", sourceId: "low-a", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "核心方案", decidedBy: "resolution",
+    });
+    registry.upsertLink({
+      entityId: lower.id, sourceKind: "reality-event", sourceId: "low-b", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "执行材料", decidedBy: "resolution",
+    });
+
+    expect(registry.listEntities("ready").map((entity) => entity.id)).toEqual([higher.id, lower.id]);
+    sqlite.close();
+  });
+
   it("按来源与相关度计分，版本更新覆盖旧贡献，两份强文档触发推荐", async () => {
     const { registry, sqlite } = await registryForTest();
     const entity = registry.createEntity({ name: "卫星项目", kind: "项目" });
