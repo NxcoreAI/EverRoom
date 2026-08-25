@@ -177,6 +177,32 @@ function adoptPreReleaseConnectorMarkdownMigrations(
   })();
 }
 
+/** Adopt the V2 scoring migration when a repaired/branched cursor lost its marker
+ * but the complete additive schema is already present. */
+function adoptKnowledgeScoringMigration(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations") || !hasTable("entities") || !hasTable("entity_doc_links")) return;
+  const columnsOf = (table: string) => new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+  );
+  const entityColumns = columnsOf("entities");
+  const linkColumns = columnsOf("entity_doc_links");
+  if (!["eligible_source_count", "trusted_source_count", "strong_source_count", "readiness_path", "scoring_version"]
+    .every((column) => entityColumns.has(column))) return;
+  if (!["evidence_group_key", "role_weight", "source_weight", "quality_factor", "relevance_factor",
+    "effective_weight", "quality_level", "trusted", "strong", "score_reasons", "scoring_version"]
+    .every((column) => linkColumns.has(column))) return;
+
+  const entry = readMigrationJournal(migrationsDir).find((item) => item.tag === "0027_knowledge_scoring_v2");
+  if (!entry?.tag || typeof entry.when !== "number") return;
+  if (sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(entry.when)) return;
+  const migrationSql = readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8");
+  sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+    .run(createHash("sha256").update(migrationSql).digest("hex"), entry.when);
+}
+
 /** Repair installs whose migration cursor advanced across the diary/perception
  * branch without applying its schema (a transient merge produced this state). */
 function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migrationsDir: string): void {
@@ -231,6 +257,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   repairLegacyMigrationCursor(sqlite, migrationsDir);
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
+  adoptKnowledgeScoringMigration(sqlite, migrationsDir);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");

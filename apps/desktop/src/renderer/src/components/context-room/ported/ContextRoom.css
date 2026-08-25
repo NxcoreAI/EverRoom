@@ -10414,13 +10414,40 @@
   gap: 10px;
 }
 
+.context-room-knowledge-batchbar {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-knowledge-batchbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--cr-text);
+}
+
+.context-room-knowledge-batchbar input,
+.context-room-knowledge-card > header input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--cr-blue);
+}
+
 .context-room-knowledge-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
   border: 1px solid var(--cr-border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--cr-surface);
 }
 
@@ -10731,6 +10758,41 @@
 }
 
 .context-room-knowledge-defer svg { width: 13px; height: 13px; }
+
+.context-room-knowledge-showmore {
+  display: inline-flex;
+  min-height: 32px;
+  align-self: center;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-knowledge-showmore svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 680px) {
+  .context-room-knowledge-batchbar {
+    align-items: stretch;
+  }
+
+  .context-room-knowledge-batchbar label,
+  .context-room-knowledge-batchbar > span {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .context-room-knowledge-batchbar .context-room-knowledge-confirm,
+  .context-room-knowledge-batchbar .context-room-knowledge-defer {
+    flex: 1 1 calc(50% - 8px);
+    justify-content: center;
+  }
+}
 
 .context-room-knowledge-create {
   display: inline-flex;

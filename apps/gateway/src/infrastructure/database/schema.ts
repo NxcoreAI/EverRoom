@@ -920,10 +920,17 @@ export const entities = sqliteTable(
     }).notNull().default("weak"),
     /** 晋升后回填 rooms.id。 */
     roomId: text("room_id"),
-    /** 累计证据分：primary +1.0 / mention +0.4 / manual +1.5（按 source 去重，版本更新调差额）。 */
+    /** V2 有效证据分：按 evidence_group_key 分组取最大贡献后求和。 */
     evidenceScore: real("evidence_score").notNull().default(0),
-    /** 关联资料数（按 sourceId 去重）。 */
+    /** 原始关联资料数（按 sourceKind + sourceId 去重）。 */
     sourceCount: integer("source_count").notNull().default(0),
+    /** V2 聚合计数：有效/可信/强证据组。 */
+    eligibleSourceCount: integer("eligible_source_count").notNull().default(0),
+    trustedSourceCount: integer("trusted_source_count").notNull().default(0),
+    strongSourceCount: integer("strong_source_count").notNull().default(0),
+    /** 达标路径：standard（三份合格证据）或 strong（两份独立强证据）。 */
+    readinessPath: text("readiness_path", { enum: ["standard", "strong"] }),
+    scoringVersion: integer("scoring_version").notNull().default(2),
     /** 质心：弱实体从第一份资料就开始累积（ED：冷启动问题随模型消失）。 */
     centroid: text("centroid"),
     centroidDocs: integer("centroid_docs").notNull().default(0),
@@ -963,6 +970,20 @@ export const entityDocLinks = sqliteTable(
     role: text("role", { enum: ["primary", "mention", "manual"] }).notNull(),
     /** 抽取时的分量快照（0~1）。 */
     salience: real("salience").notNull().default(0),
+    /** V2 推荐评分快照；规则升级时可从来源元数据重新计算。 */
+    evidenceGroupKey: text("evidence_group_key").notNull().default(""),
+    roleWeight: real("role_weight").notNull().default(0),
+    sourceWeight: real("source_weight").notNull().default(0),
+    qualityFactor: real("quality_factor").notNull().default(0),
+    relevanceFactor: real("relevance_factor").notNull().default(0),
+    effectiveWeight: real("effective_weight").notNull().default(0),
+    qualityLevel: text("quality_level", {
+      enum: ["excluded", "uncertain", "low", "normal", "high"],
+    }).notNull().default("excluded"),
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
+    strong: integer("strong", { mode: "boolean" }).notNull().default(false),
+    scoreReasons: text("score_reasons", { mode: "json" }).$type<string[]>(),
+    scoringVersion: integer("scoring_version").notNull().default(2),
     /** 抽取依据句（原文短句）——实体详情"为什么存在"的可解释性来源。 */
     evidence: text("evidence"),
     decidedBy: text("decided_by", { enum: ["resolution", "user"] }).notNull(),

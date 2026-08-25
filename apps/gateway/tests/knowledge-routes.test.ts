@@ -25,4 +25,45 @@ describe('knowledge room routes', () => {
       await app.close()
     }
   })
+
+  it('accepts up to 20 recommendations and returns per-entity batch results', async () => {
+    const promoteEntities = vi.fn().mockReturnValue([
+      { entityId: 'ready-1', status: 'queued', jobId: 'job-1', error: null },
+      { entityId: 'stale-1', status: 'rejected', jobId: null, error: 'recommendation_below_threshold' },
+    ])
+    const suppressEntities = vi.fn().mockReturnValue([
+      { entityId: 'ready-1', status: 'suppressed', error: null },
+    ])
+    const service = { promoteEntities, suppressEntities } as unknown as KnowledgeService
+    const app = Fastify().withTypeProvider<TypeBoxTypeProvider>()
+    await app.register(knowledgeRoutes(service))
+
+    try {
+      const promoted = await app.inject({
+        method: 'POST',
+        url: '/v1/knowledge/entities/batch-promote',
+        payload: { entityIds: ['ready-1', 'stale-1'] },
+      })
+      expect(promoted.statusCode).toBe(202)
+      expect(promoted.json().items).toHaveLength(2)
+      expect(promoteEntities).toHaveBeenCalledWith(['ready-1', 'stale-1'])
+
+      const suppressed = await app.inject({
+        method: 'POST',
+        url: '/v1/knowledge/entities/batch-suppress',
+        payload: { entityIds: ['ready-1'] },
+      })
+      expect(suppressed.statusCode).toBe(200)
+      expect(suppressEntities).toHaveBeenCalledWith(['ready-1'])
+
+      const tooMany = await app.inject({
+        method: 'POST',
+        url: '/v1/knowledge/entities/batch-promote',
+        payload: { entityIds: Array.from({ length: 21 }, (_, index) => `entity-${index}`) },
+      })
+      expect(tooMany.statusCode).toBe(400)
+    } finally {
+      await app.close()
+    }
+  })
 })

@@ -895,7 +895,9 @@ export interface NxcoreDesktopApi {
     getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
     /** 用户确认创建（推荐态实体走完整晋升流程）。 */
     promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }>
+    promoteEntities(entityIds: string[]): Promise<{ items: import('./knowledge').KnowledgeBatchPromoteResultDto[] }>
     suppressEntity(entityId: string): Promise<{ ok: boolean }>
+    suppressEntities(entityIds: string[]): Promise<{ items: import('./knowledge').KnowledgeBatchSuppressResultDto[] }>
     restoreSuppressedEntity(entityId: string): Promise<{ ok: boolean }>
     /** 手动合并：from 并入 target。 */
     mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>

@@ -121,6 +121,12 @@ const EntityDto = Type.Object({
   roomId: Type.Union([Type.String(), Type.Null()]),
   evidenceScore: Type.Number(),
   sourceCount: Type.Integer(),
+  eligibleSourceCount: Type.Integer(),
+  trustedSourceCount: Type.Integer(),
+  strongSourceCount: Type.Integer(),
+  readinessPath: Type.Union([Type.Literal("standard"), Type.Literal("strong"), Type.Null()]),
+  sourceKinds: Type.Array(Type.String()),
+  excludedSourceCount: Type.Integer(),
   promoteScore: Type.Number(),
   promoteSources: Type.Integer(),
   firstEvidence: Type.Union([Type.String(), Type.Null()]),
@@ -156,6 +162,13 @@ const EntityStatusQuery = Type.Object({
 
 const EntityIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
 
+const EntityBatchBody = Type.Object({
+  entityIds: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), {
+    minItems: 1,
+    maxItems: 20,
+  }),
+});
+
 const EntityLinkDto = Type.Object({
   id: Type.String(),
   entityId: Type.String(),
@@ -164,6 +177,17 @@ const EntityLinkDto = Type.Object({
   sourceVersion: Type.Integer(),
   role: Type.String(),
   salience: Type.Number(),
+  evidenceGroupKey: Type.String(),
+  roleWeight: Type.Number(),
+  sourceWeight: Type.Number(),
+  qualityFactor: Type.Number(),
+  relevanceFactor: Type.Number(),
+  effectiveWeight: Type.Number(),
+  qualityLevel: Type.String(),
+  trusted: Type.Boolean(),
+  strong: Type.Boolean(),
+  scoreReasons: Type.Array(Type.String()),
+  scoringVersion: Type.Integer(),
   evidence: Type.Union([Type.String(), Type.Null()]),
   decidedBy: Type.String(),
   sourceTitle: Type.Union([Type.String(), Type.Null()]),
@@ -182,6 +206,10 @@ const EntityDetailDto = Type.Object({
     roomId: Type.Union([Type.String(), Type.Null()]),
     evidenceScore: Type.Number(),
     sourceCount: Type.Integer(),
+    eligibleSourceCount: Type.Integer(),
+    trustedSourceCount: Type.Integer(),
+    strongSourceCount: Type.Integer(),
+    readinessPath: Type.Union([Type.Literal("standard"), Type.Literal("strong"), Type.Null()]),
     mergedFrom: Type.Array(Type.String()),
     lastLinkedAt: Type.Union([Type.String(), Type.Null()]),
     createdAt: Type.String(),
@@ -610,6 +638,10 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
             roomId: detail.entity.roomId,
             evidenceScore: detail.entity.evidenceScore,
             sourceCount: detail.entity.sourceCount,
+            eligibleSourceCount: detail.entity.eligibleSourceCount,
+            trustedSourceCount: detail.entity.trustedSourceCount,
+            strongSourceCount: detail.entity.strongSourceCount,
+            readinessPath: detail.entity.readinessPath,
             mergedFrom: detail.entity.mergedFrom,
             lastLinkedAt: detail.entity.lastLinkedAt ? iso(detail.entity.lastLinkedAt) : null,
             createdAt: iso(detail.entity.createdAt),
@@ -624,6 +656,17 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
             sourceVersion: link.sourceVersion,
             role: link.role,
             salience: link.salience,
+            evidenceGroupKey: link.evidenceGroupKey,
+            roleWeight: link.roleWeight,
+            sourceWeight: link.sourceWeight,
+            qualityFactor: link.qualityFactor,
+            relevanceFactor: link.relevanceFactor,
+            effectiveWeight: link.effectiveWeight,
+            qualityLevel: link.qualityLevel,
+            trusted: link.trusted,
+            strong: link.strong,
+            scoreReasons: link.scoreReasons,
+            scoringVersion: link.scoringVersion,
             evidence: link.evidence,
             decidedBy: link.decidedBy,
             sourceTitle: link.sourceTitle,
@@ -632,6 +675,47 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           })),
         };
       },
+    );
+
+    app.post(
+      "/v1/knowledge/entities/batch-promote",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: EntityBatchBody,
+          response: {
+            202: Type.Object({
+              items: Type.Array(Type.Object({
+                entityId: Type.String(),
+                status: Type.Union([Type.Literal("queued"), Type.Literal("already_queued"), Type.Literal("rejected")]),
+                jobId: Type.Union([Type.String(), Type.Null()]),
+                error: Type.Union([Type.String(), Type.Null()]),
+              })),
+            }),
+          },
+        },
+      },
+      async (request, reply) => reply.code(202).send({ items: service.promoteEntities(request.body.entityIds) }),
+    );
+
+    app.post(
+      "/v1/knowledge/entities/batch-suppress",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: EntityBatchBody,
+          response: {
+            200: Type.Object({
+              items: Type.Array(Type.Object({
+                entityId: Type.String(),
+                status: Type.Union([Type.Literal("suppressed"), Type.Literal("already_suppressed"), Type.Literal("rejected")]),
+                error: Type.Union([Type.String(), Type.Null()]),
+              })),
+            }),
+          },
+        },
+      },
+      async (request) => ({ items: service.suppressEntities(request.body.entityIds) }),
     );
 
     app.post(

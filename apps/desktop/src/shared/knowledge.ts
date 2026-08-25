@@ -100,6 +100,12 @@ export interface KnowledgeEntityDto {
   roomId: string | null
   evidenceScore: number
   sourceCount: number
+  eligibleSourceCount: number
+  trustedSourceCount: number
+  strongSourceCount: number
+  readinessPath: 'standard' | 'strong' | null
+  sourceKinds: string[]
+  excludedSourceCount: number
   promoteScore: number
   promoteSources: number
   firstEvidence: string | null
@@ -116,6 +122,17 @@ export interface KnowledgeEntityLinkDto {
   sourceVersion: number
   role: string
   salience: number
+  evidenceGroupKey: string
+  roleWeight: number
+  sourceWeight: number
+  qualityFactor: number
+  relevanceFactor: number
+  effectiveWeight: number
+  qualityLevel: string
+  trusted: boolean
+  strong: boolean
+  scoreReasons: string[]
+  scoringVersion: number
   evidence: string | null
   decidedBy: string
   sourceTitle: string | null
@@ -134,6 +151,10 @@ export interface KnowledgeEntityDetailDto {
     roomId: string | null
     evidenceScore: number
     sourceCount: number
+    eligibleSourceCount: number
+    trustedSourceCount: number
+    strongSourceCount: number
+    readinessPath: 'standard' | 'strong' | null
     mergedFrom: string[]
     lastLinkedAt: string | null
     createdAt: string
@@ -141,6 +162,19 @@ export interface KnowledgeEntityDetailDto {
   }
   room: { id: string; title: string; kind: string } | null
   links: KnowledgeEntityLinkDto[]
+}
+
+export interface KnowledgeBatchPromoteResultDto {
+  entityId: string
+  status: 'queued' | 'already_queued' | 'rejected'
+  jobId: string | null
+  error: string | null
+}
+
+export interface KnowledgeBatchSuppressResultDto {
+  entityId: string
+  status: 'suppressed' | 'already_suppressed' | 'rejected'
+  error: string | null
 }
 
 /** 未识别栏条目（抽取空/失败的资料，等待人工挂载）。 */

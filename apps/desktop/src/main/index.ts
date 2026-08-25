@@ -370,7 +370,9 @@ const KNOWLEDGE_CHANNELS = {
   listEntities: 'knowledge:entities:list',
   getEntity: 'knowledge:entities:get',
   promoteEntity: 'knowledge:entities:promote',
+  promoteEntities: 'knowledge:entities:promote-batch',
   suppressEntity: 'knowledge:entities:suppress',
+  suppressEntities: 'knowledge:entities:suppress-batch',
   restoreSuppressedEntity: 'knowledge:entities:restore',
   mergeEntity: 'knowledge:entities:merge',
   listUnmatched: 'knowledge:unmatched:list',
@@ -1240,7 +1242,9 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
     bridge.listEntities(status))
   handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.promoteEntities, (_event, entityIds: string[]) => bridge.promoteEntities(entityIds))
   handle(KNOWLEDGE_CHANNELS.suppressEntity, (_event, entityId: string) => bridge.suppressEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.suppressEntities, (_event, entityIds: string[]) => bridge.suppressEntities(entityIds))
   handle(KNOWLEDGE_CHANNELS.restoreSuppressedEntity, (_event, entityId: string) => bridge.restoreSuppressedEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
     bridge.mergeEntity(fromId, targetId))

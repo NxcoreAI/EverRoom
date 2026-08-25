@@ -801,11 +801,11 @@ export function loadConfig(
       : parseBoolean("NXCORE_KNOWLEDGE_ROUTER_ENABLED", env.NXCORE_KNOWLEDGE_ROUTER_ENABLED.trim()),
     knowledgeEntityPromoteScore: parsePositiveNumber(
       "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE",
-      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE ?? "2.0",
+      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE ?? "2.4",
     ),
     knowledgeEntityPromoteSources: parsePositiveInteger(
       "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES",
-      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES ?? "2",
+      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES ?? "3",
     ),
     knowledgeEntityMergeAutoDice: parseFraction(
       "NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE",

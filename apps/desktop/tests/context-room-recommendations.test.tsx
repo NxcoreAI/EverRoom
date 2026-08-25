@@ -22,8 +22,14 @@ function entity(id: string, evidenceScore: number) {
     roomId: null,
     evidenceScore,
     sourceCount: 2,
-    promoteScore: 2,
-    promoteSources: 2,
+    eligibleSourceCount: 2,
+    trustedSourceCount: 2,
+    strongSourceCount: 2,
+    readinessPath: 'strong' as const,
+    sourceKinds: ['file'],
+    excludedSourceCount: 0,
+    promoteScore: 2.4,
+    promoteSources: 3,
     firstEvidence: '推荐依据',
     lastLinkedAt: null,
     updatedAt: '2026-08-20T00:00:00.000Z',
@@ -48,6 +54,7 @@ function installKnowledgeApi(items: ReturnType<typeof entity>[]) {
     clearInterval,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
   })
 
   return { clearInterval, listEntities, listRecentDecisions }
@@ -70,7 +77,7 @@ describe('Context Room recommendations', () => {
     })
 
     expect(api.listEntities.mock.calls.map(([status]) => status)).toEqual([
-      'ready', 'promoting', 'room',
+      'ready', 'promoting', 'room', 'suppressed',
     ])
     expect(api.listRecentDecisions).toHaveBeenCalledOnce()
     expect(renderer!.root.findAllByProps({ className: 'context-room-knowledge-empty' })).toHaveLength(1)

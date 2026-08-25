@@ -78,8 +78,22 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/promote`, { method: 'POST' })
   }
 
+  promoteEntities(entityIds: string[]) {
+    return this.request<{ items: import('../../shared/knowledge').KnowledgeBatchPromoteResultDto[] }>(
+      '/v1/knowledge/entities/batch-promote',
+      { method: 'POST', body: JSON.stringify({ entityIds }) },
+    )
+  }
+
   suppressEntity(entityId: string): Promise<{ ok: boolean }> {
     return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/suppress`, { method: 'POST' })
+  }
+
+  suppressEntities(entityIds: string[]) {
+    return this.request<{ items: import('../../shared/knowledge').KnowledgeBatchSuppressResultDto[] }>(
+      '/v1/knowledge/entities/batch-suppress',
+      { method: 'POST', body: JSON.stringify({ entityIds }) },
+    )
   }
 
   restoreSuppressedEntity(entityId: string): Promise<{ ok: boolean }> {

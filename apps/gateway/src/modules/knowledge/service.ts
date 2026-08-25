@@ -22,7 +22,6 @@ import { fileIdOf } from "../files/storage.js";
 import { EmbeddingClient } from "./embedding.js";
 import {
   EntityRegistry,
-  meetsPromotionThreshold,
   type EntityLinkRow,
   type EntityRow,
   type SourceKind,
@@ -57,9 +56,9 @@ export interface KnowledgeServiceConfig {
   ingestDebounceMs: number;
   /** 自动归类路由总开关（NXCORE_KNOWLEDGE_ROUTER_ENABLED）。 */
   routerEnabled: boolean;
-  /** 晋升证据分阈值（entity-room-plan §6，默认 2.0）。 */
+  /** V2 标准路径证据分阈值（默认 2.4）。 */
   entityPromoteScore: number;
-  /** 晋升最小资料数（防单份资料多角色刷分，默认 2）。 */
+  /** V2 标准路径最小有效证据组数（默认 3）。 */
   entityPromoteSources: number;
   /** 弱-弱确定性自动合并线（默认 0.75，免 LLM）。 */
   mergeAutoDice: number;
@@ -408,7 +407,10 @@ export class KnowledgeService {
       teamId: config.teamId,
     });
     this.registry = new RoomWikiRegistry(this.db, this.ks);
-    this.entityRegistry = new EntityRegistry(this.db);
+    this.entityRegistry = new EntityRegistry(this.db, {
+      promoteScore: config.entityPromoteScore,
+      promoteSources: config.entityPromoteSources,
+    });
     this.ownedAgentResolver = config.llm && !agentResolver
       ? createKnowledgeAgentResolver(config.dataDir, config.llm)
       : null;
@@ -484,17 +486,12 @@ export class KnowledgeService {
         "stuck promoting entities reset to weak",
       );
     }
-    // 推荐池补账：存量已达阈值的 weak 实体一次性翻 ready（旧自动晋升数据立即进推荐池）
-    const backfillReady = this.entityRegistry.listEntities("weak")
-      .filter((entity) => meetsPromotionThreshold(entity, {
-        promoteScore: this.config.entityPromoteScore,
-        promoteSources: this.config.entityPromoteSources,
-      }));
-    for (const entity of backfillReady) this.entityRegistry.markReady(entity.id);
-    if (backfillReady.length > 0) {
+    // V2 可重入回算：补评分快照、邮件线程聚合，并同步 weak/ready 双向状态。
+    const rescored = this.entityRegistry.rescoreAll();
+    if (rescored.links > 0 || rescored.entities > 0) {
       this.logger.info(
-        { event: "knowledge.entity.ready_backfilled", count: backfillReady.length },
-        "threshold-meeting weak entities moved to ready pool",
+        { event: "knowledge.entity.v2_rescored", ...rescored },
+        "knowledge evidence rescored with V2 rules",
       );
     }
     if (this.drainTimer || !this.config.roomWikisEnabled) return;
@@ -1756,6 +1753,7 @@ export class KnowledgeService {
   }
 
   private async runCleanupJob(payload: CleanupJobPayload): Promise<void> {
+    this.entityRegistry.removeSourceLinks(payload.sourceKind, payload.sourceId);
     const decisions = this.db.select().from(routeDecisions)
       .where(and(
         eq(routeDecisions.sourceKind, payload.sourceKind),
@@ -1818,6 +1816,12 @@ export class KnowledgeService {
     roomId: string | null;
     evidenceScore: number;
     sourceCount: number;
+    eligibleSourceCount: number;
+    trustedSourceCount: number;
+    strongSourceCount: number;
+    readinessPath: "standard" | "strong" | null;
+    sourceKinds: SourceKind[];
+    excludedSourceCount: number;
     promoteScore: number;
     promoteSources: number;
     firstEvidence: string | null;
@@ -1827,7 +1831,13 @@ export class KnowledgeService {
   }> {
     return this.entityRegistry.listEntities(status)
       .slice(0, LIST_PAGE_SIZE)
-      .map((entity) => ({
+      .map((entity) => {
+        const links = this.entityRegistry.linksOfEntity(entity.id);
+        const sourceKinds = [...new Set(links
+          .filter((link) => link.effectiveWeight > 0)
+          .sort((a, b) => b.effectiveWeight - a.effectiveWeight)
+          .map((link) => link.sourceKind))].slice(0, 3);
+        return {
         id: entity.id,
         name: entity.name,
         kind: entity.kind,
@@ -1835,13 +1845,20 @@ export class KnowledgeService {
         roomId: entity.roomId,
         evidenceScore: entity.evidenceScore,
         sourceCount: entity.sourceCount,
+        eligibleSourceCount: entity.eligibleSourceCount,
+        trustedSourceCount: entity.trustedSourceCount,
+        strongSourceCount: entity.strongSourceCount,
+        readinessPath: entity.readinessPath,
+        sourceKinds,
+        excludedSourceCount: links.filter((link) => link.effectiveWeight === 0).length,
         promoteScore: this.config.entityPromoteScore,
         promoteSources: this.config.entityPromoteSources,
         firstEvidence: this.evidenceSamplesOf(entity.id)[0] ?? null,
         lastLinkedAt: entity.lastLinkedAt,
         updatedAt: entity.updatedAt,
         promotion: this.promotionProgress(entity.id),
-      }));
+      };
+      });
   }
 
   suppressEntity(entityId: string): { ok: true } | { ok: false; error: string } {
@@ -2048,6 +2065,50 @@ export class KnowledgeService {
     return { ok: true, queued: true, jobId };
   }
 
+  /** 推荐池批量确认：逐项回算门槛并幂等入队，允许部分成功。 */
+  promoteEntities(entityIds: string[]): Array<{
+    entityId: string;
+    status: "queued" | "already_queued" | "rejected";
+    jobId: string | null;
+    error: string | null;
+  }> {
+    return [...new Set(entityIds)].slice(0, 20).map((entityId) => {
+      const active = this.activePromotionJob(entityId);
+      if (active) return { entityId, status: "already_queued" as const, jobId: active.id, error: null };
+      const entity = this.entityRegistry.recomputeEntity(entityId);
+      if (!entity) return { entityId, status: "rejected" as const, jobId: null, error: "entity_not_found" };
+      if (entity.status !== "ready") {
+        return { entityId, status: "rejected" as const, jobId: null, error: "recommendation_below_threshold" };
+      }
+      const promoted = this.promoteEntity(entityId);
+      if (!promoted.ok) return { entityId, status: "rejected" as const, jobId: null, error: promoted.error };
+      return {
+        entityId,
+        status: promoted.queued ? "queued" as const : "already_queued" as const,
+        jobId: promoted.jobId,
+        error: null,
+      };
+    });
+  }
+
+  /** 推荐池批量忽略：幂等处理 suppressed，逐项返回结果。 */
+  suppressEntities(entityIds: string[]): Array<{
+    entityId: string;
+    status: "suppressed" | "already_suppressed" | "rejected";
+    error: string | null;
+  }> {
+    return [...new Set(entityIds)].slice(0, 20).map((entityId) => {
+      const entity = this.entityRegistry.getEntity(entityId);
+      if (!entity) return { entityId, status: "rejected" as const, error: "entity_not_found" };
+      if (entity.status === "suppressed") {
+        return { entityId, status: "already_suppressed" as const, error: null };
+      }
+      const suppressed = this.suppressEntity(entityId);
+      if (!suppressed.ok) return { entityId, status: "rejected" as const, error: suppressed.error };
+      return { entityId, status: "suppressed" as const, error: null };
+    });
+  }
+
   /**
    * 手动合并（plan §4.5 用户主动治理）：from 并入 into；已晋升侧的 wiki
    * 级联（from Room 的源文件清理 + 目标 re-ingest）走 backlog 补账。
@@ -2148,13 +2209,7 @@ export class KnowledgeService {
         reason: `手动挂载到弱实体「${updated.name}」（证据累积中）`,
         updatedAt: new Date(),
       }).where(eq(routeDecisions.id, decision.id)).run();
-      // 推荐确认制：达阈值只进推荐池，等用户确认创建
-      if (meetsPromotionThreshold(updated, {
-        promoteScore: this.config.entityPromoteScore,
-        promoteSources: this.config.entityPromoteSources,
-      })) {
-        this.entityRegistry.markReady(updated.id);
-      }
+      // upsertLink 已按 V2 规则回算 weak/ready；创建仍等待用户确认。
     }
     this.wake();
     return { ok: true, entityId: entity.id };
