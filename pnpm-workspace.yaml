@@ -29,3 +29,4 @@ minimumReleaseAgeExclude:
 
 patchedDependencies:
   pi-mcp-adapter@2.26.1: patches/pi-mcp-adapter@2.26.1.patch
+  sqlite-vec@0.1.7-alpha.2: patches/sqlite-vec@0.1.7-alpha.2.patch
