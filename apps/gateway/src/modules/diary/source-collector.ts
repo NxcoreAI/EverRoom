@@ -16,6 +16,7 @@ import {
   visualObservations,
 } from "../../infrastructure/database/schema.js";
 import { insightEvidenceMarkdown, normalizeInsightTags } from "../reality/insight-tags.js";
+import { YjsHistoryService } from "../documents/core/yjs-history-service.js";
 import type { DiaryKnowledgeEntity, DiaryMemoryProvider, DiarySource } from "./types.js";
 import { clampDate, hash, iso } from "./utils.js";
 
@@ -36,6 +37,8 @@ function textFromJson(value: unknown): string {
 }
 
 export class DiarySourceCollector {
+  private readonly yjsHistory = new YjsHistoryService();
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly memory?: DiaryMemoryProvider,
@@ -61,12 +64,14 @@ export class DiarySourceCollector {
     }
     for (const row of latestDocumentVersions.values()) {
       const doc = this.db.select().from(documents).where(eq(documents.id, row.documentId)).get();
-      const content = textFromJson(row.contentJson);
+      const materialized = this.yjsHistory.materialize(this.db, row.documentId, row.version);
+      if (!materialized?.content) continue;
+      const content = textFromJson(materialized.content);
       add({
         sourceId: sourceRef("document_version", row.id), kind: "document_version", version: String(row.version),
         occurredAt: iso(row.createdAt), timeBasis: "document_version_created",
-        fingerprint: hash([row.id, row.version, row.createdAt, row.contentJson]),
-        evidenceSummary: `${row.title || doc?.title || "文档"}: ${content.slice(0, 240)}`,
+        fingerprint: hash([row.id, row.version, row.createdAt, materialized.content]),
+        evidenceSummary: `${materialized.title || doc?.title || "文档"}: ${content.slice(0, 240)}`,
         content,
       });
     }

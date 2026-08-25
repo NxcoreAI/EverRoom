@@ -1,9 +1,9 @@
 import type { RoomDocument } from "@nxcore/agent-contract";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
-import { documents } from "../../../infrastructure/database/schema.js";
+import { documents, jobs } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
-import { enqueueDocumentDelete } from "../integration-outbox.js";
+import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE, enqueueDocumentDelete } from "../integration-outbox.js";
 import { DocumentRepository } from "./repository.js";
 
 export interface DocumentLifecycleHooks {
@@ -51,6 +51,7 @@ export class DocumentLifecycleService {
     }
     const now = new Date();
     this.db.transaction((tx) => {
+      this.removeHistoryBackfillJob(tx, current.id);
       enqueueDocumentDelete(tx, { documentId: current.id, roomId: current.roomId }, now);
       tx.delete(documents).where(eq(documents.id, documentId)).run();
     });
@@ -63,6 +64,7 @@ export class DocumentLifecycleService {
     if (trashed.length === 0) return trashed;
     this.db.transaction((tx) => {
       for (const document of trashed) {
+        this.removeHistoryBackfillJob(tx, document.id);
         enqueueDocumentDelete(tx, { documentId: document.id, roomId: document.roomId }, new Date());
         tx.delete(documents).where(eq(documents.id, document.id)).run();
       }
@@ -75,5 +77,12 @@ export class DocumentLifecycleService {
     const document = this.repository.get(documentId);
     if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
     return document;
+  }
+
+  private removeHistoryBackfillJob(tx: GatewayDatabase, documentId: string): void {
+    tx.delete(jobs).where(and(
+      eq(jobs.id, `document-history-backfill:${documentId}`),
+      eq(jobs.type, DOCUMENT_HISTORY_BACKFILL_JOB_TYPE),
+    )).run();
   }
 }

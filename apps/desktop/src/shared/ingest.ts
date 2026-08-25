@@ -28,7 +28,7 @@ export interface FileCatalogDto {
   originalName: string
   displayName: string | null
   sharedTitle: string
-  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'legacy-upload'
+  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'web-clipper' | 'legacy-upload'
   sourceLabel: string
   relativePath: string | null
   provider: string | null
@@ -68,6 +68,8 @@ export interface FileImportAcceptedDto {
 export interface FileImportOutcome {
   filename: string
   fileId: string | null
+  /** Exact immutable version accepted by the file service. */
+  fileVersionId: string | null
   /** 引擎台账事件（进入链路成功时）。 */
   eventId: string | null
   dataType: string | null

@@ -145,7 +145,10 @@ export async function testAiConnection(fields: AiConfigFields): Promise<TestConn
  * 比让用户手填维度可靠。错误串复用 primary 的 taxonomy，渲染层
  * configTestErrorMessage 无需新增映射。
  */
-export async function testEmbeddingConnection(fields: AiConfigFields): Promise<EmbeddingTestResult> {
+export async function testEmbeddingConnection(
+  fields: AiConfigFields,
+  requestedDimensions?: number,
+): Promise<EmbeddingTestResult> {
   if (!isEmbeddingConfigured(fields)) {
     return { valid: false, error: "runtime_config_test_incomplete" };
   }
@@ -157,7 +160,13 @@ export async function testEmbeddingConnection(fields: AiConfigFields): Promise<E
         "content-type": "application/json",
         authorization: `Bearer ${fields.apiKey}`,
       },
-      body: JSON.stringify({ model: fields.model, input: "ping" }),
+      body: JSON.stringify({
+        model: fields.model,
+        input: "ping",
+        ...(requestedDimensions && requestedDimensions > 0
+          ? { dimensions: requestedDimensions }
+          : {}),
+      }),
       signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
     });
   } catch (error) {

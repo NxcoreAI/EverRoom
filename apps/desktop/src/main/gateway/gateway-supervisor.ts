@@ -124,11 +124,16 @@ export class GatewaySupervisor {
       ? process.execPath
       : (process.env.NXCORE_GATEWAY_PACKAGE_MANAGER ?? 'pnpm')
     const extra = typeof this.extraEnvironment === 'function' ? this.extraEnvironment() : this.extraEnvironment
-    const environment = {
+    const environment: NodeJS.ProcessEnv = {
       ...process.env,
       NXCORE_GATEWAY_TOKEN: token,
       ...extra,
       ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    }
+    if (!environment.NXCORE_NANGO_SECRET?.trim()) {
+      environment.NXCORE_NANGO_URL = ''
+      environment.NXCORE_NANGO_SECRET = ''
+      environment.NXCORE_ENV_FILE = join(this.dataDirectory, 'runtime', '.desktop-gateway.env')
     }
     const gatewayArguments = [
       '--host',

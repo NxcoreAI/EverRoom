@@ -105,6 +105,22 @@ describe('DocumentOperationProvider React state machine', () => {
     vi.unstubAllGlobals()
   })
 
+  it('passes the operation authorization context when loading details after refresh', async () => {
+    const detail = operation()
+    const get = vi.fn().mockResolvedValue(detail)
+    const api = { ...bridge(detail, vi.fn().mockResolvedValue(null)), get }
+    await act(async () => {
+      renderer = TestRenderer.create(<DocumentOperationProvider operationBridge={api}><div /></DocumentOperationProvider>)
+    })
+    await flush()
+
+    expect(get).toHaveBeenCalledWith('operation-1', {
+      roomId: 'room-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+    })
+  })
+
   it('opens feedback only from the disagree action and submits a revision request', async () => {
     const onAccept = vi.fn().mockResolvedValue(undefined)
     const onAcceptAll = vi.fn().mockResolvedValue(undefined)
@@ -248,6 +264,32 @@ describe('DocumentOperationProvider React state machine', () => {
       decisions: { 'item-1': 'rejected' },
       error: undefined,
     })
+  })
+
+  it('reuses a command id when a network failure may have followed a committed command', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn()
+        .mockReturnValueOnce('command-1')
+        .mockReturnValueOnce('command-2'),
+    })
+    const command = vi.fn()
+      .mockRejectedValueOnce(new Error('socket closed'))
+      .mockResolvedValueOnce({ operation: operation({ revision: 2 }), duplicate: true })
+    const api = bridge(operation(), command)
+    let context!: DocumentOperationContextValue
+    const Consumer = () => { context = useDocumentOperations(); return null }
+
+    await act(async () => {
+      renderer = TestRenderer.create(<DocumentOperationProvider operationBridge={api}><Consumer /></DocumentOperationProvider>)
+    })
+    await flush()
+
+    await act(async () => { await context.execute('operation-1', 'item.accept', { itemId: 'item-1' }) })
+    await act(async () => { await context.execute('operation-1', 'item.accept', { itemId: 'item-1' }) })
+
+    expect(command).toHaveBeenCalledTimes(2)
+    expect(command.mock.calls[0]?.[1]).toMatchObject({ commandId: 'command-1' })
+    expect(command.mock.calls[1]?.[1]).toMatchObject({ commandId: 'command-1' })
   })
 
   it('starts selection rewrite operations and returns the authoritative command document', async () => {

@@ -108,7 +108,7 @@ function statusLabel(status: DisplayAgentToolCall['status'], t: Translate): stri
   return t('surface:agentExecutionTimeline.waiting')
 }
 
-function localizeAgentActivityText(value: string | undefined, t: Translate): string | undefined {
+export function localizeAgentActivityText(value: string | undefined, t: Translate): string | undefined {
   if (!value) return value
   const exactKeys: Record<string, string> = {
     '获取连接账户': 'surface:agentExecutionTimeline.getConnectedAccounts',
@@ -201,6 +201,11 @@ function localizeAgentActivityText(value: string | undefined, t: Translate): str
   if (executed) return t('surface:agentExecutionTimeline.executedName', { name: executed[1]! })
   const executing = /^执行\s+(.+)$/u.exec(value)
   if (executing) return t('surface:agentExecutionTimeline.executingName', { name: executing[1]! })
+  // Tool names are not translated, but the surrounding status verb must follow the UI locale.
+  const englishExecuted = /^Executed\s+(.+)$/u.exec(value)
+  if (englishExecuted) return t('surface:agentExecutionTimeline.executedName', { name: englishExecuted[1]! })
+  const englishExecuting = /^Executing\s+(.+)$/u.exec(value)
+  if (englishExecuting) return t('surface:agentExecutionTimeline.executingName', { name: englishExecuting[1]! })
   return value
 }
 
@@ -306,16 +311,16 @@ export function AgentExecutionTimeline({
           <div className="agent-tool-list">
             {activity.steps.map((step) => {
               const tool = step.tool
-              const summaryText = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult), t)
+              const summaryText = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult, t), t)
               const subject = agentToolSubject(tool)
               const preview = subject ?? summaryText ?? tool.error
               const duration = durationMs(tool.startedAt, tool.completedAt, now)
               const command = agentToolCommand(tool)
               const args = Object.keys(tool.args).length ? detailText(tool.args) : undefined
               const result = detailText(tool.result ?? tool.partialResult)
-              const label = localizeAgentActivityText(agentToolLabel(tool), t) ?? agentToolLabel(tool)
+              const label = agentToolLabel(tool, tool.status === 'completed', t)
               const beforeText = localizeAgentActivityText(step.beforeText, t)
-              const stageText = localizeAgentActivityText(step.afterText || agentToolStageText(tool), t)
+              const stageText = localizeAgentActivityText(step.afterText || agentToolStageText(tool, t), t)
               return (
                 <div key={step.id} className="agent-tool-step" data-status={tool.status}>
                   {beforeText ? <p className="agent-activity-commentary">{beforeText}</p> : null}
@@ -337,7 +342,7 @@ export function AgentExecutionTimeline({
                           <code>{tool.name}</code>
                           <span>{statusLabel(tool.status, t)} · {formatDuration(duration, t)}</span>
                         </div>
-                        {tool.error ? <p className="agent-tool-error">{tool.error}</p> : null}
+                        {tool.error ? <p className="agent-tool-error">{localizeAgentActivityText(tool.error, t)}</p> : null}
                         {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
                         {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
                         {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}

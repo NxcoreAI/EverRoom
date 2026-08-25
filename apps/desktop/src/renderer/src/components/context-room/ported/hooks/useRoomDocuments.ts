@@ -102,7 +102,7 @@ export function useRoomDocuments(roomIds: string[]) {
   useEffect(() => {
     const documents = window.nxcore?.documents
     if (!documents) return
-    return documents.onEvent(({ event }) => {
+    const unsubscribeEvents = documents.onEvent(({ event }) => {
       if (!DOCUMENT_STATE_EVENT_TYPES.has(event.type)) return
 
       const document = documentFromEvent(event)
@@ -135,7 +135,14 @@ export function useRoomDocuments(roomIds: string[]) {
         invalidateDocumentBlockReferences({ roomId: event.roomId, documentId: event.documentId })
       }
     })
-  }, [upsertDocument])
+    const unsubscribeReady = documents.onReady?.((roomId) => {
+      if (subscribedRooms.current.has(roomId)) void refreshRoom(roomId).catch(() => undefined)
+    }) ?? (() => undefined)
+    return () => {
+      unsubscribeEvents()
+      unsubscribeReady()
+    }
+  }, [refreshRoom, upsertDocument])
 
   useEffect(() => {
     const documents = window.nxcore?.documents

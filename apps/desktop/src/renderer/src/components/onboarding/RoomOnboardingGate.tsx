@@ -42,14 +42,17 @@ interface RoomOnboardingGateProps {
 const REPEATABLE_ROOM_ONBOARDING = false
 
 export function RoomOnboardingGate({ children, suppressOnboarding = false, onFinished, onNavigateStage, memoryReady = false, activeStage = 'idle' }: RoomOnboardingGateProps) {
-  const { locale, setLocale, t } = useLocale()
+  const { locale, preference, setLocale, t } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const { state, backendReady, refreshFromBackend } = useContextRoomState()
   const markerRef = useRef<RoomOnboardingMarker | null>(readRoomOnboardingMarker())
   const forceOpenRef = useRef(false)
   const initialBackendSyncRef = useRef<'idle' | 'loading' | 'done'>('idle')
   const createdRoomIdRef = useRef<string | null>(null)
-  const [mode, setMode] = useState<GateMode>('checking')
+  const [mode, setMode] = useState<GateMode>(() => {
+    if (suppressOnboarding || markerRef.current || state.rooms.length > 0 || state.deletedRooms.length > 0) return 'app'
+    return 'checking'
+  })
   const [name, setName] = useState('')
   const [purpose, setPurpose] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -239,8 +242,9 @@ export function RoomOnboardingGate({ children, suppressOnboarding = false, onFin
         <div className="room-onboarding-actions no-drag">
           <div className="room-onboarding-language" role="group" aria-label={t('contextRoom:onboarding.language')}>
             <Languages aria-hidden="true" />
-            <button type="button" data-active={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
-            <button type="button" data-active={locale === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
+            <button type="button" data-active={preference === 'system'} onClick={() => setLocale('system')}>{t('surface:settings.followSystem')}</button>
+            <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
+            <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
           {mode !== 'success' ? <button type="button" className="room-onboarding-skip" onClick={skip}>{t('contextRoom:onboarding.skip')}</button> : null}
         </div>

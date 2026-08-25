@@ -77,13 +77,26 @@ export function AgentPanel({
   const agentAvailable = Boolean(window.nxcore?.agent)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
 
-  const focusComposer = () => {
-    window.requestAnimationFrame(() => composerRef.current?.focus())
+  const focusComposer = (attention = false) => {
+    window.requestAnimationFrame(() => {
+      const composer = composerRef.current
+      composer?.focus()
+      if (!attention || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+
+      composer?.closest<HTMLElement>('.agent-prompt')?.animate?.(
+        [
+          { transform: 'scale(1)', boxShadow: '0 2px 12px rgba(15, 23, 42, 0.07)' },
+          { transform: 'scale(1.018)', boxShadow: '0 10px 28px rgba(59, 130, 246, 0.18)' },
+          { transform: 'scale(1)', boxShadow: '0 2px 12px rgba(15, 23, 42, 0.07)' },
+        ],
+        { duration: 460, easing: 'cubic-bezier(.22, 1, .36, 1)' },
+      )
+    })
   }
 
   useEffect(() => {
     if (!focusRequest) return
-    focusComposer()
+    focusComposer(true)
   }, [focusRequest])
 
   useEffect(() => {
@@ -208,15 +221,31 @@ export function AgentPanel({
       .catch(() => handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key))
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
-  const sendPrompt = async (prompt: string, replaceRunId?: string) => {
-    if (!prompt.trim() || !agentAvailable) return
+  const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = []) => {
+    if ((!prompt.trim() && files.length === 0) || !agentAvailable) return
     const submittedPrompt = prompt.trim()
     const submittedContext = selectedText
     setDraft('')
     setSubmitting(true)
     try {
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
-      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId)
+      let attachments = undefined
+      if (files.length > 0) {
+        const filesApi = window.nxcore?.files
+        if (!filesApi) throw new Error('文件服务不可用，请稍后重试。')
+        const outcomes = await filesApi.importDropped(files, { pipelines: { room: false, wiki: false, memory: false }, ...(roomId ? { roomId } : {}) })
+        const imported = outcomes?.filter((item) => item.fileId && item.fileVersionId && !item.error) ?? []
+        if (imported.length !== files.length) {
+          throw new Error('部分文件上传或解析失败，请检查文件格式后重试。')
+        }
+        attachments = imported.map((item) => ({
+          fileId: item.fileId!,
+          fileVersionId: item.fileVersionId!,
+          fileName: item.filename,
+          status: 'processing' as const,
+        }))
+      }
+      await session.sendPrompt(submittedPrompt || '请分析我上传的文件。', submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
       setSelectedText('')
       setComposerResetKey((current) => current + 1)
     } catch {
@@ -292,7 +321,7 @@ export function AgentPanel({
       onChange={setDraft}
       onClearContext={() => setSelectedText('')}
       onStop={() => void session.stop()}
-      onSubmit={() => void sendPrompt(draft)}
+      onSubmit={(files) => void sendPrompt(draft, undefined, files)}
     />
   )
 

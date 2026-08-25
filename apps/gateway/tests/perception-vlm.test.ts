@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenAiCompatibleVlmClient, parseVisualInference } from "../src/modules/perception/vlm-client.js";
+import {
+  OpenAiCompatibleVlmClient,
+  parseDocumentOcr,
+  parseVisualInference,
+} from "../src/modules/perception/vlm-client.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -35,6 +39,25 @@ describe("visual inference parser", () => {
       eventType: "WORK", title: "工作", summary: "总结", keyPoints: "not-array",
       representativeTags: [], confidence: 2,
     })).toThrow();
+  });
+
+  it("validates normalized document OCR blocks", () => {
+    expect(parseDocumentOcr({
+      text: "Invoice 42",
+      blocks: [{
+        type: "paragraph",
+        text: "Invoice 42",
+        bbox: [0.1, 0.2, 0.8, 0.3],
+        confidence: 0.95,
+      }],
+    })).toMatchObject({
+      text: "Invoice 42",
+      blocks: [{ type: "paragraph", bbox: [0.1, 0.2, 0.8, 0.3] }],
+    });
+    expect(() => parseDocumentOcr({
+      text: "bad",
+      blocks: [{ type: "paragraph", text: "bad", bbox: [0.2, 0.2, 1.2, 0.3], confidence: 1 }],
+    })).toThrow("normalized");
   });
 
   it("uses one non-stored multimodal request without leaking local paths", async () => {

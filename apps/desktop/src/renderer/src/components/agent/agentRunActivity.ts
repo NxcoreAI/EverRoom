@@ -1,4 +1,5 @@
 import type { AgentEvent } from '@nxcore/agent-contract'
+import type { Translate } from '../../i18n/LocaleContext'
 
 export type DisplayAgentToolStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped'
 
@@ -107,7 +108,7 @@ function userText(value: unknown, limit = 600): string | undefined {
   return text.slice(0, limit)
 }
 
-export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.status === 'completed'): string {
+export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.status === 'completed', t?: Translate): string {
   const name = tool.name.toLowerCase()
   const labels: Record<string, [string, string]> = {
     connector_apps: ['获取连接账户', '已获取连接账户'],
@@ -127,26 +128,50 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
     tool_search: ['选择所需工具', '已选择所需工具'],
   }
   const exact = labels[name]
-  if (exact) return exact[completed ? 1 : 0]
-  if (/photo|image/.test(name)) return completed ? '已查看图像' : '查看图像'
+  if (exact) {
+    if (t) {
+      const keys: Record<string, [string, string]> = {
+        connector_apps: ['surface:agentExecutionTimeline.getConnectedAccounts', 'surface:agentExecutionTimeline.connectedAccountsRetrieved'],
+        connector_run: ['surface:agentExecutionTimeline.runConnectorAction', 'surface:agentExecutionTimeline.connectorActionExecuted'],
+        connector_schema: ['surface:agentExecutionTimeline.viewOperationRequirements', 'surface:agentExecutionTimeline.operationRequirementsViewed'],
+        connector_search: ['surface:agentExecutionTimeline.searchAvailableOperations', 'surface:agentExecutionTimeline.availableOperationsFound'],
+        context_room_document_intent: ['surface:agentExecutionTimeline.prepareCreationOptions', 'surface:agentExecutionTimeline.creationOptionsPrepared'],
+        context_room_document_list: ['surface:agentExecutionTimeline.getDocumentList', 'surface:agentExecutionTimeline.documentListRetrieved'],
+        context_room_document_read: ['surface:agentExecutionTimeline.readDocument', 'surface:agentExecutionTimeline.documentRead'],
+        context_room_list: ['surface:agentExecutionTimeline.getRoomList', 'surface:agentExecutionTimeline.roomListRetrieved'],
+        context_room_patch_begin: ['surface:agentExecutionTimeline.prepareDocumentChanges', 'surface:agentExecutionTimeline.documentChangesPrepared'],
+        context_room_patch_commit: ['surface:agentExecutionTimeline.commitDocumentChanges', 'surface:agentExecutionTimeline.documentChangesCommitted'],
+        context_room_patch_hunk: ['surface:agentExecutionTimeline.generateDocumentChanges', 'surface:agentExecutionTimeline.documentChangesGenerated'],
+        context_room_write_append: ['surface:agentExecutionTimeline.writeDocumentContent', 'surface:agentExecutionTimeline.documentContentWritten'],
+        context_room_write_begin: ['surface:agentExecutionTimeline.startDocumentCreation', 'surface:agentExecutionTimeline.documentCreationStarted'],
+        context_room_write_commit: ['surface:agentExecutionTimeline.commitNewDocument', 'surface:agentExecutionTimeline.newDocumentCommitted'],
+        tool_search: ['surface:agentExecutionTimeline.selectRequiredTool', 'surface:agentExecutionTimeline.requiredToolSelected'],
+      }
+      const key = keys[name]?.[completed ? 1 : 0]
+      if (key) return t(key)
+    }
+    return exact[completed ? 1 : 0]
+  }
+  if (/photo|image/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.imageViewed' : 'surface:agentExecutionTimeline.viewImage') : completed ? '已查看图像' : '查看图像'
   if (/calendar/.test(name)) {
-    if (/create|add/.test(name)) return completed ? '已创建日程' : '创建日程'
-    return completed ? '已查询日历' : '查询日历'
+    if (/create|add/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.calendarEventCreated' : 'surface:agentExecutionTimeline.createCalendarEvent') : completed ? '已创建日程' : '创建日程'
+    return t ? t(completed ? 'surface:agentExecutionTimeline.calendarQueried' : 'surface:agentExecutionTimeline.queryCalendar') : completed ? '已查询日历' : '查询日历'
   }
-  if (/scheduler/.test(name)) return completed ? '已处理定时任务' : '处理定时任务'
-  if (/memory/.test(name)) return completed ? '已查询个人记忆' : '查询个人记忆'
+  if (/scheduler/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.scheduledTaskHandled' : 'surface:agentExecutionTimeline.handleScheduledTask') : completed ? '已处理定时任务' : '处理定时任务'
+  if (/memory/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.memoryQueried' : 'surface:agentExecutionTimeline.queryMemory') : completed ? '已查询个人记忆' : '查询个人记忆'
   if (/email|mail/.test(name)) {
-    if (/sync/.test(name)) return completed ? '已同步邮件' : '同步邮件'
-    return completed ? '已查询邮件' : '查询邮件'
+    if (/sync/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.emailSynced' : 'surface:agentExecutionTimeline.syncEmail') : completed ? '已同步邮件' : '同步邮件'
+    return t ? t(completed ? 'surface:agentExecutionTimeline.emailQueried' : 'surface:agentExecutionTimeline.queryEmail') : completed ? '已查询邮件' : '查询邮件'
   }
-  if (/meeting/.test(name)) return completed ? '已查询会议' : '查询会议'
-  if (/diary/.test(name)) return completed ? '已查询日记' : '查询日记'
-  if (/search|web/.test(name)) return completed ? '已搜索网页' : '搜索网页'
-  if (/read/.test(name)) return completed ? '已读取文件' : '读取文件'
-  if (/write|edit|patch/.test(name)) return completed ? '已修改文件' : '修改文件'
-  if (/bash|command|terminal|shell/.test(name)) return completed ? '已运行命令' : '运行命令'
+  if (/meeting/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.meetingQueried' : 'surface:agentExecutionTimeline.queryMeeting') : completed ? '已查询会议' : '查询会议'
+  if (/diary/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.diaryQueried' : 'surface:agentExecutionTimeline.queryDiary') : completed ? '已查询日记' : '查询日记'
+  if (/search|web/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.webSearched' : 'surface:agentExecutionTimeline.searchWeb') : completed ? '已搜索网页' : '搜索网页'
+  if (/read/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.fileRead' : 'surface:agentExecutionTimeline.readFile') : completed ? '已读取文件' : '读取文件'
+  if (/write|edit|patch/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.fileModified' : 'surface:agentExecutionTimeline.modifyFile') : completed ? '已修改文件' : '修改文件'
+  if (/bash|command|terminal|shell/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.commandRun' : 'surface:agentExecutionTimeline.runCommand') : completed ? '已运行命令' : '运行命令'
   const fallback = tool.name.replace(/[_-]+/g, ' ').trim()
-  return fallback ? `${completed ? '已执行' : '执行'} ${fallback}` : completed ? '已调用工具' : '调用工具'
+  if (!fallback) return t ? t(completed ? 'surface:agentExecutionTimeline.toolCalled' : 'surface:agentExecutionTimeline.callTool') : completed ? '已调用工具' : '调用工具'
+  return t ? t(completed ? 'surface:agentExecutionTimeline.executedName' : 'surface:agentExecutionTimeline.executingName', { name: fallback }) : `${completed ? '已执行' : '执行'} ${fallback}`
 }
 
 export function agentToolSubject(tool: DisplayAgentToolCall): string | undefined {
@@ -176,11 +201,11 @@ export function agentToolCommand(tool: DisplayAgentToolCall): string | undefined
   return undefined
 }
 
-export function agentToolResultSummary(result: unknown): string | undefined {
+export function agentToolResultSummary(result: unknown, t?: Translate): string | undefined {
   if (!result) return undefined
   if (typeof result === 'string') {
     try {
-      return agentToolResultSummary(JSON.parse(result))
+      return agentToolResultSummary(JSON.parse(result), t)
     } catch {
       return result.trim().slice(0, 120) || undefined
     }
@@ -188,7 +213,9 @@ export function agentToolResultSummary(result: unknown): string | undefined {
   if (typeof result !== 'object' || Array.isArray(result)) return undefined
   const record = result as Record<string, unknown>
   for (const key of ['results', 'items', 'messages', 'events', 'photos']) {
-    if (Array.isArray(record[key])) return `获得 ${record[key].length} 条结果`
+    if (Array.isArray(record[key])) return t
+      ? t('surface:agentExecutionTimeline.countResults', { count: record[key].length })
+      : `获得 ${record[key].length} 条结果`
   }
   for (const key of ['summary', 'message', 'title', 'documentTitle']) {
     const value = userText(record[key], 120)
@@ -197,7 +224,7 @@ export function agentToolResultSummary(result: unknown): string | undefined {
   for (const key of ['structuredContent', 'details', 'navigation', 'document', 'patch']) {
     const nested = record[key]
     if (!nested || typeof nested !== 'object' || Array.isArray(nested)) continue
-    const value = agentToolResultSummary(nested)
+    const value = agentToolResultSummary(nested, t)
     if (value) return value
   }
   return undefined
@@ -292,14 +319,19 @@ function filterActivityText(
 
 export function agentToolStageText(
   tool: DisplayAgentToolCall,
+  t?: Translate,
 ): string {
   if (tool.status === 'pending' || tool.status === 'running') {
     return ''
   }
   if (tool.status === 'error') {
-    return punctuate(tool.error?.slice(0, 120) || '工具调用失败')
+    const error = tool.error?.slice(0, 120)
+    if (t && (!error || error === '工具调用失败' || error === '工具调用失败。')) {
+      return t('surface:agentExecutionTimeline.failed')
+    }
+    return punctuate(error || '工具调用失败')
   }
-  if (tool.status === 'stopped') return '操作已停止。'
+  if (tool.status === 'stopped') return t ? t('surface:agentExecutionTimeline.stopped') : '操作已停止。'
 
   const root = resultRecord(tool.result ?? tool.partialResult)
   const structured = resultRecord(root?.structuredContent) ?? resultRecord(root?.details) ?? root
@@ -308,37 +340,47 @@ export function agentToolStageText(
     const blockCount = structured?.blockCount
     const version = structured?.version
     if (title && typeof blockCount === 'number' && typeof version === 'number') {
-      return `《${title}》当前有 ${blockCount} 个可编辑内容块，基于版本 ${version} 处理。`
+      return t
+        ? t('surface:agentExecutionTimeline.titleHasCountEditableBlocksAndWillBe', { title, count: blockCount, version })
+        : `《${title}》当前有 ${blockCount} 个可编辑内容块，基于版本 ${version} 处理。`
     }
   }
   if (tool.name === 'context_room_patch_begin') {
     const summary = userText(tool.args.summary, 180)
-    if (summary) return punctuate(`修改范围已确定：${summary}`)
+    if (summary) return t
+      ? t('surface:agentExecutionTimeline.changeScopeConfirmedSummary', { summary })
+      : punctuate(`修改范围已确定：${summary}`)
   }
   if (tool.name === 'context_room_patch_hunk') {
     const sequence = structured?.acceptedSequence ?? tool.args.sequence
     const operation = tool.args.operation
     const markdown = typeof tool.args.markdown === 'string' ? tool.args.markdown.trim() : ''
     const action = operation === 'insert'
-      ? '新增内容'
+      ? (t ? t('surface:agentExecutionTimeline.insertContent') : '新增内容')
       : operation === 'replace'
-        ? '替换内容'
-        : operation === 'delete' ? '删除内容' : '文档修改'
+        ? (t ? t('surface:agentExecutionTimeline.replaceContent') : '替换内容')
+        : operation === 'delete'
+          ? (t ? t('surface:agentExecutionTimeline.deleteContent') : '删除内容')
+          : (t ? t('surface:agentExecutionTimeline.documentChange') : '文档修改')
     if (typeof sequence === 'number') {
-      return markdown
-        ? `第 ${sequence} 项为${action}，建议内容 ${markdown.length} 字。`
-        : `第 ${sequence} 项为${action}。`
+      return t
+        ? (markdown
+          ? t('surface:agentExecutionTimeline.itemSequenceIsActionWithCountCharactersOf', { sequence, action, count: markdown.length })
+          : t('surface:agentExecutionTimeline.itemSequenceIsAction', { sequence, action }))
+        : markdown
+          ? `第 ${sequence} 项为${action}，建议内容 ${markdown.length} 字。`
+          : `第 ${sequence} 项为${action}。`
     }
   }
 
-  const result = agentToolResultSummary(tool.result ?? tool.partialResult)
+  const result = agentToolResultSummary(tool.result ?? tool.partialResult, t)
   if (!result) return ''
   const comparableResult = comparableText(result)
   const subject = agentToolSubject(tool)
   if (
     comparableResult === comparableText(subject ?? '')
-    || comparableResult === comparableText(agentToolLabel(tool, false))
-    || comparableResult === comparableText(agentToolLabel(tool, true))
+    || comparableResult === comparableText(agentToolLabel(tool, false, t))
+    || comparableResult === comparableText(agentToolLabel(tool, true, t))
     || /^(已)?(操作)?(完成|成功)$/.test(comparableResult)
   ) return ''
   return punctuate(result)

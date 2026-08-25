@@ -21,13 +21,13 @@
 .onboarding-flow-content > .folder-settings-onboarding { position: static; inset: auto; min-height: 0; overflow: visible; background: transparent; }
 .onboarding-flow-chrome[data-stage='folder'] .onboarding-flow-content > .app-shell,
 .onboarding-flow-chrome[data-stage='ready'] .onboarding-flow-content > .app-shell { display: none; }
-.onboarding-flow-content .memory-onboarding-header,
-.onboarding-flow-content .room-onboarding-header,
-.onboarding-flow-content .folder-settings-onboarding-header,
-.onboarding-flow-content .memory-onboarding-sequence,
-.onboarding-flow-content .room-onboarding-sequence,
-.onboarding-flow-content .folder-settings-onboarding-sequence { display: none; }
-.onboarding-flow-content .memory-onboarding-main,
-.onboarding-flow-content .room-onboarding-main,
-.onboarding-flow-content .folder-settings-onboarding-main { min-height: 0; padding-top: 48px; }
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .memory-onboarding-header,
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .room-onboarding-header,
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .folder-settings-onboarding-header,
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .memory-onboarding-sequence,
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .room-onboarding-sequence,
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .folder-settings-onboarding-sequence { display: none; }
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .memory-onboarding-main,
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .room-onboarding-main,
+.onboarding-flow-chrome:not([data-stage='idle']) .onboarding-flow-content .folder-settings-onboarding-main { min-height: 0; padding-top: 48px; }
 @media (max-width: 760px) { .onboarding-flow-sequence { flex-wrap: wrap; padding: 5px 10px; } .onboarding-flow-stage { font-size: 10px; } }

@@ -1491,6 +1491,11 @@
   }
 }
 
+.agent-composer-shell[data-dragging='true'] .agent-prompt {
+  border-color: #5876d8;
+  box-shadow: 0 0 0 3px rgba(88, 118, 216, 0.14), 0 9px 24px rgba(15, 23, 42, 0.04);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-thinking-text::after,
   .spin {

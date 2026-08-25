@@ -134,6 +134,39 @@ describe("agent gateway", () => {
     await app.close();
   });
 
+  it("accepts immutable uploaded-file references in the Agent run API", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const session = (await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "首页" },
+    })).json<AgentSession>();
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: {
+        prompt: "这个文档写了什么？",
+        idempotencyKey: "attachment-schema-key",
+        context: {
+          attachments: [{
+            fileId: "file-report",
+            fileVersionId: "fver-report-v1",
+            fileName: "report.pdf",
+            status: "processing",
+          }],
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(202);
+    await app.close();
+  });
+
   it("streams authenticated agent events over WebSocket", async () => {
     const config = await testConfig();
     const app = await createServer(config);

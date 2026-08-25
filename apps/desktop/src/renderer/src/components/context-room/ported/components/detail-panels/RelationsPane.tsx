@@ -11,8 +11,15 @@ import { PanelEmptyState } from './PanelEmptyState';
 export function RelationsPane({ room, rooms, onOpenRoom }: { room: ContextRoomRecord; rooms: ContextRoomRecord[]; onOpenRoom: (roomId: string) => void }) {
   const { t } = useLocale();
   const people = useMemo(() => new Set(room.people.map((person) => person.name)), [room]);
-  const relatedRooms = rooms.filter((candidate) => candidate.id !== room.id && (candidate.kind === room.kind || candidate.people.some((person) => people.has(person.name))));
-  const graphRooms = [room, ...relatedRooms];
+  // Keep the graph's room array stable while only the selected node changes.
+  // RoomGraphCanvas uses its room collection to own the force-layout worker;
+  // rebuilding that collection on every selection makes the canvas flash and
+  // lose its layout before the inline details can settle.
+  const relatedRooms = useMemo(
+    () => rooms.filter((candidate) => candidate.id !== room.id && (candidate.kind === room.kind || candidate.people.some((person) => people.has(person.name)))),
+    [people, room.id, room.kind, rooms],
+  );
+  const graphRooms = useMemo(() => [room, ...relatedRooms], [relatedRooms, room]);
   const graphRef = useRef<RoomGraphCanvasHandle>(null);
   const [selectedGraphRoomId, setSelectedGraphRoomId] = useState(room.id);
   useEffect(() => setSelectedGraphRoomId(room.id), [room.id]);

@@ -1,6 +1,7 @@
 import {
   index,
   integer,
+  blob,
   primaryKey,
   real,
   sqliteTable,
@@ -644,7 +645,9 @@ export const documentVersions = sqliteTable(
       .references(() => documents.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
     title: text("title").notNull().default("无标题文档"),
-    contentJson: text("content_json", { mode: "json" }).notNull(),
+    // Only retained snapshots have a JSON body. Other versions are
+    // reconstructed from the Yjs history chain.
+    contentJson: text("content_json", { mode: "json" }),
     contentSchemaVersion: integer("content_schema_version").notNull().default(1),
     sourceTransactionId: text("source_transaction_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -652,6 +655,69 @@ export const documentVersions = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [uniqueIndex("doc_versions_document_version_idx").on(table.documentId, table.version)],
+);
+
+export const documentYjsCheckpoints = sqliteTable(
+  "document_yjs_checkpoints",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    throughVersion: integer("through_version").notNull(),
+    docState: blob("doc_state", { mode: "buffer" }).notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("document_yjs_checkpoints_document_version_idx").on(table.documentId, table.throughVersion),
+    index("document_yjs_checkpoints_document_idx").on(table.documentId),
+  ],
+);
+
+export const documentYjsUpdates = sqliteTable(
+  "document_yjs_updates",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    update: blob("update", { mode: "buffer" }).notNull(),
+    source: text("source").notNull().default("commit"),
+    contentHash: text("content_hash").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("document_yjs_updates_document_version_idx").on(table.documentId, table.version),
+    index("document_yjs_updates_document_idx").on(table.documentId, table.version),
+  ],
+);
+
+export const documentYjsVersions = sqliteTable(
+  "document_yjs_versions",
+  {
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    updateId: text("update_id")
+      .notNull()
+      .references(() => documentYjsUpdates.id, { onDelete: "cascade" }),
+    checkpointId: text("checkpoint_id").references(() => documentYjsCheckpoints.id, { onDelete: "set null" }),
+    backfilled: integer("backfilled", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.documentId, table.version] }),
+    index("document_yjs_versions_update_idx").on(table.updateId),
+  ],
 );
 
 export const documentOperations = sqliteTable(
@@ -1030,7 +1096,7 @@ export const uploadedFiles = sqliteTable("uploaded_files", {
 });
 
 /**
- * 统一文件目录（files-unified-catalog-and-ingest-plan F1-F7）。
+ * 统一文件目录（统一文件目录与 ingest 设计）。
  * uploaded_files 在兼容期继续存在；新入口以 file_entries/file_versions 为
  * 权威目录，原始字节按 hash 复用 file_blobs。
  */
@@ -1047,7 +1113,7 @@ export const fileEntries = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["manual-upload", "local-folder", "connector", "legacy-upload"],
+      enum: ["manual-upload", "local-folder", "connector", "web-clipper", "legacy-upload"],
     }).notNull(),
     sourceKey: text("source_key").notNull(),
     originalName: text("original_name").notNull(),
@@ -1100,6 +1166,93 @@ export const fileVersions = sqliteTable(
     uniqueIndex("file_versions_entry_hash_idx").on(table.fileEntryId, table.contentHash),
     index("file_versions_hash_idx").on(table.contentHash),
     index("file_versions_status_created_idx").on(table.status, table.createdAt),
+  ],
+);
+
+export const clipperCaptures = sqliteTable(
+  "clipper_captures",
+  {
+    id: text("id").primaryKey(),
+    captureKey: text("capture_key").notNull().unique(),
+    fileEntryId: text("file_entry_id").references(() => fileEntries.id, { onDelete: "cascade" }),
+    fileVersionId: text("file_version_id").references(() => fileVersions.id, { onDelete: "cascade" }),
+    sourceUrl: text("source_url").notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    title: text("title").notNull(),
+    author: text("author"),
+    publishedAt: text("published_at"),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
+    extractionMode: text("extraction_mode", { enum: ["selection", "article", "full-page"] }).notNull(),
+    rawContentHash: text("raw_content_hash").notNull(),
+    extractorVersion: text("extractor_version").notNull(),
+    parserVersion: text("parser_version").notNull(),
+    status: text("status", {
+      enum: ["storing", "assets_pending", "ready", "ready_with_missing_assets", "failed"],
+    }).notNull().default("storing"),
+    assetCount: integer("asset_count").notNull().default(0),
+    storedAssetCount: integer("stored_asset_count").notNull().default(0),
+    failedAssetCount: integer("failed_asset_count").notNull().default(0),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("clipper_captures_file_entry_idx").on(table.fileEntryId, table.capturedAt),
+    index("clipper_captures_canonical_idx").on(table.canonicalUrl, table.capturedAt),
+    index("clipper_captures_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const clipperAssets = sqliteTable(
+  "clipper_assets",
+  {
+    id: text("id").primaryKey(),
+    captureId: text("capture_id").notNull().references(() => clipperCaptures.id, { onDelete: "cascade" }),
+    fileVersionId: text("file_version_id").notNull().references(() => fileVersions.id, { onDelete: "cascade" }),
+    referenceKey: text("reference_key").notNull(),
+    contentHash: text("content_hash").references(() => fileBlobs.contentHash),
+    originalUrl: text("original_url").notNull(),
+    mime: text("mime"),
+    byteSize: integer("byte_size"),
+    altText: text("alt_text"),
+    width: integer("width"),
+    height: integer("height"),
+    status: text("status", { enum: ["pending", "stored", "failed"] }).notNull().default("pending"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("clipper_assets_capture_idx").on(table.captureId, table.status),
+    index("clipper_assets_reference_idx").on(table.referenceKey, table.createdAt),
+    index("clipper_assets_hash_idx").on(table.contentHash),
+  ],
+);
+
+/**
+ * 文件版本的结构化多模态解析产物。第一阶段将完整 Canonical Artifact
+ * 保存在 JSON 中；高频的 page/block/table 索引在查询需求稳定后再拆表。
+ */
+export const parsedDocuments = sqliteTable(
+  "parsed_documents",
+  {
+    id: text("id").primaryKey(),
+    fileVersionId: text("file_version_id").notNull().references(() => fileVersions.id, { onDelete: "cascade" }),
+    parserRevision: text("parser_revision").notNull(),
+    format: text("format", {
+      enum: ["pdf", "docx", "xlsx", "pptx", "legacy-office"],
+    }).notNull(),
+    artifact: text("artifact", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    markdown: text("markdown").notNull(),
+    quality: text("quality", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("parsed_documents_version_revision_idx").on(table.fileVersionId, table.parserRevision),
+    index("parsed_documents_format_created_idx").on(table.format, table.createdAt),
   ],
 );
 

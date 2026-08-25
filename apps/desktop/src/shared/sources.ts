@@ -13,6 +13,7 @@ export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' |
 
 import type {
   AgentEvent,
+  AgentAttachmentReference,
   AgentUsageRange,
   AgentUsageSnapshot,
   PendingAgentIntent,
@@ -36,6 +37,9 @@ import type {
   DocumentBlockList,
   DocumentBlockBacklinkList,
   DocumentVersionSummary,
+  DocumentVersionListOptions,
+  DocumentVersionSnapshot,
+  DocumentDiffResult,
   ImportRoomDocumentInput,
   RoomDocument,
   ResolveDocumentBlockReferencesInput,
@@ -47,6 +51,8 @@ import type {
   StartDocumentOperationInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
+import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
+import type { BrowserExtensionClipperCapture } from './browser-extension'
 import type {
   CreateRealityEventInput,
   FinishRealityCaptureInput,
@@ -595,7 +601,12 @@ export interface NangoRuntimeStatus {
 export interface NxcoreDesktopApi {
   platform: string
   pageMode: DesktopPageMode
+  app: {
+    clearUserData(): Promise<void>
+  }
   locale: {
+    system: string
+    getSystem(): Promise<string>
     set(locale: DesktopLocale): void
   }
   clipboard: {
@@ -610,6 +621,16 @@ export interface NxcoreDesktopApi {
   }
   gateway: {
     status(): Promise<GatewayStatus>
+  }
+  browserExtension: {
+    status(): Promise<BrowserExtensionStatus>
+    install(): Promise<BrowserExtensionStatus>
+    openDirectory(): Promise<void>
+    openBrowserPage(): Promise<void>
+    createPairing(): Promise<BrowserExtensionStatus>
+    revoke(): Promise<BrowserExtensionStatus>
+    onStatus(listener: (status: BrowserExtensionStatus) => void): () => void
+    onMessage(listener: (message: BrowserExtensionMessage) => void): () => void
   }
   runtimeConfig: {
     get(): Promise<RuntimeConfigSnapshot>
@@ -822,7 +843,9 @@ export interface NxcoreDesktopApi {
     get(documentId: string): Promise<RoomDocument>
     listBlocks(documentId: string): Promise<DocumentBlockList>
     listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList>
-    listVersions(documentId: string): Promise<DocumentVersionSummary[]>
+    listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
+    getVersionSnapshot(documentId: string, version: number): Promise<DocumentVersionSnapshot>
+    getDiff(documentId: string, fromVersion: number | null, toVersion: number): Promise<DocumentDiffResult>
     restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
     listOperations(filters?: {
@@ -832,7 +855,7 @@ export interface NxcoreDesktopApi {
       status?: DocumentOperationStatus
     }): Promise<DocumentOperationSummary[]>
     startOperation(input: StartDocumentOperationInput): Promise<DocumentOperation>
-    getOperation(operationId: string): Promise<DocumentOperation>
+    getOperation(operationId: string, context?: { roomId: string; sessionId: string; runId: string }): Promise<DocumentOperation>
     executeOperationCommand(
       operationId: string,
       input: DocumentOperationCommandInput,
@@ -849,6 +872,7 @@ export interface NxcoreDesktopApi {
     unsubscribe(roomId?: string): Promise<void>
     onEvent(listener: (frame: DocumentEventFrame) => void): () => void
     onOperationChanged(listener: (operationId: string) => void): () => void
+    onReady(listener: (roomId: string) => void): () => void
   }
   sources: {
     list(): Promise<DataSourceSummary[]>
@@ -902,10 +926,12 @@ export interface NxcoreDesktopApi {
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
+    listClipCaptures(limit?: number, offset?: number): Promise<{ items: BrowserExtensionClipperCapture[]; total: number }>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
-    readMarkdown(fileId: string): Promise<{ markdown: string }>
+    readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
+    getClipCapture(fileId: string): Promise<BrowserExtensionClipperCapture>
     rename(fileId: string, displayName: string): Promise<FileCatalogDto>
     pinClusterTitle(clusterId: string, sharedTitle: string): Promise<{ id: string; canonicalTitle: string; titlePinned: boolean }>
     /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
@@ -923,6 +949,7 @@ export interface NxcoreDesktopApi {
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>

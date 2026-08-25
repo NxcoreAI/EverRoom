@@ -80,13 +80,19 @@ function createRequestId(): string {
 }
 
 export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, onNavigateStage, activeStage = 'idle' }: MemoryOnboardingGateProps) {
-  const { locale, setLocale, t, formatDate } = useLocale()
+  const { locale, preference, setLocale, t, formatDate } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const storedMarker = readMemoryOnboardingMarker()
   const initialMarkerRef = useRef<MemoryOnboardingMarker | null>(
     REPEATABLE_MEMORY_ONBOARDING && storedMarker?.status !== 'pending' ? null : storedMarker,
   )
-  const [mode, setMode] = useState<GateMode>('checking')
+  const [mode, setMode] = useState<GateMode>(() => {
+    // A restored pending request keeps polling in the background. Only an
+    // explicitly active Memory stage should block on the refining screen.
+    if (initialMarkerRef.current?.status === 'pending') return activeStage === 'memory' ? 'refining' : 'app'
+    if (initialMarkerRef.current && !REPEATABLE_MEMORY_ONBOARDING) return 'app'
+    return 'checking'
+  })
   const [step, setStep] = useState(0)
   const [pageDirection, setPageDirection] = useState<'forward' | 'backward'>('forward')
   const [answers, setAnswers] = useState(['', '', ''])
@@ -160,12 +166,17 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
       submitRequestIdRef.current = marker.requestId
       foregroundStartedAtRef.current = Date.now()
       continueStartedAtRef.current = Date.now()
-      setMode('refining')
+      if (activeStage === 'memory') {
+        setMode('refining')
+      } else {
+        window.nxcore?.memory?.onboardingFinished?.()
+        setMode('app')
+      }
       return () => { cancelled = true }
     }
     if (marker && !REPEATABLE_MEMORY_ONBOARDING && !forceLocalDataCheck) {
       window.nxcore?.memory?.onboardingFinished?.()
-      setMode(marker.status === 'completed' ? 'ready' : 'app')
+      setMode('app')
       return () => { cancelled = true }
     }
     const api = window.nxcore?.memory
@@ -292,7 +303,16 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
 
   const skip = () => {
     writeMemoryOnboardingMarker({ status: 'skipped' })
+    initialMarkerRef.current = { status: 'skipped' }
     setPending(null)
+    finishOnboarding()
+  }
+
+  const continueWithExistingMemory = () => {
+    // Existing memory satisfies setup, but still needs a durable acknowledgement
+    // so a renderer reload does not reopen the ready screen on every launch.
+    writeMemoryOnboardingMarker({ status: 'skipped' })
+    initialMarkerRef.current = { status: 'skipped' }
     finishOnboarding()
   }
 
@@ -398,8 +418,9 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
         <div className="memory-onboarding-actions no-drag">
           <div className="memory-onboarding-language" role="group" aria-label={t('memory:onboarding.language')}>
             <Languages aria-hidden="true" />
-            <button type="button" data-active={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
-            <button type="button" data-active={locale === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
+            <button type="button" data-active={preference === 'system'} onClick={() => setLocale('system')}>{t('surface:settings.followSystem')}</button>
+            <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
+            <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
           {mode !== 'success' ? <button type="button" className="memory-onboarding-skip" onClick={skip}>{t('memory:onboarding.skip')}</button> : null}
         </div>
@@ -508,7 +529,7 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
               <p>{t('memory:onboarding.alreadyReadyBody')}</p>
               <div className="memory-onboarding-button-row">
                 <button type="button" className="memory-onboarding-secondary" onClick={resetQuestions}>{t('memory:onboarding.restart')}</button>
-                <button type="button" className="memory-onboarding-primary" onClick={finishOnboarding}>{t('memory:onboarding.continueToRoom')}<ChevronRight aria-hidden="true" /></button>
+                <button type="button" className="memory-onboarding-primary" onClick={continueWithExistingMemory}>{t('memory:onboarding.continueToRoom')}<ChevronRight aria-hidden="true" /></button>
               </div>
             </div>
           ) : null}

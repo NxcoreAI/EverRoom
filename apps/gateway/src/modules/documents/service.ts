@@ -6,6 +6,8 @@ import type {
   DocumentBlockSummary,
   DocumentEvent,
   DocumentVersionSummary,
+  DocumentVersionSnapshot,
+  DocumentDiffResult,
   ImportRoomDocumentInput,
   ResolveDocumentBlockReferencesInput,
   RoomDocument,
@@ -18,6 +20,7 @@ import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   documentVersions,
   documents,
+  jobs,
   roomDocumentLinks,
 } from "../../infrastructure/database/schema.js";
 import {
@@ -28,12 +31,14 @@ import {
 } from "./content-model.js";
 import { DocumentEventBroker } from "./event-broker.js";
 import { DocumentServiceError } from "./errors.js";
+import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE } from "./integration-outbox.js";
 import {
   DocumentCommitService,
   DocumentContentEngine,
   DocumentLifecycleService,
   DocumentQueryService,
   DocumentRepository,
+  YjsHistoryService,
   type AtomicDocumentCreateInput,
   type AtomicDocumentCommitInput,
 } from "./core/index.js";
@@ -213,6 +218,7 @@ export class DocumentService {
   private readonly commitService: DocumentCommitService;
   private readonly queryService: DocumentQueryService;
   private readonly lifecycleService: DocumentLifecycleService;
+  private readonly yjsHistory: YjsHistoryService;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -226,7 +232,8 @@ export class DocumentService {
     this.contentEngine = new DocumentContentEngine({
       findDocumentRoom: (documentId) => this.repository.get(documentId)?.roomId ?? null,
     });
-    this.commitService = new DocumentCommitService(db, this.repository, this.contentEngine);
+    this.yjsHistory = new YjsHistoryService();
+    this.commitService = new DocumentCommitService(db, this.repository, this.contentEngine, {}, this.yjsHistory);
     this.queryService = new DocumentQueryService(db, this.repository, this.contentEngine);
     this.lifecycleService = new DocumentLifecycleService(db, this.repository, {
       trashed: (document) => this.publish(
@@ -270,8 +277,58 @@ export class DocumentService {
     return this.queryService.listBlockBacklinks(documentId, blockId);
   }
 
-  listVersions(documentId: string): DocumentVersionSummary[] {
-    return this.queryService.listVersions(documentId);
+  listVersions(documentId: string, options: { limit?: number; beforeVersion?: number } = {}): DocumentVersionSummary[] {
+    return this.queryService.listVersions(documentId, options);
+  }
+
+  getVersionSnapshot(documentId: string, version: number): DocumentVersionSnapshot | null {
+    if (!this.get(documentId)) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    return this.queryService.getVersionSnapshot(documentId, version);
+  }
+
+  diff(documentId: string, fromVersion: number | null, toVersion: number): DocumentDiffResult | null {
+    if (!this.get(documentId)) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    return this.queryService.diff(documentId, fromVersion, toVersion);
+  }
+
+  backfillYjsHistory(documentId: string, maxVersions = 50): number {
+    if (!this.get(documentId)) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    return this.yjsHistory.backfillDocument(this.db, documentId, maxVersions);
+  }
+
+  isYjsHistoryComplete(documentId: string): boolean {
+    if (!this.get(documentId)) return false;
+    return this.yjsHistory.isHistoryComplete(this.db, documentId);
+  }
+
+  retryYjsHistoryBackfill(documentId: string): void {
+    if (!this.get(documentId)) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
+    this.db.transaction((tx) => {
+      const id = `document-history-backfill:${documentId}`;
+      const existing = tx.select({ id: jobs.id }).from(jobs).where(and(
+        eq(jobs.id, id),
+        eq(jobs.type, DOCUMENT_HISTORY_BACKFILL_JOB_TYPE),
+      )).get();
+      const now = new Date();
+      if (!existing) {
+        tx.insert(jobs).values({
+          id,
+          type: DOCUMENT_HISTORY_BACKFILL_JOB_TYPE,
+          status: "pending",
+          payload: { documentId, attempts: 0 },
+          createdAt: now,
+          updatedAt: now,
+        }).run();
+        return;
+      }
+      tx.update(jobs).set({
+        status: "pending",
+        payload: { documentId, attempts: 0 },
+        result: null,
+        error: null,
+        updatedAt: now,
+      }).where(eq(jobs.id, id)).run();
+    });
   }
 
   restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument> {
@@ -288,10 +345,13 @@ export class DocumentService {
         eq(documentVersions.version, version),
       )).get();
       if (!historical) throw new DocumentServiceError("VERSION_NOT_FOUND", "Document version not found", 404);
+      const historicalContent = this.yjsHistory.materialize(this.db, documentId, version)?.content
+        ?? historical.contentJson as TiptapJsonContent | null;
+      if (!historicalContent) throw new DocumentServiceError("VERSION_CONTENT_UNAVAILABLE", "Document version content is unavailable", 409);
       const nextVersion = document.version + 1;
       const coordination = this.onDocumentVersionCommitted?.(documentId, nextVersion);
       const content = normalizePersistedDocumentBody(
-        historical.contentJson as TiptapJsonContent,
+        historicalContent,
         historical.title,
       ).content;
       const restored = this.commitService.commit({
@@ -425,7 +485,13 @@ export class DocumentService {
       const titleChanged = current.title !== title;
       if (!contentChanged && !titleChanged) return current;
       if (current.version !== input.baseVersion) {
-        throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409);
+        throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409, {
+          documentId,
+          currentVersion: current.version,
+          currentDocument: current,
+          retryable: true,
+          nextAction: "refresh_document_before_save",
+        });
       }
       const coordination = this.onDocumentVersionCommitted?.(documentId, nextVersion);
       const updated = this.commitService.commit({
@@ -591,37 +657,45 @@ export class DocumentService {
       .from(documents)
       .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
       .orderBy(asc(documents.createdAt)).all();
-    this.db.transaction((tx) => {
-      for (const row of rows) {
-        const body = normalizePersistedDocumentBody(
-          row.document.contentJson as TiptapJsonContent,
-          row.document.title,
-        );
-        const normalized = this.contentEngine.normalizeStoredDocument(
-          body.content,
-          row.document.id,
-          row.roomId,
-          row.document.contentSchemaVersion,
-          row.document.version,
-        );
-        if (body.changed || normalized.changed || row.document.contentSchemaVersion !== normalized.schemaVersion) {
-          tx.update(documents).set({
-            contentJson: normalized.content,
-            contentSchemaVersion: normalized.schemaVersion,
-          })
-            .where(eq(documents.id, row.document.id)).run();
-          tx.update(documentVersions).set({
-            title: row.document.title,
-            contentJson: normalized.content,
-            contentSchemaVersion: normalized.schemaVersion,
-          }).where(and(
-            eq(documentVersions.documentId, row.document.id),
-            eq(documentVersions.version, row.document.version),
-          )).run();
-        }
-        this.repository.replaceProjection(tx, row.document.id, normalized);
+    for (const row of rows) {
+      try {
+        this.db.transaction((tx) => {
+          const body = normalizePersistedDocumentBody(
+            row.document.contentJson as TiptapJsonContent,
+            row.document.title,
+          );
+          const normalized = this.contentEngine.normalizeStoredDocument(
+            body.content,
+            row.document.id,
+            row.roomId,
+            row.document.contentSchemaVersion,
+            row.document.version,
+          );
+          // Each document is repaired atomically so one unavailable history
+          // cannot leave partial writes or prevent healthy documents loading.
+          if (body.changed || normalized.changed || row.document.contentSchemaVersion !== normalized.schemaVersion) {
+            tx.update(documents).set({
+              contentJson: normalized.content,
+              contentSchemaVersion: normalized.schemaVersion,
+            }).where(eq(documents.id, row.document.id)).run();
+            tx.update(documentVersions).set({
+              title: row.document.title,
+              contentJson: normalized.content,
+              contentSchemaVersion: normalized.schemaVersion,
+            }).where(and(
+              eq(documentVersions.documentId, row.document.id),
+              eq(documentVersions.version, row.document.version),
+            )).run();
+            this.yjsHistory.rebuildDocument(tx, row.document.id);
+          }
+          this.repository.replaceProjection(tx, row.document.id, normalized);
+        });
+      } catch (error) {
+        try {
+          this.onAfterCommitError?.(error, row.document.id, row.document.version);
+        } catch {}
       }
-    });
+    }
   }
 
   private publish(

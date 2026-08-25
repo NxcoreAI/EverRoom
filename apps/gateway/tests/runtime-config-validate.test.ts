@@ -143,13 +143,23 @@ describe("runtime config embedding connection test", () => {
   });
 
   it("reports valid with dimensions on a 2xx response carrying a vector", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(
-      JSON.stringify({ data: [{ embedding: Array.from({ length: 1536 }, () => 0.1) }] }),
-      { status: 200 },
-    )));
-    const result = await testEmbeddingConnection(embeddingAiFields(embeddingConfig()));
+    let requestBody: unknown;
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(
+        JSON.stringify({ data: [{ embedding: Array.from({ length: 1536 }, () => 0.1) }] }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await testEmbeddingConnection(embeddingAiFields(embeddingConfig()), 1536);
     expect(result.valid).toBe(true);
     expect(result.dimensions).toBe(1536);
+    expect(requestBody).toMatchObject({
+      model: "text-embedding-test",
+      input: "ping",
+      dimensions: 1536,
+    });
     vi.unstubAllGlobals();
   });
 

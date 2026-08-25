@@ -86,6 +86,16 @@ export interface AgentMessage {
   createdAt: string;
 }
 
+export type AgentAttachmentKind = "document" | "image";
+
+export interface AgentAttachmentReference {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  kind: AgentAttachmentKind;
+}
+
 export interface AgentEvent<T = unknown> {
   id: string;
   sessionId: string;
@@ -295,6 +305,7 @@ export interface CreateContextRoomResult {
 export interface StartAgentRunInput {
   prompt: string;
   idempotencyKey: string;
+  attachments?: AgentAttachmentReference[];
   /** Completed run replaced by this regeneration request. */
   replaceRunId?: string;
   /** Current UI locale used for assistant-generated summaries and documents. */
@@ -314,7 +325,19 @@ export interface StartAgentRunInput {
     /** Explicit UI-confirmed target for a global Agent session. */
     selectedRoomId?: string | null;
     activeDocument?: AgentActiveDocumentContext;
+    /** Files uploaded from the conversation composer and parsed by the unified file engine. */
+    attachments?: AgentFileAttachment[];
   };
+}
+
+export interface AgentFileAttachment {
+  fileId: string;
+  /** Immutable file version selected when the attachment was uploaded. */
+  fileVersionId: string;
+  fileName: string;
+  content?: string;
+  status?: "processing" | "ready";
+  contentHash?: string;
 }
 
 export type PendingAgentIntentTargetCapability =
@@ -460,6 +483,50 @@ export interface DocumentVersionSummary {
   contentSchemaVersion: number;
   sourceTransactionId: string | null;
   createdAt: string;
+  title?: string;
+  yjsBackfilled?: boolean;
+}
+
+export interface DocumentVersionListOptions {
+  limit?: number;
+  beforeVersion?: number;
+}
+
+export interface DocumentVersionSnapshot {
+  documentId: string;
+  version: number;
+  title: string;
+  contentJson: TiptapJsonContent;
+  contentSchemaVersion: number;
+  sourceTransactionId: string | null;
+  createdAt: string;
+  yjsBackfilled: boolean;
+}
+
+export interface DocumentDiffSpan {
+  type: "equal" | "insert" | "delete";
+  text: string;
+}
+
+export interface DocumentDiffBlock {
+  blockId: string;
+  status: "added" | "removed" | "modified" | "unchanged";
+  type: string;
+  path: number[];
+  before?: TiptapJsonContent;
+  after?: TiptapJsonContent;
+  textDiff: DocumentDiffSpan[];
+  unstableMatch?: boolean;
+}
+
+export interface DocumentDiffResult {
+  documentId: string;
+  fromVersion: number | null;
+  toVersion: number;
+  blocks: DocumentDiffBlock[];
+  yjsBackfilled: boolean;
+  truncated?: boolean;
+  truncatedReason?: "too_large";
 }
 
 export interface RestoreDocumentVersionInput {
@@ -546,6 +613,11 @@ export interface DocumentOperationCommandInput {
   expectedRevision: number;
   type: string;
   payload?: Record<string, unknown>;
+  context?: {
+    roomId: string;
+    sessionId: string;
+    runId: string;
+  };
 }
 
 export interface DocumentOperationCommandResult {

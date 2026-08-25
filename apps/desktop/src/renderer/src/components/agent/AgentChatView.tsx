@@ -640,7 +640,7 @@ export function AgentChatView({
                       type="button"
                       aria-label={t('surface:agentChat.regenerate')}
                       title={t('surface:agentChat.regenerate')}
-                      disabled={!previousUserMessage}
+                      disabled={!previousUserMessage || previousUserMessage.content.includes('[附件：')}
                       onClick={() => previousUserMessage && onRetryPrompt(previousUserMessage.content, message.runId)}
                     >
                       <RotateCcw aria-hidden="true" />

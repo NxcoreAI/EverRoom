@@ -15,8 +15,14 @@ interface DocumentReadReceipt {
   expiresAt: Date;
 }
 
+type ReadableDocument = { deletedAt?: string | null };
+
 export class DocumentReadAuthority {
   private readonly receipts = new Map<string, DocumentReadReceipt>();
+
+  constructor(
+    private readonly findDocument?: (documentId: string) => ReadableDocument | null,
+  ) {}
 
   issue(
     context: DocumentExecutionContext,
@@ -27,6 +33,7 @@ export class DocumentReadAuthority {
     if (!context.roomId) {
       throw new DocumentServiceError("ROOM_SELECTION_REQUIRED", "Select a Context Room first", 409);
     }
+    this.assertReadable(documentId);
     this.prune();
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + READ_RECEIPT_TTL_MS);
@@ -50,6 +57,7 @@ export class DocumentReadAuthority {
     version: number,
   ): DocumentReadReceipt {
     this.prune();
+    this.assertReadable(documentId);
     const receipt = this.receipts.get(token);
     if (!receipt
       || receipt.sessionId !== context.agentSessionId
@@ -78,6 +86,7 @@ export class DocumentReadAuthority {
     version: number,
   ): DocumentReadReceipt {
     this.prune();
+    this.assertReadable(documentId);
     const receipt = [...this.receipts.values()].reverse().find((candidate) =>
       candidate.sessionId === context.agentSessionId
       && candidate.runId === context.runId
@@ -121,5 +130,19 @@ export class DocumentReadAuthority {
     for (const [token, receipt] of this.receipts) {
       if (receipt.expiresAt.getTime() <= now) this.receipts.delete(token);
     }
+  }
+
+  private assertReadable(documentId: string): void {
+    const document = this.findDocument?.(documentId);
+    if (!this.findDocument || document) {
+      if (document?.deletedAt) {
+        throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409, {
+          documentId,
+          retryable: false,
+        });
+      }
+      return;
+    }
+    throw new DocumentServiceError("NOT_FOUND", "Document not found", 404, { documentId });
   }
 }

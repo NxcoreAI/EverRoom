@@ -57,6 +57,49 @@ async function createReviewHarness(name: string) {
 }
 
 describe("document capability registry", () => {
+  it("blocks Agent reads, patches, and selection rewrites after a document enters trash", async () => {
+    const { documents, registry } = await createReviewHarness("trashed-agent-document")
+    const document = await documents.import({
+      id: "doc-trashed-agent",
+      roomId: "room-1",
+      title: "Trashed document",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Private content" }] }],
+      },
+    })
+    const context = { agentSessionId: "session-trash", runId: "run-trash", roomId: "room-1" }
+
+    await documents.delete(document.id)
+
+    await expect(registry.execute(
+      "context_room_document_list",
+      {},
+      context,
+    )).resolves.toMatchObject({ structuredContent: { documents: [] } })
+    await expect(registry.execute(
+      "context_room_document_read",
+      { documentId: document.id },
+      context,
+    )).rejects.toMatchObject({ code: "DOCUMENT_TRASHED", statusCode: 409 })
+    await expect(registry.execute(
+      "context_room_patch_begin",
+      { documentId: document.id, baseVersion: document.version, kind: "edit", summary: "rewrite" },
+      context,
+    )).rejects.toMatchObject({ code: "DOCUMENT_TRASHED", statusCode: 409 })
+    await expect(registry.start({
+      capabilityId: "document.selection-rewrite",
+      context: { roomId: "room-1", documentId: document.id, sessionId: "session-trash", runId: "run-trash" },
+      input: {
+        baseVersion: document.version,
+        proposedContentJson: document.contentJson,
+        originalText: "Private content",
+        replacementText: "Changed content",
+        instruction: "rewrite",
+      },
+    })).rejects.toMatchObject({ code: "DOCUMENT_TRASHED", statusCode: 409 })
+  })
+
   it("tells document creation agents to keep the page title out of the Markdown body", () => {
     const registry = createBuiltinDocumentCapabilityRegistry({} as never);
 
