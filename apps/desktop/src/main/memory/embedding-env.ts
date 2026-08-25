@@ -4,8 +4,9 @@
  * MemoryCore 约束(见 memory-core src/gateway/config.ts):env 下发完整远程配置
  * (PROVIDER/BASE_URL/API_KEY/MODEL/DIMENSIONS)时自动启用 embedding,缺任一项
  * 自动禁用不崩溃。provider 为任意非 local/none 字符串(OpenAI 兼容 HTTP)。
- * dimensions 由 gateway /v1/runtime-config/test 的真实 /embeddings 响应推导,
- * 不让用户手填。不设 TDAI_EMBEDDING_ENABLED/SEND_DIMENSIONS,走 MemoryCore 默认。
+ * dimensions 由 gateway /v1/runtime-config/test 的真实 /embeddings 响应确认；
+ * 已配置 TDAI_EMBEDDING_DIMENSIONS 时，探测请求会带上该期望维度，避免供应商默认值覆盖本地配置。
+ * 不设 TDAI_EMBEDDING_ENABLED/SEND_DIMENSIONS，走 MemoryCore 默认。
  */
 export interface MemoryCoreEmbeddingFields {
   provider: string

@@ -13,6 +13,10 @@
     "sourceLabel": {
       "type": "string",
       "description": "An optional human-readable label for the supplied material."
+    },
+    "context": {
+      "type": "string",
+      "description": "Optional caller context that frames the analysis without becoming source evidence."
     }
   },
   "required": ["content"],

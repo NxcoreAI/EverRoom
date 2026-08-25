@@ -68,4 +68,20 @@ CREATE TABLE `room_source_memberships` (
 CREATE UNIQUE INDEX `room_source_memberships_room_source_idx` ON `room_source_memberships` (`room_id`,`source_kind`,`source_id`);--> statement-breakpoint
 CREATE INDEX `room_source_memberships_source_idx` ON `room_source_memberships` (`source_kind`,`source_id`);--> statement-breakpoint
 CREATE INDEX `room_source_memberships_group_idx` ON `room_source_memberships` (`evidence_group_key`);--> statement-breakpoint
-CREATE INDEX `room_source_memberships_room_idx` ON `room_source_memberships` (`room_id`);
+CREATE INDEX `room_source_memberships_room_idx` ON `room_source_memberships` (`room_id`);--> statement-breakpoint
+ALTER TABLE `entities` ADD `eligible_source_count` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entities` ADD `trusted_source_count` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entities` ADD `strong_source_count` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entities` ADD `readiness_path` text;--> statement-breakpoint
+ALTER TABLE `entities` ADD `scoring_version` integer DEFAULT 2 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `evidence_group_key` text DEFAULT '' NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `role_weight` real DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `source_weight` real DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `quality_factor` real DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `relevance_factor` real DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `effective_weight` real DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `quality_level` text DEFAULT 'excluded' NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `trusted` integer DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `strong` integer DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `score_reasons` text;--> statement-breakpoint
+ALTER TABLE `entity_doc_links` ADD `scoring_version` integer DEFAULT 2 NOT NULL;

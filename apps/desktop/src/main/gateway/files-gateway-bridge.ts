@@ -2,6 +2,7 @@ import { dialog, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { basename, extname, relative, resolve, sep } from 'node:path'
+import type { AgentAttachmentReference } from '@nxcore/agent-contract'
 import type {
   FileDto,
   FileCatalogDto,
@@ -12,6 +13,11 @@ import type {
   HighRiskImportResolution,
   IngestPipelines,
 } from '../../shared/ingest'
+import type {
+  BrowserExtensionCapture,
+  BrowserExtensionCaptureResult,
+  BrowserExtensionClipperCapture,
+} from '../../shared/browser-extension'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
 import {
@@ -35,6 +41,15 @@ const DEFAULT_IMPORT_EXTENSIONS = new Set([
   '.pptx', '.pptm', '.rtf', '.sldx', '.sldm', '.text', '.txt', '.xls', '.xla', '.xlam', '.xlsb',
   '.xlsx', '.xlsm', '.xlt', '.xltx', '.xltm',
 ])
+const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
+const AGENT_MAX_ATTACHMENTS = 5
+const AGENT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+function imageMime(extension: string): string {
+  return extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg'
+    : extension === '.png' ? 'image/png'
+      : extension === '.gif' ? 'image/gif' : 'image/webp'
+}
 
 interface ImportCollectionPlan {
   candidates: ImportCandidate[]
@@ -134,6 +149,11 @@ export class FilesGatewayBridge {
     return this.request(`/v1/files/catalog?${query}`)
   }
 
+  listClipCaptures(limit = 100, offset = 0): Promise<{ items: BrowserExtensionClipperCapture[]; total: number }> {
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    return this.request(`/v1/clipper/captures?${query}`)
+  }
+
   catalog(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
     return this.request(`/v1/files/catalog?${query}`)
@@ -148,8 +168,18 @@ export class FilesGatewayBridge {
   }
 
   /** 文件当前解析产物的 markdown（渲染器预览用；未进过链路 404）。 */
-  readMarkdown(fileId: string): Promise<{ markdown: string }> {
-    return this.request(`/v1/files/${encodeURIComponent(fileId)}/markdown`)
+  async readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }> {
+    const waitMs = Math.min(Math.max(options?.waitMs ?? 0, 0), 120_000)
+    const pollMs = Math.min(Math.max(options?.pollMs ?? 500, 100), 5_000)
+    const deadline = Date.now() + waitMs
+    while (true) {
+      try {
+        return await this.request(`/v1/files/${encodeURIComponent(fileId)}/markdown`)
+      } catch (error) {
+        if (Date.now() >= deadline || !(error instanceof Error) || !/file_not_parsed/i.test(error.message)) throw error
+        await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(1, deadline - Date.now()))))
+      }
+    }
   }
 
   async readDataUrl(fileId: string): Promise<{ dataUrl: string }> {
@@ -161,6 +191,57 @@ export class FilesGatewayBridge {
     const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
     const bytes = Buffer.from(await response.arrayBuffer())
     return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
+  }
+
+  async importAgentAttachments(selectedPaths: string[]): Promise<AgentAttachmentReference[]> {
+    const candidates = await collectImportCandidates(
+      selectedPaths,
+      new Set([...DEFAULT_IMPORT_EXTENSIONS, ...AGENT_IMAGE_EXTENSIONS]),
+    )
+    if (candidates.length > AGENT_MAX_ATTACHMENTS) throw new Error('最多只能添加 5 个附件')
+    const attachments: AgentAttachmentReference[] = []
+    for (const candidate of candidates) {
+      const fileStat = await stat(candidate.filePath)
+      if (fileStat.size > AGENT_MAX_ATTACHMENT_BYTES) throw new Error(`附件超过 10 MB：${candidate.filename}`)
+      const extension = extname(candidate.filename).toLowerCase()
+      if (AGENT_IMAGE_EXTENSIONS.has(extension)) {
+        const uploaded = await this.request<{ id: string; bytes: number; originalName: string }>('/v1/files', {
+          method: 'POST',
+          body: JSON.stringify({
+            filename: basename(candidate.filename),
+            contentBase64: (await readFile(candidate.filePath)).toString('base64'),
+            mime: imageMime(extension),
+            assetKind: 'photo',
+            originChannel: 'agent-composer',
+            visibility: 'private',
+          }),
+        })
+        attachments.push({
+          fileId: uploaded.id,
+          filename: uploaded.originalName,
+          mimeType: imageMime(extension),
+          size: uploaded.bytes,
+          kind: 'image',
+        })
+      } else {
+        const imported = await this.importPath({
+          filePath: candidate.filePath,
+          sourceKind: 'manual-upload',
+          sourceKey: `agent:${randomUUID()}`,
+          originalName: basename(candidate.filename),
+          relativePath: candidate.filename,
+        })
+        await this.waitForMarkdown(imported.fileEntryId)
+        attachments.push({
+          fileId: imported.fileEntryId,
+          filename: basename(candidate.filename),
+          mimeType: 'text/plain',
+          size: fileStat.size,
+          kind: 'document',
+        })
+      }
+    }
+    return attachments
   }
 
   rename(fileId: string, displayName: string): Promise<FileCatalogDto> {
@@ -301,6 +382,7 @@ export class FilesGatewayBridge {
         outcomes.push({
           filename,
           fileId: uploaded.fileEntryId,
+          fileVersionId: uploaded.fileVersionId,
           eventId: null,
           dataType: null,
           deduped: uploaded.versionDeduped,
@@ -314,6 +396,7 @@ export class FilesGatewayBridge {
         outcomes.push({
           filename,
           fileId: null,
+          fileVersionId: null,
           eventId: null,
           dataType: null,
           deduped: false,
@@ -357,6 +440,54 @@ export class FilesGatewayBridge {
     sourceModifiedAt: string
   }): Promise<FileImportAcceptedDto> {
     return this.importPath({ ...input, sourceKind: 'connector' })
+  }
+
+  createClipCapture(input: BrowserExtensionCapture): Promise<BrowserExtensionCaptureResult> {
+    return this.request('/v1/clipper/captures', { method: 'POST', body: JSON.stringify({
+      captureId: input.captureId,
+      sourceUrl: input.url,
+      canonicalUrl: input.canonicalUrl,
+      title: input.title,
+      author: input.author,
+      publishedAt: input.publishedAt,
+      capturedAt: input.capturedAt,
+      extractionMode: input.extractionMode,
+      markdown: input.markdown,
+      extractorVersion: input.extractorVersion,
+      assets: input.assets,
+    }) })
+  }
+
+  uploadClipAsset(captureId: string, assetId: string, data: string): Promise<BrowserExtensionClipperCapture['assets'][number]> {
+    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/assets/${encodeURIComponent(assetId)}`, {
+      method: 'PUT', body: JSON.stringify({ data }),
+    })
+  }
+
+  finalizeClipCapture(captureId: string, failures: Array<{ assetId: string; code?: string }>): Promise<BrowserExtensionClipperCapture> {
+    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/finalize`, {
+      method: 'POST', body: JSON.stringify({ failures }),
+    })
+  }
+
+  retryClipCapture(captureId: string): Promise<{ capture: BrowserExtensionClipperCapture; pendingAssetIds: string[] }> {
+    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/retry`, { method: 'POST' })
+  }
+
+  getClipCapture(fileEntryId: string): Promise<BrowserExtensionClipperCapture> {
+    return this.request(`/v1/clipper/files/${encodeURIComponent(fileEntryId)}`)
+  }
+
+  async readClipAsset(assetId: string): Promise<{ buffer: Buffer; mime: string }> {
+    const connection = this.supervisor.getConnection()
+    const response = await fetch(`${connection.baseUrl}/v1/clipper/assets/${encodeURIComponent(assetId)}/content`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+    })
+    if (!response.ok) throw new Error(`网页剪藏图片读取失败（${response.status}）`)
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      mime: response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream',
+    }
   }
 
   private async importPath(input: {
@@ -407,6 +538,22 @@ export class FilesGatewayBridge {
       throw new Error(typeof body?.error === 'string' ? body.error : `文件上传失败（${response.status}）`)
     }
     return response.json() as Promise<FileImportAcceptedDto>
+  }
+
+  private async waitForMarkdown(fileId: string): Promise<void> {
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      try {
+        await this.readMarkdown(fileId)
+        return
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'file_not_parsed') {
+          throw new Error(`附件解析失败：${error instanceof Error ? error.message : String(error)}`, { cause: error })
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+      }
+    }
+    throw new Error(`附件解析超时：${fileId}`)
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

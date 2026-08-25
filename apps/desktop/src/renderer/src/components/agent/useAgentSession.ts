@@ -1,6 +1,7 @@
 import type {
   AgentEvent,
   AgentActiveDocumentContext,
+  AgentFileAttachment,
   AgentMessage,
   AgentRoomReference,
   AgentSession,
@@ -629,9 +630,10 @@ export function useAgentSession(
     selectedRoomId?: string,
     activeDocument?: AgentActiveDocumentContext | null,
     replaceRunId?: string,
+    attachments?: AgentFileAttachment[],
   ): Promise<string | null> => {
     const message = prompt.trim()
-    if (!message || activeRunId || loading || sending) return null
+    if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
     if (replaceRunId) {
       setMessages((current) => removeAgentRunMessages(current, replaceRunId))
       setToolCallsByRun((current) => {
@@ -691,7 +693,7 @@ export function useAgentSession(
         idempotencyKey: crypto.randomUUID(),
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments),
       })
       const updatedAt = new Date().toISOString()
       const runCompleted = terminalRunIdsRef.current.has(run.id)

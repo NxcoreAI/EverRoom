@@ -422,7 +422,7 @@ export class PiAgentRuntime implements AgentRuntime {
           id: this.config.model,
           name: this.config.model,
           reasoning: this.config.reasoning !== "off",
-          input: ["text"],
+          input: ["text", "image"],
           cost: EMPTY_COST,
           contextWindow: this.config.contextWindow,
           maxTokens: this.config.maxTokens,
@@ -735,7 +735,30 @@ export class PiAgentRuntime implements AgentRuntime {
         "",
         `用户请求：${input.prompt}`,
       ].join("\n");
-      await active.handle.session.prompt(prompt, { expandPromptTemplates: false, source: "rpc" });
+      const attachmentText = input.attachments?.filter((attachment) => attachment.text).map((attachment) => [
+        `附件：${attachment.filename}`,
+        "<attachment_text>",
+        attachment.text,
+        "</attachment_text>",
+      ].join("\n")) ?? [];
+      const promptText = attachmentText.length ? `${prompt}\n\n${attachmentText.join("\n\n")}` : prompt;
+      const images = input.attachments?.filter((attachment) => attachment.dataUrl).map((attachment) => ({
+        type: "image" as const,
+        data: attachment.dataUrl!.replace(/^data:[^;]+;base64,/, ""),
+        mimeType: attachment.mimeType,
+      }));
+      try {
+        await active.handle.session.prompt(
+          promptText,
+          { expandPromptTemplates: false, source: "rpc", ...(images?.length ? { images } : {}) },
+        );
+      } catch (error) {
+        if (images?.length) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`Pi vision model unavailable: ${message}`, { cause: error });
+        }
+        throw error;
+      }
       if (!active.terminal) await this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
     } catch (error) {
       if (active.cancelled) {

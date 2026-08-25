@@ -22,6 +22,6 @@ export default defineConfig({
       "globalThis.__dirname = __nxcoreDirname(globalThis.__filename);",
     ].join("\n"),
   },
-  noExternal: [/^(?!better-sqlite3$).*/],
-  external: ["better-sqlite3"],
+  noExternal: [/^(?!(better-sqlite3|@napi-rs\/canvas)$).*/],
+  external: ["better-sqlite3", "@napi-rs/canvas"],
 });

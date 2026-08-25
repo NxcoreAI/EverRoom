@@ -6,6 +6,7 @@ import { ContextRoomHomeSkeleton } from './context-room/ContextRoomHomeSkeleton'
 import { DiaryPageSkeleton } from './diary/DiaryPageSkeleton'
 import { DocsPage } from './pages/DocsPage'
 import { FilesPage } from './pages/FilesPage'
+import { InspirationPage } from './pages/InspirationPage'
 import { HomePage } from './pages/HomePage'
 import { MemoryPage } from './pages/MemoryPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -92,6 +93,7 @@ export function PageCanvas({
   if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage />
+  if (page === 'inspiration') content = <InspirationPage />
   if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
   if (page === 'wiki') content = <WikiPage />
   if (page === 'connectors') content = <ConnectorSyncPage />

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "3a0e7a93-bc1e-4b06-a901-533a918d5464",
+  "id": "34b710e7-ab1b-44cd-941b-0aa6a6d4db86",
   "prevId": "afbc7120-0d89-4922-ade8-2a479071072e",
   "tables": {
     "agent_events": {
@@ -4148,7 +4148,7 @@
           "name": "content_json",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "content_schema_version": {
@@ -4200,289 +4200,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "document_yjs_checkpoints": {
-      "name": "document_yjs_checkpoints",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "through_version": {
-          "name": "through_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "doc_state": {
-          "name": "doc_state",
-          "type": "blob",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "schema_version": {
-          "name": "schema_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "document_yjs_checkpoints_document_version_idx": {
-          "name": "document_yjs_checkpoints_document_version_idx",
-          "columns": [
-            "document_id",
-            "through_version"
-          ],
-          "isUnique": true
-        },
-        "document_yjs_checkpoints_document_idx": {
-          "name": "document_yjs_checkpoints_document_idx",
-          "columns": [
-            "document_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "document_yjs_checkpoints_document_id_documents_id_fk": {
-          "name": "document_yjs_checkpoints_document_id_documents_id_fk",
-          "tableFrom": "document_yjs_checkpoints",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "document_yjs_updates": {
-      "name": "document_yjs_updates",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "update": {
-          "name": "update",
-          "type": "blob",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'commit'"
-        },
-        "content_hash": {
-          "name": "content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "document_yjs_updates_document_version_idx": {
-          "name": "document_yjs_updates_document_version_idx",
-          "columns": [
-            "document_id",
-            "version"
-          ],
-          "isUnique": true
-        },
-        "document_yjs_updates_document_idx": {
-          "name": "document_yjs_updates_document_idx",
-          "columns": [
-            "document_id",
-            "version"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "document_yjs_updates_document_id_documents_id_fk": {
-          "name": "document_yjs_updates_document_id_documents_id_fk",
-          "tableFrom": "document_yjs_updates",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "document_yjs_versions": {
-      "name": "document_yjs_versions",
-      "columns": {
-        "document_id": {
-          "name": "document_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "update_id": {
-          "name": "update_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "checkpoint_id": {
-          "name": "checkpoint_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "backfilled": {
-          "name": "backfilled",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "document_yjs_versions_update_idx": {
-          "name": "document_yjs_versions_update_idx",
-          "columns": [
-            "update_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "document_yjs_versions_document_id_documents_id_fk": {
-          "name": "document_yjs_versions_document_id_documents_id_fk",
-          "tableFrom": "document_yjs_versions",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "document_yjs_versions_update_id_document_yjs_updates_id_fk": {
-          "name": "document_yjs_versions_update_id_document_yjs_updates_id_fk",
-          "tableFrom": "document_yjs_versions",
-          "tableTo": "document_yjs_updates",
-          "columnsFrom": [
-            "update_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "document_yjs_versions_checkpoint_id_document_yjs_checkpoints_id_fk": {
-          "name": "document_yjs_versions_checkpoint_id_document_yjs_checkpoints_id_fk",
-          "tableFrom": "document_yjs_versions",
-          "tableTo": "document_yjs_checkpoints",
-          "columnsFrom": [
-            "checkpoint_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "document_yjs_versions_document_id_version_pk": {
-          "columns": [
-            "document_id",
-            "version"
-          ],
-          "name": "document_yjs_versions_document_id_version_pk"
-        }
-      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -5812,6 +5529,110 @@
         }
       },
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "parsed_documents": {
+      "name": "parsed_documents",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "file_version_id": {
+          "name": "file_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "parser_revision": {
+          "name": "parser_revision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "format": {
+          "name": "format",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "artifact": {
+          "name": "artifact",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "markdown": {
+          "name": "markdown",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quality": {
+          "name": "quality",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "parsed_documents_version_revision_idx": {
+          "name": "parsed_documents_version_revision_idx",
+          "columns": [
+            "file_version_id",
+            "parser_revision"
+          ],
+          "isUnique": true
+        },
+        "parsed_documents_format_created_idx": {
+          "name": "parsed_documents_format_created_idx",
+          "columns": [
+            "format",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "parsed_documents_file_version_id_file_versions_id_fk": {
+          "name": "parsed_documents_file_version_id_file_versions_id_fk",
+          "tableFrom": "parsed_documents",
+          "tableTo": "file_versions",
+          "columnsFrom": [
+            "file_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

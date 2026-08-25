@@ -125,6 +125,65 @@ describe("PiAgentRuntime", () => {
     }
   });
 
+  it("adds document text and image blocks to a multimodal prompt", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        requestBody = JSON.parse(raw) as Record<string, unknown>;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end([
+          `data: ${JSON.stringify({ id: "multimodal", object: "chat.completion.chunk", model: "nxcore-test-model", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] })}`,
+          `data: ${JSON.stringify({ id: "multimodal", object: "chat.completion.chunk", model: "nxcore-test-model", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}`,
+          "data: [DONE]",
+          "",
+        ].join("\n\n"));
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-multimodal-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-multimodal",
+        sessionId: "session-multimodal",
+        runtimeSessionRef: null,
+        prompt: "识别附件",
+        pageLabel: "测试",
+        roomId: null,
+        attachments: [
+          { filename: "notes.md", mimeType: "text/plain", kind: "document", text: "附件正文" },
+          { filename: "image.png", mimeType: "image/png", kind: "image", dataUrl: "data:image/png;base64,aGVsbG8=" },
+        ],
+      });
+      for await (const _event of run.events) { /* consume */ }
+      const serialized = JSON.stringify(requestBody);
+      expect(serialized).toContain("附件正文");
+      expect(serialized).toContain("aGVsbG8=");
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
   it("reports a token-limited response as incomplete", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const endpoint = createServer((_request, response) => {

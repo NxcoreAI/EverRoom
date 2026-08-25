@@ -1,0 +1,10 @@
+{
+  "name": "@nxcore/browser-extension",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "description": "Local EverRoom browser extension",
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0"
+  }
+}

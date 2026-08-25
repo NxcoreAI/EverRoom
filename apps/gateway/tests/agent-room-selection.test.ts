@@ -432,6 +432,32 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
+  it('binds an uploaded document version to the runtime and requires delegated analysis', async () => {
+    const { runtime, service, sqlite } = await createHarness()
+    const session = service.createSession({ pageLabel: '首页', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '这个文档写了什么？',
+      idempotencyKey: 'uploaded-document-analysis',
+      context: {
+        attachments: [{
+          fileId: 'file-report',
+          fileVersionId: 'fver-report-v1',
+          fileName: 'report.pdf',
+          status: 'processing',
+        }],
+      },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+
+    expect(runtime.starts).toHaveLength(1)
+    expect(runtime.starts[0]?.prompt).toContain('document_analysis')
+    expect(runtime.starts[0]?.prompt).toContain('file-report')
+    expect(runtime.starts[0]?.prompt).toContain('fver-report-v1')
+    expect(runtime.starts[0]?.prompt).toContain('等待子 Agent 返回后再回答')
+    sqlite.close()
+  })
+
   it('keeps document discussion in the Agent instead of opening the Room picker', async () => {
     const { runtime, service, sqlite } = await createHarness()
     const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
