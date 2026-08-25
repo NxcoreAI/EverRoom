@@ -9,6 +9,7 @@ import {
   GraduationCap,
   Handshake,
   Presentation,
+  Scissors,
   ScrollText,
   Table2,
   Users,
@@ -24,6 +25,7 @@ export interface FileCategoryDefinition {
 }
 
 export const FILE_CATEGORY_DEFINITIONS: FileCategoryDefinition[] = [
+  { key: 'clipper', label: 'surface:files.categoryClipper', icon: Scissors, tone: 'teal' },
   { key: 'data', label: 'surface:files.categoryData', icon: BarChart3, tone: 'green' },
   { key: 'form', label: 'surface:files.categoryForm', icon: ClipboardList, tone: 'blue' },
   { key: 'lesson', label: 'surface:files.categoryLesson', icon: Presentation, tone: 'orange' },
@@ -59,6 +61,7 @@ function extensionOf(file: FileCatalogDto): string {
 }
 
 export function categoryForFile(file: FileCatalogDto): FileCategoryDefinition {
+  if (file.sourceKind === 'web-clipper') return categoryByKey.get('clipper')!
   if (file.agentCategory && categoryByKey.has(file.agentCategory)) return categoryByKey.get(file.agentCategory)!
   const haystack = `${file.originalName} ${file.sharedTitle}`.toLocaleLowerCase()
   for (const matcher of MATCHERS) {

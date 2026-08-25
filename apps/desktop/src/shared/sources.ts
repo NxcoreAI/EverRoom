@@ -51,6 +51,8 @@ import type {
   StartDocumentOperationInput,
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
+import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
+import type { BrowserExtensionClipperCapture } from './browser-extension'
 import type {
   CreateRealityEventInput,
   FinishRealityCaptureInput,
@@ -599,7 +601,12 @@ export interface NangoRuntimeStatus {
 export interface NxcoreDesktopApi {
   platform: string
   pageMode: DesktopPageMode
+  app: {
+    clearUserData(): Promise<void>
+  }
   locale: {
+    system: string
+    getSystem(): Promise<string>
     set(locale: DesktopLocale): void
   }
   clipboard: {
@@ -614,6 +621,16 @@ export interface NxcoreDesktopApi {
   }
   gateway: {
     status(): Promise<GatewayStatus>
+  }
+  browserExtension: {
+    status(): Promise<BrowserExtensionStatus>
+    install(): Promise<BrowserExtensionStatus>
+    openDirectory(): Promise<void>
+    openBrowserPage(): Promise<void>
+    createPairing(): Promise<BrowserExtensionStatus>
+    revoke(): Promise<BrowserExtensionStatus>
+    onStatus(listener: (status: BrowserExtensionStatus) => void): () => void
+    onMessage(listener: (message: BrowserExtensionMessage) => void): () => void
   }
   runtimeConfig: {
     get(): Promise<RuntimeConfigSnapshot>
@@ -908,10 +925,12 @@ export interface NxcoreDesktopApi {
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
+    listClipCaptures(limit?: number, offset?: number): Promise<{ items: BrowserExtensionClipperCapture[]; total: number }>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
-    readMarkdown(fileId: string): Promise<{ markdown: string }>
+    readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
+    getClipCapture(fileId: string): Promise<BrowserExtensionClipperCapture>
     rename(fileId: string, displayName: string): Promise<FileCatalogDto>
     pinClusterTitle(clusterId: string, sharedTitle: string): Promise<{ id: string; canonicalTitle: string; titlePinned: boolean }>
     /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */

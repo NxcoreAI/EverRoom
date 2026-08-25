@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["complete", "partial", "failed"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "artifactId": { "type": "string" },
+    "fileVersionId": { "type": "string" },
+    "format": { "type": "string", "enum": ["pdf", "docx", "xlsx", "pptx", "legacy-office"] },
+    "pageCount": { "type": "integer", "minimum": 0 },
+    "blockCount": { "type": "integer", "minimum": 0 },
+    "tableCount": { "type": "integer", "minimum": 0 },
+    "valid": { "type": "boolean" },
+    "issues": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "requiresReview": { "type": "boolean" }
+  },
+  "required": [
+    "status", "summary", "artifactId", "fileVersionId", "format", "pageCount",
+    "blockCount", "tableCount", "valid", "issues", "warnings", "requiresReview"
+  ],
+  "additionalProperties": false
+}

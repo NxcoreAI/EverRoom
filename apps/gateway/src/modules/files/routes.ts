@@ -28,7 +28,7 @@ const CatalogFileDto = Type.Object({
   sharedTitle: Type.String(),
   sourceKind: Type.Union([
     Type.Literal("manual-upload"), Type.Literal("local-folder"),
-    Type.Literal("connector"), Type.Literal("legacy-upload"),
+    Type.Literal("connector"), Type.Literal("web-clipper"), Type.Literal("legacy-upload"),
   ]),
   sourceLabel: Type.String(),
   relativePath: Type.Union([Type.String(), Type.Null()]),
@@ -213,14 +213,14 @@ export function filesRoutes(
           sourceKind?: unknown; sourceKey?: unknown; originalName?: unknown;
           provider?: unknown; connectionId?: unknown; localSourceId?: unknown; localItemId?: unknown;
           relativePath?: unknown; sourceUri?: unknown; sourceModifiedAt?: unknown;
-          pipelines?: unknown; roomId?: unknown;
+          pipelines?: unknown; roomId?: unknown; clipCaptureId?: unknown;
         };
         try {
           metadata = JSON.parse(metadataText) as typeof metadata;
         } catch {
           return reply.code(400).send(errorOf("metadata_invalid"));
         }
-        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "local-folder" && metadata.sourceKind !== "connector") {
+        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "local-folder" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "web-clipper") {
           return reply.code(400).send(errorOf("source_kind_invalid"));
         }
         if (typeof metadata.sourceKey !== "string" || !metadata.sourceKey.trim()) {

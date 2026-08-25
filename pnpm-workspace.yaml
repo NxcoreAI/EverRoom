@@ -17,6 +17,7 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
   protobufjs: true
+  '@tencentdb-agent-memory/memory-tencentdb-v2@git+https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e550cc4a13d51cbef8550f0b1755073ea4&path:MemoryCore(patch_hash=351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6)': false
 
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-agent-core@0.84.2'
@@ -28,5 +29,6 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-tui@0.84.2'
 
 patchedDependencies:
+  '@tencentdb-agent-memory/memory-tencentdb-v2@2.0.0-beta.1-everroom.8': patches/memory-tencentdb-v2@2.0.0-beta.1-everroom.8.patch
   pi-mcp-adapter@2.26.1: patches/pi-mcp-adapter@2.26.1.patch
   sqlite-vec@0.1.7-alpha.2: patches/sqlite-vec@0.1.7-alpha.2.patch

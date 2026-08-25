@@ -14,7 +14,7 @@ interface OnboardingFlowChromeProps {
 }
 
 export function OnboardingFlowChrome({ stage, onStageChange, children }: OnboardingFlowChromeProps) {
-  const { locale, setLocale, t } = useLocale()
+  const { locale, preference, setLocale, t } = useLocale()
   const item = (value: Exclude<OnboardingFlowStage, 'idle'>, label: string) => (
     <button type="button" className="onboarding-flow-stage" data-state={stage === value ? 'active' : stageOrder(stage) > stageOrder(value) ? 'complete' : 'upcoming'} onClick={() => onStageChange(value)}>
       {label}
@@ -26,8 +26,9 @@ export function OnboardingFlowChrome({ stage, onStageChange, children }: Onboard
         <ProductBrand className="onboarding-flow-brand" />
         <div className="onboarding-flow-language no-drag">
           <Languages aria-hidden="true" />
-          <button type="button" data-active={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
-          <button type="button" data-active={locale === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
+          <button type="button" data-active={preference === 'system'} onClick={() => setLocale('system')}>{t('surface:settings.followSystem')}</button>
+          <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
+          <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
         </div>
       </header>
       <nav className="onboarding-flow-sequence" aria-label={t('surface:settings.folderGuide.eyebrow')}>

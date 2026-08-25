@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EverRoom</title>
+    <style>
+      :root { color-scheme: light; font: 13px/1.4 system-ui, sans-serif; }
+      body { width: 280px; margin: 0; padding: 16px; color: #1d2528; }
+      h1 { margin: 0 0 8px; font-size: 16px; }
+      p { color: #647074; margin: 0 0 14px; }
+      button { width: 100%; border: 0; border-radius: 6px; padding: 9px 12px; background: #256f65; color: white; cursor: pointer; }
+      button.secondary { margin-top: 8px; background: #edf2f1; color: #1d2528; }
+      button:disabled { cursor: default; opacity: .45; }
+      #status { margin: 12px 0; padding: 9px; border-radius: 6px; background: #f4f6f5; }
+    </style>
+  </head>
+  <body>
+    <h1>EverRoom</h1>
+    <p id="status">Checking local connection...</p>
+    <button id="connect">Connect to this app</button>
+    <button id="send" class="secondary">Save current page</button>
+    <button id="retry" class="secondary" disabled>Retry missing images</button>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

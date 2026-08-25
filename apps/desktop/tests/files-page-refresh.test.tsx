@@ -103,6 +103,7 @@ describe('FilesPage catalog refresh', () => {
     const importDropped = vi.fn().mockResolvedValue([{
       filename: 'notes.md',
       fileId: 'file-1',
+      fileVersionId: 'version-1',
       eventId: null,
       dataType: null,
       deduped: false,

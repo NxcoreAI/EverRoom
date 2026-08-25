@@ -80,7 +80,7 @@ function createRequestId(): string {
 }
 
 export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, onNavigateStage, activeStage = 'idle' }: MemoryOnboardingGateProps) {
-  const { locale, setLocale, t, formatDate } = useLocale()
+  const { locale, preference, setLocale, t, formatDate } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const storedMarker = readMemoryOnboardingMarker()
   const initialMarkerRef = useRef<MemoryOnboardingMarker | null>(
@@ -418,8 +418,9 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
         <div className="memory-onboarding-actions no-drag">
           <div className="memory-onboarding-language" role="group" aria-label={t('memory:onboarding.language')}>
             <Languages aria-hidden="true" />
-            <button type="button" data-active={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
-            <button type="button" data-active={locale === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
+            <button type="button" data-active={preference === 'system'} onClick={() => setLocale('system')}>{t('surface:settings.followSystem')}</button>
+            <button type="button" data-active={preference === 'zh-CN'} onClick={() => setLocale('zh-CN')}>中文</button>
+            <button type="button" data-active={preference === 'en-US'} onClick={() => setLocale('en-US')}>EN</button>
           </div>
           {mode !== 'success' ? <button type="button" className="memory-onboarding-skip" onClick={skip}>{t('memory:onboarding.skip')}</button> : null}
         </div>

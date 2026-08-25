@@ -1,5 +1,7 @@
-import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, HardDrive, Search, Trash2, Upload } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, HardDrive, Search, Trash2, Upload, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 import type {
   FileCatalogDto,
@@ -8,6 +10,7 @@ import type {
   IngestEventDto,
   IngestPipelines,
 } from '../../../../shared/ingest'
+import type { BrowserExtensionClipperCapture } from '../../../../shared/browser-extension'
 import { PageHeader } from './PageHeader'
 import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition } from './fileCategories'
 import { formatBytes, formatDate } from './sources/sourceFormatters'
@@ -39,6 +42,56 @@ const FILES_REFRESH_INTERVAL_MS = 2_000
 interface ClassifiedFile {
   file: FileCatalogDto
   category: FileCategoryDefinition
+}
+
+function useMasonryColumnCount(): number {
+  const columnCount = () => {
+    if (typeof window === 'undefined') return 1
+    if (window.innerWidth <= 720) return 1
+    if (window.innerWidth <= 1100) return 2
+    return 3
+  }
+  const [count, setCount] = useState(columnCount)
+  useEffect(() => {
+    if (typeof window.addEventListener !== 'function') return
+    const update = () => setCount(columnCount())
+    window.addEventListener('resize', update)
+    return () => {
+      if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', update)
+    }
+  }, [])
+  return count
+}
+
+function MasonryColumns({
+  items,
+  className,
+  renderItem,
+}: {
+  items: string[]
+  className: string
+  renderItem: (item: string) => ReactNode
+}) {
+  const columnCount = useMasonryColumnCount()
+  const columns = Array.from({ length: Math.min(columnCount, Math.max(items.length, 1)) }, () => [] as string[])
+  items.forEach((item, index) => {
+    if (index < columns.length) {
+      columns[index].push(item)
+      return
+    }
+    const target = columns.reduce((shortest, column, columnIndex) =>
+      column.length < columns[shortest].length ? columnIndex : shortest, 0)
+    columns[target].push(item)
+  })
+  return (
+    <div className={`file-masonry ${className}`}>
+      {columns.map((column, index) => (
+        <div className="file-masonry-column" key={index}>
+          {column.map((item) => renderItem(item))}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 let fileCatalogCache: { items: FileCatalogDto[]; total: number; complete: boolean } = {
@@ -93,6 +146,7 @@ export function FilesPage() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [dragActive, setDragActive] = useState(false)
+  const [clipperPreview, setClipperPreview] = useState<{ capture: BrowserExtensionClipperCapture; markdown: string } | null>(null)
   const dragDepth = useRef(0)
   const filesSnapshot = useRef<FileCatalogDto[]>(fileCatalogCache.items)
   const filesRefreshInFlight = useRef<Promise<void> | null>(null)
@@ -357,6 +411,17 @@ export function FilesPage() {
     })
   }
 
+  const openFile = (file: FileCatalogDto) => {
+    if (!filesApi || file.sourceKind !== 'web-clipper') return openOriginal(file)
+    void runFileAction(file.id, async () => {
+      const [capture, content] = await Promise.all([
+        filesApi.getClipCapture(file.id),
+        filesApi.readMarkdown(file.id, { waitMs: 30_000 }),
+      ])
+      setClipperPreview({ capture, markdown: content.markdown })
+    })
+  }
+
   return (
     <div
       className="page files-page-drop-target"
@@ -445,8 +510,11 @@ export function FilesPage() {
           ) : null}
 
           {!loading && !selectedCategory ? (
-            <div className="file-category-grid">
-              {categoryCards.map((category) => {
+            <MasonryColumns
+              className="file-category-masonry"
+              items={categoryCards.map((category) => category.key)}
+              renderItem={(categoryKey) => {
+                const category = categoryCards.find((item) => item.key === categoryKey)!
                 const CategoryIcon = category.icon
                 return (
                   <button
@@ -465,19 +533,20 @@ export function FilesPage() {
                       </span>
                       <ChevronRight aria-hidden="true" strokeWidth={1.8} />
                     </span>
-                    <span className="file-category-list">
-                      {category.files.slice(0, 5).map(({ file }) => (
-                        <span className="file-category-item" key={file.id}>
+                    <span className="file-category-samples">
+                      {category.files.slice(0, 4).map(({ file }) => (
+                        <span className="file-category-sample" key={file.id}>
                           <FileTypeIcon file={file} />
                           <span title={`${file.sharedTitle} · ${file.originalName}`}>{file.sharedTitle}</span>
                         </span>
                       ))}
-                      {category.files.length > 5 ? <small className="file-category-more">{t('surface:files.countMoreFiles', { count: category.files.length - 5 })}</small> : null}
+                      {category.files.length > 4 ? <small className="file-category-more">+ {t('surface:files.countMoreFiles', { count: category.files.length - 4 })}</small> : null}
                     </span>
+                    <span className="file-category-card-foot"><span>{t(category.label)}</span><ChevronRight aria-hidden="true" strokeWidth={1.8} /></span>
                   </button>
                 )
-              })}
-            </div>
+              }}
+            />
           ) : null}
 
           {!loading && selectedCategory ? (
@@ -486,26 +555,22 @@ export function FilesPage() {
                 <span className={`file-category-icon file-category-${selectedCategory.tone}`}>{SelectedCategoryIcon ? <SelectedCategoryIcon aria-hidden="true" strokeWidth={1.8} /> : null}</span>
                 <div><h2>{t(selectedCategory.label)}</h2><span>{t('surface:files.countFiles', { count: selectedCategory.files.length })}</span></div>
               </div>
-              <div className="data-table files-table">
-                <div className="table-head"><span>{t('surface:files.name')}</span><span>{t('surface:files.size')}</span><span>{t('surface:files.status')}</span><span>{t('surface:files.imported')}</span><span className="files-actions-column">{t('surface:files.actions')}</span></div>
-                {selectedCategory.files.map(({ file }) => (
-                  <div key={file.id} className="table-row">
-                    <span className="name-cell">
-                      <button type="button" className="file-name-button" title={t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openOriginal(file)}>
-                        <strong title={file.contentHash}>{file.sharedTitle}</strong>
-                        <small>{file.originalName} · {file.sourceLabel}</small>
-                      </button>
-                    </span>
-                    <span>{formatBytes(file.bytes)}</span>
-                    <span className="status-cell"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? '原件不可用' : '处理中'}</span>
-                    <span>{formatDate(file.updatedAt, locale, t)}</span>
-                    <span className="files-actions">
-                      <button type="button" className="icon-button" aria-label={t('surface:files.openOriginalName', { name: file.originalName })} title={t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openOriginal(file)}><ExternalLink aria-hidden="true" strokeWidth={1.8} /></button>
-                      <button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button>
-                    </span>
-                  </div>
-                ))}
-              </div>
+              <MasonryColumns
+                className="file-file-masonry"
+                items={selectedCategory.files.map(({ file }) => file.id)}
+                renderItem={(fileId) => {
+                  const file = selectedCategory.files.find(({ file: item }) => item.id === fileId)!.file
+                  return <article key={file.id} className={`file-document-card file-document-${selectedCategory.tone}`}>
+                    <button type="button" className="file-document-main" title={file.sourceKind === 'web-clipper' ? t('surface:files.openClipperPreview') : t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openFile(file)}>
+                      <span className="file-document-icon"><FileTypeIcon file={file} /></span>
+                      <span className="file-document-copy"><strong title={file.contentHash}>{file.sharedTitle}</strong><small>{file.originalName}</small></span>
+                    </button>
+                    <div className="file-document-preview" aria-hidden="true"><span /><span /><span /></div>
+                    <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? '原件不可用' : '处理中'}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
+                    <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t('surface:files.openOriginalName', { name: file.originalName })} title={t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openOriginal(file)}><ExternalLink aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
+                  </article>
+                }}
+              />
             </div>
           ) : null}
         </section>
@@ -530,6 +595,51 @@ export function FilesPage() {
               <span>{formatDate(event.createdAt, locale, t)}</span>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {clipperPreview ? (
+        <div className="evidence-dialog-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setClipperPreview(null)
+        }}>
+          <section className="evidence-dialog clipper-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="clipper-preview-title">
+            <header className="evidence-dialog-head">
+              <div>
+                <span>{t('surface:files.categoryClipper')}</span>
+                <h2 id="clipper-preview-title">{clipperPreview.capture.title}</h2>
+                <small>{clipperPreview.capture.author || new URL(clipperPreview.capture.sourceUrl).hostname} · {formatDate(clipperPreview.capture.capturedAt, locale, t)}</small>
+              </div>
+              <button type="button" className="icon-button" title={t('surface:files.close')} aria-label={t('surface:files.close')} onClick={() => setClipperPreview(null)}><X aria-hidden="true" /></button>
+            </header>
+            <div className="clipper-preview-meta">
+              <span>{t(`surface:files.clipperStatus.${clipperPreview.capture.status}`)}</span>
+              <span>{t('surface:files.clipperAssetSummary', { stored: clipperPreview.capture.storedAssetCount, total: clipperPreview.capture.assetCount })}</span>
+              <a href={clipperPreview.capture.sourceUrl} target="_blank" rel="noreferrer noopener"><ExternalLink aria-hidden="true" />{t('surface:files.openSourcePage')}</a>
+            </div>
+            <div className="evidence-dialog-body clipper-preview-body">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                urlTransform={(url) => url.startsWith('nxcore-clipper-asset://') ? url : defaultUrlTransform(url)}
+                components={{
+                  a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener">{children}</a>,
+                  img: ({ src, alt, ...props }) => <img {...props} src={src} alt={alt ?? ''} onError={(event) => {
+                    const fallback = clipperPreview.capture.assets.find((asset) => asset.localUrl === src)?.originalUrl
+                    if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback
+                  }} />,
+                }}
+              >
+                {clipperPreview.markdown}
+              </ReactMarkdown>
+              {clipperPreview.capture.failedAssetCount > 0 ? (
+                <aside className="clipper-missing-assets">
+                  <strong>{t('surface:files.clipperMissingAssets')}</strong>
+                  {clipperPreview.capture.assets.filter((asset) => asset.status === 'failed').map((asset) => (
+                    <a key={asset.id} href={asset.originalUrl} target="_blank" rel="noreferrer noopener">{asset.altText || new URL(asset.originalUrl).hostname}</a>
+                  ))}
+                </aside>
+              ) : null}
+            </div>
+          </section>
         </div>
       ) : null}
 

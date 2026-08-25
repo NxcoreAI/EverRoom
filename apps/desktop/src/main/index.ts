@@ -1,6 +1,8 @@
-import { accessSync, constants as fsConstants, existsSync, readFileSync } from 'node:fs'
-import { access, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { rm, writeFile } from 'node:fs/promises'
+import { join, parse, resolve } from 'node:path'
+import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
+import { access } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { loadEnvFile } from 'node:process'
 
@@ -92,6 +94,8 @@ import {
   type OpenConnectorConnection,
 } from './open-connector/open-connector-supervisor'
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
+import { BrowserExtensionService } from './browser-extension/browser-extension-service'
+import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
 
 const APP_NAME = 'EverRoom'
 
@@ -129,6 +133,7 @@ const envFilePath = process.env.NXCORE_ENV_FILE?.trim() || join(defaultDataDirec
 if (existsSync(envFilePath)) loadEnvFile(envFilePath)
 const desktopPageMode = resolveDesktopPageMode(process.env[DESKTOP_PAGE_MODE_ENV])
 const dataDirectory = process.env.NXCORE_DATA_DIR?.trim() || defaultDataDirectory
+const resolvedDataDirectory = resolve(dataDirectory)
 
 app.setPath('userData', dataDirectory)
 app.setName(APP_NAME)
@@ -147,10 +152,16 @@ configureDesktopLogger(dataDirectory)
 configureSentry(app.getVersion(), app.isPackaged)
 if (process.platform === 'darwin') process.title = APP_NAME
 
-protocol.registerSchemesAsPrivileged([{
-  scheme: DOCUMENT_ASSET_SCHEME,
-  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
-}])
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: DOCUMENT_ASSET_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
+  {
+    scheme: CLIPPER_ASSET_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
+])
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
@@ -176,6 +187,14 @@ const SOURCE_CHANNELS = {
 
 const GATEWAY_CHANNELS = {
   status: 'gateway:status',
+} as const
+const BROWSER_EXTENSION_CHANNELS = {
+  status: 'browser-extension:status',
+  install: 'browser-extension:install',
+  openDirectory: 'browser-extension:open-directory',
+  openBrowserPage: 'browser-extension:open-browser-page',
+  createPairing: 'browser-extension:create-pairing',
+  revoke: 'browser-extension:revoke',
 } as const
 const RUNTIME_CONFIG_CHANNELS = {
   get: 'runtime-config:get',
@@ -384,9 +403,11 @@ const KNOWLEDGE_CHANNELS = {
 
 const FILES_CHANNELS = {
   list: 'files:list',
+  listClipCaptures: 'files:clipper-captures:list',
   get: 'files:get',
   readMarkdown: 'files:read-markdown',
   readDataUrl: 'files:read-data-url',
+  getClipCapture: 'files:clipper-capture:get',
   rename: 'files:rename',
   pinClusterTitle: 'files:pin-cluster-title',
   delete: 'files:delete',
@@ -497,6 +518,7 @@ function installIpcRouters(): void {
     FILES_CHANNELS,
     INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
+    BROWSER_EXTENSION_CHANNELS,
     PERCEPTION_CHANNELS,
     DIARY_CHANNELS,
     AGENT_SCHEDULER_CHANNELS,
@@ -516,8 +538,36 @@ function installIpcRouters(): void {
   }
 }
 
+function publishBrowserExtensionStatus(status: BrowserExtensionStatus): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send(BROWSER_EXTENSION_CHANNELS.status, status)
+    }
+  }
+}
+
+function registerBrowserExtensionHandlers(service: BrowserExtensionService): void {
+  browserExtensionService = service
+  service.onStatus((status) => publishBrowserExtensionStatus(status))
+  service.onMessage((message) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send('browser-extension:message', message)
+      }
+    }
+  })
+  handle(BROWSER_EXTENSION_CHANNELS.status, () => service.getStatus())
+  handle(BROWSER_EXTENSION_CHANNELS.install, () => service.install())
+  handle(BROWSER_EXTENSION_CHANNELS.openDirectory, () => service.openDevelopmentExtension())
+  handle(BROWSER_EXTENSION_CHANNELS.openBrowserPage, () => service.openBrowserExtensionsPage())
+  handle(BROWSER_EXTENSION_CHANNELS.createPairing, () => service.createPairing())
+  handle(BROWSER_EXTENSION_CHANNELS.revoke, () => service.revoke())
+}
+
 let localDataService: LocalDataService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let browserExtensionService: BrowserExtensionService | null = null
+let clipperAssetBridge: FilesGatewayBridge | null = null
 let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
@@ -543,6 +593,7 @@ let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
 let privateSyncScheduler: PrivateSyncScheduler | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
+let clearUserDataOnQuit = false
 const queuedProtocolUrls: string[] = []
 let screenshotOutbox: ScreenshotOutbox | null = null
 const captureAndQueueCurrentWindow = async () => {
@@ -563,6 +614,19 @@ function logRendererRequestError(input: unknown): void {
 }
 
 ipcMain.on('app:request-error', (_event, input: unknown) => logRendererRequestError(input))
+const getSystemLocale = (): string => app.getSystemLocale()
+ipcMain.on('app:get-system-locale-sync', (event) => {
+  event.returnValue = getSystemLocale()
+})
+ipcMain.handle('app:get-system-locale', () => getSystemLocale())
+ipcMain.handle('app:clear-user-data', () => {
+  const target = parse(resolvedDataDirectory)
+  if (resolvedDataDirectory === target.root || resolvedDataDirectory === resolve(appDataDirectory) || resolvedDataDirectory === resolve(process.cwd())) {
+    throw new Error('Refusing to clear an unsafe application data path.')
+  }
+  clearUserDataOnQuit = true
+  app.quit()
+})
 ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(locale))
 
 function logRendererDiagnostic(input: unknown): void {
@@ -1266,9 +1330,14 @@ function registerFilesHandlers(
     }
   })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
+  handle(FILES_CHANNELS.listClipCaptures, (_event, limit?: number, offset?: number) => bridge.listClipCaptures(limit, offset))
   handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
-  handle(FILES_CHANNELS.readMarkdown, (_event, fileId: string) => bridge.readMarkdown(fileId))
+  handle(
+    FILES_CHANNELS.readMarkdown,
+    (_event, fileId: string, options?: { waitMs?: number; pollMs?: number }) => bridge.readMarkdown(fileId, options),
+  )
   handle(FILES_CHANNELS.readDataUrl, (_event, fileId: string) => bridge.readDataUrl(fileId))
+  handle(FILES_CHANNELS.getClipCapture, (_event, fileId: string) => bridge.getClipCapture(fileId))
   handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
     bridge.rename(fileId, displayName))
   handle(FILES_CHANNELS.pinClusterTitle, (_event, clusterId: string, sharedTitle: string) =>
@@ -1802,9 +1871,31 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   )
   await screenshotOutbox.initialize()
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
+  protocol.handle(CLIPPER_ASSET_SCHEME, async (request) => {
+    try {
+      const url = new URL(request.url)
+      const assetId = decodeURIComponent(url.pathname.replace(/^\//, ''))
+      if (url.hostname !== 'local' || !/^[a-zA-Z0-9_-]{8,200}$/.test(assetId) || !clipperAssetBridge) {
+        return new Response('Not found', { status: 404 })
+      }
+      const asset = await clipperAssetBridge.readClipAsset(assetId)
+      return new Response(new Uint8Array(asset.buffer), {
+        headers: { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=31536000, immutable' },
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
   installIpcRouters()
   registerSystemClipboardHandler()
   registerGatewayHandlers()
+  browserExtensionService = new BrowserExtensionService(dataDirectory)
+  try {
+    await browserExtensionService.start()
+  } catch (error) {
+    console.warn('Browser extension bridge unavailable; extension settings stay disabled.', error)
+  }
+  registerBrowserExtensionHandlers(browserExtensionService)
   registerOpenConnectorHandlers()
   createWindow()
   const connectorPageEnabled = desktopPageMode === 'connectors'
@@ -1947,6 +2038,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'))
     await highRiskImports.initialize()
     const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)
+    clipperAssetBridge = filesGatewayBridge
+    browserExtensionService?.setCaptureHandlers({
+      create: (capture) => filesGatewayBridge.createClipCapture(capture),
+      uploadAsset: (captureId, assetId, data) => filesGatewayBridge.uploadClipAsset(captureId, assetId, data),
+      finalize: (captureId, failures) => filesGatewayBridge.finalizeClipCapture(captureId, failures),
+      retry: (captureId) => filesGatewayBridge.retryClipCapture(captureId),
+    })
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'))
@@ -2100,6 +2198,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
     privateSyncScheduler?.stop()
     privateSyncScheduler = null
+    await browserExtensionService?.stop()
+    browserExtensionService = null
     const service = localDataService
     localDataService = null
     await service?.shutdown()
@@ -2119,6 +2219,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     diaryGatewayBridge = null
     agentSchedulerGatewayBridge = null
     connectorGatewayBridge = null
+    clipperAssetBridge = null
     await recordingStore?.dispose()
     recordingStore = null
     await gatewaySupervisor?.shutdown()
@@ -2144,6 +2245,7 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   shutdownStarted = true
   const service = localDataService
+  const browserExtension = browserExtensionService
   const gateway = gatewaySupervisor
   const connectorCli = ooCliBridge
   const connectorRuntime = openConnectorSupervisor
@@ -2163,6 +2265,7 @@ app.on('before-quit', (event) => {
   const cloud = saasClient
   const privateSync = privateSyncScheduler
   localDataService = null
+  browserExtensionService = null
   gatewaySupervisor = null
   ooCliBridge = null
   openConnectorSupervisor = null
@@ -2181,6 +2284,7 @@ app.on('before-quit', (event) => {
   diaryGatewayBridge = null
   agentSchedulerGatewayBridge = null
   connectorGatewayBridge = null
+  clipperAssetBridge = null
   recordingStore = null
   saasClient = null
   screenshotOutbox = null
@@ -2198,6 +2302,7 @@ app.on('before-quit', (event) => {
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
   void Promise.allSettled([
     service?.shutdown(),
+    browserExtension?.stop(),
     recordings?.dispose(),
     pendingScreenshots?.dispose(),
     gateway?.shutdown(),
@@ -2206,6 +2311,17 @@ app.on('before-quit', (event) => {
     memoryCore?.shutdown(),
     nango?.shutdown(),
     knowledgeService?.shutdown(),
-  ]).then(() => flushDesktopLogs()).finally(() => app.quit())
+  ]).then(async () => {
+    await flushDesktopLogs()
+    if (clearUserDataOnQuit) {
+      try {
+        await rm(resolvedDataDirectory, { recursive: true, force: true })
+      } catch (error) {
+        console.error('Failed to clear EverRoom user data', error)
+        clearUserDataOnQuit = false
+      }
+    }
+    if (clearUserDataOnQuit) app.relaunch()
+  }).finally(() => app.quit())
 })
 app.on('window-all-closed', () => app.quit())

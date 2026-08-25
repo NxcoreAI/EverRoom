@@ -119,6 +119,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       expect(metadata.sourceKey).toMatch(/^manual:/)
       return new Response(JSON.stringify({
         fileEntryId: 'file-entry-1',
+        fileVersionId: 'file-version-1',
         versionDeduped: false,
         jobId: 'job-1',
       }), { headers: { 'Content-Type': 'application/json' } })
@@ -131,6 +132,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       expect.objectContaining({
         filename: 'notes/kept.md',
         fileId: 'file-entry-1',
+        fileVersionId: 'file-version-1',
         routeJobId: 'job-1',
         error: null,
       }),
@@ -190,81 +192,49 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
   })
 })
 
-describe('FilesGatewayBridge.importAgentAttachments', () => {
-  it('uploads images and waits for imported documents to parse', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attachments-'))
-    temporaryDirectories.push(directory)
-    const imagePath = join(directory, 'image.png')
-    const documentPath = join(directory, 'notes.md')
-    await writeFile(imagePath, Buffer.from([137, 80, 78, 71]))
-    await writeFile(documentPath, '# notes')
+describe('FilesGatewayBridge.readMarkdown', () => {
+  it('waits for an asynchronously parsed file without surfacing intermediate 404s', async () => {
+    let attempts = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      attempts += 1
+      if (attempts === 1) return new Response(JSON.stringify({ error: 'file_not_parsed' }), { status: 404 })
+      return new Response(JSON.stringify({ markdown: '# Parsed PDF' }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    const supervisor = {
+      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
+    } as unknown as GatewaySupervisor
 
+    await expect(new FilesGatewayBridge(supervisor).readMarkdown('file-1', { waitMs: 1_000, pollMs: 100 }))
+      .resolves.toEqual({ markdown: '# Parsed PDF' })
+    expect(attempts).toBe(2)
+  })
+})
+
+describe('FilesGatewayBridge.createClipCapture', () => {
+  it('forwards the structured capture to the dedicated Clipper endpoint', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input)
-      if (url.endsWith('/v1/files') && init?.method === 'POST') {
-        const body = JSON.parse(String(init.body)) as Record<string, unknown>
-        expect(body).toMatchObject({ filename: 'image.png', mime: 'image/png', assetKind: 'photo' })
-        return new Response(JSON.stringify({ id: 'image-1', bytes: 4, originalName: 'image.png' }), { status: 201 })
-      }
-      if (url.endsWith('/v1/file-imports')) {
-        return new Response(JSON.stringify({ fileEntryId: 'document-1', fileVersionId: 'version-1', jobId: 'job-1' }), { status: 202 })
-      }
-      expect(url).toBe('http://gateway.test/v1/files/document-1/markdown')
-      return new Response(JSON.stringify({ markdown: '# notes' }), { status: 200 })
+      expect(String(input)).toBe('http://gateway.test/v1/clipper/captures')
+      expect(init?.method).toBe('POST')
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        captureId: 'capture-1', sourceUrl: 'https://example.com/article?utm_source=test',
+        canonicalUrl: 'https://example.com/article', title: 'An article', markdown: '# An article',
+        assets: [],
+      })
+      return new Response(JSON.stringify({
+        fileEntryId: 'file-1', fileVersionId: 'version-1', jobId: 'job-1',
+        contentHash: 'a'.repeat(64), blobDeduped: false, versionDeduped: false, pendingAssetIds: [], capture: {},
+      }), { headers: { 'Content-Type': 'application/json' } })
     })
     const supervisor = {
       getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
     } as unknown as GatewaySupervisor
 
-    await expect(new FilesGatewayBridge(supervisor).importAgentAttachments([imagePath, documentPath])).resolves.toEqual([
-      { fileId: 'image-1', filename: 'image.png', mimeType: 'image/png', size: 4, kind: 'image' },
-      { fileId: 'document-1', filename: 'notes.md', mimeType: 'text/plain', size: 7, kind: 'document' },
-    ])
-  })
-
-  it('rejects more than five attachments before uploading', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attachment-limit-'))
-    temporaryDirectories.push(directory)
-    const paths = await Promise.all(Array.from({ length: 6 }, async (_, index) => {
-      const path = join(directory, `file-${index}.txt`)
-      await writeFile(path, 'file')
-      return path
-    }))
-    const supervisor = {
-      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
-    } as unknown as GatewaySupervisor
-
-    await expect(new FilesGatewayBridge(supervisor).importAgentAttachments(paths)).rejects.toThrow('5')
-  })
-
-  it('rejects an attachment larger than 10 MB before uploading', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attachment-size-'))
-    temporaryDirectories.push(directory)
-    const path = join(directory, 'large.txt')
-    await writeFile(path, Buffer.alloc(10 * 1024 * 1024 + 1))
-    const supervisor = {
-      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
-    } as unknown as GatewaySupervisor
-
-    await expect(new FilesGatewayBridge(supervisor).importAgentAttachments([path])).rejects.toThrow('10 MB')
-  })
-
-  it('returns parser failures without waiting for the polling timeout', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attachment-parse-'))
-    temporaryDirectories.push(directory)
-    const path = join(directory, 'notes.md')
-    await writeFile(path, '# notes')
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = String(input)
-      if (url.endsWith('/v1/file-imports')) {
-        return new Response(JSON.stringify({ fileEntryId: 'document-1' }), { status: 202 })
-      }
-      return new Response(JSON.stringify({ error: 'parser_failed' }), { status: 500 })
-    })
-    const supervisor = {
-      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
-    } as unknown as GatewaySupervisor
-
-    await expect(new FilesGatewayBridge(supervisor).importAgentAttachments([path])).rejects.toThrow('parser_failed')
+    await expect(new FilesGatewayBridge(supervisor).createClipCapture({
+      markdown: '# An article', title: 'An article', url: 'https://example.com/article?utm_source=test',
+      canonicalUrl: 'https://example.com/article', capturedAt: '2026-08-24T12:00:00.000Z', captureId: 'capture-1',
+      extractionMode: 'article', extractorVersion: 'test-1', assets: [],
+    })).resolves.toMatchObject({ fileEntryId: 'file-1', fileVersionId: 'version-1' })
   })
 })

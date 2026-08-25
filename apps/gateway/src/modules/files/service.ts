@@ -6,6 +6,8 @@ import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   fileBlobs,
+  clipperAssets,
+  clipperCaptures,
   fileClassifications,
   fileClusterMemberships,
   fileClusters,
@@ -41,7 +43,7 @@ export function isSupportedUploadFilename(filename: string): boolean {
   return SUPPORTED_UPLOAD_EXTENSIONS.has(normalizedFileExtension(filename));
 }
 
-export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "legacy-upload";
+export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "web-clipper" | "legacy-upload";
 
 export interface FileImportInput {
   sourceKind: Exclude<FileSourceKind, "legacy-upload">;
@@ -410,7 +412,7 @@ export class FilesService {
       displayName: entry.displayName,
       sharedTitle: cluster?.canonicalTitle ?? entry.displayName ?? entry.originalName,
       sourceKind: entry.sourceKind,
-      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : "历史上传"),
+      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : "历史上传"),
       relativePath: entry.relativePath,
       provider: entry.provider,
       bytes: blob?.byteSize ?? 0,
@@ -476,6 +478,10 @@ export class FilesService {
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
     if (!entry || entry.sourceKind === "legacy-upload") return null;
     const versions = this.db.select().from(fileVersions).where(eq(fileVersions.fileEntryId, fileEntryId)).all();
+    const clipperAssetHashes = this.db.select({ contentHash: clipperAssets.contentHash }).from(clipperAssets)
+      .innerJoin(clipperCaptures, eq(clipperAssets.captureId, clipperCaptures.id))
+      .where(eq(clipperCaptures.fileEntryId, fileEntryId)).all()
+      .flatMap(({ contentHash }) => contentHash ? [contentHash] : []);
     const membership = this.db.select().from(fileClusterMemberships)
       .where(eq(fileClusterMemberships.fileEntryId, fileEntryId)).get();
     this.db.delete(fileEntries).where(eq(fileEntries.id, fileEntryId)).run();
@@ -512,6 +518,20 @@ export class FilesService {
         if (!parsedReference && !legacyParsedReference) {
           this.db.delete(parsedContents).where(eq(parsedContents.id, version.parsedId)).run();
         }
+      }
+    }
+    for (const contentHash of new Set(clipperAssetHashes)) {
+      const catalogReference = this.db.select({ id: fileVersions.id }).from(fileVersions)
+        .where(eq(fileVersions.contentHash, contentHash)).limit(1).get();
+      const legacyReference = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+        .where(eq(uploadedFiles.contentHash, contentHash)).limit(1).get();
+      const clipperReference = this.db.select({ id: clipperAssets.id }).from(clipperAssets)
+        .where(eq(clipperAssets.contentHash, contentHash)).limit(1).get();
+      if (!catalogReference && !legacyReference && !clipperReference) {
+        const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, contentHash)).get();
+        this.db.delete(fileBlobs).where(eq(fileBlobs.contentHash, contentHash)).run();
+        if (blob) await rm(join(this.dataDir, blob.storagePath), { force: true }).catch(() => undefined);
+        blobCollected = true;
       }
     }
     return { fileId: fileEntryId, knowledgeCleanup, deletedMemoryDocuments, blobCollected };

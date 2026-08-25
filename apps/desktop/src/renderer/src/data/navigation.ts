@@ -11,12 +11,13 @@ import {
   AudioLines,
   NotebookPen,
   ListTodo,
+  Lightbulb,
   PlugZap,
   Settings,
 } from 'lucide-react'
 import type { DesktopPageMode } from '../../../shared/page-mode'
 
-export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'schedules' | 'settings'
+export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'schedules' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -48,6 +49,7 @@ export const navigationSections: NavigationSection[] = [
     items: [
       { id: 'sources', label: 'surface:navigation.sources', icon: FolderSync, tone: 'cyan' },
       { id: 'files', label: 'surface:navigation.files', icon: FolderOpen, tone: 'green' },
+      { id: 'inspiration', label: 'surface:navigation.inspiration', icon: Lightbulb, tone: 'orange' },
       { id: 'memory', label: 'surface:navigation.memory', icon: Brain, tone: 'orange' },
       { id: 'wiki', label: 'surface:navigation.wiki', icon: BookOpenText, tone: 'indigo' },
       { id: 'connectors', label: 'surface:navigation.connectors', icon: PlugZap, tone: 'green' },
@@ -98,6 +100,8 @@ const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
   'Sources': 'surface:navigation.sources',
   '文件': 'surface:navigation.files',
   'Files': 'surface:navigation.files',
+  '灵感': 'surface:navigation.inspiration',
+  'Inspiration': 'surface:navigation.inspiration',
   '记忆': 'surface:navigation.memory',
   'Memory': 'surface:navigation.memory',
   'Wiki': 'surface:navigation.wiki',

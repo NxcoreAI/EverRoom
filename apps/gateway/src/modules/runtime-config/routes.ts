@@ -15,6 +15,13 @@ import {
 const ConfigBody = Type.Object({}, { additionalProperties: true });
 const SourceBody = Type.Object({ source: Type.Union([Type.Literal("user"), Type.Literal("saas"), Type.Literal("default")]) });
 
+function configuredEmbeddingDimensions(): number | undefined {
+  const raw = process.env.TDAI_EMBEDDING_DIMENSIONS?.trim();
+  if (!raw) return undefined;
+  const dimensions = Number(raw);
+  return Number.isInteger(dimensions) && dimensions > 0 ? dimensions : undefined;
+}
+
 export function runtimeConfigRoutes(manager: RuntimeConfigManager): FastifyPluginAsyncTypebox {
   return async (app) => {
     // 桌面端启动 gate 靠该字段判定"已配置/未配置"；所有返回 snapshot 的
@@ -52,7 +59,9 @@ export function runtimeConfigRoutes(manager: RuntimeConfigManager): FastifyPlugi
       const embeddingFields = embeddingAiFields(config);
       const vlmFields = vlmAiFields(config);
       const [embeddingResult, vlmResult] = await Promise.all([
-        isEmbeddingConfigured(embeddingFields) ? testEmbeddingConnection(embeddingFields) : null,
+        isEmbeddingConfigured(embeddingFields)
+          ? testEmbeddingConnection(embeddingFields, configuredEmbeddingDimensions())
+          : null,
         aiFieldsConfigured(vlmFields) ? testAiConnection(vlmFields) : null,
       ]);
       return reply.send({

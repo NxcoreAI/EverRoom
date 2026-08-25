@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentAttachmentReference, AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
+import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -221,18 +221,31 @@ export function AgentPanel({
       .catch(() => handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key))
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
-  const sendPrompt = async (prompt: string, attachments: AgentAttachmentReference[] = [], replaceRunId?: string) => {
-    if ((!prompt.trim() && attachments.length === 0) || !agentAvailable) return
-    const submittedPrompt = [
-      prompt.trim(),
-      attachments.length ? `[附件：${attachments.map((attachment) => attachment.filename).join('、')}]` : '',
-    ].filter(Boolean).join('\n\n')
+  const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = []) => {
+    if ((!prompt.trim() && files.length === 0) || !agentAvailable) return
+    const submittedPrompt = prompt.trim()
     const submittedContext = selectedText
     setDraft('')
     setSubmitting(true)
     try {
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
-      await session.sendPrompt(submittedPrompt, submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
+      let attachments = undefined
+      if (files.length > 0) {
+        const filesApi = window.nxcore?.files
+        if (!filesApi) throw new Error('文件服务不可用，请稍后重试。')
+        const outcomes = await filesApi.importDropped(files, { pipelines: { room: false, wiki: false, memory: false }, ...(roomId ? { roomId } : {}) })
+        const imported = outcomes?.filter((item) => item.fileId && item.fileVersionId && !item.error) ?? []
+        if (imported.length !== files.length) {
+          throw new Error('部分文件上传或解析失败，请检查文件格式后重试。')
+        }
+        attachments = imported.map((item) => ({
+          fileId: item.fileId!,
+          fileVersionId: item.fileVersionId!,
+          fileName: item.filename,
+          status: 'processing' as const,
+        }))
+      }
+      await session.sendPrompt(submittedPrompt || '请分析我上传的文件。', submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
       setSelectedText('')
       setComposerResetKey((current) => current + 1)
     } catch {
@@ -308,7 +321,7 @@ export function AgentPanel({
       onChange={setDraft}
       onClearContext={() => setSelectedText('')}
       onStop={() => void session.stop()}
-      onSubmit={(attachments) => void sendPrompt(draft, attachments)}
+      onSubmit={(files) => void sendPrompt(draft, undefined, files)}
     />
   )
 
@@ -351,7 +364,7 @@ export function AgentPanel({
         loading={session.loading}
         messages={session.messages}
         onRejectDocumentIntent={focusComposer}
-        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, [], runId)}
+        onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}
