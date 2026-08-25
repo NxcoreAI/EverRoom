@@ -1,4 +1,4 @@
-import { Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, MonitorSpeaker, Square } from 'lucide-react'
+import { Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, MonitorSpeaker, Settings2, Square } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
 
 import { PRODUCT_NAME } from '@/components/ui/brand'
@@ -84,26 +84,16 @@ async function waitForStop(recorder: MediaRecorder, t: Translate): Promise<void>
 const CassetteListeningControl = memo(function CassetteListeningControl({
   listening,
   busy,
-  elapsed,
-  onToggle,
 }: {
   listening: boolean
   busy: boolean
-  elapsed: number
-  onToggle: () => void
 }) {
-  const { t } = useLocale()
   return (
-    <button
-      type="button"
+    <div
       className="cassette-switch"
-      role="switch"
-      aria-checked={listening}
-      aria-label={t(listening ? 'diaryReality:recording.stopListening' : busy ? 'diaryReality:recording.processingRecording' : 'diaryReality:recording.startListening')}
+      aria-hidden="true"
       data-active={String(listening)}
       data-busy={String(busy)}
-      disabled={busy}
-      onClick={onToggle}
     >
       <span className="cassette-topline" aria-hidden="true">
         <span>ER-01</span>
@@ -118,18 +108,20 @@ const CassetteListeningControl = memo(function CassetteListeningControl({
         <span className="cassette-levels"><i /><i /><i /><i /></span>
         <span className="cassette-key"><i /></span>
       </span>
-    </button>
+    </div>
   )
 })
 
 export function RecordingPage({
   onOpenSettings,
   onEventChanged,
+  onEventRemoved,
   embedded = false,
   controlOnly = false,
 }: {
   onOpenSettings: () => void
   onEventChanged?: (event: RealityEvent) => void
+  onEventRemoved?: (eventId: string) => void
   embedded?: boolean
   controlOnly?: boolean
 }) {
@@ -259,6 +251,21 @@ export function RecordingPage({
       })
       recorder.start(1000)
       recordingStartedAtRef.current = Date.now()
+      const capturedEvent = await desktopApi(t).reality.createEvent({
+        id,
+        title: t('diaryReality:recording.desktopPerceptionTitle', {
+          time: new Date().toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }),
+        }),
+        captureDevice: {
+          id: 'desktop-local',
+          name: t(desktopApi(t).platform === 'darwin' ? 'diaryReality:recording.thisMac' : 'diaryReality:recording.thisComputer'),
+          kind: 'desktop',
+        },
+        audioSource,
+        audioMimeType: recorder.mimeType || 'audio/webm',
+      })
+      realityEventIdRef.current = id
+      onEventChanged?.(capturedEvent)
       setState('recording')
     } catch (caught) {
       const recorder = recorderRef.current
@@ -272,7 +279,10 @@ export function RecordingPage({
       if (id) await desktopApi(t).asr.cancelRecording(id).catch(() => undefined)
       const eventId = realityEventIdRef.current
       realityEventIdRef.current = null
-      if (eventId) await desktopApi(t).reality.fail(eventId, errorMessage(caught, t)).catch(() => undefined)
+      if (eventId) {
+        const failed = await desktopApi(t).reality.fail(eventId, errorMessage(caught, t)).catch(() => null)
+        if (failed) onEventChanged?.(failed)
+      }
       reportRecordingError(caught, audioSource, t)
       setState('error')
     }
@@ -294,6 +304,9 @@ export function RecordingPage({
       if (durationMs < MIN_TRANSCRIPTION_DURATION_MS) {
         recordingIdRef.current = null
         await desktopApi(t).asr.cancelRecording(id)
+        realityEventIdRef.current = null
+        await desktopApi(t).reality.discard(id).catch(() => undefined)
+        onEventRemoved?.(id)
         setElapsed(0)
         setState('idle')
         showToast({
@@ -302,21 +315,6 @@ export function RecordingPage({
         })
         return
       }
-      const capturedEvent = await desktopApi(t).reality.createEvent({
-        id,
-        title: t('diaryReality:recording.desktopPerceptionTitle', {
-          time: new Date().toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }),
-        }),
-        captureDevice: {
-          id: 'desktop-local',
-          name: t(desktopApi(t).platform === 'darwin' ? 'diaryReality:recording.thisMac' : 'diaryReality:recording.thisComputer'),
-          kind: 'desktop',
-        },
-        audioSource,
-        audioMimeType: recorder.mimeType || 'audio/webm',
-      })
-      realityEventIdRef.current = id
-      onEventChanged?.(capturedEvent)
       const { filePath } = await desktopApi(t).asr.finishRecording(id)
       recordingIdRef.current = null
       const finishedEvent = await desktopApi(t).reality.finishCapture(id, {
@@ -371,20 +369,31 @@ export function RecordingPage({
 
   if (controlOnly) {
     const listening = state === 'recording'
+    const SourceIcon = audioSource === 'system' ? MonitorSpeaker : Mic
     return (
-      <div className="cassette-control-column">
-        <CassetteListeningControl
-          listening={listening}
-          busy={busy}
-          elapsed={listening ? elapsed : 0}
-          onToggle={listening ? stopRecording : startRecording}
-        />
-        {listening || busy ? (
-          <span className="cassette-recording-timer" data-recording={String(listening)} role="timer">
-            <i aria-hidden="true" />
-            {listening ? formatDuration(elapsed) : t('diaryReality:recording.processing')}
-          </span>
-        ) : null}
+      <div className="capture-console" data-state={state}>
+        <CassetteListeningControl listening={listening} busy={busy} />
+        <div className="capture-console-copy" aria-live="polite">
+          <span>{t('diaryReality:recording.listeningControl')}</span>
+          <strong>{statusLabel}</strong>
+          <small><SourceIcon aria-hidden="true" />{t(audioSource === 'system' ? 'diaryReality:recording.computerAudio' : 'diaryReality:recording.microphone')} · {t(mode === 'cloud' ? 'diaryReality:recording.cloudHosted' : 'diaryReality:recording.localProcessing')}</small>
+        </div>
+        <div className="capture-console-actions">
+          <button
+            type="button"
+            className="capture-primary-button"
+            data-recording={String(listening)}
+            disabled={busy}
+            onClick={listening ? stopRecording : startRecording}
+          >
+            {listening ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
+            {t(listening ? 'diaryReality:recording.stopListening' : busy ? 'diaryReality:recording.processing' : 'diaryReality:recording.startListening')}
+            {listening ? <time>{formatDuration(elapsed)}</time> : null}
+          </button>
+          <button type="button" className="capture-settings-button" title={t('diaryReality:recording.captureSettings')} aria-label={t('diaryReality:recording.captureSettings')} onClick={onOpenSettings}>
+            <Settings2 aria-hidden="true" />
+          </button>
+        </div>
       </div>
     )
   }
