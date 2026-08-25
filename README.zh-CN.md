@@ -10,11 +10,12 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-![Status](https://img.shields.io/badge/status-early%20development-f59e0b)
-![Electron](https://img.shields.io/badge/Electron-39-47848F?logo=electron&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
-![Fastify](https://img.shields.io/badge/Fastify-5-111111?logo=fastify&logoColor=white)
-![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)
+![Build](https://github.com/NxcoreAI/EverRoom/actions/workflows/app-windows-ci.yml/badge.svg?branch=main)
+![Maintenance](https://img.shields.io/github/commit-activity/y/NxcoreAI/EverRoom?label=maintenance)
+![Stars](https://img.shields.io/github/stars/NxcoreAI/EverRoom?style=flat&label=stars)
+![Version](https://img.shields.io/github/package-json/v/NxcoreAI/EverRoom?filename=apps%2Fdesktop%2Fpackage.json&label=version)
+![Status](https://img.shields.io/badge/status-alpha-f59e0b)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 </div>
 
@@ -297,11 +298,11 @@ Everroom/
 
 复杂多 Agent DAG、连续屏幕录制、企业协作和云端同步不属于首版范围。
 
-## 开源边界
+## 开源协议与贡献
 
 社区版计划包含桌面客户端、基础 Room 与 Doc 体验、Agent runtime 边界、基础 Memory Kernel、本地 Connector 和扩展 SDK。托管同步、团队管理、企业控制与托管连接器基础设施可能单独提供。
 
-未来 SaaS Connector 可以通过兼容 Nango 的 Provider 接入，但客户端不会捆绑或再分发 Nango 服务端。用户可以选择托管 Provider 或运行兼容部署。项目最终许可证和第三方依赖分发审查将在首次公开发布前完成。
+Everroom 以 [Apache License 2.0](./LICENSE) 开源。第三方组件仍适用各自的上游许可证；请以对应目录中的许可证和声明文件为准。
 
 ## 致谢
 

@@ -10,11 +10,12 @@ Connect data. Build evidence. Govern memory. Move work forward.
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-![Status](https://img.shields.io/badge/status-early%20development-f59e0b)
-![Electron](https://img.shields.io/badge/Electron-39-47848F?logo=electron&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
-![Fastify](https://img.shields.io/badge/Fastify-5-111111?logo=fastify&logoColor=white)
-![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)
+![Build](https://github.com/NxcoreAI/EverRoom/actions/workflows/app-windows-ci.yml/badge.svg?branch=main)
+![Maintenance](https://img.shields.io/github/commit-activity/y/NxcoreAI/EverRoom?label=maintenance)
+![Stars](https://img.shields.io/github/stars/NxcoreAI/EverRoom?style=flat&label=stars)
+![Version](https://img.shields.io/github/package-json/v/NxcoreAI/EverRoom?filename=apps%2Fdesktop%2Fpackage.json&label=version)
+![Status](https://img.shields.io/badge/status-alpha-f59e0b)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 </div>
 
@@ -303,9 +304,9 @@ Everroom builds on a number of open-source projects and ideas:
 - [Liminon](https://liminon.ai/) for inspiration around AI workflows and context products.
 - [Nango](https://nango.dev/) for connector integrations and OAuth management.
 
-Upstream licenses remain applicable to their respective components. Everroom's final project license and third-party distribution audit will be completed before the first public release.
+Everroom is released under the [Apache License 2.0](./LICENSE). Upstream licenses remain applicable to their respective components; see their individual notices and license files where applicable.
 
-## Open-source boundary and contributing
+## License and contributing
 
 The intended community edition includes the desktop client, core Room and Doc experiences, the Agent boundary, the local memory and knowledge integrations, local connectors, and extension SDKs. Hosted synchronization, team administration, enterprise controls, and managed connector infrastructure may be delivered separately.
 
