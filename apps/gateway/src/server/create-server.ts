@@ -57,6 +57,7 @@ import { IngestFilterService } from "../modules/ingest/filter-agent.js";
 import { FilterRulesStore } from "../modules/ingest/rules.js";
 import { FilterInsightJob } from "../modules/ingest/rules-insight.js";
 import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
+import { DocumentHistoryBackfillWorker } from "../modules/ingest/document-history-backfill-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
@@ -767,6 +768,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     );
   }
   let documentOutboxWorker: DocumentOutboxWorker | null = null;
+  let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
     await filesService.dispose();
@@ -779,6 +781,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
+    await documentHistoryBackfillWorker?.dispose();
     filterInsightJob?.dispose();
     ingestService.disposeFilter();
     await cliConnectorSyncService.dispose();
@@ -948,6 +951,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
   );
   documentOutboxWorker.start();
+  documentHistoryBackfillWorker = new DocumentHistoryBackfillWorker(
+    db,
+    documentService,
+    app.log,
+  );
+  documentHistoryBackfillWorker.start();
   cliConnectorMarkdownService = new ConnectorMarkdownService(
     db,
     config.dataDir,

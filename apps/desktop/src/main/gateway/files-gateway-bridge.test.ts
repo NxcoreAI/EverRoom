@@ -77,7 +77,7 @@ describe('collectImportCandidates', () => {
   })
 
   it('counts supported non-Office/PDF files as high risk', async () => {
-    const directory = await mkdtemp(join('/tmp', 'everroom-import-risk-'))
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-risk-'))
     temporaryDirectories.push(directory)
     await writeFile(join(directory, 'proposal.docx'), 'office')
     await Promise.all(Array.from({ length: 101 }, (_, index) =>
@@ -141,7 +141,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
   })
 
   it('queues a large high-risk batch without delaying low-risk files', async () => {
-    const directory = await mkdtemp(join('/tmp', 'everroom-import-high-risk-'))
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-high-risk-'))
     temporaryDirectories.push(directory)
     await writeFile(join(directory, 'proposal.pdf'), 'pdf')
     await Promise.all(Array.from({ length: 101 }, (_, index) =>

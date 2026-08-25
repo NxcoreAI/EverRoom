@@ -12,6 +12,7 @@ import { DocumentServiceError } from "../errors.js";
 import { enqueueDocumentIngest } from "../integration-outbox.js";
 import { DocumentContentEngine } from "./content-engine.js";
 import { DocumentRepository } from "./repository.js";
+import { YjsHistoryService } from "./yjs-history-service.js";
 
 export interface DocumentCommitHooks {
   afterCommit?: (
@@ -75,6 +76,7 @@ export class DocumentCommitService {
     private readonly repository: DocumentRepository,
     private readonly engine: DocumentContentEngine,
     private readonly hooks: DocumentCommitHooks = {},
+    private readonly yjsHistory: YjsHistoryService = new YjsHistoryService(),
   ) {}
 
   create(input: CommitDocumentInput): RoomDocument {
@@ -84,6 +86,12 @@ export class DocumentCommitService {
   }
 
   prepareCreate(input: CommitDocumentInput): PreparedDocumentCreate {
+    if (input.writeVersion !== false && input.status !== "draft" && input.version !== 1) {
+      throw new DocumentServiceError("DOCUMENT_VERSION_INVALID", "A new committed document must start at version 1", 409);
+    }
+    if (input.writeVersion === false && input.version !== 0) {
+      throw new DocumentServiceError("DOCUMENT_VERSION_INVALID", "Draft documents must use version 0", 409);
+    }
     const normalized = this.engine.normalizeDocument(
       input.content,
       input.documentId,
@@ -113,6 +121,9 @@ export class DocumentCommitService {
 
   applyPreparedCreate(tx: GatewayDatabase, prepared: PreparedDocumentCreate): void {
     const { input, normalized, now } = prepared;
+    if (input.writeVersion !== false && input.status !== "draft" && input.version !== 1) {
+      throw new DocumentServiceError("DOCUMENT_VERSION_INVALID", "A new committed document must start at version 1", 409);
+    }
     tx.insert(documents).values({
         id: input.documentId,
         title: input.title,
@@ -131,6 +142,15 @@ export class DocumentCommitService {
     }).run();
     if (input.writeVersion !== false && input.version > 0) {
       this.insertVersion(tx, input, normalized, now);
+      this.yjsHistory.writeCommit(tx, {
+        documentId: input.documentId,
+        version: input.version,
+        title: input.title,
+        content: normalized.content,
+        contentSchemaVersion: normalized.schemaVersion,
+        source: input.sourceTransactionId ?? null,
+        now,
+      });
       enqueueDocumentIngest(tx, {
         documentId: input.documentId,
         roomId: input.roomId,
@@ -164,9 +184,28 @@ export class DocumentCommitService {
     );
     const previous = this.repository.get(input.documentId);
     if (!previous) throw new Error(`Document ${input.documentId} was not found`);
+    if (previous.roomId !== input.roomId) {
+      throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
+    }
+    const expectedVersion = input.expectedVersion ?? previous.version;
+    if (input.expectedVersion !== undefined && input.expectedVersion !== previous.version) {
+      throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409, {
+        currentVersion: previous.version,
+      });
+    }
+    if (input.writeVersion !== false) {
+      if (input.version !== expectedVersion + 1) {
+        throw new DocumentServiceError("DOCUMENT_VERSION_INVALID", "Committed document versions must advance by exactly one", 409, {
+          currentVersion: previous.version,
+          expectedVersion,
+          requestedVersion: input.version,
+        });
+      }
+    }
+    const boundInput = { ...input, expectedVersion };
     const now = input.createdAt ?? new Date();
     return {
-      input,
+      input: boundInput,
       normalized,
       previousVersion: previous.version,
       now,
@@ -187,6 +226,9 @@ export class DocumentCommitService {
 
   applyPrepared(tx: GatewayDatabase, prepared: PreparedDocumentCommit): void {
     const { input, normalized, now } = prepared;
+    if (input.writeVersion !== false && (input.expectedVersion === undefined || input.version !== input.expectedVersion + 1)) {
+      throw new DocumentServiceError("DOCUMENT_VERSION_INVALID", "Committed document versions must advance by exactly one", 409);
+    }
     const updated = tx.update(documents).set({
         title: input.title,
         contentJson: normalized.content,
@@ -208,6 +250,15 @@ export class DocumentCommitService {
     }
     if (input.writeVersion !== false) {
       this.insertVersion(tx, input, normalized, now);
+      this.yjsHistory.writeCommit(tx, {
+        documentId: input.documentId,
+        version: input.version,
+        title: input.title,
+        content: normalized.content,
+        contentSchemaVersion: normalized.schemaVersion,
+        source: input.sourceTransactionId ?? null,
+        now,
+      });
       enqueueDocumentIngest(tx, {
         documentId: input.documentId,
         roomId: input.roomId,

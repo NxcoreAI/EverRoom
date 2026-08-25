@@ -21,6 +21,9 @@ export function selectionRewritePlugin(backend: CapabilityBackend): DocumentCapa
       if (document.roomId !== request.context.roomId) {
         throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
       }
+      if (document.deletedAt) {
+        throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
+      }
       const baseVersion = request.input.baseVersion;
       const proposedContent = request.input.proposedContentJson;
       if (!Number.isSafeInteger(baseVersion) || baseVersion !== document.version) {

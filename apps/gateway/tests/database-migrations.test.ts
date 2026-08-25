@@ -24,6 +24,55 @@ describe("database migrations", () => {
     expect(indexes.map((index) => index.name)).toContain("jobs_type_status_created_idx");
   });
 
+  it("reconciles the pre-merge Yjs migration branch with the canonical schema", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-yjs-branch-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+    const beforeMerge = createDatabase(databasePath, migrationsDir);
+    const now = Date.now();
+    const content = JSON.stringify({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "preserved" }] }],
+    });
+    beforeMerge.sqlite.prepare(
+      "INSERT INTO documents (id, title, content_json, version, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("document-1", "Preserved", content, 1, "active", now, now);
+    beforeMerge.sqlite.prepare(
+      "INSERT INTO doc_versions (id, document_id, version, title, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("version-1", "document-1", 1, "Preserved", content, now);
+
+    beforeMerge.sqlite.exec("DROP TABLE runtime_config_store");
+    beforeMerge.sqlite.exec("DROP TABLE agent_schedules");
+    beforeMerge.sqlite.exec("ALTER TABLE ingest_events DROP COLUMN reinstated_at");
+    beforeMerge.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(1787320000000);
+    beforeMerge.sqlite.prepare(
+      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+    ).run("pre-merge-yjs-history", 1787577820465);
+    beforeMerge.sqlite.close();
+
+    const upgraded = createDatabase(databasePath, migrationsDir);
+    const tables = upgraded.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    ).all() as Array<{ name: string }>;
+    const ingestColumns = upgraded.sqlite.prepare("PRAGMA table_info(ingest_events)")
+      .all() as Array<{ name: string }>;
+    const preserved = upgraded.sqlite.prepare(
+      "SELECT title, content_json FROM doc_versions WHERE id = ?",
+    ).get("version-1");
+    upgraded.sqlite.close();
+
+    expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "runtime_config_store",
+      "agent_schedules",
+      "document_yjs_checkpoints",
+      "document_yjs_updates",
+      "document_yjs_versions",
+    ]));
+    expect(ingestColumns.map(({ name }) => name)).toContain("reinstated_at");
+    expect(preserved).toEqual({ title: "Preserved", content_json: content });
+  });
+
   it("adopts the complete pre-release connector configuration migration", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-connector-config-migration-test-"));
     temporaryDirectories.push(dataDir);

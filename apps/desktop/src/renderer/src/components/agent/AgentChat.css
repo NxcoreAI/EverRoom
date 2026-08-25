@@ -1214,24 +1214,6 @@
   opacity: 0.42;
 }
 
-.agent-prompt-voice[data-recording='true'] {
-  background: #fdf1f1;
-  color: #b42318;
-}
-
-.agent-prompt-voice[data-recording='true'] svg {
-  width: 10px;
-  height: 10px;
-  fill: currentColor;
-}
-
-.agent-voice-status {
-  flex: 0 0 auto;
-  color: #737b87;
-  font-size: 10px;
-  white-space: nowrap;
-}
-
 .agent-prompt-submit {
   margin-left: auto;
   border-radius: 50%;
@@ -1297,10 +1279,11 @@
   .agent-composer-context {
     font-size: 10px;
   }
+}
 
-  .agent-voice-status {
-    display: none;
-  }
+.agent-composer-shell[data-dragging='true'] .agent-prompt {
+  border-color: #5876d8;
+  box-shadow: 0 0 0 3px rgba(88, 118, 216, 0.14), 0 9px 24px rgba(15, 23, 42, 0.04);
 }
 
 @media (prefers-reduced-motion: reduce) {

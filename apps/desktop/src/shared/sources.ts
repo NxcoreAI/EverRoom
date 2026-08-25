@@ -13,6 +13,7 @@ export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' |
 
 import type {
   AgentEvent,
+  AgentAttachmentReference,
   AgentUsageRange,
   AgentUsageSnapshot,
   PendingAgentIntent,
@@ -36,6 +37,9 @@ import type {
   DocumentBlockList,
   DocumentBlockBacklinkList,
   DocumentVersionSummary,
+  DocumentVersionListOptions,
+  DocumentVersionSnapshot,
+  DocumentDiffResult,
   ImportRoomDocumentInput,
   RoomDocument,
   ResolveDocumentBlockReferencesInput,
@@ -838,7 +842,9 @@ export interface NxcoreDesktopApi {
     get(documentId: string): Promise<RoomDocument>
     listBlocks(documentId: string): Promise<DocumentBlockList>
     listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList>
-    listVersions(documentId: string): Promise<DocumentVersionSummary[]>
+    listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
+    getVersionSnapshot(documentId: string, version: number): Promise<DocumentVersionSnapshot>
+    getDiff(documentId: string, fromVersion: number | null, toVersion: number): Promise<DocumentDiffResult>
     restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
     listOperations(filters?: {
@@ -848,7 +854,7 @@ export interface NxcoreDesktopApi {
       status?: DocumentOperationStatus
     }): Promise<DocumentOperationSummary[]>
     startOperation(input: StartDocumentOperationInput): Promise<DocumentOperation>
-    getOperation(operationId: string): Promise<DocumentOperation>
+    getOperation(operationId: string, context?: { roomId: string; sessionId: string; runId: string }): Promise<DocumentOperation>
     executeOperationCommand(
       operationId: string,
       input: DocumentOperationCommandInput,
@@ -865,6 +871,7 @@ export interface NxcoreDesktopApi {
     unsubscribe(roomId?: string): Promise<void>
     onEvent(listener: (frame: DocumentEventFrame) => void): () => void
     onOperationChanged(listener: (operationId: string) => void): () => void
+    onReady(listener: (roomId: string) => void): () => void
   }
   sources: {
     list(): Promise<DataSourceSummary[]>
@@ -941,6 +948,7 @@ export interface NxcoreDesktopApi {
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>

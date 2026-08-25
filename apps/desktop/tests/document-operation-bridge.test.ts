@@ -33,6 +33,7 @@ DocumentOperationSummary {
 describe('Desktop document operation bridge', () => {
   it('merges status requests, filters capabilities, and forwards change ids', async () => {
     const listeners = new Set<(operationId: string) => void>()
+    const readyListeners = new Set<() => void>()
     const listOperations = vi.fn(async ({ status }: { status?: string }) => status === 'failed'
       ? [summary('operation-2', 'failed', 'document.continue')]
       : [summary('operation-1', 'awaiting_review'), summary('operation-2', 'failed', 'document.continue')])
@@ -43,6 +44,10 @@ describe('Desktop document operation bridge', () => {
       onOperationChanged: (listener: (operationId: string) => void) => {
         listeners.add(listener)
         return () => listeners.delete(listener)
+      },
+      onReady: (listener: (roomId: string) => void) => {
+        readyListeners.add(() => listener('room-1'))
+        return () => readyListeners.clear()
       },
     } as unknown as NxcoreDesktopApi['documents']
     const bridge = createDesktopOperationBridge(documents)
@@ -62,5 +67,11 @@ describe('Desktop document operation bridge', () => {
     expect(listener).toHaveBeenCalledWith('operation-3')
     unsubscribe?.()
     expect(listeners.size).toBe(0)
+
+    const ready = vi.fn()
+    const unsubscribeReady = bridge.subscribeReady?.(ready)
+    for (const notify of readyListeners) notify()
+    expect(ready).toHaveBeenCalledTimes(1)
+    unsubscribeReady?.()
   })
 })

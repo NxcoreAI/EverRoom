@@ -76,6 +76,9 @@ export function DocumentOperationProvider({
   entriesRef.current = entriesById
   const loadRequests = useRef(new Map<string, Promise<DocumentOperation | null>>())
   const commandsInFlight = useRef(new Set<string>())
+  const commandIds = useRef(new Map<string, string>())
+
+  const recoverableFilters = useMemo(() => ({ statuses: [...RECOVERABLE_STATUSES] }), [])
 
   const refresh = useCallback(async (filters?: DocumentOperationListFilters) => {
     const summaries = await bridge.list(filters)
@@ -87,7 +90,10 @@ export function DocumentOperationProvider({
     return summaries
   }, [bridge])
 
-  const load = useCallback((operationId: string) => {
+  const load = useCallback((
+    operationId: string,
+    discoveredSummary?: DocumentOperationSummary,
+  ) => {
     const existing = loadRequests.current.get(operationId)
     if (existing) return existing
     const currentEntry = entriesRef.current[operationId]
@@ -98,7 +104,12 @@ export function DocumentOperationProvider({
       }
       setEntriesById(entriesRef.current)
     }
-    const request = bridge.get(operationId)
+    const operationSummary = currentEntry?.summary ?? discoveredSummary
+    const request = bridge.get(operationId, operationSummary ? {
+      roomId: operationSummary.roomId,
+      sessionId: operationSummary.sessionId,
+      runId: operationSummary.runId,
+    } : undefined)
       .then((detail) => {
         if (detail) {
           entriesRef.current = {
@@ -164,6 +175,9 @@ export function DocumentOperationProvider({
     const entry = entriesRef.current[operationId]
     if (!entry || commandsInFlight.current.has(operationId)) return null
     commandsInFlight.current.add(operationId)
+    const commandKey = JSON.stringify([operationId, type, payload ?? null])
+    const commandId = commandIds.current.get(commandKey) ?? crypto.randomUUID()
+    commandIds.current.set(commandKey, commandId)
     entriesRef.current = {
       ...entriesRef.current,
       [operationId]: { ...entry, busy: true, error: undefined },
@@ -171,12 +185,18 @@ export function DocumentOperationProvider({
     setEntriesById(entriesRef.current)
     try {
       const result = await bridge.command(operationId, {
-        commandId: crypto.randomUUID(),
+        commandId,
         expectedRevision: entry.revision,
         type,
         payload,
+        context: {
+          roomId: entry.summary.roomId,
+          sessionId: entry.summary.sessionId,
+          runId: entry.summary.runId,
+        },
       })
       if (result) {
+        commandIds.current.delete(commandKey)
         const merged = mergeOperationDetail(entriesRef.current[operationId], result.operation)
         entriesRef.current = { ...entriesRef.current, [operationId]: merged }
         setEntriesById(entriesRef.current)
@@ -228,12 +248,38 @@ export function DocumentOperationProvider({
     })
   }, [])
 
-  useEffect(() => {
-    void refresh({ statuses: [...RECOVERABLE_STATUSES] }).then((operations) => {
-      for (const operation of operations) void load(operation.id)
+  const refreshRecoverableOperations = useCallback(() => {
+    return refresh(recoverableFilters).then((operations) => {
+      // React state updates are asynchronous. Pass the summary directly so a
+      // detail request made in this same tick still has its authorization
+      // context (room/session/run).
+      for (const operation of operations) void load(operation.id, operation)
     }).catch(() => undefined)
-    return bridge.subscribe?.((operationId) => { void load(operationId) })
-  }, [bridge, load, refresh])
+  }, [load, refresh, recoverableFilters])
+
+  useEffect(() => {
+    void refreshRecoverableOperations()
+    const unsubscribeOperation = bridge.subscribe?.((operationId) => {
+      const known = entriesRef.current[operationId]
+      if (known) {
+        void load(operationId, known.summary)
+        return
+      }
+      // WebSocket notifications can arrive before the list response that
+      // supplies the operation's authorization context. Discover the summary
+      // first so the detail request never drops room/session/run identity.
+      void refresh().then((summaries) => {
+        const summary = summaries.find((candidate) => candidate.id === operationId)
+        if (summary) return load(operationId, summary)
+        return null
+      }).catch(() => undefined)
+    })
+    const unsubscribeReady = bridge.subscribeReady?.(() => { void refreshRecoverableOperations() })
+    return () => {
+      unsubscribeOperation?.()
+      unsubscribeReady?.()
+    }
+  }, [bridge, load, refreshRecoverableOperations])
 
   const value = useMemo<DocumentOperationContextValue>(() => ({
     entriesById,

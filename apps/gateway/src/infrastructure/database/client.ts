@@ -210,6 +210,13 @@ function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migra
   }
   if (!hasObject("table", "connector_markdown_artifacts")) runMigrationStatements("0018_charming_vampiro");
   if (!hasObject("table", "subagent_definitions")) runMigrationStatements("0019_sturdy_fantastic_four");
+  if (!hasObject("table", "runtime_config_store")) runMigrationStatements("0023_runtime_config_store");
+  if (existsSync(join(migrationsDir, "0023_wide_red_hulk.sql"))
+    && hasObject("table", "ingest_events")
+    && !hasColumn("ingest_events", "reinstated_at")) {
+    sqlite.exec("ALTER TABLE `ingest_events` ADD `reinstated_at` integer");
+  }
+  if (!hasObject("table", "agent_schedules")) runMigrationStatements("0025_greedy_the_santerians");
 }
 
 export function createDatabase(databasePath: string, migrationsDir: string): DatabaseClient {

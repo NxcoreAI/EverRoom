@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  AgentAttachmentReference,
   AgentActiveDocumentContext,
   AgentFileAttachment,
   AgentMessage,
@@ -633,7 +634,7 @@ export function useAgentSession(
     attachments?: AgentFileAttachment[],
   ): Promise<string | null> => {
     const message = prompt.trim()
-    if (!message || activeRunId || loading || sending) return null
+    if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
     if (replaceRunId) {
       setMessages((current) => removeAgentRunMessages(current, replaceRunId))
       setToolCallsByRun((current) => {
@@ -691,6 +692,7 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
+        ...(attachments?.length ? { attachments } : {}),
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
         context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments),

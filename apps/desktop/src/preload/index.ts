@@ -413,13 +413,15 @@ const api: NxcoreDesktopApi = {
     get: (documentId) => invoke('documents:get', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
     listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
-    listVersions: (documentId) => invoke('documents:list-versions', documentId),
+    listVersions: (documentId, options) => invoke('documents:list-versions', documentId, options),
+    getVersionSnapshot: (documentId, version) => invoke('documents:get-version-snapshot', documentId, version),
+    getDiff: (documentId, fromVersion, toVersion) => invoke('documents:get-diff', documentId, fromVersion, toVersion),
     restoreVersion: (documentId, version, baseVersion) =>
       invoke('documents:restore-version', documentId, version, baseVersion),
     resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),
     listOperations: (filters) => invokeQuietly('documents:list-operations', filters),
     startOperation: (input) => invokeQuietly('documents:start-operation', input),
-    getOperation: (operationId) => invokeQuietly('documents:get-operation', operationId),
+    getOperation: (operationId, context) => invokeQuietly('documents:get-operation', operationId, context),
     executeOperationCommand: (operationId, input) =>
       invokeQuietly('documents:execute-operation-command', operationId, input),
     storeImage: (documentId, input) => invoke('documents:store-image', documentId, input),
@@ -445,6 +447,13 @@ const api: NxcoreDesktopApi = {
       }
       ipcRenderer.on('documents:operation-changed', handleEvent)
       return () => ipcRenderer.removeListener('documents:operation-changed', handleEvent)
+    },
+    onReady: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, roomId: string) => {
+        listener(roomId)
+      }
+      ipcRenderer.on('documents:ready', handleEvent)
+      return () => ipcRenderer.removeListener('documents:ready', handleEvent)
     },
   },
   sources: {
@@ -515,6 +524,10 @@ const api: NxcoreDesktopApi = {
     importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
+    },
+    importAgentAttachments: (files: File[]) => {
+      const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
+      return invoke('files:import-agent-attachments', paths)
     },
     onImportProgress: (listener) => {
       const handleProgress = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) => listener(progress)

@@ -28,9 +28,10 @@ export function createDesktopOperationBridge(
         .filter((operation) => !filters.statuses || filters.statuses.includes(operation.status))
     },
     start: (input) => documents.startOperation(input),
-    get: (operationId) => documents.getOperation(operationId),
+    get: (operationId, context) => documents.getOperation(operationId, context),
     command: (operationId, command) => documents.executeOperationCommand(operationId, command),
     subscribe: (listener) => documents.onOperationChanged(listener),
+    subscribeReady: (listener) => documents.onReady?.(() => listener()) ?? (() => undefined),
   }
 }
 
