@@ -87,7 +87,9 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/@esbuild/**/*"
+      "node_modules/@esbuild/**/*",
+      "node_modules/sqlite-vec-darwin-arm64/**/*",
+      "node_modules/sqlite-vec-darwin-x64/**/*"
     ],
     "directories": {
       "output": "../../release"

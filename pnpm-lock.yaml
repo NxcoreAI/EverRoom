@@ -11,6 +11,7 @@ overrides:
 patchedDependencies:
   '@tencentdb-agent-memory/memory-tencentdb-v2@2.0.0-beta.1-everroom.8': 351b45cf8e7bc7b80b1feff362fb4100900a4301b00d7dd3fa34c572f331e7e6
   pi-mcp-adapter@2.26.1: 10c2c1734b5cc6e2dfea25e01802255613a59f22b5e0940b4607f7f96c716d46
+  sqlite-vec@0.1.7-alpha.2: dc66b136208f29f8a7f31c0053a98bbdcb16cfbc4f88028da689fd9b66f776ac
 
 importers:
 
@@ -183,7 +184,7 @@ importers:
         version: 4.3.4(supports-color@8.1.1)(vite@6.4.3(@types/node@22.20.1)(jiti@2.7.0)(sass-embedded@1.102.0)(sass@1.102.0)(tsx@4.23.12)(yaml@2.9.0))
       electron:
         specifier: ^39.2.7
-        version: 39.8.10(supports-color@8.1.1)
+        version: 39.8.10(supports-color@7.1.0)
       electron-builder:
         specifier: ^26.0.12
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@8.1.1)
@@ -6434,9 +6435,9 @@ packages:
     engines: {node: ^18 || >=20}
     hasBin: true
 
-  negotiator@1.0.0:
-    resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
-    engines: {node: '>= 0.6'}
+  negotiator@1.1.0:
+    resolution: {integrity: sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg==}
+    engines: {node: '>=18'}
 
   netmask@2.1.1:
     resolution: {integrity: sha512-eonl3sLUha+S1GzTPxychyhnUzKyeQkZ7jLjKrBagJgPla13F+uQ71HgpFefyHgqrjEbCPkDArxYsjY8/+gLKA==}
@@ -8934,7 +8935,7 @@ snapshots:
       fs-extra: 8.1.0
       got: 11.8.5
       progress: 2.0.3
-      semver: 6.3.1
+      semver: 6.2.0
       sumchecker: 3.0.1(supports-color@8.1.1)
     optionalDependencies:
       global-agent: 3.0.0
@@ -9474,7 +9475,7 @@ snapshots:
 
   '@jridgewell/gen-mapping@0.3.12':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.5.0
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/remapping@2.3.5':
@@ -9491,7 +9492,7 @@ snapshots:
   '@jridgewell/trace-mapping@0.3.31':
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.5.0
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
@@ -11405,7 +11406,7 @@ snapshots:
       js-yaml: 4.3.1
       json5: 2.2.3
       jszip: 3.10.1
-      sqlite-vec: 0.1.7-alpha.2
+      sqlite-vec: 0.1.7-alpha.2(patch_hash=dc66b136208f29f8a7f31c0053a98bbdcb16cfbc4f88028da689fd9b66f776ac)
       tsx: 4.23.12
       undici: 8.9.0
       yaml: 2.9.0
@@ -11981,7 +11982,7 @@ snapshots:
   accepts@2.0.0:
     dependencies:
       mime-types: 3.0.2
-      negotiator: 1.0.0
+      negotiator: 1.1.0
 
   acorn@8.18.0: {}
 
@@ -12106,7 +12107,7 @@ snapshots:
       ci-info: 4.3.1
       debug: 4.4.3(supports-color@8.1.1)
       dmg-builder: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@8.1.1)
-      dotenv: 16.5.0
+      dotenv: 16.4.5
       dotenv-expand: 11.0.6
       ejs: 3.1.8
       electron-builder-squirrel-windows: 26.15.3(dmg-builder@26.15.3)(supports-color@8.1.1)
@@ -12790,11 +12791,12 @@ snapshots:
 
   dotenv-expand@11.0.6:
     dependencies:
-      dotenv: 16.5.0
+      dotenv: 16.4.5
 
   dotenv@16.4.5: {}
 
-  dotenv@16.5.0: {}
+  dotenv@16.5.0:
+    optional: true
 
   dotenv@17.4.2: {}
 
@@ -12921,7 +12923,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@39.8.10(supports-color@8.1.1):
+  electron@39.8.10(supports-color@7.1.0):
     dependencies:
       '@electron/get': 2.0.0(supports-color@8.1.1)
       '@types/node': 22.20.1
@@ -14786,7 +14788,9 @@ snapshots:
 
   nanoid@5.1.16: {}
 
-  negotiator@1.0.0: {}
+  negotiator@1.1.0:
+    dependencies:
+      content-type: 2.1.0
 
   netmask@2.1.1: {}
 
@@ -16035,11 +16039,12 @@ snapshots:
   source-map-support@0.5.21:
     dependencies:
       buffer-from: 1.1.2
-      source-map: 0.6.1
+      source-map: 0.6.0
 
   source-map@0.6.0: {}
 
-  source-map@0.6.1: {}
+  source-map@0.6.1:
+    optional: true
 
   source-map@0.7.6: {}
 
@@ -16072,7 +16077,7 @@ snapshots:
   sqlite-vec-windows-x64@0.1.7-alpha.2:
     optional: true
 
-  sqlite-vec@0.1.7-alpha.2:
+  sqlite-vec@0.1.7-alpha.2(patch_hash=dc66b136208f29f8a7f31c0053a98bbdcb16cfbc4f88028da689fd9b66f776ac):
     optionalDependencies:
       sqlite-vec-darwin-arm64: 0.1.7-alpha.2
       sqlite-vec-darwin-x64: 0.1.7-alpha.2
