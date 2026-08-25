@@ -62,6 +62,39 @@ class CompletingRuntime extends RecordingRuntime {
   }
 }
 
+class RoomListRuntime extends RecordingRuntime {
+  constructor(private readonly candidateRoomIds?: string[]) {
+    super()
+  }
+
+  override async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+    this.starts.push(input)
+    const events = new AsyncEventQueue<RuntimeEvent>()
+    if (!input.roomId) {
+      const candidateIds = this.candidateRoomIds ? new Set(this.candidateRoomIds) : null
+      const rooms = candidateIds
+        ? (input.availableRooms ?? []).filter((room) => candidateIds.has(room.id))
+        : input.availableRooms ?? []
+      const toolCallId = `room-list-${input.runId}`
+      events.push({
+        type: 'tool.started',
+        payload: { toolCallId, name: 'context_room_list', args: { candidateRoomIds: this.candidateRoomIds } },
+      })
+      events.push({
+        type: 'tool.completed',
+        payload: {
+          toolCallId,
+          name: 'context_room_list',
+          result: { details: { rooms, selectionRequired: true } },
+        },
+      })
+    }
+    events.push({ type: 'run.completed', payload: {} })
+    events.end()
+    return { runId: input.runId, runtimeSessionRef: `runtime-${input.sessionId}`, events }
+  }
+}
+
 class HangingRuntime extends RecordingRuntime {
   readonly cancels: string[] = []
   private readonly queues = new Map<string, AsyncEventQueue<RuntimeEvent>>()
@@ -254,8 +287,9 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
-  it('requires selection in a global session and binds a validated selection for one run', async () => {
-    const { rooms: roomRegistry, runtime, service, sqlite } = await createHarness()
+  it('uses the Agent candidate list in a global session and binds the user selection for one run', async () => {
+    const runtime = new RoomListRuntime(['room-b'])
+    const { rooms: roomRegistry, service, sqlite } = await createHarness({ runtime })
     const session = service.createSession({ pageLabel: '首页', roomId: null })
     const rooms = [
       { id: 'room-a', title: '产品规划', kind: '项目' },
@@ -280,28 +314,38 @@ describe('Agent Room selection', () => {
 
     expect(runtime.starts).toEqual([
       expect.objectContaining({
+        roomId: null,
+        availableRooms: rooms,
+        roomSelectionRequired: true,
+      }),
+      expect.objectContaining({
         roomId: 'room-b',
         availableRooms: rooms,
         roomSelectionRequired: false,
       }),
     ])
-    expect(listRun.status).toBe('completed')
+    expect(service.getRun(listRun.id)?.status).toBe('completed')
     expect(service.listEvents(session.id, listRun.id, 0).map((event) => event.type)).toEqual([
       'run.accepted',
-      'tool.requested',
       'tool.started',
       'tool.completed',
       'run.completed',
     ])
-    expect(service.listEvents(session.id, listRun.id, 0)[3]?.payload).toMatchObject({
+    expect(service.listEvents(session.id, listRun.id, 0)[2]?.payload).toMatchObject({
       name: 'context_room_list',
-      result: { rooms, selectionRequired: true },
+      result: {
+        details: {
+          rooms: [{ id: 'room-b', title: '后端进阶', kind: '主题' }],
+          selectionRequired: true,
+          pendingIntent: expect.objectContaining({ allowedRoomIds: ['room-b'] }),
+        },
+      },
     })
     expect(service.getSnapshot(session.id)?.session.roomId).toBeNull()
     sqlite.close()
   })
 
-  it('requires Room selection for an English document creation request', async () => {
+  it('lets the Agent infer a Room for an English document creation request', async () => {
     const { rooms: roomRegistry, runtime, service, sqlite } = await createHarness()
     const session = service.createSession({ pageLabel: 'Home', roomId: null })
     const rooms = [{ id: 'room-a', title: 'Java backend', kind: 'Project' }]
@@ -310,25 +354,18 @@ describe('Agent Room selection', () => {
       deletedRooms: [],
     })
 
-    const run = await service.startRun(session.id, {
+    await service.startRun(session.id, {
       prompt: 'help me to draft a java back-end guide book doc in current room',
       idempotencyKey: 'english-global-list-run',
       context: { rooms },
     })
 
-    expect(runtime.starts).toEqual([])
-    expect(run.status).toBe('completed')
-    expect(service.listEvents(session.id, run.id, 0)[3]?.payload).toMatchObject({
-      name: 'context_room_list',
-      result: {
-        rooms,
-        selectionRequired: true,
-        pendingIntent: expect.objectContaining({
-          originalPrompt: 'help me to draft a java back-end guide book doc in current room',
-          targetCapability: 'document.create',
-        }),
-      },
-    })
+    expect(runtime.starts).toEqual([expect.objectContaining({
+      originalPrompt: 'help me to draft a java back-end guide book doc in current room',
+      roomId: null,
+      availableRooms: rooms,
+      roomSelectionRequired: true,
+    })])
     sqlite.close()
   })
 
@@ -381,17 +418,17 @@ describe('Agent Room selection', () => {
     const { runtime, service, sqlite } = await createHarness()
     const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
 
-    const run = await service.startRun(session.id, {
+    await service.startRun(session.id, {
       prompt,
       idempotencyKey: `document-in-room-${prompt}`,
       context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
     })
 
-    expect(runtime.starts).toEqual([])
-    expect(service.listEvents(session.id, run.id, 0)[3]?.payload).toMatchObject({
-      name: 'context_room_list',
-      result: { selectionRequired: true },
-    })
+    expect(runtime.starts).toEqual([expect.objectContaining({
+      originalPrompt: prompt,
+      roomId: null,
+      roomSelectionRequired: true,
+    })])
     sqlite.close()
   })
 
@@ -495,7 +532,8 @@ describe('Agent Room selection', () => {
   })
 
   it('persists the original document intent and resumes it once with a validated Room', async () => {
-    const { db, rooms: roomRegistry, runtime, service, sqlite } = await createHarness()
+    const runtime = new RoomListRuntime(['room-b'])
+    const { db, rooms: roomRegistry, service, sqlite } = await createHarness({ runtime })
     const rooms = [
       { id: 'room-a', title: '产品规划' },
       { id: 'room-b', title: '后端进阶' },
@@ -511,6 +549,7 @@ describe('Agent Room selection', () => {
       idempotencyKey: 'pending-source-run',
       context: { rooms },
     })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
 
     const [intent] = service.listPendingIntents(session.id)
     expect(intent).toMatchObject({
@@ -518,13 +557,13 @@ describe('Agent Room selection', () => {
       sourceRunId: sourceRun.id,
       originalPrompt,
       targetCapability: 'document.create',
-      allowedRoomIds: ['room-a', 'room-b'],
+      allowedRoomIds: ['room-b'],
       allowedDocumentIds: [],
       consumedAt: null,
     })
     expect(new Date(intent!.expiresAt).getTime()).toBeGreaterThan(Date.now())
-    expect(service.listEvents(session.id, sourceRun.id, 0)[3]?.payload).toMatchObject({
-      result: { pendingIntent: { id: intent!.id, originalPrompt } },
+    expect(service.listEvents(session.id, sourceRun.id, 0)[2]?.payload).toMatchObject({
+      result: { details: { pendingIntent: { id: intent!.id, originalPrompt } } },
     })
 
     await expect(service.submitPendingIntent(intent!.id, {
@@ -557,7 +596,8 @@ describe('Agent Room selection', () => {
   })
 
   it('keeps an intent available when the Agent session is busy and rejects expired intents', async () => {
-    const { db, rooms, service, sqlite } = await createHarness()
+    const runtime = new RoomListRuntime()
+    const { db, rooms, service, sqlite } = await createHarness({ runtime })
     rooms.saveSnapshot({
       rooms: [{ id: 'room-a', title: '产品规划', data: {} }],
       deletedRooms: [],
@@ -568,6 +608,7 @@ describe('Agent Room selection', () => {
       idempotencyKey: 'busy-intent-source',
       context: { rooms: [{ id: 'room-a', title: '产品规划' }] },
     })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
     const intent = service.listPendingIntents(session.id)[0]!
 
     db.update(agentSessions).set({ status: 'running' }).where(eq(agentSessions.id, session.id)).run()

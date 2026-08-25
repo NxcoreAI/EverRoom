@@ -259,6 +259,32 @@ function availableRooms(input: StartAgentRunInput, registry?: AgentRoomRegistry)
   });
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    try {
+      return objectRecord(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function roomSelectionDetails(value: unknown): Record<string, unknown> | null {
+  const root = objectRecord(value);
+  if (!root) return null;
+  const contentText = Array.isArray(root.content)
+    ? root.content.map(objectRecord).find((item) => typeof item?.text === "string")?.text
+    : typeof root.content === "string" ? root.content : undefined;
+  for (const candidateValue of [root.details, root.structuredContent, root, contentText]) {
+    const candidate = objectRecord(candidateValue);
+    if (candidate?.selectionRequired === true && Array.isArray(candidate.rooms)) return candidate;
+  }
+  return null;
+}
+
 function selectedRunRoomId(
   input: StartAgentRunInput,
   registry?: AgentRoomRegistry,
@@ -908,19 +934,16 @@ export class AgentService {
     );
     await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: { prompt: input.prompt } });
 
-    // Selection and clarification controls are driven by completed tool events.
-    // Emit those preflights deterministically instead of relying on model behavior.
+    // Clarification controls are driven by a deterministic preflight for requests
+    // that do not yet identify a document. Room routing itself is delegated to
+    // the Agent: it receives the Room metadata and can pass an exact Room id to
+    // the document-create tool when the match is clear.
     // toolsEnabled=false 的运行是内部纯文本调用（选区重写/续写），不触发 UI 预检。
     const interactiveRun = input.toolsEnabled !== false;
     const documentTopic = interactiveRun && !runRoomId
       ? ambiguousDocumentTopic(input.prompt)
       : null;
-    const preflightTool = interactiveRun && !runRoomId && requestsWorkspaceDocument(input.prompt)
-      ? {
-          name: "context_room_list",
-          result: { rooms, selectionRequired: true },
-        }
-      : documentTopic
+    const preflightTool = documentTopic
         ? {
             name: "context_room_document_intent",
             result: {
@@ -977,6 +1000,7 @@ export class AgentService {
         runId,
         sessionId,
         runtimeSessionRef: session.runtimeSessionRef,
+        originalPrompt: input.prompt,
         prompt: runtimePrompt(input, runPageLabel, this.connectorMode),
         ...(responseLanguage ? { responseLanguage } : {}),
         pageLabel: runPageLabel,
@@ -1019,13 +1043,65 @@ export class AgentService {
     events: AsyncIterable<RuntimeEvent>,
   ): Promise<void> {
     try {
-      for await (const event of events) await this.appendEvent(sessionId, runId, event);
+      for await (const event of events) {
+        await this.appendEvent(sessionId, runId, this.attachRoomSelectionIntent(sessionId, runId, event));
+      }
     } catch (error) {
       await this.appendEvent(sessionId, runId, {
         type: "run.failed",
         payload: { message: error instanceof Error ? error.message : "Runtime failed" },
       });
     }
+  }
+
+  private attachRoomSelectionIntent(
+    sessionId: string,
+    runId: string,
+    event: RuntimeEvent,
+  ): RuntimeEvent {
+    if (event.type !== "tool.completed") return event;
+    const payload = objectRecord(event.payload);
+    if (payload?.name !== "context_room_list") return event;
+    const run = this.getRun(runId);
+    const execution = this.executionContexts.get(runId);
+    if (!run || run.sessionId !== sessionId || !execution || execution.roomId || !requestsWorkspaceDocument(run.prompt)) {
+      return event;
+    }
+    const selection = roomSelectionDetails(payload.result);
+    if (!selection) return event;
+    const availableById = new Map(execution.availableRooms.map((room) => [room.id, room]));
+    const listedRooms: unknown[] = Array.isArray(selection.rooms) ? selection.rooms : [];
+    const candidateRooms: AgentRoomReference[] = listedRooms.flatMap((value): AgentRoomReference[] => {
+      const id = objectRecord(value)?.id;
+      const room = typeof id === "string" ? availableById.get(id) : undefined;
+      return room ? [room] : [];
+    });
+    if (candidateRooms.length === 0) return event;
+    const pendingIntent = this.createPendingIntent({
+      sessionId,
+      sourceRunId: runId,
+      originalPrompt: run.prompt,
+      targetCapability: "document.create",
+      allowedRoomIds: candidateRooms.map((room) => room.id),
+      allowedDocumentIds: [],
+      now: new Date(),
+    });
+    const result = objectRecord(payload.result) ?? {};
+    return {
+      ...event,
+      payload: {
+        ...payload,
+        result: {
+          ...result,
+          details: {
+            ...selection,
+            rooms: candidateRooms,
+            selectionRequired: true,
+            pendingIntent,
+          },
+        },
+      },
+    };
   }
 
   private createPendingIntent(input: {

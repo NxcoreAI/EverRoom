@@ -126,18 +126,24 @@ describe("PiAgentRuntime", () => {
   });
 
   it("reports a token-limited response as incomplete", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
     const endpoint = createServer((_request, response) => {
-      response.writeHead(200, { "content-type": "text/event-stream" });
-      const chunk = (content: string, finishReason: string | null = null) => JSON.stringify({
-        id: "chatcmpl-output-limit",
-        object: "chat.completion.chunk",
-        created: 1,
-        model: "nxcore-test-model",
-        choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finishReason }],
+      let raw = "";
+      _request.on("data", (chunk) => { raw += chunk.toString(); });
+      _request.on("end", () => {
+        requestBodies.push(JSON.parse(raw) as Record<string, unknown>);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const chunk = (content: string, finishReason: string | null = null) => JSON.stringify({
+          id: "chatcmpl-output-limit",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finishReason }],
+        });
+        response.write(`data: ${chunk("正在整理检索结果。")}\n\n`);
+        response.write(`data: ${chunk("", "length")}\n\n`);
+        response.end("data: [DONE]\n\n");
       });
-      response.write(`data: ${chunk("正在整理检索结果。")}\n\n`);
-      response.write(`data: ${chunk("", "length")}\n\n`);
-      response.end("data: [DONE]\n\n");
     });
     await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
     const address = endpoint.address();
@@ -167,6 +173,23 @@ describe("PiAgentRuntime", () => {
         prompt: "整理检索结果",
         pageLabel: "首页",
         roomId: null,
+        roomSelectionRequired: true,
+        availableRooms: [{
+          id: "room-java",
+          title: "Java Space",
+          kind: "主题",
+          background: "Java 后端学习材料",
+          goal: "形成完整的后端知识体系",
+          status: "持续整理",
+          contextSummary: {
+            overview: "包含并发、Spring 与数据库资料。",
+            nextSteps: ["补充分布式系统章节"],
+            entities: [],
+            actionItems: [],
+            meetings: [],
+            sourceDocuments: [],
+          },
+        }],
       });
       const events: RuntimeEvent[] = [];
       for await (const event of run.events) events.push(event);
@@ -177,6 +200,12 @@ describe("PiAgentRuntime", () => {
         payload: { message: expect.stringContaining("输出上限") },
       });
       expect(events.some((event) => event.type === "run.completed")).toBe(false);
+      const request = JSON.stringify(requestBodies[0]);
+      expect(request).toContain("<available_rooms>");
+      expect(request).toContain("Java Space");
+      expect(request).toContain("Java 后端学习材料");
+      expect(request).toContain("形成完整的后端知识体系");
+      expect(request).toContain("candidateRoomIds");
     } finally {
       await runtime.dispose();
       await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
