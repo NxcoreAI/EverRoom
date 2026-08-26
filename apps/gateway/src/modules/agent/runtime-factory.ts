@@ -17,10 +17,12 @@ import { createWebSearchPiTools } from "./web-search-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
 import { loadBuiltinAgentBundle } from "./builtin-bundles.js";
+import type { ExternalCallBudgetService } from "../external-calls/service.js";
 
 export interface AgentRuntimeIntegrationOptions {
   tools?: readonly PiAgentRuntimeTool[];
   agentResolver?: AgentResolver;
+  externalCalls?: ExternalCallBudgetService;
   /** 会话级 Room wiki 解析（plan §6.1 resolveKnowledge），knowledge 模块注入。 */
   resolveKnowledgeWikiIds?: (input: {
     runId: string;
@@ -105,10 +107,10 @@ export function createAgentRuntime(
       ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
       ...(config.cliConnectorAgentMode === "local" && connectorSync
         ? createConnectorDataPiTools(connectorSync, config.cliConnectorSyncOwnerId ?? "local-user")
-        : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector) : []),
-      ...(nango ? createNangoPiTools(nango.manager, nango.executor) : []),
+        : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
+      ...(nango ? createNangoPiTools(nango.manager, nango.executor, knowledge?.externalCalls) : []),
       ...(config.webSearch && knowledge?.agentResolver
-        ? createWebSearchPiTools(knowledge.agentResolver)
+        ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
         : []),
     ],
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),
@@ -119,6 +121,18 @@ export function createAgentRuntime(
       routedRoomByRun.delete(input.runId);
       await mcpHost.finishAgentRun(input.sessionId, outcome, input.runId);
     },
+    ...(knowledge?.externalCalls
+      ? {
+          executeMcpCall: (input, tool, invoke) => knowledge.externalCalls!.execute("MCP", tool, {
+            source: "agent",
+            runId: input.runId,
+            correlationId: input.sessionId,
+          }, async (markDispatched) => {
+            markDispatched();
+            return invoke();
+          }),
+        }
+      : {}),
   });
 }
 
@@ -298,6 +312,7 @@ export function createAgentResolver(config: GatewayConfig): AgentResolver {
         ...webSearch,
         systemPrompt: bundle.systemPrompt,
         requestOptions: { enable_search: true },
+        includeProviderErrorBody: false,
         ...directories,
       });
     });
@@ -325,6 +340,7 @@ export function registerWebSearchAgentIfMissing(resolver: AgentResolver, config:
       ...webSearch,
       systemPrompt: bundle.systemPrompt,
       requestOptions: { enable_search: true },
+      includeProviderErrorBody: false,
       ...directories,
     });
   });

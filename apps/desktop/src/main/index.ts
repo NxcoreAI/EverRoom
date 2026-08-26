@@ -34,10 +34,12 @@ import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
+import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv, memoryCoreEnvironment } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
-import type { McpServersSnapshot } from '../shared/mcp'
+import type { McpServersMutation } from '../shared/mcp'
+import type { ExternalCallPolicyInput, ExternalCallQuery } from '../shared/external-calls'
 import type { IngestPipelines } from '../shared/ingest'
 import type {
   MemoryAtomicListOptions,
@@ -48,6 +50,8 @@ import type {
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
+import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
+import { loadOrCreateGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
@@ -385,6 +389,14 @@ const MCP_CHANNELS = {
   saveServers: 'mcp:servers:save',
 } as const
 
+const EXTERNAL_CALL_CHANNELS = {
+  listPolicies: 'external-calls:policies:list',
+  savePolicy: 'external-calls:policies:save',
+  deletePolicy: 'external-calls:policies:delete',
+  listUsage: 'external-calls:usage:list',
+  listAudits: 'external-calls:audits:list',
+} as const
+
 const KNOWLEDGE_CHANNELS = {
   listRooms: 'knowledge:rooms:list',
   getRoomContext: 'knowledge:rooms:context',
@@ -531,6 +543,7 @@ function installIpcRouters(): void {
     MEMORY_CHANNELS,
     KNOWLEDGE_CHANNELS,
     MCP_CHANNELS,
+    EXTERNAL_CALL_CHANNELS,
     FILES_CHANNELS,
     INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
@@ -1030,9 +1043,42 @@ async function syncManagedChildProcesses(snapshot: RuntimeConfigSnapshot): Promi
   const run = managedChildSyncQueue.then(async () => {
     await syncMemoryCoreEnvironment(snapshot)
     await syncCursorCompletionEnvironment(snapshot)
+    await syncKnowledgeServiceEnvironment(snapshot)
   })
   managedChildSyncQueue = run.catch(() => undefined)
   return run
+}
+
+/**
+ * Knowledge Service（Wiki 引擎）的 runtime config 同步：primary 三要素 →
+ * LLM_* 重启托管实例。KS 的 wiki ingest 依赖 LLM；.env 清空迁移 runtime
+ * config 后 spawn env 里 LLM_API_KEY 为空，ingest 会报「LLM apiKey 未配置」。
+ * 与 MemoryCore 同款 JSON 比较去重（配置没变不重启）。
+ */
+let knowledgeServiceAiEnvApplied: string | null = null
+
+async function syncKnowledgeServiceEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  try {
+    const supervisor = knowledgeServiceSupervisor
+    const initialConnection = supervisor?.getConnection() ?? null
+    if (!supervisor || !initialConnection) return
+    const nextEnv = knowledgeServiceLlmEnv(snapshot.config)
+    const nextJson = JSON.stringify(nextEnv)
+    if (nextJson === knowledgeServiceAiEnvApplied) return
+    if (initialConnection.managed) {
+      const restarted = await supervisor.restart(nextEnv)
+      if (restarted?.managed) {
+        knowledgeServiceAiEnvApplied = nextJson
+        console.info(`[knowledge] ai env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
+      } else {
+        // 复用模式（外部实例/残留进程占 8421）：env 未真正应用，不标记
+        // applied，下次 sync 重试。
+        console.warn('[knowledge] instance at 8421 is not managed by this app; ai env NOT applied (stray process?)')
+      }
+    }
+  } catch (error) {
+    console.error('[knowledge] failed to sync ai env:', error)
+  }
 }
 
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
@@ -1313,7 +1359,15 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: Documen
 
 function registerMcpHandlers(bridge: McpGatewayBridge): void {
   handle(MCP_CHANNELS.listServers, () => bridge.list())
-  handle(MCP_CHANNELS.saveServers, (_event, servers: McpServersSnapshot['servers']) => bridge.save(servers))
+  handle(MCP_CHANNELS.saveServers, (_event, servers: McpServersMutation) => bridge.save(servers))
+}
+
+function registerExternalCallHandlers(bridge: ExternalCallsGatewayBridge): void {
+  handle(EXTERNAL_CALL_CHANNELS.listPolicies, (_event, query?: ExternalCallQuery) => bridge.listPolicies(query))
+  handle(EXTERNAL_CALL_CHANNELS.savePolicy, (_event, input: ExternalCallPolicyInput) => bridge.savePolicy(input))
+  handle(EXTERNAL_CALL_CHANNELS.deletePolicy, (_event, id: string) => bridge.deletePolicy(id))
+  handle(EXTERNAL_CALL_CHANNELS.listUsage, (_event, query?: ExternalCallQuery) => bridge.listUsage(query))
+  handle(EXTERNAL_CALL_CHANNELS.listAudits, (_event, query?: ExternalCallQuery) => bridge.listAudits(query))
 }
 
 function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
@@ -1622,6 +1676,13 @@ function registerAccountHandlers(client: SaasClient, onAccountChanged?: (account
   })
   handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
   handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
+    const connection = gatewaySupervisor?.isRunning() ? gatewaySupervisor.getConnection() : null
+    if (connection) {
+      await fetch(`${connection.baseUrl}/v1/security/secrets/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${connection.token}` },
+      }).catch(() => undefined)
+    }
     const account = await syncAccountMonitoring(client.logout())
     onAccountChanged?.(account)
     return account
@@ -1895,6 +1956,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
+  const gatewaySecretStoreKey = await loadOrCreateGatewaySecretKey(
+    join(dataDirectory, 'security', 'gateway-master-key.json'),
+  )
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error) => {
@@ -1969,6 +2033,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
     knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
+    // 冷启动先带 .env 透传起 KS（gateway 未起，runtime config 读不到）；
+    // gateway ready 后的 startup syncManagedChildProcesses 会按已存 primary
+    // 三要素重启注入 LLM_*（同 MemoryCore 的窗口收窄策略）。
     const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
       console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
       return null
@@ -1991,6 +2058,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
         // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
         NXCORE_AGENT_RUNTIME: 'pi',
+        ...(gatewaySecretStoreKey ? { NXCORE_SECRET_STORE_KEY: gatewaySecretStoreKey } : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
@@ -2070,6 +2138,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
+    registerExternalCallHandlers(new ExternalCallsGatewayBridge(gatewaySupervisor))
     const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'))
     await highRiskImports.initialize()
     const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)

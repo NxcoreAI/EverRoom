@@ -150,6 +150,11 @@ export class KnowledgeRouter {
     this.deps.embedding = embedding;
   }
 
+  /** runtime config 变更后替换抽取/判定 LLM（null = 关闭：抽取落未识别栏）。 */
+  replaceLlm(llm: RouterDeps["llm"]): void {
+    this.deps.llm = llm;
+  }
+
   /**
    * 跑完整瀑布并落 decision 行。
    * skipEntry：revert 后重路由时跳过 ①（否则同 Room 直连死循环）。

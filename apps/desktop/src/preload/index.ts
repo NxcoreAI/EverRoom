@@ -230,6 +230,13 @@ const api: NxcoreDesktopApi = {
     listServers: () => invoke('mcp:servers:list'),
     saveServers: (servers) => invoke('mcp:servers:save', servers),
   },
+  externalCalls: {
+    listPolicies: (query) => invokeQuietly('external-calls:policies:list', query),
+    savePolicy: (input) => invoke('external-calls:policies:save', input),
+    deletePolicy: (id) => invoke('external-calls:policies:delete', id),
+    listUsage: (query) => invokeQuietly('external-calls:usage:list', query),
+    listAudits: (query) => invokeQuietly('external-calls:audits:list', query),
+  },
   screenCapture: {
     captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
     start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),

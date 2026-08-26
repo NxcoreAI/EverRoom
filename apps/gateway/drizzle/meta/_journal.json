@@ -218,6 +218,13 @@
       "when": 1787655840754,
       "tag": "0031_room_duplicates",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1787644800000,
+      "tag": "0030_external_call_budgets",
+      "breakpoints": true
     }
   ]
 }

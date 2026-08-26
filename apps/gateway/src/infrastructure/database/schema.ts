@@ -78,6 +78,77 @@ export const auditLogs = sqliteTable("audit_logs", {
     .$defaultFn(() => new Date()),
 });
 
+export const externalCallPolicies = sqliteTable(
+  "external_call_policies",
+  {
+    id: text("id").primaryKey(),
+    subjectScope: text("subject_scope", { enum: ["user", "workspace", "service"] }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    service: text("service", { enum: ["WEB_SEARCH", "MCP", "CONNECTOR"] }).notNull(),
+    period: text("period", { enum: ["UTC_DAY", "UTC_MONTH"] }).notNull(),
+    callLimit: integer("call_limit").notNull(),
+    warningThreshold: integer("warning_threshold").notNull(),
+    enforcement: text("enforcement", { enum: ["BLOCK", "AUDIT_ONLY"] }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [uniqueIndex("external_call_policies_subject_idx")
+    .on(table.subjectScope, table.subjectId, table.service, table.period)],
+);
+
+export const externalCallUsage = sqliteTable(
+  "external_call_usage",
+  {
+    policyId: text("policy_id").notNull().references(() => externalCallPolicies.id, { onDelete: "cascade" }),
+    periodStart: integer("period_start", { mode: "timestamp_ms" }).notNull(),
+    reservedCalls: integer("reserved_calls").notNull().default(0),
+    consumedCalls: integer("consumed_calls").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.policyId, table.periodStart] }),
+    index("external_call_usage_period_idx").on(table.periodStart),
+  ],
+);
+
+export const externalCallReservations = sqliteTable("external_call_reservations", {
+  id: text("id").primaryKey(),
+  policyIds: text("policy_ids", { mode: "json" }).$type<string[]>().notNull(),
+  service: text("service", { enum: ["WEB_SEARCH", "MCP", "CONNECTOR"] }).notNull(),
+  tool: text("tool").notNull(),
+  state: text("state", { enum: ["RESERVED", "CONSUMED", "RELEASED"] }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const externalCallAudits = sqliteTable(
+  "external_call_audits",
+  {
+    id: text("id").primaryKey(),
+    subjectScope: text("subject_scope", { enum: ["user", "workspace", "service"] }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    workspaceId: text("workspace_id"),
+    userId: text("user_id"),
+    service: text("service", { enum: ["WEB_SEARCH", "MCP", "CONNECTOR"] }).notNull(),
+    tool: text("tool").notNull(),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+    source: text("source").notNull(),
+    runId: text("run_id"),
+    correlationId: text("correlation_id"),
+    reservedCalls: integer("reserved_calls").notNull(),
+    consumedCalls: integer("consumed_calls").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    outcome: text("outcome", { enum: ["SUCCEEDED", "FAILED", "RELEASED", "BLOCKED"] }).notNull(),
+    failureCode: text("failure_code", {
+      enum: ["PROVIDER_FAILURE", "NOT_DISPATCHED", "BUDGET_EXCEEDED", "CANCELLED"],
+    }),
+  },
+  (table) => [
+    index("external_call_audits_subject_idx").on(table.subjectScope, table.subjectId, table.occurredAt),
+    index("external_call_audits_service_idx").on(table.service, table.occurredAt),
+  ],
+);
+
 export const connectorAccounts = sqliteTable(
   "connector_accounts",
   {

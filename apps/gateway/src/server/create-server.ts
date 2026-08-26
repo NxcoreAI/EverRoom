@@ -12,7 +12,7 @@ import { createDatabase } from "../infrastructure/database/client.js";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
-import { mcpRoutes } from "../modules/agent/mcp-routes.js";
+import { McpConfigManager, mcpRoutes } from "../modules/agent/mcp-routes.js";
 import { AgentService } from "../modules/agent/service.js";
 import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
@@ -104,6 +104,10 @@ import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import type { RuntimeConfig } from "../runtime-config.js";
 import { OpenAiCompatibleVlmClient } from "../modules/perception/vlm-client.js";
 import { isPrimaryConfigured as isRuntimePrimaryConfigured } from "../modules/runtime-config/validate.js";
+import { SecretStore } from "../security/secret-store.js";
+import { redactSecrets, redactText } from "../security/secret-redaction.js";
+import { ExternalCallBudgetService } from "../modules/external-calls/service.js";
+import { externalCallRoutes } from "../modules/external-calls/routes.js";
 
 function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void {
   // runtime config（尤其默认文件）里的 "" 是「未配置」占位，不是「清空」指令；
@@ -119,20 +123,19 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
-  apply(config.webSearch as unknown as Record<string, unknown> | null, runtime.webSearch);
   // webSearch：boot 时 config.webSearch 仅由 env 构造（config.ts 的
   // NXCORE_WEB_SEARCH_API_KEY 门），env 未配时为 null 且 apply 无法从 null
   // 构造——runtime 四要素齐全时直接构造，让云端下发的搜索配置真正生效。
   const runtimeWebSearch = runtime.webSearch as Record<string, unknown> | undefined;
   const webSearchText = (key: string): string =>
     runtimeWebSearch && typeof runtimeWebSearch[key] === "string" ? (runtimeWebSearch[key] as string).trim() : "";
-  if (!config.webSearch && webSearchText("baseUrl") && webSearchText("apiKey") && webSearchText("model")) {
+  if (webSearchText("baseUrl") && webSearchText("apiKey") && webSearchText("model")) {
     config.webSearch = {
       baseUrl: webSearchText("baseUrl"),
       apiKey: webSearchText("apiKey"),
       model: webSearchText("model"),
     };
-  }
+  } else config.webSearch = null;
   // VLM：runtime 三字段齐全可直接构造（否则 env 没配时 runtime.vlm 是死配置）；
   // 不齐全时保持补丁行为——env 已配的键由 apply 补，缺的键沿用 env 值。
   const runtimeVlm = runtime.vlm as Record<string, unknown> | undefined;
@@ -256,7 +259,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
-  const runtimeConfigManager = new RuntimeConfigManager(db);
+  const secretStore = new SecretStore(join(config.dataDir, "security", "credentials.enc"));
+  const mcpConfigManager = new McpConfigManager(config, secretStore);
+  const externalCalls = new ExternalCallBudgetService(sqlite, undefined, {
+    userId: config.externalCallUserId ?? config.cliConnectorSyncOwnerId ?? "local-user",
+    workspaceId: config.externalCallWorkspaceId ?? "local-workspace",
+  });
+  const runtimeConfigManager = new RuntimeConfigManager(db, secretStore, undefined, config.webSearch
+    ? { provider: "openai-compatible", api: "openai-completions", ...config.webSearch }
+    : null);
   const initialRuntimeSnapshot = runtimeConfigManager.snapshot();
   applyRuntimeConfig(config, initialRuntimeSnapshot.config);
   const redactedRuntimeSnapshot = runtimeConfigManager.snapshot(true);
@@ -342,12 +353,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoConnectorManager.startPolling(pollingIntervalMs);
   }
 
+  app.addHook("preSerialization", async (_request, _reply, payload) => redactSecrets(payload));
+
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
     if (error instanceof AsrError) {
       await reply.code(error.statusCode).send({
         error: error.code,
-        message: error.message,
+        message: redactText(error.message),
         requestId: request.id,
       });
       return;
@@ -355,7 +368,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     if (error instanceof MemoryGatewayError || error instanceof RealityError) {
       await reply.code(error.statusCode).send({
         error: error.code,
-        message: error.message,
+        message: redactText(error.message),
         requestId: request.id,
       });
       return;
@@ -363,7 +376,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     if (error instanceof DocumentServiceError) {
       await reply.code(error.statusCode).send({
         error: error.code,
-        message: error.message,
+        message: redactText(error.message),
         ...error.details,
         requestId: request.id,
       });
@@ -372,7 +385,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     const statusCode = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
     await reply.code(statusCode).send({
       error: statusCode === 500 ? "internal_error" : "request_error",
-      message: statusCode === 500 ? "An internal gateway error occurred" : error.message,
+      message: statusCode === 500 ? "An internal gateway error occurred" : redactText(error.message),
       requestId: request.id,
     });
   });
@@ -498,7 +511,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   await subagentRegistry.initialize();
-  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig);
+  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls);
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -521,6 +534,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
   }
   registerPrimaryAgent(agentResolver, config, documentMcpHost, {
+    externalCalls,
     ...(subagentConfig.enabled
       ? {
           tools: createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
@@ -639,6 +653,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         });
       });
       app.log.info("knowledge agent registered from runtime config");
+    }
+    // 抽取/判定 LLM 同步热替换：KnowledgeService 构造于 runtime config 到达
+    // 之前，boot 时 llm 冻结为 null——不替换的话路由永远走「未识别」出口。
+    if (config.knowledge?.llm) {
+      knowledgeService.replaceLlm(config.knowledge.llm);
     }
     void (async () => {
       try {
@@ -810,7 +829,24 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator)));
   await app.register(subagentRoutes(subagentOrchestrator));
-  await app.register(mcpRoutes(config));
+  const reloadMcpRuntimes = async (): Promise<void> => {
+    const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
+    await agentService.replaceRuntime(primary.current);
+    await primary.previous?.dispose();
+    const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
+    await transcriptionSummaryService.replaceRuntime(background.current);
+    await background.previous?.dispose();
+  };
+  await app.register(mcpRoutes(mcpConfigManager, reloadMcpRuntimes));
+  app.post("/v1/security/secrets/logout", { schema: { tags: ["security"] } }, async () => {
+    runtimeConfigManager.clearManagedSecrets();
+    if (agentResolver.has(BUILTIN_AGENT_IDS.webSearch)) {
+      const search = agentResolver.reload(BUILTIN_AGENT_IDS.webSearch);
+      await search.previous?.dispose();
+    }
+    return { cleared: true };
+  });
+  await app.register(externalCallRoutes(externalCalls));
   await app.register(contextRoomRoutes(contextRoomService, roomDuplicateService));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));

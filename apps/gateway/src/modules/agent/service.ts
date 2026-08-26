@@ -38,6 +38,7 @@ import {
 import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
 import type { FilesService } from "../files/service.js";
+import { clearRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
 export interface AgentServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
@@ -505,7 +506,7 @@ export class AgentService {
         pageLabel: "Remote Agent",
         runtimeId: this.runtime.id,
         status: "idle",
-        title: input.title?.trim() || input.prompt.trim().slice(0, 48),
+        title: redactText(input.title?.trim() || input.prompt.trim().slice(0, 48)),
         createdAt: now,
         updatedAt: now,
       }).returning().get();
@@ -923,13 +924,14 @@ export class AgentService {
 
     const now = new Date();
     const runId = randomUUID();
+    const safePrompt = redactText(input.prompt);
     const runRow: typeof agentRuns.$inferInsert = {
       id: runId,
       sessionId,
       idempotencyKey: input.idempotencyKey,
       roomId: runRoomId,
       status: "accepted",
-      prompt: input.prompt,
+      prompt: safePrompt,
       lastEventSeq: 0,
       createdAt: now,
     };
@@ -951,12 +953,12 @@ export class AgentService {
           sessionId,
           runId,
           role: "user",
-          content: input.prompt,
+          content: safePrompt,
           createdAt: now,
         }).run();
       }
       tx.update(agentSessions)
-        .set({ status: "running", updatedAt: now, title: session.title ?? input.prompt.slice(0, 48) })
+        .set({ status: "running", updatedAt: now, title: session.title ?? safePrompt.slice(0, 48) })
         .where(eq(agentSessions.id, sessionId))
         .run();
     });
@@ -966,10 +968,10 @@ export class AgentService {
     }
     this.sequences.set(runId, 0);
     this.logger.info(
-      { event: "agent.input", sessionId, runId, content: input.prompt },
+      { event: "agent.input", sessionId, runId, content: safePrompt },
       "agent user input",
     );
-    await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: { prompt: input.prompt } });
+    await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: { prompt: safePrompt } });
 
     // Clarification controls are driven by a deterministic preflight for requests
     // that do not yet identify a document. Room routing itself is delegated to
@@ -985,7 +987,7 @@ export class AgentService {
             name: "context_room_document_intent",
             result: {
               clarificationRequired: true,
-              originalPrompt: input.prompt.trim(),
+              originalPrompt: safePrompt.trim(),
               topic: documentTopic,
             },
           }
@@ -994,7 +996,7 @@ export class AgentService {
       const intent = this.createPendingIntent({
         sessionId,
         sourceRunId: runId,
-        originalPrompt: input.prompt,
+        originalPrompt: safePrompt,
         targetCapability: "document.create",
         allowedRoomIds: rooms.map((room) => room.id),
         allowedDocumentIds: [],
@@ -1189,7 +1191,7 @@ export class AgentService {
       id: randomUUID(),
       sessionId: input.sessionId,
       sourceRunId: input.sourceRunId,
-      originalPrompt: input.originalPrompt,
+      originalPrompt: redactText(input.originalPrompt),
       targetCapability: input.targetCapability,
       allowedRoomIds: [...new Set(input.allowedRoomIds.filter(Boolean))],
       allowedDocumentIds: [...new Set(input.allowedDocumentIds.filter(Boolean))],
@@ -1218,6 +1220,16 @@ export class AgentService {
   }
 
   private async appendEvent(sessionId: string, runId: string, runtimeEvent: RuntimeEvent): Promise<void> {
+    runtimeEvent = redactSecrets(runtimeEvent);
+    const deltaScope = `agent:${runId}`;
+    if (runtimeEvent.type === "message.delta") {
+      const payload = runtimeEvent.payload as { delta?: unknown };
+      if (typeof payload.delta === "string") {
+        runtimeEvent = { ...runtimeEvent, payload: { ...payload, delta: redactDelta(deltaScope, payload.delta) } };
+      }
+    } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
+      clearRedactionDelta(deltaScope);
+    }
     if (runtimeEvent.type === "message.completed") {
       const payload = runtimeEvent.payload as { content?: unknown };
       const content = typeof payload.content === "string" ? payload.content : "";
