@@ -93,8 +93,6 @@ export class McpConfigManager {
     }
     if (migrated && this.secrets.isAvailable()) {
       this.secrets.update(changes);
-    }
-    if (migrated) {
       this.persist();
     }
     this.applyLiveConfig();

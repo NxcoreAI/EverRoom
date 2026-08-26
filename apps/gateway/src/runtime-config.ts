@@ -355,6 +355,7 @@ export class RuntimeConfigManager {
   }
 
   private migrateSearchSecrets(): void {
+    if (!this.secrets.isAvailable()) return;
     for (const source of ["user", "saas"] as const) {
       const row = this.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, source)).get();
       if (!row) continue;
@@ -362,7 +363,7 @@ export class RuntimeConfigManager {
       const current = payload.webSearch;
       const value = current?.apiKey;
       if (typeof value !== "string" || !value || value === "********") continue;
-      if (this.secrets.isAvailable()) this.secrets.set(`search:${source}`, value);
+      this.secrets.set(`search:${source}`, value);
       const { apiKey: _apiKey, ...webSearch } = current;
       payload.webSearch = webSearch as RuntimeAiConfig;
       this.db.update(runtimeConfigStore).set({ payload }).where(eq(runtimeConfigStore.source, source)).run();

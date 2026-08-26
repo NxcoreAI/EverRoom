@@ -65,7 +65,7 @@ describe("secret storage", () => {
     expect(() => new SecretStore(path, masterKey)).toThrow("secret_store_decryption_failed");
   });
 
-  it("strips legacy plaintext without overwriting it with a secret when storage is unavailable", async () => {
+  it("preserves legacy plaintext for later migration when storage is unavailable", async () => {
     const root = await directory();
     const configPath = join(root, "agent", "mcp.json");
     const encryptedPath = join(root, "security", "credentials.enc");
@@ -82,8 +82,30 @@ describe("secret storage", () => {
 
     expect(manager.snapshot().servers.alpha?.env).toEqual({ TOKEN: { configured: false } });
     expect(runtime.mcp.mcpServers).toEqual({ alpha: { command: "npx" } });
-    expect(JSON.stringify(await readFile(configPath, "utf8"))).not.toContain("legacy-plaintext-51");
+    expect(await readFile(configPath, "utf8")).toContain("legacy-plaintext-51");
     expect(await readFile(encryptedPath, "utf8")).toBe(encrypted);
+
+    const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database.sqlite);
+    database.db.insert(runtimeConfigStore).values({
+      source: "user",
+      payload: {
+        schemaVersion: 1,
+        webSearch: { provider: "openai-compatible", api: "openai-completions", model: "search", baseUrl: "https://search.test/v1", apiKey: "legacy-search-plaintext-51" },
+      },
+      schemaVersion: 1,
+      configVersion: 1,
+      updatedAt: new Date(),
+    }).run();
+    const runtimeConfig = new RuntimeConfigManager(
+      database.db,
+      new SecretStore(encryptedPath, undefined),
+      resolve("runtime-config.default.json"),
+    );
+    const stored = database.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, "user")).get();
+    expect(JSON.stringify(stored?.payload)).toContain("legacy-search-plaintext-51");
+    expect(runtimeConfig.snapshot().config.webSearch?.apiKey).not.toBe("legacy-search-plaintext-51");
+    expect(runtimeConfig.snapshot().webSearchCredential.configured).toBe(false);
   });
 
   it("migrates MCP plaintext without leaking and supports keep, set, delete, rename, list, and server delete", async () => {
