@@ -1,13 +1,12 @@
-import { ChevronRight, FileText, Link2, Maximize2, Network } from 'lucide-react'
+import { Link2, Maximize2, Network } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 
 import type { ContextRoomRecord } from '../../types'
-import { localizedUiText } from '../../adapters'
 import { useRoomRelationGraph } from '../../hooks/useRoomRelationGraph'
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from '../RoomGraphCanvas'
+import { RoomNodeInspector } from '../RoomGraphInspector'
 import { CreateRoomRelationDialog, relationTypeLabel, RoomRelationInspector } from '../RoomRelationControls'
-import { roomKindIcon, roomKindTone } from '../utils'
 import { PanelEmptyState } from './PanelEmptyState'
 
 export function RelationsPane({
@@ -25,11 +24,13 @@ export function RelationsPane({
   const graphRef = useRef<RoomGraphCanvasHandle>(null)
   const [selectedGraphRoomId, setSelectedGraphRoomId] = useState(room.id)
   const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null)
+  const [inspectorOpen, setInspectorOpen] = useState(true)
   const [createRelationOpen, setCreateRelationOpen] = useState(false)
 
   useEffect(() => {
     setSelectedGraphRoomId(room.id)
     setSelectedRelationId(null)
+    setInspectorOpen(true)
   }, [room.id])
 
   const nodeIds = useMemo(() => new Set(graph?.nodes.map((node) => node.id) ?? [room.id]), [graph?.nodes, room.id])
@@ -40,15 +41,10 @@ export function RelationsPane({
     (edge.sourceRoomId === room.id && edge.targetRoomId === selectedRoom.id)
       || (edge.targetRoomId === room.id && edge.sourceRoomId === selectedRoom.id)
   )) ?? null
-  const selected = {
-    ...selectedRoom,
-    brief: { ...selectedRoom.brief, background: localizedUiText(selectedRoom.brief.background, t) },
-  }
-  const Icon = roomKindIcon(selected.kind)
   const hasRelations = Boolean(graph?.edges.length)
 
   return (
-    <div className={`context-room-related-rooms-pane${hasRelations ? '' : ' is-empty'}`}>
+    <div className={`context-room-related-rooms-pane${hasRelations ? '' : ' is-empty'}${selectedRelation || inspectorOpen ? ' has-inspector' : ''}`}>
       <section className="context-room-related-graph">
         <header>
           <div><h2>{t('contextRoom:relations.roomRelationshipGraph')}</h2><span>{room.title}</span></div>
@@ -74,8 +70,8 @@ export function RelationsPane({
               relations={graph?.edges ?? []}
               selectedId={selectedGraphRoomId}
               selectedRelationId={selectedRelationId}
-              onSelectRoom={(roomId) => { setSelectedRelationId(null); setSelectedGraphRoomId(roomId ?? room.id) }}
-              onSelectRelation={(relationId) => { setSelectedRelationId(relationId); setSelectedGraphRoomId(room.id) }}
+              onSelectRoom={(roomId) => { setSelectedRelationId(null); setSelectedGraphRoomId(roomId ?? room.id); setInspectorOpen(Boolean(roomId)) }}
+              onSelectRelation={(relationId) => { setSelectedRelationId(relationId); setSelectedGraphRoomId(room.id); setInspectorOpen(Boolean(relationId)) }}
               onOpenRoom={onOpenRoom}
             />
           ) : (
@@ -90,18 +86,15 @@ export function RelationsPane({
 
       {selectedRelation ? (
         <RoomRelationInspector relation={selectedRelation} rooms={rooms} onClose={() => setSelectedRelationId(null)} onChanged={reload} />
-      ) : (
-        <article className="context-room-related-inline-detail" data-icon-tone={roomKindTone(selected.kind)}>
-          <header><span className="context-room-related-room-icon"><Icon aria-hidden="true" /></span><div><small>{t(selected.id === room.id ? 'contextRoom:relations.currentRoom' : 'contextRoom:relations.relatedRoom')}</small><h3>{selected.title}</h3></div></header>
-          <p>{selected.brief.background}</p>
-          <dl>
-            <div><dt>{t('contextRoom:relations.relationshipBasis')}</dt><dd>{relationToSelected ? `${relationTypeLabel(relationToSelected.type, t)} · ${t('contextRoom:relations.scoreValue', { score: relationToSelected.score.toFixed(2) })}` : t('contextRoom:relations.centerOfTheCurrentGraph')}</dd></div>
-            <div><dt>{t('contextRoom:relations.relatedResources')}</dt><dd>{t('contextRoom:relations.countItems', { count: selected.materials.length + selected.fileItems.length })}</dd></div>
-          </dl>
-          <section><span>{t('contextRoom:relations.relatedResources')}</span>{selected.materials.slice(0, 3).map((material) => <div key={material.id}><FileText aria-hidden="true" /><b>{material.title}</b><time>{material.time}</time></div>)}</section>
-          <button type="button" className="context-room-primary" onClick={() => onOpenRoom(selected.id)}>{t('contextRoom:relations.openRoom')}<ChevronRight aria-hidden="true" /></button>
-        </article>
-      )}
+      ) : inspectorOpen ? (
+        <RoomNodeInspector
+          room={selectedRoom}
+          contextLabel={t(selectedRoom.id === room.id ? 'contextRoom:relations.currentRoom' : 'contextRoom:relations.relatedRoom')}
+          relationshipSummary={relationToSelected ? `${relationTypeLabel(relationToSelected.type, t)} · ${t('contextRoom:relations.scoreValue', { score: relationToSelected.score.toFixed(2) })}` : t('contextRoom:relations.centerOfTheCurrentGraph')}
+          onClose={() => setInspectorOpen(false)}
+          onOpenRoom={onOpenRoom}
+        />
+      ) : null}
 
       <CreateRoomRelationDialog
         open={createRelationOpen}

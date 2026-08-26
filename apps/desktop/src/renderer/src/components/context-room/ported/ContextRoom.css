@@ -776,6 +776,7 @@
 }
 
 .context-room-room-graph-layout {
+  --context-room-graph-height: 440px;
   display: block;
   padding: 12px;
   border: 1px solid var(--cr-border);
@@ -791,7 +792,7 @@
 
 .context-room-room-graph-canvas {
   position: relative;
-  height: 440px;
+  height: var(--context-room-graph-height);
   min-width: 0;
   overflow: hidden;
   border-radius: 8px;
@@ -840,123 +841,389 @@
   color: var(--cr-text);
 }
 
-.context-room-room-graph-drawer {
-  position: relative;
-  display: flex;
+.context-room-room-graph-inspector {
+  --cr-inspector-accent: var(--cr-icon-tone, var(--cr-blue));
+  display: grid;
+  height: var(--context-room-graph-height, 440px);
   min-width: 0;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
   border-left: 1px solid var(--cr-border);
   border-radius: 0 10px 10px 0;
   background: var(--cr-surface-secondary);
 }
 
-.context-room-room-graph-drawer > button:first-child {
-  position: absolute;
-  top: 0;
-  right: 0;
-  display: inline-flex;
-  width: 42px;
-  height: 42px;
+.context-room-graph-inspector-header {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 34px minmax(0, 1fr) 28px;
   align-items: center;
-  justify-content: center;
-  border-radius: 0 9px 0 8px;
-  background: transparent;
+  gap: 10px;
+  padding: 13px 12px 12px 14px;
+  border-bottom: 1px solid var(--cr-border);
+  background: var(--cr-surface);
+}
+
+.context-room-graph-inspector-header::before {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--cr-inspector-accent);
+  content: '';
+}
+
+.context-room-graph-inspector-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--cr-inspector-accent) 10%, var(--cr-surface));
+  color: var(--cr-inspector-accent);
+}
+
+.context-room-graph-inspector-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-graph-inspector-header > div {
+  min-width: 0;
+}
+
+.context-room-graph-inspector-header h3,
+.context-room-graph-inspector-header small,
+.context-room-graph-inspector-scroll h4,
+.context-room-graph-inspector-scroll p {
+  margin: 0;
+}
+
+.context-room-graph-inspector-header h3 {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-graph-inspector-header small {
+  display: block;
+  overflow: hidden;
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-graph-inspector-header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 6px;
   color: var(--cr-tertiary);
 }
 
-.context-room-room-graph-drawer > button:first-child:hover {
+.context-room-graph-inspector-header button:hover {
   background: var(--cr-surface-hover);
   color: var(--cr-text);
 }
 
-.context-room-room-graph-drawer > button:first-child svg {
+.context-room-graph-inspector-header button svg {
   width: 14px;
   height: 14px;
 }
 
-.context-room-graph-drawer-title {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding-right: 24px;
-}
-
-.context-room-graph-drawer-title h3,
-.context-room-graph-drawer-title p {
-  margin: 0;
-}
-
-.context-room-graph-drawer-title h3 {
-  font-size: 14px;
-}
-
-.context-room-graph-drawer-title p {
-  display: -webkit-box;
-  margin-top: 4px;
-  overflow: hidden;
-  color: var(--cr-muted);
-  font-size: 11px;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.context-room-graph-materials {
-  display: flex;
+.context-room-graph-inspector-scroll {
   min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 6px;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px 16px;
+  scrollbar-gutter: stable;
 }
 
-.context-room-graph-materials header {
-  display: flex;
-  justify-content: space-between;
-  margin: 4px 0;
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-graph-materials > div {
+.context-room-graph-inspector-footer {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--cr-border);
   background: var(--cr-surface);
 }
 
-.context-room-graph-materials > div > svg {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 auto;
-  color: var(--cr-muted);
+.context-room-graph-inspector-footer > .context-room-primary {
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
 }
 
-.context-room-graph-materials > div span {
+.context-room-graph-inspector-footer > .context-room-primary svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-node-overview {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-node-meta {
   display: flex;
-  min-width: 0;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
 }
 
-.context-room-graph-materials b,
-.context-room-graph-materials small {
+.context-room-node-meta > span {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 9.5px;
+}
+
+.context-room-node-meta svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-node-overview p {
+  margin-top: 9px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.context-room-inspector-highlight {
+  display: grid;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-left: 2px solid var(--cr-inspector-accent);
+  background: color-mix(in srgb, var(--cr-inspector-accent) 5%, var(--cr-surface));
+}
+
+.context-room-inspector-highlight span,
+.context-room-inspector-section h4 {
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.context-room-inspector-highlight b {
+  color: var(--cr-text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.context-room-inspector-section {
+  margin-top: 15px;
+}
+
+.context-room-inspector-section h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+
+.context-room-node-context-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.context-room-node-context-list > div {
+  padding: 8px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+}
+
+.context-room-node-context-list :where(dt, dd) {
+  margin: 0;
+}
+
+.context-room-node-context-list dt {
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
+}
+
+.context-room-node-context-list dd {
+  margin-top: 4px;
+  color: var(--cr-text);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.context-room-node-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-border);
+}
+
+.context-room-node-stat {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 13px minmax(0, 1fr);
+  gap: 2px 5px;
+  padding: 8px;
+  background: var(--cr-surface);
+}
+
+.context-room-node-stat svg {
+  width: 12px;
+  height: 12px;
+  color: var(--cr-inspector-accent);
+}
+
+.context-room-node-stat span {
+  overflow: hidden;
+  color: var(--cr-tertiary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-node-stat b {
+  grid-column: 1 / -1;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-node-signals > div + div {
+  margin-top: 9px;
+}
+
+.context-room-node-signals > div > span {
+  display: inline-flex;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--cr-success-soft);
+  color: var(--cr-success);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.context-room-node-signals > div[data-kind='risk'] > span {
+  background: var(--cr-danger-soft);
+  color: var(--cr-danger);
+}
+
+.context-room-node-signals ul {
+  display: grid;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding-left: 16px;
+  color: var(--cr-muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.context-room-node-people {
+  display: grid;
+  gap: 5px;
+}
+
+.context-room-node-people > span {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 7px;
+  border-radius: 5px;
+  background: var(--cr-surface);
+}
+
+.context-room-node-people svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cr-icon-people);
+}
+
+.context-room-node-people b,
+.context-room-node-people small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.context-room-graph-materials b {
-  font-size: 11px;
+.context-room-node-people b {
+  font-size: 10.5px;
 }
 
-.context-room-graph-materials small {
+.context-room-node-people small {
   color: var(--cr-tertiary);
-  font-size: 10px;
+  font-size: 9.5px;
+}
+
+.context-room-node-resources {
+  display: grid;
+  gap: 5px;
+}
+
+.context-room-node-resources > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-node-resources > div > svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cr-icon-document);
+}
+
+.context-room-node-resources > div > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.context-room-node-resources b,
+.context-room-node-resources small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-node-resources b {
+  color: var(--cr-text);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.context-room-node-resources small,
+.context-room-inspector-empty {
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
 }
 
 .context-room-primary,
@@ -4607,11 +4874,15 @@
     display: block;
   }
 
-  .context-room-room-graph-canvas {
-    height: 360px;
+  .context-room-room-graph-layout {
+    --context-room-graph-height: 360px;
   }
 
-  .context-room-room-graph-drawer {
+  .context-room-room-graph-canvas {
+    height: var(--context-room-graph-height);
+  }
+
+  .context-room-room-graph-layout > .context-room-room-graph-inspector {
     margin-top: 12px;
     border-top: 1px solid var(--cr-border);
     border-left: 0;
@@ -8035,15 +8306,6 @@
   box-shadow: 0 4px 14px rgba(31, 31, 31, 0.08);
 }
 
-.context-room-relation-inspector {
-  min-width: 0;
-  padding: 14px;
-  overflow-y: auto;
-  border-left: 1px solid var(--cr-border);
-  background: var(--cr-surface-secondary);
-}
-
-.context-room-relation-inspector > header,
 .context-room-relation-create > header {
   display: flex;
   align-items: flex-start;
@@ -8051,45 +8313,60 @@
   gap: 10px;
 }
 
-.context-room-relation-inspector > header h3,
-.context-room-relation-inspector > header small,
-.context-room-relation-inspector h4,
-.context-room-relation-inspector p,
 .context-room-relation-create h2,
 .context-room-relation-create p {
   margin: 0;
 }
 
-.context-room-relation-inspector > header h3 {
-  margin-top: 3px;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.45;
+.context-room-room-graph-inspector[data-relation-type='shared_evidence'] { --cr-inspector-accent: #4678bd; }
+.context-room-room-graph-inspector[data-relation-type='shared_entity'] { --cr-inspector-accent: #278679; }
+.context-room-room-graph-inspector[data-relation-type='mixed'] { --cr-inspector-accent: #755daf; }
+.context-room-room-graph-inspector[data-relation-type='related'] { --cr-inspector-accent: #63758b; }
+.context-room-room-graph-inspector[data-relation-type='depends_on'] { --cr-inspector-accent: #ac7629; }
+.context-room-room-graph-inspector[data-relation-type='part_of'] { --cr-inspector-accent: #347f9f; }
+.context-room-room-graph-inspector[data-relation-type='supports'] { --cr-inspector-accent: #3d8557; }
+.context-room-room-graph-inspector[data-relation-type='blocks'] { --cr-inspector-accent: #b65353; }
+.context-room-room-graph-inspector[data-relation-type='owns'] { --cr-inspector-accent: #985a82; }
+.context-room-room-graph-inspector[data-relation-type='custom'] { --cr-inspector-accent: #9a673d; }
+
+.context-room-relation-endpoints {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
 }
 
-.context-room-relation-inspector > header small {
+.context-room-relation-endpoints > div {
+  min-width: 0;
+}
+
+.context-room-relation-endpoints small,
+.context-room-relation-endpoints b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-relation-endpoints small {
   color: var(--cr-tertiary);
+  font-size: 9px;
+}
+
+.context-room-relation-endpoints b {
+  margin-top: 3px;
+  color: var(--cr-text);
   font-size: 10px;
 }
 
-.context-room-relation-inspector > header button {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 6px;
-  color: var(--cr-tertiary);
-}
-
-.context-room-relation-inspector > header button:hover {
-  background: var(--cr-surface-hover);
-  color: var(--cr-text);
-}
-
-.context-room-relation-inspector > header svg {
-  width: 14px;
-  height: 14px;
+.context-room-relation-endpoints > svg {
+  width: 15px;
+  height: 15px;
+  color: var(--cr-inspector-accent);
 }
 
 .context-room-relation-metrics {
@@ -8172,6 +8449,13 @@
   margin-top: 14px;
 }
 
+.context-room-relation-form > h4 {
+  margin: 0 0 1px;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .context-room-relation-form > label:not(.context-room-relation-checkbox),
 .context-room-relation-create > label:not(.context-room-relation-checkbox) {
   display: grid;
@@ -8207,31 +8491,50 @@
   font-size: 11px !important;
 }
 
-.context-room-relation-actions {
-  display: grid;
+.context-room-relation-footer-actions {
+  display: flex;
+  width: 100%;
+  min-width: 0;
   gap: 6px;
-  margin-top: 10px;
 }
 
-.context-room-relation-actions button {
+.context-room-relation-footer-actions button {
   display: inline-flex;
-  min-height: 30px;
+  min-width: 0;
+  min-height: 32px;
   align-items: center;
+  justify-content: center;
   gap: 7px;
+  margin: 0;
   padding: 5px 8px;
   border: 1px solid var(--cr-border);
   border-radius: 6px;
   color: var(--cr-muted);
   font-size: 11px;
-  text-align: left;
 }
 
-.context-room-relation-actions button:hover {
+.context-room-relation-footer-actions button:hover {
   border-color: var(--cr-border-strong);
   color: var(--cr-text);
 }
 
-.context-room-relation-actions svg {
+.context-room-relation-footer-actions button.context-room-primary {
+  flex: 1 1 auto;
+  border-color: var(--cr-text);
+  color: white;
+}
+
+.context-room-relation-footer-actions button:not(.context-room-primary) {
+  width: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+}
+
+.context-room-relation-footer-actions button.is-danger {
+  color: var(--cr-danger);
+}
+
+.context-room-relation-footer-actions svg {
   width: 13px;
   height: 13px;
 }
@@ -8313,12 +8616,6 @@
   height: 14px;
 }
 
-.context-room-related-rooms-pane.is-empty {
-  display: grid;
-  grid-template-rows: minmax(270px, 1fr) auto;
-  overflow-y: auto;
-}
-
 @container context-room-shell (max-width: 900px) {
   .context-room-room-graph-toolbar {
     grid-template-columns: minmax(180px, 1fr) repeat(2, auto);
@@ -8352,8 +8649,8 @@
     grid-template-columns: 1fr;
   }
 
-  .context-room-relation-inspector {
-    max-height: 420px;
+  .context-room-room-graph-layout > .context-room-room-graph-inspector {
+    height: 360px;
     border-top: 1px solid var(--cr-border);
     border-left: 0;
   }
@@ -8420,21 +8717,17 @@
   font-weight: 600;
 }
 
+/* Node/relation details render below the graph in the leftover pane space,
+   never as a side column: row 1 is the fixed-height graph, row 2 stretches. */
 .context-room-related-rooms-pane {
+  --context-room-graph-height: 276px;
+  display: grid;
   height: 100%;
   min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
   overflow-y: auto;
-}
-
-.context-room-related-rooms-pane.is-empty {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.context-room-related-rooms-pane.is-empty > .context-room-panel-empty {
-  min-height: 0;
-  flex: 1;
 }
 
 .context-room-related-empty-header {
@@ -8473,6 +8766,11 @@
 }
 
 .context-room-related-graph {
+  display: grid;
+  height: var(--context-room-graph-height);
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
   border-bottom: 1px solid var(--cr-border);
   background: var(--cr-surface);
 }
@@ -8535,7 +8833,8 @@
 }
 
 .context-room-related-graph-canvas {
-  height: 228px;
+  height: auto;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
   border-top: 1px solid var(--cr-border);
@@ -8543,6 +8842,14 @@
     linear-gradient(#eef0f3 1px, transparent 1px),
     linear-gradient(90deg, #eef0f3 1px, transparent 1px), #fbfcfd;
   background-size: 24px 24px;
+}
+
+.context-room-related-rooms-pane > .context-room-room-graph-inspector {
+  height: auto;
+  min-height: 0;
+  border-top: 1px solid var(--cr-border);
+  border-left: 0;
+  border-radius: 0;
 }
 
 .context-room-related-rooms-pane > .context-room-related-list-header {
@@ -11889,5 +12196,19 @@
 
   .context-room-wiki-markdown h4 {
     font-size: 16px;
+  }
+}
+
+@container context-room-shell (min-width: 521px) and (max-width: 759px) {
+  .context-room-room-graph-layout.is-selected {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(230px, 240px);
+  }
+
+  .context-room-room-graph-layout > .context-room-room-graph-inspector {
+    margin-top: 0;
+    border-top: 0;
+    border-left: 1px solid var(--cr-border);
+    border-radius: 0 10px 10px 0;
   }
 }

@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  FileText,
   GitMerge,
   Layers3,
   Link2,
@@ -9,7 +8,6 @@ import {
   RotateCcw,
   Search,
   Trash2,
-  X,
 } from 'lucide-react';
 import type { RoomDuplicateCandidate } from '@nxcore/agent-contract';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -23,6 +21,7 @@ import { RoomCard } from './RoomCard';
 import { RoomForm, RoomLifecycleDialogs, type DraftRoom } from './RoomDialogs';
 import { isMergeRecommendationCandidate, RoomDuplicateCenter } from './RoomDuplicateCenter';
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from './RoomGraphCanvas';
+import { RoomNodeInspector } from './RoomGraphInspector';
 import { CreateRoomRelationDialog, RoomRelationInspector } from './RoomRelationControls';
 import { useRoomRelationGraph } from '../hooks/useRoomRelationGraph';
 import {
@@ -133,58 +132,11 @@ function RoomGraph({
         {selectedRelation ? (
           <RoomRelationInspector relation={selectedRelation} rooms={rooms} onClose={() => setSelectedRelationId(null)} onChanged={reload} />
         ) : selected ? (
-          <aside className="context-room-room-graph-drawer">
-            <button
-              type="button"
-              aria-label={t('contextRoom:home.closeRoomRelationshipDetails')}
-              onClick={() => setSelectedId(null)}
-            >
-              <X aria-hidden="true" />
-            </button>
-            <div className="context-room-graph-drawer-title">
-              <span
-                className="context-room-home-card-icon"
-                data-icon-tone={roomKindTone(selected.kind)}
-              >
-                {(() => {
-                  const Icon = roomKindIcon(selected.kind);
-                  return <Icon aria-hidden="true" />;
-                })()}
-              </span>
-              <div>
-                <h3>{selected.title}</h3>
-                <p>{localizedUiText(selected.brief.background, t)}</p>
-              </div>
-            </div>
-            <div className="context-room-graph-materials">
-              <header>
-                <span>{t('contextRoom:home.relatedResources')}</span>
-                <b>{selected.materials.length + selected.fileItems.length}</b>
-              </header>
-              {[...selected.materials.slice(0, 3), ...selected.fileItems.slice(0, 2)].map(
-                (item) => {
-                  const name = 'title' in item ? item.title : item.name;
-                  const time = item.time;
-                  return (
-                    <div key={'id' in item ? item.id : name}>
-                      <FileText aria-hidden="true" />
-                      <span>
-                        <b>{name}</b>
-                        <small>{time}</small>
-                      </span>
-                    </div>
-                  );
-                }
-              )}
-            </div>
-            <button
-              type="button"
-              className="context-room-primary"
-              onClick={() => onOpen(selected.id)}
-            >
-              {t('contextRoom:home.openRoom')}
-            </button>
-          </aside>
+          <RoomNodeInspector
+            room={selected}
+            onClose={() => setSelectedId(null)}
+            onOpenRoom={onOpen}
+          />
         ) : null}
       </div>
       <CreateRoomRelationDialog

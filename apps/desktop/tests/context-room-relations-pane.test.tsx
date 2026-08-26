@@ -2,19 +2,29 @@ import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ContextRoomRecord } from '../src/renderer/src/components/context-room/ported/types'
 
-const graphProps: Array<{ rooms: unknown[]; onSelectRoom: (roomId: string | null) => void }> = []
+const graphProps: Array<{
+  rooms: unknown[]
+  onSelectRelation: (relationId: string | null) => void
+  onSelectRoom: (roomId: string | null) => void
+}> = []
 
 vi.mock('../src/renderer/src/components/context-room/ported/components/RoomGraphCanvas', async () => {
   const { forwardRef } = await import('react')
   return {
     RoomGraphCanvas: forwardRef(function MockRoomGraphCanvas(
-      props: { rooms: unknown[]; onSelectRoom: (roomId: string | null) => void },
+      props: {
+        rooms: unknown[]
+        onSelectRelation: (relationId: string | null) => void
+        onSelectRoom: (roomId: string | null) => void
+      },
+      _ref,
     ) {
       graphProps.push(props)
       return (
-        <button type="button" onClick={() => props.onSelectRoom('room-b')}>
-          select room-b
-        </button>
+        <>
+          <button type="button" onClick={() => props.onSelectRoom('room-b')}>select room-b</button>
+          <button type="button" onClick={() => props.onSelectRelation('relation-a-b')}>select relation</button>
+        </>
       )
     }),
   }
@@ -122,5 +132,63 @@ describe('RelationsPane graph selection', () => {
 
     expect(graphProps.at(-1)!.rooms).toBe(initialRooms)
     expect(renderer!.root.findByType('h3').children).toEqual(['Related Room'])
+  })
+
+  it('uses the same fixed inspector shell and scroll region for Rooms and relations', async () => {
+    const current = room('room-a', '项目', 'Current Room')
+    const related = room('room-b', '主题', 'Related Room')
+    let renderer: TestRenderer.ReactTestRenderer
+    vi.stubGlobal('window', {
+      nxcore: {
+        knowledge: {
+          getRoomGraph: vi.fn(),
+          getRoomRelations: vi.fn().mockResolvedValue({
+            revision: 1,
+            generatedAt: '2026-08-25T00:00:00.000Z',
+            indexing: { status: 'ready', pendingSources: 0 },
+            nodes: [
+              { id: current.id, title: current.title, kind: current.kind, origin: 'user', updatedAt: '2026-08-25T00:00:00.000Z' },
+              { id: related.id, title: related.title, kind: related.kind, origin: 'user', updatedAt: '2026-08-25T00:00:00.000Z' },
+            ],
+            edges: [{
+              id: 'relation-a-b',
+              sourceRoomId: current.id,
+              targetRoomId: related.id,
+              directed: true,
+              type: 'supports',
+              origin: 'manual',
+              score: 1.2,
+              strength: 'medium',
+              sharedSourceCount: 1,
+              sharedEntityCount: 1,
+              directMentionCount: 0,
+              pinned: false,
+              hidden: false,
+              label: null,
+              note: null,
+              topReasons: [],
+              updatedAt: '2026-08-25T00:00:00.000Z',
+            }],
+          }),
+        },
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+
+    await act(async () => {
+      renderer = TestRenderer.create(<RelationsPane room={current} rooms={[current, related]} onOpenRoom={vi.fn()} />)
+    })
+
+    expect(renderer!.root.findByProps({ className: 'context-room-graph-inspector-scroll' })).toBeTruthy()
+    expect(renderer!.root.findByProps({ className: 'context-room-graph-inspector-footer' })).toBeTruthy()
+
+    await act(async () => {
+      graphProps.at(-1)!.onSelectRelation('relation-a-b')
+    })
+
+    expect(renderer!.root.findByProps({ className: 'context-room-graph-inspector-scroll' })).toBeTruthy()
+    expect(renderer!.root.findByProps({ className: 'context-room-graph-inspector-footer' })).toBeTruthy()
+    expect(renderer!.root.findByProps({ 'data-relation-type': 'supports' }).props.className).toBe('context-room-room-graph-inspector')
   })
 })

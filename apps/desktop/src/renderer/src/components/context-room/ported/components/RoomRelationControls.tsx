@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Link2, Pin, PinOff, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, ArrowRight, Eye, EyeOff, Link2, Pin, PinOff, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type {
@@ -7,6 +7,7 @@ import type {
 } from '../../../../../../shared/knowledge'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import type { ContextRoomRecord } from '../types'
+import { RoomGraphInspectorShell } from './RoomGraphInspector'
 import { ReferenceDialog } from './shared'
 
 export const ROOM_RELATION_TYPES: KnowledgeRoomRelationManualType[] = [
@@ -50,6 +51,7 @@ export function RoomRelationInspector({
   const [error, setError] = useState<string | null>(null)
   const source = rooms.find((room) => room.id === relation.sourceRoomId)
   const target = rooms.find((room) => room.id === relation.targetRoomId)
+  const DirectionIcon = relation.directed ? ArrowRight : ArrowLeftRight
 
   useEffect(() => {
     setType(ROOM_RELATION_TYPES.includes(relation.type as KnowledgeRoomRelationManualType)
@@ -74,16 +76,54 @@ export function RoomRelationInspector({
   }
 
   return (
-    <aside className="context-room-relation-inspector" aria-label={t('contextRoom:relations.inspector')}>
-      <header>
-        <div>
-          <small>{t(`contextRoom:relations.origin.${relation.origin}`)}</small>
-          <h3>{source?.title ?? relation.sourceRoomId} {relation.directed ? '→' : '↔'} {target?.title ?? relation.targetRoomId}</h3>
+    <RoomGraphInspectorShell
+      ariaLabel={t('contextRoom:relations.inspector')}
+      eyebrow={`${t(`contextRoom:relations.origin.${relation.origin}`)} · ${relationTypeLabel(relation.type, t)}`}
+      icon={Link2}
+      onClose={onClose}
+      relationType={relation.type}
+      title={relation.label || t('contextRoom:relations.relationDetails')}
+      footer={(
+        <div className="context-room-relation-footer-actions">
+          <button type="submit" form={`room-relation-${relation.id}`} className="context-room-primary" disabled={busy}>{t('contextRoom:relations.saveRelation')}</button>
+          <button
+            type="button"
+            disabled={busy}
+            title={t(relation.pinned ? 'contextRoom:relations.unpin' : 'contextRoom:relations.pin')}
+            aria-label={t(relation.pinned ? 'contextRoom:relations.unpin' : 'contextRoom:relations.pin')}
+            onClick={() => void mutate(() => window.nxcore!.knowledge.updateRoomRelation(relation.id, { pinned: !relation.pinned }))}
+          >
+            {relation.pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            title={t(relation.hidden ? 'contextRoom:relations.restore' : 'contextRoom:relations.hide')}
+            aria-label={t(relation.hidden ? 'contextRoom:relations.restore' : 'contextRoom:relations.hide')}
+            onClick={() => void mutate(() => window.nxcore!.knowledge.updateRoomRelation(relation.id, { hidden: !relation.hidden }))}
+          >
+            {relation.hidden ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
+          </button>
+          {relation.origin !== 'auto' ? (
+            <button
+              type="button"
+              disabled={busy}
+              className="is-danger"
+              title={t('contextRoom:relations.removeManualOverride')}
+              aria-label={t('contextRoom:relations.removeManualOverride')}
+              onClick={() => void mutate(() => window.nxcore!.knowledge.removeManualRoomRelation(relation.id))}
+            >
+              <Trash2 aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
-        <button type="button" aria-label={t('contextRoom:relations.closeInspector')} onClick={onClose}>
-          <X aria-hidden="true" />
-        </button>
-      </header>
+      )}
+    >
+      <section className="context-room-relation-endpoints">
+        <div><small>{t('contextRoom:relations.sourceRoom')}</small><b>{source?.title ?? relation.sourceRoomId}</b></div>
+        <DirectionIcon aria-hidden="true" />
+        <div><small>{t('contextRoom:relations.targetRoom')}</small><b>{target?.title ?? relation.targetRoomId}</b></div>
+      </section>
 
       <div className="context-room-relation-metrics">
         <div><span>{t('contextRoom:relations.score')}</span><b>{relation.score.toFixed(2)}</b></div>
@@ -105,6 +145,7 @@ export function RoomRelationInspector({
       </section>
 
       <form
+        id={`room-relation-${relation.id}`}
         className="context-room-relation-form"
         onSubmit={(event) => {
           event.preventDefault()
@@ -120,6 +161,7 @@ export function RoomRelationInspector({
           }))
         }}
       >
+        <h4>{t('contextRoom:relations.editRelation')}</h4>
         <label>
           <span>{t('contextRoom:relations.relationType')}</span>
           <select value={type} onChange={(event) => setType(event.target.value as KnowledgeRoomRelationManualType)}>
@@ -139,38 +181,8 @@ export function RoomRelationInspector({
           <textarea value={note} maxLength={1000} rows={3} onChange={(event) => setNote(event.target.value)} />
         </label>
         {error ? <p className="context-room-relation-error">{error}</p> : null}
-        <button type="submit" className="context-room-primary" disabled={busy}>{t('contextRoom:relations.saveRelation')}</button>
       </form>
-
-      <div className="context-room-relation-actions">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void mutate(() => window.nxcore!.knowledge.updateRoomRelation(relation.id, { pinned: !relation.pinned }))}
-        >
-          {relation.pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-          {t(relation.pinned ? 'contextRoom:relations.unpin' : 'contextRoom:relations.pin')}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void mutate(() => window.nxcore!.knowledge.updateRoomRelation(relation.id, { hidden: !relation.hidden }))}
-        >
-          {relation.hidden ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
-          {t(relation.hidden ? 'contextRoom:relations.restore' : 'contextRoom:relations.hide')}
-        </button>
-        {relation.origin !== 'auto' ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void mutate(() => window.nxcore!.knowledge.removeManualRoomRelation(relation.id))}
-          >
-            <Trash2 aria-hidden="true" />
-            {t('contextRoom:relations.removeManualOverride')}
-          </button>
-        ) : null}
-      </div>
-    </aside>
+    </RoomGraphInspectorShell>
   )
 }
 
