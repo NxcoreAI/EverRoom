@@ -776,6 +776,7 @@
 }
 
 .context-room-room-graph-layout {
+  --context-room-graph-height: 440px;
   display: block;
   padding: 12px;
   border: 1px solid var(--cr-border);
@@ -791,7 +792,7 @@
 
 .context-room-room-graph-canvas {
   position: relative;
-  height: 440px;
+  height: var(--context-room-graph-height);
   min-width: 0;
   overflow: hidden;
   border-radius: 8px;
@@ -1170,13 +1171,59 @@
   white-space: nowrap;
 }
 
-.context-room-graph-materials b {
-  font-size: 11px;
+.context-room-node-people b {
+  font-size: 10.5px;
 }
 
-.context-room-graph-materials small {
+.context-room-node-people small {
   color: var(--cr-tertiary);
-  font-size: 10px;
+  font-size: 9.5px;
+}
+
+.context-room-node-resources {
+  display: grid;
+  gap: 5px;
+}
+
+.context-room-node-resources > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-node-resources > div > svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cr-icon-document);
+}
+
+.context-room-node-resources > div > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.context-room-node-resources b,
+.context-room-node-resources small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-node-resources b {
+  color: var(--cr-text);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.context-room-node-resources small,
+.context-room-inspector-empty {
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
 }
 
 .context-room-primary,
@@ -4559,6 +4606,40 @@
   font-style: normal;
 }
 
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:hover:not(:disabled) {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg[data-spin='true'] {
+  animation: context-room-spin 900ms linear infinite;
+}
+
 .context-room-dashboard-grid article > p,
 .context-room-dashboard-grid article > small,
 .context-room-dashboard-grid article > ul,
@@ -6980,43 +7061,14 @@
   color: var(--cr-blue-hover);
 }
 
-.context-room-graph-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 240px;
-  height: 510px;
-  min-height: 420px;
-  overflow: hidden;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
-  background: var(--cr-surface-secondary);
-}
-
-.context-room-graph-canvas {
+/* Only the wiki graph still wants the dotted canvas paper; graph-inspector is
+   styled once near the top of this file and must not be re-declared here. */
+.context-room-wiki-graph .context-room-graph-canvas {
   min-width: 0;
   overflow: hidden;
-  border-right: 1px solid var(--cr-border);
   background-color: var(--cr-canvas);
   background-image: radial-gradient(circle, rgba(113, 128, 148, 0.22) 1px, transparent 1px);
   background-size: 18px 18px;
-}
-
-.context-room-graph-inspector {
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  color: var(--cr-muted);
-  background: rgba(255, 255, 255, 0.7);
-  text-align: center;
-}
-
-.context-room-graph-inspector b,
-.context-room-graph-inspector span {
-  display: block;
-}
-
-.context-room-graph-inspector span {
-  margin-top: 4px;
-  font-size: 11.5px;
 }
 
 .context-room-graph-legend {
@@ -7755,14 +7807,6 @@
     grid-template-columns: 1fr;
   }
 
-  .context-room-graph-workspace {
-    grid-template-columns: 1fr;
-  }
-
-  .context-room-graph-inspector {
-    display: none;
-  }
-
   .context-room-room-grid,
   .context-room-mail-layout,
   .context-room-memory-layout {
@@ -7971,15 +8015,6 @@
   .context-room-data-head > b {
     min-width: 0;
     flex: 1 1 180px;
-  }
-
-  .context-room-graph-workspace {
-    grid-template-columns: 1fr;
-    min-height: 360px;
-  }
-
-  .context-room-graph-inspector {
-    display: none;
   }
 
   .context-room-graph-legend span:last-child {

@@ -248,6 +248,11 @@ const CONTEXT_ROOM_CHANNELS = {
   getMergeOperation: 'context-rooms:get-merge-operation',
   retryMerge: 'context-rooms:retry-merge',
   cancelMerge: 'context-rooms:cancel-merge',
+  dispatchSelectionRewrite: 'context-rooms:dispatch-selection-rewrite',
+  getSubagentInvocation: 'context-rooms:get-subagent-invocation',
+  cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
+  refreshBrief: 'context-rooms:refresh-brief',
+  roomEntities: 'context-rooms:room-entities',
 } as const
 
 const AGENT_CHANNELS = {
@@ -1256,6 +1261,13 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.getMergeOperation, (_event, id) => bridge.getMergeOperation(id))
   handle(CONTEXT_ROOM_CHANNELS.retryMerge, (_event, id) => bridge.retryMerge(id))
   handle(CONTEXT_ROOM_CHANNELS.cancelMerge, (_event, id) => bridge.cancelMerge(id))
+  handle(CONTEXT_ROOM_CHANNELS.dispatchSelectionRewrite, (_event, input) => bridge.dispatchSelectionRewrite(input))
+  handle(CONTEXT_ROOM_CHANNELS.getSubagentInvocation, (_event, invocationId) =>
+    bridge.getSubagentInvocation(invocationId))
+  handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
+    bridge.cancelSubagentInvocation(invocationId))
+  handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
 }
 
 function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {

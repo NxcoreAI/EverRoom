@@ -38,6 +38,8 @@ import { DocumentServiceError } from "../modules/documents/errors.js";
 import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
 import { RoomDuplicateService } from "../modules/context-rooms/duplicate-service.js";
 import { ContextRoomService } from "../modules/context-rooms/service.js";
+import { ContextRoomAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/context-rooms/room-agent.js";
+import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
@@ -512,6 +514,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   await subagentRegistry.initialize();
   const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls);
+  // context-room 子 Agent 的网关只读工具：记忆检索 + Room 文档上下文。
+  // registerAgentTools 必须发生在任何 acquire 之前（首次 dispatch 前）。
+  subagentRuntimeManager.registerAgentTools(
+    "context-room",
+    () => createContextRoomAgentTools({ db, memory: memoryService }),
+  );
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -528,6 +536,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     subagentRuntimeManager,
     app.log,
   );
+  // Room 创建整理走 internal_workflow 异步调度；logger 供失败降级日志。
+  contextRoomService.setRoomAgentDispatcher(new ContextRoomAgentDispatcher(subagentOrchestrator), (bindings, message) => {
+    app.log.warn(bindings, message);
+  });
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
   const recoveredSubagentInvocations = subagentOrchestrator.initialize();
   if (recoveredSubagentInvocations > 0) {
@@ -847,13 +859,29 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     return { cleared: true };
   });
   await app.register(externalCallRoutes(externalCalls));
-  await app.register(contextRoomRoutes(contextRoomService, roomDuplicateService));
+  await app.register(contextRoomRoutes(
+    contextRoomService,
+    roomDuplicateService,
+    subagentConfig.enabled ? new ContextRoomAgentDispatcher(subagentOrchestrator) : undefined,
+  ));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));
   await app.register(documentOperationRoutes(
     documentOperationService,
     documentMcpHost.capabilities,
-    (context) => agentService.validateDocumentOperationContext(context),
+    (context) => {
+      // dispatch 子 Agent（context-room 划词改写）溯源：按 completed Invocation 校验。
+      if (context.invocationId) {
+        if (!isSelectionRewriteInvocationAuthorized(
+          subagentOrchestrator.getInvocation(context.invocationId),
+          { capabilityId: context.capabilityId, roomId: context.roomId },
+        )) {
+          throw new Error("agent_operation_context_invalid");
+        }
+        return;
+      }
+      agentService.validateDocumentOperationContext(context);
+    },
   ));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));

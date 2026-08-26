@@ -1,18 +1,16 @@
-import type {
-  AgentEvent,
-  AgentRun,
-  AgentSession,
-  CreateAgentSessionInput,
-  StartAgentRunInput,
-} from '@nxcore/agent-contract'
+import type { SubagentInvocation } from '@nxcore/agent-contract'
 import i18n from '@/i18n/i18next'
+import type { AppLocale } from '@/i18n/resources'
+import type { RoomAgentSelectionRewriteInput } from '../../../../../../../shared/sources'
 
+/**
+ * 划词改写已迁入 context-room dispatch_only 子 Agent：dispatch 后轮询 invocation 至终态。
+ * 见 gateway POST /v1/context-rooms/selection-rewrite 与 GET /v1/subagent-invocations/:id。
+ */
 export interface SelectionRewriteAgentApi {
-  createSession(input: CreateAgentSessionInput): Promise<AgentSession>
-  deleteSession(sessionId: string): Promise<void>
-  getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
-  startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
-  cancelRun(runId: string): Promise<AgentRun>
+  dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>
+  getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
+  cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
 }
 
 export interface SelectionRewriteRequest {
@@ -34,34 +32,14 @@ export interface SelectionRewriteFormatContext {
 interface StreamSelectionRewriteOptions {
   signal: AbortSignal
   onText: (text: string) => void
-  responseLanguage?: StartAgentRunInput['responseLanguage']
+  responseLanguage?: AppLocale
   pollIntervalMs?: number
   timeoutMs?: number
 }
 
 export interface SelectionRewriteAgentResult {
   replacementText: string
-  sessionId: string
-  runId: string
-}
-
-export function buildSelectionRewritePrompt(
-  input: SelectionRewriteRequest,
-  responseLanguage: StartAgentRunInput['responseLanguage'] = 'zh-CN',
-): string {
-  const t = i18n.getFixedT(responseLanguage, 'common')
-  const payload = {
-    instruction: input.instruction.trim() || t('contextRoom:selectionRewriteAgent.defaultInstruction'),
-    selectedText: input.selectedText,
-    contextBefore: input.contextBefore,
-    contextAfter: input.contextAfter,
-    ...(input.formatContext ? { formatContext: input.formatContext } : {}),
-  }
-  return [
-    t('contextRoom:selectionRewriteAgent.promptInstruction'),
-    '',
-    JSON.stringify(payload),
-  ].join('\n')
+  invocationId: string
 }
 
 export function sanitizeSelectionRewriteOutput(
@@ -112,21 +90,8 @@ function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-function eventText(event: AgentEvent, key: 'delta' | 'content' | 'message'): string | null {
-  if (!event.payload || typeof event.payload !== 'object') return null
-  const value = (event.payload as Record<string, unknown>)[key]
-  return typeof value === 'string' ? value : null
-}
-
-async function deleteTemporarySession(api: SelectionRewriteAgentApi, sessionId: string): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      await api.deleteSession(sessionId)
-      return
-    } catch {
-      if (attempt < 2) await new Promise((resolve) => globalThis.setTimeout(resolve, 80))
-    }
-  }
+function isTerminalStatus(status: SubagentInvocation['status']): boolean {
+  return status !== 'accepted' && status !== 'running'
 }
 
 export async function streamSelectionRewrite(
@@ -134,87 +99,62 @@ export async function streamSelectionRewrite(
   input: SelectionRewriteRequest,
   options: StreamSelectionRewriteOptions,
 ): Promise<SelectionRewriteAgentResult> {
-  const pollIntervalMs = options.pollIntervalMs ?? 70
+  const pollIntervalMs = options.pollIntervalMs ?? 250
   const timeoutMs = options.timeoutMs ?? 120_000
   const startedAt = Date.now()
-  let sessionId: string | null = null
-  let runId: string | null = null
+  let invocationId: string | null = null
   let cancelPromise: Promise<unknown> | null = null
-  let runSettled = false
-  let completed = false
-  let rawText = ''
-  let afterSeq = 0
+  let settled = false
   const preserveWhitespace = input.formatContext?.blockType === 'codeBlock'
     || input.formatContext?.ancestorTypes.includes('codeBlock') === true
 
-  const cancelRun = () => {
-    if (!runId || cancelPromise) return
-    cancelPromise = api.cancelRun(runId).catch(() => undefined)
+  const cancelInvocation = () => {
+    if (!invocationId || cancelPromise) return
+    cancelPromise = api.cancelSubagentInvocation(invocationId).catch(() => undefined)
   }
-  const onAbort = () => cancelRun()
+  const onAbort = () => cancelInvocation()
   options.signal.addEventListener('abort', onAbort)
 
   try {
     throwIfAborted(options.signal)
-    const session = await api.createSession({
-      pageLabel: i18n.getFixedT(options.responseLanguage ?? 'zh-CN', 'common')('contextRoom:selectionRewriteAgent.pageLabel', { name: input.documentName }),
+    const t = i18n.getFixedT(options.responseLanguage ?? 'zh-CN', 'common')
+    const dispatched = await api.dispatchSelectionRewrite({
       roomId: input.roomId,
-    })
-    sessionId = session.id
-    throwIfAborted(options.signal)
-    const run = await api.startRun(session.id, {
-      prompt: buildSelectionRewritePrompt(input, options.responseLanguage),
-      idempotencyKey: crypto.randomUUID(),
+      documentName: input.documentName,
+      selectedText: input.selectedText,
+      instruction: input.instruction.trim() || t('contextRoom:selectionRewriteAgent.defaultInstruction'),
+      contextBefore: input.contextBefore,
+      contextAfter: input.contextAfter,
+      blockType: input.formatContext?.blockType,
       responseLanguage: options.responseLanguage,
-      captureMemory: false,
-      recallMemory: false,
-      toolsEnabled: false,
-      context: { selectedRoomId: input.roomId },
     })
-    runId = run.id
-    if (options.signal.aborted) {
-      cancelRun()
-      throw abortError()
-    }
+    invocationId = dispatched.invocationId
 
     while (Date.now() - startedAt < timeoutMs) {
       throwIfAborted(options.signal)
-      const events = await api.getEvents(session.id, run.id, afterSeq)
-      for (const event of events) {
-        afterSeq = Math.max(afterSeq, event.seq)
-        if (event.type === 'message.delta') {
-          const delta = eventText(event, 'delta')
-          if (delta) {
-            rawText += delta
-            options.onText(sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace }))
-          }
-        } else if (event.type === 'message.completed') {
-          const content = eventText(event, 'content')
-          if (content !== null) rawText = content
-          options.onText(sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace }))
-        } else if (event.type === 'run.completed') {
-          runSettled = true
-          const output = sanitizeSelectionRewriteOutput(rawText, { preserveWhitespace })
-          if (!output) throw new Error(i18n.t('contextRoom:selectionRewriteAgent.noReplacementText'))
-          completed = true
-          return { replacementText: output, sessionId: session.id, runId: run.id }
-        } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {
-          runSettled = true
-          const message = eventText(event, 'message')
-          throw new Error(message || i18n.t('contextRoom:selectionRewriteAgent.failed'))
-        } else if (event.type === 'run.cancelled') {
-          runSettled = true
-          throw abortError()
-        }
+      const invocation = await api.getSubagentInvocation(invocationId)
+      if (invocation.status === 'completed') {
+        settled = true
+        const output = sanitizeSelectionRewriteOutput(invocation.result?.text ?? '', { preserveWhitespace })
+        if (!output) throw new Error(i18n.t('contextRoom:selectionRewriteAgent.noReplacementText'))
+        options.onText(output)
+        return { replacementText: output, invocationId }
+      }
+      if (invocation.status === 'cancelled') {
+        settled = true
+        throw abortError()
+      }
+      if (isTerminalStatus(invocation.status)) {
+        settled = true
+        throw new Error(invocation.errorMessage || i18n.t('contextRoom:selectionRewriteAgent.failed'))
       }
       await wait(pollIntervalMs, options.signal)
     }
-    cancelRun()
+    cancelInvocation()
     throw new Error(i18n.t('contextRoom:selectionRewriteAgent.timedOut'))
   } finally {
     options.signal.removeEventListener('abort', onAbort)
-    if (!runSettled) cancelRun()
+    if (!settled) cancelInvocation()
     if (cancelPromise) await cancelPromise
-    if (sessionId && !completed) await deleteTemporarySession(api, sessionId)
   }
 }

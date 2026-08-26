@@ -46,6 +46,4 @@ tools:
   - agent_catalog
   - agent_dispatch
   - content_analysis
-
-skills:
-  - ./skills/selection-rewrite
+  - room_analysis

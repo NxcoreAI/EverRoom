@@ -30,6 +30,8 @@ agents/
 IDs listed in the architecture document are reserved and are not dispatchable
 subagents.
 
-`content-analyst` is the first developer-defined Agent. Its server integration test proves
-that the default project directory is loaded through the same Gateway startup
-path used by the desktop application.
+`content-analyst` was the first developer-defined Agent. Its server integration
+test proves that the default project directory is loaded through the same
+Gateway startup path used by the desktop application. The shipped bundles also
+include `multimodal-document-parser` and `context-room` (Context Room
+enrichment, brief refresh, selection rewrite, and material analysis tasks).

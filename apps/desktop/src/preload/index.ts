@@ -17,7 +17,7 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
+import type { DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import {
@@ -282,6 +282,14 @@ const api: NxcoreDesktopApi = {
     getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
     retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
     cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),
+    dispatchSelectionRewrite: (input: RoomAgentSelectionRewriteInput) =>
+      invokeQuietly('context-rooms:dispatch-selection-rewrite', input),
+    getSubagentInvocation: (invocationId: string) =>
+      invokeQuietly('context-rooms:get-subagent-invocation', invocationId),
+    cancelSubagentInvocation: (invocationId: string) =>
+      invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
+    refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
+    roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
