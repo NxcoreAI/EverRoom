@@ -61,7 +61,8 @@ export interface AgentCompletedMessageResolver {
 
 const silentLogger: AgentServiceLogger = { info: () => undefined };
 const PENDING_INTENT_TTL_MS = 10 * 60 * 1000;
-const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
+/** 划词改写运行结束后仍允许登记 document operation 的宽限期（会话与子 Agent 调用溯源共用）。 */
+export const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
 
 export interface AgentRoomRegistry {
   listReferences(): AgentRoomReference[];

@@ -10,6 +10,10 @@ import {
   type ForceGraphWorkerResponse,
 } from '../src/renderer/src/components/context-room/ported/graph/forceGraphProtocol'
 import { createForceGraphSimulation } from '../src/renderer/src/components/context-room/ported/graph/forceGraphSimulation'
+import {
+  roomGraphLayoutDimensions,
+  roomGraphLayoutOptions,
+} from '../src/renderer/src/components/context-room/ported/graph/roomGraphVisuals'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -231,6 +235,55 @@ describe('force graph shared layout', () => {
       latest[3]! - settled[3]!,
     )
     expect(untouchedNodeShift).toBeLessThan(2)
+  })
+
+  it('keeps a highly connected Room hub and its neighbors well separated', () => {
+    const nodeCount = 13
+    const relationCount = nodeCount - 1
+    const dimensions = roomGraphLayoutDimensions({
+      compact: false,
+      nodeCount,
+      relationCount,
+      screenHeight: 420,
+      screenWidth: 640,
+    })
+    let latest: number[] = []
+    const simulation = createForceGraphSimulation({
+      nodes: Array.from({ length: nodeCount }, (_, index) => ({ id: `node-${String(index)}`, radius: 29 })),
+      edges: Array.from({ length: relationCount }, (_, index) => ({
+        source: 'node-0',
+        target: `node-${String(index + 1)}`,
+      })),
+      options: {
+        ...DEFAULT_FORCE_GRAPH_OPTIONS,
+        ...roomGraphLayoutOptions({ compact: false, nodeCount, relationCount }),
+        ...dimensions,
+      },
+      publish: (nodes) => {
+        latest = nodes.flatMap((node) => [node.x ?? 0, node.y ?? 0])
+      },
+      settled: vi.fn(),
+    })
+
+    simulation.step(500)
+    simulation.stop()
+    const hubDistances = Array.from({ length: relationCount }, (_, index) => Math.hypot(
+      latest[(index + 1) * 2]! - latest[0]!,
+      latest[(index + 1) * 2 + 1]! - latest[1]!,
+    ))
+    let minimumNodeDistance = Number.POSITIVE_INFINITY
+    for (let left = 0; left < nodeCount; left += 1) {
+      for (let right = left + 1; right < nodeCount; right += 1) {
+        minimumNodeDistance = Math.min(minimumNodeDistance, Math.hypot(
+          latest[left * 2]! - latest[right * 2]!,
+          latest[left * 2 + 1]! - latest[right * 2 + 1]!,
+        ))
+      }
+    }
+
+    expect(hubDistances.reduce((sum, distance) => sum + distance, 0) / hubDistances.length)
+      .toBeGreaterThan(260)
+    expect(minimumNodeDistance).toBeGreaterThan(105)
   })
 
   it('runs d3-force with link, charge, and centering forces', () => {

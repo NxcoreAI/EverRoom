@@ -45,12 +45,10 @@ export function clearRoomOnboardingMarker(
 
 export function shouldShowRoomOnboarding(
   backendReady: boolean,
-  _roomCount: number,
+  roomCount: number,
   marker: RoomOnboardingMarker | null,
   suppress = false,
 ): boolean {
   if (suppress) return false
-  // A built-in data Room may exist before the user has gone through setup.
-  // The marker, rather than the Room count, is the durable first-use signal.
-  return backendReady && marker === null
+  return backendReady && roomCount === 0 && marker === null
 }

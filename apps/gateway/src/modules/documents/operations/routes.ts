@@ -12,6 +12,20 @@ const OperationStatus = Type.Union([
   Type.Literal("rejected"), Type.Literal("conflicted"), Type.Literal("failed"),
   Type.Literal("cancelled"), Type.Literal("expired"),
 ]);
+/** 溯源二选一：主 Agent 会话（sessionId+runId）或 dispatch 子 Agent 调用（invocationId，如划词改写）。 */
+const OperationContext = Type.Union([
+  Type.Object({
+    roomId: Type.String({ minLength: 1, maxLength: 128 }),
+    documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    sessionId: Type.String({ minLength: 1, maxLength: 128 }),
+    runId: Type.String({ minLength: 1, maxLength: 128 }),
+  }),
+  Type.Object({
+    roomId: Type.String({ minLength: 1, maxLength: 128 }),
+    documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    invocationId: Type.String({ minLength: 1, maxLength: 128 }),
+  }),
+]);
 
 function errorPayload(error: DocumentServiceError) {
   return { error: error.code, message: error.message, ...error.details };
@@ -25,6 +39,8 @@ export function documentOperationRoutes(
     agentSessionId: string;
     runId: string;
     roomId: string;
+    /** 存在时按 dispatch 子 Agent 调用校验溯源，忽略 agentSessionId/runId（值已被归一化为 invocationId）。 */
+    invocationId?: string;
   }) => void,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
@@ -35,25 +51,37 @@ export function documentOperationRoutes(
           tags: ["documents", "operations"],
           body: Type.Object({
             capabilityId: Type.String({ minLength: 1, maxLength: 128 }),
-            context: Type.Object({
-              roomId: Type.String({ minLength: 1, maxLength: 128 }),
-              documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-              sessionId: Type.String({ minLength: 1, maxLength: 128 }),
-              runId: Type.String({ minLength: 1, maxLength: 128 }),
-            }),
+            context: OperationContext,
             input: Type.Record(Type.String(), Type.Unknown()),
           }),
         },
       },
       async (request, reply) => {
         try {
+          const raw = request.body.context;
+          // invocation 溯源归一化为 sessionId = runId = invocationId，operation 落库与回显保持单一形状。
+          const context = "invocationId" in raw
+            ? {
+              roomId: raw.roomId,
+              ...(raw.documentId ? { documentId: raw.documentId } : {}),
+              sessionId: raw.invocationId,
+              runId: raw.invocationId,
+              invocationId: raw.invocationId,
+            }
+            : {
+              roomId: raw.roomId,
+              ...(raw.documentId ? { documentId: raw.documentId } : {}),
+              sessionId: raw.sessionId,
+              runId: raw.runId,
+            };
           authorizeContext?.({
             capabilityId: request.body.capabilityId,
-            agentSessionId: request.body.context.sessionId,
-            runId: request.body.context.runId,
-            roomId: request.body.context.roomId,
+            agentSessionId: context.sessionId,
+            runId: context.runId,
+            roomId: context.roomId,
+            ...("invocationId" in context ? { invocationId: context.invocationId } : {}),
           });
-          return await capabilities.start(request.body);
+          return await capabilities.start({ ...request.body, context });
         } catch (error) {
           if (error instanceof DocumentServiceError) {
             return reply.code(error.statusCode).send(errorPayload(error));

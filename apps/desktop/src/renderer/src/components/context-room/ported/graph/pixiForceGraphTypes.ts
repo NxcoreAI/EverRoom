@@ -118,7 +118,7 @@ export interface PixiForceGraphDependencies {
   Text: new (text?: string, style?: Record<string, unknown>) => PixiText
   ParticleContainer: new (
     maxSize?: number,
-    properties?: { position: boolean; tint?: boolean },
+    properties?: { position: boolean; alpha?: boolean; scale?: boolean; tint?: boolean },
     batchSize?: number,
     autoResize?: boolean,
   ) => PixiParticleContainer
@@ -128,6 +128,7 @@ export interface PixiForceGraphDependencies {
 
 export interface PixiForceGraphNode {
   color?: number | string
+  icon?: 'book' | 'flag' | 'message' | 'target' | 'user' | 'zap'
   label?: string
   radius?: number
 }
@@ -135,6 +136,7 @@ export interface PixiForceGraphNode {
 export interface PixiForceGraphEdge {
   id?: string
   label?: string
+  labelColor?: number | string
   source: number
   target: number
   directed?: boolean
@@ -179,6 +181,7 @@ export interface PixiForceGraphRenderer {
   readonly app: PixiApplication
   readonly viewport: PixiViewport
   readonly particleContainer: PixiParticleContainer
+  readonly iconParticleContainers: readonly PixiParticleContainer[]
   readonly edgeGraphics: PixiGraphics
   readonly labelLayer: PixiContainer
   readonly sprites: readonly PixiSprite[]

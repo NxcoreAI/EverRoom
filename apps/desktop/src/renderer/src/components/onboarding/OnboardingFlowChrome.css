@@ -13,7 +13,8 @@
 .onboarding-flow-sequence { display: flex; min-height: 42px; align-items: center; justify-content: center; gap: 4px; border-bottom: 1px solid var(--border); }
 .onboarding-flow-sequence > svg { width: 13px; color: var(--subtle); }
 .onboarding-flow-stage { display: inline-flex; align-items: center; padding: 5px 3px; border: 0; background: transparent; color: var(--subtle); font-size: 12px; cursor: pointer; }
-.onboarding-flow-stage[data-state='complete'] { color: var(--muted); }
+.onboarding-flow-stage > svg { width: 13px; height: 13px; margin-right: 4px; }
+.onboarding-flow-stage[data-state='complete'] { color: var(--icon-task); font-weight: 650; }
 .onboarding-flow-stage[data-state='active'] { color: var(--accent-strong); font-weight: 700; }
 .onboarding-flow-content { min-height: calc(100dvh - var(--topbar-height) - 43px); }
 .onboarding-flow-content > .memory-onboarding,

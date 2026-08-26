@@ -200,6 +200,58 @@ export function createSubagentPiTools(
       ),
     });
   }
+  const contextRoomAgent = registry.get("context-room");
+  if (contextRoomAgent) {
+    tools.push({
+      name: "room_analysis",
+      label: "Analyze room materials",
+      description: "调度 Context Room Agent 分析指定 Room 的已收录资料，返回事实、风险、矛盾、信息缺口和下一步建议。用户询问某个 Room 的整体情况或资料结论时使用。",
+      parameters: Type.Object({
+        roomId: Type.String({ minLength: 1, maxLength: 128 }),
+        focus: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
+        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal) => {
+        const input = {
+          task: "material-analysis" as const,
+          roomId: String(params.roomId),
+          ...(typeof params.focus === "string" && params.focus.trim()
+            ? { instruction: params.focus.trim() }
+            : {}),
+          ...(typeof params.responseLanguage === "string" && params.responseLanguage.trim()
+            ? { responseLanguage: params.responseLanguage.trim() }
+            : {}),
+        };
+        const task = "分析指定 Context Room 的资料并提炼可核验结论";
+        const invocation = await orchestrator.dispatch({
+          agentId: "context-room",
+          task,
+          input,
+          idempotencyKey: dispatchKey(run.runId, "context-room", task, input),
+          source: "primary_agent",
+          parentSessionId: run.sessionId,
+          parentRunId: run.runId,
+          ...(signal ? { signal } : {}),
+        });
+        const structured = invocation.result?.structuredOutput !== null
+          && typeof invocation.result?.structuredOutput === "object"
+          && !Array.isArray(invocation.result.structuredOutput)
+          ? invocation.result.structuredOutput as Record<string, unknown>
+          : extractJsonObject(invocation.result?.text ?? "");
+        return {
+          content: JSON.stringify({
+            invocationId: invocation.id,
+            agentId: invocation.agentDefinitionId,
+            status: invocation.status,
+            ...(structured ? { analysis: structured } : {}),
+            result: invocation.result,
+            error: invocation.errorMessage,
+          }),
+          details: invocation,
+        };
+      },
+    });
+  }
   const documentParser = registry.get("multimodal-document-parser");
   if (documentParser) {
     tools.push({

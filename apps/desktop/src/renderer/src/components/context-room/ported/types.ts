@@ -67,6 +67,8 @@ export interface ContextRoomTimelineItem {
   title: string;
   description: string;
   kind: 'done' | 'warn' | 'info';
+  /** true = 从文档/生成上下文确定性派生，刷新时整体重建；缺省视为手工条目保留。 */
+  generated?: boolean;
 }
 
 export interface ContextRoomMaterial {

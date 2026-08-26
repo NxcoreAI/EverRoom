@@ -24,14 +24,17 @@ import type {
   AgentSessionSnapshot,
   AgentSocketFrame,
   ContextRoomSnapshot,
+  ContextRoomSnapshotItem,
   CreateContextRoomInput,
   CreateContextRoomResult,
   RoomDuplicateCandidate,
   RoomDuplicateCandidateStatus,
   RoomDuplicateCheckInput,
   RoomDuplicateCheckResult,
+  RoomAppliedEntitiesResult,
   RoomMergeOperation,
   RoomMergePreview,
+  SubagentInvocation,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   DocumentEventFrame,
@@ -613,6 +616,18 @@ export interface NangoRuntimeStatus {
   message: string | null
 }
 
+/** Context Room 子 Agent（划词改写）dispatch 入参，见 gateway /v1/context-rooms/selection-rewrite。 */
+export interface RoomAgentSelectionRewriteInput {
+  roomId?: string
+  documentName?: string
+  selectedText: string
+  instruction?: string
+  contextBefore?: string
+  contextAfter?: string
+  blockType?: string
+  responseLanguage?: string
+}
+
 export interface NxcoreDesktopApi {
   platform: string
   pageMode: DesktopPageMode
@@ -753,6 +768,11 @@ export interface NxcoreDesktopApi {
     getMergeOperation(id: string): Promise<RoomMergeOperation>
     retryMerge(id: string): Promise<RoomMergeOperation>
     cancelMerge(id: string): Promise<RoomMergeOperation>
+    dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>
+    getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
+    cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
+    refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
+    roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
   }
   account: {
     status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>

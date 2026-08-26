@@ -307,6 +307,39 @@ export interface CreateContextRoomResult {
   created: boolean;
 }
 
+export type RoomAppliedEntityStatus =
+  | "weak"
+  | "ready"
+  | "promoting"
+  | "room"
+  | "archived"
+  | "suppressed";
+
+/** Room 关联的应用实体：room_entity_mentions 按实体聚合 + entities 实时状态。 */
+export interface RoomAppliedEntity {
+  entityId: string;
+  name: string;
+  kind: string;
+  status: RoomAppliedEntityStatus;
+  summary: string | null;
+  aliases: string[];
+  /** 实体晋升后回填的 rooms.id（未晋升为 null）。 */
+  linkedRoomId: string | null;
+  /** Room 内提及该实体的来源数（sourceKind + sourceId 去重）。 */
+  mentionCount: number;
+  sourceKinds: string[];
+  /** Room 内最大显著度（0-1）。 */
+  salience: number;
+  lastMentionAt: string | null;
+  evidence: string | null;
+}
+
+export interface RoomAppliedEntitiesResult {
+  roomId: string;
+  entities: RoomAppliedEntity[];
+  updatedAt: string;
+}
+
 export type RoomDuplicateConfidence = "high" | "medium" | "related" | "distinct" | "pending";
 export type RoomDuplicateCandidateStatus = "open" | "related" | "distinct" | "merged";
 
@@ -708,11 +741,16 @@ export interface DocumentOperationCommandResult {
 
 export interface StartDocumentOperationInput {
   capabilityId: string;
+  /**
+   * 操作溯源二选一：主 Agent 会话（sessionId + runId）或 dispatch 子 Agent 调用（invocationId）。
+   * invocationId 变体由网关归一化为 sessionId = runId = invocationId 后落库。
+   */
   context: {
     roomId: string;
     documentId?: string;
-    sessionId: string;
-    runId: string;
+    sessionId?: string;
+    runId?: string;
+    invocationId?: string;
   };
   input: Record<string, unknown>;
 }

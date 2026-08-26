@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { ContextRoomService } from "./service.js";
 import { DuplicateReviewRequiredError, type RoomDuplicateService } from "./duplicate-service.js";
+import type { RoomAgentDispatcher } from "./room-agent.js";
 
 const RoomData = Type.Object({}, { additionalProperties: true });
 const RoomSnapshotItem = Type.Object({
@@ -11,7 +12,11 @@ const RoomSnapshotItem = Type.Object({
   data: RoomData,
 });
 
-export function contextRoomRoutes(service: ContextRoomService, duplicates?: RoomDuplicateService): FastifyPluginAsyncTypebox {
+export function contextRoomRoutes(
+  service: ContextRoomService,
+  duplicates?: RoomDuplicateService,
+  roomAgent?: RoomAgentDispatcher,
+): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.get(
       "/v1/context-rooms",
@@ -216,6 +221,92 @@ export function contextRoomRoutes(service: ContextRoomService, duplicates?: Room
         } catch (error) {
           return reply.code(409).send({ error: error instanceof Error ? error.message : "context_room_merge_cannot_cancel" });
         }
+      },
+    );
+
+    app.post(
+      "/v1/context-rooms/:roomId/refresh-brief",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.refreshBrief(request.params.roomId);
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "context_room_brief_refresh_failed";
+          if (code === "context_room_not_found") {
+            return reply.code(404).send({ error: code, message: "Context Room not found" });
+          }
+          if (code === "context_room_agent_not_configured") {
+            return reply.code(503).send({ error: code, message: "Context Room agent is not available" });
+          }
+          return reply.code(502).send({ error: code, message: "Context Room brief refresh failed" });
+        }
+      },
+    );
+
+    app.get(
+      "/v1/context-rooms/:roomId/entities",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return service.roomAppliedEntities(request.params.roomId);
+        } catch (error) {
+          if (error instanceof Error && error.message === "context_room_not_found") {
+            return reply.code(404).send({ error: error.message, message: "Context Room not found" });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/context-rooms/selection-rewrite",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          body: Type.Object({
+            roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            documentName: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+            selectedText: Type.String({ minLength: 1, maxLength: 20_000 }),
+            instruction: Type.Optional(Type.String({ maxLength: 2_000 })),
+            contextBefore: Type.Optional(Type.String({ maxLength: 4_000 })),
+            contextAfter: Type.Optional(Type.String({ maxLength: 4_000 })),
+            blockType: Type.Optional(Type.String({ maxLength: 64 })),
+            responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+          }, { additionalProperties: false }),
+        },
+      },
+      async (request, reply) => {
+        if (!roomAgent) {
+          return reply.code(503).send({ error: "context_room_agent_not_configured" });
+        }
+        const body = request.body;
+        if (!body.selectedText.trim()) {
+          return reply.code(400).send({ error: "context_room_selection_required" });
+        }
+        const invocationId = await roomAgent.dispatchDetached({
+          task: "selection-rewrite",
+          taskInput: {
+            selectedText: body.selectedText,
+            ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),
+            ...(body.contextBefore?.trim() ? { contextBefore: body.contextBefore } : {}),
+            ...(body.contextAfter?.trim() ? { contextAfter: body.contextAfter } : {}),
+            ...(body.blockType?.trim() ? { blockType: body.blockType } : {}),
+            ...(body.roomId ? { roomId: body.roomId } : {}),
+            ...(body.documentName ? { documentName: body.documentName } : {}),
+            ...(body.responseLanguage ? { responseLanguage: body.responseLanguage } : {}),
+          },
+        });
+        return { invocationId };
       },
     );
   };

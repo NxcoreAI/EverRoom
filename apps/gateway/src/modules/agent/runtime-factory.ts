@@ -93,7 +93,7 @@ export function createAgentRuntime(
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
   // 降级启动：AI 未配置时返回占位 runtime（run 立即 runtime_config_not_ready），
   // 等 runtime config 保存后 AgentResolver.reload 换成真实 Pi runtime。
-  if (!isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
+  if (!config.pi || !isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
   const routedRoomByRun = new Map<string, string>();
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi),
@@ -175,20 +175,6 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
     systemPrompt: bundle.systemPrompt,
-  });
-}
-
-export function createContextRoomAgentRuntime(config: GatewayConfig): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi) || !config.backgroundPi?.memory) return null;
-  const { knowledge: _knowledge, mcp: _mcp, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...pi,
-    includeBashTool: false,
-    builtinTools: [],
-    maxToolCallsPerRun: 8,
-    sessionsDir: join(pi.sessionsDir, "context-room-create"),
-    workingDirectory: join(pi.workingDirectory, "context-room-create"),
-    agentDirectory: join(pi.agentDirectory, "context-room-create"),
   });
 }
 

@@ -54,6 +54,11 @@ class FakeGraphics implements PixiGraphics {
     return this
   }
 
+  drawPolygon(points: number[]) {
+    this.operations.push(`drawPolygon:${points.join(',')}`)
+    return this
+  }
+
   endFill() {
     this.operations.push('endFill')
     return this
@@ -139,7 +144,7 @@ class FakeParticleContainer implements PixiParticleContainer {
 
   constructor(readonly options: {
     maxSize?: number
-    properties?: { position: boolean; tint?: boolean }
+    properties?: { position: boolean; alpha?: boolean; scale?: boolean; tint?: boolean }
     batchSize?: number
     autoResize?: boolean
   }) {}
@@ -300,7 +305,7 @@ function createFakes() {
     ParticleContainer: class extends FakeParticleContainer {
       constructor(
         maxSize?: number,
-        properties?: { position: boolean; tint?: boolean },
+        properties?: { position: boolean; alpha?: boolean; scale?: boolean; tint?: boolean },
         batchSize?: number,
         autoResize?: boolean,
       ) {
@@ -396,6 +401,35 @@ describe('PixiForceGraphRenderer', () => {
       .toContain('lineStyle:2.04,4026358,1')
   })
 
+  it('renders Room type icons with one shared texture per icon type', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [
+        { icon: 'target', radius: 29 },
+        { icon: 'target', radius: 29 },
+        { icon: 'book', radius: 22 },
+      ],
+      positions: new Float32Array([20, 30, 80, 90, 140, 150]),
+    })
+
+    expect(fakes.textures).toHaveLength(3)
+    expect(renderer.iconParticleContainers).toEqual([fakes.particles[1], fakes.particles[2]])
+    expect(fakes.particles[1]?.children).toHaveLength(2)
+    expect(fakes.particles[2]?.children).toHaveLength(1)
+    expect((fakes.particles[1]?.children[0] as FakeSprite).texture)
+      .toBe((fakes.particles[1]?.children[1] as FakeSprite).texture)
+    expect((fakes.particles[2]?.children[0] as FakeSprite).texture)
+      .not.toBe((fakes.particles[1]?.children[0] as FakeSprite).texture)
+    expect(fakes.particles.slice(1).flatMap((container) => container.children).map((sprite) => [sprite.x, sprite.y])).toEqual([
+      [20, 30],
+      [80, 90],
+      [140, 150],
+    ])
+  })
+
   it('raises label texture resolution in stable steps while zooming in', async () => {
     const fakes = createFakes()
     await createPixiForceGraphRenderer({
@@ -423,7 +457,7 @@ describe('PixiForceGraphRenderer', () => {
     const renderer = await createPixiForceGraphRenderer({
       dependencies: fakes.dependencies,
       edges: [
-        { id: 'manual-edge', source: 0, target: 1, label: 'Depends on' },
+        { id: 'manual-edge', source: 0, target: 1, label: 'Depends on', labelColor: 0xac7629 },
         { id: 'unlabeled-edge', source: 1, target: 2 },
       ],
       host: createHost(),
@@ -432,6 +466,7 @@ describe('PixiForceGraphRenderer', () => {
     })
 
     expect(fakes.texts.map((label) => label.text)).toEqual(['Depends on'])
+    expect(fakes.texts[0]?.tint).toBe(0xac7629)
     expect(renderer.activeLabelCount()).toBe(0)
   })
 
@@ -580,7 +615,7 @@ describe('PixiForceGraphRenderer', () => {
     expect(viewport.plugins.pause).not.toHaveBeenCalled()
   })
 
-  it('keeps one texture, one particle container, and two Graphics objects for 10,000 nodes', async () => {
+  it('keeps one node texture, one particle container, and two Graphics objects for 10,000 nodes without icons', async () => {
     const fakes = createFakes()
     const nodeCount = 10_000
     const renderer = await createPixiForceGraphRenderer({
