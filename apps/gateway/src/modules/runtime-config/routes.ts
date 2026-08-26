@@ -34,13 +34,28 @@ export function runtimeConfigRoutes(manager: RuntimeConfigManager): FastifyPlugi
     };
     app.get("/v1/runtime-config", { schema: { tags: ["runtime-config"] } }, async () =>
       withFlag(manager.snapshot(true)));
-    app.put("/v1/runtime-config/user", { schema: { tags: ["runtime-config"], body: ConfigBody } }, async (request) => withFlag(manager.set("user", request.body)));
+    app.put("/v1/runtime-config/user", { schema: { tags: ["runtime-config"], body: ConfigBody } }, async (request) => {
+      manager.set("user", request.body);
+      return withFlag(manager.snapshot(true));
+    });
     // Never return the decrypted SaaS payload to the renderer. The main process
     // receives the secret from SaaS, but all gateway snapshots crossing IPC are redacted.
-    app.put("/v1/runtime-config/saas", { schema: { tags: ["runtime-config"], body: ConfigBody } }, async (request) => withFlag(manager.set("saas", request.body)));
-    app.delete("/v1/runtime-config/user", { schema: { tags: ["runtime-config"] } }, async () => withFlag(manager.clear("user")));
-    app.delete("/v1/runtime-config/saas", { schema: { tags: ["runtime-config"] } }, async () => withFlag(manager.clear("saas")));
-    app.put("/v1/runtime-config/source", { schema: { tags: ["runtime-config"], body: SourceBody } }, async (request) => withFlag(manager.selectSource(request.body.source)));
+    app.put("/v1/runtime-config/saas", { schema: { tags: ["runtime-config"], body: ConfigBody } }, async (request) => {
+      manager.set("saas", request.body);
+      return withFlag(manager.snapshot(true));
+    });
+    app.delete("/v1/runtime-config/user", { schema: { tags: ["runtime-config"] } }, async () => {
+      manager.clear("user");
+      return withFlag(manager.snapshot(true));
+    });
+    app.delete("/v1/runtime-config/saas", { schema: { tags: ["runtime-config"] } }, async () => {
+      manager.clear("saas");
+      return withFlag(manager.snapshot(true));
+    });
+    app.put("/v1/runtime-config/source", { schema: { tags: ["runtime-config"], body: SourceBody } }, async (request) => {
+      manager.selectSource(request.body.source);
+      return withFlag(manager.snapshot(true));
+    });
     /**
      * 连通测试（启动 gate 放行前的最后一关）：对当前生效配置的 LLM 端点发
      * 一次 max_tokens=1 的真实请求，2xx 才算 valid。凭据不回传——apiKey

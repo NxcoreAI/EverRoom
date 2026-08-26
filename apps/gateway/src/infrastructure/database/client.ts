@@ -224,6 +224,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
 
   const sqlite = new Database(databasePath);
   sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("secure_delete = ON");
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("busy_timeout = 5000");
   sqlite.pragma("synchronous = NORMAL");

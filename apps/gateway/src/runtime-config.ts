@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import type { GatewayDatabase } from "./infrastructure/database/client.js";
 import { gatewayMetadata, runtimeConfigStore } from "./infrastructure/database/schema.js";
+import { registerSecret } from "./security/secret-redaction.js";
+import type { SecretStore } from "./security/secret-store.js";
 
 export interface RuntimeAiConfig {
   provider: string;
@@ -49,6 +51,10 @@ export interface RuntimeConfigSnapshot {
   availableSources: RuntimeConfigSource[];
   configVersion: number;
   updatedAt: string;
+  webSearchCredential: {
+    configured: boolean;
+    source: "user" | "saas" | "env" | "none";
+  };
 }
 
 const SECRET_KEYS = new Set([
@@ -70,6 +76,15 @@ function redact(value: unknown): unknown {
     key,
     SECRET_KEYS.has(key) && typeof child === "string" && child ? "********" : redact(child),
   ]));
+}
+
+function stripWebSearchApiKey(config: RuntimeConfig): RuntimeConfig {
+  const output = clone(config);
+  if (output.webSearch) {
+    const { apiKey: _apiKey, ...webSearch } = output.webSearch;
+    output.webSearch = webSearch as RuntimeAiConfig;
+  }
+  return output;
 }
 
 function merge(base: RuntimeConfig, override: Partial<RuntimeConfig>): RuntimeConfig {
@@ -178,14 +193,21 @@ export class RuntimeConfigManager {
   private current: RuntimeConfigSnapshot;
   private readonly listeners = new Set<(snapshot: RuntimeConfigSnapshot) => void>();
 
-  constructor(private readonly db: GatewayDatabase, defaultPath = defaultConfigPath()) {
+  constructor(
+    private readonly db: GatewayDatabase,
+    private readonly secrets: SecretStore,
+    defaultPath = defaultConfigPath(),
+    private readonly environmentSearch: RuntimeAiConfig | null = null,
+  ) {
+    if (environmentSearch?.apiKey) registerSecret(environmentSearch.apiKey);
+    this.migrateSearchSecrets();
     const parsed = validateConfig(JSON.parse(readFileSync(defaultPath, "utf8")));
     this.current = this.resolve(parsed);
   }
 
   snapshot(redacted = false): RuntimeConfigSnapshot {
     const result = clone(this.current);
-    if (redacted) result.config = redact(result.config) as RuntimeConfig;
+    if (redacted) result.config = stripWebSearchApiKey(redact(result.config) as RuntimeConfig);
     return result;
   }
 
@@ -196,7 +218,10 @@ export class RuntimeConfigManager {
 
   set(source: Exclude<RuntimeConfigSource, "default">, input: unknown): RuntimeConfigSnapshot {
     const previous = this.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, source)).get();
-    const config = validateConfig(preserveMasked(input, previous?.payload));
+    const candidate = clone(input) as Record<string, unknown>;
+    const searchSecret = this.extractSearchSecret(source, candidate);
+    const config = validateConfig(preserveMasked(candidate, previous?.payload));
+    this.secrets.update({ [`search:${source}`]: searchSecret });
     const version = Math.max(this.current.configVersion, previous?.configVersion ?? 0) + 1;
     const now = new Date();
     this.db.transaction((tx) => {
@@ -218,6 +243,7 @@ export class RuntimeConfigManager {
   }
 
   clear(source: Exclude<RuntimeConfigSource, "default">): RuntimeConfigSnapshot {
+    this.secrets.delete(`search:${source}`);
     this.db.delete(runtimeConfigStore).where(eq(runtimeConfigStore.source, source)).run();
     const selected = this.selectedSource();
     if (selected === source) this.db.delete(gatewayMetadata).where(eq(gatewayMetadata.key, "runtime_config_source")).run();
@@ -231,6 +257,13 @@ export class RuntimeConfigManager {
       throw new Error(`runtime_config_source_unavailable:${source}`);
     }
     this.db.insert(gatewayMetadata).values({ key: "runtime_config_source", value: source, updatedAt: new Date() }).onConflictDoUpdate({ target: gatewayMetadata.key, set: { value: source, updatedAt: new Date() } }).run();
+    this.current = this.resolve(this.defaultConfig(), this.current.configVersion + 1);
+    this.emit();
+    return this.snapshot();
+  }
+
+  clearManagedSecrets(): RuntimeConfigSnapshot {
+    if (this.secrets.isAvailable()) this.secrets.update({ "search:user": undefined, "search:saas": undefined });
     this.current = this.resolve(this.defaultConfig(), this.current.configVersion + 1);
     this.emit();
     return this.snapshot();
@@ -258,9 +291,82 @@ export class RuntimeConfigManager {
     } else if (selectedSource === "saas" && saas) {
       config = merge(config, saas.payload as RuntimeConfig);
     }
+    const credential = this.searchCredential(selectedSource);
+    const selectedSearch = config.webSearch ?? {} as RuntimeAiConfig;
+    if (this.environmentSearch || config.webSearch) {
+      config.webSearch = { ...selectedSearch } as RuntimeAiConfig;
+      for (const key of ["provider", "model", "baseUrl", "api"] as const) {
+        if (!config.webSearch[key] && this.environmentSearch?.[key]) config.webSearch[key] = this.environmentSearch[key];
+      }
+      config.webSearch.apiKey = credential.value;
+    }
     const updatedAt = selected?.updatedAt?.toISOString() ?? new Date().toISOString();
     const version = Math.max(minimumVersion, selected?.configVersion ?? 1);
-    return { config: { ...config, configVersion: version, updatedAt }, source: selectedSource, selectedSource, availableSources, configVersion: version, updatedAt };
+    return {
+      config: { ...config, configVersion: version, updatedAt },
+      source: selectedSource,
+      selectedSource,
+      availableSources,
+      configVersion: version,
+      updatedAt,
+      webSearchCredential: { configured: Boolean(credential.value), source: credential.source },
+    };
+  }
+
+  private searchCredential(selectedSource: RuntimeConfigSource): {
+    value: string;
+    source: RuntimeConfigSnapshot["webSearchCredential"]["source"];
+  } {
+    const candidates = selectedSource === "user"
+      ? [["user", this.secrets.get("search:user")], ["saas", this.secrets.get("search:saas")]] as const
+      : selectedSource === "saas"
+        ? [["saas", this.secrets.get("search:saas")]] as const
+        : [];
+    for (const [source, value] of candidates) if (value) return { value, source };
+    return this.environmentSearch?.apiKey
+      ? { value: this.environmentSearch.apiKey, source: "env" }
+      : { value: "", source: "none" };
+  }
+
+  private extractSearchSecret(
+    source: Exclude<RuntimeConfigSource, "default">,
+    input: Record<string, unknown>,
+  ): string | undefined {
+    const webSearch = input.webSearch;
+    if (!webSearch || typeof webSearch !== "object" || Array.isArray(webSearch)) {
+      return this.secrets.get(`search:${source}`);
+    }
+    const section = webSearch as Record<string, unknown>;
+    const raw = section.apiKey;
+    delete section.apiKey;
+    if (raw === undefined) return this.secrets.get(`search:${source}`);
+    if (typeof raw === "string") {
+      if (raw === "********" || raw === "[REDACTED]") return this.secrets.get(`search:${source}`);
+      return raw.trim() || undefined;
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("runtime_config_invalid:webSearch.apiKey");
+    const mutation = raw as { operation?: unknown; value?: unknown };
+    if (mutation.operation === "keep") return this.secrets.get(`search:${source}`);
+    if (mutation.operation === "delete") return undefined;
+    if (mutation.operation === "set" && typeof mutation.value === "string" && mutation.value.trim()) {
+      return mutation.value.trim();
+    }
+    throw new Error("runtime_config_invalid:webSearch.apiKey");
+  }
+
+  private migrateSearchSecrets(): void {
+    for (const source of ["user", "saas"] as const) {
+      const row = this.db.select().from(runtimeConfigStore).where(eq(runtimeConfigStore.source, source)).get();
+      if (!row) continue;
+      const payload = clone(row.payload) as RuntimeConfig;
+      const current = payload.webSearch;
+      const value = current?.apiKey;
+      if (typeof value !== "string" || !value || value === "********") continue;
+      if (this.secrets.isAvailable()) this.secrets.set(`search:${source}`, value);
+      const { apiKey: _apiKey, ...webSearch } = current;
+      payload.webSearch = webSearch as RuntimeAiConfig;
+      this.db.update(runtimeConfigStore).set({ payload }).where(eq(runtimeConfigStore.source, source)).run();
+    }
   }
 
   private selectedSource(): RuntimeConfigSource | null {

@@ -166,6 +166,11 @@ export interface PiAgentRuntimeTool {
 
 export interface PiAgentRuntimeIntegration {
   tools?: readonly PiAgentRuntimeTool[];
+  executeMcpCall?: <T>(
+    input: StartRuntimeRunInput,
+    tool: string,
+    invoke: () => Promise<T>,
+  ) => Promise<T>;
   /**
    * 会话级 wiki 作用域解析（Room 级 wiki 模式）：run 启动前按
    * roomId 解析本 Room 的 wiki 集合；未提供或解析失败时回退配置默认集。
@@ -521,6 +526,15 @@ export class PiAgentRuntime implements AgentRuntime {
               config: { mcpServers } as NonNullable<
                 NonNullable<Parameters<typeof createMcpAdapter>[0]>["config"]
               >,
+              ...(this.integration.executeMcpCall
+                ? {
+                    callTool: <T>(identity: { server: string; tool: string }, invoke: () => Promise<T>) => {
+                      const input = context.current;
+                      if (!input) throw new Error("MCP tool is not bound to an active run");
+                      return this.integration.executeMcpCall!(input, `${identity.server}.${identity.tool}`, invoke);
+                    },
+                  }
+                : {}),
             }),
           ]
         : []),

@@ -399,6 +399,10 @@ export interface RuntimeConfigSnapshot {
   availableSources: Array<'user' | 'saas' | 'default'>
   configVersion: number
   updatedAt: string
+  webSearchCredential?: {
+    configured: boolean
+    source: 'user' | 'saas' | 'env' | 'none'
+  }
   /** primary AI 四要素（provider/model/baseUrl/apiKey）是否已填写（占位空串视为未配置）。 */
   primaryConfigured?: boolean
 }
@@ -684,7 +688,14 @@ export interface NxcoreDesktopApi {
   }
   mcp: {
     listServers(): Promise<McpServersSnapshot>
-    saveServers(servers: McpServersSnapshot['servers']): Promise<McpServersSnapshot>
+    saveServers(servers: import('./mcp').McpServersMutation): Promise<McpServersSnapshot>
+  }
+  externalCalls: {
+    listPolicies(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallPolicy>>
+    savePolicy(input: import('./external-calls').ExternalCallPolicyInput): Promise<import('./external-calls').ExternalCallPolicy>
+    deletePolicy(id: string): Promise<void>
+    listUsage(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallUsage>>
+    listAudits(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallAudit>>
   }
   screenCapture: {
     captureCurrentWindow(): Promise<WindowScreenshotResult>

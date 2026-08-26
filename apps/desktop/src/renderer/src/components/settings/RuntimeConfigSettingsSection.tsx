@@ -17,7 +17,7 @@ import {
   type ManualAsrFields,
 } from '../runtimeConfigFormState'
 
-type SectionTab = 'llm' | 'embedding' | 'vlm' | 'asr'
+type SectionTab = 'llm' | 'embedding' | 'vlm' | 'asr' | 'search'
 
 function pretty(value: Record<string, unknown>): string { return `${JSON.stringify(value, null, 2)}\n` }
 
@@ -53,6 +53,8 @@ export function RuntimeConfigSettingsSection() {
   const [embedding, setEmbedding] = useState<ManualAiConfigFields>(emptyAiFields())
   const [vlm, setVlm] = useState<ManualAiConfigFields>(emptyAiFields())
   const [asr, setAsr] = useState<ManualAsrFields>(emptyAsrFields())
+  const [search, setSearch] = useState<ManualAiConfigFields>(emptyAiFields())
+  const [deleteSearchKey, setDeleteSearchKey] = useState(false)
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [jsonText, setJsonText] = useState('')
   const [busy, setBusy] = useState<'save' | 'json' | 'test' | null>(null)
@@ -68,6 +70,7 @@ export function RuntimeConfigSettingsSection() {
       setEmbedding(emptyAiFields())
       setVlm(emptyAiFields())
       setAsr(emptyAsrFields())
+      setSearch(emptyAiFields())
       setJsonText('')
       return
     }
@@ -75,6 +78,14 @@ export function RuntimeConfigSettingsSection() {
     setEmbedding(embeddingFieldsFromSnapshot(next))
     setVlm(vlmFieldsFromSnapshot(next))
     setAsr(asrFieldsFromSnapshot(next))
+    const webSearch = (next.config.webSearch ?? {}) as Record<string, unknown>
+    setSearch({
+      provider: typeof webSearch.provider === 'string' ? webSearch.provider : 'openai-compatible',
+      model: typeof webSearch.model === 'string' ? webSearch.model : '',
+      baseUrl: typeof webSearch.baseUrl === 'string' ? webSearch.baseUrl : '',
+      apiKey: '',
+    })
+    setDeleteSearchKey(false)
     setJsonText(pretty(next.config as Record<string, unknown>))
   }
 
@@ -87,10 +98,27 @@ export function RuntimeConfigSettingsSection() {
   /** 表单保存：四段校验（可选段 all-or-nothing）通过后一次写入 user source。 */
   const saveForm = async () => {
     setBusy('save'); setMessage(null); setFieldError(null); setTestResult(null)
-    const error = aiFieldsError(llm, t) ?? aiFieldsError(embedding, t) ?? aiFieldsError(vlm, t) ?? asrFieldsError(asr, t)
+    const searchReady = !search.model.trim() && !search.baseUrl.trim()
+      ? null
+      : search.model.trim() && search.baseUrl.trim() && (search.apiKey.trim() || snapshot?.webSearchCredential?.configured || deleteSearchKey)
+        ? null
+        : t('surface:configGate.embeddingIncomplete')
+    const error = aiFieldsError(llm, t) ?? aiFieldsError(embedding, t) ?? aiFieldsError(vlm, t) ?? asrFieldsError(asr, t) ?? searchReady
     if (error) { setFieldError(error); setBusy(null); return }
     try {
-      const next = await window.nxcore?.runtimeConfig.saveUser(buildUserConfig(snapshot, { primary: llm, embedding, vlm, asr }))
+      const config = buildUserConfig(snapshot, { primary: llm, embedding, vlm, asr })
+      config.webSearch = {
+        provider: search.provider.trim() || 'openai-compatible',
+        model: search.model.trim(),
+        baseUrl: search.baseUrl.trim(),
+        api: 'openai-completions',
+        apiKey: deleteSearchKey
+          ? { operation: 'delete' }
+          : search.apiKey.trim()
+            ? { operation: 'set', value: search.apiKey.trim() }
+            : { operation: 'keep' },
+      }
+      const next = await window.nxcore?.runtimeConfig.saveUser(config)
       if (next) { seedFromSnapshot(next); setMessage(t('surface:settings.rcSaved')) }
     } catch (saveError) {
       setMessage(saveError instanceof Error ? saveError.message : String(saveError))
@@ -151,6 +179,10 @@ export function RuntimeConfigSettingsSection() {
   const updateEmbedding = (key: keyof ManualAiConfigFields, value: string) => setEmbedding((c) => ({ ...c, [key]: value }))
   const updateVlm = (key: keyof ManualAiConfigFields, value: string) => setVlm((c) => ({ ...c, [key]: value }))
   const updateAsr = (key: 'model' | 'baseUrl' | 'apiKey', value: string) => setAsr((c) => ({ ...c, [key]: value }))
+  const updateSearch = (key: keyof ManualAiConfigFields, value: string) => {
+    setDeleteSearchKey(false)
+    setSearch((current) => ({ ...current, [key]: value }))
+  }
   const updateOss = (key: keyof ManualAsrFields['oss'], value: string) => setAsr((c) => ({ ...c, oss: { ...c.oss, [key]: value } }))
 
   const aiLabels = {
@@ -176,6 +208,7 @@ export function RuntimeConfigSettingsSection() {
     { id: 'embedding', label: t('surface:settings.rcTabEmbedding'), optional: true },
     { id: 'vlm', label: t('surface:settings.rcTabVlm'), optional: true },
     { id: 'asr', label: t('surface:settings.rcTabAsr'), optional: true },
+    { id: 'search', label: t('surface:settings.rcTabSearch'), optional: true },
   ]
 
   return <section id="settings-runtime-config" className="reality-settings-section settings-anchor-section" aria-labelledby="runtime-config-title">
@@ -248,6 +281,20 @@ export function RuntimeConfigSettingsSection() {
             <input value={asr.oss.prefix} placeholder="nxcore-asr" onChange={(event) => updateOss('prefix', event.target.value)} /></label>
         </div>
         <p className="rc-form-hint">{t('surface:settings.rcTabHintAsr')}</p>
+      </> : null}
+      {tab === 'search' ? <>
+        <label className="rc-form-field"><span>{aiLabels.model}</span>
+          <input value={search.model} placeholder="qwen-plus" onChange={(event) => updateSearch('model', event.target.value)} /></label>
+        <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
+          <input value={search.baseUrl} placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" onChange={(event) => updateSearch('baseUrl', event.target.value)} /></label>
+        <label className="rc-form-field"><span>{aiLabels.apiKey}</span>
+          <input type="password" value={search.apiKey} placeholder={snapshot?.webSearchCredential?.configured ? t('surface:settings.rcSearchConfigured') : 'sk-...'} onChange={(event) => updateSearch('apiKey', event.target.value)} /></label>
+        <p className="rc-form-hint">{snapshot?.webSearchCredential?.configured
+          ? t('surface:settings.rcSearchSource', { source: snapshot.webSearchCredential.source })
+          : t('surface:settings.rcSearchNotConfigured')}</p>
+        {snapshot?.webSearchCredential?.source === 'user' ? <button type="button" className="secondary-button" onClick={() => { setDeleteSearchKey(true); setSearch((current) => ({ ...current, apiKey: '' })) }} disabled={busy !== null || deleteSearchKey}>
+          <Trash2 aria-hidden="true" />{deleteSearchKey ? t('surface:settings.rcSearchDeletePending') : t('surface:settings.rcSearchDelete')}
+        </button> : null}
       </> : null}
 
       {fieldError ? <p className="rc-form-error" role="alert">{fieldError}</p> : null}

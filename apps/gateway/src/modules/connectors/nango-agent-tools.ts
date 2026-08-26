@@ -5,6 +5,10 @@ import type {
 import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { ConnectorManager } from "./manager.js";
 import type { NangoExecutor } from "./nango-executor.js";
+import {
+  ExternalCallBudgetExceededError,
+  type ExternalCallBudgetService,
+} from "../external-calls/service.js";
 
 const MODEL_CONTEXT_OUTPUT_LIMIT = 64 * 1024;
 const PLACEHOLDER_PATTERN = /(?:\byour_username\b|\busername_here\b|\breplace_me\b|<\s*(?:username|paste\b|insert\b|粘贴|填写|替换)[^>]*>|\{\{\s*[^}]+\s*\}\})/i;
@@ -82,6 +86,14 @@ function nangoFailurePolicy(
   operation: "list" | "trigger" | "request",
   error: unknown,
 ): PiAgentRuntimeToolFailurePolicy {
+  if (error instanceof ExternalCallBudgetExceededError) {
+    return {
+      category: "external_call_budget_exceeded",
+      recoverable: true,
+      instruction: "Skip this tool and continue with another available path.",
+      retryKey: "external-call-budget",
+    };
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (/oauth|unauthori[sz]ed|forbidden|missing scope|insufficient scope|token.*expired|HTTP 401|HTTP 403|connection_disabled/i.test(message)) {
     return {
@@ -122,6 +134,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 export function createNangoPiTools(
   manager: ConnectorManager,
   executor: NangoExecutor,
+  externalCalls?: ExternalCallBudgetService,
 ): PiAgentRuntimeTool[] {
   return [
     {
@@ -257,11 +270,21 @@ export function createNangoPiTools(
           throw new Error("Query parameters contain an unresolved example placeholder. Use a real value from the user or a previous tool result.");
         }
         signal?.throwIfAborted();
-        const result = await executor.proxyGet(
-          connection.nangoConnectionId,
-          connection.nangoConfigKey,
-          target.toString(),
-        );
+        const invoke = async (markDispatched: () => void) => {
+          markDispatched();
+          return executor.proxyGet(
+            connection.nangoConnectionId,
+            connection.nangoConfigKey,
+            target.toString(),
+          );
+        };
+        const result = externalCalls
+          ? await externalCalls.execute("CONNECTOR", "nango_request", {
+              source: "agent",
+              runId: input.runId,
+              correlationId: input.sessionId,
+            }, invoke)
+          : await invoke(() => undefined);
         return textResult(result);
       },
       classifyFailure: (error: unknown) => nangoFailurePolicy("request", error),

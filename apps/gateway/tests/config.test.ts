@@ -7,6 +7,8 @@ describe("loadConfig", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {});
 
     expect(config.agentRuntime).toBe("fake");
+    expect(config.externalCallUserId).toBe("local-user");
+    expect(config.externalCallWorkspaceId).toBe("local-workspace");
     expect(config.pi).toBeNull();
     expect(config.cursorCompletionPi).toBeNull();
     expect(config.backgroundPi).toBeNull();
@@ -16,6 +18,15 @@ describe("loadConfig", () => {
       defaultTimeoutMs: 300_000,
       maxConcurrent: 4,
     });
+  });
+
+  it("loads server-owned external call budget identity", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_EXTERNAL_CALL_USER_ID: "user-a",
+      NXCORE_EXTERNAL_CALL_WORKSPACE_ID: "workspace-a",
+    });
+    expect(config.externalCallUserId).toBe("user-a");
+    expect(config.externalCallWorkspaceId).toBe("workspace-a");
   });
 
   it("loads the filesystem subagent directory and execution limits", () => {
