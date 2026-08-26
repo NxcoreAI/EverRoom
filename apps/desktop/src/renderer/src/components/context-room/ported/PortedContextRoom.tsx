@@ -165,7 +165,11 @@ export function PortedContextRoom({
         setState((current) => {
           const room = current.rooms.find((item) => item.id === activeRoomId)
           if (!room) return current
-          const updated = applyGeneratedRoomContext(room, context)
+          const updated = applyGeneratedRoomContext(
+            room,
+            context,
+            roomDocuments.documentsByRoom[activeRoomId] ?? [],
+          )
           if (updated === room) return current
           return {
             ...current,
