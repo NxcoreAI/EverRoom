@@ -359,7 +359,12 @@ export class AgentService {
     private readonly connectorMode: "direct" | "local" = "direct",
     private readonly disposeRuntime = true,
   ) {
-    const runtimeWithApprovals = this.runtime as AgentRuntime & {
+    this.attachBashApprovalBridge(this.runtime);
+  }
+
+  /** replaceRuntime 热替换后也必须重挂，否则审批立即回落 false（无 UI 询问）。 */
+  private attachBashApprovalBridge(runtime: AgentRuntime): void {
+    const runtimeWithApprovals = runtime as AgentRuntime & {
       setBashApprovalHandler?: (handler: ((request: PiBashApprovalRequest) => Promise<boolean>) | null) => void;
       setBashSessionAuthorizationChecker?: (checker: ((sessionId: string) => boolean) | null) => void;
     };
@@ -397,6 +402,7 @@ export class AgentService {
   async replaceRuntime(runtime: AgentRuntime): Promise<void> {
     const previous = this.runtime;
     this.runtime = runtime;
+    this.attachBashApprovalBridge(runtime);
     await Promise.allSettled([...this.runtimeEventConsumers.values()]);
     if (previous !== runtime) await previous.dispose();
   }

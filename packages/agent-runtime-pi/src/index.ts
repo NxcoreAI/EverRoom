@@ -134,7 +134,7 @@ export interface PiAgentRuntimeConfig {
   bashSandbox?: {
     allowedRoots?: string[];
     timeoutMs?: number;
-    /** Commands matching any expression are rejected before approval. */
+    /** Commands matching any expression are rejected before approval. Default: none — everything goes through approval UI. */
     deniedPatterns?: string[];
   };
 }
@@ -247,14 +247,9 @@ function createBashSandboxExtension(
   const allowedRoots = (policy.allowedRoots?.length ? policy.allowedRoots : [config.workingDirectory])
     .map((root) => `${resolve(root)}${sep}`);
   const timeoutMs = Math.max(1_000, policy.timeoutMs ?? 30_000);
-  const deniedPatterns = (policy.deniedPatterns ?? [
-    "(^|[;&|])\\s*(sudo|su)\\b",
-    "(^|[;&|])\\s*(rm|mkfs|shutdown|reboot)\\b",
-    "(^|[;&|])\\s*(curl|wget)\\b[^;|]*(--upload|-T|--data|--request\\s+(POST|PUT|PATCH))",
-    "(^|[;&|])\\s*chmod\\s+(-R\\s+)?777\\b",
-    "(^|[\\s;&|])(?:/etc|/var|/private|/Users|/root)(?:[/\\s;&|]|$)",
-    "(?:^|[/\\s])\\.\\.(?:[/\\s;&|]|$)",
-  ]).map((pattern) => new RegExp(pattern, "i"));
+  // ponytail: 默认不硬拒任何命令（sudo/rm 等一律走审批 UI 由用户决定）；
+  // 正则粗筛误伤率高于收益，需要收紧时由部署方显式传 deniedPatterns。
+  const deniedPatterns = (policy.deniedPatterns ?? []).map((pattern) => new RegExp(pattern, "i"));
   return (pi) => {
     pi.on("tool_call", async (event) => {
       if (event.toolName !== "bash") return;
