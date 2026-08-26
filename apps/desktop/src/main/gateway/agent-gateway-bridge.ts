@@ -159,6 +159,13 @@ export class AgentGatewayBridge {
     return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/events?${query}`)
   }
 
+  resolveApproval(approvalId: string, decision: 'approved' | 'approved_session' | 'denied'): Promise<{ approvalId: string; decision: string }> {
+    return this.request(`/v1/agent/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+      method: 'POST',
+      data: { decision },
+    })
+  }
+
   async startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun> {
     const run = await this.request<AgentRun>(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',

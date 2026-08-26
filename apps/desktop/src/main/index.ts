@@ -265,6 +265,7 @@ const AGENT_CHANNELS = {
   startRun: 'agent:start-run',
   submitPendingIntent: 'agent:submit-pending-intent',
   cancelRun: 'agent:cancel-run',
+  resolveApproval: 'agent:resolve-approval',
   subscribe: 'agent:subscribe',
   unsubscribe: 'agent:unsubscribe',
 } as const
@@ -1291,6 +1292,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
     bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
+  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision) => bridge.resolveApproval(approvalId, decision))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }

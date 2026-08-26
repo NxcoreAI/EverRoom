@@ -855,6 +855,7 @@ export interface NxcoreDesktopApi {
       input: SubmitPendingAgentIntentInput,
     ): Promise<{ intent: PendingAgentIntent; run: AgentRun }>
     cancelRun(runId: string): Promise<AgentRun>
+    resolveApproval(approvalId: string, decision: 'approved' | 'approved_session' | 'denied'): Promise<{ approvalId: string; decision: string }>
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void

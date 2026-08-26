@@ -96,7 +96,11 @@ export function createAgentRuntime(
   if (!isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
   const routedRoomByRun = new Map<string, string>();
   return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi!),
+    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi),
+    bashSandbox: {
+      allowedRoots: [agentDirectories(config, BUILTIN_AGENT_IDS.primary).workingDirectory],
+      timeoutMs: 30_000,
+    },
     runtimeRole: "user-facing",
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
