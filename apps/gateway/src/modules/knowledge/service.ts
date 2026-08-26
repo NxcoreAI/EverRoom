@@ -380,9 +380,10 @@ export class KnowledgeService {
   private readonly registry: RoomWikiRegistry;
   private readonly entityRegistry: EntityRegistry;
   private readonly router: KnowledgeRouter;
-  private readonly llm: KnowledgeLlm | null;
+  private llm: KnowledgeLlm | null;
+  private readonly externalAgentResolver: AgentResolver | null;
   private readonly roomContextCache = new Map<string, { key: string; value: RoomContextSummary }>();
-  private readonly ownedAgentResolver: AgentResolver | null;
+  private ownedAgentResolver: AgentResolver | null;
   /** 字节与登记表的唯一所有者是 modules/files（U9）；此处仅编排路由/ingest。 */
   private readonly files: FilesService;
   private readonly pendingSchedules = new Map<string, PendingSchedule>();
@@ -413,6 +414,7 @@ export class KnowledgeService {
       ? createKnowledgeAgentResolver(config.dataDir, config.llm)
       : null;
     this.llm = config.llm ? new KnowledgeLlm(agentResolver ?? this.ownedAgentResolver!) : null;
+    this.externalAgentResolver = agentResolver ?? null;
     const embedding = config.embeddingLlm && config.embeddingModel
       ? { client: new EmbeddingClient(config.embeddingLlm, config.embeddingModel), model: config.embeddingModel }
       : null;
@@ -437,6 +439,21 @@ export class KnowledgeService {
   /** runtime config 变更后替换消歧 tie-break 的 embedding 端点（null = 关闭）。 */
   replaceEmbedding(embedding: { client: EmbeddingClient; model: string } | null): void {
     this.router.replaceEmbedding(embedding);
+  }
+
+  /**
+   * runtime config 变更后替换抽取/判定 LLM（null = 关闭）。boot 时 env 未配
+   * NXCORE_KNOWLEDGE_LLM_*、SaaS/用户配置稍后到达的场景由此补上；llm 到位
+   * 同时按需自建 ownedAgentResolver（主进程注入的 resolver 缺 knowledge
+   * agent 时 registerAgent 兜底在 create-server onChange 里做）。
+   */
+  replaceLlm(llm: KnowledgeLlmConfig | null): void {
+    if (!llm) return;
+    if (!this.llm && !this.ownedAgentResolver && !this.externalAgentResolver) {
+      this.ownedAgentResolver = createKnowledgeAgentResolver(this.config.dataDir, llm);
+    }
+    this.llm = new KnowledgeLlm(this.externalAgentResolver ?? this.ownedAgentResolver!);
+    this.router.replaceLlm(this.llm);
   }
 
   /** supervisor 生命周期钩子：崩溃恢复清扫 + 启动 worker 轮询。 */

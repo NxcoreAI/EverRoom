@@ -34,6 +34,7 @@ import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { NangoSupervisor } from './gateway/nango-supervisor'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
+import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv, memoryCoreEnvironment } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
@@ -1014,9 +1015,42 @@ async function syncManagedChildProcesses(snapshot: RuntimeConfigSnapshot): Promi
   const run = managedChildSyncQueue.then(async () => {
     await syncMemoryCoreEnvironment(snapshot)
     await syncCursorCompletionEnvironment(snapshot)
+    await syncKnowledgeServiceEnvironment(snapshot)
   })
   managedChildSyncQueue = run.catch(() => undefined)
   return run
+}
+
+/**
+ * Knowledge Service（Wiki 引擎）的 runtime config 同步：primary 三要素 →
+ * LLM_* 重启托管实例。KS 的 wiki ingest 依赖 LLM；.env 清空迁移 runtime
+ * config 后 spawn env 里 LLM_API_KEY 为空，ingest 会报「LLM apiKey 未配置」。
+ * 与 MemoryCore 同款 JSON 比较去重（配置没变不重启）。
+ */
+let knowledgeServiceAiEnvApplied: string | null = null
+
+async function syncKnowledgeServiceEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
+  try {
+    const supervisor = knowledgeServiceSupervisor
+    const initialConnection = supervisor?.getConnection() ?? null
+    if (!supervisor || !initialConnection) return
+    const nextEnv = knowledgeServiceLlmEnv(snapshot.config)
+    const nextJson = JSON.stringify(nextEnv)
+    if (nextJson === knowledgeServiceAiEnvApplied) return
+    if (initialConnection.managed) {
+      const restarted = await supervisor.restart(nextEnv)
+      if (restarted?.managed) {
+        knowledgeServiceAiEnvApplied = nextJson
+        console.info(`[knowledge] ai env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
+      } else {
+        // 复用模式（外部实例/残留进程占 8421）：env 未真正应用，不标记
+        // applied，下次 sync 重试。
+        console.warn('[knowledge] instance at 8421 is not managed by this app; ai env NOT applied (stray process?)')
+      }
+    }
+  } catch (error) {
+    console.error('[knowledge] failed to sync ai env:', error)
+  }
 }
 
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
@@ -1934,6 +1968,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
     knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
+    // 冷启动先带 .env 透传起 KS（gateway 未起，runtime config 读不到）；
+    // gateway ready 后的 startup syncManagedChildProcesses 会按已存 primary
+    // 三要素重启注入 LLM_*（同 MemoryCore 的窗口收窄策略）。
     const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
       console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
       return null
