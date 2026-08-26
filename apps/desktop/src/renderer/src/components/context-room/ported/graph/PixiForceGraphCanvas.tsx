@@ -36,12 +36,14 @@ interface PixiForceGraphCanvasProps {
   nodes: readonly PixiForceGraphCanvasNode[]
   onResize?: (width: number, height: number) => void
   onDragNode?: (nodeId: string, x: number, y: number) => void
+  onSelectEdge?: (edgeId: string) => void
   onOpenNode?: (nodeId: string) => void
   onReleaseNode?: (nodeId: string) => void
   onSelectNode: (nodeId: string | null) => void
   positions: Float32Array
   revision?: () => number
   selectedId: string | null
+  selectedEdgeId?: string | null
 }
 
 /** React lifecycle shell for the PIXI force-graph renderer. */
@@ -51,6 +53,7 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
   edges,
   nodes,
   onDragNode,
+  onSelectEdge,
   onOpenNode,
   onReleaseNode,
   onResize,
@@ -58,11 +61,12 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
   positions,
   revision,
   selectedId,
+  selectedEdgeId = null,
 }, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<PixiForceGraphRenderer | null>(null)
-  const propsRef = useRef({ nodes, onDragNode, onOpenNode, onReleaseNode, onResize, onSelectNode })
-  propsRef.current = { nodes, onDragNode, onOpenNode, onReleaseNode, onResize, onSelectNode }
+  const propsRef = useRef({ nodes, onDragNode, onOpenNode, onReleaseNode, onResize, onSelectEdge, onSelectNode })
+  propsRef.current = { nodes, onDragNode, onOpenNode, onReleaseNode, onResize, onSelectEdge, onSelectNode }
 
   useImperativeHandle(ref, () => ({
     fitView() {
@@ -86,6 +90,8 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
         positions,
         revision,
         selectedIndex: selectedId ? nodes.findIndex((node) => node.id === selectedId) : null,
+        selectedEdgeId,
+        onEdgeSelect: (edgeId) => propsRef.current.onSelectEdge?.(edgeId),
         onNodeDrag: (index, x, y) => {
           const nodeId = propsRef.current.nodes[index]?.id
           if (nodeId) propsRef.current.onDragNode?.(nodeId, x, y)
@@ -133,6 +139,10 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
     const selectedIndex = selectedId ? nodes.findIndex((node) => node.id === selectedId) : null
     rendererRef.current?.setSelectedIndex(selectedIndex === -1 ? null : selectedIndex)
   }, [nodes, selectedId])
+
+  useEffect(() => {
+    rendererRef.current?.setSelectedEdgeId(selectedEdgeId)
+  }, [selectedEdgeId])
 
   return <div ref={hostRef} className={className} />
 })

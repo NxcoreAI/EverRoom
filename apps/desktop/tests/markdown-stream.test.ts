@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { TiptapJsonContent } from '@nxcore/agent-contract'
+import { TableKit } from '@tiptap/extension-table'
+import { MarkdownManager } from '@tiptap/markdown'
+import { EditorState } from '@tiptap/pm/state'
+import { tableEditing } from '@tiptap/pm/tables'
+import { getSchema } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
 import {
   AppliedSequenceTracker,
   assignStableBlockIds,
   countTiptapTextCharacters,
   documentStreamCharactersPerFrame,
   documentStreamRevealDelay,
+  documentStreamRevealLimits,
   hasVisibleTiptapContent,
   isAgentDocumentAwaitingContent,
   isEmptyTiptapParagraph,
@@ -182,6 +189,49 @@ describe('Markdown stream buffering', () => {
     })
     expect(revealTiptapNode(node, 7)).toEqual(node)
     expect(revealTiptapNode(node, 7)).not.toBe(node)
+  })
+
+  it('reveals a table in one structural frame without table repair artifacts', () => {
+    const extensions = [StarterKit, TableKit]
+    const markdown = new MarkdownManager({ extensions })
+    const schema = getSchema(extensions)
+    const table = markdown.parse([
+      '| A | B | C | D | E |',
+      '| --- | --- | --- | --- | --- |',
+      '| 111 | 222 | 333 | 444 | 555 |',
+      '| 666 | 777 | 888 | 999 | 000 |',
+    ].join('\n')).content?.[0] as TiptapJsonContent
+    const revealLimits = documentStreamRevealLimits(table, 2)
+
+    expect(revealLimits).toEqual([countTiptapTextCharacters(table)])
+
+    let state = EditorState.create({
+      schema,
+      doc: schema.node('doc', null, [schema.node('paragraph')]),
+      plugins: [tableEditing()],
+    })
+    const previewFrom = 0
+    let previewTo = state.doc.content.size
+    for (const characterLimit of revealLimits) {
+      const preview = schema.nodeFromJSON(revealTiptapNode(table, characterLimit))
+      state = state.applyTransaction(state.tr.replaceWith(previewFrom, previewTo, preview)).state
+      previewTo = previewFrom + preview.nodeSize
+    }
+
+    const tables: Array<{ rows: number; cells: number; text: string }> = []
+    state.doc.descendants((node) => {
+      if (node.type.name !== 'table') return
+      tables.push({
+        rows: node.childCount,
+        cells: node.content.content.reduce((total, row) => total + row.childCount, 0),
+        text: node.textContent,
+      })
+    })
+    expect(tables).toEqual([{
+      rows: 3,
+      cells: 15,
+      text: 'ABCDE111222333444555666777888999000',
+    }])
   })
 
   it('uses fast human typing cadence and adapts very large appends', () => {

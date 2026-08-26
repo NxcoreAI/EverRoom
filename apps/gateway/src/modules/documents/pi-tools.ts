@@ -27,6 +27,13 @@ function toPiResult(result: DocumentMcpToolResult): PiAgentRuntimeToolResult {
 }
 
 export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool[] {
+  return createDocumentPiToolsWithRoomBindings(host, new Map());
+}
+
+export function createDocumentPiToolsWithRoomBindings(
+  host: DocumentMcpHost,
+  routedRoomByRun: Map<string, string>,
+): PiAgentRuntimeTool[] {
   return host.listTools().map((definition) => ({
     name: definition.name,
     label: definition.title,
@@ -41,17 +48,40 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
         throw new DocumentRouteMismatchError();
       }
       try {
-        return toPiResult(await host.callTool(
+        const requestedRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        const previouslyRoutedRoomId = routedRoomByRun.get(input.runId);
+        const fixedRoomId = input.roomId ?? previouslyRoutedRoomId ?? null;
+        if (requestedRoomId && fixedRoomId && requestedRoomId !== fixedRoomId) {
+          throw new Error("ROOM_SELECTION_MISMATCH: The document target differs from the Room already bound to this run");
+        }
+        let roomId = fixedRoomId;
+        if (definition.name === "context_room_write_begin" && !roomId) {
+          const selectedRoom = input.availableRooms?.find((room) => room.id === requestedRoomId);
+          if (!selectedRoom) {
+            throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+          }
+          roomId = selectedRoom.id;
+        }
+        const result = await host.callTool(
           definition.name,
           params,
           {
             agentSessionId: input.sessionId,
             runId: input.runId,
-            roomId: input.roomId,
+            roomId,
             availableRooms: input.availableRooms ?? [],
             ...(input.activeDocument ? { activeDocument: input.activeDocument } : {}),
           },
-        ));
+        );
+        if (definition.name === "context_room_write_begin") {
+          const selectedRoomId = typeof result.structuredContent.roomId === "string"
+            ? result.structuredContent.roomId
+            : roomId;
+          if (selectedRoomId) routedRoomByRun.set(input.runId, selectedRoomId);
+        } else if (definition.name === "context_room_write_commit" || definition.name === "context_room_write_abort") {
+          routedRoomByRun.delete(input.runId);
+        }
+        return toPiResult(result);
       } catch (error) {
         throw new Error(JSON.stringify(documentToolErrorPayload(error)), { cause: error });
       }

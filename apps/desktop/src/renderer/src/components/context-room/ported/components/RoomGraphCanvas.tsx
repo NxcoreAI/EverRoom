@@ -9,6 +9,7 @@ import {
 } from 'react'
 
 import type { ContextRoomKind, ContextRoomRecord } from '../types'
+import type { KnowledgeRoomRelationDto } from '../../../../../../shared/knowledge'
 import {
   PixiForceGraphCanvas,
   type PixiForceGraphCanvasHandle,
@@ -18,7 +19,7 @@ import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
 import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import { uiText } from '../adapters'
-import { createRoomGraphData } from './roomGraphModel'
+import { relationTypeLabel } from './RoomRelationControls'
 
 export interface RoomGraphCanvasHandle {
   fitView(): Promise<void>
@@ -27,8 +28,11 @@ export interface RoomGraphCanvasHandle {
 interface RoomGraphCanvasProps {
   compact?: boolean
   rooms: ContextRoomRecord[]
+  relations: KnowledgeRoomRelationDto[]
   selectedId: string | null
+  selectedRelationId?: string | null
   onOpenRoom: (roomId: string) => void
+  onSelectRelation?: (relationId: string) => void
   onSelectRoom: (roomId: string | null) => void
 }
 
@@ -41,48 +45,63 @@ const ROOM_KIND_COLORS: Record<ContextRoomKind, number> = {
   事件: 0xd06b35,
 }
 
-const ROOM_NODE_POSITIONS = [
-  [360, 220],
-  [140, 130],
-  [590, 120],
-  [180, 350],
-  [550, 355],
-  [360, 70],
-  [70, 255],
-  [655, 250],
-] as const
-
 function RoomGraphCanvasComponent(
-  { compact = false, rooms, selectedId, onOpenRoom, onSelectRoom }: RoomGraphCanvasProps,
+  {
+    compact = false,
+    rooms,
+    relations,
+    selectedId,
+    selectedRelationId = null,
+    onOpenRoom,
+    onSelectRelation,
+    onSelectRoom,
+  }: RoomGraphCanvasProps,
   ref: React.ForwardedRef<RoomGraphCanvasHandle>,
 ) {
   const { t } = useLocale()
   const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
   const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
-  const graph = useMemo(() => createRoomGraphData(rooms), [rooms])
   const nodeIndex = useMemo(
-    () => new Map(graph.nodes.map((node, index) => [node.id, index])),
-    [graph.nodes],
+    () => new Map(rooms.map((node, index) => [node.id, index])),
+    [rooms],
   )
-  const nodes = useMemo<PixiForceGraphCanvasNode[]>(() => graph.nodes.map((room) => ({
+  const nodes = useMemo<PixiForceGraphCanvasNode[]>(() => rooms.map((room) => ({
     color: ROOM_KIND_COLORS[room.kind],
     id: room.id,
     label: room.title,
     radius: compact ? 22 : 29,
-  })), [compact, graph.nodes])
-  const edges = useMemo<PixiForceGraphEdge[]>(() => graph.edges.flatMap((edge) => {
-    const source = nodeIndex.get(edge.source)
-    const target = nodeIndex.get(edge.target)
+  })), [compact, rooms])
+  const edges = useMemo<PixiForceGraphEdge[]>(() => relations.flatMap((edge) => {
+    const source = nodeIndex.get(edge.sourceRoomId)
+    const target = nodeIndex.get(edge.targetRoomId)
     return source === undefined || target === undefined
       ? []
-      : [{ source, target }]
-  }), [graph.edges, nodeIndex])
+      : [{
+          id: edge.id,
+          source,
+          target,
+          label: edge.label?.trim() || relationTypeLabel(edge.type, t),
+          directed: edge.directed,
+          color: edge.origin === 'auto' ? 0x929ba8 : 0x3d6ff6,
+          width: edge.strength === 'strong' ? 3 : edge.strength === 'medium' ? 2.1 : 1.25,
+          alpha: edge.strength === 'strong' ? 0.92 : edge.strength === 'medium' ? 0.72 : 0.5,
+        }]
+  }), [relations, nodeIndex, t])
+  const layoutEdges = useMemo(() => relations.flatMap((edge) => (
+    nodeIndex.has(edge.sourceRoomId) && nodeIndex.has(edge.targetRoomId)
+      ? [{ source: edge.sourceRoomId, target: edge.targetRoomId }]
+      : []
+  )), [nodeIndex, relations])
   const fallbackPositions = useMemo(() => {
     const result = new Float32Array(nodes.length * 2)
     nodes.forEach((_, index) => {
-      result[index * 2] = ROOM_NODE_POSITIONS[index]?.[0]
-        ?? 360 + (index - ROOM_NODE_POSITIONS.length) * 70
-      result[index * 2 + 1] = ROOM_NODE_POSITIONS[index]?.[1] ?? 220
+      const ring = Math.floor(Math.sqrt(index))
+      const ringStart = ring * ring
+      const ringSize = Math.max(1, (ring + 1) * (ring + 1) - ringStart)
+      const angle = ((index - ringStart) / ringSize) * Math.PI * 2
+      const radius = ring === 0 ? 0 : 88 + ring * 70
+      result[index * 2] = 360 + Math.cos(angle) * radius
+      result[index * 2 + 1] = 220 + Math.sin(angle) * radius
     })
     return result
   }, [nodes])
@@ -96,16 +115,30 @@ function RoomGraphCanvasComponent(
     let next: ForceGraphLayoutController
     try {
       next = new ForceGraphLayoutController({
-        nodes: graph.nodes.map((room, index) => ({
+        nodes: rooms.map((room, index) => ({
           id: room.id,
           radius: compact ? 22 : 29,
           x: fallbackPositions[index * 2],
           y: fallbackPositions[index * 2 + 1],
         })),
-        edges: graph.edges,
+        edges: layoutEdges,
         options: compact
-          ? { collisionPadding: 8, linkDistance: 105, manyBodyStrength: -230 }
-          : undefined,
+          ? {
+              collisionPadding: 8,
+              collisionStrength: 0.72,
+              linkDistance: 105,
+              linkStrength: 0.22,
+              manyBodyStrength: -105,
+              velocityDecay: 0.56,
+            }
+          : {
+              collisionPadding: 10,
+              collisionStrength: 0.78,
+              linkDistance: 118,
+              linkStrength: 0.24,
+              manyBodyStrength: -135,
+              velocityDecay: 0.54,
+            },
       })
     } catch (error) {
       console.error('Failed to initialize Room force graph layout', error)
@@ -117,7 +150,7 @@ function RoomGraphCanvasComponent(
       console.error('Room force graph worker failed', error)
     })
     return () => next.dispose()
-  }, [compact, fallbackPositions, graph.edges, graph.nodes])
+  }, [compact, fallbackPositions, layoutEdges, rooms])
 
   useImperativeHandle(ref, () => ({
     async fitView() {
@@ -136,14 +169,16 @@ function RoomGraphCanvasComponent(
         positions={layout?.snapshot.positions ?? fallbackPositions}
         revision={layout ? readRevision : undefined}
         selectedId={selectedId}
+        selectedEdgeId={selectedRelationId}
         onResize={resizeLayout}
         onDragNode={(nodeId, x, y) => layout?.drag(nodeId, x, y)}
         onReleaseNode={(nodeId) => layout?.release(nodeId)}
         onOpenNode={onOpenRoom}
+        onSelectEdge={onSelectRelation}
         onSelectNode={onSelectRoom}
       />
       <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.roomNodes')}>
-        {graph.nodes.map((room) => (
+        {rooms.map((room) => (
           <button
             type="button"
             key={room.id}

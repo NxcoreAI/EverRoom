@@ -130,6 +130,109 @@ describe('force graph shared layout', () => {
       .toBeGreaterThanOrEqual(78)
   })
 
+  it('keeps nodes inside the simulation viewport after a large drag', () => {
+    let latest: number[] = []
+    const simulation = createForceGraphSimulation({
+      nodes: [
+        { id: 'a', radius: 20, x: 100, y: 100 },
+        { id: 'b', radius: 20, x: -200, y: 900 },
+      ],
+      edges: [{ source: 'a', target: 'b' }],
+      options: { ...DEFAULT_FORCE_GRAPH_OPTIONS, width: 640, height: 420 },
+      publish: (nodes) => {
+        latest = nodes.flatMap((node) => [node.x ?? 0, node.y ?? 0])
+      },
+      settled: vi.fn(),
+    })
+
+    simulation.drag('a', 2000, -500)
+    simulation.step(40)
+    simulation.stop()
+    expect(latest[0]).toBeGreaterThanOrEqual(32)
+    expect(latest[0]).toBeLessThanOrEqual(608)
+    expect(latest[1]).toBeGreaterThanOrEqual(32)
+    expect(latest[1]).toBeLessThanOrEqual(388)
+    expect(latest[2]).toBeGreaterThanOrEqual(32)
+    expect(latest[2]).toBeLessThanOrEqual(608)
+    expect(latest[3]).toBeGreaterThanOrEqual(32)
+    expect(latest[3]).toBeLessThanOrEqual(388)
+  })
+
+  it('keeps a small drag local instead of scattering the surrounding graph', () => {
+    let latest: number[] = []
+    const simulation = createForceGraphSimulation({
+      nodes: [
+        { id: 'a', x: 250, y: 210 },
+        { id: 'b', x: 390, y: 210 },
+        { id: 'c', x: 320, y: 120 },
+        { id: 'd', x: 320, y: 300 },
+      ],
+      edges: [
+        { source: 'a', target: 'b' },
+        { source: 'a', target: 'c' },
+        { source: 'b', target: 'd' },
+      ],
+      options: {
+        ...DEFAULT_FORCE_GRAPH_OPTIONS,
+        linkDistance: 118,
+        linkStrength: 0.24,
+        manyBodyStrength: -135,
+        velocityDecay: 0.54,
+      },
+      publish: (nodes) => {
+        latest = nodes.flatMap((node) => [node.x ?? 0, node.y ?? 0])
+      },
+      settled: vi.fn(),
+    })
+
+    simulation.step(240)
+    const settled = [...latest]
+    simulation.drag('a', settled[0]! + 8, settled[1]! + 5)
+    simulation.step(12)
+    simulation.release('a')
+    simulation.step(80)
+    simulation.stop()
+
+    const surroundingNodeShifts = [1, 2, 3].map((index) => Math.hypot(
+      latest[index * 2]! - settled[index * 2]!,
+      latest[index * 2 + 1]! - settled[index * 2 + 1]!,
+    ))
+    expect(Math.max(...surroundingNodeShifts)).toBeLessThan(15)
+  })
+
+  it('does not translate every other node opposite to a dragged node', () => {
+    let latest: number[] = []
+    const simulation = createForceGraphSimulation({
+      nodes: [
+        { id: 'a', x: 200, y: 200 },
+        { id: 'b', x: 300, y: 200 },
+        { id: 'c', x: 400, y: 200 },
+      ],
+      edges: [],
+      options: {
+        ...DEFAULT_FORCE_GRAPH_OPTIONS,
+        collisionStrength: 0,
+        manyBodyStrength: 0,
+      },
+      publish: (nodes) => {
+        latest = nodes.flatMap((node) => [node.x ?? 0, node.y ?? 0])
+      },
+      settled: vi.fn(),
+    })
+
+    simulation.step(240)
+    const settled = [...latest]
+    simulation.drag('a', settled[0]! + 120, settled[1]!)
+    simulation.step(20)
+    simulation.stop()
+
+    const untouchedNodeShift = Math.hypot(
+      latest[2]! - settled[2]!,
+      latest[3]! - settled[3]!,
+    )
+    expect(untouchedNodeShift).toBeLessThan(2)
+  })
+
   it('runs d3-force with link, charge, and centering forces', () => {
     const frames: number[][] = []
     const simulation = createForceGraphSimulation({
