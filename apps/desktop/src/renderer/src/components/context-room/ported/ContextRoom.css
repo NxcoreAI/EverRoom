@@ -776,7 +776,6 @@
 }
 
 .context-room-room-graph-layout {
-  --context-room-graph-height: 440px;
   display: block;
   padding: 12px;
   border: 1px solid var(--cr-border);
@@ -792,7 +791,7 @@
 
 .context-room-room-graph-canvas {
   position: relative;
-  height: var(--context-room-graph-height);
+  height: 440px;
   min-width: 0;
   overflow: hidden;
   border-radius: 8px;
@@ -1171,59 +1170,13 @@
   white-space: nowrap;
 }
 
-.context-room-node-people b {
-  font-size: 10.5px;
+.context-room-graph-materials b {
+  font-size: 11px;
 }
 
-.context-room-node-people small {
+.context-room-graph-materials small {
   color: var(--cr-tertiary);
-  font-size: 9.5px;
-}
-
-.context-room-node-resources {
-  display: grid;
-  gap: 5px;
-}
-
-.context-room-node-resources > div {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 15px minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-node-resources > div > svg {
-  width: 13px;
-  height: 13px;
-  color: var(--cr-icon-document);
-}
-
-.context-room-node-resources > div > span {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.context-room-node-resources b,
-.context-room-node-resources small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-node-resources b {
-  color: var(--cr-text);
-  font-size: 10.5px;
-  font-weight: 550;
-}
-
-.context-room-node-resources small,
-.context-room-inspector-empty {
-  color: var(--cr-tertiary);
-  font-size: 9.5px;
+  font-size: 10px;
 }
 
 .context-room-primary,
@@ -10531,6 +10484,43 @@
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.context-room-memory-entity-status {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  vertical-align: 1px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.context-room-memory-entity-status[data-status='room'] {
+  background: var(--cr-success-soft);
+  color: var(--cr-success);
+}
+
+.context-room-memory-entity-status[data-status='promoting'] {
+  background: var(--cr-warning-soft);
+  color: var(--cr-text);
+}
+
+.context-room-memory-entity-status[data-status='weak'],
+.context-room-memory-entity-status[data-status='archived'],
+.context-room-memory-entity-status[data-status='suppressed'] {
+  background: var(--cr-surface-sunken);
+  color: var(--cr-muted);
+}
+
+.context-room-memory-entity-mention {
+  display: block;
+  margin-top: 2px;
+  color: var(--cr-tertiary);
+  font-size: 10.5px;
 }
 
 .context-room-memory-inline-detail p,
