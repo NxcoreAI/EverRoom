@@ -1,4 +1,5 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -9,6 +10,7 @@ import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
 
 const temporaryDirectories: string[] = [];
+if (!process.env.NXCORE_SECRET_STORE_KEY) process.env.NXCORE_SECRET_STORE_KEY = randomBytes(32).toString("base64url");
 
 async function testConfig(): Promise<GatewayConfig> {
   const dataDir = await mkdtemp(join(tmpdir(), "nxcore-gateway-test-"));
@@ -66,6 +68,37 @@ describe("gateway server", () => {
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
   }, 10_000);
+
+  it("clears managed search secrets without deleting local MCP credentials", async () => {
+    const previousKey = process.env.NXCORE_SECRET_STORE_KEY;
+    process.env.NXCORE_SECRET_STORE_KEY = randomBytes(32).toString("base64url");
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const mcp = await app.inject({
+      method: "PUT",
+      url: "/v1/agent/mcp/servers",
+      headers,
+      payload: { servers: { local: { command: "npx", env: { TOKEN: { operation: "set", value: "local-mcp-51" } } } } },
+    });
+    expect(mcp.statusCode).toBe(200);
+    const runtime = await app.inject({
+      method: "PUT",
+      url: "/v1/runtime-config/saas",
+      headers,
+      payload: { schemaVersion: 1, webSearch: { provider: "openai-compatible", api: "openai-completions", model: "search", baseUrl: "https://search.test/v1", apiKey: "saas-search-51" } },
+    });
+    expect(runtime.statusCode).toBe(200);
+    const logout = await app.inject({ method: "POST", url: "/v1/security/secrets/logout", headers });
+    expect(logout.statusCode).toBe(200);
+    const mcpAfter = await app.inject({ method: "GET", url: "/v1/agent/mcp/servers", headers });
+    expect(mcpAfter.json().servers.local.env).toEqual({ TOKEN: { configured: true } });
+    const runtimeAfter = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
+    expect(runtimeAfter.json().webSearchCredential).toMatchObject({ configured: false, source: "none" });
+    await app.close();
+    if (previousKey === undefined) delete process.env.NXCORE_SECRET_STORE_KEY;
+    else process.env.NXCORE_SECRET_STORE_KEY = previousKey;
+  });
 
   it("keeps memory routes enabled without a Pi runtime", async () => {
     const config = await testConfig();

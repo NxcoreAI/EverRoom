@@ -60,6 +60,8 @@ const RawConfigSchema = Type.Object(
     cliConnectorSyncJobsJson: Type.String(),
     cliConnectorSyncIntervalMs: Type.Integer({ minimum: 5_000 }),
     cliConnectorSyncOwnerId: Type.String({ minLength: 1, maxLength: 128 }),
+    externalCallUserId: Type.String({ minLength: 1, maxLength: 200 }),
+    externalCallWorkspaceId: Type.String({ minLength: 1, maxLength: 200 }),
     aiProvider: Type.String(),
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
@@ -301,6 +303,8 @@ export interface GatewayConfig {
   cliConnectorSyncIntervalMs?: number;
   cliConnectorSyncJobs?: ConnectorSyncJobConfig[];
   cliConnectorSyncOwnerId?: string;
+  externalCallUserId?: string;
+  externalCallWorkspaceId?: string;
   /** Backward-compatible aliases retained for merged clients/tests. */
   connectorSyncOwnerId?: string;
   memory: MemoryRuntimeConfig | null;
@@ -676,6 +680,8 @@ export function loadConfig(
       env.NXCORE_CLI_CONNECTOR_SYNC_INTERVAL_MS ?? "300000",
     ),
     cliConnectorSyncOwnerId: env.NXCORE_CLI_CONNECTOR_SYNC_OWNER_ID?.trim() || "local-user",
+    externalCallUserId: env.NXCORE_EXTERNAL_CALL_USER_ID?.trim() || "local-user",
+    externalCallWorkspaceId: env.NXCORE_EXTERNAL_CALL_WORKSPACE_ID?.trim() || "local-workspace",
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
@@ -1066,6 +1072,8 @@ export function loadConfig(
     cliConnectorSyncJobs,
     cliConnectorSyncOwnerId: rawConfig.cliConnectorSyncOwnerId,
     connectorSyncOwnerId: rawConfig.cliConnectorSyncOwnerId,
+    externalCallUserId: rawConfig.externalCallUserId,
+    externalCallWorkspaceId: rawConfig.externalCallWorkspaceId,
     diaryMaxTokens: rawConfig.diaryMaxTokens,
     memory,
     databasePath: join(dataDir, "database", "gateway.sqlite"),

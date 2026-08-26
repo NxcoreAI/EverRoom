@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import type * as SentryApi from '@sentry/electron/main'
 
 import type { CloudAccountStatus } from '../../shared/sources'
+import { redactDesktopSecrets } from '../security/secret-redaction'
 
 const require = createRequire(import.meta.url)
 const Sentry = process.versions.electron
@@ -16,6 +17,7 @@ let enabledUntil = 0
 let currentAccount: CloudAccountStatus | null = null
 
 const LOCAL_ONLY_LOG_MODULES = new Set(['document-cursor-completion'])
+export const redactSentryPayload = redactDesktopSecrets
 
 export function isSentryLogModuleAllowed(module: string): boolean {
   return !LOCAL_ONLY_LOG_MODULES.has(module)
@@ -48,9 +50,9 @@ export function configureSentry(version: string, packaged: boolean): void {
       integrations: (defaults) => defaults.filter(
         ({ name }) => name !== 'MainProcessSession' && name !== 'SentryMinidump',
       ),
-      beforeBreadcrumb: (breadcrumb) => isRemoteDebugActive() ? breadcrumb : null,
-      beforeSend: (event) => isRemoteDebugActive() ? event : null,
-      beforeSendLog: (log) => isRemoteDebugActive() ? log : null,
+      beforeBreadcrumb: (breadcrumb) => isRemoteDebugActive() ? redactSentryPayload(breadcrumb) : null,
+      beforeSend: (event) => isRemoteDebugActive() ? redactSentryPayload(event) : null,
+      beforeSendLog: (log) => isRemoteDebugActive() ? redactSentryPayload(log) : null,
     })
     configured = true
     if (currentAccount) applyAccountScope(currentAccount)
@@ -88,5 +90,5 @@ export function captureSentryLog(
   const message = typeof event.event === 'string' ? event.event : `${module}.${level}`
   // debug 本地已默认丢弃，远端同样不上报，避免轮询类日志刷屏。
   if (level === 'debug') return
-  Sentry.logger[level](message, { source: 'desktop', module, ...event })
+  Sentry.logger[level](message, redactDesktopSecrets({ source: 'desktop', module, ...event }))
 }

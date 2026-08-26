@@ -4,6 +4,7 @@ import { Writable } from "node:stream";
 import pino, { type Logger } from "pino";
 import pinoRoll from "pino-roll";
 import type { LogLevel } from "../config.js";
+import { redactSecrets, redactText } from "../security/secret-redaction.js";
 
 const LOG_RETENTION_DAYS = 30;
 
@@ -74,7 +75,7 @@ function displayValue(value: unknown, key = ""): string {
   if (SENSITIVE_KEY.test(key)) return "[REDACTED]";
   if (value === null || value === undefined) return String(value);
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    const text = String(value)
+    const text = redactText(String(value))
       .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
       .replace(/([?&](?:token|signature|credential|secret|password)=)[^&#\s]+/gi, "$1[REDACTED]")
       .replace(/\s+/g, " ")
@@ -94,6 +95,7 @@ function displayValue(value: unknown, key = ""): string {
 }
 
 export function formatGatewayConsoleRecord(record: Record<string, unknown>, colorize = true): string {
+  record = redactSecrets(record);
   const { label, color } = levelName(record.level);
   const parsedTime = typeof record.time === "string" ? new Date(record.time) : new Date();
   const timestamp = Number.isNaN(parsedTime.getTime()) ? localTimestamp(new Date()) : localTimestamp(parsedTime);
@@ -123,7 +125,7 @@ function createConsoleStream(colorize: boolean): Writable {
         try {
           process.stdout.write(`${formatGatewayConsoleRecord(JSON.parse(line) as Record<string, unknown>, colorize)}\n`);
         } catch {
-          process.stdout.write(`${line}\n`);
+          process.stdout.write(`${redactText(line)}\n`);
         }
       }
       callback();
@@ -133,7 +135,7 @@ function createConsoleStream(colorize: boolean): Writable {
         try {
           process.stdout.write(`${formatGatewayConsoleRecord(JSON.parse(pending) as Record<string, unknown>, colorize)}\n`);
         } catch {
-          process.stdout.write(`${pending}\n`);
+          process.stdout.write(`${redactText(pending)}\n`);
         }
       }
       callback();
@@ -179,6 +181,11 @@ export async function createGatewayLogger(dataDirectory: string, level: LogLevel
           return { statusCode: typeof statusCode === "number" ? statusCode : null };
         },
         err: pino.stdSerializers.err,
+      },
+      hooks: {
+        logMethod(args, method) {
+          method.apply(this, args.map((value) => redactSecrets(value)) as Parameters<typeof method>);
+        },
       },
     },
     destination,

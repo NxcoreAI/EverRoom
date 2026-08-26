@@ -38,7 +38,8 @@ import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv, memoryCoreEnvironment } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
-import type { McpServersSnapshot } from '../shared/mcp'
+import type { McpServersMutation } from '../shared/mcp'
+import type { ExternalCallPolicyInput, ExternalCallQuery } from '../shared/external-calls'
 import type { IngestPipelines } from '../shared/ingest'
 import type {
   MemoryAtomicListOptions,
@@ -49,6 +50,8 @@ import type {
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
+import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
+import { loadOrCreateGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
@@ -378,6 +381,14 @@ const MCP_CHANNELS = {
   saveServers: 'mcp:servers:save',
 } as const
 
+const EXTERNAL_CALL_CHANNELS = {
+  listPolicies: 'external-calls:policies:list',
+  savePolicy: 'external-calls:policies:save',
+  deletePolicy: 'external-calls:policies:delete',
+  listUsage: 'external-calls:usage:list',
+  listAudits: 'external-calls:audits:list',
+} as const
+
 const KNOWLEDGE_CHANNELS = {
   listRooms: 'knowledge:rooms:list',
   getRoomContext: 'knowledge:rooms:context',
@@ -516,6 +527,7 @@ function installIpcRouters(): void {
     MEMORY_CHANNELS,
     KNOWLEDGE_CHANNELS,
     MCP_CHANNELS,
+    EXTERNAL_CALL_CHANNELS,
     FILES_CHANNELS,
     INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
@@ -1323,7 +1335,15 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: Documen
 
 function registerMcpHandlers(bridge: McpGatewayBridge): void {
   handle(MCP_CHANNELS.listServers, () => bridge.list())
-  handle(MCP_CHANNELS.saveServers, (_event, servers: McpServersSnapshot['servers']) => bridge.save(servers))
+  handle(MCP_CHANNELS.saveServers, (_event, servers: McpServersMutation) => bridge.save(servers))
+}
+
+function registerExternalCallHandlers(bridge: ExternalCallsGatewayBridge): void {
+  handle(EXTERNAL_CALL_CHANNELS.listPolicies, (_event, query?: ExternalCallQuery) => bridge.listPolicies(query))
+  handle(EXTERNAL_CALL_CHANNELS.savePolicy, (_event, input: ExternalCallPolicyInput) => bridge.savePolicy(input))
+  handle(EXTERNAL_CALL_CHANNELS.deletePolicy, (_event, id: string) => bridge.deletePolicy(id))
+  handle(EXTERNAL_CALL_CHANNELS.listUsage, (_event, query?: ExternalCallQuery) => bridge.listUsage(query))
+  handle(EXTERNAL_CALL_CHANNELS.listAudits, (_event, query?: ExternalCallQuery) => bridge.listAudits(query))
 }
 
 function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
@@ -1621,6 +1641,13 @@ function registerAccountHandlers(client: SaasClient, onAccountChanged?: (account
   })
   handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
   handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
+    const connection = gatewaySupervisor?.isRunning() ? gatewaySupervisor.getConnection() : null
+    if (connection) {
+      await fetch(`${connection.baseUrl}/v1/security/secrets/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${connection.token}` },
+      }).catch(() => undefined)
+    }
     const account = await syncAccountMonitoring(client.logout())
     onAccountChanged?.(account)
     return account
@@ -1894,6 +1921,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
+  const gatewaySecretStoreKey = await loadOrCreateGatewaySecretKey(
+    join(dataDirectory, 'security', 'gateway-master-key.json'),
+  )
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error) => {
@@ -1993,6 +2023,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
         // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
         NXCORE_AGENT_RUNTIME: 'pi',
+        ...(gatewaySecretStoreKey ? { NXCORE_SECRET_STORE_KEY: gatewaySecretStoreKey } : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
@@ -2072,6 +2103,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
+    registerExternalCallHandlers(new ExternalCallsGatewayBridge(gatewaySupervisor))
     const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'))
     await highRiskImports.initialize()
     const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)
