@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import type { RoomAppliedEntityStatus } from '@nxcore/agent-contract'
 import {
   PixiForceGraphCanvas,
   type PixiForceGraphCanvasNode,
@@ -31,6 +32,22 @@ const FACT_POSITIONS = [
   [260, 182],
 ] as const
 
+/** 应用实体状态配色：静态实体保持默认蓝。 */
+const APPLIED_STATUS_COLORS: Record<RoomAppliedEntityStatus, number> = {
+  room: 0x2fb380,
+  ready: 0x408cf0,
+  promoting: 0xf0a03c,
+  weak: 0x7a9cc9,
+  archived: 0x9aa3ad,
+  suppressed: 0x9aa3ad,
+}
+
+/** 固定点位放不下时的确定性环形兜底，避免大量节点同点出生。 */
+function fallbackPosition(index: number, ring: number): [number, number] {
+  const angle = (index / 12) * Math.PI * 2
+  return [260 + Math.cos(angle) * ring, 140 + Math.sin(angle) * ring]
+}
+
 export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFactGraphCanvasProps) {
   const { t } = useLocale()
   const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
@@ -39,7 +56,9 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
     [data.nodes],
   )
   const nodes = useMemo<PixiForceGraphCanvasNode[]>(() => data.nodes.map((node) => ({
-    color: node.kind === 'entity' ? 0x408cf0 : 0x8fb9f3,
+    color: node.kind === 'entity'
+      ? (node.status ? APPLIED_STATUS_COLORS[node.status] : 0x408cf0)
+      : 0x8fb9f3,
     id: node.id,
     label: node.label,
     radius: node.kind === 'entity' ? 12 : 6,
@@ -55,8 +74,10 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
     const result = new Float32Array(data.nodes.length * 2)
     data.nodes.forEach((node, index) => {
       const position = node.kind === 'entity'
-        ? ENTITY_POSITIONS[entityIndex++] ?? ENTITY_POSITIONS[0]
-        : FACT_POSITIONS[factIndex++] ?? FACT_POSITIONS[0]
+        ? ENTITY_POSITIONS[entityIndex] ?? fallbackPosition(entityIndex, 170)
+        : FACT_POSITIONS[factIndex] ?? fallbackPosition(factIndex, 95)
+      if (node.kind === 'entity') entityIndex += 1
+      else factIndex += 1
       result[index * 2] = position[0]
       result[index * 2 + 1] = position[1]
     })
