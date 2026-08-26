@@ -1,4 +1,4 @@
-import { ChevronRight, Languages } from 'lucide-react'
+import { Check, ChevronRight, Languages } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { ProductBrand } from '@/components/ui/ProductBrand'
@@ -6,20 +6,25 @@ import { useLocale } from '@/i18n/LocaleContext'
 import './OnboardingFlowChrome.css'
 
 export type OnboardingFlowStage = 'idle' | 'memory' | 'room' | 'folder' | 'ready'
+export type CompletedOnboardingStage = Exclude<OnboardingFlowStage, 'idle' | 'ready'>
 
 interface OnboardingFlowChromeProps {
   stage: OnboardingFlowStage
+  completedStages?: ReadonlySet<CompletedOnboardingStage>
   onStageChange: (stage: OnboardingFlowStage) => void
   children: ReactNode
 }
 
-export function OnboardingFlowChrome({ stage, onStageChange, children }: OnboardingFlowChromeProps) {
+export function OnboardingFlowChrome({ stage, completedStages = new Set(), onStageChange, children }: OnboardingFlowChromeProps) {
   const { locale, preference, setLocale, t } = useLocale()
-  const item = (value: Exclude<OnboardingFlowStage, 'idle'>, label: string) => (
-    <button type="button" className="onboarding-flow-stage" data-state={stage === value ? 'active' : stageOrder(stage) > stageOrder(value) ? 'complete' : 'upcoming'} onClick={() => onStageChange(value)}>
-      {label}
-    </button>
-  )
+  const item = (value: Exclude<OnboardingFlowStage, 'idle'>, label: string) => {
+    const state = onboardingFlowStageState(stage, value, completedStages)
+    return (
+      <button type="button" className="onboarding-flow-stage" data-state={state} onClick={() => onStageChange(value)}>
+        {state === 'complete' ? <Check aria-hidden="true" /> : null}{label}
+      </button>
+    )
+  }
   return (
     <div className="onboarding-flow-chrome" data-stage={stage}>
       <header className="onboarding-flow-header drag-region">
@@ -45,6 +50,12 @@ export function OnboardingFlowChrome({ stage, onStageChange, children }: Onboard
   )
 }
 
-function stageOrder(stage: OnboardingFlowStage): number {
-  return stage === 'idle' ? -1 : ({ folder: 0, memory: 1, room: 2, ready: 3 })[stage]
+export function onboardingFlowStageState(
+  activeStage: OnboardingFlowStage,
+  stage: Exclude<OnboardingFlowStage, 'idle'>,
+  completedStages: ReadonlySet<CompletedOnboardingStage>,
+): 'active' | 'complete' | 'upcoming' {
+  if (activeStage === stage) return 'active'
+  if (stage !== 'ready' && completedStages.has(stage)) return 'complete'
+  return 'upcoming'
 }

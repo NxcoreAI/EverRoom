@@ -68,7 +68,7 @@ describe('MemoryOnboardingGate refresh behavior', () => {
     expect(onboardingFinished).toHaveBeenCalled()
   })
 
-  it('persists acknowledgement when continuing with existing memory', async () => {
+  it('skips the guide and persists acknowledgement when memory already exists', async () => {
     const localStorage = storage()
     installWindow(localStorage, { overview: vi.fn().mockResolvedValue({ l0: { total: 1 }, l1: { total: 0 } }) })
 
@@ -78,13 +78,9 @@ describe('MemoryOnboardingGate refresh behavior', () => {
       )
     })
 
-    const ready = renderer!.root.findByProps({ className: 'memory-onboarding-ready' })
-    await act(async () => {
-      ready.findByProps({ className: 'memory-onboarding-primary' }).props.onClick()
-    })
-
     expect(JSON.parse(localStorage.value()!)).toEqual({ status: 'skipped' })
     expect(JSON.stringify(renderer!.toJSON())).toContain('app-content')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('memory-onboarding-ready')
   })
 
   it('restores a pending generation in the background after an app restart', async () => {
