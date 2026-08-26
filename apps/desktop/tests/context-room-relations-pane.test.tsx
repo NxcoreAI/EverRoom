@@ -63,26 +63,64 @@ function room(id: string, kind: '项目' | '主题', title: string): ContextRoom
 describe('RelationsPane graph selection', () => {
   afterEach(() => {
     graphProps.length = 0
+    vi.unstubAllGlobals()
   })
 
   it('keeps the graph instance data stable while showing the selected Room details', async () => {
     const current = room('room-a', '项目', 'Current Room')
     const related = room('room-b', '项目', 'Related Room')
     let renderer: TestRenderer.ReactTestRenderer
+    vi.stubGlobal('window', {
+      nxcore: {
+        knowledge: {
+          getRoomGraph: vi.fn(),
+          getRoomRelations: vi.fn().mockResolvedValue({
+            revision: 1,
+            generatedAt: '2026-08-25T00:00:00.000Z',
+            indexing: { status: 'ready', pendingSources: 0 },
+            nodes: [
+              { id: 'room-a', title: 'Current Room', kind: '项目', origin: 'user', updatedAt: '2026-08-25T00:00:00.000Z' },
+              { id: 'room-b', title: 'Related Room', kind: '项目', origin: 'user', updatedAt: '2026-08-25T00:00:00.000Z' },
+            ],
+            edges: [{
+              id: 'relation-a-b',
+              sourceRoomId: 'room-a',
+              targetRoomId: 'room-b',
+              directed: false,
+              type: 'shared_evidence',
+              origin: 'auto',
+              score: 1.2,
+              strength: 'weak',
+              sharedSourceCount: 1,
+              sharedEntityCount: 0,
+              directMentionCount: 0,
+              pinned: false,
+              hidden: false,
+              label: null,
+              note: null,
+              topReasons: [],
+              updatedAt: '2026-08-25T00:00:00.000Z',
+            }],
+          }),
+        },
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
 
     await act(async () => {
       renderer = TestRenderer.create(<RelationsPane room={current} rooms={[current, related]} onOpenRoom={vi.fn()} />)
     })
 
-    expect(graphProps).toHaveLength(1)
+    expect(graphProps.length).toBeGreaterThan(0)
     expect(renderer!.root.findByType('h3').children).toEqual(['Current Room'])
+    const initialRooms = graphProps.at(-1)!.rooms
 
     await act(async () => {
       renderer!.root.findAllByType('button').find((button) => button.children.includes('select room-b'))!.props.onClick()
     })
 
-    expect(graphProps).toHaveLength(2)
-    expect(graphProps[1]!.rooms).toBe(graphProps[0]!.rooms)
+    expect(graphProps.at(-1)!.rooms).toBe(initialRooms)
     expect(renderer!.root.findByType('h3').children).toEqual(['Related Room'])
   })
 })

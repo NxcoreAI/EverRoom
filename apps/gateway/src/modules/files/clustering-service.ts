@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNotNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   fileClassifications,
@@ -57,9 +57,22 @@ export class FileClusteringService {
     const parsed = this.db.select({ id: fileVersions.id, fileEntryId: fileVersions.fileEntryId })
       .from(fileVersions)
       .leftJoin(fileClassifications, eq(fileClassifications.fileVersionId, fileVersions.id))
-      .where(and(eq(fileVersions.status, "parsed"), isNotNull(fileVersions.parsedId)))
+      .where(and(
+        eq(fileVersions.status, "parsed"),
+        isNotNull(fileVersions.parsedId),
+        isNull(fileClassifications.id),
+      ))
       .all();
-    for (const version of parsed) this.enqueue(version.fileEntryId, version.id);
+    this.db.transaction((tx) => {
+      for (const version of parsed) {
+        tx.insert(jobs).values({
+          id: `file.classify:${version.id}:v${PROMPT_VERSION}`,
+          type: "file.classify",
+          status: "pending",
+          payload: { fileEntryId: version.fileEntryId, fileVersionId: version.id, attempts: 0 },
+        }).onConflictDoNothing().run();
+      }
+    });
     this.kick();
   }
 
@@ -125,6 +138,9 @@ export class FileClusteringService {
           updatedAt: new Date(),
         }).where(eq(jobs.id, job.id)).run();
       }
+      // Exact-hash classifications can complete synchronously. Yield between
+      // jobs so a large recovered queue cannot starve server startup or HTTP.
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
   }
 

@@ -418,6 +418,49 @@ describe('PixiForceGraphRenderer', () => {
     expect(fakes.texts[0]?.resolution).toBe(4)
   })
 
+  it('renders relationship labels with the provided text and falls back to none when absent', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [
+        { id: 'manual-edge', source: 0, target: 1, label: 'Depends on' },
+        { id: 'unlabeled-edge', source: 1, target: 2 },
+      ],
+      host: createHost(),
+      nodes: [{}, {}, {}],
+      positions: new Float32Array([10, 20, 80, 20, 150, 20]),
+    })
+
+    expect(fakes.texts.map((label) => label.text)).toEqual(['Depends on'])
+    expect(renderer.activeLabelCount()).toBe(0)
+  })
+
+  it('limits edge labels and keeps only selected or hovered relationships at low zoom', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: Array.from({ length: 4 }, (_, index) => ({
+        id: `edge-${String(index)}`,
+        source: index,
+        target: index + 1,
+        label: `Relation ${String(index)}`,
+      })),
+      host: createHost(),
+      maxVisibleEdgeLabels: 2,
+      nodes: Array.from({ length: 5 }, () => ({})),
+      positions: new Float32Array([10, 20, 80, 20, 150, 20, 220, 20, 290, 20]),
+    })
+
+    expect(fakes.texts.map((label) => label.text)).toEqual(['Relation 0', 'Relation 1'])
+
+    const viewport = fakes.viewports[0]!
+    viewport.scale.x = 0.5
+    renderer.setSelectedEdgeId('edge-3')
+    fakes.ticker.tick()
+
+    expect(fakes.texts.filter((label) => label.visible).map((label) => label.text)).toEqual(['Relation 3'])
+  })
+
   it('culls labels to visible nodes and never grows the reusable text pool past its cap', async () => {
     const fakes = createFakes()
     const renderer = await createPixiForceGraphRenderer({
@@ -466,7 +509,7 @@ describe('PixiForceGraphRenderer', () => {
     expect(viewport.plugins.pause).toHaveBeenCalledWith('drag')
     expect(viewport.plugins.resume).toHaveBeenCalledWith('drag')
     expect(viewport.panStarts).toBe(0)
-    expect(drag).toHaveBeenCalledTimes(3)
+    expect(drag).toHaveBeenCalledTimes(2)
     expect(drag).toHaveBeenLastCalledWith(0, 25, 35)
     expect(release).toHaveBeenCalledWith(0)
     expect(select).not.toHaveBeenCalled()
@@ -474,6 +517,8 @@ describe('PixiForceGraphRenderer', () => {
 
   it('selects a hit node when the pointer is released without dragging', async () => {
     const fakes = createFakes()
+    const drag = vi.fn()
+    const release = vi.fn()
     const select = vi.fn()
     await createPixiForceGraphRenderer({
       dependencies: fakes.dependencies,
@@ -481,6 +526,8 @@ describe('PixiForceGraphRenderer', () => {
       host: createHost(),
       nodes: [{ label: 'A' }],
       positions: new Float32Array([10, 20]),
+      onNodeDrag: drag,
+      onNodeRelease: release,
       onNodeSelect: select,
     })
     const viewport = fakes.viewports[0]!
@@ -490,6 +537,8 @@ describe('PixiForceGraphRenderer', () => {
 
     expect(select).toHaveBeenCalledOnce()
     expect(select).toHaveBeenCalledWith(0)
+    expect(drag).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
   })
 
   it('opens a node when the same node is clicked twice', async () => {
@@ -576,6 +625,7 @@ describe('PixiForceGraphRenderer', () => {
       'lineStyle:1.2,12173514,0.8',
       'moveTo:11,22',
       'lineTo:33,44',
+      'lineStyle:1.2,12173514,0.8',
       'moveTo:33,44',
       'lineTo:55,66',
     ])

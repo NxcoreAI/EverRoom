@@ -19,6 +19,8 @@ import {
   EntityRegistry,
   derivePrimaryRoles,
   meetsPromotionThreshold,
+  recommendationPathOf,
+  scoreEvidence,
   type EntityRow,
 } from "../src/modules/knowledge/entity-registry.js";
 import {
@@ -170,11 +172,19 @@ describe("④ 证据与晋升判定", () => {
 
   it("浮点容差内的并列视为同分（1e-9）", () => {
     const roles = derivePrimaryRoles([
-      { name: "甲", salience: 0.3 },
-      { name: "乙", salience: 0.3 + 1e-12 },
+      { name: "甲", salience: 0.7 },
+      { name: "乙", salience: 0.7 + 1e-12 },
     ]);
     expect(roles.get("甲")).toBe("primary");
     expect(roles.get("乙")).toBe("primary");
+  });
+
+  it("最高 salience 低于 0.65 时不产生 primary", () => {
+    const roles = derivePrimaryRoles([
+      { name: "甲", salience: 0.64 },
+      { name: "乙", salience: 0.4 },
+    ]);
+    expect([...roles.values()]).toEqual(["mention", "mention"]);
   });
 
   it("meetsPromotionThreshold：双条件同时满足，且仅 weak 态可晋升", () => {
@@ -195,6 +205,54 @@ describe("④ 证据与晋升判定", () => {
       { status: "room", evidenceScore: 5, sourceCount: 5 },
       thresholds,
     )).toBe(false);
+  });
+
+  it("V2 推荐支持标准路径与两份独立强证据路径", () => {
+    expect(recommendationPathOf({
+      evidenceScore: 2.4, sourceCount: 3, eligibleSourceCount: 3, trustedSourceCount: 2, strongSourceCount: 0,
+    }, { promoteScore: 2.4, promoteSources: 3 })).toBe("standard");
+    expect(recommendationPathOf({
+      evidenceScore: 2, sourceCount: 2, eligibleSourceCount: 2, trustedSourceCount: 2, strongSourceCount: 2,
+    }, { promoteScore: 2.4, promoteSources: 3 })).toBe("strong");
+    expect(recommendationPathOf({
+      evidenceScore: 10, sourceCount: 10, eligibleSourceCount: 10, trustedSourceCount: 1, strongSourceCount: 0,
+    }, { promoteScore: 2.4, promoteSources: 3 })).toBeNull();
+  });
+
+  it("V2 质量规则硬排垃圾邮件、降权营销邮件并按 threadId 分组", () => {
+    const baseMail = {
+      sourceKind: "mail" as const,
+      sourceId: "mail-1",
+      role: "primary" as const,
+      salience: 0.9,
+      decidedBy: "resolution" as const,
+      filterStatus: "passed" as const,
+      filterVerdict: { informative: true, category: "other", confidence: 0.9 },
+    };
+    const spam = scoreEvidence({
+      ...baseMail,
+      mail: { threadId: "thread-a", senderAddress: "person@example.com", labels: ["SPAM"], extensionPayload: null },
+    });
+    expect(spam.effectiveWeight).toBe(0);
+    expect(spam.qualityLevel).toBe("excluded");
+
+    const bulk = scoreEvidence({
+      ...baseMail,
+      mail: { threadId: "thread-a", senderAddress: "no-reply@example.com", labels: [], extensionPayload: null },
+    });
+    expect(bulk.effectiveWeight).toBeCloseTo(0.15, 6);
+    expect(bulk.trusted).toBe(false);
+    expect(bulk.evidenceGroupKey).toBe("mail-thread:thread-a");
+
+    const starred = scoreEvidence({
+      ...baseMail,
+      sourceId: "mail-2",
+      mail: { threadId: "thread-a", senderAddress: "person@example.com", labels: ["IMPORTANT"], extensionPayload: null },
+    });
+    expect(starred.effectiveWeight).toBeCloseTo(0.75, 6);
+    expect(starred.trusted).toBe(true);
+    expect(starred.strong).toBe(false);
+    expect(starred.evidenceGroupKey).toBe(bulk.evidenceGroupKey);
   });
 });
 
@@ -222,6 +280,8 @@ describe("路由纯函数", () => {
     const base = {
       aliases: [], kind: "主题", summary: null, roomId: "room-a",
       evidenceScore: 0, sourceCount: 0,
+      eligibleSourceCount: 0, trustedSourceCount: 0, strongSourceCount: 0,
+      readinessPath: null, scoringVersion: 2,
       centroid: null, centroidDocs: 0, centroidModel: null, mergedFrom: [],
       lastLinkedAt: null, createdAt: new Date(), updatedAt: new Date(),
     };
@@ -360,46 +420,121 @@ async function registryForTest() {
   return { registry: new EntityRegistry(db), sqlite };
 }
 
-describe("实体注册表：证据累积算术（plan §4.3）", () => {
-  it("首链计权重、sourceCount 只在首次 +1、版本更新调差额", async () => {
+describe("实体注册表：V2 证据聚合", () => {
+  it("ready 推荐按证据总分从高到低返回", async () => {
+    const { registry, sqlite } = await registryForTest();
+    const higher = registry.createEntity({ name: "高分推荐", kind: "项目" });
+    registry.upsertLink({
+      entityId: higher.id, sourceKind: "everroom-doc", sourceId: "high-a", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "核心方案", decidedBy: "resolution",
+    });
+    registry.upsertLink({
+      entityId: higher.id, sourceKind: "file", sourceId: "high-b", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "执行材料", decidedBy: "resolution",
+    });
+
+    const lower = registry.createEntity({ name: "低分推荐", kind: "项目" });
+    registry.upsertLink({
+      entityId: lower.id, sourceKind: "cloud-doc", sourceId: "low-a", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "核心方案", decidedBy: "resolution",
+    });
+    registry.upsertLink({
+      entityId: lower.id, sourceKind: "reality-event", sourceId: "low-b", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "执行材料", decidedBy: "resolution",
+    });
+
+    expect(registry.listEntities("ready").map((entity) => entity.id)).toEqual([higher.id, lower.id]);
+    sqlite.close();
+  });
+
+  it("按来源与相关度计分，版本更新覆盖旧贡献，两份强文档触发推荐", async () => {
     const { registry, sqlite } = await registryForTest();
     const entity = registry.createEntity({ name: "卫星项目", kind: "项目" });
     expect(entity.status).toBe("weak");
     expect(entity.summary).toBeNull(); // ED7：弱期不写合成概述
 
-    // 源 1：primary（+1.0）
+    // 上传文件 primary：1.0 × 1.1 × 1.0 × 1.0 = 1.1
     let updated = registry.upsertLink({
       entityId: entity.id, sourceKind: "file", sourceId: "file-a", sourceVersion: 1,
       role: "primary", salience: 0.9, evidence: "排期确认", decidedBy: "resolution",
     });
-    expect(updated.evidenceScore).toBeCloseTo(1.0, 6);
+    expect(updated.evidenceScore).toBeCloseTo(1.1, 6);
     expect(updated.sourceCount).toBe(1);
+    expect(updated.strongSourceCount).toBe(1);
 
-    // 源 2：mention（+0.4）
+    // 低于 0.35 的 mention 保留审计链接但不计分
     updated = registry.upsertLink({
       entityId: entity.id, sourceKind: "file", sourceId: "file-b", sourceVersion: 1,
       role: "mention", salience: 0.3, evidence: "顺带提及", decidedBy: "resolution",
     });
-    expect(updated.evidenceScore).toBeCloseTo(1.4, 6);
+    expect(updated.evidenceScore).toBeCloseTo(1.1, 6);
     expect(updated.sourceCount).toBe(2);
-    expect(meetsPromotionThreshold(updated, { promoteScore: 2, promoteSources: 2 })).toBe(false);
+    expect(updated.eligibleSourceCount).toBe(1);
 
-    // 源 1 版本更新：primary → mention，调差额 -0.6，sourceCount 不变
+    // 源 1 版本更新后低相关，旧贡献被覆盖而不是重复累加
     updated = registry.upsertLink({
       entityId: entity.id, sourceKind: "file", sourceId: "file-a", sourceVersion: 2,
       role: "mention", salience: 0.2, evidence: "改稿后降级", decidedBy: "resolution",
     });
-    expect(updated.evidenceScore).toBeCloseTo(0.8, 6);
+    expect(updated.evidenceScore).toBe(0);
     expect(updated.sourceCount).toBe(2);
 
-    // 手动挂载（+1.5）达到晋升线
+    // 两份独立高质量文件 primary 走 strong 路径
     updated = registry.upsertLink({
-      entityId: entity.id, sourceKind: "mail", sourceId: "mail-1", sourceVersion: 1,
-      role: "manual", salience: 1, evidence: "用户手动挂载", decidedBy: "user",
+      entityId: entity.id, sourceKind: "file", sourceId: "file-c", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "预算确认", decidedBy: "resolution",
     });
-    expect(updated.evidenceScore).toBeCloseTo(2.3, 6);
-    expect(updated.sourceCount).toBe(3);
-    expect(meetsPromotionThreshold(updated, { promoteScore: 2, promoteSources: 2 })).toBe(true);
+    updated = registry.upsertLink({
+      entityId: entity.id, sourceKind: "cloud-doc", sourceId: "doc-d", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "里程碑确认", decidedBy: "resolution",
+    });
+    expect(updated.evidenceScore).toBeCloseTo(2.1, 6);
+    expect(updated.strongSourceCount).toBe(2);
+    expect(updated.readinessPath).toBe("strong");
+    expect(updated.status).toBe("ready");
+    expect(updated.sourceCount).toBe(4);
+    sqlite.close();
+  });
+
+  it("移除来源后回扣分数，ready 会降回 weak", async () => {
+    const { registry, sqlite } = await registryForTest();
+    const entity = registry.createEntity({ name: "发射计划", kind: "项目" });
+    registry.upsertLink({
+      entityId: entity.id, sourceKind: "everroom-doc", sourceId: "doc-a", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "方案", decidedBy: "resolution",
+    });
+    let updated = registry.upsertLink({
+      entityId: entity.id, sourceKind: "cloud-doc", sourceId: "doc-b", sourceVersion: 1,
+      role: "primary", salience: 0.9, evidence: "排期", decidedBy: "resolution",
+    });
+    expect(updated.status).toBe("ready");
+    expect(updated.readinessPath).toBe("strong");
+
+    expect(registry.removeSourceLinks("cloud-doc", "doc-b")).toBe(1);
+    updated = registry.getEntity(entity.id)!;
+    expect(updated.status).toBe("weak");
+    expect(updated.evidenceScore).toBeCloseTo(1.2, 6);
+    expect(updated.strongSourceCount).toBe(1);
+    sqlite.close();
+  });
+
+  it("replaceResolutionLinks 删除新版本不再包含的旧实体链接并保留 user 链接", async () => {
+    const { registry, sqlite } = await registryForTest();
+    const oldEntity = registry.createEntity({ name: "旧主题", kind: "主题" });
+    const keptEntity = registry.createEntity({ name: "保留主题", kind: "主题" });
+    registry.replaceResolutionLinks("file", "file-x", [
+      { entityId: oldEntity.id, sourceVersion: 1, role: "primary", salience: 0.9, evidence: "旧" },
+      { entityId: keptEntity.id, sourceVersion: 1, role: "mention", salience: 0.5, evidence: "保留" },
+    ]);
+    registry.upsertLink({
+      entityId: keptEntity.id, sourceKind: "file", sourceId: "file-x", sourceVersion: 1,
+      role: "manual", salience: 1, evidence: "用户挂载", decidedBy: "user",
+    });
+    registry.replaceResolutionLinks("file", "file-x", []);
+    expect(registry.linksOfEntity(oldEntity.id)).toHaveLength(0);
+    expect(registry.getEntity(oldEntity.id)!.evidenceScore).toBe(0);
+    expect(registry.linksOfEntity(keptEntity.id)).toHaveLength(1);
+    expect(registry.linksOfEntity(keptEntity.id)[0]!.decidedBy).toBe("user");
     sqlite.close();
   });
 
@@ -465,7 +600,7 @@ describe("实体注册表：证据累积算术（plan §4.3）", () => {
     });
 
     const merged = registry.mergeEntities({ intoId: into.id, fromId: from.id });
-    expect(merged.into!.evidenceScore).toBeCloseTo(1.4, 6); // 1.0 + (0.4 + 0)
+    expect(merged.into!.evidenceScore).toBeCloseTo(1.1, 6);
     expect(merged.into!.aliases).toContain("星座计划");
     expect(merged.into!.mergedFrom).toEqual([from.id]);
     expect(merged.from!.status).toBe("archived");

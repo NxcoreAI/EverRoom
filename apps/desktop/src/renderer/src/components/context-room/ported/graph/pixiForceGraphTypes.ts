@@ -15,6 +15,7 @@ export interface PixiGraphics {
   lineStyle(width: number, color: number | string, alpha?: number): PixiGraphics
   moveTo(x: number, y: number): PixiGraphics
   lineTo(x: number, y: number): PixiGraphics
+  drawPolygon(points: number[]): PixiGraphics
   destroy(options?: unknown): void
   renderable?: boolean
 }
@@ -132,8 +133,14 @@ export interface PixiForceGraphNode {
 }
 
 export interface PixiForceGraphEdge {
+  id?: string
+  label?: string
   source: number
   target: number
+  directed?: boolean
+  color?: number | string
+  width?: number
+  alpha?: number
 }
 
 export interface PixiForceGraphRendererOptions {
@@ -154,9 +161,13 @@ export interface PixiForceGraphRendererOptions {
   highlightEdgeColor?: number | string
   labelScaleThreshold?: number
   maxVisibleLabels?: number
+  edgeLabelScaleThreshold?: number
+  maxVisibleEdgeLabels?: number
   revision?: () => number
   selectedColor?: number | string
   selectedIndex?: number | null
+  selectedEdgeId?: string | null
+  onEdgeSelect?: (id: string) => void
   onNodeDrag?: (index: number, x: number, y: number) => void
   onNodeHover?: (index: number | null) => void
   onNodeOpen?: (index: number) => void
@@ -178,5 +189,6 @@ export interface PixiForceGraphRenderer {
   resize(width: number, height: number): void
   setHoveredIndex(index: number | null): void
   setSelectedIndex(index: number | null): void
+  setSelectedEdgeId(id: string | null): void
   destroy(): void
 }

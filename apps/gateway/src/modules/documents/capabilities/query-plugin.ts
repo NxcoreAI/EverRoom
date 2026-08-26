@@ -17,14 +17,36 @@ export function queryPlugins(
   const roomList: DocumentCapabilityTool = {
     name: "context_room_list",
     title: "列出可写入的 Context Room",
-    description: "仅当用户已经明确要求在工作区创建、保存或写入文档，但当前视口未绑定具体 Context Room 时，必须立即调用此只读工具取得 Room 列表并触发选择 UI。满足条件时不得询问用户是否需要列表，也不得替用户选择。普通问答、分析、总结、整理、写方案、起草或润色时不得调用。",
-    inputSchema: EMPTY_INPUT_SCHEMA,
+    description: "仅当用户已经明确要求在工作区创建、保存或写入文档，当前视口未绑定具体 Context Room，并且根据文档标题、主题和拟写内容仍无法可靠确定唯一目标时调用。candidateRoomIds 只填写最可能相关的 2 至 5 个 Room；无法缩小范围时省略。调用后停止创建并等待用户选择。普通问答、分析、总结、整理、写方案、起草或润色时不得调用。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        candidateRoomIds: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          maxItems: 5,
+          uniqueItems: true,
+        },
+      },
+    },
     annotations: annotations(true),
-    execute: (_args, context) => success({
-      rooms: rooms?.listReferences() ?? context.availableRooms ?? [],
-      selectionRequired: !context.roomId,
-      selectedRoomId: context.roomId,
-    }),
+    execute: (args, context) => {
+      const available = rooms?.listReferences() ?? context.availableRooms ?? [];
+      const requestedIds = Array.isArray(args.candidateRoomIds)
+        ? args.candidateRoomIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+        : [];
+      const requestedSet = new Set(requestedIds);
+      const candidates = requestedSet.size > 0
+        ? available.filter((room) => requestedSet.has(room.id))
+        : available;
+      return success({
+        rooms: candidates.length > 0 ? candidates : available,
+        selectionRequired: !context.roomId,
+        selectedRoomId: context.roomId,
+      });
+    },
   };
   const roomCreate: DocumentCapabilityTool = {
     name: "context_room_create",

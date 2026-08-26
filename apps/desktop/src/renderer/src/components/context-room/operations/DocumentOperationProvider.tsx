@@ -42,6 +42,7 @@ const RECOVERABLE_STATUSES = [
 
 export interface DocumentOperationContextValue {
   entriesById: DocumentOperationStoreState
+  appliedDocumentsById: Record<string, RoomDocument>
   operations: DocumentOperationEntry[]
   presentingOperationIds: ReadonlySet<string>
   bridge: OperationBridge
@@ -71,6 +72,7 @@ export function DocumentOperationProvider({
 }) {
   const bridge = operationBridge
   const [entriesById, setEntriesById] = useState<DocumentOperationStoreState>({})
+  const [appliedDocumentsById, setAppliedDocumentsById] = useState<Record<string, RoomDocument>>({})
   const [presentingOperationIds, setPresentingOperationIds] = useState<ReadonlySet<string>>(() => new Set())
   const entriesRef = useRef(entriesById)
   entriesRef.current = entriesById
@@ -200,7 +202,14 @@ export function DocumentOperationProvider({
         const merged = mergeOperationDetail(entriesRef.current[operationId], result.operation)
         entriesRef.current = { ...entriesRef.current, [operationId]: merged }
         setEntriesById(entriesRef.current)
-        if (result.document) onDocumentApplied?.(result.document)
+        if (result.document) {
+          onDocumentApplied?.(result.document)
+          setAppliedDocumentsById((current) => {
+            const previous = current[result.document!.id]
+            if (previous && previous.version >= result.document!.version) return current
+            return { ...current, [result.document!.id]: result.document! }
+          })
+        }
         return result
       }
       return null
@@ -283,6 +292,7 @@ export function DocumentOperationProvider({
 
   const value = useMemo<DocumentOperationContextValue>(() => ({
     entriesById,
+    appliedDocumentsById,
     operations: Object.values(entriesById).sort((left, right) => right.summary.updatedAt.localeCompare(left.summary.updatedAt)),
     presentingOperationIds,
     bridge,
@@ -294,6 +304,7 @@ export function DocumentOperationProvider({
     executeResult,
     setOperationPresentationPending,
   }), [
+    appliedDocumentsById,
     bridge,
     entriesById,
     execute,

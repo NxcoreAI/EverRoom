@@ -4,7 +4,7 @@ import { PiAgentRuntime, type PiAgentRuntimeTool } from "@nxcore/agent-runtime-p
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
-import { createDocumentPiTools } from "../documents/pi-tools.js";
+import { createDocumentPiToolsWithRoomBindings } from "../documents/pi-tools.js";
 import { createOpenConnectorPiTools } from "./open-connector-tools.js";
 import { createConnectorDataPiTools } from "../connectors/pi-tools.js";
 import { createNangoPiTools } from "../connectors/nango-agent-tools.js";
@@ -94,6 +94,7 @@ export function createAgentRuntime(
   // 降级启动：AI 未配置时返回占位 runtime（run 立即 runtime_config_not_ready），
   // 等 runtime config 保存后 AgentResolver.reload 换成真实 Pi runtime。
   if (!isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
+  const routedRoomByRun = new Map<string, string>();
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi!),
     runtimeRole: "user-facing",
@@ -103,7 +104,7 @@ export function createAgentRuntime(
   }, {
     tools: [
       ...(knowledge?.tools ?? []),
-      ...createDocumentPiTools(mcpHost),
+      ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
       ...(config.cliConnectorAgentMode === "local" && connectorSync
         ? createConnectorDataPiTools(connectorSync, config.cliConnectorSyncOwnerId ?? "local-user")
         : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
@@ -116,7 +117,10 @@ export function createAgentRuntime(
     ...(knowledge?.resolveKnowledgeWikiIds
       ? { resolveKnowledgeWikiIds: knowledge.resolveKnowledgeWikiIds }
       : {}),
-    onRunFinished: (input, outcome) => mcpHost.finishAgentRun(input.sessionId, outcome, input.runId),
+    onRunFinished: async (input, outcome) => {
+      routedRoomByRun.delete(input.runId);
+      await mcpHost.finishAgentRun(input.sessionId, outcome, input.runId);
+    },
     ...(knowledge?.externalCalls
       ? {
           executeMcpCall: (input, tool, invoke) => knowledge.externalCalls!.execute("MCP", tool, {

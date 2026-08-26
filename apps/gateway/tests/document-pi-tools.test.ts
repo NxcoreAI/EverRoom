@@ -67,4 +67,60 @@ describe('Document Pi tool routing', () => {
     })
     expect(callTool).toHaveBeenCalledOnce()
   })
+
+  it('binds an Agent-inferred available Room for the entire document creation run', async () => {
+    const callTool = vi.fn(async (name: string, _params: Record<string, unknown>, context: { roomId: string | null }): Promise<DocumentMcpToolResult> => ({
+      content: [{ type: 'text', text: JSON.stringify({ roomId: context.roomId, operationId: 'operation-1' }) }],
+      structuredContent: { roomId: context.roomId, operationId: 'operation-1' },
+    }))
+    const host = {
+      listTools: () => [
+        {
+          name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+          inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
+        },
+        {
+          name: 'context_room_write_append', title: 'Append', description: 'Append',
+          inputSchema: { type: 'object', properties: { operationId: { type: 'string' } } },
+        },
+      ],
+      callTool,
+    } as unknown as DocumentMcpHost
+    const [begin, append] = createDocumentPiTools(host)
+    const input = {
+      ...runtimeInput('创建一份 Java 并发指南文档'),
+      availableRooms: [
+        { id: 'room-product', title: '产品规划' },
+        { id: 'room-java', title: 'Java Space' },
+      ],
+    }
+
+    await begin!.execute(input, { roomId: 'room-java', title: 'Java 并发指南' })
+    await append!.execute(input, { operationId: 'operation-1', sequence: 1, text: '正文' })
+
+    expect(callTool).toHaveBeenNthCalledWith(1, 'context_room_write_begin', expect.any(Object), expect.objectContaining({
+      roomId: 'room-java',
+    }))
+    expect(callTool).toHaveBeenNthCalledWith(2, 'context_room_write_append', expect.any(Object), expect.objectContaining({
+      roomId: 'room-java',
+    }))
+  })
+
+  it('rejects an Agent-inferred Room outside the current available Room snapshot', async () => {
+    const { callTool } = harness()
+    const host = {
+      listTools: () => [{
+        name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+        inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
+      }],
+      callTool,
+    } as unknown as DocumentMcpHost
+    const begin = createDocumentPiTools(host)[0]!
+
+    await expect(begin.execute(runtimeInput('创建一份产品文档'), {
+      roomId: 'room-forged',
+      title: '产品文档',
+    })).rejects.toThrow('ROOM_SELECTION_REQUIRED')
+    expect(callTool).not.toHaveBeenCalled()
+  })
 })

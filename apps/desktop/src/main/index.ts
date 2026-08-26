@@ -240,6 +240,14 @@ const CONTEXT_ROOM_CHANNELS = {
   list: 'context-rooms:list',
   create: 'context-rooms:create',
   syncSnapshot: 'context-rooms:sync-snapshot',
+  checkDuplicates: 'context-rooms:check-duplicates',
+  listDuplicateCandidates: 'context-rooms:list-duplicate-candidates',
+  updateDuplicateCandidate: 'context-rooms:update-duplicate-candidate',
+  previewMerge: 'context-rooms:preview-merge',
+  startMerge: 'context-rooms:start-merge',
+  getMergeOperation: 'context-rooms:get-merge-operation',
+  retryMerge: 'context-rooms:retry-merge',
+  cancelMerge: 'context-rooms:cancel-merge',
 } as const
 
 const AGENT_CHANNELS = {
@@ -394,6 +402,12 @@ const KNOWLEDGE_CHANNELS = {
   getRoomContext: 'knowledge:rooms:context',
   upsertRoom: 'knowledge:rooms:upsert',
   deleteRoom: 'knowledge:rooms:delete',
+  getRoomGraph: 'knowledge:room-graph:get',
+  getRoomRelations: 'knowledge:room-relations:list',
+  getRoomRelationEvidence: 'knowledge:room-relations:evidence',
+  createRoomRelation: 'knowledge:room-relations:create',
+  updateRoomRelation: 'knowledge:room-relations:update',
+  removeManualRoomRelation: 'knowledge:room-relations:remove-manual',
   listWikiPages: 'knowledge:wiki:pages',
   readWikiPage: 'knowledge:wiki:page-read',
   listWikis: 'knowledge:wikis:list',
@@ -401,7 +415,9 @@ const KNOWLEDGE_CHANNELS = {
   listEntities: 'knowledge:entities:list',
   getEntity: 'knowledge:entities:get',
   promoteEntity: 'knowledge:entities:promote',
+  promoteEntities: 'knowledge:entities:promote-batch',
   suppressEntity: 'knowledge:entities:suppress',
+  suppressEntities: 'knowledge:entities:suppress-batch',
   restoreSuppressedEntity: 'knowledge:entities:restore',
   mergeEntity: 'knowledge:entities:merge',
   listUnmatched: 'knowledge:unmatched:list',
@@ -1231,6 +1247,14 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
   handle(CONTEXT_ROOM_CHANNELS.create, (_event, input) => bridge.create(input))
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
+  handle(CONTEXT_ROOM_CHANNELS.checkDuplicates, (_event, input) => bridge.checkDuplicates(input))
+  handle(CONTEXT_ROOM_CHANNELS.listDuplicateCandidates, (_event, status) => bridge.listDuplicateCandidates(status))
+  handle(CONTEXT_ROOM_CHANNELS.updateDuplicateCandidate, (_event, id, status) => bridge.updateDuplicateCandidate(id, status))
+  handle(CONTEXT_ROOM_CHANNELS.previewMerge, (_event, sourceRoomId, targetRoomId) => bridge.previewMerge(sourceRoomId, targetRoomId))
+  handle(CONTEXT_ROOM_CHANNELS.startMerge, (_event, input) => bridge.startMerge(input))
+  handle(CONTEXT_ROOM_CHANNELS.getMergeOperation, (_event, id) => bridge.getMergeOperation(id))
+  handle(CONTEXT_ROOM_CHANNELS.retryMerge, (_event, id) => bridge.retryMerge(id))
+  handle(CONTEXT_ROOM_CHANNELS.cancelMerge, (_event, id) => bridge.cancelMerge(id))
 }
 
 function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
@@ -1351,6 +1375,15 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.getRoomContext, (_event, roomId: string) => bridge.getRoomContext(roomId))
   handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
   handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
+  handle(KNOWLEDGE_CHANNELS.getRoomGraph, (_event, visibility) => bridge.getRoomGraph(visibility))
+  handle(KNOWLEDGE_CHANNELS.getRoomRelations, (_event, roomId, visibility) => bridge.getRoomRelations(roomId, visibility))
+  handle(KNOWLEDGE_CHANNELS.getRoomRelationEvidence, (_event, relationId, offset, limit) =>
+    bridge.getRoomRelationEvidence(relationId, offset, limit))
+  handle(KNOWLEDGE_CHANNELS.createRoomRelation, (_event, input) => bridge.createRoomRelation(input))
+  handle(KNOWLEDGE_CHANNELS.updateRoomRelation, (_event, relationId, input) =>
+    bridge.updateRoomRelation(relationId, input))
+  handle(KNOWLEDGE_CHANNELS.removeManualRoomRelation, (_event, relationId) =>
+    bridge.removeManualRoomRelation(relationId))
   handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
   handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
   handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
@@ -1358,8 +1391,10 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed') =>
     bridge.listEntities(status))
   handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
-  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string, options?: { forceNew?: boolean }) => bridge.promoteEntity(entityId, options))
+  handle(KNOWLEDGE_CHANNELS.promoteEntities, (_event, entityIds: string[]) => bridge.promoteEntities(entityIds))
   handle(KNOWLEDGE_CHANNELS.suppressEntity, (_event, entityId: string) => bridge.suppressEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.suppressEntities, (_event, entityIds: string[]) => bridge.suppressEntities(entityIds))
   handle(KNOWLEDGE_CHANNELS.restoreSuppressedEntity, (_event, entityId: string) => bridge.restoreSuppressedEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
     bridge.mergeEntity(fromId, targetId))
