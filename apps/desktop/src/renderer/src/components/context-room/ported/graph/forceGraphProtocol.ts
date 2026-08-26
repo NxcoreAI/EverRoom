@@ -14,6 +14,7 @@ export interface ForceGraphOptions {
   centerStrength: number
   collisionPadding: number
   collisionStrength: number
+  degreeBias: number
   height: number
   linkDistance: number
   linkStrength: number
@@ -26,6 +27,7 @@ export const DEFAULT_FORCE_GRAPH_OPTIONS: ForceGraphOptions = {
   centerStrength: 0.06,
   collisionPadding: 12,
   collisionStrength: 0.95,
+  degreeBias: 0,
   height: 420,
   linkDistance: 140,
   linkStrength: 0.35,

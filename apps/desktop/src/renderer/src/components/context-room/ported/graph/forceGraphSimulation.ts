@@ -13,6 +13,7 @@ import {
 import type { ForceGraphEdge, ForceGraphNode, ForceGraphOptions } from './forceGraphProtocol'
 
 interface SimulationNode extends SimulationNodeDatum {
+  degree: number
   id: string
   radius: number
 }
@@ -102,9 +103,15 @@ export function createForceGraphSimulation({
   if (invalidEdge) {
     throw new Error(`Force graph edge references an unknown node: ${invalidEdge.source} -> ${invalidEdge.target}`)
   }
+  const degreeById = new Map(nodes.map((node) => [node.id, 0]))
+  for (const edge of edges) {
+    degreeById.set(edge.source, (degreeById.get(edge.source) ?? 0) + 1)
+    degreeById.set(edge.target, (degreeById.get(edge.target) ?? 0) + 1)
+  }
   const simulationNodes: SimulationNode[] = nodes.map((node, index) => {
     const fallback = initialPosition(index, nodes.length, options.width, options.height)
     return {
+      degree: degreeById.get(node.id) ?? 0,
       id: node.id,
       radius: node.radius ?? 18,
       x: Number.isFinite(node.x) ? node.x : fallback.x,
@@ -122,14 +129,25 @@ export function createForceGraphSimulation({
     .strength(options.centerStrength)
   const centerY = forceY<SimulationNode>(height / 2)
     .strength(options.centerStrength)
+  const edgeDegree = (edge: SimulationEdge) => {
+    const source = typeof edge.source === 'string' ? degreeById.get(edge.source) ?? 0 : edge.source.degree
+    const target = typeof edge.target === 'string' ? degreeById.get(edge.target) ?? 0 : edge.target.degree
+    return Math.max(1, source, target)
+  }
   const links = forceLink<SimulationNode, SimulationEdge>(simulationEdges)
     .id((node) => node.id)
-    .distance(options.linkDistance)
-    .strength(options.linkStrength)
+    .distance((edge) => options.linkDistance * (
+      1 + Math.min(0.65, Math.log2(edgeDegree(edge) + 1) * 0.14) * options.degreeBias
+    ))
+    .strength((edge) => options.linkStrength / Math.pow(edgeDegree(edge), options.degreeBias * 0.5))
 
   simulation = forceSimulation<SimulationNode>(simulationNodes)
     .velocityDecay(options.velocityDecay)
-    .force('charge', forceManyBody<SimulationNode>().strength(options.manyBodyStrength))
+    .force('charge', forceManyBody<SimulationNode>().strength((node) => (
+      options.manyBodyStrength * (
+        1 + Math.min(1.4, Math.log2(node.degree + 1) * 0.32) * options.degreeBias
+      )
+    )))
     .force('collide', forceCollide<SimulationNode>()
       .radius((node) => node.radius + options.collisionPadding)
       .strength(options.collisionStrength)

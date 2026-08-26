@@ -17,6 +17,11 @@ import {
 } from '../graph/PixiForceGraphCanvas'
 import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
 import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+import {
+  roomGraphLayoutDimensions,
+  roomGraphLayoutOptions,
+  roomRelationTypeColor,
+} from '../graph/roomGraphVisuals'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import { uiText } from '../adapters'
 import { relationTypeLabel } from './RoomRelationControls'
@@ -45,6 +50,15 @@ const ROOM_KIND_COLORS: Record<ContextRoomKind, number> = {
   事件: 0xd06b35,
 }
 
+const ROOM_KIND_GRAPH_ICONS: Record<ContextRoomKind, PixiForceGraphCanvasNode['icon']> = {
+  项目: 'target',
+  主题: 'book',
+  人物: 'user',
+  长期目标: 'flag',
+  议题: 'message',
+  事件: 'zap',
+}
+
 function RoomGraphCanvasComponent(
   {
     compact = false,
@@ -60,6 +74,7 @@ function RoomGraphCanvasComponent(
 ) {
   const { t } = useLocale()
   const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
+  const fitTimerRef = useRef<number | null>(null)
   const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const nodeIndex = useMemo(
     () => new Map(rooms.map((node, index) => [node.id, index])),
@@ -68,12 +83,14 @@ function RoomGraphCanvasComponent(
   const nodes = useMemo<PixiForceGraphCanvasNode[]>(() => rooms.map((room) => ({
     color: ROOM_KIND_COLORS[room.kind],
     id: room.id,
+    icon: ROOM_KIND_GRAPH_ICONS[room.kind],
     label: room.title,
     radius: compact ? 22 : 29,
   })), [compact, rooms])
   const edges = useMemo<PixiForceGraphEdge[]>(() => relations.flatMap((edge) => {
     const source = nodeIndex.get(edge.sourceRoomId)
     const target = nodeIndex.get(edge.targetRoomId)
+    const color = roomRelationTypeColor(edge.type)
     return source === undefined || target === undefined
       ? []
       : [{
@@ -81,8 +98,9 @@ function RoomGraphCanvasComponent(
           source,
           target,
           label: edge.label?.trim() || relationTypeLabel(edge.type, t),
+          labelColor: color,
           directed: edge.directed,
-          color: edge.origin === 'auto' ? 0x929ba8 : 0x3d6ff6,
+          color,
           width: edge.strength === 'strong' ? 3 : edge.strength === 'medium' ? 2.1 : 1.25,
           alpha: edge.strength === 'strong' ? 0.92 : edge.strength === 'medium' ? 0.72 : 0.5,
         }]
@@ -92,23 +110,38 @@ function RoomGraphCanvasComponent(
       ? [{ source: edge.sourceRoomId, target: edge.targetRoomId }]
       : []
   )), [nodeIndex, relations])
+  const initialLayoutDimensions = useMemo(() => roomGraphLayoutDimensions({
+    compact,
+    nodeCount: nodes.length,
+    relationCount: relations.length,
+    screenHeight: 420,
+    screenWidth: 640,
+  }), [compact, nodes.length, relations.length])
   const fallbackPositions = useMemo(() => {
     const result = new Float32Array(nodes.length * 2)
     nodes.forEach((_, index) => {
-      const ring = Math.floor(Math.sqrt(index))
-      const ringStart = ring * ring
-      const ringSize = Math.max(1, (ring + 1) * (ring + 1) - ringStart)
-      const angle = ((index - ringStart) / ringSize) * Math.PI * 2
-      const radius = ring === 0 ? 0 : 88 + ring * 70
-      result[index * 2] = 360 + Math.cos(angle) * radius
-      result[index * 2 + 1] = 220 + Math.sin(angle) * radius
+      const angle = index * Math.PI * (3 - Math.sqrt(5))
+      const distance = Math.min(initialLayoutDimensions.width, initialLayoutDimensions.height)
+        * 0.38 * Math.sqrt(index / Math.max(1, nodes.length - 1))
+      result[index * 2] = initialLayoutDimensions.width / 2 + Math.cos(angle) * distance
+      result[index * 2 + 1] = initialLayoutDimensions.height / 2 + Math.sin(angle) * distance
     })
     return result
-  }, [nodes])
-  const resizeLayout = useCallback(
-    (width: number, height: number) => layout?.resize(width, height),
-    [layout],
-  )
+  }, [initialLayoutDimensions, nodes])
+  const resizeLayout = useCallback((width: number, height: number) => {
+    const dimensions = roomGraphLayoutDimensions({
+      compact,
+      nodeCount: nodes.length,
+      relationCount: relations.length,
+      screenHeight: height,
+      screenWidth: width,
+    })
+    layout?.resize(dimensions.width, dimensions.height)
+    if (dimensions.width > width || dimensions.height > height) {
+      if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
+      fitTimerRef.current = window.setTimeout(() => canvasRef.current?.fitView(), 500)
+    }
+  }, [compact, layout, nodes.length, relations.length])
   const readRevision = useCallback(() => layout?.revision() ?? 0, [layout])
 
   useEffect(() => {
@@ -122,23 +155,10 @@ function RoomGraphCanvasComponent(
           y: fallbackPositions[index * 2 + 1],
         })),
         edges: layoutEdges,
-        options: compact
-          ? {
-              collisionPadding: 8,
-              collisionStrength: 0.72,
-              linkDistance: 105,
-              linkStrength: 0.22,
-              manyBodyStrength: -105,
-              velocityDecay: 0.56,
-            }
-          : {
-              collisionPadding: 10,
-              collisionStrength: 0.78,
-              linkDistance: 118,
-              linkStrength: 0.24,
-              manyBodyStrength: -135,
-              velocityDecay: 0.54,
-            },
+        options: {
+          ...roomGraphLayoutOptions({ compact, nodeCount: rooms.length, relationCount: relations.length }),
+          ...initialLayoutDimensions,
+        },
       })
     } catch (error) {
       console.error('Failed to initialize Room force graph layout', error)
@@ -150,7 +170,11 @@ function RoomGraphCanvasComponent(
       console.error('Room force graph worker failed', error)
     })
     return () => next.dispose()
-  }, [compact, fallbackPositions, layoutEdges, rooms])
+  }, [compact, fallbackPositions, initialLayoutDimensions, layoutEdges, relations.length, rooms])
+
+  useEffect(() => () => {
+    if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
+  }, [])
 
   useImperativeHandle(ref, () => ({
     async fitView() {

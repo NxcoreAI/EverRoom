@@ -14,8 +14,10 @@ export interface PixiForceGraphEdgeLabelManager {
   update(hoveredIndex: number | null, selectedEdgeId: string | null): void
 }
 
+const DEFAULT_EDGE_LABEL_COLOR = 0x566171
+
 const EDGE_LABEL_STYLE: Record<string, unknown> = {
-  fill: 0x566171,
+  fill: DEFAULT_EDGE_LABEL_COLOR,
   fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   fontSize: 10,
   fontWeight: '500',
@@ -63,6 +65,7 @@ export function createPixiForceGraphEdgeLabelManager({
       created += 1
     }
     label.text = edges[index]?.label ?? ''
+    label.tint = edges[index]?.labelColor ?? edges[index]?.color ?? DEFAULT_EDGE_LABEL_COLOR
     label.resolution = currentResolution
     label.visible = true
     active.set(index, label)
