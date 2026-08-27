@@ -475,6 +475,18 @@
   color: #b66e17;
 }
 
+.memory-trace-answer[data-state='active'] > span,
+.memory-trace-answer[data-state='complete'] > span {
+  border-color: #e6b778;
+  background: #fff8ed;
+  color: #b66e17;
+}
+
+.memory-trace-answer[data-state='complete'] > span {
+  box-shadow: inset 0 0 0 1px #e6b778;
+  font-weight: 700;
+}
+
 .memory-trace-answer p {
   display: -webkit-box;
   margin: 7px 0 0;
@@ -708,6 +720,9 @@
 
 .memory-trace-step { border-color: var(--border); background: var(--bg); color: var(--subtle); }
 .memory-trace-step[data-active='true'] { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: var(--accent-soft); color: var(--accent-strong); }
+.memory-trace-answer[data-state='active'] > span,
+.memory-trace-answer[data-state='complete'] > span { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: var(--accent-soft); color: var(--accent-strong); }
+.memory-trace-answer[data-state='complete'] > span { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 48%, var(--border)); }
 .memory-trace-line { background: var(--border-strong); }
 .memory-trace-answer[data-filled='true'] p { color: var(--muted); }
 .memory-trace-memory > svg { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: var(--accent); color: var(--accent-contrast); }

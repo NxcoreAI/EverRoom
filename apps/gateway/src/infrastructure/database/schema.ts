@@ -79,6 +79,77 @@ export const auditLogs = sqliteTable("audit_logs", {
     .$defaultFn(() => new Date()),
 });
 
+export const externalCallPolicies = sqliteTable(
+  "external_call_policies",
+  {
+    id: text("id").primaryKey(),
+    subjectScope: text("subject_scope", { enum: ["user", "workspace", "service"] }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    service: text("service", { enum: ["WEB_SEARCH", "MCP", "CONNECTOR"] }).notNull(),
+    period: text("period", { enum: ["UTC_DAY", "UTC_MONTH"] }).notNull(),
+    callLimit: integer("call_limit").notNull(),
+    warningThreshold: integer("warning_threshold").notNull(),
+    enforcement: text("enforcement", { enum: ["BLOCK", "AUDIT_ONLY"] }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [uniqueIndex("external_call_policies_subject_idx")
+    .on(table.subjectScope, table.subjectId, table.service, table.period)],
+);
+
+export const externalCallUsage = sqliteTable(
+  "external_call_usage",
+  {
+    policyId: text("policy_id").notNull().references(() => externalCallPolicies.id, { onDelete: "cascade" }),
+    periodStart: integer("period_start", { mode: "timestamp_ms" }).notNull(),
+    reservedCalls: integer("reserved_calls").notNull().default(0),
+    consumedCalls: integer("consumed_calls").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.policyId, table.periodStart] }),
+    index("external_call_usage_period_idx").on(table.periodStart),
+  ],
+);
+
+export const externalCallReservations = sqliteTable("external_call_reservations", {
+  id: text("id").primaryKey(),
+  policyIds: text("policy_ids", { mode: "json" }).$type<string[]>().notNull(),
+  service: text("service", { enum: ["WEB_SEARCH", "MCP", "CONNECTOR"] }).notNull(),
+  tool: text("tool").notNull(),
+  state: text("state", { enum: ["RESERVED", "CONSUMED", "RELEASED"] }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const externalCallAudits = sqliteTable(
+  "external_call_audits",
+  {
+    id: text("id").primaryKey(),
+    subjectScope: text("subject_scope", { enum: ["user", "workspace", "service"] }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    workspaceId: text("workspace_id"),
+    userId: text("user_id"),
+    service: text("service", { enum: ["WEB_SEARCH", "MCP", "CONNECTOR"] }).notNull(),
+    tool: text("tool").notNull(),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+    source: text("source").notNull(),
+    runId: text("run_id"),
+    correlationId: text("correlation_id"),
+    reservedCalls: integer("reserved_calls").notNull(),
+    consumedCalls: integer("consumed_calls").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    outcome: text("outcome", { enum: ["SUCCEEDED", "FAILED", "RELEASED", "BLOCKED"] }).notNull(),
+    failureCode: text("failure_code", {
+      enum: ["PROVIDER_FAILURE", "NOT_DISPATCHED", "BUDGET_EXCEEDED", "CANCELLED"],
+    }),
+  },
+  (table) => [
+    index("external_call_audits_subject_idx").on(table.subjectScope, table.subjectId, table.occurredAt),
+    index("external_call_audits_service_idx").on(table.service, table.occurredAt),
+  ],
+);
+
 export const connectorAccounts = sqliteTable(
   "connector_accounts",
   {
@@ -501,6 +572,9 @@ export const contextRooms = sqliteTable(
     kind: text("kind"),
     data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     position: integer("position").notNull().default(0),
+    lifecycle: text("lifecycle", { enum: ["active", "merging", "merged"] }).notNull().default("active"),
+    mergedIntoRoomId: text("merged_into_room_id"),
+    mergedAt: integer("merged_at", { mode: "timestamp_ms" }),
     deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -527,6 +601,8 @@ export const agentRuns = sqliteTable(
       enum: ["explicit_switch", "delegated_subagent"],
     }).notNull().default("explicit_switch"),
     idempotencyKey: text("idempotency_key").notNull(),
+    /** Persisted per-run Room attribution. Sessions may span multiple Rooms. */
+    roomId: text("room_id"),
     status: text("status", {
       enum: ["accepted", "running", "completed", "failed", "cancelled", "interrupted"],
     })
@@ -1066,6 +1142,9 @@ export const rooms = sqliteTable("rooms", {
   aliases: text("aliases", { mode: "json" }).$type<string[]>(),
   /** Room 的户口实体（ED4：现有 Room 一律种子化为已晋升实体；渲染器上报时同步维护）。 */
   entityId: text("entity_id"),
+  lifecycle: text("lifecycle", { enum: ["active", "merging", "merged"] }).notNull().default("active"),
+  mergedIntoRoomId: text("merged_into_room_id"),
+  mergedAt: integer("merged_at", { mode: "timestamp_ms" }),
   /** 软删除（null = 存活）：候选池/auto 同步/wiki 挂载全部过滤。 */
   deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -1075,6 +1154,103 @@ export const rooms = sqliteTable("rooms", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/** Durable Room-pair duplicate assessment. Formal Rooms are never auto-merged. */
+export const roomDuplicateCandidates = sqliteTable(
+  "room_duplicate_candidates",
+  {
+    id: text("id").primaryKey(),
+    roomAId: text("room_a_id").notNull(),
+    roomBId: text("room_b_id").notNull(),
+    nameScore: real("name_score").notNull().default(0),
+    centroidScore: real("centroid_score").notNull().default(0),
+    contentOverlap: real("content_overlap").notNull().default(0),
+    entityOverlap: real("entity_overlap").notNull().default(0),
+    duplicateScore: real("duplicate_score").notNull().default(0),
+    confidence: text("confidence", { enum: ["high", "medium", "related", "distinct", "pending"] }).notNull(),
+    llmVerdict: text("llm_verdict", { enum: ["same", "different", "unavailable"] }),
+    reasons: text("reasons", { mode: "json" }).$type<string[]>().notNull(),
+    status: text("status", { enum: ["open", "related", "distinct", "merged"] }).notNull().default("open"),
+    evidenceRevision: text("evidence_revision").notNull(),
+    scoringVersion: integer("scoring_version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_duplicate_candidates_pair_idx").on(table.roomAId, table.roomBId),
+    index("room_duplicate_candidates_status_idx").on(table.status, table.confidence),
+    index("room_duplicate_candidates_room_a_idx").on(table.roomAId),
+    index("room_duplicate_candidates_room_b_idx").on(table.roomBId),
+  ],
+);
+
+/** User-confirmed, irreversible Room merge orchestration state. */
+export const roomMergeOperations = sqliteTable(
+  "room_merge_operations",
+  {
+    id: text("id").primaryKey(),
+    sourceRoomId: text("source_room_id").notNull(),
+    targetRoomId: text("target_room_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    status: text("status", { enum: ["queued", "running", "completed", "failed", "cancelled"] }).notNull().default("queued"),
+    stage: text("stage").notNull().default("queued"),
+    progress: integer("progress").notNull().default(0),
+    commitReached: integer("commit_reached", { mode: "boolean" }).notNull().default(false),
+    impact: text("impact", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    error: text("error"),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_merge_operations_idempotency_idx").on(table.idempotencyKey),
+    index("room_merge_operations_rooms_idx").on(table.sourceRoomId, table.targetRoomId),
+    index("room_merge_operations_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+/** Execution journal used for crash recovery before the irreversible commit point. */
+export const roomMergeItems = sqliteTable(
+  "room_merge_items",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull().references(() => roomMergeOperations.id, { onDelete: "cascade" }),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull(),
+    beforeRoomId: text("before_room_id"),
+    afterRoomId: text("after_room_id"),
+    beforeValue: text("before_value", { mode: "json" }).$type<Record<string, unknown>>(),
+    fingerprint: text("fingerprint"),
+    status: text("status", { enum: ["pending", "moved", "folded", "skipped"] }).notNull().default("pending"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_merge_items_operation_resource_idx").on(table.operationId, table.resourceType, table.resourceId),
+    index("room_merge_items_operation_idx").on(table.operationId, table.status),
+  ],
+);
+
+/** Gateway-owned provenance for memories that can be attributed to one Room. */
+export const roomMemoryAttributions = sqliteTable(
+  "room_memory_attributions",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    memoryId: text("memory_id").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceId: text("source_id"),
+    confidence: text("confidence", { enum: ["explicit", "derived"] }).notNull().default("explicit"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_memory_attributions_memory_idx").on(table.memoryId),
+    index("room_memory_attributions_room_idx").on(table.roomId),
+  ],
+);
 
 /**
  * 实体注册表（entity-room-plan §3.1）：弱 Room 的本体，也是 Room 的"户口"。
@@ -1101,10 +1277,17 @@ export const entities = sqliteTable(
     }).notNull().default("weak"),
     /** 晋升后回填 rooms.id。 */
     roomId: text("room_id"),
-    /** 累计证据分：primary +1.0 / mention +0.4 / manual +1.5（按 source 去重，版本更新调差额）。 */
+    /** V2 有效证据分：按 evidence_group_key 分组取最大贡献后求和。 */
     evidenceScore: real("evidence_score").notNull().default(0),
-    /** 关联资料数（按 sourceId 去重）。 */
+    /** 原始关联资料数（按 sourceKind + sourceId 去重）。 */
     sourceCount: integer("source_count").notNull().default(0),
+    /** V2 聚合计数：有效/可信/强证据组。 */
+    eligibleSourceCount: integer("eligible_source_count").notNull().default(0),
+    trustedSourceCount: integer("trusted_source_count").notNull().default(0),
+    strongSourceCount: integer("strong_source_count").notNull().default(0),
+    /** 达标路径：standard（三份合格证据）或 strong（两份独立强证据）。 */
+    readinessPath: text("readiness_path", { enum: ["standard", "strong"] }),
+    scoringVersion: integer("scoring_version").notNull().default(2),
     /** 质心：弱实体从第一份资料就开始累积（ED：冷启动问题随模型消失）。 */
     centroid: text("centroid"),
     centroidDocs: integer("centroid_docs").notNull().default(0),
@@ -1144,6 +1327,20 @@ export const entityDocLinks = sqliteTable(
     role: text("role", { enum: ["primary", "mention", "manual"] }).notNull(),
     /** 抽取时的分量快照（0~1）。 */
     salience: real("salience").notNull().default(0),
+    /** V2 推荐评分快照；规则升级时可从来源元数据重新计算。 */
+    evidenceGroupKey: text("evidence_group_key").notNull().default(""),
+    roleWeight: real("role_weight").notNull().default(0),
+    sourceWeight: real("source_weight").notNull().default(0),
+    qualityFactor: real("quality_factor").notNull().default(0),
+    relevanceFactor: real("relevance_factor").notNull().default(0),
+    effectiveWeight: real("effective_weight").notNull().default(0),
+    qualityLevel: text("quality_level", {
+      enum: ["excluded", "uncertain", "low", "normal", "high"],
+    }).notNull().default("excluded"),
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
+    strong: integer("strong", { mode: "boolean" }).notNull().default(false),
+    scoreReasons: text("score_reasons", { mode: "json" }).$type<string[]>(),
+    scoringVersion: integer("scoring_version").notNull().default(2),
     /** 抽取依据句（原文短句）——实体详情"为什么存在"的可解释性来源。 */
     evidence: text("evidence"),
     decidedBy: text("decided_by", { enum: ["resolution", "user"] }).notNull(),
@@ -1161,6 +1358,116 @@ export const entityDocLinks = sqliteTable(
       table.sourceId,
     ),
     index("entity_doc_links_source_idx").on(table.sourceKind, table.sourceId),
+  ],
+);
+
+/**
+ * Room relation source projection. This is deliberately separate from
+ * entity_doc_links: relation indexing must not change routing or recommendation
+ * scores. One source can belong to multiple Rooms, while a mail thread remains
+ * one evidence group.
+ */
+export const roomSourceMemberships = sqliteTable(
+  "room_source_memberships",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    sourceKind: text("source_kind", {
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+    }).notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceVersion: integer("source_version").notNull(),
+    sourceTitle: text("source_title"),
+    evidenceGroupKey: text("evidence_group_key").notNull(),
+    role: text("role", { enum: ["entry", "primary", "mention", "manual", "rule"] }).notNull(),
+    effectiveWeight: real("effective_weight").notNull().default(0),
+    qualityLevel: text("quality_level", {
+      enum: ["excluded", "uncertain", "low", "normal", "high"],
+    }).notNull().default("excluded"),
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
+    scoreReasons: text("score_reasons", { mode: "json" }).$type<string[]>(),
+    scoringVersion: integer("scoring_version").notNull().default(1),
+    /** Entity extraction completed for this source version, including an empty result. */
+    entityIndexed: integer("entity_indexed", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_source_memberships_room_source_idx").on(table.roomId, table.sourceKind, table.sourceId),
+    index("room_source_memberships_source_idx").on(table.sourceKind, table.sourceId),
+    index("room_source_memberships_group_idx").on(table.evidenceGroupKey),
+    index("room_source_memberships_room_idx").on(table.roomId),
+  ],
+);
+
+/** Normalized entities mentioned by a Room's source material. */
+export const roomEntityMentions = sqliteTable(
+  "room_entity_mentions",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    entityId: text("entity_id").notNull(),
+    sourceKind: text("source_kind", {
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+    }).notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceVersion: integer("source_version").notNull(),
+    evidenceGroupKey: text("evidence_group_key").notNull(),
+    salience: real("salience").notNull().default(0),
+    relevanceFactor: real("relevance_factor").notNull().default(0),
+    qualityLevel: text("quality_level", {
+      enum: ["excluded", "uncertain", "low", "normal", "high"],
+    }).notNull().default("excluded"),
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
+    evidence: text("evidence"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_entity_mentions_room_entity_source_idx").on(
+      table.roomId,
+      table.entityId,
+      table.sourceKind,
+      table.sourceId,
+    ),
+    index("room_entity_mentions_entity_idx").on(table.entityId),
+    index("room_entity_mentions_room_idx").on(table.roomId),
+    index("room_entity_mentions_source_idx").on(table.sourceKind, table.sourceId),
+  ],
+);
+
+/** Materialized, explainable Room-to-Room relations plus user overrides. */
+export const roomRelations = sqliteTable(
+  "room_relations",
+  {
+    id: text("id").primaryKey(),
+    roomAId: text("room_a_id").notNull(),
+    roomBId: text("room_b_id").notNull(),
+    autoScore: real("auto_score").notNull().default(0),
+    autoType: text("auto_type", { enum: ["shared_evidence", "shared_entity", "mixed"] }),
+    strength: text("strength", { enum: ["weak", "medium", "strong"] }),
+    sharedSourceCount: integer("shared_source_count").notNull().default(0),
+    sharedEntityCount: integer("shared_entity_count").notNull().default(0),
+    directMentionCount: integer("direct_mention_count").notNull().default(0),
+    topReasons: text("top_reasons", { mode: "json" }).$type<Array<Record<string, unknown>>>(),
+    scoringVersion: integer("scoring_version").notNull().default(1),
+    pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
+    hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
+    manualType: text("manual_type", {
+      enum: ["related", "depends_on", "part_of", "supports", "blocks", "owns", "custom"],
+    }),
+    manualFromRoomId: text("manual_from_room_id"),
+    manualToRoomId: text("manual_to_room_id"),
+    manualLabel: text("manual_label"),
+    manualNote: text("manual_note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_relations_pair_idx").on(table.roomAId, table.roomBId),
+    index("room_relations_room_a_idx").on(table.roomAId),
+    index("room_relations_room_b_idx").on(table.roomBId),
+    index("room_relations_updated_idx").on(table.updatedAt),
   ],
 );
 

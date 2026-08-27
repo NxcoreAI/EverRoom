@@ -1,3 +1,46 @@
+diff --git a/direct-tools.ts b/direct-tools.ts
+index 8bc84a6ea8d6dc6241196cf8444e1f4349710441..2f6ce28771edb6e9b09ab33aad191d7907d58483 100644
+--- a/direct-tools.ts
++++ b/direct-tools.ts
+@@ -517,7 +517,7 @@ export function createDirectToolExecutor(
+           })
+         : null;
+ 
+-      const result = await withSessionRecovery<ClientCallToolResult>(
++      const invoke = () => withSessionRecovery<ClientCallToolResult>(
+         {
+           manager: state.manager,
+           config: state.config,
+@@ -531,6 +531,9 @@ export function createDirectToolExecutor(
+           _meta: uiSession?.requestMeta,
+         }, requestOptions), ownedSignal),
+       );
++      const result = state.callTool
++        ? await state.callTool({ server: spec.serverName, tool: spec.originalName }, invoke)
++        : await invoke();
+       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
+ 
+       if (result.isError) {
+@@ -569,6 +572,7 @@ export function createDirectToolExecutor(
+         details: { server: spec.serverName, tool: spec.originalName, ...guardedMcpDetails(guarded) },
+       };
+     } catch (error) {
++      if (error instanceof Error && error.name === "ExternalCallBudgetExceededError") throw error;
+       if (error instanceof SessionRecoveryAuthRequiredError) {
+         const message = error.authMessage ?? getDirectAuthRequiredMessage(state, spec.serverName);
+         uiSession?.sendToolCancelled(message);
+diff --git a/index.ts b/index.ts
+index 5a910364a79061d2534ca1423e3c318e2842da51..74100371d114d11646f9590b903bb264bf47165d 100644
+--- a/index.ts
++++ b/index.ts
+@@ -314,6 +314,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
+       }
+ 
+       state = nextState;
++      if (options.callTool) nextState.callTool = options.callTool;
+       nextState.onToolMetadataUpdated = (_serverName, _reason) => {
+         if (state !== nextState || !owner.isActive()) return;
+         syncPromptCommands();
 diff --git a/npx-resolver.ts b/npx-resolver.ts
 index c735a77fc87231f12e74b79a288e4b720ebde880..619c4ee12fc30fa9c5df44acda5687704ecf5d80 100644
 --- a/npx-resolver.ts
@@ -11,6 +54,37 @@ index c735a77fc87231f12e74b79a288e4b720ebde880..619c4ee12fc30fa9c5df44acda568770
          clearTimeout(timer);
          signal?.removeEventListener("abort", abort);
          reject(err);
+diff --git a/proxy-modes.ts b/proxy-modes.ts
+index f3a505548a439929139448727ab4ef70e329705e..e2d02e8363a8b87b8f9797e5b6c1d10d79cbc369 100644
+--- a/proxy-modes.ts
++++ b/proxy-modes.ts
+@@ -1225,7 +1225,7 @@ export async function executeCall(
+         })
+       : null;
+ 
+-    const result = await withSessionRecovery<ClientCallToolResult>(
++    const invoke = () => withSessionRecovery<ClientCallToolResult>(
+       {
+         manager: state.manager,
+         config: state.config,
+@@ -1239,6 +1239,9 @@ export async function executeCall(
+         _meta: uiSession?.requestMeta,
+       }, requestOptions), ownedSignal),
+     );
++    const result = state.callTool
++      ? await state.callTool({ server: serverName, tool: toolMeta.originalName }, invoke)
++      : await invoke();
+ 
+     if (toolMeta.uiResourceUri) {
+       uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/client").CallToolResult);
+@@ -1292,6 +1295,7 @@ export async function executeCall(
+       details: { mode: "call", ...guardedMcpDetails(guarded), ...callIdentity },
+     };
+   } catch (error) {
++    if (error instanceof Error && error.name === "ExternalCallBudgetExceededError") throw error;
+     if (error instanceof SessionRecoveryAuthRequiredError) {
+       const message = error.authMessage ?? getAuthRequiredMessage(state, serverName);
+       uiSession?.sendToolCancelled(message);
 diff --git a/request-headers-command.ts b/request-headers-command.ts
 index 67d63606a47a4822acc4466024f6d09c595c58e0..41ce63db269a6f44eca055120e485cbdc1bc0448 100644
 --- a/request-headers-command.ts
@@ -24,6 +98,40 @@ index 67d63606a47a4822acc4466024f6d09c595c58e0..41ce63db269a6f44eca055120e485cbd
      const request = new Request(input, init);
      const body = Buffer.from(await request.clone().arrayBuffer());
      const derived = await invokeRequestHeadersCommand(config, {
+diff --git a/state.ts b/state.ts
+index 9733178dd10602ab9c987e432d13cb67c6662430..f181f4302eeb57db94397141983856edfc1be353 100644
+--- a/state.ts
++++ b/state.ts
+@@ -3,7 +3,7 @@ import type { ConsentManager } from "./consent-manager.ts";
+ import type { McpLifecycleManager } from "./lifecycle.ts";
+ import type { McpServerManager } from "./server-manager.ts";
+ import type { AuthStorageOptions } from "./mcp-auth.ts";
+-import type { ToolMetadata, PromptMetadata, McpConfig, UiSessionMessages, UiStreamSummary } from "./types.ts";
++import type { ToolMetadata, PromptMetadata, McpAdapterOptions, McpConfig, UiSessionMessages, UiStreamSummary } from "./types.ts";
+ import type { UiResourceHandler } from "./ui-resource-handler.ts";
+ import type { UiServerHandle } from "./ui-server.ts";
+ import type { McpRuntimeOwner } from "./runtime-owner.ts";
+@@ -59,4 +59,5 @@ export interface McpExtensionState {
+   sendMessage?: SendMessageFn;
+   onToolMetadataUpdated?: (serverName: string, reason: string) => void | Promise<void>;
+   statusEvents?: McpStatusEventBus;
++  callTool?: NonNullable<McpAdapterOptions["callTool"]>;
+ }
+diff --git a/types.ts b/types.ts
+index 8edf767171e370d0082ae54c0e65a8bff4557671..ff5f37d30481cdfee55ead70da24fc671d1ed3ed 100644
+--- a/types.ts
++++ b/types.ts
+@@ -565,6 +565,10 @@ export interface McpConfig {
+ export interface McpAdapterOptions {
+   config?: McpConfig;
+   configPath?: string;
++  callTool?: <T>(
++    input: { server: string; tool: string },
++    invoke: () => Promise<T>,
++  ) => Promise<T>;
+ }
+ 
+ // Alias for clarity
 diff --git a/unix-socket-transport.ts b/unix-socket-transport.ts
 index f6b4577eb4a5f9459eb6e324338f325549841421..568f89027b02a731316111e96e7d271a2a5d8258 100644
 --- a/unix-socket-transport.ts

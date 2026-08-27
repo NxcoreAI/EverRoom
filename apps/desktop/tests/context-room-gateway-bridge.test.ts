@@ -104,4 +104,44 @@ describe('ContextRoomGatewayBridge snapshots', () => {
       },
     ])
   })
+
+  it('forwards duplicate review and irreversible merge operations to the Gateway', async () => {
+    const requests: Array<{ method: string; path: string; body: string }> = []
+    const server = createServer(async (request, response) => {
+      const requestBody = await body(request)
+      requests.push({ method: request.method ?? '', path: request.url ?? '', body: requestBody })
+      if (request.url?.includes('duplicate-check')) {
+        return json(response, 200, { candidates: [], overrideToken: null, expiresAt: null })
+      }
+      if (request.url?.includes('duplicate-candidates')) return json(response, 200, { items: [] })
+      if (request.url?.includes('merge-preview')) return json(response, 200, { previewHash: 'preview' })
+      return json(response, 200, { id: 'merge-operation' })
+    })
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const bridge = new ContextRoomGatewayBridge({
+      getConnection: () => ({ pid: 1, baseUrl: `http://127.0.0.1:${String(port)}`, token: 'room-token', version: 'test' }),
+    } as GatewaySupervisor)
+
+    await bridge.checkDuplicates({ title: '校园生活', description: '校园资料' })
+    await bridge.listDuplicateCandidates('open')
+    await bridge.updateDuplicateCandidate('candidate-1', 'distinct')
+    await bridge.previewMerge('room-source', 'room-target')
+    await bridge.startMerge({ sourceRoomId: 'room-source', targetRoomId: 'room-target', previewHash: 'hash', idempotencyKey: 'key' })
+    await bridge.getMergeOperation('operation-1')
+    await bridge.retryMerge('operation-1')
+    await bridge.cancelMerge('operation-1')
+
+    expect(requests).toEqual([
+      { method: 'POST', path: '/v1/context-rooms/duplicate-check', body: JSON.stringify({ title: '校园生活', description: '校园资料' }) },
+      { method: 'GET', path: '/v1/context-rooms/duplicate-candidates?status=open', body: '' },
+      { method: 'PATCH', path: '/v1/context-rooms/duplicate-candidates/candidate-1', body: JSON.stringify({ status: 'distinct' }) },
+      { method: 'POST', path: '/v1/context-rooms/merge-preview', body: JSON.stringify({ sourceRoomId: 'room-source', targetRoomId: 'room-target' }) },
+      { method: 'POST', path: '/v1/context-rooms/merge-operations', body: JSON.stringify({ sourceRoomId: 'room-source', targetRoomId: 'room-target', previewHash: 'hash', idempotencyKey: 'key' }) },
+      { method: 'GET', path: '/v1/context-rooms/merge-operations/operation-1', body: '' },
+      { method: 'POST', path: '/v1/context-rooms/merge-operations/operation-1/retry', body: '' },
+      { method: 'POST', path: '/v1/context-rooms/merge-operations/operation-1/cancel', body: '' },
+    ])
+  })
 })

@@ -1,14 +1,16 @@
 import {
   ArrowRight,
-  FileText,
+  GitMerge,
   Layers3,
+  Link2,
+  Maximize2,
   Plus,
   RotateCcw,
   Search,
   Trash2,
-  X,
 } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import type { RoomDuplicateCandidate } from '@nxcore/agent-contract';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 import obsidianLogo from '../../../../assets/obsidian.svg';
 
@@ -18,7 +20,11 @@ import { ReferenceDialog } from './shared';
 import { KnowledgePendingPanel } from './KnowledgePendingPanel';
 import { RoomCard } from './RoomCard';
 import { RoomForm, RoomLifecycleDialogs, type DraftRoom } from './RoomDialogs';
+import { isMergeRecommendationCandidate, RoomDuplicateCenter } from './RoomDuplicateCenter';
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from './RoomGraphCanvas';
+import { RoomNodeInspector } from './RoomGraphInspector';
+import { CreateRoomRelationDialog, RoomRelationInspector } from './RoomRelationControls';
+import { useRoomRelationGraph } from '../hooks/useRoomRelationGraph';
 import {
   RoomRecommendationDialog,
   RoomRecommendations,
@@ -36,87 +42,111 @@ function RoomGraph({
 }) {
   const { t } = useLocale();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedRelationId, setSelectedRelationId] = useState<string | null>(null);
+  const [relationType, setRelationType] = useState('all');
+  const [strength, setStrength] = useState('all');
+  const [graphQuery, setGraphQuery] = useState('');
+  const [showIsolated, setShowIsolated] = useState(true);
+  const [visibility, setVisibility] = useState<'active' | 'hidden'>('active');
+  const [createRelationOpen, setCreateRelationOpen] = useState(false);
   const graphRef = useRef<RoomGraphCanvasHandle>(null);
+  const { error, graph, loading, reload } = useRoomRelationGraph(null, visibility);
+  const filteredEdges = useMemo(() => (graph?.edges ?? []).filter((edge) => {
+    if (strength !== 'all' && edge.strength !== strength) return false;
+    if (relationType === 'manual') return edge.origin !== 'auto';
+    return relationType === 'all' || edge.type === relationType;
+  }), [graph?.edges, relationType, strength]);
+  const connectedIds = useMemo(() => new Set(filteredEdges.flatMap((edge) => [edge.sourceRoomId, edge.targetRoomId])), [filteredEdges]);
+  const graphRooms = useMemo(() => {
+    const normalized = graphQuery.trim().toLowerCase();
+    return rooms.filter((room) => {
+      if (!showIsolated && !connectedIds.has(room.id)) return false;
+      return !normalized || room.title.toLowerCase().includes(normalized);
+    });
+  }, [connectedIds, graphQuery, rooms, showIsolated]);
+  const graphRoomIds = useMemo(() => new Set(graphRooms.map((room) => room.id)), [graphRooms]);
+  const visibleEdges = useMemo(() => filteredEdges.filter((edge) => (
+    graphRoomIds.has(edge.sourceRoomId) && graphRoomIds.has(edge.targetRoomId)
+  )), [filteredEdges, graphRoomIds]);
   const selected = rooms.find((room) => room.id === selectedId);
+  const selectedRelation = (graph?.edges ?? []).find((edge) => edge.id === selectedRelationId) ?? null;
 
   return (
     <section className="context-room-home-section context-room-home-graph-section">
-      <div className="context-room-home-section-title">
-        <span>{t('contextRoom:home.relations')}</span>
-        <h2>{t('contextRoom:home.roomRelationshipGraph')}</h2>
+      <div className="context-room-home-section-title context-room-graph-heading">
+        <div><span>{t('contextRoom:home.relations')}</span><h2>{t('contextRoom:home.roomRelationshipGraph')}</h2></div>
+        <div className="context-room-graph-index-state" data-status={error ? 'degraded' : graph?.indexing.status ?? 'building'}>
+          {error
+            ? t('contextRoom:relations.indexDegraded')
+            : graph?.indexing.status === 'building'
+              ? t('contextRoom:relations.indexBuilding', { count: graph.indexing.pendingSources })
+              : graph?.indexing.status === 'degraded'
+                ? t('contextRoom:relations.indexDegraded')
+                : t('contextRoom:relations.indexReady')}
+        </div>
       </div>
-      <div className={`context-room-room-graph-layout${selected ? ' is-selected' : ''}`}>
+      <div className="context-room-room-graph-toolbar">
+        <label className="context-room-home-search">
+          <Search aria-hidden="true" />
+          <input type="search" value={graphQuery} placeholder={t('contextRoom:relations.searchRooms')} onChange={(event) => setGraphQuery(event.target.value)} />
+        </label>
+        <select aria-label={t('contextRoom:relations.filterType')} value={relationType} onChange={(event) => setRelationType(event.target.value)}>
+          <option value="all">{t('contextRoom:relations.allTypes')}</option>
+          <option value="shared_evidence">{t('contextRoom:relations.type.shared_evidence')}</option>
+          <option value="shared_entity">{t('contextRoom:relations.type.shared_entity')}</option>
+          <option value="mixed">{t('contextRoom:relations.type.mixed')}</option>
+          <option value="manual">{t('contextRoom:relations.manualRelations')}</option>
+        </select>
+        <select aria-label={t('contextRoom:relations.filterStrength')} value={strength} onChange={(event) => setStrength(event.target.value)}>
+          <option value="all">{t('contextRoom:relations.allStrengths')}</option>
+          <option value="weak">{t('contextRoom:relations.strength.weak')}</option>
+          <option value="medium">{t('contextRoom:relations.strength.medium')}</option>
+          <option value="strong">{t('contextRoom:relations.strength.strong')}</option>
+        </select>
+        <label className="context-room-graph-toggle"><input type="checkbox" checked={showIsolated} onChange={(event) => setShowIsolated(event.target.checked)} />{t('contextRoom:relations.showIsolated')}</label>
+        <button type="button" className="context-room-graph-tool-button" aria-pressed={visibility === 'hidden'} onClick={() => setVisibility((current) => current === 'active' ? 'hidden' : 'active')}>
+          {t(visibility === 'hidden' ? 'contextRoom:relations.showActive' : 'contextRoom:relations.showHidden')}
+        </button>
+        <button type="button" className="context-room-graph-tool-button" disabled={!selectedId} onClick={() => setCreateRelationOpen(true)}>
+          <Link2 aria-hidden="true" />{t('contextRoom:relations.newRelation')}
+        </button>
+        <button type="button" className="context-room-graph-icon-button" aria-label={t('contextRoom:home.fitToCanvas')} title={t('contextRoom:home.fitToCanvas')} onClick={() => void graphRef.current?.fitView()}>
+          <Maximize2 aria-hidden="true" />
+        </button>
+      </div>
+      <div className={`context-room-room-graph-layout${selected || selectedRelation ? ' is-selected' : ''}`}>
         <div className="context-room-room-graph-canvas">
-          <RoomGraphCanvas
-            ref={graphRef}
-            rooms={rooms}
-            selectedId={selectedId}
-            onSelectRoom={setSelectedId}
+          {loading && !graph ? <div className="context-room-graph-state">{t('contextRoom:relations.loadingGraph')}</div> : (
+            <RoomGraphCanvas
+              ref={graphRef}
+              rooms={graphRooms}
+              relations={visibleEdges}
+              selectedId={selectedId}
+              selectedRelationId={selectedRelationId}
+              onSelectRoom={(roomId) => { setSelectedRelationId(null); setSelectedId(roomId); }}
+              onSelectRelation={(relationId) => { setSelectedId(null); setSelectedRelationId(relationId); }}
+              onOpenRoom={onOpen}
+            />
+          )}
+          {error ? <div className="context-room-graph-degraded">{t('contextRoom:relations.degradedNoSyntheticEdges')}</div> : null}
+        </div>
+        {selectedRelation ? (
+          <RoomRelationInspector relation={selectedRelation} rooms={rooms} onClose={() => setSelectedRelationId(null)} onChanged={reload} />
+        ) : selected ? (
+          <RoomNodeInspector
+            room={selected}
+            onClose={() => setSelectedId(null)}
             onOpenRoom={onOpen}
           />
-          <button
-            type="button"
-            className="context-room-graph-fit-button"
-            onClick={() => void graphRef.current?.fitView()}
-          >
-            {t('contextRoom:home.fitToCanvas')}
-          </button>
-        </div>
-        {selected ? (
-          <aside className="context-room-room-graph-drawer">
-            <button
-              type="button"
-              aria-label={t('contextRoom:home.closeRoomRelationshipDetails')}
-              onClick={() => setSelectedId(null)}
-            >
-              <X aria-hidden="true" />
-            </button>
-            <div className="context-room-graph-drawer-title">
-              <span
-                className="context-room-home-card-icon"
-                data-icon-tone={roomKindTone(selected.kind)}
-              >
-                {(() => {
-                  const Icon = roomKindIcon(selected.kind);
-                  return <Icon aria-hidden="true" />;
-                })()}
-              </span>
-              <div>
-                <h3>{selected.title}</h3>
-                <p>{localizedUiText(selected.brief.background, t)}</p>
-              </div>
-            </div>
-            <div className="context-room-graph-materials">
-              <header>
-                <span>{t('contextRoom:home.relatedResources')}</span>
-                <b>{selected.materials.length + selected.fileItems.length}</b>
-              </header>
-              {[...selected.materials.slice(0, 3), ...selected.fileItems.slice(0, 2)].map(
-                (item) => {
-                  const name = 'title' in item ? item.title : item.name;
-                  const time = item.time;
-                  return (
-                    <div key={'id' in item ? item.id : name}>
-                      <FileText aria-hidden="true" />
-                      <span>
-                        <b>{name}</b>
-                        <small>{time}</small>
-                      </span>
-                    </div>
-                  );
-                }
-              )}
-            </div>
-            <button
-              type="button"
-              className="context-room-primary"
-              onClick={() => onOpen(selected.id)}
-            >
-              {t('contextRoom:home.openRoom')}
-            </button>
-          </aside>
         ) : null}
       </div>
+      <CreateRoomRelationDialog
+        open={createRelationOpen}
+        fromRoomId={selectedId}
+        rooms={rooms}
+        onOpenChange={setCreateRelationOpen}
+        onCreated={async (relation) => { await reload(); setSelectedId(null); setSelectedRelationId(relation.id); }}
+      />
     </section>
   );
 }
@@ -133,10 +163,11 @@ export function HomeView({
   onOpenDetail,
   onShowAll,
   onFocusAgent,
+  onRefreshRooms,
 }: {
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
-  onCreateRoom: (draft: DraftRoom) => Promise<void>;
+  onCreateRoom: (draft: DraftRoom, duplicateOverrideToken?: string) => Promise<void>;
   onMountObsidian: () => Promise<void>;
   onRenameRoom: (roomId: string, name: string) => void;
   onDeleteRoom: (roomId: string) => void;
@@ -145,11 +176,19 @@ export function HomeView({
   onOpenDetail: (roomId: string) => void;
   onShowAll: () => void;
   onFocusAgent: () => void;
+  onRefreshRooms: () => Promise<void>;
 }) {
   const { t } = useLocale();
   const [query, setQuery] = useState('');
   const [recommendation, setRecommendation] = useState<RoomRecommendation | null>(null);
   const [newRoomOpen, setNewRoomOpen] = useState(false);
+  const [duplicateCenterOpen, setDuplicateCenterOpen] = useState(false);
+  const [duplicateCandidateCount, setDuplicateCandidateCount] = useState(0);
+  const [creationReview, setCreationReview] = useState<{
+    draft: DraftRoom;
+    candidates: RoomDuplicateCandidate[];
+    overrideToken: string;
+  } | null>(null);
   const [renameRoom, setRenameRoom] = useState<ContextRoomRecord | null>(null);
   const [deleteRoom, setDeleteRoom] = useState<ContextRoomRecord | null>(null);
   const [deletedRoomsOpen, setDeletedRoomsOpen] = useState(false);
@@ -161,6 +200,30 @@ export function HomeView({
       : rooms;
   }, [query, rooms]);
   const homeRooms = query.trim() ? visibleRooms : visibleRooms.slice(0, 6);
+
+  useEffect(() => {
+    const api = window.nxcore?.contextRooms;
+    if (!api) return;
+    let active = true;
+    void api.listDuplicateCandidates('open').then((result) => {
+      if (active) setDuplicateCandidateCount(result.items.filter(isMergeRecommendationCandidate).length);
+    }).catch(() => {
+      // The management dialog surfaces service errors when the user opens it.
+    });
+    return () => { active = false; };
+  }, [rooms]);
+
+  const submitRoom = async (draft: DraftRoom) => {
+    const api = window.nxcore?.contextRooms;
+    if (!api) throw new Error(t('contextRoom:roomDialogs.serviceUnavailable'));
+    const review = await api.checkDuplicates({ title: draft.name, description: draft.description });
+    if (review.candidates.length && review.overrideToken) {
+      setCreationReview({ draft, candidates: review.candidates, overrideToken: review.overrideToken });
+      return false;
+    }
+    await onCreateRoom(draft);
+    return true;
+  };
 
   return (
     <div className="context-room-app">
@@ -187,6 +250,16 @@ export function HomeView({
                   </button>
                   <button type="button" aria-label={t('surface:obsidian.mount')} title={t('surface:obsidian.mount')} className="context-room-add-room" onClick={() => void onMountObsidian()}>
                     <img className="obsidian-app-icon" src={obsidianLogo} alt="" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={duplicateCandidateCount > 0 ? `重复 Room，${duplicateCandidateCount} 个待处理合并建议` : '重复 Room'}
+                    title={duplicateCandidateCount > 0 ? `重复 Room · ${duplicateCandidateCount} 个待处理合并建议` : '重复 Room'}
+                    className="context-room-add-room context-room-duplicate-button"
+                    onClick={() => setDuplicateCenterOpen(true)}
+                  >
+                    <GitMerge aria-hidden="true" />
+                    {duplicateCandidateCount > 0 ? <span className="context-room-duplicate-alert" aria-hidden="true" /> : null}
                   </button>
                   {deletedRooms.length ? (
                     <button
@@ -259,7 +332,7 @@ export function HomeView({
               onOpenRecommendationSource(source);
             }}
             onCreate={async (draft) => {
-              await onCreateRoom(draft);
+              await submitRoom(draft);
               setRecommendation(null);
             }}
           />
@@ -272,11 +345,49 @@ export function HomeView({
           submitLabel={t('contextRoom:home.createRoom')}
           onCancel={() => setNewRoomOpen(false)}
           onSubmit={async (draft) => {
-            await onCreateRoom(draft);
+            await submitRoom(draft);
             setNewRoomOpen(false);
           }}
         />
       </ReferenceDialog>
+      <ReferenceDialog
+        open={Boolean(creationReview)}
+        onOpenChange={(open) => !open && setCreationReview(null)}
+        title="发现相似 Room"
+      >
+        {creationReview ? (
+          <div className="context-room-create-duplicate-review">
+            <header><span>创建前检查</span><h2>可能已经有相同主题</h2></header>
+            <p>可直接打开已有 Room，或确认后仍然创建新的 Room。</p>
+            <div>
+              {creationReview.candidates.map((candidate) => (
+                <button key={candidate.id} type="button" onClick={() => { setCreationReview(null); onOpenDetail(candidate.roomBId) }}>
+                  <span><b>{candidate.roomB.title}</b><small>{candidate.reasons[0] ?? '主题相似'}</small></span>
+                  <ArrowRight aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+            <footer>
+              <button type="button" onClick={() => setCreationReview(null)}>取消</button>
+              <button
+                type="button"
+                className="context-room-primary-button"
+                onClick={async () => {
+                  const review = creationReview;
+                  await onCreateRoom(review.draft, review.overrideToken);
+                  setCreationReview(null);
+                }}
+              >仍然创建</button>
+            </footer>
+          </div>
+        ) : null}
+      </ReferenceDialog>
+      <RoomDuplicateCenter
+        open={duplicateCenterOpen}
+        onOpenChange={setDuplicateCenterOpen}
+        onMerged={onRefreshRooms}
+        onCandidateCountChange={setDuplicateCandidateCount}
+      />
       <ReferenceDialog
         open={deletedRoomsOpen}
         onOpenChange={setDeletedRoomsOpen}

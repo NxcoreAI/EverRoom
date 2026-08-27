@@ -2,7 +2,9 @@ name: Windows app CI
 
 on:
   pull_request:
+    branches: [main]
   push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -36,21 +38,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Check types
-        id: typecheck
-        continue-on-error: true
         run: pnpm typecheck
 
       - name: Run tests
-        id: tests
-        continue-on-error: true
         run: pnpm test:ci
 
       - name: Build gateway and desktop
-        id: build
-        continue-on-error: true
-        run: pnpm build
-
-      - name: Report failed checks
-        if: always() && (steps.typecheck.outcome == 'failure' || steps.tests.outcome == 'failure' || steps.build.outcome == 'failure')
-        shell: pwsh
-        run: throw 'One or more verification checks failed; see the individual steps above.'
+        env:
+          SENTRY_AUTH_TOKEN: ""
+        run: |
+          pnpm --filter @nxcore/gateway build
+          pnpm --filter @nxcore/desktop exec electron-vite build

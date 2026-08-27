@@ -27,6 +27,28 @@ export function localizedUiText(value: string | null | undefined, t: Translate):
   if (editedContent) {
     return t('contextRoom:display.editedContent', { content: editedContent[1]! })
   }
+  const timelineDocumentAdded = /^《(.+)》已收录于 Room$/u.exec(value)
+  if (timelineDocumentAdded) {
+    return t('contextRoom:display.timelineDocumentAdded', { title: timelineDocumentAdded[1]! })
+  }
+  const timelineDocumentUpdated = /^《(.+)》更新至第 (\d+) 版$/u.exec(value)
+  if (timelineDocumentUpdated) {
+    return t('contextRoom:display.timelineDocumentUpdated', {
+      title: timelineDocumentUpdated[1]!,
+      version: timelineDocumentUpdated[2]!,
+    })
+  }
+  const timelineMeeting = /^会议《(.+)》$/u.exec(value)
+  if (timelineMeeting) {
+    return t('contextRoom:display.timelineMeeting', { title: timelineMeeting[1]! })
+  }
+  const timelineMeetingDetail = /^(\d+) 人参与，源自《(.+)》。$/u.exec(value)
+  if (timelineMeetingDetail) {
+    return t('contextRoom:display.timelineMeetingDetail', {
+      count: timelineMeetingDetail[1]!,
+      source: timelineMeetingDetail[2]!,
+    })
+  }
   const key = CONTEXT_ROOM_DISPLAY_KEYS[value]
   return key ? t(key) : value
 }
@@ -137,6 +159,10 @@ const CONTEXT_ROOM_DISPLAY_KEYS: Record<string, string> = {
   '待补充 Room 的背景和资料范围。': 'contextRoom:portedContextRoom.defaultBackground',
   '明确目标并聚合相关资料。': 'contextRoom:portedContextRoom.defaultGoal',
   'Room 已创建，等待补充资料。': 'contextRoom:portedContextRoom.defaultBriefStatus',
+  'Room 已创建': 'contextRoom:display.timelineRoomCreated',
+  '基于创建描述初始化，等待资料补充。': 'contextRoom:display.timelineRoomCreatedDetail',
+  '文档内容已保存新版本。': 'contextRoom:display.timelineDocumentUpdatedDetail',
+  '已作为资料归入本 Room，参与后续上下文生成。': 'contextRoom:display.timelineDocumentAddedDetail',
   '资料归类时判定为新主题，自动创建的 Room。': 'contextRoom:portedContextRoom.autoCreatedBackground',
   '确认归属并补充背景。': 'contextRoom:portedContextRoom.autoCreatedGoal',
   '自动创建，等待认领。': 'contextRoom:portedContextRoom.autoCreatedBriefStatus',

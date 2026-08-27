@@ -3,6 +3,7 @@ import {
   ChevronDown,
   Clock3,
   Inbox,
+  Link2,
   LoaderCircle,
   MessageCircle,
   RefreshCw,
@@ -56,7 +57,7 @@ function promotionLabel(progress: KnowledgePromotionProgressDto, t: Translate): 
   return t(stageKeys[progress.stage] ?? 'contextRoom:knowledgePending.creatingRoom');
 }
 
-/** 推荐池展示上限：页面只放前三个，按证据分排（推荐确认制）。 */
+/** 仅展示证据分最高的三个待创建候选。 */
 const RECOMMEND_LIMIT = 3;
 
 /**
@@ -70,10 +71,14 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
   const [recent, setRecent] = useState<KnowledgeDecisionDto[]>([]);
   const [suppressed, setSuppressed] = useState<KnowledgeEntityDto[]>([]);
   const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const activePromotionsRef = useRef(new Map<string, string>());
   const promotionControllers = useRef(new Map<string, AbortController>());
+  const selectionInitializedRef = useRef(false);
+  const translateRef = useRef(t);
+  translateRef.current = t;
 
   const refresh = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge;
@@ -93,14 +98,32 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
       const activePromotions = [...promoting.items, ...ready.items, ...rooms.items]
         .filter(promotionActive);
       const activeIds = new Set(activePromotions.map((entity) => entity.id));
-      const failedFirst = [...ready.items].sort((a, b) => {
+      const rankedReady = [...ready.items].sort((a, b) => {
+        const scoreDelta = b.evidenceScore - a.evidenceScore;
         const failureDelta = Number(b.promotion?.status === 'failed') - Number(a.promotion?.status === 'failed');
-        return failureDelta || b.evidenceScore - a.evidenceScore;
+        const pathDelta = Number(b.readinessPath === 'strong') - Number(a.readinessPath === 'strong');
+        const trustedDelta = (b.trustedSourceCount ?? 0) - (a.trustedSourceCount ?? 0);
+        const updatedDelta = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+        return scoreDelta || failureDelta || pathDelta || trustedDelta || updatedDelta;
       });
-      setRecommended([
+      const nextRecommended = [
         ...activePromotions,
-        ...failedFirst.filter((entity) => !activeIds.has(entity.id)).slice(0, RECOMMEND_LIMIT),
-      ]);
+        ...rankedReady.filter((entity) => !activeIds.has(entity.id)),
+      ];
+      setRecommended(nextRecommended);
+      const selectableIds = new Set(rankedReady
+        .filter((entity) => !activeIds.has(entity.id))
+        .slice(0, RECOMMEND_LIMIT)
+        .filter((entity) => !entity.existingRoomMatch)
+        .map((entity) => entity.id));
+      setSelected((current) => {
+        if (!selectionInitializedRef.current) {
+          selectionInitializedRef.current = true;
+          return selectableIds;
+        }
+        const next = new Set([...current].filter((id) => selectableIds.has(id)));
+        return next.size === current.size && [...next].every((id) => current.has(id)) ? current : next;
+      });
       setRecent(recentData.items);
       setSuppressed(suppressedData.items);
       setLoaded(true);
@@ -110,10 +133,10 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
       const failed = ready.items.filter((entity) => previous.has(entity.id) && entity.promotion?.status === 'failed');
       activePromotionsRef.current = new Map(activePromotions.map((entity) => [entity.id, entity.name]));
       for (const entity of completed) {
-        showToast({ title: t('contextRoom:knowledgePending.roomCreated'), message: t('contextRoom:knowledgePending.nameIsReadyToUse', { name: entity.name }) });
+        showToast({ title: translateRef.current('contextRoom:knowledgePending.roomCreated'), message: translateRef.current('contextRoom:knowledgePending.nameIsReadyToUse', { name: entity.name }) });
       }
       for (const entity of failed) {
-        showToast({ title: t('contextRoom:knowledgePending.creationFailed'), message: entity.promotion?.error ?? undefined });
+        showToast({ title: translateRef.current('contextRoom:knowledgePending.creationFailed'), message: entity.promotion?.error ?? undefined });
       }
       if (completed.length > 0) {
         window.setTimeout(() => window.dispatchEvent(new CustomEvent('everroom:knowledge-changed')), 0);
@@ -121,7 +144,7 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
     } catch {
       setLoaded(true); // 知识服务不可用：面板静默为空
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -169,7 +192,7 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
       try {
         const knowledge = window.nxcore?.knowledge;
         if (!knowledge) return;
-        await knowledge.promoteEntity(entity.id);
+        await knowledge.promoteEntity(entity.id, entity.existingRoomMatch?.confidence === 'medium' ? { forceNew: true } : undefined);
         showToast({ title: t('contextRoom:knowledgePending.creatingRoom'), message: t('contextRoom:knowledgePending.buildingTheRoomAndWikiForName', { name: entity.name }) });
         const controller = new AbortController();
         promotionControllers.current.get(entity.id)?.abort();
@@ -195,11 +218,48 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
       }
     });
 
+  const reuseExistingRoom = (entity: KnowledgeEntityDto) =>
+    runBusy(`entity:${entity.id}:reuse`, async () => {
+      const match = entity.existingRoomMatch;
+      if (!match) return;
+      await window.nxcore?.knowledge?.mergeEntity(entity.id, match.entityId);
+      showToast({
+        title: t('contextRoom:knowledgePending.joinedExistingRoom'),
+        message: t('contextRoom:knowledgePending.addedToExistingRoom', { name: match.roomTitle }),
+      });
+    });
+
   const deferCreate = (entity: KnowledgeEntityDto) =>
     runBusy(`entity:${entity.id}:suppress`, async () => {
       await window.nxcore?.knowledge?.suppressEntity(entity.id);
       showToast({ title: t('contextRoom:knowledgePending.creationDeferred'), message: t('contextRoom:knowledgePending.topicWillNotBeRecommendedAgain', { name: entity.name }) });
     });
+
+  const confirmSelected = () => {
+    const entityIds = [...selected];
+    if (entityIds.length === 0) return;
+    void runBusy('batch:promote', async () => {
+      const result = await window.nxcore?.knowledge?.promoteEntities(entityIds);
+      const rejected = result?.items.filter((item) => item.status === 'rejected').length ?? 0;
+      const queued = (result?.items.length ?? 0) - rejected;
+      setSelected((current) => new Set([...current].filter((id) => !entityIds.includes(id))));
+      if (queued > 0) showToast({ title: t('contextRoom:knowledgePending.batchCreatingRooms', { count: queued }) });
+      if (rejected > 0) showToast({ title: t('contextRoom:knowledgePending.batchRejected', { count: rejected }) });
+    });
+  };
+
+  const suppressSelected = () => {
+    const entityIds = [...selected];
+    if (entityIds.length === 0) return;
+    void runBusy('batch:suppress', async () => {
+      const result = await window.nxcore?.knowledge?.suppressEntities(entityIds);
+      const rejected = result?.items.filter((item) => item.status === 'rejected').length ?? 0;
+      const suppressedCount = (result?.items.length ?? 0) - rejected;
+      setSelected((current) => new Set([...current].filter((id) => !entityIds.includes(id))));
+      if (suppressedCount > 0) showToast({ title: t('contextRoom:knowledgePending.batchDeferred', { count: suppressedCount }) });
+      if (rejected > 0) showToast({ title: t('contextRoom:knowledgePending.batchRejected', { count: rejected }) });
+    });
+  };
 
   const restoreCreate = (entity: KnowledgeEntityDto) =>
     runBusy(`entity:${entity.id}:restore`, async () => {
@@ -243,6 +303,23 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
   };
 
   if (!loaded) return null;
+
+  const promotionActive = (entity: KnowledgeEntityDto) =>
+    entity.promotion?.status === 'queued' || entity.promotion?.status === 'running';
+  const activeRecommended = recommended.filter(promotionActive);
+  const idleRecommended = recommended.filter((entity) => !promotionActive(entity));
+  const visibleIdle = idleRecommended.slice(0, RECOMMEND_LIMIT);
+  const visibleRecommended = [...activeRecommended, ...visibleIdle];
+  const visibleSelectableIds = visibleIdle.filter((entity) => !entity.existingRoomMatch).map((entity) => entity.id);
+  const allVisibleSelected = visibleSelectableIds.length > 0
+    && visibleSelectableIds.every((id) => selected.has(id));
+
+  const toggleVisible = () => setSelected((current) => {
+    const next = new Set(current);
+    if (allVisibleSelected) visibleSelectableIds.forEach((id) => next.delete(id));
+    else visibleSelectableIds.forEach((id) => next.add(id));
+    return next;
+  });
 
   return (
     <section className="context-room-knowledge-panel" data-testid="context-room-knowledge-pending">
@@ -288,24 +365,68 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
         </div>
       ) : (
         <div className="context-room-knowledge-list">
-          <h3 className="context-room-knowledge-group">{t('contextRoom:knowledgePending.recommendedTop3ByEvidenceScore')}</h3>
-          {recommended.map((entity) => {
-            const scoreRatio = Math.min(1, entity.evidenceScore / entity.promoteScore);
+          <div className="context-room-knowledge-batchbar">
+            <label>
+              <input type="checkbox" checked={allVisibleSelected} onChange={toggleVisible} />
+              <span>{t('contextRoom:knowledgePending.selectVisible')}</span>
+            </label>
+            <span>{t('contextRoom:knowledgePending.selectedCount', { count: selected.size })}</span>
+            <button type="button" className="context-room-knowledge-confirm" disabled={selected.size === 0 || busy.has('batch:promote')} onClick={confirmSelected}>
+              {busy.has('batch:promote') ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+              {t('contextRoom:knowledgePending.createSelected', { count: selected.size })}
+            </button>
+            <button type="button" className="context-room-knowledge-defer" disabled={selected.size === 0 || busy.has('batch:suppress')} onClick={suppressSelected}>
+              <EyeOff aria-hidden="true" />
+              {t('contextRoom:knowledgePending.deferSelected')}
+            </button>
+          </div>
+          <h3 className="context-room-knowledge-group">{t('contextRoom:knowledgePending.highConfidenceRecommendations')}</h3>
+          {visibleRecommended.map((entity) => {
+            const scoreRatio = 1;
             const promotion = entity.promotion;
-            const promotionActive = promotion?.status === 'queued' || promotion?.status === 'running';
+            const isPromotionActive = promotion?.status === 'queued' || promotion?.status === 'running';
             const creationPercent = promotion ? promotionPercent(promotion) : 0;
             return (
               <article key={entity.id} className="context-room-knowledge-card" data-state="recommended">
                 <header>
+                  {!isPromotionActive && !entity.existingRoomMatch ? (
+                    <input
+                      type="checkbox"
+                      aria-label={t('contextRoom:knowledgePending.selectRecommendation', { name: entity.name })}
+                      checked={selected.has(entity.id)}
+                      onChange={() => setSelected((current) => {
+                        const next = new Set(current);
+                        if (next.has(entity.id)) next.delete(entity.id); else next.add(entity.id);
+                        return next;
+                      })}
+                    />
+                  ) : null}
                   <strong>{entity.name}</strong>
                   <span className="context-room-knowledge-tag">{localizedUiText(entity.kind, t)}</span>
                 </header>
+                <p className="context-room-knowledge-reason">
+                  {entity.existingRoomMatch
+                    ? t(entity.existingRoomMatch.confidence === 'high'
+                      ? 'contextRoom:knowledgePending.existingRoomHighMatch'
+                      : 'contextRoom:knowledgePending.existingRoomMediumMatch', {
+                        name: entity.existingRoomMatch.roomTitle,
+                      })
+                    : entity.readinessPath === 'strong'
+                    ? t('contextRoom:knowledgePending.strongEvidenceReason', { count: entity.strongSourceCount ?? 0 })
+                    : t('contextRoom:knowledgePending.standardEvidenceReason', {
+                        count: entity.eligibleSourceCount ?? entity.sourceCount,
+                        trusted: entity.trustedSourceCount ?? 0,
+                      })}
+                  {entity.sourceKinds?.length
+                    ? ` · ${entity.sourceKinds.map((kind) => t(`contextRoom:knowledgePending.sourceKind.${kind}`)).join(' / ')}`
+                    : ''}
+                </p>
                 <div className="context-room-knowledge-progress" role="progressbar" aria-label={t('contextRoom:knowledgePending.evidenceProgress')}>
                   <div className="context-room-knowledge-progress-bar">
                     <div className="context-room-knowledge-progress-fill" style={{ width: `${Math.round(scoreRatio * 100)}%` }} />
                   </div>
                   <span>
-                    {t('contextRoom:knowledgePending.evidenceScoreCountResourcesRecommendationThresholdReached', { score: entity.evidenceScore.toFixed(1), count: entity.sourceCount })}
+                    {t('contextRoom:knowledgePending.evidenceScoreSecondary', { score: entity.evidenceScore.toFixed(2), count: entity.sourceCount })}
                   </span>
                 </div>
                 {entity.firstEvidence ? (
@@ -333,18 +454,42 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
                   </div>
                 ) : null}
                 <footer>
-                  <button
-                    type="button"
-                    className="context-room-knowledge-confirm"
-                    disabled={busy.has(`entity:${entity.id}:promote`) || promotionActive}
-                    onClick={() => void confirmCreate(entity)}
-                  >
-                    {promotionActive ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
-                    {t(promotionActive
-                      ? promotion?.status === 'queued' ? 'contextRoom:knowledgePending.queued' : 'contextRoom:knowledgePending.creating'
-                      : promotion?.status === 'failed' ? 'contextRoom:knowledgePending.retryCreation' : 'contextRoom:knowledgePending.create')}
-                  </button>
-                  {!promotionActive ? (
+                  {entity.existingRoomMatch && !isPromotionActive ? (
+                    <button
+                      type="button"
+                      className="context-room-knowledge-confirm"
+                      aria-label={t('contextRoom:knowledgePending.joinExistingRoom')}
+                      disabled={busy.has(`entity:${entity.id}:reuse`)}
+                      onClick={() => void reuseExistingRoom(entity)}
+                    >
+                      {busy.has(`entity:${entity.id}:reuse`) ? <LoaderCircle className="spin" aria-hidden="true" /> : <Link2 aria-hidden="true" />}
+                      {t('contextRoom:knowledgePending.joinExistingRoom')}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="context-room-knowledge-confirm"
+                      disabled={busy.has(`entity:${entity.id}:promote`) || isPromotionActive}
+                      onClick={() => void confirmCreate(entity)}
+                    >
+                      {isPromotionActive ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+                      {t(isPromotionActive
+                        ? promotion?.status === 'queued' ? 'contextRoom:knowledgePending.queued' : 'contextRoom:knowledgePending.creating'
+                        : promotion?.status === 'failed' ? 'contextRoom:knowledgePending.retryCreation' : 'contextRoom:knowledgePending.create')}
+                    </button>
+                  )}
+                  {entity.existingRoomMatch?.confidence === 'medium' && !isPromotionActive ? (
+                    <button
+                      type="button"
+                      className="context-room-knowledge-defer"
+                      disabled={busy.has(`entity:${entity.id}:promote`)}
+                      onClick={() => void confirmCreate(entity)}
+                    >
+                      <Sparkles aria-hidden="true" />
+                      {t('contextRoom:knowledgePending.createAnyway')}
+                    </button>
+                  ) : null}
+                  {!isPromotionActive ? (
                     <button
                       type="button"
                       className="context-room-knowledge-defer"

@@ -15,6 +15,7 @@ export interface PixiGraphics {
   lineStyle(width: number, color: number | string, alpha?: number): PixiGraphics
   moveTo(x: number, y: number): PixiGraphics
   lineTo(x: number, y: number): PixiGraphics
+  drawPolygon(points: number[]): PixiGraphics
   destroy(options?: unknown): void
   renderable?: boolean
 }
@@ -117,7 +118,7 @@ export interface PixiForceGraphDependencies {
   Text: new (text?: string, style?: Record<string, unknown>) => PixiText
   ParticleContainer: new (
     maxSize?: number,
-    properties?: { position: boolean; tint?: boolean },
+    properties?: { position: boolean; alpha?: boolean; scale?: boolean; tint?: boolean },
     batchSize?: number,
     autoResize?: boolean,
   ) => PixiParticleContainer
@@ -127,13 +128,21 @@ export interface PixiForceGraphDependencies {
 
 export interface PixiForceGraphNode {
   color?: number | string
+  icon?: 'book' | 'flag' | 'message' | 'target' | 'user' | 'zap'
   label?: string
   radius?: number
 }
 
 export interface PixiForceGraphEdge {
+  id?: string
+  label?: string
+  labelColor?: number | string
   source: number
   target: number
+  directed?: boolean
+  color?: number | string
+  width?: number
+  alpha?: number
 }
 
 export interface PixiForceGraphRendererOptions {
@@ -154,9 +163,13 @@ export interface PixiForceGraphRendererOptions {
   highlightEdgeColor?: number | string
   labelScaleThreshold?: number
   maxVisibleLabels?: number
+  edgeLabelScaleThreshold?: number
+  maxVisibleEdgeLabels?: number
   revision?: () => number
   selectedColor?: number | string
   selectedIndex?: number | null
+  selectedEdgeId?: string | null
+  onEdgeSelect?: (id: string) => void
   onNodeDrag?: (index: number, x: number, y: number) => void
   onNodeHover?: (index: number | null) => void
   onNodeOpen?: (index: number) => void
@@ -168,6 +181,7 @@ export interface PixiForceGraphRenderer {
   readonly app: PixiApplication
   readonly viewport: PixiViewport
   readonly particleContainer: PixiParticleContainer
+  readonly iconParticleContainers: readonly PixiParticleContainer[]
   readonly edgeGraphics: PixiGraphics
   readonly labelLayer: PixiContainer
   readonly sprites: readonly PixiSprite[]
@@ -178,5 +192,6 @@ export interface PixiForceGraphRenderer {
   resize(width: number, height: number): void
   setHoveredIndex(index: number | null): void
   setSelectedIndex(index: number | null): void
+  setSelectedEdgeId(id: string | null): void
   destroy(): void
 }

@@ -32,6 +32,7 @@ interface RoomOnboardingGateProps {
   children: (controls: { openRoomOnboarding: () => void }) => ReactNode
   suppressOnboarding?: boolean
   onFinished?: (reason?: 'created' | 'existing') => void
+  onExistingData?: () => void
   onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
   memoryReady?: boolean
   activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'ready'
@@ -41,7 +42,7 @@ interface RoomOnboardingGateProps {
 // run so the form does not reopen after skip/create.
 const REPEATABLE_ROOM_ONBOARDING = false
 
-export function RoomOnboardingGate({ children, suppressOnboarding = false, onFinished, onNavigateStage, memoryReady = false, activeStage = 'idle' }: RoomOnboardingGateProps) {
+export function RoomOnboardingGate({ children, suppressOnboarding = false, onFinished, onExistingData, onNavigateStage, memoryReady = false, activeStage = 'idle' }: RoomOnboardingGateProps) {
   const { locale, preference, setLocale, t } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const { state, backendReady, refreshFromBackend } = useContextRoomState()
@@ -114,10 +115,17 @@ export function RoomOnboardingGate({ children, suppressOnboarding = false, onFin
       setMode('app')
       return
     }
-    if (state.rooms.length > 0 && (forceLocalDataCheck || !markerRef.current)) {
-      setCreatedRoom(state.rooms[0] ?? null)
-      setGuideCreated(true)
-      setMode('form')
+    if (activeStage !== 'idle' && activeStage !== 'room') {
+      setMode('app')
+      return
+    }
+    if (state.rooms.length > 0 || state.deletedRooms.length > 0) {
+      if (!markerRef.current) {
+        writeRoomOnboardingMarker({ status: 'skipped' })
+        markerRef.current = { status: 'skipped' }
+      }
+      setMode('app')
+      onExistingData?.()
       return
     }
     if (markerRef.current && !REPEATABLE_ROOM_ONBOARDING && !forceLocalDataCheck) {
@@ -135,10 +143,13 @@ export function RoomOnboardingGate({ children, suppressOnboarding = false, onFin
       void refreshFromBackend().then((refreshed) => {
         if (!refreshed) throw new Error('Context Room backend is unavailable')
         initialBackendSyncRef.current = 'done'
-        if (refreshed.rooms.length > 0) {
-          setCreatedRoom(refreshed.rooms[0] ?? null)
-          setGuideCreated(true)
-          setMode('form')
+        if (refreshed.rooms.length > 0 || refreshed.deletedRooms.length > 0) {
+          if (!markerRef.current) {
+            writeRoomOnboardingMarker({ status: 'skipped' })
+            markerRef.current = { status: 'skipped' }
+          }
+          setMode('app')
+          onExistingData?.()
         } else {
           setMode(shouldShowRoomOnboarding(backendReady, refreshed.rooms.length, forceLocalDataCheck ? null : markerRef.current) ? 'form' : 'app')
         }
@@ -148,14 +159,8 @@ export function RoomOnboardingGate({ children, suppressOnboarding = false, onFin
       })
       return
     }
-    if (state.rooms.length > 0) {
-      setCreatedRoom(state.rooms[0] ?? null)
-      setGuideCreated(true)
-      setMode('form')
-    } else {
-      setMode(shouldShowRoomOnboarding(backendReady, state.rooms.length, forceLocalDataCheck ? null : markerRef.current) ? 'form' : 'app')
-    }
-  }, [backendReady, checkRequest, refreshFromBackend, state.deletedRooms.length, state.rooms.length, suppressOnboarding])
+    setMode(shouldShowRoomOnboarding(backendReady, state.rooms.length, forceLocalDataCheck ? null : markerRef.current) ? 'form' : 'app')
+  }, [activeStage, backendReady, checkRequest, onExistingData, refreshFromBackend, state.deletedRooms.length, state.rooms.length, suppressOnboarding])
 
   const finishSkip = () => {
     console.info('[onboarding] room-skip', { activeStage, destination: 'ready' })

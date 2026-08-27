@@ -33,6 +33,83 @@ const WikiDto = Type.Object({
 
 const RoomIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) });
 
+const RelationVisibilityQuery = Type.Object({
+  visibility: Type.Optional(Type.Union([Type.Literal("active"), Type.Literal("hidden"), Type.Literal("all")])),
+});
+
+const RoomRelationReasonDto = Type.Object({
+  kind: Type.Union([Type.Literal("shared_source"), Type.Literal("direct_mention"), Type.Literal("shared_entity")]),
+  contribution: Type.Number(),
+  key: Type.String(),
+  label: Type.String(),
+  sourceKind: Type.Optional(Type.String()),
+  sourceId: Type.Optional(Type.String()),
+  entityId: Type.Optional(Type.String()),
+  evidence: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+});
+
+const RoomRelationDto = Type.Object({
+  id: Type.String(),
+  sourceRoomId: Type.String(),
+  targetRoomId: Type.String(),
+  directed: Type.Boolean(),
+  type: Type.String(),
+  origin: Type.Union([Type.Literal("auto"), Type.Literal("manual"), Type.Literal("hybrid")]),
+  score: Type.Number(),
+  strength: Type.Union([Type.Literal("weak"), Type.Literal("medium"), Type.Literal("strong")]),
+  sharedSourceCount: Type.Integer(),
+  sharedEntityCount: Type.Integer(),
+  directMentionCount: Type.Integer(),
+  pinned: Type.Boolean(),
+  hidden: Type.Boolean(),
+  label: Type.Union([Type.String(), Type.Null()]),
+  note: Type.Union([Type.String(), Type.Null()]),
+  topReasons: Type.Array(RoomRelationReasonDto),
+  updatedAt: Type.String(),
+});
+
+const RoomGraphResponse = Type.Object({
+  revision: Type.Integer(),
+  generatedAt: Type.String(),
+  indexing: Type.Object({
+    status: Type.Union([Type.Literal("ready"), Type.Literal("building"), Type.Literal("degraded")]),
+    pendingSources: Type.Integer(),
+  }),
+  nodes: Type.Array(Type.Object({
+    id: Type.String(),
+    title: Type.String(),
+    kind: Type.String(),
+    origin: Type.String(),
+    updatedAt: Type.String(),
+  })),
+  edges: Type.Array(RoomRelationDto),
+});
+
+const ManualRelationType = Type.Union([
+  Type.Literal("related"), Type.Literal("depends_on"), Type.Literal("part_of"),
+  Type.Literal("supports"), Type.Literal("blocks"), Type.Literal("owns"), Type.Literal("custom"),
+]);
+
+const CreateRoomRelationBody = Type.Object({
+  fromRoomId: Type.String({ minLength: 1, maxLength: 200 }),
+  toRoomId: Type.String({ minLength: 1, maxLength: 200 }),
+  type: ManualRelationType,
+  directed: Type.Optional(Type.Boolean()),
+  label: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
+  note: Type.Optional(Type.Union([Type.String({ maxLength: 1_000 }), Type.Null()])),
+});
+
+const UpdateRoomRelationBody = Type.Partial(Type.Object({
+  type: ManualRelationType,
+  directed: Type.Boolean(),
+  fromRoomId: Type.String({ minLength: 1, maxLength: 200 }),
+  toRoomId: Type.String({ minLength: 1, maxLength: 200 }),
+  label: Type.Union([Type.String({ maxLength: 120 }), Type.Null()]),
+  note: Type.Union([Type.String({ maxLength: 1_000 }), Type.Null()]),
+  pinned: Type.Boolean(),
+  hidden: Type.Boolean(),
+}));
+
 /** wiki 页面目录项（KS page/ls 透传，ref=path）。 */
 const WikiPageDto = Type.Object({
   id: Type.String(),
@@ -121,11 +198,28 @@ const EntityDto = Type.Object({
   roomId: Type.Union([Type.String(), Type.Null()]),
   evidenceScore: Type.Number(),
   sourceCount: Type.Integer(),
+  eligibleSourceCount: Type.Integer(),
+  trustedSourceCount: Type.Integer(),
+  strongSourceCount: Type.Integer(),
+  readinessPath: Type.Union([Type.Literal("standard"), Type.Literal("strong"), Type.Null()]),
+  sourceKinds: Type.Array(Type.String()),
+  excludedSourceCount: Type.Integer(),
   promoteScore: Type.Number(),
   promoteSources: Type.Integer(),
   firstEvidence: Type.Union([Type.String(), Type.Null()]),
   lastLinkedAt: Type.Union([Type.String(), Type.Null()]),
   updatedAt: Type.String(),
+  existingRoomMatch: Type.Union([
+    Type.Object({
+      roomId: Type.String(),
+      roomTitle: Type.String(),
+      entityId: Type.String(),
+      confidence: Type.Union([Type.Literal("high"), Type.Literal("medium")]),
+      score: Type.Number(),
+      reasons: Type.Array(Type.String()),
+    }),
+    Type.Null(),
+  ]),
   promotion: Type.Union([
     Type.Object({
       jobId: Type.String(),
@@ -154,7 +248,18 @@ const EntityStatusQuery = Type.Object({
   ])),
 });
 
+const PromoteEntityQuery = Type.Object({
+  forceNew: Type.Optional(Type.Boolean()),
+});
+
 const EntityIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
+
+const EntityBatchBody = Type.Object({
+  entityIds: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), {
+    minItems: 1,
+    maxItems: 20,
+  }),
+});
 
 const EntityLinkDto = Type.Object({
   id: Type.String(),
@@ -164,6 +269,17 @@ const EntityLinkDto = Type.Object({
   sourceVersion: Type.Integer(),
   role: Type.String(),
   salience: Type.Number(),
+  evidenceGroupKey: Type.String(),
+  roleWeight: Type.Number(),
+  sourceWeight: Type.Number(),
+  qualityFactor: Type.Number(),
+  relevanceFactor: Type.Number(),
+  effectiveWeight: Type.Number(),
+  qualityLevel: Type.String(),
+  trusted: Type.Boolean(),
+  strong: Type.Boolean(),
+  scoreReasons: Type.Array(Type.String()),
+  scoringVersion: Type.Integer(),
   evidence: Type.Union([Type.String(), Type.Null()]),
   decidedBy: Type.String(),
   sourceTitle: Type.Union([Type.String(), Type.Null()]),
@@ -182,6 +298,10 @@ const EntityDetailDto = Type.Object({
     roomId: Type.Union([Type.String(), Type.Null()]),
     evidenceScore: Type.Number(),
     sourceCount: Type.Integer(),
+    eligibleSourceCount: Type.Integer(),
+    trustedSourceCount: Type.Integer(),
+    strongSourceCount: Type.Integer(),
+    readinessPath: Type.Union([Type.Literal("standard"), Type.Literal("strong"), Type.Null()]),
     mergedFrom: Type.Array(Type.String()),
     lastLinkedAt: Type.Union([Type.String(), Type.Null()]),
     createdAt: Type.String(),
@@ -318,6 +438,108 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           updatedAt: iso(room.updatedAt),
         })),
       }),
+    );
+
+    app.get(
+      "/v1/knowledge/room-graph",
+      {
+        schema: {
+          tags: ["knowledge"],
+          querystring: RelationVisibilityQuery,
+          response: { 200: RoomGraphResponse },
+        },
+      },
+      async (request) => service.roomGraph(request.query.visibility ?? "active"),
+    );
+
+    app.get(
+      "/v1/knowledge/rooms/:id/relations",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: RoomIdParams,
+          querystring: RelationVisibilityQuery,
+          response: { 200: RoomGraphResponse, 404: Type.Object({ error: Type.String() }) },
+        },
+      },
+      async (request, reply) => {
+        const graph = service.roomRelations(request.params.id, request.query.visibility ?? "active");
+        return graph ?? reply.code(404).send(errorOf("room_not_found"));
+      },
+    );
+
+    app.get(
+      "/v1/knowledge/room-relations/:id/evidence",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          querystring: Type.Object({
+            offset: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+          }),
+          response: {
+            200: Type.Object({ items: Type.Array(RoomRelationReasonDto), total: Type.Integer() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => service.roomRelationEvidence(
+        request.params.id,
+        request.query.offset ?? 0,
+        request.query.limit ?? 50,
+      ) ?? reply.code(404).send(errorOf("room_relation_not_found")),
+    );
+
+    app.post(
+      "/v1/knowledge/room-relations",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: CreateRoomRelationBody,
+          response: { 201: RoomRelationDto, 400: Type.Object({ error: Type.String() }) },
+        },
+      },
+      async (request, reply) => {
+        const relation = service.createRoomRelation(request.body);
+        return relation
+          ? reply.code(201).send(relation)
+          : reply.code(400).send(errorOf("invalid_room_relation"));
+      },
+    );
+
+    app.patch(
+      "/v1/knowledge/room-relations/:id",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          body: UpdateRoomRelationBody,
+          response: { 200: RoomRelationDto, 404: Type.Object({ error: Type.String() }) },
+        },
+      },
+      async (request, reply) => service.updateRoomRelation(request.params.id, request.body)
+        ?? reply.code(404).send(errorOf("room_relation_not_found")),
+    );
+
+    app.delete(
+      "/v1/knowledge/room-relations/:id/manual",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          response: {
+            200: Type.Object({ relation: Type.Union([RoomRelationDto, Type.Null()]) }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const relation = service.removeManualRoomRelation(request.params.id);
+        return relation === undefined
+          ? reply.code(404).send(errorOf("room_relation_not_found"))
+          : { relation };
+      },
     );
 
     app.post(
@@ -610,6 +832,10 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
             roomId: detail.entity.roomId,
             evidenceScore: detail.entity.evidenceScore,
             sourceCount: detail.entity.sourceCount,
+            eligibleSourceCount: detail.entity.eligibleSourceCount,
+            trustedSourceCount: detail.entity.trustedSourceCount,
+            strongSourceCount: detail.entity.strongSourceCount,
+            readinessPath: detail.entity.readinessPath,
             mergedFrom: detail.entity.mergedFrom,
             lastLinkedAt: detail.entity.lastLinkedAt ? iso(detail.entity.lastLinkedAt) : null,
             createdAt: iso(detail.entity.createdAt),
@@ -624,6 +850,17 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
             sourceVersion: link.sourceVersion,
             role: link.role,
             salience: link.salience,
+            evidenceGroupKey: link.evidenceGroupKey,
+            roleWeight: link.roleWeight,
+            sourceWeight: link.sourceWeight,
+            qualityFactor: link.qualityFactor,
+            relevanceFactor: link.relevanceFactor,
+            effectiveWeight: link.effectiveWeight,
+            qualityLevel: link.qualityLevel,
+            trusted: link.trusted,
+            strong: link.strong,
+            scoreReasons: link.scoreReasons,
+            scoringVersion: link.scoringVersion,
             evidence: link.evidence,
             decidedBy: link.decidedBy,
             sourceTitle: link.sourceTitle,
@@ -635,11 +872,53 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
     );
 
     app.post(
+      "/v1/knowledge/entities/batch-promote",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: EntityBatchBody,
+          response: {
+            202: Type.Object({
+              items: Type.Array(Type.Object({
+                entityId: Type.String(),
+                status: Type.Union([Type.Literal("queued"), Type.Literal("already_queued"), Type.Literal("rejected")]),
+                jobId: Type.Union([Type.String(), Type.Null()]),
+                error: Type.Union([Type.String(), Type.Null()]),
+              })),
+            }),
+          },
+        },
+      },
+      async (request, reply) => reply.code(202).send({ items: service.promoteEntities(request.body.entityIds) }),
+    );
+
+    app.post(
+      "/v1/knowledge/entities/batch-suppress",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: EntityBatchBody,
+          response: {
+            200: Type.Object({
+              items: Type.Array(Type.Object({
+                entityId: Type.String(),
+                status: Type.Union([Type.Literal("suppressed"), Type.Literal("already_suppressed"), Type.Literal("rejected")]),
+                error: Type.Union([Type.String(), Type.Null()]),
+              })),
+            }),
+          },
+        },
+      },
+      async (request) => ({ items: service.suppressEntities(request.body.entityIds) }),
+    );
+
+    app.post(
       "/v1/knowledge/entities/:id/promote",
       {
         schema: {
           tags: ["knowledge"],
           params: EntityIdParams,
+          querystring: PromoteEntityQuery,
           response: {
             202: Type.Object({ queued: Type.Boolean(), jobId: Type.String() }),
             400: Type.Object({ error: Type.String() }),
@@ -648,7 +927,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         },
       },
       async (request, reply) => {
-        const result = service.promoteEntity(request.params.id);
+        const result = service.promoteEntity(request.params.id, { forceNew: request.query.forceNew === true });
         if (!result.ok) {
           const status = result.error === "entity_not_found" ? 404 : 400;
           return reply.code(status).send(errorOf(result.error));

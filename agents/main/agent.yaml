@@ -48,6 +48,7 @@ tools:
   - agent_dispatch
   - content_analysis
   - send_notification
+  - room_analysis
 
 skills:
   - ./skills/selection-rewrite

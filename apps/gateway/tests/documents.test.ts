@@ -486,6 +486,14 @@ describe('document transactions', () => {
       selectionRequired: true,
       selectedRoomId: null,
     })
+    const candidates = await host.callTool('context_room_list', {
+      candidateRoomIds: ['room-2'],
+    }, globalContext)
+    expect(candidates.structuredContent).toEqual({
+      rooms: [{ id: 'room-2', title: '后端进阶', kind: '主题' }],
+      selectionRequired: true,
+      selectedRoomId: null,
+    })
     const created = await host.callTool('context_room_create', {
       title: 'Campus Life',
       description: 'Campus activities and study notes',
@@ -1371,9 +1379,9 @@ describe('document transactions', () => {
     expect(result.tools?.find((tool) => tool.name === 'context_room_write_begin')?.description)
       .toContain('句子的创建对象是 Room、Context Room 或房间')
     expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
-      .toContain('必须立即调用此只读工具')
+      .toContain('无法可靠确定唯一目标时调用')
     expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
-      .toContain('不得询问用户是否需要列表')
+      .toContain('最可能相关的 2 至 5 个 Room')
     expect(result.tools?.find((tool) => tool.name === 'context_room_create')?.description)
       .toContain('用户明确要求创建')
     expect(result.tools?.find((tool) => tool.name === 'context_room_create')?.description)

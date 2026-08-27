@@ -345,6 +345,7 @@ describe('DocumentOperationProvider React state machine', () => {
     await act(async () => { result = await context.executeResult('operation-1', 'review.apply') })
     expect(result).toMatchObject({ document: { id: 'doc-1', version: 2 } })
     expect(onDocumentApplied).toHaveBeenCalledWith(document)
+    expect(context.appliedDocumentsById['doc-1']).toEqual(document)
   })
 
   it('unmounts completed/rejected presenters and lets the next review regain focus', async () => {

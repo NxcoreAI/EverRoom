@@ -49,7 +49,9 @@ interface MemoryOnboardingControls {
 
 interface MemoryOnboardingGateProps {
   children: (controls: MemoryOnboardingControls) => ReactNode
+  suppressOnboarding?: boolean
   onFinished?: () => void
+  onExistingData?: () => void
   onMemoryGenerated?: (item: MemoryAtomicItemDto) => void
   onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
   activeStage?: 'idle' | 'memory' | 'room' | 'folder' | 'ready'
@@ -79,7 +81,7 @@ function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `memory-onboarding-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, onNavigateStage, activeStage = 'idle' }: MemoryOnboardingGateProps) {
+export function MemoryOnboardingGate({ children, suppressOnboarding = false, onFinished, onExistingData, onMemoryGenerated, onNavigateStage, activeStage = 'idle' }: MemoryOnboardingGateProps) {
   const { locale, preference, setLocale, t, formatDate } = useLocale()
   const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const storedMarker = readMemoryOnboardingMarker()
@@ -94,6 +96,7 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
     return 'checking'
   })
   const [step, setStep] = useState(0)
+  const [completedSteps, setCompletedSteps] = useState<boolean[]>([false, false, false])
   const [pageDirection, setPageDirection] = useState<'forward' | 'backward'>('forward')
   const [answers, setAnswers] = useState(['', '', ''])
   const [fieldError, setFieldError] = useState<string | null>(null)
@@ -105,23 +108,31 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
   })
   const [checkRequest, setCheckRequest] = useState(0)
   const [failureContext, setFailureContext] = useState<'initial' | 'submit'>('initial')
+  const onFinishedRef = useRef(onFinished)
+  const onExistingDataRef = useRef(onExistingData)
   const forceLocalDataCheckRef = useRef(false)
+  const forceOpenRef = useRef(false)
   const baselineIdsRef = useRef<Set<string>>(new Set())
   const foregroundStartedAtRef = useRef(0)
   const continueStartedAtRef = useRef(0)
   const submitRequestIdRef = useRef<string | null>(null)
+  onFinishedRef.current = onFinished
+  onExistingDataRef.current = onExistingData
+
   const finishOnboarding = useCallback(() => {
     setMode('app')
     // 通知主进程引导结束：解除云端转写物化延迟（首登时 materialize 会把
     // 云端历史写进 MemoryCore L0，若先于本 gate 的 overview 判定完成，
     // 会被误判为「已完成记忆设置」而跳过引导）。
     window.nxcore?.memory?.onboardingFinished?.()
-    onFinished?.()
-  }, [onFinished])
+    onFinishedRef.current?.()
+  }, [])
 
   const resetQuestions = useCallback(() => {
     console.info('[onboarding] memory-open', { activeStage })
+    forceOpenRef.current = true
     setStep(0)
+    setCompletedSteps([false, false, false])
     setPageDirection('forward')
     setAnswers(['', '', ''])
     setFieldError(null)
@@ -161,6 +172,18 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
     const marker = initialMarkerRef.current
     const forceLocalDataCheck = forceLocalDataCheckRef.current
     forceLocalDataCheckRef.current = false
+    if (forceOpenRef.current) {
+      forceOpenRef.current = false
+      return () => { cancelled = true }
+    }
+    if (suppressOnboarding) {
+      setMode('app')
+      return () => { cancelled = true }
+    }
+    if (activeStage !== 'idle' && activeStage !== 'memory') {
+      setMode('app')
+      return () => { cancelled = true }
+    }
     if (marker?.status === 'pending') {
       setPending(marker)
       submitRequestIdRef.current = marker.requestId
@@ -196,9 +219,12 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
           if (REPEATABLE_MEMORY_ONBOARDING || memoryOverviewIsEmpty(overview)) {
             setMode('questions')
           } else {
-            // 已有记忆时给用户选择：继续进入，或重新完成一遍引导。
-            window.nxcore?.memory?.onboardingFinished?.()
-            setMode('ready')
+            // Existing memory means this is not a first-use workspace. Persist
+            // the acknowledgement and enter the app without flashing a guide.
+            writeMemoryOnboardingMarker({ status: 'skipped' })
+            initialMarkerRef.current = { status: 'skipped' }
+            onExistingDataRef.current?.()
+            finishOnboarding()
           }
         })
         .catch(() => {
@@ -217,7 +243,7 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
       cancelled = true
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [checkRequest])
+  }, [activeStage, checkRequest, finishOnboarding, suppressOnboarding])
 
   const findGeneratedMemory = useCallback(async (
     marker: Pick<Extract<MemoryOnboardingMarker, { status: 'pending' }>, 'sessionId' | 'capturedAt'>,
@@ -333,6 +359,7 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
     }
     setFieldError(null)
     setPageDirection('forward')
+    setCompletedSteps((current) => current.map((complete, index) => index === step ? true : complete))
     setStep((current) => Math.min(2, current + 1))
   }
 
@@ -351,6 +378,7 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
       return
     }
     setFieldError(null)
+    setCompletedSteps((current) => current.map((complete, index) => index <= step ? true : complete))
     setMode('saving')
     continueStartedAtRef.current = Date.now()
     try {
@@ -399,7 +427,7 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
     },
   ], [t])
 
-  if (mode === 'app' || (activeStage !== 'idle' && activeStage !== 'memory')) return <>{children({ openMemoryOnboarding: resetQuestions })}</>
+  if (suppressOnboarding || mode === 'app' || (activeStage !== 'idle' && activeStage !== 'memory')) return <>{children({ openMemoryOnboarding: resetQuestions })}</>
 
   const activeQuestion = questions[step]
   const visibleAnswers = answers.map((answer) => answer.trim())
@@ -581,7 +609,12 @@ export function MemoryOnboardingGate({ children, onFinished, onMemoryGenerated, 
         <aside className="memory-onboarding-trace" data-aggregating={mode === 'refining'} aria-label={t('memory:onboarding.trace')}>
           <div className="memory-trace-line" aria-hidden="true" />
           {visibleAnswers.map((answer, index) => (
-            <div key={index} className="memory-trace-answer" data-filled={Boolean(answer)}>
+            <div
+              key={index}
+              className="memory-trace-answer"
+              data-filled={Boolean(answer)}
+              data-state={completedSteps[index] ? 'complete' : mode === 'questions' && step === index ? 'active' : 'upcoming'}
+            >
               <span>{index + 1}</span>
               <p>{answer || t(TRACE_PLACEHOLDER_KEYS[index] ?? TRACE_PLACEHOLDER_KEYS[0])}</p>
             </div>

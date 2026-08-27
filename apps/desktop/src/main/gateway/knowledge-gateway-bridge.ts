@@ -9,7 +9,12 @@ import type {
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
   KnowledgeRoomContextDto,
+  KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
+  KnowledgeRoomRelationDto,
+  KnowledgeRoomRelationVisibility,
+  CreateKnowledgeRoomRelationInput,
+  UpdateKnowledgeRoomRelationInput,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
   KnowledgeWikiGraphDto,
@@ -38,6 +43,46 @@ export class KnowledgeGatewayBridge {
 
   deleteRoom(roomId: string): Promise<void> {
     return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}`, { method: 'DELETE' })
+  }
+
+  getRoomGraph(visibility: KnowledgeRoomRelationVisibility = 'active'): Promise<KnowledgeRoomGraphDto> {
+    return this.request(`/v1/knowledge/room-graph?${new URLSearchParams({ visibility })}`)
+  }
+
+  getRoomRelations(
+    roomId: string,
+    visibility: KnowledgeRoomRelationVisibility = 'active',
+  ): Promise<KnowledgeRoomGraphDto> {
+    return this.request(`/v1/knowledge/rooms/${encodeURIComponent(roomId)}/relations?${new URLSearchParams({ visibility })}`)
+  }
+
+  getRoomRelationEvidence(
+    relationId: string,
+    offset = 0,
+    limit = 50,
+  ): Promise<{ items: import('../../shared/knowledge').KnowledgeRoomRelationReasonDto[]; total: number }> {
+    return this.request(`/v1/knowledge/room-relations/${encodeURIComponent(relationId)}/evidence?${new URLSearchParams({
+      offset: String(offset),
+      limit: String(limit),
+    })}`)
+  }
+
+  createRoomRelation(input: CreateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto> {
+    return this.request('/v1/knowledge/room-relations', { method: 'POST', body: JSON.stringify(input) })
+  }
+
+  updateRoomRelation(
+    relationId: string,
+    input: UpdateKnowledgeRoomRelationInput,
+  ): Promise<KnowledgeRoomRelationDto> {
+    return this.request(`/v1/knowledge/room-relations/${encodeURIComponent(relationId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    })
+  }
+
+  removeManualRoomRelation(relationId: string): Promise<{ relation: KnowledgeRoomRelationDto | null }> {
+    return this.request(`/v1/knowledge/room-relations/${encodeURIComponent(relationId)}/manual`, { method: 'DELETE' })
   }
 
   getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto> {
@@ -74,12 +119,27 @@ export class KnowledgeGatewayBridge {
   }
 
   /** 手动转正：跳过阈值走晋升全流程（202 异步入队）。 */
-  promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }> {
-    return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/promote`, { method: 'POST' })
+  promoteEntity(entityId: string, options?: { forceNew?: boolean }): Promise<{ queued: boolean; jobId: string }> {
+    const query = options?.forceNew ? '?forceNew=true' : ''
+    return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/promote${query}`, { method: 'POST' })
+  }
+
+  promoteEntities(entityIds: string[]) {
+    return this.request<{ items: import('../../shared/knowledge').KnowledgeBatchPromoteResultDto[] }>(
+      '/v1/knowledge/entities/batch-promote',
+      { method: 'POST', body: JSON.stringify({ entityIds }) },
+    )
   }
 
   suppressEntity(entityId: string): Promise<{ ok: boolean }> {
     return this.request(`/v1/knowledge/entities/${encodeURIComponent(entityId)}/suppress`, { method: 'POST' })
+  }
+
+  suppressEntities(entityIds: string[]) {
+    return this.request<{ items: import('../../shared/knowledge').KnowledgeBatchSuppressResultDto[] }>(
+      '/v1/knowledge/entities/batch-suppress',
+      { method: 'POST', body: JSON.stringify({ entityIds }) },
+    )
   }
 
   restoreSuppressedEntity(entityId: string): Promise<{ ok: boolean }> {

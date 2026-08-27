@@ -6,7 +6,6 @@ import type {
   DocumentCapabilityManifest,
   DocumentOperation,
   DocumentOperationCommandInput,
-  StartDocumentOperationInput,
 } from "@nxcore/agent-contract";
 import type {
   AddDocumentOperationItemInput,
@@ -56,7 +55,7 @@ export interface DocumentCapabilityPlugin {
   promptGuidelines: readonly string[];
   tools: readonly DocumentCapabilityTool[];
   start?(
-    request: StartDocumentOperationInput,
+    request: NormalizedStartDocumentOperationInput,
   ): Promise<DocumentOperationPlan> | DocumentOperationPlan;
   command?(
     operation: DocumentOperation,
@@ -68,6 +67,21 @@ export interface DocumentCapabilityPlugin {
 export interface DocumentOperationPlan {
   operation: CreateDocumentOperationInput;
   items?: AddDocumentOperationItemInput[];
+}
+
+/**
+ * 已归一化的 start 请求：路由层会把 invocationId 溯源映射为 sessionId = runId = invocationId，
+ * 插件拿到的 context 恒有 sessionId/runId（落库形状与主 Agent 会话溯源一致）。
+ */
+export interface NormalizedStartDocumentOperationInput {
+  capabilityId: string;
+  context: {
+    roomId: string;
+    documentId?: string;
+    sessionId: string;
+    runId: string;
+  };
+  input: Record<string, unknown>;
 }
 
 export function record(value: unknown): Record<string, unknown> {

@@ -13,6 +13,7 @@ import type {
   DocumentExecutionContext,
   DocumentToolDefinition,
   DocumentToolResult,
+  NormalizedStartDocumentOperationInput,
 } from "./types.js";
 
 export class DocumentCapabilityRegistry {
@@ -93,9 +94,27 @@ export class DocumentCapabilityRegistry {
         409,
       );
     }
+    const { sessionId, runId } = request.context;
+    if (!sessionId || !runId) {
+      throw new DocumentServiceError(
+        "INVALID_OPERATION_CONTEXT",
+        "Operation context requires an agent session (sessionId+runId) or subagent invocation (invocationId)",
+        400,
+      );
+    }
+    const normalized: NormalizedStartDocumentOperationInput = {
+      capabilityId: request.capabilityId,
+      context: {
+        roomId: request.context.roomId,
+        ...(request.context.documentId ? { documentId: request.context.documentId } : {}),
+        sessionId,
+        runId,
+      },
+      input: request.input,
+    };
     this.assertContext(plugin.manifest, {
-      agentSessionId: request.context.sessionId,
-      runId: request.context.runId,
+      agentSessionId: sessionId,
+      runId,
       roomId: request.context.roomId,
       ...(request.context.documentId ? { activeDocument: {
         roomId: request.context.roomId,
@@ -105,14 +124,14 @@ export class DocumentCapabilityRegistry {
         defaultAnchor: "end",
       } } : {}),
     });
-    const plan = await plugin.start(request);
+    const plan = await plugin.start(normalized);
     if (plan.operation.capabilityId !== plugin.manifest.id
       || plan.operation.capabilityVersion !== plugin.manifest.version
       || plan.operation.interactionMode !== plugin.manifest.interactionMode
       || plan.operation.presenterKey !== plugin.manifest.presenterKey
       || plan.operation.roomId !== request.context.roomId
-      || plan.operation.sessionId !== request.context.sessionId
-      || plan.operation.runId !== request.context.runId
+      || plan.operation.sessionId !== sessionId
+      || plan.operation.runId !== runId
       || (plan.operation.documentId ?? undefined) !== request.context.documentId) {
       throw new DocumentServiceError(
         "OPERATION_PLAN_INVALID",

@@ -150,6 +150,11 @@ export class KnowledgeRouter {
     this.deps.embedding = embedding;
   }
 
+  /** runtime config 变更后替换抽取/判定 LLM（null = 关闭：抽取落未识别栏）。 */
+  replaceLlm(llm: RouterDeps["llm"]): void {
+    this.deps.llm = llm;
+  }
+
   /**
    * 跑完整瀑布并落 decision 行。
    * skipEntry：revert 后重路由时跳过 ①（否则同 Room 直连死循环）。
@@ -257,7 +262,9 @@ export class KnowledgeRouter {
         : "抽取未发现实体",
     );
     if (entities.length === 0) {
-      // 空数组是合法抽取结果（通用词不成实体）——同样进未识别栏人工挂载
+      // 空数组是合法的新版本结果：移除旧 resolution 链接并回扣分数；
+      // user 手动链接由 replaceResolutionLinks 保留。
+      this.deps.registry.replaceResolutionLinks(envelope.ref.kind, envelope.ref.id, []);
       return this.persist(envelope, {
         disposition: "awaiting_review",
         roomId: null,
@@ -278,6 +285,7 @@ export class KnowledgeRouter {
     const documentVector = await this.embedDocument(envelope);
 
     const pool = this.deps.registry.loadResolutionPool();
+    const resolvedLinks: Array<{ entity: EntityRow; role: LinkRole; salience: number; evidence: string }> = [];
     const linked: Array<{ entity: EntityRow; role: LinkRole; salience: number; evidence: string }> = [];
 
     for (const item of entities) {
@@ -286,27 +294,28 @@ export class KnowledgeRouter {
       if (resolved) pool.push(resolved);
       const entity = resolved ?? this.deps.registry.createEntity({ name: item.name, kind: item.kind });
       if (userPinned.has(entity.id)) continue; // 用户手动挂载优先，不被重抽取覆盖
+      resolvedLinks.push({ entity, role, salience: item.salience, evidence: item.evidence });
+    }
 
-      const updated = this.deps.registry.upsertLink({
+    const updatedEntities = new Map(this.deps.registry.replaceResolutionLinks(
+      envelope.ref.kind,
+      envelope.ref.id,
+      resolvedLinks.map(({ entity, role, salience, evidence }) => ({
         entityId: entity.id,
-        sourceKind: envelope.ref.kind,
-        sourceId: envelope.ref.id,
         sourceVersion: envelope.ref.version,
         role,
-        salience: item.salience,
-        evidence: item.evidence || null,
-        decidedBy: "resolution",
-      });
-      linked.push({ entity: updated, role, salience: item.salience, evidence: item.evidence });
+        salience,
+        evidence: evidence || null,
+      })),
+    ).map((entity) => [entity.id, entity]));
+
+    for (const item of resolvedLinks) {
+      const updated = updatedEntities.get(item.entity.id) ?? item.entity;
+      linked.push({ ...item, entity: updated });
       if (documentVector) {
         try {
-          this.deps.registry.advanceEntityCentroid(entity.id, documentVector, this.deps.embedding!.model);
+          this.deps.registry.advanceEntityCentroid(item.entity.id, documentVector, this.deps.embedding!.model);
         } catch { /* best-effort */ }
-      }
-      // 推荐确认制：达阈值只翻推荐态（weak → ready），不建 Room——
-      // 用户在首页确认后才晋升（service.promoteEntity）
-      if (this.isPromotionReady(updated)) {
-        this.deps.registry.markReady(updated.id);
       }
     }
 
@@ -479,12 +488,6 @@ export class KnowledgeRouter {
       }
     }
     return null;
-  }
-
-  private isPromotionReady(entity: EntityRow): boolean {
-    return entity.status === "weak"
-      && entity.evidenceScore >= this.deps.thresholds.promoteScore
-      && entity.sourceCount >= this.deps.thresholds.promoteSources;
   }
 
   /** 文档向量（消歧 tie-break + 实体质心推进共用）；未配置/失败返回 null。 */

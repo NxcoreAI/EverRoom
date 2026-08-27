@@ -11,7 +11,9 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
+import { formatRoomUpdatedTime } from '../../roomUpdatedTime';
 import type { ContextRoomRecord } from '../../types';
+import { useRoomAppliedEntities } from '../../useRoomAppliedEntities';
 import { localizedUiText, uiText } from '../../adapters';
 import { EntityFactGraphCanvas } from '../EntityFactGraphCanvas';
 import { createEntityFactGraphData } from '../entityFactGraphModel';
@@ -27,8 +29,12 @@ export function MemoryPane({
   onOpenMemory: (id: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
 }) {
-  const { t } = useLocale();
-  const graphData = useMemo(() => createEntityFactGraphData(room), [room]);
+  const { t, locale } = useLocale();
+  const appliedEntities = useRoomAppliedEntities(room.id, room.updatedAt);
+  const graphData = useMemo(
+    () => createEntityFactGraphData(room, appliedEntities),
+    [appliedEntities, room],
+  );
   const [showFullGraph, setShowFullGraph] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(() => graphData.rootId);
   const [disableConfirmOpen, setDisableConfirmOpen] = useState(false);
@@ -67,7 +73,12 @@ export function MemoryPane({
   const selectedMeta =
     selectedNode.kind === 'fact'
       ? t('contextRoom:memory.statusRoomOnlyRoom', { status: t(uiText(selectedNode.memory.status)), room: room.title })
-      : t('contextRoom:memory.typeEntity', { type: t(uiText(selectedNode.entityType)) });
+      : selectedNode.mentionCount !== undefined
+        ? t('contextRoom:memory.appliedEntityMeta', {
+          type: t(uiText(selectedNode.entityType)),
+          count: selectedNode.mentionCount,
+        })
+        : t('contextRoom:memory.typeEntity', { type: t(uiText(selectedNode.entityType)) });
   const isRootEntity = selectedNode.id === graphData.rootId;
   const isPerson = selectedNode.kind === 'entity' && selectedNode.entityType === '人物';
   const DetailIcon = selectedMemory
@@ -119,11 +130,28 @@ export function MemoryPane({
                 <DetailIcon aria-hidden="true" />
               </span>
               <span>
-                <h3>{selectedMemory ? t(uiText(selectedMemory.type)) : selectedNode.label}</h3>
+                <h3>
+                  {selectedMemory ? t(uiText(selectedMemory.type)) : selectedNode.label}
+                  {selectedNode.kind === 'entity' && selectedNode.status ? (
+                    <span
+                      className="context-room-memory-entity-status"
+                      data-status={selectedNode.status}
+                    >
+                      {t(`contextRoom:memory.entityStatus.${selectedNode.status}`)}
+                    </span>
+                  ) : null}
+                </h3>
                 <small>{selectedMeta}</small>
               </span>
             </header>
             <p>{localizedUiText(selectedNode.description, t)}</p>
+            {selectedNode.kind === 'entity' && selectedNode.lastMentionAt ? (
+              <small className="context-room-memory-entity-mention">
+                {t('contextRoom:memory.lastMentionAt', {
+                  time: formatRoomUpdatedTime(selectedNode.lastMentionAt, selectedNode.lastMentionAt, locale, t),
+                })}
+              </small>
+            ) : null}
             <section>
               <div className="context-room-memory-detail-section-head">
                 <span>{t(selectedMemory ? 'contextRoom:memory.sources' : 'contextRoom:memory.relatedMemories')}</span>

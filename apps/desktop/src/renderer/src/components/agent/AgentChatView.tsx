@@ -2,6 +2,8 @@ import { Check, ChevronRight, CircleHelp, Copy, FileText, Folder, FolderKanban, 
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
+import { AgentShellApproval } from './AgentShellApproval'
+import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
 import { parseAgentDocumentIntentResult, type AgentDocumentIntentResult } from './agentDocumentIntent'
 import { parseAgentNavigationTarget } from './agentNavigation'
@@ -315,7 +317,9 @@ export function AgentChatView({
   messages,
   notificationRunTarget,
   onNotificationRunLocated,
+  pendingApprovals = [],
   onRetryPrompt,
+  onResolveApproval = () => undefined,
   onOpenSessionLink,
   onRejectDocumentIntent,
   onSelectRoom,
@@ -324,6 +328,7 @@ export function AgentChatView({
   pendingNavigationByRun,
   runCompletedAtByRun,
   runStartedAtByRun,
+  resolvingApprovalIds = new Set<string>(),
   scopeReady,
   sessionLinks,
   submitting,
@@ -343,7 +348,9 @@ export function AgentChatView({
   messages: DisplayAgentMessage[]
   notificationRunTarget?: { key: string; runId: string } | null
   onNotificationRunLocated?: (key: string) => void
+  pendingApprovals?: PendingShellApproval[]
   onRetryPrompt: (prompt: string, runId: string) => void
+  onResolveApproval?: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied') => void
   onOpenSessionLink: (link: AgentSessionLink) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (
@@ -356,6 +363,7 @@ export function AgentChatView({
   pendingNavigationByRun: Record<string, AgentNavigationTarget>
   runCompletedAtByRun: Record<string, string>
   runStartedAtByRun: Record<string, string>
+  resolvingApprovalIds?: ReadonlySet<string>
   scopeReady: boolean
   sessionLinks: AgentSessionLink[]
   submitting: boolean
@@ -381,7 +389,7 @@ export function AgentChatView({
   const handledDocumentSelectionsRef = useRef(new Set<string>())
   const { documentsByRoom } = useRoomDocumentsState()
   const conversationRef = useRef<HTMLDivElement>(null)
-  const hasConversation = messages.length > 0 || sessionLinks.length > 0
+  const hasConversation = messages.length > 0 || sessionLinks.length > 0 || pendingApprovals.length > 0
     || Boolean(activeRunId) || Boolean(error)
   const confirmedEmpty = scopeReady && !hasConversation
   const [emptyLayout, setEmptyLayout] = useState(confirmedEmpty)
@@ -524,7 +532,7 @@ export function AgentChatView({
     const element = conversationRef.current
     if (!element || notificationTargetMessageId) return
     element.scrollTop = element.scrollHeight
-  }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, toolCallsByRun])
+  }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, pendingApprovals, toolCallsByRun])
 
   useLayoutEffect(() => {
     if (scopeReady) setEmptyLayout(confirmedEmpty)
@@ -751,6 +759,11 @@ export function AgentChatView({
           {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
             ? <ThinkingStatus label={getThinkingLabel(undefined, latestTools, t)} />
             : null}
+          <AgentShellApproval
+            approvals={pendingApprovals}
+            resolvingApprovalIds={resolvingApprovalIds}
+            onResolve={onResolveApproval}
+          />
           {pendingDocumentIntent ? (
             <DocumentIntentClarification
               busy={loading || submitting || activeRunPending}

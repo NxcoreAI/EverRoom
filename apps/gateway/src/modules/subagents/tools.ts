@@ -10,6 +10,74 @@ function dispatchKey(runId: string, agentId: string, task: string, input: unknow
     .digest("hex");
 }
 
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractJsonObject(value: string): Record<string, unknown> | null {
+  const direct = parseJsonObject(value.trim());
+  if (direct) return direct;
+
+  for (const match of value.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    const parsed = parseJsonObject(match[1]?.trim() ?? "");
+    if (parsed) return parsed;
+  }
+
+  for (let start = value.indexOf("{"); start >= 0; start = value.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < value.length; index += 1) {
+      const character = value[index]!;
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') {
+        inString = true;
+      } else if (character === "{") {
+        depth += 1;
+      } else if (character === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          const parsed = parseJsonObject(value.slice(start, index + 1));
+          if (parsed) return parsed;
+          break;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeDocumentSummary(result: { text: string; structuredOutput?: unknown } | null): {
+  summary: string | null;
+  outputFormat: "structured" | "text" | null;
+  warning?: "unstructured_subagent_output";
+} {
+  const structured = result?.structuredOutput !== null
+    && typeof result?.structuredOutput === "object"
+    && !Array.isArray(result.structuredOutput)
+    ? result.structuredOutput as Record<string, unknown>
+    : extractJsonObject(result?.text ?? "");
+  if (typeof structured?.summary === "string" && structured.summary.trim()) {
+    return { summary: structured.summary.trim(), outputFormat: "structured" };
+  }
+  const text = result?.text.trim() ?? "";
+  return text
+    ? { summary: text, outputFormat: "text", warning: "unstructured_subagent_output" }
+    : { summary: null, outputFormat: null };
+}
+
 export function createSubagentPiTools(
   registry: SubagentRegistry,
   orchestrator: SubagentOrchestrator,
@@ -132,6 +200,58 @@ export function createSubagentPiTools(
       ),
     });
   }
+  const contextRoomAgent = registry.get("context-room");
+  if (contextRoomAgent) {
+    tools.push({
+      name: "room_analysis",
+      label: "Analyze room materials",
+      description: "调度 Context Room Agent 分析指定 Room 的已收录资料，返回事实、风险、矛盾、信息缺口和下一步建议。用户询问某个 Room 的整体情况或资料结论时使用。",
+      parameters: Type.Object({
+        roomId: Type.String({ minLength: 1, maxLength: 128 }),
+        focus: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
+        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+      }, { additionalProperties: false }),
+      execute: async (run, params, signal) => {
+        const input = {
+          task: "material-analysis" as const,
+          roomId: String(params.roomId),
+          ...(typeof params.focus === "string" && params.focus.trim()
+            ? { instruction: params.focus.trim() }
+            : {}),
+          ...(typeof params.responseLanguage === "string" && params.responseLanguage.trim()
+            ? { responseLanguage: params.responseLanguage.trim() }
+            : {}),
+        };
+        const task = "分析指定 Context Room 的资料并提炼可核验结论";
+        const invocation = await orchestrator.dispatch({
+          agentId: "context-room",
+          task,
+          input,
+          idempotencyKey: dispatchKey(run.runId, "context-room", task, input),
+          source: "primary_agent",
+          parentSessionId: run.sessionId,
+          parentRunId: run.runId,
+          ...(signal ? { signal } : {}),
+        });
+        const structured = invocation.result?.structuredOutput !== null
+          && typeof invocation.result?.structuredOutput === "object"
+          && !Array.isArray(invocation.result.structuredOutput)
+          ? invocation.result.structuredOutput as Record<string, unknown>
+          : extractJsonObject(invocation.result?.text ?? "");
+        return {
+          content: JSON.stringify({
+            invocationId: invocation.id,
+            agentId: invocation.agentDefinitionId,
+            status: invocation.status,
+            ...(structured ? { analysis: structured } : {}),
+            result: invocation.result,
+            error: invocation.errorMessage,
+          }),
+          details: invocation,
+        };
+      },
+    });
+  }
   const documentParser = registry.get("multimodal-document-parser");
   if (documentParser) {
     tools.push({
@@ -178,15 +298,17 @@ export function createSubagentPiTools(
           facts?: unknown;
           missingFields?: unknown;
         } | undefined;
+        const normalized = normalizeDocumentSummary(invocation.result);
         return {
           content: JSON.stringify({
             invocationId: invocation.id,
             agentId: invocation.agentDefinitionId,
             status: invocation.status,
-            summary: typeof structured?.summary === "string" ? structured.summary : null,
+            summary: normalized.summary,
             facts: Array.isArray(structured?.facts) ? structured.facts : null,
             missingFields: Array.isArray(structured?.missingFields) ? structured.missingFields : null,
-            outputFormat: structured ? "structured" : null,
+            outputFormat: normalized.outputFormat,
+            ...(normalized.warning ? { warning: normalized.warning } : {}),
             result: invocation.result,
             error: invocation.errorMessage,
           }),

@@ -5,6 +5,10 @@ import type {
 } from '@nxcore/agent-runtime-pi';
 import type { StartRuntimeRunInput } from '@nxcore/agent-runtime';
 import type { OpenConnectorCliConfig } from '../../config.js';
+import {
+  ExternalCallBudgetExceededError,
+  type ExternalCallBudgetService,
+} from '../external-calls/service.js';
 
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
 const MODEL_CONTEXT_OUTPUT_LIMIT = 64 * 1024;
@@ -468,10 +472,30 @@ function chooseConnectionName(
 export function createOpenConnectorPiTools(
   config: OpenConnectorCliConfig,
   runner: OoRunner = runOo,
+  budget?: ExternalCallBudgetService,
 ): PiAgentRuntimeTool[] {
   const observedNotionIds = new Map<string, Set<string>>();
   const schemaCache = new Map<string, Map<string, unknown>>();
   const exposedSchemas = new Map<string, Set<string>>();
+  const external = <T>(input: StartRuntimeRunInput, tool: string, invoke: () => Promise<T>): Promise<T> => budget
+    ? budget.execute('CONNECTOR', tool, {
+        source: 'agent',
+        runId: input.runId,
+        correlationId: input.sessionId,
+      }, async (markDispatched) => {
+        markDispatched();
+        return invoke();
+      })
+    : invoke();
+  const classify = (
+    operation: ConnectorOperation,
+    error: unknown,
+    params: Record<string, unknown>,
+  ): PiAgentRuntimeToolFailurePolicy | null => error instanceof ExternalCallBudgetExceededError ? {
+    category: 'external_call_budget_exceeded',
+    recoverable: true,
+    instruction: `Skip connector_${operation} and continue with another available path.`,
+  } : connectorFailurePolicy(operation, error, params);
   const runCacheKey = (input: { runId?: string; sessionId?: string }): string => (
     textValue(input.runId) ?? textValue(input.sessionId) ?? 'unknown-run'
   );
@@ -536,7 +560,7 @@ export function createOpenConnectorPiTools(
         const exactAction = service === 'notion'
           ? requestedNotionAction(originalPrompt)
           : null;
-        const result = await runner(
+        const result = await external(input, 'connector_search', () => runner(
           config,
           [
             'connector',
@@ -546,10 +570,10 @@ export function createOpenConnectorPiTools(
             connectorSearchQuery(originalPrompt, String(params.query), service),
           ],
           signal,
-        );
+        ));
         return textResult(connectorSearchResults(result, service, exactAction));
       },
-      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => connectorFailurePolicy('search', error, params),
+      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => classify('search', error, params),
     },
     {
       name: 'connector_schema',
@@ -584,12 +608,12 @@ export function createOpenConnectorPiTools(
             instruction: 'Reuse the inputSchema from the earlier connector_schema result in this run. Calling schema again cannot provide new evidence.',
           });
         }
-        const schema = await cachedSchema(input, service, name, signal);
+        const schema = await external(input, 'connector_schema', () => cachedSchema(input, service, name, signal));
         exposed.add(actionKey);
         exposedSchemas.set(runKey, exposed);
         return textResult(schema);
       },
-      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => connectorFailurePolicy('schema', error, params),
+      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => classify('schema', error, params),
     },
     {
       name: 'connector_apps',
@@ -608,12 +632,12 @@ export function createOpenConnectorPiTools(
         'Call this before connector_run and use only a connectionName returned by this tool.',
         'If the result is empty, do not call connector_run; tell the user to connect the service in the Connector Web Console.',
       ],
-      execute: async (_input, params, signal) => textResult(await runner(
+      execute: async (input, params, signal) => textResult(await external(input, 'connector_apps', () => runner(
         config,
         ['connector', 'apps', String(params.service), '--json'],
         signal,
-      )),
-      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => connectorFailurePolicy('apps', error, params),
+      ))),
+      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => classify('apps', error, params),
     },
     {
       name: 'connector_run',
@@ -673,34 +697,36 @@ export function createOpenConnectorPiTools(
         }
         const data = JSON.stringify(connectorInput);
         if (Buffer.byteLength(data) > 256 * 1024) throw new Error('Connector input exceeds 256 KiB');
-        try {
-          await cachedSchema(input, service, name, signal);
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error);
-          throw new Error(`Connector action "${service}.${name}" could not be verified and was not executed: ${reason}. Call connector_search, copy its exact service and name, inspect connector_schema, and retry in this turn.`);
-        }
-        const apps = await runner(config, ['connector', 'apps', service, '--json'], signal);
-        const connectionName = chooseConnectionName(
-          service,
-          textValue(params.connectionName),
-          apps,
-        );
-        const result = await runner(config, [
-          'connector',
-          'run',
-          service,
-          '--action',
-          name,
-          '--data',
-          data,
-          '--connection-name',
-          connectionName,
-          '--json',
-        ], signal);
+        const result = await external(input, 'connector_run', async () => {
+          try {
+            await cachedSchema(input, service, name, signal);
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            throw new Error(`Connector action "${service}.${name}" could not be verified and was not executed: ${reason}. Call connector_search, copy its exact service and name, inspect connector_schema, and retry in this turn.`);
+          }
+          const apps = await runner(config, ['connector', 'apps', service, '--json'], signal);
+          const connectionName = chooseConnectionName(
+            service,
+            textValue(params.connectionName),
+            apps,
+          );
+          return runner(config, [
+            'connector',
+            'run',
+            service,
+            '--action',
+            name,
+            '--data',
+            data,
+            '--connection-name',
+            connectionName,
+            '--json',
+          ], signal);
+        });
         if (service === 'notion') rememberNotionIds(input.runId, result);
         return textResult(result);
       },
-      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => connectorFailurePolicy('run', error, params),
+      classifyFailure: (error: unknown, _input: StartRuntimeRunInput, params: Record<string, unknown>) => classify('run', error, params),
     },
   ];
 }

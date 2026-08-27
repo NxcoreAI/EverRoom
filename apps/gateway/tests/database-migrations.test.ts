@@ -24,6 +24,53 @@ describe("database migrations", () => {
     expect(indexes.map((index) => index.name)).toContain("jobs_type_status_created_idx");
   });
 
+  it("reconciles the pre-merge Context Room migration branch", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-context-room-branch-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+    const beforeMerge = createDatabase(databasePath, migrationsDir);
+    beforeMerge.sqlite.prepare(
+      "INSERT INTO room_relations (id, room_a_id, room_b_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("relation-1", "room-a", "room-b", 1, 1);
+    beforeMerge.sqlite.exec("DROP TABLE clipper_assets");
+    beforeMerge.sqlite.exec("DROP TABLE clipper_captures");
+    beforeMerge.sqlite.exec("DROP TABLE parsed_documents");
+    beforeMerge.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(1787552314033);
+    const insertLegacyMigration = beforeMerge.sqlite.prepare(
+      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+    );
+    insertLegacyMigration.run("pre-merge-yjs", 1787580711823);
+    insertLegacyMigration.run("pre-merge-knowledge-scoring", 1787636018104);
+    insertLegacyMigration.run("pre-merge-room-relations", 1787644742114);
+    beforeMerge.sqlite.close();
+
+    const upgraded = createDatabase(databasePath, migrationsDir);
+    const tables = upgraded.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    ).all() as Array<{ name: string }>;
+    const relation = upgraded.sqlite.prepare(
+      "SELECT id, room_a_id, room_b_id FROM room_relations WHERE id = ?",
+    ).get("relation-1");
+    const journal = JSON.parse(
+      await readFile(join(migrationsDir, "meta", "_journal.json"), "utf8"),
+    ) as { entries: Array<{ when: number; tag: string }> };
+    const mergedEntry = journal.entries.find((entry) => entry.tag === "0030_room_relations_and_scoring");
+    const mergedMarker = upgraded.sqlite.prepare(
+      "SELECT created_at FROM __drizzle_migrations WHERE created_at = ?",
+    ).get(mergedEntry?.when);
+    upgraded.sqlite.close();
+
+    expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "parsed_documents",
+      "clipper_captures",
+      "clipper_assets",
+      "room_relations",
+    ]));
+    expect(relation).toEqual({ id: "relation-1", room_a_id: "room-a", room_b_id: "room-b" });
+    expect(mergedMarker).toEqual({ created_at: mergedEntry?.when });
+  });
+
   it("reconciles the pre-merge Yjs migration branch with the canonical schema", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-yjs-branch-migration-test-"));
     temporaryDirectories.push(dataDir);

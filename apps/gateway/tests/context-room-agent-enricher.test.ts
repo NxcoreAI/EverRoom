@@ -1,33 +1,54 @@
-import type { AgentRuntime, RuntimeEvent } from '@nxcore/agent-runtime'
+import type { SubagentInvocation } from '@nxcore/agent-contract'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  ContextRoomAgentEnricher,
+  CONTEXT_ROOM_AGENT_ID,
+  ContextRoomAgentDispatcher,
   fallbackContextRoomEnrichment,
+  isSelectionRewriteInvocationAuthorized,
+  parseBriefRefresh,
   parseContextRoomEnrichment,
-} from '../src/modules/context-rooms/agent-enricher.js'
+} from '../src/modules/context-rooms/room-agent.js'
 
-function runtimeWith(events: RuntimeEvent[]): AgentRuntime {
+function invocation(overrides: Partial<SubagentInvocation>): SubagentInvocation {
+  const now = Date.now()
   return {
-    id: 'room-test',
-    getCapabilities: async () => ({ streaming: true, reasoning: false, tools: true, steering: false, resume: false }),
-    start: async () => ({
-      runId: 'run-1',
-      runtimeSessionRef: '/tmp/room-session.jsonl',
-      events: (async function* () { yield* events })(),
-    }),
-    resume: async () => { throw new Error('not implemented') },
-    sendInput: async () => undefined,
-    cancel: async () => undefined,
-    deleteSession: vi.fn(async () => undefined),
-    dispose: async () => undefined,
+    id: 'invocation-1',
+    agentDefinitionId: CONTEXT_ROOM_AGENT_ID,
+    agentRevisionId: 'revision-1',
+    source: 'internal_workflow',
+    parentSessionId: null,
+    parentRunId: null,
+    task: '改写文档选区',
+    input: { roomId: 'room-1' },
+    status: 'completed',
+    result: { text: '改写后的文本' },
+    errorCode: null,
+    errorMessage: null,
+    createdAt: new Date(now - 5_000).toISOString(),
+    startedAt: new Date(now - 4_000).toISOString(),
+    completedAt: new Date(now - 3_000).toISOString(),
+    ...overrides,
   }
 }
 
-describe('Context Room creation enrichment', () => {
+describe('Context Room Agent enrichment parsing', () => {
   const fallback = fallbackContextRoomEnrichment({
     title: 'Campus Life',
     description: 'Organize campus activities and study notes',
+  })
+
+  it('falls back to a pending status derived from the creation input', () => {
+    expect(fallback).toMatchObject({
+      kind: '主题',
+      overview: 'Organize campus activities and study notes',
+      status: 'Created; awaiting more material',
+      nextSteps: [],
+      entities: [],
+      facts: [],
+    })
+    expect(fallbackContextRoomEnrichment({ title: '校园生活', description: '整理资料' }).status)
+      .toBe('已创建，等待补充资料')
   })
 
   it('parses fenced Agent JSON and keeps only supported structured fields', () => {
@@ -69,36 +90,82 @@ describe('Context Room creation enrichment', () => {
       .toThrow('invalid JSON')
   })
 
-  it('accepts Agent output only after both memory searches and cleans up the session', async () => {
-    const runtime = runtimeWith([
-      { type: 'tool.started', payload: { name: 'memory_search' } },
-      { type: 'tool.started', payload: { name: 'conversation_search' } },
-      { type: 'message.completed', payload: { content: JSON.stringify({
-        kind: '项目',
-        overview: 'Enriched campus context',
-        background: 'Campus background',
-        goal: 'Campus goal',
-        status: 'Ready',
-        nextSteps: [],
-        entities: [],
-        facts: [],
-      }) } },
-    ])
-    const enricher = new ContextRoomAgentEnricher(runtime)
+  it('parses a brief refresh payload with bounded lists', () => {
+    expect(parseBriefRefresh(JSON.stringify({
+      background: '新背景',
+      goal: '新目标',
+      status: '进行中',
+      risks: ['风险一', ''],
+      decisions: ['决策一'],
+    }))).toEqual({
+      background: '新背景',
+      goal: '新目标',
+      status: '进行中',
+      risks: ['风险一'],
+      decisions: ['决策一'],
+    })
+  })
+})
 
-    await expect(enricher.enrich({ title: 'Campus Life', description: 'Campus notes' }))
-      .resolves.toMatchObject({ kind: '项目', overview: 'Enriched campus context' })
-    expect(runtime.deleteSession).toHaveBeenCalledWith('/tmp/room-session.jsonl')
+describe('ContextRoomAgentDispatcher', () => {
+  it('maps tasks to the context-room subagent with internal_workflow source', async () => {
+    const orchestrator = {
+      dispatch: vi.fn().mockResolvedValue(invocation({ status: 'running', result: null })),
+      startDetached: vi.fn().mockResolvedValue('invocation-detached'),
+    }
+    const dispatcher = new ContextRoomAgentDispatcher(orchestrator as never)
+
+    await dispatcher.dispatch({
+      task: 'room-enrich',
+      taskInput: { roomId: 'room-1', title: 'T', description: 'D' },
+      idempotencyKey: 'room-enrich:room-1',
+    })
+    await dispatcher.dispatchDetached({ task: 'selection-rewrite', taskInput: { selectedText: 'x' } })
+
+    expect(orchestrator.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'context-room',
+      task: '整理新创建的 Context Room',
+      input: { task: 'room-enrich', roomId: 'room-1', title: 'T', description: 'D' },
+      idempotencyKey: 'room-enrich:room-1',
+      source: 'internal_workflow',
+    }))
+    expect(orchestrator.startDetached).toHaveBeenCalledWith(expect.objectContaining({
+      task: '改写文档选区',
+      input: expect.objectContaining({ task: 'selection-rewrite' }),
+      idempotencyKey: expect.stringMatching(/^room-agent:/),
+    }))
+  })
+})
+
+describe('isSelectionRewriteInvocationAuthorized', () => {
+  const options = { capabilityId: 'document.selection-rewrite', roomId: 'room-1' }
+
+  it('accepts a completed internal context-room invocation for the same room', () => {
+    expect(isSelectionRewriteInvocationAuthorized(invocation({}), options)).toBe(true)
   })
 
-  it('falls back when the Agent skips a required memory search', async () => {
-    const runtime = runtimeWith([
-      { type: 'tool.started', payload: { name: 'memory_search' } },
-      { type: 'message.completed', payload: { content: '{"kind":"项目","overview":"unsupported"}' } },
-    ])
-    const enricher = new ContextRoomAgentEnricher(runtime)
+  it('rejects other capabilities, agents, sources, and non-terminal runs', () => {
+    expect(isSelectionRewriteInvocationAuthorized(invocation({}), {
+      capabilityId: 'document.continue',
+      roomId: 'room-1',
+    })).toBe(false)
+    expect(isSelectionRewriteInvocationAuthorized(
+      invocation({ agentDefinitionId: 'content-analyst' }),
+      options,
+    )).toBe(false)
+    expect(isSelectionRewriteInvocationAuthorized(invocation({ source: 'primary_agent' }), options)).toBe(false)
+    expect(isSelectionRewriteInvocationAuthorized(invocation({ status: 'running', result: null }), options)).toBe(false)
+    expect(isSelectionRewriteInvocationAuthorized(null, options)).toBe(false)
+  })
 
-    await expect(enricher.enrich({ title: 'Campus Life', description: 'Campus notes' }))
-      .resolves.toMatchObject({ kind: '主题', overview: 'Campus notes', facts: [] })
+  it('rejects invocations outside the operation grace window or bound to another room', () => {
+    expect(isSelectionRewriteInvocationAuthorized(invocation({}), {
+      ...options,
+      now: new Date(Date.now() + 11 * 60 * 1000),
+    })).toBe(false)
+    expect(isSelectionRewriteInvocationAuthorized(
+      invocation({ input: { roomId: 'room-2' } }),
+      options,
+    )).toBe(false)
   })
 })

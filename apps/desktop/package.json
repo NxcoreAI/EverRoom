@@ -97,7 +97,9 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/@esbuild/**/*"
+      "node_modules/@esbuild/**/*",
+      "node_modules/sqlite-vec-darwin-arm64/**/*",
+      "node_modules/sqlite-vec-darwin-x64/**/*"
     ],
     "directories": {
       "output": "../../release"
@@ -128,6 +130,14 @@
           "!**/{test,spec}.*",
           "!**/*.{test,spec}.*",
           "!**/*.{map,ts,tsx,mts,cts}"
+        ]
+      },
+      {
+        "from": "../gateway/dist/node_modules/@napi-rs",
+        "to": "gateway/node_modules/@napi-rs",
+        "filter": [
+          "**/*",
+          "!**/*.d.ts"
         ]
       },
       {

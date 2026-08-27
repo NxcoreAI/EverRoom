@@ -9,17 +9,22 @@ import {
   FileText,
   GitBranch,
   Info,
+  LoaderCircle,
   Network,
+  Sparkles,
   Zap,
 } from 'lucide-react';
 import type { RoomDocument } from '@nxcore/agent-contract';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useLocale, type Translate } from '../../../../../i18n/LocaleContext';
+import { useContextRoomState } from '../../../ContextRoomStateProvider';
+import { showToast } from '@/state/toast';
 
 import { createContextRoomResourceLibrary } from '../../resources';
 import { localizedUiText, uiText } from '../../adapters';
 import type { ContextRoomRecord, ContextRoomResource } from '../../types';
 import { useRoomUpdatedTime } from '../../roomUpdatedTime';
+import { formatTimelineTime, parseTimelineDate } from '../../roomTimeline';
 import { roomKindIcon, roomKindTone } from '../utils';
 import { PanelEmptyState } from './PanelEmptyState';
 type WorkspaceObjectPreview =
@@ -36,19 +41,6 @@ const DASHBOARD_COPY: Record<
   string,
   { aiStatus: string; nextSteps: string[]; entities: Array<{ label: string; description: string }> }
 > = {};
-
-function parseRoomDate(value: string) {
-  const date = new Date(REFERENCE_TODAY);
-  date.setHours(0, 0, 0, 0);
-  if (/^(今天|today)(?:\s|$)/iu.test(value)) return date;
-  if (/^(昨天|yesterday)(?:\s|$)/iu.test(value)) {
-    date.setDate(date.getDate() - 1);
-    return date;
-  }
-  const match = value.match(/(\d{1,2})-(\d{1,2})/);
-  if (!match) return null;
-  return new Date(REFERENCE_TODAY.getFullYear(), Number(match[1]) - 1, Number(match[2]));
-}
 
 function startOfWeek(value: Date) {
   const result = new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -106,6 +98,8 @@ export function OverviewDashboard({
   onToggleTask: (taskId: string) => void;
 }) {
   const { locale, t } = useLocale();
+  const { refreshFromBackend } = useContextRoomState();
+  const [regeneratingBrief, setRegeneratingBrief] = useState(false);
   const latestDocumentAt = backendDocuments.reduce<string | undefined>((latest, document) => (
     !latest || document.updatedAt > latest ? document.updatedAt : latest
   ), undefined);
@@ -136,7 +130,7 @@ export function OverviewDashboard({
     [backendDocuments, locale, room],
   );
   const visibleTimeline = room.timeline.filter((item) =>
-    inTimelineRange(parseRoomDate(item.time), timelineView, timelineCursor)
+    inTimelineRange(parseTimelineDate(item.time, REFERENCE_TODAY), timelineView, timelineCursor)
   );
   const recentDocuments = [...backendDocuments]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -154,6 +148,24 @@ export function OverviewDashboard({
       else next.setDate(next.getDate() + delta * (timelineView === 'week' ? 7 : 1));
       return next;
     });
+  // 简报再生成：dispatch context-room 子 Agent（brief-refresh），完成后拉取后端快照刷新本地状态。
+  const regenerateBrief = useCallback(async () => {
+    const api = window.nxcore?.contextRooms;
+    if (!api || regeneratingBrief) return;
+    setRegeneratingBrief(true);
+    try {
+      await api.refreshBrief(room.id);
+      await refreshFromBackend();
+      showToast({ title: t('contextRoom:overviewDashboard.briefRegenerated') });
+    } catch (error) {
+      showToast({
+        title: t('contextRoom:overviewDashboard.briefRegenerateFailed'),
+        message: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setRegeneratingBrief(false);
+    }
+  }, [refreshFromBackend, regeneratingBrief, room.id, t]);
 
   return (
     <section className="context-room-dashboard" data-testid="context-room-pane-overview">
@@ -168,7 +180,21 @@ export function OverviewDashboard({
 
       <div className="context-room-dashboard-grid">
         <article>
-          <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}</header>
+          <header data-icon-tone="document"><FileText aria-hidden="true" />{t('contextRoom:overviewDashboard.roomOverview')}
+            <button
+              type="button"
+              className="context-room-dashboard-regenerate"
+              disabled={regeneratingBrief}
+              onClick={() => void regenerateBrief()}
+            >
+              {regeneratingBrief
+                ? <LoaderCircle aria-hidden="true" data-spin="true" />
+                : <Sparkles aria-hidden="true" />}
+              {t(regeneratingBrief
+                ? 'contextRoom:overviewDashboard.regeneratingBrief'
+                : 'contextRoom:overviewDashboard.regenerateBrief')}
+            </button>
+          </header>
           {hasOverview ? (
             <><p>{localizedUiText(generatedOverview || room.brief.background, t) || t('contextRoom:overviewDashboard.noBackgroundProvided')}</p><small><b>{t('contextRoom:overviewDashboard.goal')}</b>{localizedUiText(room.brief.goal, t) || t('contextRoom:overviewDashboard.notSet')}</small></>
           ) : (
@@ -232,7 +258,7 @@ export function OverviewDashboard({
         {visibleTimeline.length ? <ol>{visibleTimeline.map((item, index) => {
           const material = recentMaterials[index] as (typeof recentMaterials)[number] | undefined;
           const resource = material ? library.resources.find((candidate) => candidate.name === material.title) : null;
-          return <li key={`${item.time}-${item.title}`}><i data-kind={item.kind} /><div><div><b>{item.title}</b><time>{item.time}</time></div><p>{item.description}</p>{resource ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedResources')} <span>1</span></button>{expanded.has(index) ? <button type="button" className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{resource.name}</button> : null}</> : null}</div></li>;
+          return <li key={`${item.time}-${item.title}`}><i data-kind={item.kind} /><div><div><b>{localizedUiText(item.title, t)}</b><time>{formatTimelineTime(item.time, locale)}</time></div><p>{localizedUiText(item.description, t)}</p>{resource ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedResources')} <span>1</span></button>{expanded.has(index) ? <button type="button" className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{resource.name}</button> : null}</> : null}</div></li>;
         })}</ol> : <PanelEmptyState compact icon={GitBranch} title={t('contextRoom:overviewDashboard.noEventsInThisRange')} description={t('contextRoom:overviewDashboard.changeTheDateRangeToSeeOtherRoom')} />}
       </article>
     </section>

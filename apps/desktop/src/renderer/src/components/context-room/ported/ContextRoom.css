@@ -560,6 +560,22 @@
   height: 14px;
 }
 
+.context-room-duplicate-button {
+  position: relative;
+}
+
+.context-room-duplicate-alert {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cr-danger);
+  box-shadow: 0 0 0 2px var(--cr-surface);
+  pointer-events: none;
+}
+
 .context-room-home-search {
   display: flex;
   width: clamp(220px, 28cqw, 300px);
@@ -765,6 +781,7 @@
 }
 
 .context-room-room-graph-layout {
+  --context-room-graph-height: 440px;
   display: block;
   padding: 12px;
   border: 1px solid var(--cr-border);
@@ -780,7 +797,7 @@
 
 .context-room-room-graph-canvas {
   position: relative;
-  height: 440px;
+  height: var(--context-room-graph-height);
   min-width: 0;
   overflow: hidden;
   border-radius: 8px;
@@ -829,123 +846,389 @@
   color: var(--cr-text);
 }
 
-.context-room-room-graph-drawer {
-  position: relative;
-  display: flex;
+.context-room-room-graph-inspector {
+  --cr-inspector-accent: var(--cr-icon-tone, var(--cr-blue));
+  display: grid;
+  height: var(--context-room-graph-height, 440px);
   min-width: 0;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
   border-left: 1px solid var(--cr-border);
   border-radius: 0 10px 10px 0;
   background: var(--cr-surface-secondary);
 }
 
-.context-room-room-graph-drawer > button:first-child {
-  position: absolute;
-  top: 0;
-  right: 0;
-  display: inline-flex;
-  width: 42px;
-  height: 42px;
+.context-room-graph-inspector-header {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 34px minmax(0, 1fr) 28px;
   align-items: center;
-  justify-content: center;
-  border-radius: 0 9px 0 8px;
-  background: transparent;
+  gap: 10px;
+  padding: 13px 12px 12px 14px;
+  border-bottom: 1px solid var(--cr-border);
+  background: var(--cr-surface);
+}
+
+.context-room-graph-inspector-header::before {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--cr-inspector-accent);
+  content: '';
+}
+
+.context-room-graph-inspector-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--cr-inspector-accent) 10%, var(--cr-surface));
+  color: var(--cr-inspector-accent);
+}
+
+.context-room-graph-inspector-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-graph-inspector-header > div {
+  min-width: 0;
+}
+
+.context-room-graph-inspector-header h3,
+.context-room-graph-inspector-header small,
+.context-room-graph-inspector-scroll h4,
+.context-room-graph-inspector-scroll p {
+  margin: 0;
+}
+
+.context-room-graph-inspector-header h3 {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-graph-inspector-header small {
+  display: block;
+  overflow: hidden;
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-graph-inspector-header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 6px;
   color: var(--cr-tertiary);
 }
 
-.context-room-room-graph-drawer > button:first-child:hover {
+.context-room-graph-inspector-header button:hover {
   background: var(--cr-surface-hover);
   color: var(--cr-text);
 }
 
-.context-room-room-graph-drawer > button:first-child svg {
+.context-room-graph-inspector-header button svg {
   width: 14px;
   height: 14px;
 }
 
-.context-room-graph-drawer-title {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding-right: 24px;
-}
-
-.context-room-graph-drawer-title h3,
-.context-room-graph-drawer-title p {
-  margin: 0;
-}
-
-.context-room-graph-drawer-title h3 {
-  font-size: 14px;
-}
-
-.context-room-graph-drawer-title p {
-  display: -webkit-box;
-  margin-top: 4px;
-  overflow: hidden;
-  color: var(--cr-muted);
-  font-size: 11px;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.context-room-graph-materials {
-  display: flex;
+.context-room-graph-inspector-scroll {
   min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 6px;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px 16px;
+  scrollbar-gutter: stable;
 }
 
-.context-room-graph-materials header {
-  display: flex;
-  justify-content: space-between;
-  margin: 4px 0;
-  color: var(--cr-muted);
-  font-size: 11px;
-}
-
-.context-room-graph-materials > div {
+.context-room-graph-inspector-footer {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--cr-border);
   background: var(--cr-surface);
 }
 
-.context-room-graph-materials > div > svg {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 auto;
-  color: var(--cr-muted);
+.context-room-graph-inspector-footer > .context-room-primary {
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
 }
 
-.context-room-graph-materials > div span {
+.context-room-graph-inspector-footer > .context-room-primary svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-node-overview {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-node-meta {
   display: flex;
-  min-width: 0;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
 }
 
-.context-room-graph-materials b,
-.context-room-graph-materials small {
+.context-room-node-meta > span {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 9.5px;
+}
+
+.context-room-node-meta svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-node-overview p {
+  margin-top: 9px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.context-room-inspector-highlight {
+  display: grid;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-left: 2px solid var(--cr-inspector-accent);
+  background: color-mix(in srgb, var(--cr-inspector-accent) 5%, var(--cr-surface));
+}
+
+.context-room-inspector-highlight span,
+.context-room-inspector-section h4 {
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.context-room-inspector-highlight b {
+  color: var(--cr-text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.context-room-inspector-section {
+  margin-top: 15px;
+}
+
+.context-room-inspector-section h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+
+.context-room-node-context-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.context-room-node-context-list > div {
+  padding: 8px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+}
+
+.context-room-node-context-list :where(dt, dd) {
+  margin: 0;
+}
+
+.context-room-node-context-list dt {
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
+}
+
+.context-room-node-context-list dd {
+  margin-top: 4px;
+  color: var(--cr-text);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.context-room-node-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-border);
+}
+
+.context-room-node-stat {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 13px minmax(0, 1fr);
+  gap: 2px 5px;
+  padding: 8px;
+  background: var(--cr-surface);
+}
+
+.context-room-node-stat svg {
+  width: 12px;
+  height: 12px;
+  color: var(--cr-inspector-accent);
+}
+
+.context-room-node-stat span {
+  overflow: hidden;
+  color: var(--cr-tertiary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-node-stat b {
+  grid-column: 1 / -1;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-node-signals > div + div {
+  margin-top: 9px;
+}
+
+.context-room-node-signals > div > span {
+  display: inline-flex;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--cr-success-soft);
+  color: var(--cr-success);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.context-room-node-signals > div[data-kind='risk'] > span {
+  background: var(--cr-danger-soft);
+  color: var(--cr-danger);
+}
+
+.context-room-node-signals ul {
+  display: grid;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding-left: 16px;
+  color: var(--cr-muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.context-room-node-people {
+  display: grid;
+  gap: 5px;
+}
+
+.context-room-node-people > span {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 7px;
+  border-radius: 5px;
+  background: var(--cr-surface);
+}
+
+.context-room-node-people svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cr-icon-people);
+}
+
+.context-room-node-people b,
+.context-room-node-people small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.context-room-graph-materials b {
-  font-size: 11px;
+.context-room-node-people b {
+  font-size: 10.5px;
 }
 
-.context-room-graph-materials small {
+.context-room-node-people small {
   color: var(--cr-tertiary);
-  font-size: 10px;
+  font-size: 9.5px;
+}
+
+.context-room-node-resources {
+  display: grid;
+  gap: 5px;
+}
+
+.context-room-node-resources > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-node-resources > div > svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cr-icon-document);
+}
+
+.context-room-node-resources > div > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.context-room-node-resources b,
+.context-room-node-resources small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-node-resources b {
+  color: var(--cr-text);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.context-room-node-resources small,
+.context-room-inspector-empty {
+  color: var(--cr-tertiary);
+  font-size: 9.5px;
 }
 
 .context-room-primary,
@@ -1181,6 +1464,314 @@
   font: inherit;
   font-size: 13px;
   outline: 0;
+}
+
+.context-room-duplicate-center,
+.context-room-create-duplicate-review {
+  width: min(680px, calc(100vw - 40px));
+  max-height: min(760px, calc(100vh - 80px));
+  overflow: auto;
+  padding: 20px;
+  background: var(--cr-surface, #fff);
+  color: var(--cr-text, #1f1f1f);
+}
+
+.context-room-duplicate-center > header,
+.context-room-create-duplicate-review > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.context-room-duplicate-center > header {
+  padding-right: 44px;
+}
+
+.context-room-duplicate-center h2,
+.context-room-create-duplicate-review h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.context-room-duplicate-center header span,
+.context-room-create-duplicate-review header span {
+  color: var(--cr-tertiary, #9ca3af);
+  font-size: 11px;
+}
+
+.context-room-icon-button {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  color: var(--cr-muted);
+}
+
+.context-room-icon-button svg,
+.context-room-duplicate-loading svg,
+.context-room-duplicate-empty svg,
+.context-room-merge-operation > svg,
+.context-room-merge-warning > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-room-icon-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.context-room-duplicate-loading,
+.context-room-duplicate-empty {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--cr-muted);
+}
+
+.context-room-duplicate-loading svg,
+.context-room-merge-operation[data-status='queued'] > svg,
+.context-room-merge-operation[data-status='running'] > svg {
+  animation: context-room-spin 900ms linear infinite;
+}
+
+.context-room-duplicate-list {
+  display: grid;
+}
+
+.context-room-duplicate-list article {
+  padding: 16px 0;
+  border-top: 1px solid var(--cr-border);
+}
+
+.context-room-duplicate-list article:first-child {
+  border-top: 0;
+}
+
+.context-room-duplicate-pair,
+.context-room-duplicate-meta,
+.context-room-duplicate-list footer,
+.context-room-merge-preview > footer {
+  display: flex;
+  align-items: center;
+}
+
+.context-room-duplicate-pair {
+  gap: 10px;
+}
+
+.context-room-duplicate-pair b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-duplicate-pair svg {
+  width: 14px;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary);
+}
+
+.context-room-duplicate-meta {
+  gap: 8px;
+  margin-top: 7px;
+  color: var(--cr-muted);
+}
+
+.context-room-duplicate-meta span {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--cr-surface-secondary);
+  font-size: 11px;
+}
+
+.context-room-duplicate-meta span[data-confidence='high'] {
+  background: rgba(200, 50, 50, 0.09);
+  color: var(--cr-danger);
+}
+
+.context-room-duplicate-meta small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-duplicate-list footer,
+.context-room-merge-preview > footer,
+.context-room-create-duplicate-review > footer {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.context-room-duplicate-list button,
+.context-room-merge-preview button,
+.context-room-create-duplicate-review button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.context-room-duplicate-list button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-primary-button {
+  border-color: var(--cr-blue) !important;
+  background: var(--cr-blue) !important;
+  color: #fff !important;
+}
+
+.context-room-merge-preview {
+  display: grid;
+  gap: 16px;
+}
+
+.context-room-merge-preview > label {
+  display: grid;
+  gap: 6px;
+}
+
+.context-room-merge-preview > label span,
+.context-room-merge-preview h3 {
+  color: var(--cr-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-merge-preview select {
+  height: 38px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+}
+
+.context-room-merge-preview section {
+  border-top: 1px solid var(--cr-border);
+  padding-top: 12px;
+}
+
+.context-room-merge-preview h3 {
+  margin: 0 0 8px;
+}
+
+.context-room-merge-impact dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.context-room-merge-impact dl > div {
+  padding: 9px;
+  border-radius: 6px;
+  background: var(--cr-surface-secondary);
+}
+
+.context-room-merge-impact dt {
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-merge-impact dd {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.context-room-merge-excluded p,
+.context-room-merge-conflicts p {
+  margin: 4px 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-merge-warning,
+.context-room-merge-operation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(200, 50, 50, 0.24);
+  border-radius: 6px;
+  background: rgba(200, 50, 50, 0.06);
+  color: var(--cr-danger);
+}
+
+.context-room-merge-warning p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.context-room-merge-operation div {
+  display: grid;
+  flex: 1;
+}
+
+.context-room-merge-operation small {
+  color: var(--cr-muted);
+}
+
+.context-room-merge-operation[data-status='completed'] {
+  border-color: rgba(28, 133, 84, 0.24);
+  background: rgba(28, 133, 84, 0.07);
+  color: #1c8554;
+}
+
+.context-room-create-duplicate-review > p {
+  margin: 0 0 12px;
+  color: var(--cr-muted);
+}
+
+.context-room-create-duplicate-review > div {
+  display: grid;
+  border-top: 1px solid var(--cr-border);
+}
+
+.context-room-create-duplicate-review > div > button {
+  justify-content: space-between;
+  border: 0;
+  border-bottom: 1px solid var(--cr-border);
+  border-radius: 0;
+  padding: 10px 4px;
+  text-align: left;
+}
+
+.context-room-create-duplicate-review > div > button span {
+  display: grid;
+}
+
+.context-room-create-duplicate-review > div > button small {
+  color: var(--cr-muted);
+}
+
+@keyframes context-room-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 640px) {
+  .context-room-merge-impact dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .context-room-duplicate-list footer { align-items: stretch; flex-direction: column; }
 }
 
 .context-room-room-form input,
@@ -4020,6 +4611,40 @@
   font-style: normal;
 }
 
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:hover:not(:disabled) {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-dashboard-grid article > header .context-room-dashboard-regenerate svg[data-spin='true'] {
+  animation: context-room-spin 900ms linear infinite;
+}
+
 .context-room-dashboard-grid article > p,
 .context-room-dashboard-grid article > small,
 .context-room-dashboard-grid article > ul,
@@ -4288,11 +4913,15 @@
     display: block;
   }
 
-  .context-room-room-graph-canvas {
-    height: 360px;
+  .context-room-room-graph-layout {
+    --context-room-graph-height: 360px;
   }
 
-  .context-room-room-graph-drawer {
+  .context-room-room-graph-canvas {
+    height: var(--context-room-graph-height);
+  }
+
+  .context-room-room-graph-layout > .context-room-room-graph-inspector {
     margin-top: 12px;
     border-top: 1px solid var(--cr-border);
     border-left: 0;
@@ -6437,43 +7066,14 @@
   color: var(--cr-blue-hover);
 }
 
-.context-room-graph-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 240px;
-  height: 510px;
-  min-height: 420px;
-  overflow: hidden;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
-  background: var(--cr-surface-secondary);
-}
-
-.context-room-graph-canvas {
+/* Only the wiki graph still wants the dotted canvas paper; graph-inspector is
+   styled once near the top of this file and must not be re-declared here. */
+.context-room-wiki-graph .context-room-graph-canvas {
   min-width: 0;
   overflow: hidden;
-  border-right: 1px solid var(--cr-border);
   background-color: var(--cr-canvas);
   background-image: radial-gradient(circle, rgba(113, 128, 148, 0.22) 1px, transparent 1px);
   background-size: 18px 18px;
-}
-
-.context-room-graph-inspector {
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  color: var(--cr-muted);
-  background: rgba(255, 255, 255, 0.7);
-  text-align: center;
-}
-
-.context-room-graph-inspector b,
-.context-room-graph-inspector span {
-  display: block;
-}
-
-.context-room-graph-inspector span {
-  margin-top: 4px;
-  font-size: 11.5px;
 }
 
 .context-room-graph-legend {
@@ -7212,14 +7812,6 @@
     grid-template-columns: 1fr;
   }
 
-  .context-room-graph-workspace {
-    grid-template-columns: 1fr;
-  }
-
-  .context-room-graph-inspector {
-    display: none;
-  }
-
   .context-room-room-grid,
   .context-room-mail-layout,
   .context-room-memory-layout {
@@ -7430,15 +8022,6 @@
     flex: 1 1 180px;
   }
 
-  .context-room-graph-workspace {
-    grid-template-columns: 1fr;
-    min-height: 360px;
-  }
-
-  .context-room-graph-inspector {
-    display: none;
-  }
-
   .context-room-graph-legend span:last-child {
     margin-left: 0;
   }
@@ -7583,6 +8166,489 @@
   color: white;
 }
 
+/* Evidence-backed Room relationship graph. */
+.context-room-graph-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.context-room-graph-index-state {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.context-room-graph-index-state[data-status='building'] {
+  color: var(--cr-blue);
+}
+
+.context-room-graph-index-state[data-status='degraded'] {
+  color: var(--cr-danger);
+}
+
+.context-room-room-graph-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto auto 32px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.context-room-room-graph-toolbar .context-room-home-search {
+  width: min(100%, 340px);
+}
+
+.context-room-room-graph-toolbar select,
+.context-room-graph-tool-button,
+.context-room-graph-icon-button {
+  height: 32px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-room-graph-toolbar select {
+  padding: 0 24px 0 8px;
+}
+
+.context-room-graph-tool-button,
+.context-room-graph-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.context-room-graph-icon-button {
+  width: 32px;
+  padding: 0;
+}
+
+.context-room-graph-tool-button svg,
+.context-room-graph-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-graph-tool-button:hover,
+.context-room-graph-icon-button:hover,
+.context-room-room-graph-toolbar select:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-graph-tool-button[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--cr-blue) 35%, var(--cr-border));
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-graph-tool-button:disabled {
+  opacity: 0.45;
+}
+
+.context-room-graph-toggle,
+.context-room-relation-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cr-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.context-room-graph-toggle input,
+.context-room-relation-checkbox input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--cr-blue);
+}
+
+.context-room-graph-state,
+.context-room-graph-degraded {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-graph-state {
+  height: 100%;
+}
+
+.context-room-graph-degraded {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  max-width: 360px;
+  padding: 7px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cr-surface) 94%, transparent);
+  box-shadow: 0 4px 14px rgba(31, 31, 31, 0.08);
+}
+
+.context-room-relation-create > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.context-room-relation-create h2,
+.context-room-relation-create p {
+  margin: 0;
+}
+
+.context-room-room-graph-inspector[data-relation-type='shared_evidence'] { --cr-inspector-accent: #4678bd; }
+.context-room-room-graph-inspector[data-relation-type='shared_entity'] { --cr-inspector-accent: #278679; }
+.context-room-room-graph-inspector[data-relation-type='mixed'] { --cr-inspector-accent: #755daf; }
+.context-room-room-graph-inspector[data-relation-type='related'] { --cr-inspector-accent: #63758b; }
+.context-room-room-graph-inspector[data-relation-type='depends_on'] { --cr-inspector-accent: #ac7629; }
+.context-room-room-graph-inspector[data-relation-type='part_of'] { --cr-inspector-accent: #347f9f; }
+.context-room-room-graph-inspector[data-relation-type='supports'] { --cr-inspector-accent: #3d8557; }
+.context-room-room-graph-inspector[data-relation-type='blocks'] { --cr-inspector-accent: #b65353; }
+.context-room-room-graph-inspector[data-relation-type='owns'] { --cr-inspector-accent: #985a82; }
+.context-room-room-graph-inspector[data-relation-type='custom'] { --cr-inspector-accent: #9a673d; }
+
+.context-room-relation-endpoints {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-surface);
+}
+
+.context-room-relation-endpoints > div {
+  min-width: 0;
+}
+
+.context-room-relation-endpoints small,
+.context-room-relation-endpoints b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-relation-endpoints small {
+  color: var(--cr-tertiary);
+  font-size: 9px;
+}
+
+.context-room-relation-endpoints b {
+  margin-top: 3px;
+  color: var(--cr-text);
+  font-size: 10px;
+}
+
+.context-room-relation-endpoints > svg {
+  width: 15px;
+  height: 15px;
+  color: var(--cr-inspector-accent);
+}
+
+.context-room-relation-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--cr-border);
+  border-radius: 7px;
+  background: var(--cr-border);
+}
+
+.context-room-relation-metrics > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px;
+  background: var(--cr-surface);
+}
+
+.context-room-relation-metrics span,
+.context-room-relation-evidence span {
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-relation-metrics b {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-room-relation-evidence {
+  margin-top: 14px;
+}
+
+.context-room-relation-evidence h4 {
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.context-room-relation-evidence > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--cr-border);
+}
+
+.context-room-relation-evidence b {
+  grid-column: 1;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.context-room-relation-evidence small {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--cr-blue);
+  font-size: 10px;
+}
+
+.context-room-relation-evidence p {
+  grid-column: 1 / -1;
+  color: var(--cr-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.context-room-relation-form,
+.context-room-relation-create {
+  display: grid;
+  gap: 10px;
+}
+
+.context-room-relation-form {
+  margin-top: 14px;
+}
+
+.context-room-relation-form > h4 {
+  margin: 0 0 1px;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.context-room-relation-form > label:not(.context-room-relation-checkbox),
+.context-room-relation-create > label:not(.context-room-relation-checkbox) {
+  display: grid;
+  gap: 5px;
+}
+
+.context-room-relation-form label > span,
+.context-room-relation-create label > span {
+  color: var(--cr-muted);
+  font-size: 10px;
+}
+
+.context-room-relation-form :where(input, select, textarea),
+.context-room-relation-create :where(input, select, textarea) {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.context-room-relation-form textarea,
+.context-room-relation-create textarea {
+  resize: vertical;
+}
+
+.context-room-relation-error {
+  color: var(--cr-danger) !important;
+  font-size: 11px !important;
+}
+
+.context-room-relation-footer-actions {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+}
+
+.context-room-relation-footer-actions button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-relation-footer-actions button:hover {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-relation-footer-actions button.context-room-primary {
+  flex: 1 1 auto;
+  border-color: var(--cr-text);
+  color: white;
+}
+
+.context-room-relation-footer-actions button:not(.context-room-primary) {
+  width: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+}
+
+.context-room-relation-footer-actions button.is-danger {
+  color: var(--cr-danger);
+}
+
+.context-room-relation-footer-actions svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-relation-create {
+  width: min(520px, calc(100vw - 48px));
+  padding: 22px;
+}
+
+.context-room-relation-create > header {
+  justify-content: flex-start;
+  padding-right: 24px;
+}
+
+.context-room-relation-create > header > svg {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 7px;
+  border-radius: 7px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-relation-create h2 {
+  font-size: 16px;
+}
+
+.context-room-relation-create p {
+  margin-top: 3px;
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-relation-create footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.context-room-relation-create footer button {
+  min-height: 32px;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.context-room-related-graph-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-related-graph > header .context-room-related-graph-actions > button {
+  display: inline-flex;
+  min-width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  color: var(--cr-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.context-room-related-graph > header .context-room-related-graph-actions > button:hover {
+  border-color: var(--cr-border-strong);
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-related-graph-actions button svg {
+  width: 14px;
+  height: 14px;
+}
+
+@container context-room-shell (max-width: 900px) {
+  .context-room-room-graph-toolbar {
+    grid-template-columns: minmax(180px, 1fr) repeat(2, auto);
+  }
+
+  .context-room-room-graph-toolbar > :nth-child(n + 4) {
+    grid-row: 2;
+  }
+}
+
+@container context-room-shell (max-width: 620px) {
+  .context-room-graph-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .context-room-room-graph-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .context-room-room-graph-toolbar .context-room-home-search {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .context-room-room-graph-toolbar > :nth-child(n + 4) {
+    grid-row: auto;
+  }
+
+  .context-room-room-graph-layout.is-selected {
+    grid-template-columns: 1fr;
+  }
+
+  .context-room-room-graph-layout > .context-room-room-graph-inspector {
+    height: 360px;
+    border-top: 1px solid var(--cr-border);
+    border-left: 0;
+  }
+}
+
 .context-room-undo > span {
   min-width: 0;
   flex: 1;
@@ -7644,21 +8710,17 @@
   font-weight: 600;
 }
 
+/* Node/relation details render below the graph in the leftover pane space,
+   never as a side column: row 1 is the fixed-height graph, row 2 stretches. */
 .context-room-related-rooms-pane {
+  --context-room-graph-height: 276px;
+  display: grid;
   height: 100%;
   min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
   overflow-y: auto;
-}
-
-.context-room-related-rooms-pane.is-empty {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.context-room-related-rooms-pane.is-empty > .context-room-panel-empty {
-  min-height: 0;
-  flex: 1;
 }
 
 .context-room-related-empty-header {
@@ -7697,6 +8759,11 @@
 }
 
 .context-room-related-graph {
+  display: grid;
+  height: var(--context-room-graph-height);
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
   border-bottom: 1px solid var(--cr-border);
   background: var(--cr-surface);
 }
@@ -7759,7 +8826,8 @@
 }
 
 .context-room-related-graph-canvas {
-  height: 228px;
+  height: auto;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
   border-top: 1px solid var(--cr-border);
@@ -7767,6 +8835,14 @@
     linear-gradient(#eef0f3 1px, transparent 1px),
     linear-gradient(90deg, #eef0f3 1px, transparent 1px), #fbfcfd;
   background-size: 24px 24px;
+}
+
+.context-room-related-rooms-pane > .context-room-room-graph-inspector {
+  height: auto;
+  min-height: 0;
+  border-top: 1px solid var(--cr-border);
+  border-left: 0;
+  border-radius: 0;
 }
 
 .context-room-related-rooms-pane > .context-room-related-list-header {
@@ -9450,6 +10526,43 @@
   white-space: nowrap;
 }
 
+.context-room-memory-entity-status {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  vertical-align: 1px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.context-room-memory-entity-status[data-status='room'] {
+  background: var(--cr-success-soft);
+  color: var(--cr-success);
+}
+
+.context-room-memory-entity-status[data-status='promoting'] {
+  background: var(--cr-warning-soft);
+  color: var(--cr-text);
+}
+
+.context-room-memory-entity-status[data-status='weak'],
+.context-room-memory-entity-status[data-status='archived'],
+.context-room-memory-entity-status[data-status='suppressed'] {
+  background: var(--cr-surface-sunken);
+  color: var(--cr-muted);
+}
+
+.context-room-memory-entity-mention {
+  display: block;
+  margin-top: 2px;
+  color: var(--cr-tertiary);
+  font-size: 10.5px;
+}
+
 .context-room-memory-inline-detail p,
 .context-room-related-inline-detail p {
   margin: 5px 0 0;
@@ -10419,13 +11532,40 @@
   gap: 10px;
 }
 
+.context-room-knowledge-batchbar {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-knowledge-batchbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--cr-text);
+}
+
+.context-room-knowledge-batchbar input,
+.context-room-knowledge-card > header input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--cr-blue);
+}
+
 .context-room-knowledge-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
   border: 1px solid var(--cr-border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--cr-surface);
 }
 
@@ -10736,6 +11876,41 @@
 }
 
 .context-room-knowledge-defer svg { width: 13px; height: 13px; }
+
+.context-room-knowledge-showmore {
+  display: inline-flex;
+  min-height: 32px;
+  align-self: center;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: 12px;
+}
+
+.context-room-knowledge-showmore svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 680px) {
+  .context-room-knowledge-batchbar {
+    align-items: stretch;
+  }
+
+  .context-room-knowledge-batchbar label,
+  .context-room-knowledge-batchbar > span {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .context-room-knowledge-batchbar .context-room-knowledge-confirm,
+  .context-room-knowledge-batchbar .context-room-knowledge-defer {
+    flex: 1 1 calc(50% - 8px);
+    justify-content: center;
+  }
+}
 
 .context-room-knowledge-create {
   display: inline-flex;
@@ -11051,5 +12226,19 @@
 
   .context-room-wiki-markdown h4 {
     font-size: 16px;
+  }
+}
+
+@container context-room-shell (min-width: 521px) and (max-width: 759px) {
+  .context-room-room-graph-layout.is-selected {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(230px, 240px);
+  }
+
+  .context-room-room-graph-layout > .context-room-room-graph-inspector {
+    margin-top: 0;
+    border-top: 0;
+    border-left: 1px solid var(--cr-border);
+    border-radius: 0 10px 10px 0;
   }
 }

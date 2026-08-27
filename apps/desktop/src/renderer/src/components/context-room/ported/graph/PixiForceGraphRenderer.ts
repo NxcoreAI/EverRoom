@@ -1,5 +1,6 @@
-import { findNearestGraphNode } from './pixiForceGraphHitTesting'
+import { findNearestGraphEdge, findNearestGraphNode } from './pixiForceGraphHitTesting'
 import { createPixiForceGraphLabelManager } from './pixiForceGraphLabels'
+import { createPixiForceGraphEdgeLabelManager } from './pixiForceGraphEdgeLabels'
 import type {
   PixiForceGraphDependencies,
   PixiForceGraphRenderer,
@@ -27,6 +28,44 @@ function createSolidCircleTexture(
   graphics.beginFill(color)
   graphics.drawCircle(radius, radius, radius)
   graphics.endFill()
+  const texture = renderer.generateTexture(graphics, { resolution })
+  graphics.destroy()
+  return texture
+}
+
+function createNodeIconTexture(
+  dependencies: PixiForceGraphDependencies,
+  renderer: PixiRenderer,
+  icon: NonNullable<PixiForceGraphRendererOptions['nodes'][number]['icon']>,
+  resolution: number,
+): PixiTexture {
+  const graphics = new dependencies.Graphics()
+  graphics.lineStyle(2.2, 0xffffff, 1)
+  if (icon === 'target') {
+    graphics.drawCircle(12, 12, 9)
+    graphics.drawCircle(12, 12, 5.25)
+    graphics.drawCircle(12, 12, 1.5)
+  } else if (icon === 'book') {
+    graphics.drawPolygon([2.5, 4, 8.5, 4, 12, 7, 15.5, 4, 21.5, 4, 21.5, 20, 15, 20, 12, 22, 9, 20, 2.5, 20])
+    graphics.moveTo(12, 7)
+    graphics.lineTo(12, 22)
+  } else if (icon === 'user') {
+    graphics.drawCircle(12, 7.5, 4.5)
+    graphics.moveTo(4, 22)
+    graphics.lineTo(5.5, 17)
+    graphics.lineTo(9, 14.5)
+    graphics.lineTo(15, 14.5)
+    graphics.lineTo(18.5, 17)
+    graphics.lineTo(20, 22)
+  } else if (icon === 'flag') {
+    graphics.moveTo(5, 22)
+    graphics.lineTo(5, 3)
+    graphics.drawPolygon([5, 4, 11, 3, 15, 5, 21, 4, 21, 14, 15, 15, 11, 13, 5, 14])
+  } else if (icon === 'message') {
+    graphics.drawPolygon([3, 4, 21, 4, 21, 17, 10, 17, 5, 21, 5, 17, 3, 17])
+  } else {
+    graphics.drawPolygon([13, 2, 4, 13, 11, 13, 10, 22, 20, 10, 13, 10])
+  }
   const texture = renderer.generateTexture(graphics, { resolution })
   graphics.destroy()
   return texture
@@ -90,6 +129,18 @@ export function createPixiForceGraphRenderer(
   )
   viewport.addChild(edgeGraphics)
   viewport.addChild(particleContainer)
+  const iconKinds = [...new Set(nodes.flatMap((node) => node.icon ? [node.icon] : []))]
+  const iconParticleContainerByKind = new Map(iconKinds.map((icon) => {
+    const container = new dependencies.ParticleContainer(
+      Math.max(1, nodes.filter((node) => node.icon === icon).length),
+      { position: true, alpha: true, scale: true },
+      16384,
+      true,
+    )
+    viewport.addChild(container)
+    return [icon, container] as const
+  }))
+  const iconParticleContainers = [...iconParticleContainerByKind.values()]
   const labelManager = createPixiForceGraphLabelManager({
     baseResolution: renderResolution,
     dependencies,
@@ -99,7 +150,17 @@ export function createPixiForceGraphRenderer(
     scaleThreshold: positiveDimension(options.labelScaleThreshold ?? 0.75, 0.75),
     viewport,
   })
+  const edgeLabelManager = createPixiForceGraphEdgeLabelManager({
+    baseResolution: renderResolution,
+    dependencies,
+    edges,
+    maxLabels: Math.max(1, Math.floor(options.maxVisibleEdgeLabels ?? 180)),
+    positions,
+    scaleThreshold: positiveDimension(options.edgeLabelScaleThreshold ?? 0.85, 0.85),
+    viewport,
+  })
   viewport.addChild(labelManager.layer)
+  viewport.addChild(edgeLabelManager.layer)
 
   // One generated texture is shared by every node sprite. Per-node radii use
   // sprite scale so texture generation remains constant regardless of graph size.
@@ -117,6 +178,7 @@ export function createPixiForceGraphRenderer(
     && nodes[options.selectedIndex]
     ? options.selectedIndex
     : null
+  let selectedEdgeId = options.selectedEdgeId ?? null
   const sprites = nodes.map((node, index) => {
     const sprite = new dependencies.Sprite(texture)
     sprite.anchor?.set(0.5)
@@ -125,6 +187,22 @@ export function createPixiForceGraphRenderer(
     sprite.scale?.set(radius / textureRadius)
     setSpritePosition(sprite, positions[index * 2] ?? 0, positions[index * 2 + 1] ?? 0)
     particleContainer.addChild(sprite)
+    return sprite
+  })
+  const iconTextures = new Map<NonNullable<(typeof nodes)[number]['icon']>, PixiTexture>()
+  const iconSprites = nodes.map((node, index) => {
+    if (!node.icon) return null
+    let iconTexture = iconTextures.get(node.icon)
+    if (!iconTexture) {
+      iconTexture = createNodeIconTexture(dependencies, app.renderer, node.icon, Math.min(4, renderResolution * 2))
+      iconTextures.set(node.icon, iconTexture)
+    }
+    const sprite = new dependencies.Sprite(iconTexture)
+    sprite.anchor?.set(0.5)
+    const radius = positiveDimension(node.radius ?? nodeRadius, nodeRadius)
+    sprite.scale?.set(Math.min(1, radius / 30) * 0.78)
+    setSpritePosition(sprite, positions[index * 2] ?? 0, positions[index * 2 + 1] ?? 0)
+    iconParticleContainerByKind.get(node.icon)?.addChild(sprite)
     return sprite
   })
 
@@ -146,7 +224,7 @@ export function createPixiForceGraphRenderer(
   const focusAlpha = 0.16
   const alphaLerp = 0.22
 
-  const drawEdge = (edge: (typeof edges)[number]) => {
+  const drawEdge = (edge: (typeof edges)[number], arrow = edge.directed) => {
     const sourceX = positions[edge.source * 2]
     const sourceY = positions[edge.source * 2 + 1]
     const targetX = positions[edge.target * 2]
@@ -154,6 +232,20 @@ export function createPixiForceGraphRenderer(
     if (![sourceX, sourceY, targetX, targetY].every(Number.isFinite)) return
     edgeGraphics.moveTo(sourceX!, sourceY!)
     edgeGraphics.lineTo(targetX!, targetY!)
+    if (arrow) {
+      const angle = Math.atan2(targetY! - sourceY!, targetX! - sourceX!)
+      const targetRadius = positiveDimension(nodes[edge.target]?.radius ?? nodeRadius, nodeRadius)
+      const tipX = targetX! - Math.cos(angle) * (targetRadius + 2)
+      const tipY = targetY! - Math.sin(angle) * (targetRadius + 2)
+      const size = 7 / Math.max(0.65, viewport.scale?.x ?? 1)
+      edgeGraphics.beginFill(edge.color ?? edgeColor)
+      edgeGraphics.drawPolygon([
+        tipX, tipY,
+        tipX - Math.cos(angle - Math.PI / 5) * size, tipY - Math.sin(angle - Math.PI / 5) * size,
+        tipX - Math.cos(angle + Math.PI / 5) * size, tipY - Math.sin(angle + Math.PI / 5) * size,
+      ])
+      edgeGraphics.endFill()
+    }
   }
 
   const setHoveredIndex = (nextIndex: number | null) => {
@@ -193,7 +285,7 @@ export function createPixiForceGraphRenderer(
     const point = worldPoint(event)
     if (dragIndex !== null) {
       if (dragStart && Math.hypot(point.x - dragStart.x, point.y - dragStart.y) > 3) dragMoved = true
-      options.onNodeDrag?.(dragIndex, point.x, point.y)
+      if (dragMoved) options.onNodeDrag?.(dragIndex, point.x, point.y)
       return
     }
     const hit = hitTest(point.x, point.y)
@@ -203,7 +295,26 @@ export function createPixiForceGraphRenderer(
     if (event.button !== undefined && event.button !== 0) return
     const point = worldPoint(event)
     const hit = hitTest(point.x, point.y)
-    if (hit === null || hit === undefined) return
+    if (hit === undefined) return
+    if (hit === null) {
+      const edgeIndex = findNearestGraphEdge({
+        edges,
+        positions,
+        revision: options.revision,
+        scale: viewport.scale?.x ?? 1,
+        x: point.x,
+        y: point.y,
+      })
+      if (edgeIndex !== null && edgeIndex !== undefined) {
+        const edgeId = edges[edgeIndex]?.id
+        if (edgeId) {
+          selectedEdgeId = edgeId
+          options.onEdgeSelect?.(edgeId)
+          event.stopImmediatePropagation?.()
+        }
+      }
+      return
+    }
     dragIndex = hit
     dragStart = point
     dragMoved = false
@@ -211,7 +322,6 @@ export function createPixiForceGraphRenderer(
     event.stopImmediatePropagation?.()
     setHoveredIndex(hit)
     viewport.cursor = 'grabbing'
-    options.onNodeDrag?.(hit, point.x, point.y)
   }
   const releaseDrag = () => {
     if (dragIndex === null) return
@@ -220,7 +330,7 @@ export function createPixiForceGraphRenderer(
     dragStart = null
     viewport.plugins?.resume('drag')
     viewport.cursor = hoveredIndex === null ? 'grab' : 'pointer'
-    options.onNodeRelease?.(releasedIndex)
+    if (dragMoved) options.onNodeRelease?.(releasedIndex)
     if (!dragMoved) {
       const selectedAt = Date.now()
       options.onNodeSelect?.(releasedIndex)
@@ -258,22 +368,38 @@ export function createPixiForceGraphRenderer(
       const targetAlpha = nodeAlphaTargets[index] ?? 1
       const nextAlpha = (sprite.alpha ?? 1) + (targetAlpha - (sprite.alpha ?? 1)) * alphaLerp
       sprite.alpha = Math.abs(targetAlpha - nextAlpha) < 0.01 ? targetAlpha : nextAlpha
+      const iconSprite = iconSprites[index]
+      if (iconSprite) {
+        setSpritePosition(iconSprite, positions[index * 2] ?? 0, positions[index * 2 + 1] ?? 0)
+        iconSprite.alpha = sprite.alpha
+      }
     }
     edgeGraphics.clear()
-    edgeGraphics.lineStyle(edgeWidth, edgeColor, hoveredIndex === null ? edgeAlpha : 0.08)
-    for (const edge of edges) drawEdge(edge)
+    for (const edge of edges) {
+      const selected = Boolean(edge.id && edge.id === selectedEdgeId)
+      edgeGraphics.lineStyle(
+        selected ? Math.max(edgeWidth * 2.2, edge.width ?? 0) : edge.width ?? edgeWidth,
+        selected ? edge.color ?? highlightEdgeColor : edge.color ?? edgeColor,
+        selected ? 1 : (hoveredIndex === null ? edge.alpha ?? edgeAlpha : 0.08),
+      )
+      drawEdge(edge)
+    }
     if (hoveredIndex !== null) {
-      edgeGraphics.lineStyle(edgeWidth * 1.7, highlightEdgeColor, 1)
       for (const edge of edges) {
-        if (edge.source === hoveredIndex || edge.target === hoveredIndex) drawEdge(edge)
+        if (edge.source === hoveredIndex || edge.target === hoveredIndex) {
+          edgeGraphics.lineStyle(edgeWidth * 1.7, edge.color ?? highlightEdgeColor, 1)
+          drawEdge(edge)
+        }
       }
     }
     labelManager.update(hoveredIndex)
+    edgeLabelManager.update(hoveredIndex, selectedEdgeId)
     const endRevision = options.revision?.() ?? startRevision
     if (startRevision !== endRevision || (endRevision & 1) === 1) return
     // A concurrent Worker tick may invalidate this read. Keep the most recent
     // frame on screen and retry instead of flashing the whole graph invisible.
     particleContainer.renderable = true
+    for (const iconContainer of iconParticleContainers) iconContainer.renderable = true
     edgeGraphics.renderable = true
     labelManager.layer.renderable = true
   }
@@ -310,6 +436,7 @@ export function createPixiForceGraphRenderer(
     edgeGraphics,
     labelLayer: labelManager.layer,
     particleContainer,
+    iconParticleContainers,
     viewport,
     sprites,
     activeLabelCount: () => labelManager.activeCount(),
@@ -334,6 +461,9 @@ export function createPixiForceGraphRenderer(
       if (selectedIndex !== null) sprites[selectedIndex]!.tint = selectedColor
       particleContainer.update?.()
     },
+    setSelectedEdgeId(nextId) {
+      selectedEdgeId = nextId
+    },
     setHoveredIndex,
     destroy() {
       if (destroyed) return
@@ -351,15 +481,27 @@ export function createPixiForceGraphRenderer(
         particleContainer.removeChild?.(sprite)
         sprite.destroy()
       }
+      for (let index = 0; index < iconSprites.length; index += 1) {
+        const sprite = iconSprites[index]
+        if (!sprite) continue
+        const icon = nodes[index]?.icon
+        if (icon) iconParticleContainerByKind.get(icon)?.removeChild?.(sprite)
+        sprite.destroy()
+      }
       viewport.removeChild?.(edgeGraphics)
       viewport.removeChild?.(particleContainer)
+      for (const iconContainer of iconParticleContainers) viewport.removeChild?.(iconContainer)
       viewport.removeChild?.(labelManager.layer)
+      viewport.removeChild?.(edgeLabelManager.layer)
       particleContainer.destroy({ children: false })
+      for (const iconContainer of iconParticleContainers) iconContainer.destroy({ children: false })
       edgeGraphics.destroy()
       labelManager.destroy()
+      edgeLabelManager.destroy()
       app.stage.removeChild?.(viewport)
       viewport.destroy({ children: false })
       texture.destroy(true)
+      for (const iconTexture of iconTextures.values()) iconTexture.destroy(true)
       app.destroy(true, { children: true })
     },
   }

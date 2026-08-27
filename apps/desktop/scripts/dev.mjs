@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url)
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workspaceEnvPath = resolve(desktopRoot, '../../.env')
 if (existsSync(workspaceEnvPath)) process.loadEnvFile(workspaceEnvPath)
-const electronExecutable = require('electron')
+const electronExecutable = require('electron').trim()
 const electronViteCli = join(dirname(require.resolve('electron-vite/package.json')), 'bin/electron-vite.js')
 
 function run(command, args) {

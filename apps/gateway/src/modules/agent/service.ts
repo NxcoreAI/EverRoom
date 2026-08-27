@@ -26,6 +26,7 @@ import type {
 } from "@nxcore/agent-contract";
 import { MAIN_AGENT_ID } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeAttachment, RuntimeEvent } from "@nxcore/agent-runtime";
+import type { PiBashApprovalRequest } from "@nxcore/agent-runtime-pi";
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -42,6 +43,7 @@ import {
 import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
 import type { FilesService } from "../files/service.js";
+import { clearRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
 export interface AgentServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
@@ -63,11 +65,13 @@ export interface AgentCompletedMessageResolver {
 
 const silentLogger: AgentServiceLogger = { info: () => undefined };
 const PENDING_INTENT_TTL_MS = 10 * 60 * 1000;
-const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
+/** 划词改写运行结束后仍允许登记 document operation 的宽限期（会话与子 Agent 调用溯源共用）。 */
+export const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
 
 export interface AgentRoomRegistry {
   listReferences(): AgentRoomReference[];
   isActive(roomId: string): boolean;
+  resolveRoomId?(roomId: string): string | null;
 }
 
 export interface AgentDocumentRegistry {
@@ -85,6 +89,13 @@ export interface AgentExternalConversationResolver {
 function normalizeRoomId(roomId: string | null | undefined): string | null {
   const normalized = roomId?.trim();
   return normalized ? normalized : null;
+}
+
+function resolveRoomId(registry: AgentRoomRegistry | undefined, roomId: string | null | undefined): string | null {
+  const normalized = normalizeRoomId(roomId);
+  if (!normalized) return null;
+  if (!registry) return normalized;
+  return registry.resolveRoomId?.(normalized) ?? (registry.isActive(normalized) ? normalized : null);
 }
 
 function requestsWorkspaceDocument(prompt: string): boolean {
@@ -147,6 +158,7 @@ function toRun(row: typeof agentRuns.$inferSelect): AgentRun {
     sessionId: row.sessionId,
     agentId: row.agentId,
     invocationMode: row.invocationMode,
+    roomId: normalizeRoomId(row.roomId),
     status: row.status,
     prompt: row.prompt,
     lastEventSeq: row.lastEventSeq,
@@ -399,6 +411,32 @@ function availableRooms(input: StartAgentRunInput, registry?: AgentRoomRegistry)
   });
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    try {
+      return objectRecord(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function roomSelectionDetails(value: unknown): Record<string, unknown> | null {
+  const root = objectRecord(value);
+  if (!root) return null;
+  const contentText = Array.isArray(root.content)
+    ? root.content.map(objectRecord).find((item) => typeof item?.text === "string")?.text
+    : typeof root.content === "string" ? root.content : undefined;
+  for (const candidateValue of [root.details, root.structuredContent, root, contentText]) {
+    const candidate = objectRecord(candidateValue);
+    if (candidate?.selectionRequired === true && Array.isArray(candidate.rooms)) return candidate;
+  }
+  return null;
+}
+
 function selectedRunRoomId(
   input: StartAgentRunInput,
   registry?: AgentRoomRegistry,
@@ -406,13 +444,13 @@ function selectedRunRoomId(
   const selectedRoomId = input.context?.selectedRoomId?.trim()
     || input.context?.activeDocument?.roomId.trim();
   if (!selectedRoomId) return null;
-  const selectedExists = registry
-    ? registry.isActive(selectedRoomId)
-    : availableRooms(input).some((room) => room.id === selectedRoomId);
-  if (!selectedExists) {
+  const resolved = registry
+    ? resolveRoomId(registry, selectedRoomId)
+    : availableRooms(input).some((room) => room.id === selectedRoomId) ? selectedRoomId : null;
+  if (!resolved) {
     throw new Error("agent_room_not_available");
   }
-  return selectedRoomId;
+  return resolved;
 }
 
 export class AgentService {
@@ -428,6 +466,12 @@ export class AgentService {
   private readonly trustedMcpSessions = new Map<string, Set<string>>();
   private readonly runtimeEventConsumers = new Map<string, Promise<void>>();
   private readonly runRuntimes = new Map<string, AgentRuntime>();
+  private readonly pendingBashApprovals = new Map<string, {
+    request: PiBashApprovalRequest;
+    resolve: (approved: boolean) => void;
+    timeout: NodeJS.Timeout;
+  }>();
+  private readonly bashAuthorizedSessions = new Set<string>();
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -440,7 +484,42 @@ export class AgentService {
     private readonly connectorMode: "direct" | "local" = "direct",
     private readonly disposeRuntime = true,
     private readonly resolveTargetRuntime?: (target: NonNullable<StartAgentRunInput["localAgent"]>) => AgentRuntime,
-  ) {}
+  ) {
+    this.attachBashApprovalBridge(this.runtime);
+  }
+
+  /** replaceRuntime 热替换后也必须重挂，否则审批立即回落 false（无 UI 询问）。 */
+  private attachBashApprovalBridge(runtime: AgentRuntime): void {
+    const runtimeWithApprovals = runtime as AgentRuntime & {
+      setBashApprovalHandler?: (handler: ((request: PiBashApprovalRequest) => Promise<boolean>) | null) => void;
+      setBashSessionAuthorizationChecker?: (checker: ((sessionId: string) => boolean) | null) => void;
+    };
+    runtimeWithApprovals.setBashApprovalHandler?.((request) => this.requestBashApproval(request));
+    runtimeWithApprovals.setBashSessionAuthorizationChecker?.((sessionId) => this.bashAuthorizedSessions.has(sessionId));
+  }
+
+  private requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingBashApprovals.delete(request.approvalId);
+        resolve(false);
+      }, 5 * 60_000);
+      timeout.unref?.();
+      this.pendingBashApprovals.set(request.approvalId, { request, resolve, timeout });
+    });
+  }
+
+  /** decision：denied 拒绝；approved 仅本次放行；approved_session 放行并授权本会话后续命令。 */
+  resolveBashApproval(approvalId: string, decision: "approved" | "approved_session" | "denied"): { approvalId: string; decision: string } | null {
+    const pending = this.pendingBashApprovals.get(approvalId);
+    if (!pending) return null;
+    clearTimeout(pending.timeout);
+    this.pendingBashApprovals.delete(approvalId);
+    const approved = decision !== "denied";
+    if (decision === "approved_session") this.bashAuthorizedSessions.add(pending.request.input.sessionId);
+    pending.resolve(approved);
+    return { approvalId, decision };
+  }
 
   setFilesService(files: FilesService): void {
     this.filesService = files;
@@ -453,6 +532,7 @@ export class AgentService {
   async replaceRuntime(runtime: AgentRuntime): Promise<void> {
     const previous = this.runtime;
     this.runtime = runtime;
+    this.attachBashApprovalBridge(runtime);
     await Promise.allSettled([...this.runtimeEventConsumers.values()]);
     if (previous !== runtime) await previous.dispose();
   }
@@ -570,6 +650,12 @@ export class AgentService {
   }
 
   async dispose(): Promise<void> {
+    for (const [approvalId, pending] of this.pendingBashApprovals) {
+      clearTimeout(pending.timeout);
+      pending.resolve(false);
+      this.pendingBashApprovals.delete(approvalId);
+    }
+    this.bashAuthorizedSessions.clear();
     for (const sessionIds of this.trustedMcpSessions.values()) {
       for (const sessionId of sessionIds) revokeTrustedMcpSession(sessionId);
     }
@@ -632,7 +718,7 @@ export class AgentService {
         runtimeId: this.runtime.id,
         activeAgentId: MAIN_AGENT_ID,
         status: "idle",
-        title: input.title?.trim() || input.prompt.trim().slice(0, 48),
+        title: redactText(input.title?.trim() || input.prompt.trim().slice(0, 48)),
         createdAt: now,
         updatedAt: now,
       }).returning().get();
@@ -748,6 +834,7 @@ export class AgentService {
       await this.runtime.deleteSession(session.runtimeSessionRef);
     }
     this.db.delete(agentSessions).where(eq(agentSessions.id, sessionId)).run();
+    this.bashAuthorizedSessions.delete(sessionId);
     return true;
   }
 
@@ -824,8 +911,11 @@ export class AgentService {
       eq(agentRuns.sessionId, input.sessionId),
     )).get();
     if (!run) throw new Error("pending_agent_intent_source_not_found");
-    const allowedRoomIds = [...new Set(input.allowedRoomIds.map((id) => id.trim()).filter(Boolean))];
-    if (allowedRoomIds.length === 0 || allowedRoomIds.some((id) => !this.roomRegistry?.isActive(id))) {
+    const allowedRoomIds = [...new Set(input.allowedRoomIds.flatMap((id) => {
+      const resolved = resolveRoomId(this.roomRegistry, id);
+      return resolved ? [resolved] : [];
+    }))];
+    if (allowedRoomIds.length === 0) {
       throw new Error("pending_agent_intent_resource_not_allowed");
     }
     const allowedDocumentIds = [...new Set((input.allowedDocumentIds ?? []).map((id) => id.trim()).filter(Boolean))];
@@ -859,9 +949,9 @@ export class AgentService {
     const now = new Date();
     if (intent.consumedAt) throw new Error("pending_agent_intent_consumed");
     if (intent.expiresAt <= now) throw new Error("pending_agent_intent_expired");
-    const roomId = input.roomId.trim();
+    const roomId = resolveRoomId(this.roomRegistry, input.roomId);
     const documentId = input.documentId?.trim();
-    if (!roomId || !intent.allowedRoomIds.includes(roomId) || !this.roomRegistry?.isActive(roomId)) {
+    if (!roomId || !intent.allowedRoomIds.includes(roomId)) {
       throw new Error("pending_agent_intent_resource_not_allowed");
     }
     if (documentId && !intent.allowedDocumentIds.includes(documentId)) {
@@ -942,12 +1032,13 @@ export class AgentService {
       eq(agentRuns.id, runId),
       eq(agentRuns.sessionId, agentSessionId),
     )).get();
-    const room = roomId?.trim() || null;
+    const requestedRoom = roomId?.trim() || null;
+    const room = requestedRoom ? resolveRoomId(this.roomRegistry, requestedRoom) : null;
     if (!session || !run) throw new Error("mcp_agent_context_not_found");
     if (run.status !== "accepted" && run.status !== "running") {
       throw new Error("mcp_agent_context_not_active");
     }
-    if (room && !this.roomRegistry?.isActive(room)) throw new Error("mcp_agent_room_not_available");
+    if (requestedRoom && !room) throw new Error("mcp_agent_room_not_available");
     const execution = this.executionContexts.get(runId);
     if (!execution || execution.sessionId !== agentSessionId || execution.roomId !== room) {
       throw new Error("mcp_agent_context_mismatch");
@@ -978,21 +1069,22 @@ export class AgentService {
       eq(agentRuns.sessionId, input.agentSessionId),
     )).get();
     const execution = this.executionContexts.get(input.runId);
+    const roomId = resolveRoomId(this.roomRegistry, input.roomId);
     const activeContextMatches = Boolean(run
       && (run.status === "accepted" || run.status === "running")
       && execution
       && execution.sessionId === input.agentSessionId
-      && execution.roomId === input.roomId);
+      && execution.roomId === roomId);
     const completedSelectionRewriteMatches = Boolean(session
       && run?.status === "completed"
       && input.capabilityId === "document.selection-rewrite"
       && execution?.sessionId === input.agentSessionId
-      && execution.roomId === normalizeRoomId(input.roomId)
+      && execution.roomId === roomId
       && run.completedAt
       && Date.now() - run.completedAt.getTime() <= SELECTION_REWRITE_OPERATION_GRACE_MS);
     if (!session || !run
       || (!activeContextMatches && !completedSelectionRewriteMatches)
-      || !this.roomRegistry?.isActive(input.roomId)) {
+      || !roomId) {
       throw new Error("agent_operation_context_invalid");
     }
   }
@@ -1074,14 +1166,16 @@ export class AgentService {
 
     const now = new Date();
     const runId = randomUUID();
+    const safePrompt = redactText(input.prompt);
     const runRow: typeof agentRuns.$inferInsert = {
       id: runId,
       sessionId,
       agentId: selectedAgentId,
       invocationMode,
       idempotencyKey: input.idempotencyKey,
+      roomId: runRoomId,
       status: "accepted",
-      prompt: input.prompt,
+      prompt: safePrompt,
       lastEventSeq: 0,
       createdAt: now,
     };
@@ -1124,7 +1218,7 @@ export class AgentService {
           sessionId,
           runId,
           role: "user",
-          content: input.prompt,
+          content: safePrompt,
           createdAt: now,
         }).run();
       }
@@ -1133,7 +1227,7 @@ export class AgentService {
           status: "running",
           ...(invocationMode === "explicit_switch" ? { activeAgentId: selectedAgentId } : {}),
           updatedAt: now,
-          title: session.title ?? input.prompt.slice(0, 48),
+          title: session.title ?? safePrompt.slice(0, 48),
         })
         .where(eq(agentSessions.id, sessionId))
         .run();
@@ -1144,29 +1238,26 @@ export class AgentService {
     }
     this.sequences.set(runId, 0);
     this.logger.info(
-      { event: "agent.input", sessionId, runId, content: input.prompt },
+      { event: "agent.input", sessionId, runId, content: safePrompt },
       "agent user input",
     );
-    await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: { prompt: input.prompt } });
+    await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: { prompt: safePrompt } });
 
-    // Selection and clarification controls are driven by completed tool events.
-    // Emit those preflights deterministically instead of relying on model behavior.
+    // Clarification controls are driven by a deterministic preflight for requests
+    // that do not yet identify a document. Room routing itself is delegated to
+    // the Agent: it receives the Room metadata and can pass an exact Room id to
+    // the document-create tool when the match is clear.
     // toolsEnabled=false 的运行是内部纯文本调用（选区重写/续写），不触发 UI 预检。
     const interactiveRun = input.toolsEnabled !== false && selectedAgentId === MAIN_AGENT_ID;
     const documentTopic = interactiveRun && !runRoomId
       ? ambiguousDocumentTopic(input.prompt)
       : null;
-    const preflightTool = interactiveRun && !runRoomId && requestsWorkspaceDocument(input.prompt)
-      ? {
-          name: "context_room_list",
-          result: { rooms, selectionRequired: true },
-        }
-      : documentTopic
+    const preflightTool = documentTopic
         ? {
             name: "context_room_document_intent",
             result: {
               clarificationRequired: true,
-              originalPrompt: input.prompt.trim(),
+              originalPrompt: safePrompt.trim(),
               topic: documentTopic,
             },
           }
@@ -1175,7 +1266,7 @@ export class AgentService {
       const intent = this.createPendingIntent({
         sessionId,
         sourceRunId: runId,
-        originalPrompt: input.prompt,
+        originalPrompt: safePrompt,
         targetCapability: "document.create",
         allowedRoomIds: rooms.map((room) => room.id),
         allowedDocumentIds: [],
@@ -1333,13 +1424,65 @@ export class AgentService {
     events: AsyncIterable<RuntimeEvent>,
   ): Promise<void> {
     try {
-      for await (const event of events) await this.appendEvent(sessionId, runId, event);
+      for await (const event of events) {
+        await this.appendEvent(sessionId, runId, this.attachRoomSelectionIntent(sessionId, runId, event));
+      }
     } catch (error) {
       await this.appendEvent(sessionId, runId, {
         type: "run.failed",
         payload: { message: error instanceof Error ? error.message : "Runtime failed" },
       });
     }
+  }
+
+  private attachRoomSelectionIntent(
+    sessionId: string,
+    runId: string,
+    event: RuntimeEvent,
+  ): RuntimeEvent {
+    if (event.type !== "tool.completed") return event;
+    const payload = objectRecord(event.payload);
+    if (payload?.name !== "context_room_list") return event;
+    const run = this.getRun(runId);
+    const execution = this.executionContexts.get(runId);
+    if (!run || run.sessionId !== sessionId || !execution || execution.roomId || !requestsWorkspaceDocument(run.prompt)) {
+      return event;
+    }
+    const selection = roomSelectionDetails(payload.result);
+    if (!selection) return event;
+    const availableById = new Map(execution.availableRooms.map((room) => [room.id, room]));
+    const listedRooms: unknown[] = Array.isArray(selection.rooms) ? selection.rooms : [];
+    const candidateRooms: AgentRoomReference[] = listedRooms.flatMap((value): AgentRoomReference[] => {
+      const id = objectRecord(value)?.id;
+      const room = typeof id === "string" ? availableById.get(id) : undefined;
+      return room ? [room] : [];
+    });
+    if (candidateRooms.length === 0) return event;
+    const pendingIntent = this.createPendingIntent({
+      sessionId,
+      sourceRunId: runId,
+      originalPrompt: run.prompt,
+      targetCapability: "document.create",
+      allowedRoomIds: candidateRooms.map((room) => room.id),
+      allowedDocumentIds: [],
+      now: new Date(),
+    });
+    const result = objectRecord(payload.result) ?? {};
+    return {
+      ...event,
+      payload: {
+        ...payload,
+        result: {
+          ...result,
+          details: {
+            ...selection,
+            rooms: candidateRooms,
+            selectionRequired: true,
+            pendingIntent,
+          },
+        },
+      },
+    };
   }
 
   private createPendingIntent(input: {
@@ -1355,7 +1498,7 @@ export class AgentService {
       id: randomUUID(),
       sessionId: input.sessionId,
       sourceRunId: input.sourceRunId,
-      originalPrompt: input.originalPrompt,
+      originalPrompt: redactText(input.originalPrompt),
       targetCapability: input.targetCapability,
       allowedRoomIds: [...new Set(input.allowedRoomIds.filter(Boolean))],
       allowedDocumentIds: [...new Set(input.allowedDocumentIds.filter(Boolean))],
@@ -1384,6 +1527,16 @@ export class AgentService {
   }
 
   private async appendEvent(sessionId: string, runId: string, runtimeEvent: RuntimeEvent): Promise<void> {
+    runtimeEvent = redactSecrets(runtimeEvent);
+    const deltaScope = `agent:${runId}`;
+    if (runtimeEvent.type === "message.delta") {
+      const payload = runtimeEvent.payload as { delta?: unknown };
+      if (typeof payload.delta === "string") {
+        runtimeEvent = { ...runtimeEvent, payload: { ...payload, delta: redactDelta(deltaScope, payload.delta) } };
+      }
+    } else if (runtimeEvent.type === "message.completed" || runtimeEvent.type.startsWith("run.")) {
+      clearRedactionDelta(deltaScope);
+    }
     const runOwner = this.db.select({ agentId: agentRuns.agentId })
       .from(agentRuns).where(eq(agentRuns.id, runId)).get();
     if (runtimeEvent.type === "runtime.session.updated") {

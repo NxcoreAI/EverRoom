@@ -112,6 +112,48 @@ export class SubagentOrchestrator {
   }
 
   async dispatch(input: DispatchSubagentInput): Promise<SubagentInvocation> {
+    const { invocationId, completion, joined } = await this.begin(input);
+    if (joined) return completion;
+    const cancelFromParent = () => {
+      const runtime = this.active.get(invocationId)?.runtime;
+      if (runtime) void runtime.cancel(invocationId).catch(() => undefined);
+    };
+    input.signal?.addEventListener("abort", cancelFromParent, { once: true });
+    if (input.signal?.aborted) cancelFromParent();
+    try {
+      return await completion;
+    } finally {
+      input.signal?.removeEventListener("abort", cancelFromParent);
+      this.active.delete(invocationId);
+    }
+  }
+
+  /**
+   * 分离式调度：持久化 Invocation 并启动执行后立即返回 invocationId，
+   * 不等待终态。调用方通过 GET /v1/subagent-invocations/:id 轮询结果。
+   */
+  async startDetached(input: DispatchSubagentInput): Promise<string> {
+    const { invocationId, completion, joined } = await this.begin(input);
+    if (joined) return invocationId;
+    const cancelFromParent = () => {
+      const runtime = this.active.get(invocationId)?.runtime;
+      if (runtime) void runtime.cancel(invocationId).catch(() => undefined);
+    };
+    input.signal?.addEventListener("abort", cancelFromParent, { once: true });
+    if (input.signal?.aborted) cancelFromParent();
+    void completion.finally(() => {
+      input.signal?.removeEventListener("abort", cancelFromParent);
+      this.active.delete(invocationId);
+    }).catch(() => undefined);
+    return invocationId;
+  }
+
+  private async begin(input: DispatchSubagentInput): Promise<{
+    invocationId: string;
+    completion: Promise<SubagentInvocation>;
+    /** true 表示命中既有幂等记录，生命周期由原始调用方管理。 */
+    joined: boolean;
+  }> {
     const normalizedTask = input.task.trim();
     if (!normalizedTask) throw new Error("subagent_task_required");
     const existing = this.db.select().from(subagentInvocations).where(and(
@@ -123,7 +165,8 @@ export class SubagentOrchestrator {
     )).get();
     if (existing) {
       const active = this.active.get(existing.id);
-      return active ? active.promise : toInvocation(existing);
+      if (active) return { invocationId: existing.id, completion: active.promise, joined: true };
+      return { invocationId: existing.id, completion: Promise.resolve(toInvocation(existing)), joined: true };
     }
 
     const definition = this.registry.get(input.agentId);
@@ -153,17 +196,7 @@ export class SubagentOrchestrator {
     );
     const promise = this.executeInvocation(invocationId, definition, runtime);
     this.active.set(invocationId, { runtime, promise });
-    const cancelFromParent = () => {
-      void runtime.cancel(invocationId).catch(() => undefined);
-    };
-    input.signal?.addEventListener("abort", cancelFromParent, { once: true });
-    if (input.signal?.aborted) cancelFromParent();
-    try {
-      return await promise;
-    } finally {
-      input.signal?.removeEventListener("abort", cancelFromParent);
-      this.active.delete(invocationId);
-    }
+    return { invocationId, completion: promise, joined: false };
   }
 
   async cancel(invocationId: string): Promise<SubagentInvocation | null> {

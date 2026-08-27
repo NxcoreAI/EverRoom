@@ -43,7 +43,7 @@ import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
 import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSettingsSection'
-import { TokenUsageSettingsSection } from '@/components/settings/TokenUsageSettingsSection'
+import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import { InvitationCodeField, useInvitationCode } from '@/components/account/InvitationCodeField'
 import './SettingsPage.css'
@@ -53,7 +53,7 @@ const SETTINGS_NAV = [
   { id: 'settings-notifications', label: 'surface:settings.notifications', description: 'surface:settings.notificationsDescription', icon: Bell },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
-  { id: 'settings-token-usage', label: 'surface:settings.tokenUsage', description: 'surface:settings.tokenUsageDescription', icon: Activity },
+  { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', description: 'surface:settings.usageAndBudgetsDescription', icon: Activity },
   { id: 'settings-extensions', label: 'surface:settings.extensions', description: 'surface:settings.extensionsDescription', icon: Puzzle },
   { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', description: 'surface:settings.onboardingSetupDescription', icon: Sparkles },
   { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
@@ -941,7 +941,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       <RuntimeConfigSettingsSection />
 
       <div id="settings-token-usage" className="settings-anchor-section settings-token-usage-group">
-        <TokenUsageSettingsSection />
+        <UsageAndBudgetSettingsSection />
       </div>
 
       <section id="settings-reality" className="reality-settings-section settings-anchor-section" aria-labelledby="reality-settings-title">
