@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, ExternalConversationSummary } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
@@ -106,6 +106,9 @@ export function AgentPanel({
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
+  const agentNamesById = useMemo(() => Object.fromEntries(
+    localAgents.map((agent) => [agent.id, agent.displayName]),
+  ), [localAgents])
 
   const handleNotificationRunLocated = useCallback((key: string) => {
     setNotificationRunTarget((current) => current?.key === key ? null : current)
@@ -432,6 +435,8 @@ export function AgentPanel({
       <AgentChatView
         activeDocument={activeDocument}
         activeRunId={session.activeRunId}
+        agentIdByRun={session.agentIdByRun}
+        agentNamesById={agentNamesById}
         activityByRun={session.activityByRun}
         availableRooms={rooms}
         composer={composer}

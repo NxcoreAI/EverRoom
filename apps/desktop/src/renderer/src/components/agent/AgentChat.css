@@ -250,6 +250,39 @@
   animation: agent-content-enter 220ms cubic-bezier(.22, 1, .36, 1);
 }
 
+.agent-assistant-response {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 5px;
+}
+
+.agent-response-byline {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: #657080;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+}
+
+.agent-response-byline::before {
+  width: 2px;
+  height: 11px;
+  flex: 0 0 2px;
+  border-radius: 1px;
+  background: #6d83b8;
+  content: '';
+}
+
+.agent-response-byline > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-assistant-turn,
 .agent-message[data-role='user'] {
   scroll-margin-block: 72px;
