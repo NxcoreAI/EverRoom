@@ -1,4 +1,5 @@
 export const AGENT_PROTOCOL_VERSION = 1 as const;
+export const MAIN_AGENT_ID = "main" as const;
 
 export type AgentSessionStatus = "idle" | "running" | "interrupted" | "closed";
 export type AgentRunStatus =
@@ -47,6 +48,7 @@ export type AgentEventType =
   | "approval.requested"
   | "approval.resolved"
   | "context.updated"
+  | "runtime.session.updated"
   | "run.interrupted"
   | "run.failed"
   | "run.cancelled"
@@ -59,6 +61,8 @@ export interface AgentSession {
   /** Last/creation UI surface, never a session partition key. */
   pageLabel: string;
   runtimeId: string;
+  /** Agent that receives unmentioned user turns in this visible conversation. */
+  activeAgentId?: string;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -68,6 +72,8 @@ export interface AgentSession {
 export interface AgentRun {
   id: string;
   sessionId: string;
+  agentId?: string;
+  invocationMode?: AgentInvocationMode;
   status: AgentRunStatus;
   prompt: string;
   lastEventSeq: number;
@@ -82,8 +88,22 @@ export interface AgentMessage {
   sessionId: string;
   runId: string;
   role: AgentMessageRole;
+  /** Present for Agent-authored messages; user messages intentionally have no Agent author. */
+  authorAgentId?: string | null;
   content: string;
   createdAt: string;
+}
+
+export interface AgentSessionParticipant {
+  sessionId: string;
+  agentId: string;
+  runtimeId: string;
+  runtimeSessionRef: string | null;
+  lastSeenAt: string | null;
+  workspaceRoot: string | null;
+  permissionProfile: AgentWorkspacePermissionProfile;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type AgentAttachmentKind = "document" | "image";
@@ -305,6 +325,14 @@ export interface CreateContextRoomResult {
 export interface StartAgentRunInput {
   prompt: string;
   idempotencyKey: string;
+  /** Stable local Agent installation id selected by an explicit composer mention. */
+  targetAgentId?: string;
+  /** Explicit switches are sticky; delegated calls return to the current speaker. */
+  invocationMode?: AgentInvocationMode;
+  /** Desktop-issued workspace binding selected through a native directory picker. */
+  workspaceBindingToken?: string;
+  /** Desktop Main-resolved target. Renderer input is discarded and replaced before Gateway dispatch. */
+  localAgent?: LocalAgentInvocationTarget;
   attachments?: AgentAttachmentReference[];
   /** Completed run replaced by this regeneration request. */
   replaceRunId?: string;
@@ -327,6 +355,174 @@ export interface StartAgentRunInput {
     activeDocument?: AgentActiveDocumentContext;
     /** Files uploaded from the conversation composer and parsed by the unified file engine. */
     attachments?: AgentFileAttachment[];
+    /** Read-only imported conversation to use once when this native session starts. */
+    externalConversationId?: string;
+  };
+}
+
+export type MigrationProvider = "notion" | "openclaw" | "codex" | "claude";
+export type MigrationTransport = "oauth" | "zip" | "local-sqlite" | "local-jsonl" | "archive" | "directory";
+export type MigrationSourceStatus = "ready" | "importing" | "completed" | "error" | "unavailable";
+export type MigrationRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type MigrationRunPhase = "discovering" | "reading" | "normalizing" | "saving" | "memory" | "finalizing" | "completed";
+
+export interface MigrationSource {
+  id: string;
+  provider: MigrationProvider;
+  transport: MigrationTransport;
+  displayName: string;
+  status: MigrationSourceStatus;
+  lastSyncedAt: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MigrationRun {
+  id: string;
+  sourceId: string;
+  provider: MigrationProvider;
+  transport: MigrationTransport;
+  status: MigrationRunStatus;
+  phase: MigrationRunPhase;
+  pagesTotal: number;
+  pagesCompleted: number;
+  threadsTotal: number;
+  threadsCompleted: number;
+  messagesTotal: number;
+  messagesCompleted: number;
+  cancelRequested: boolean;
+  error: string | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export interface MigrationProgressEvent {
+  run: MigrationRun;
+}
+
+export interface ExternalConversationSummary {
+  id: string;
+  provider: MigrationProvider;
+  sourceId: string;
+  title: string;
+  agentId: string | null;
+  externalSessionId: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+  lastMessageExcerpt: string;
+  available: boolean;
+}
+
+export interface ExternalConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  occurredAt: string;
+}
+
+export interface ExternalConversationPreview {
+  conversation: ExternalConversationSummary;
+  messages: ExternalConversationMessage[];
+}
+
+export interface ExternalConversationPage {
+  items: ExternalConversationSummary[];
+  nextCursor: string | null;
+}
+
+export type LocalAgentProvider = "codex" | "claude" | "opencode" | "custom";
+export type LocalAgentStatus = "discovered" | "verified" | "history_available" | "unavailable";
+export type AgentInvocationMode = "explicit_switch" | "delegated_subagent";
+export type AgentWorkspacePermissionProfile = "inspect" | "workspace_write" | "full_access";
+
+export interface LocalAgentCard {
+  name: string;
+  description: string;
+  version: string;
+  supportedInterfaces: Array<{ url: string; protocolBinding: string; protocolVersion: string }>;
+  capabilities: { streaming?: boolean; pushNotifications?: boolean };
+  defaultInputModes: string[];
+  defaultOutputModes: string[];
+  skills: Array<{ id: string; name: string; description: string; tags: string[] }>;
+}
+
+export interface LocalAgentInstallation {
+  id: string;
+  provider: LocalAgentProvider;
+  displayName: string;
+  executablePath: string | null;
+  version: string | null;
+  status: LocalAgentStatus;
+  callable: boolean;
+  invocationSupported: boolean;
+  historyAvailable: boolean;
+  historyPaths: string[];
+  card: LocalAgentCard;
+  lastSeenAt: string;
+  error?: string;
+}
+
+export interface LocalAgentHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+}
+
+export interface LocalAgentHistoryConversation {
+  /** Provider-native session id used by the CLI resume protocol. */
+  sessionId: string;
+  title: string;
+  messages: LocalAgentHistoryMessage[];
+}
+
+export interface LocalAgentHistoryImportResult {
+  sessionsFound: number;
+  sessionsImported: number;
+  messagesImported: number;
+  skippedFiles: number;
+}
+
+export interface LocalAgentInvocationTarget {
+  id: string;
+  provider: LocalAgentProvider;
+  displayName: string;
+  executablePath: string;
+  workingDirectory: string;
+  permissionProfile: AgentWorkspacePermissionProfile;
+  card: LocalAgentCard;
+}
+
+export interface LocalAgentDelegationContext {
+  schemaVersion: 1;
+  targetAgentId: string;
+  task: { text: string };
+  conversation: {
+    messages: Array<Pick<AgentMessage, "role" | "authorAgentId" | "content" | "createdAt">>;
+    truncated: boolean;
+  };
+  selection?: { pageLabel: string; text: string };
+  attachments: Array<{
+    filename: string;
+    mimeType: string;
+    kind: AgentAttachmentKind;
+    text?: string;
+  }>;
+  resources: {
+    workspaceRoot: string;
+    roomIds: string[];
+    activeDocument?: Pick<AgentActiveDocumentContext, "roomId" | "documentId" | "title" | "version">;
+  };
+  grant: {
+    workspaceAccess: "read-only" | "workspace-write" | "full-access";
+    approvals: "disabled" | "agent-reviewed";
+    mutationAllowed: boolean;
+  };
+  provenance: {
+    source: "everroom.local-agent-delegation";
+    generatedAt: string;
+    digestAlgorithm: "sha256";
+    digest: string;
   };
 }
 
@@ -626,6 +822,56 @@ export interface DocumentOperationCommandResult {
   duplicate: boolean;
 }
 
+export interface ExternalDocumentProjectionBinding {
+  sourceKind: "obsidian-vault";
+  sourceId: string;
+  resourceId: string;
+  roomId: string;
+  documentId: string;
+  relativePath: string;
+  sourceHash: string;
+  updatedAt: string;
+}
+
+export interface SyncExternalDocumentProjectionInput {
+  sourceKind: "obsidian-vault";
+  sourceId: string;
+  resourceId: string;
+  roomId: string;
+  relativePath: string;
+  sourceHash: string;
+  title: string;
+  markdown: string;
+}
+
+export interface PrepareExternalDocumentPatchInput {
+  operationId: string;
+  command: DocumentOperationCommandInput;
+}
+
+export interface PreparedExternalDocumentPatch {
+  preparationId: string;
+  operationId: string;
+  documentId: string;
+  sourceId: string;
+  resourceId: string;
+  relativePath: string;
+  expectedSourceHash: string;
+  markdown: string;
+  patch: string;
+  expiresAt: string;
+}
+
+export interface CompleteExternalDocumentPatchInput {
+  preparationId: string;
+  resultingSourceHash: string;
+  context: {
+    roomId: string;
+    sessionId: string;
+    runId: string;
+  };
+}
+
 export interface StartDocumentOperationInput {
   capabilityId: string;
   context: {
@@ -694,6 +940,7 @@ export interface SaveRoomDocumentInput {
 
 export interface AgentSessionSnapshot {
   session: AgentSession;
+  participants: AgentSessionParticipant[];
   activeRun: AgentRun | null;
   messages: AgentMessage[];
   lastEventSeq: number;

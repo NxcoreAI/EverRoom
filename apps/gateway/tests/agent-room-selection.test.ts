@@ -20,14 +20,22 @@ import {
   roomDocumentLinks,
 } from '../src/infrastructure/database/schema.js'
 import { AgentEventBroker } from '../src/modules/agent/event-broker.js'
-import { AgentService, type AgentCompletedMessageResolver } from '../src/modules/agent/service.js'
+import {
+  AgentService,
+  type AgentCompletedMessageResolver,
+  type AgentExternalConversationResolver,
+} from '../src/modules/agent/service.js'
 import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 
 const temporaryDirectories: string[] = []
 
 class RecordingRuntime implements AgentRuntime {
-  readonly id = 'recording'
+  readonly id: string
   readonly starts: StartRuntimeRunInput[] = []
+
+  constructor(id = 'recording') {
+    this.id = id
+  }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
     return { streaming: true, reasoning: false, tools: true, steering: false, resume: false }
@@ -38,7 +46,7 @@ class RecordingRuntime implements AgentRuntime {
     const events = new AsyncEventQueue<RuntimeEvent>()
     events.push({ type: 'run.completed', payload: {} })
     events.end()
-    return { runId: input.runId, runtimeSessionRef: `runtime-${input.sessionId}`, events }
+    return { runId: input.runId, runtimeSessionRef: `${this.id}-${input.sessionId}`, events }
   }
 
   async resume(_input: ResumeRuntimeRunInput): Promise<RuntimeRun> {
@@ -86,7 +94,9 @@ afterEach(async () => {
 
 async function createHarness(options: {
   runtime?: RecordingRuntime
+  targetRuntime?: RecordingRuntime
   completedMessageResolver?: AgentCompletedMessageResolver
+  externalConversationResolver?: AgentExternalConversationResolver
   disposeRuntime?: boolean
 } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-agent-room-selection-'))
@@ -104,11 +114,178 @@ async function createHarness(options: {
     options.completedMessageResolver,
     'direct',
     options.disposeRuntime ?? true,
+    options.targetRuntime ? () => options.targetRuntime! : undefined,
   )
+  if (options.externalConversationResolver) service.setExternalConversationResolver(options.externalConversationResolver)
   return { ...database, rooms, runtime, service }
 }
 
 describe('Agent Room selection', () => {
+  it('switches the active Agent while preserving independent native sessions', async () => {
+    const primary = new RecordingRuntime('main-runtime')
+    const external = new RecordingRuntime('codex-runtime')
+    const { service, db, sqlite } = await createHarness({ runtime: primary, targetRuntime: external })
+    const session = service.createSession({ pageLabel: 'Home', roomId: null })
+    const codexTarget = {
+      id: 'codex:/usr/local/bin/codex',
+      provider: 'codex' as const,
+      displayName: 'Codex',
+      executablePath: '/usr/local/bin/codex',
+      workingDirectory: '/workspace/project',
+      permissionProfile: 'inspect' as const,
+      card: {
+        name: 'Codex Local',
+        description: 'Local Codex adapter',
+        version: '1.0.0',
+        supportedInterfaces: [],
+        capabilities: { streaming: true },
+        defaultInputModes: ['text/plain', 'application/json'],
+        defaultOutputModes: ['text/plain'],
+        skills: [],
+      },
+    }
+    await service.startRun(session.id, {
+      prompt: 'Primary turn',
+      idempotencyKey: 'primary-before-delegation',
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    const primaryRef = db.select().from(agentSessions).where(eq(agentSessions.id, session.id)).get()?.runtimeSessionRef
+
+    await service.startRun(session.id, {
+      prompt: 'Review this implementation',
+      idempotencyKey: 'external-delegation',
+      targetAgentId: codexTarget.id,
+      invocationMode: 'explicit_switch',
+      localAgent: codexTarget,
+      context: {
+        pageLabel: 'Editor',
+        selectedText: 'const answer = 42',
+        attachments: [{
+          fileId: 'file-notes',
+          fileVersionId: 'version-notes',
+          fileName: 'notes.txt',
+          content: 'Relevant attachment content',
+          status: 'ready',
+        }],
+      },
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+
+    expect(primary.starts).toHaveLength(1)
+    expect(external.starts).toHaveLength(1)
+    expect(external.starts[0]).toMatchObject({
+      runtimeSessionRef: null,
+      delegationContext: {
+        schemaVersion: 1,
+        targetAgentId: 'codex:/usr/local/bin/codex',
+        task: { text: 'Review this implementation' },
+        conversation: { messages: [{ role: 'user', content: 'Primary turn' }] },
+        selection: { pageLabel: 'Editor', text: 'const answer = 42' },
+        attachments: [{
+          filename: 'notes.txt',
+          mimeType: 'text/plain',
+          kind: 'document',
+          text: 'Relevant attachment content',
+        }],
+        resources: { workspaceRoot: '/workspace/project' },
+        grant: { workspaceAccess: 'read-only', approvals: 'disabled', mutationAllowed: false },
+        provenance: { digestAlgorithm: 'sha256', digest: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+      },
+    })
+    expect(db.select().from(agentSessions).where(eq(agentSessions.id, session.id)).get()?.runtimeSessionRef)
+      .toBe(primaryRef)
+    expect(service.getSnapshot(session.id)?.session.activeAgentId).toBe(codexTarget.id)
+
+    await service.startRun(session.id, {
+      prompt: 'Continue without another mention',
+      idempotencyKey: 'codex-sticky-follow-up',
+      localAgent: codexTarget,
+    })
+    expect(external.starts).toHaveLength(2)
+    expect(external.starts[1]?.runtimeSessionRef).toBe(`codex-runtime-${session.id}`)
+
+    await service.startRun(session.id, {
+      prompt: 'Return to Main',
+      idempotencyKey: 'main-after-codex',
+      targetAgentId: 'main',
+      invocationMode: 'explicit_switch',
+    })
+    expect(primary.starts[1]?.runtimeSessionRef).toBe(primaryRef)
+    expect(primary.starts[1]?.prompt).toContain('Review this implementation')
+    expect(primary.starts[1]?.prompt).toContain('Continue without another mention')
+    expect(service.getSnapshot(session.id)?.session.activeAgentId).toBe('main')
+    await service.dispose()
+    sqlite.close()
+  })
+
+  it('keeps the current speaker when Main delegates to a subagent', async () => {
+    const primary = new RecordingRuntime('main-runtime')
+    const external = new RecordingRuntime('codex-runtime')
+    const { service, sqlite } = await createHarness({ runtime: primary, targetRuntime: external })
+    const session = service.createSession({ pageLabel: 'Home', roomId: null })
+    await service.startRun(session.id, {
+      prompt: 'Inspect this implementation for Main',
+      idempotencyKey: 'delegated-codex',
+      targetAgentId: 'codex:/usr/local/bin/codex',
+      invocationMode: 'delegated_subagent',
+      localAgent: {
+        id: 'codex:/usr/local/bin/codex',
+        provider: 'codex',
+        displayName: 'Codex',
+        executablePath: '/usr/local/bin/codex',
+        workingDirectory: '/workspace/project',
+        permissionProfile: 'inspect',
+        card: {
+          name: 'Codex Local', description: 'Local Codex adapter', version: '1.0.0',
+          supportedInterfaces: [], capabilities: { streaming: true },
+          defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain'], skills: [],
+        },
+      },
+    })
+
+    expect(external.starts).toHaveLength(1)
+    expect(service.getSnapshot(session.id)?.session.activeAgentId).toBe('main')
+    await service.dispose()
+    sqlite.close()
+  })
+
+  it('starts a selected local Agent on the native thread mapped from imported history', async () => {
+    const external = new RecordingRuntime('codex-runtime')
+    const resolver: AgentExternalConversationResolver = {
+      bindAndBuildContext: async () => 'duplicated imported history',
+      resolveNativeContinuation: (threadId, targetAgentId) => (
+        threadId === 'imported-thread' && targetAgentId.startsWith('codex:') ? 'native-codex-session' : null
+      ),
+    }
+    const { service, sqlite } = await createHarness({ targetRuntime: external, externalConversationResolver: resolver })
+    const session = service.createSession({ pageLabel: 'Home', roomId: null })
+    await service.startRun(session.id, {
+      prompt: 'Continue this work',
+      idempotencyKey: 'continue-imported-codex',
+      targetAgentId: 'codex:/usr/local/bin/codex',
+      invocationMode: 'explicit_switch',
+      localAgent: {
+        id: 'codex:/usr/local/bin/codex',
+        provider: 'codex',
+        displayName: 'Codex',
+        executablePath: '/usr/local/bin/codex',
+        workingDirectory: '/workspace/project',
+        permissionProfile: 'inspect',
+        card: {
+          name: 'Codex Local', description: 'Local Codex adapter', version: '1.0.0',
+          supportedInterfaces: [], capabilities: { streaming: true },
+          defaultInputModes: ['text/plain'], defaultOutputModes: ['text/plain'], skills: [],
+        },
+      },
+      context: { externalConversationId: 'imported-thread' },
+    })
+
+    expect(external.starts[0]?.runtimeSessionRef).toBe('native-codex-session')
+    expect(external.starts[0]?.prompt).not.toContain('duplicated imported history')
+    await service.dispose()
+    sqlite.close()
+  })
+
   it('cancels active event streams before disposing a shared runtime', async () => {
     const runtime = new HangingRuntime()
     const { service, sqlite } = await createHarness({ runtime, disposeRuntime: false })

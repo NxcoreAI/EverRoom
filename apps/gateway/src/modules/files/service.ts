@@ -43,7 +43,7 @@ export function isSupportedUploadFilename(filename: string): boolean {
   return SUPPORTED_UPLOAD_EXTENSIONS.has(normalizedFileExtension(filename));
 }
 
-export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "web-clipper" | "legacy-upload";
+export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload";
 
 export interface FileImportInput {
   sourceKind: Exclude<FileSourceKind, "legacy-upload">;

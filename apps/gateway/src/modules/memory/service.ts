@@ -508,6 +508,30 @@ export class MemoryService {
     };
   }
 
+  async importConversation(input: {
+    sessionId: string;
+    messages: Array<{ role: "user" | "assistant"; content: string; timestamp: string }>;
+  }): Promise<{ sessionId: string; messagesImported: number }> {
+    const client = this.require();
+    await this.call(() => client.deleteConversation({ sessionIds: [input.sessionId] }));
+    await this.call(() => client.addConversation(input.sessionId, input.messages));
+    return { sessionId: input.sessionId, messagesImported: input.messages.length };
+  }
+
+  async replaceConversationBatches(input: {
+    sessionId: string;
+    messages: Array<{ role: "user" | "assistant"; content: string; timestamp: string }>;
+    batchSize?: number;
+  }): Promise<{ sessionId: string; messagesImported: number }> {
+    const client = this.require();
+    const batchSize = Math.min(Math.max(input.batchSize ?? 200, 1), 200);
+    await this.call(() => client.deleteConversation({ sessionIds: [input.sessionId] }));
+    for (let offset = 0; offset < input.messages.length; offset += batchSize) {
+      await this.call(() => client.addConversation(input.sessionId, input.messages.slice(offset, offset + batchSize)));
+    }
+    return { sessionId: input.sessionId, messagesImported: input.messages.length };
+  }
+
   async searchConversations(
     query: string,
     limit: number,

@@ -178,6 +178,7 @@ export function useAgentSession(
               sessionId: event.sessionId,
               runId: event.runId,
               role: 'user',
+              authorAgentId: null,
               content: prompt,
               createdAt: event.occurredAt,
             }]
@@ -631,6 +632,8 @@ export function useAgentSession(
     activeDocument?: AgentActiveDocumentContext | null,
     replaceRunId?: string,
     attachments?: AgentFileAttachment[],
+    targetAgentId?: string,
+    externalConversationId?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
     if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
@@ -676,6 +679,7 @@ export function useAgentSession(
       sessionId: sessionIdRef.current ?? 'pending',
       runId: 'pending',
       role: 'user',
+      authorAgentId: null,
       content: message,
       createdAt: new Date().toISOString(),
     }
@@ -685,15 +689,25 @@ export function useAgentSession(
     setError(null)
     try {
       const currentSessionId = await ensureSession([optimisticMessage])
+      const selectedAgentId = targetAgentId ?? currentSession?.activeAgentId ?? 'main'
+      const workspaceBinding = selectedAgentId === 'main'
+        ? null
+        : await api!.bindLocalAgentWorkspace(selectedAgentId, currentSessionId)
+      if (selectedAgentId !== 'main' && !workspaceBinding) {
+        throw new Error(t('surface:useAgentSession.workspaceRequired'))
+      }
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, sessionId: currentSessionId }
         : item))
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
+        targetAgentId: selectedAgentId,
+        invocationMode: 'explicit_switch',
+        ...(workspaceBinding ? { workspaceBindingToken: workspaceBinding.token } : {}),
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, externalConversationId),
       })
       const updatedAt = new Date().toISOString()
       const runCompleted = terminalRunIdsRef.current.has(run.id)
@@ -708,6 +722,7 @@ export function useAgentSession(
       setCurrentSession((current) => current?.id === currentSessionId
         ? {
             ...current,
+            activeAgentId: selectedAgentId,
             title: current.title ?? message.slice(0, 48),
             ...(!runCompleted ? { status: 'running' as const } : {}),
             updatedAt,
