@@ -29,8 +29,7 @@ interface RewritePreviewState extends RewriteAnchor {
   formatContext: SelectionRewriteFormatContext
   phase: 'requesting' | 'ready' | 'submitting' | 'error'
   error: string | null
-  sessionId: string | null
-  runId: string | null
+  invocationId: string | null
   operationId: string | null
   revision: number | null
   left: number
@@ -239,12 +238,11 @@ export function useTiptapSelectionRewrite({
     if (wasEditable && !externallyLocked) editor.setEditable(true)
   }, [editor, externallyLocked])
 
-  const finish = useCallback((wasEditable: boolean, sessionId?: string | null) => {
+  const finish = useCallback((wasEditable: boolean) => {
     operationRef.current = null
     previewRef.current = null
     restoreEditor(wasEditable)
     setPreview(null)
-    if (sessionId) void window.nxcore?.agent.deleteSession(sessionId).catch(() => undefined)
   }, [restoreEditor])
 
   const preservePreviewError = useCallback(async (
@@ -279,17 +277,17 @@ export function useTiptapSelectionRewrite({
         current.phase === 'requesting' ? 'operation.cancel' : 'review.reject',
       ).then((result) => {
         if (!result) throw new Error(t('contextRoom:tiptapSelectionRewrite.theDocumentOperationIsStillProcessing'))
-        finish(operation?.wasEditable ?? true, current.sessionId)
+        finish(operation?.wasEditable ?? true)
       }).catch((error: unknown) => {
         void preservePreviewError(current, error)
       })
       return
     }
-    finish(operation?.wasEditable ?? true, current?.sessionId)
+    finish(operation?.wasEditable ?? true)
   }, [executeResult, finish, preservePreviewError])
 
   const createOperation = useCallback(async (current: RewritePreviewState): Promise<DocumentOperation> => {
-    if (!editor || editor.isDestroyed || !current.sessionId || !current.runId) {
+    if (!editor || editor.isDestroyed || !current.invocationId) {
       throw new Error(t('contextRoom:tiptapSelectionRewrite.theDocumentOperationServiceIsUnavailable'))
     }
     if (selectionText(editor, current.from, current.to) !== current.originalText) {
@@ -311,8 +309,7 @@ export function useTiptapSelectionRewrite({
         context: {
           roomId,
           documentId,
-          sessionId: current.sessionId,
-          runId: current.runId,
+          invocationId: current.invocationId,
         },
         input: {
           baseVersion,
@@ -339,7 +336,7 @@ export function useTiptapSelectionRewrite({
   const startOperation = useCallback(async (current: RewritePreviewState): Promise<void> => {
     const operation = await createOperation(current)
     const active = previewRef.current
-    if (!active || active.sessionId !== current.sessionId || active.runId !== current.runId) {
+    if (!active || active.invocationId !== current.invocationId) {
       await executeResult(operation.id, 'operation.cancel')
       return
     }
@@ -360,7 +357,7 @@ export function useTiptapSelectionRewrite({
     formatContext: SelectionRewriteFormatContext,
   ) => {
     if (!editor || editor.isDestroyed) return
-    const api = window.nxcore?.agent
+    const api = window.nxcore?.contextRooms
     const position = previewPosition(editor, anchor.to)
     setRewriteDecoration(editor, { ...anchor, variant: 'original' })
     if (!api) {
@@ -373,8 +370,7 @@ export function useTiptapSelectionRewrite({
         formatContext,
         phase: 'error',
         error: t('contextRoom:tiptapSelectionRewrite.agentServiceDesktopOnly'),
-        sessionId: null,
-        runId: null,
+        invocationId: null,
         operationId: null,
         revision: null,
         ...position,
@@ -401,8 +397,7 @@ export function useTiptapSelectionRewrite({
       formatContext,
       phase: 'requesting',
       error: null,
-      sessionId: null,
-      runId: null,
+      invocationId: null,
       operationId: null,
       revision: null,
       ...position,
@@ -429,18 +424,14 @@ export function useTiptapSelectionRewrite({
         if (operationRef.current?.id !== operation.id) return
         setPreview((current) => current ? { ...current, replacementText } : current)
       },
-    }).then(async ({ replacementText, sessionId, runId }) => {
-      if (operationRef.current?.id !== operation.id) {
-        void api.deleteSession(sessionId).catch(() => undefined)
-        return
-      }
+    }).then(async ({ replacementText, invocationId }) => {
+      if (operationRef.current?.id !== operation.id) return
       const current = previewRef.current
       if (!current) return
       const generated: RewritePreviewState = {
         ...current,
         replacementText,
-        sessionId,
-        runId,
+        invocationId,
         phase: 'requesting',
         error: null,
       }
@@ -479,7 +470,7 @@ export function useTiptapSelectionRewrite({
       setPreview({ ...current, phase: 'error', error: t('contextRoom:tiptapSelectionRewrite.theOriginalSelectionHasChangedSelectItAgain') })
       return
     }
-    if (current.replacementText && current.sessionId && current.runId && !current.operationId) {
+    if (current.replacementText && current.invocationId && !current.operationId) {
       editor.setEditable(false)
       setPreview({ ...current, phase: 'requesting', error: null })
       void startOperation(current).catch((error: unknown) => {
@@ -534,7 +525,7 @@ export function useTiptapSelectionRewrite({
         : null
       editor.commands.setContent(stripDocumentTitle(result.document.contentJson).content, { emitUpdate: false })
       onDocumentApplied(result.document)
-      finish(operation?.wasEditable ?? true, current.sessionId)
+      finish(operation?.wasEditable ?? true)
       if (scrollElement && scrollPosition) {
         scrollElement.scrollTo({ ...scrollPosition, behavior: 'auto' })
         window.requestAnimationFrame(() => {

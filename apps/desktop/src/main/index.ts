@@ -38,7 +38,8 @@ import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
 import { embeddingFieldsFromConfig, memoryCoreEmbeddingEnv, memoryCoreEnvironment } from './memory/embedding-env'
 import type { KnowledgeAttachInput } from '../shared/knowledge'
-import type { McpServersSnapshot } from '../shared/mcp'
+import type { McpServersMutation } from '../shared/mcp'
+import type { ExternalCallPolicyInput, ExternalCallQuery } from '../shared/external-calls'
 import type { IngestPipelines } from '../shared/ingest'
 import type {
   MemoryAtomicListOptions,
@@ -49,6 +50,8 @@ import type {
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
+import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
+import { loadOrCreateGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
@@ -237,6 +240,19 @@ const CONTEXT_ROOM_CHANNELS = {
   list: 'context-rooms:list',
   create: 'context-rooms:create',
   syncSnapshot: 'context-rooms:sync-snapshot',
+  checkDuplicates: 'context-rooms:check-duplicates',
+  listDuplicateCandidates: 'context-rooms:list-duplicate-candidates',
+  updateDuplicateCandidate: 'context-rooms:update-duplicate-candidate',
+  previewMerge: 'context-rooms:preview-merge',
+  startMerge: 'context-rooms:start-merge',
+  getMergeOperation: 'context-rooms:get-merge-operation',
+  retryMerge: 'context-rooms:retry-merge',
+  cancelMerge: 'context-rooms:cancel-merge',
+  dispatchSelectionRewrite: 'context-rooms:dispatch-selection-rewrite',
+  getSubagentInvocation: 'context-rooms:get-subagent-invocation',
+  cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
+  refreshBrief: 'context-rooms:refresh-brief',
+  roomEntities: 'context-rooms:room-entities',
 } as const
 
 const AGENT_CHANNELS = {
@@ -254,6 +270,7 @@ const AGENT_CHANNELS = {
   startRun: 'agent:start-run',
   submitPendingIntent: 'agent:submit-pending-intent',
   cancelRun: 'agent:cancel-run',
+  resolveApproval: 'agent:resolve-approval',
   subscribe: 'agent:subscribe',
   unsubscribe: 'agent:unsubscribe',
 } as const
@@ -378,11 +395,25 @@ const MCP_CHANNELS = {
   saveServers: 'mcp:servers:save',
 } as const
 
+const EXTERNAL_CALL_CHANNELS = {
+  listPolicies: 'external-calls:policies:list',
+  savePolicy: 'external-calls:policies:save',
+  deletePolicy: 'external-calls:policies:delete',
+  listUsage: 'external-calls:usage:list',
+  listAudits: 'external-calls:audits:list',
+} as const
+
 const KNOWLEDGE_CHANNELS = {
   listRooms: 'knowledge:rooms:list',
   getRoomContext: 'knowledge:rooms:context',
   upsertRoom: 'knowledge:rooms:upsert',
   deleteRoom: 'knowledge:rooms:delete',
+  getRoomGraph: 'knowledge:room-graph:get',
+  getRoomRelations: 'knowledge:room-relations:list',
+  getRoomRelationEvidence: 'knowledge:room-relations:evidence',
+  createRoomRelation: 'knowledge:room-relations:create',
+  updateRoomRelation: 'knowledge:room-relations:update',
+  removeManualRoomRelation: 'knowledge:room-relations:remove-manual',
   listWikiPages: 'knowledge:wiki:pages',
   readWikiPage: 'knowledge:wiki:page-read',
   listWikis: 'knowledge:wikis:list',
@@ -390,7 +421,9 @@ const KNOWLEDGE_CHANNELS = {
   listEntities: 'knowledge:entities:list',
   getEntity: 'knowledge:entities:get',
   promoteEntity: 'knowledge:entities:promote',
+  promoteEntities: 'knowledge:entities:promote-batch',
   suppressEntity: 'knowledge:entities:suppress',
+  suppressEntities: 'knowledge:entities:suppress-batch',
   restoreSuppressedEntity: 'knowledge:entities:restore',
   mergeEntity: 'knowledge:entities:merge',
   listUnmatched: 'knowledge:unmatched:list',
@@ -516,6 +549,7 @@ function installIpcRouters(): void {
     MEMORY_CHANNELS,
     KNOWLEDGE_CHANNELS,
     MCP_CHANNELS,
+    EXTERNAL_CALL_CHANNELS,
     FILES_CHANNELS,
     INGEST_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
@@ -1219,6 +1253,21 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
   handle(CONTEXT_ROOM_CHANNELS.create, (_event, input) => bridge.create(input))
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
+  handle(CONTEXT_ROOM_CHANNELS.checkDuplicates, (_event, input) => bridge.checkDuplicates(input))
+  handle(CONTEXT_ROOM_CHANNELS.listDuplicateCandidates, (_event, status) => bridge.listDuplicateCandidates(status))
+  handle(CONTEXT_ROOM_CHANNELS.updateDuplicateCandidate, (_event, id, status) => bridge.updateDuplicateCandidate(id, status))
+  handle(CONTEXT_ROOM_CHANNELS.previewMerge, (_event, sourceRoomId, targetRoomId) => bridge.previewMerge(sourceRoomId, targetRoomId))
+  handle(CONTEXT_ROOM_CHANNELS.startMerge, (_event, input) => bridge.startMerge(input))
+  handle(CONTEXT_ROOM_CHANNELS.getMergeOperation, (_event, id) => bridge.getMergeOperation(id))
+  handle(CONTEXT_ROOM_CHANNELS.retryMerge, (_event, id) => bridge.retryMerge(id))
+  handle(CONTEXT_ROOM_CHANNELS.cancelMerge, (_event, id) => bridge.cancelMerge(id))
+  handle(CONTEXT_ROOM_CHANNELS.dispatchSelectionRewrite, (_event, input) => bridge.dispatchSelectionRewrite(input))
+  handle(CONTEXT_ROOM_CHANNELS.getSubagentInvocation, (_event, invocationId) =>
+    bridge.getSubagentInvocation(invocationId))
+  handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
+    bridge.cancelSubagentInvocation(invocationId))
+  handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
 }
 
 function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
@@ -1255,6 +1304,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
     bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
+  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision) => bridge.resolveApproval(approvalId, decision))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
@@ -1323,7 +1373,15 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: Documen
 
 function registerMcpHandlers(bridge: McpGatewayBridge): void {
   handle(MCP_CHANNELS.listServers, () => bridge.list())
-  handle(MCP_CHANNELS.saveServers, (_event, servers: McpServersSnapshot['servers']) => bridge.save(servers))
+  handle(MCP_CHANNELS.saveServers, (_event, servers: McpServersMutation) => bridge.save(servers))
+}
+
+function registerExternalCallHandlers(bridge: ExternalCallsGatewayBridge): void {
+  handle(EXTERNAL_CALL_CHANNELS.listPolicies, (_event, query?: ExternalCallQuery) => bridge.listPolicies(query))
+  handle(EXTERNAL_CALL_CHANNELS.savePolicy, (_event, input: ExternalCallPolicyInput) => bridge.savePolicy(input))
+  handle(EXTERNAL_CALL_CHANNELS.deletePolicy, (_event, id: string) => bridge.deletePolicy(id))
+  handle(EXTERNAL_CALL_CHANNELS.listUsage, (_event, query?: ExternalCallQuery) => bridge.listUsage(query))
+  handle(EXTERNAL_CALL_CHANNELS.listAudits, (_event, query?: ExternalCallQuery) => bridge.listAudits(query))
 }
 
 function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
@@ -1331,6 +1389,15 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.getRoomContext, (_event, roomId: string) => bridge.getRoomContext(roomId))
   handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
   handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
+  handle(KNOWLEDGE_CHANNELS.getRoomGraph, (_event, visibility) => bridge.getRoomGraph(visibility))
+  handle(KNOWLEDGE_CHANNELS.getRoomRelations, (_event, roomId, visibility) => bridge.getRoomRelations(roomId, visibility))
+  handle(KNOWLEDGE_CHANNELS.getRoomRelationEvidence, (_event, relationId, offset, limit) =>
+    bridge.getRoomRelationEvidence(relationId, offset, limit))
+  handle(KNOWLEDGE_CHANNELS.createRoomRelation, (_event, input) => bridge.createRoomRelation(input))
+  handle(KNOWLEDGE_CHANNELS.updateRoomRelation, (_event, relationId, input) =>
+    bridge.updateRoomRelation(relationId, input))
+  handle(KNOWLEDGE_CHANNELS.removeManualRoomRelation, (_event, relationId) =>
+    bridge.removeManualRoomRelation(relationId))
   handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
   handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
   handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
@@ -1338,8 +1405,10 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed') =>
     bridge.listEntities(status))
   handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
-  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string) => bridge.promoteEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string, options?: { forceNew?: boolean }) => bridge.promoteEntity(entityId, options))
+  handle(KNOWLEDGE_CHANNELS.promoteEntities, (_event, entityIds: string[]) => bridge.promoteEntities(entityIds))
   handle(KNOWLEDGE_CHANNELS.suppressEntity, (_event, entityId: string) => bridge.suppressEntity(entityId))
+  handle(KNOWLEDGE_CHANNELS.suppressEntities, (_event, entityIds: string[]) => bridge.suppressEntities(entityIds))
   handle(KNOWLEDGE_CHANNELS.restoreSuppressedEntity, (_event, entityId: string) => bridge.restoreSuppressedEntity(entityId))
   handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
     bridge.mergeEntity(fromId, targetId))
@@ -1621,6 +1690,13 @@ function registerAccountHandlers(client: SaasClient, onAccountChanged?: (account
   })
   handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
   handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
+    const connection = gatewaySupervisor?.isRunning() ? gatewaySupervisor.getConnection() : null
+    if (connection) {
+      await fetch(`${connection.baseUrl}/v1/security/secrets/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${connection.token}` },
+      }).catch(() => undefined)
+    }
     const account = await syncAccountMonitoring(client.logout())
     onAccountChanged?.(account)
     return account
@@ -1894,6 +1970,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
+  const gatewaySecretStoreKey = await loadOrCreateGatewaySecretKey(
+    join(dataDirectory, 'security', 'gateway-master-key.json'),
+  )
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error) => {
@@ -1993,6 +2072,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
         // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
         NXCORE_AGENT_RUNTIME: 'pi',
+        ...(gatewaySecretStoreKey ? { NXCORE_SECRET_STORE_KEY: gatewaySecretStoreKey } : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
@@ -2072,6 +2152,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
+    registerExternalCallHandlers(new ExternalCallsGatewayBridge(gatewaySupervisor))
     const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'))
     await highRiskImports.initialize()
     const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)

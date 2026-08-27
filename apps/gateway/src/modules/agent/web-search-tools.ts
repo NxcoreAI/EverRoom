@@ -1,12 +1,19 @@
 import type { PiAgentRuntimeTool, PiAgentRuntimeToolResult } from "@nxcore/agent-runtime-pi";
 import { invokeAgent } from "./invoke.js";
 import { BUILTIN_AGENT_IDS, type AgentResolver } from "./resolver.js";
+import {
+  ExternalCallBudgetExceededError,
+  type ExternalCallBudgetService,
+} from "../external-calls/service.js";
 
 /**
  * 百炼（DashScope）联网搜索工具：走 compatible-mode chat completions，
  * 开启 enable_search 让模型基于实时检索结果回答。
  */
-export function createWebSearchPiTools(resolver: AgentResolver): PiAgentRuntimeTool[] {
+export function createWebSearchPiTools(
+  resolver: AgentResolver,
+  budget?: ExternalCallBudgetService,
+): PiAgentRuntimeTool[] {
   const tool: PiAgentRuntimeTool = {
     name: "web_search",
     label: "联网搜索",
@@ -31,15 +38,30 @@ export function createWebSearchPiTools(resolver: AgentResolver): PiAgentRuntimeT
       const query = typeof params.query === "string" ? params.query.trim() : "";
       if (!query) throw new Error("web_search 参数 query 不能为空");
       if (signal?.aborted) throw new Error("web_search 已取消");
-      const content = await invokeAgent(resolver, BUILTIN_AGENT_IDS.webSearch, query, {
+      const invoke = () => invokeAgent(resolver, BUILTIN_AGENT_IDS.webSearch, query, {
         pageLabel: "联网搜索",
         timeoutMs: 60_000,
       });
+      const content = budget
+        ? await budget.execute("WEB_SEARCH", "web_search", {
+            source: "agent",
+            runId: _input.runId,
+            correlationId: _input.sessionId,
+          }, async (markDispatched) => {
+            markDispatched();
+            return invoke();
+          })
+        : await invoke();
       return {
         content,
         details: { query, agentId: BUILTIN_AGENT_IDS.webSearch },
       };
     },
+    classifyFailure: (error) => error instanceof ExternalCallBudgetExceededError ? {
+      category: "external_call_budget_exceeded",
+      recoverable: true,
+      instruction: "Skip web_search and continue with another available path.",
+    } : null,
   };
   return [tool];
 }

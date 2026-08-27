@@ -1,4 +1,5 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -9,6 +10,7 @@ import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
 
 const temporaryDirectories: string[] = [];
+if (!process.env.NXCORE_SECRET_STORE_KEY) process.env.NXCORE_SECRET_STORE_KEY = randomBytes(32).toString("base64url");
 
 async function testConfig(): Promise<GatewayConfig> {
   const dataDir = await mkdtemp(join(tmpdir(), "nxcore-gateway-test-"));
@@ -66,6 +68,37 @@ describe("gateway server", () => {
     expect(unauthorized.statusCode).toBe(401);
     expect(authorized.statusCode).toBe(200);
   }, 10_000);
+
+  it("clears managed search secrets without deleting local MCP credentials", async () => {
+    const previousKey = process.env.NXCORE_SECRET_STORE_KEY;
+    process.env.NXCORE_SECRET_STORE_KEY = randomBytes(32).toString("base64url");
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const mcp = await app.inject({
+      method: "PUT",
+      url: "/v1/agent/mcp/servers",
+      headers,
+      payload: { servers: { local: { command: "npx", env: { TOKEN: { operation: "set", value: "local-mcp-51" } } } } },
+    });
+    expect(mcp.statusCode).toBe(200);
+    const runtime = await app.inject({
+      method: "PUT",
+      url: "/v1/runtime-config/saas",
+      headers,
+      payload: { schemaVersion: 1, webSearch: { provider: "openai-compatible", api: "openai-completions", model: "search", baseUrl: "https://search.test/v1", apiKey: "saas-search-51" } },
+    });
+    expect(runtime.statusCode).toBe(200);
+    const logout = await app.inject({ method: "POST", url: "/v1/security/secrets/logout", headers });
+    expect(logout.statusCode).toBe(200);
+    const mcpAfter = await app.inject({ method: "GET", url: "/v1/agent/mcp/servers", headers });
+    expect(mcpAfter.json().servers.local.env).toEqual({ TOKEN: { configured: true } });
+    const runtimeAfter = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
+    expect(runtimeAfter.json().webSearchCredential).toMatchObject({ configured: false, source: "none" });
+    await app.close();
+    if (previousKey === undefined) delete process.env.NXCORE_SECRET_STORE_KEY;
+    else process.env.NXCORE_SECRET_STORE_KEY = previousKey;
+  });
 
   it("keeps memory routes enabled without a Pi runtime", async () => {
     const config = await testConfig();
@@ -394,6 +427,84 @@ describe("gateway server", () => {
       deletedRooms: [{ id: "room-deleted", title: "回收站 Room", kind: "主题" }],
       updatedAt: expect.any(String),
     });
+  });
+
+  it("requires duplicate review before creation and runs a confirmed irreversible merge", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    await app.inject({
+      method: "PUT",
+      url: "/v1/context-rooms/snapshot",
+      headers,
+      payload: {
+        rooms: [{ id: "room-existing", title: "校园生活", kind: "主题", data: { id: "room-existing", title: "校园生活" } }],
+        deletedRooms: [],
+      },
+    });
+
+    const review = await app.inject({
+      method: "POST",
+      url: "/v1/context-rooms/duplicate-check",
+      headers,
+      payload: { title: "校园生活", description: "校园资料" },
+    });
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/v1/context-rooms",
+      headers,
+      payload: { title: "校园生活", description: "校园资料" },
+    });
+    const reviewBody = review.json<{ overrideToken: string; candidates: unknown[] }>();
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/context-rooms",
+      headers,
+      payload: { title: "校园生活", description: "校园资料", duplicateOverrideToken: reviewBody.overrideToken },
+    });
+    const createdRoomId = created.json<{ room: { id: string } }>().room.id;
+    const preview = await app.inject({
+      method: "POST",
+      url: "/v1/context-rooms/merge-preview",
+      headers,
+      payload: { sourceRoomId: createdRoomId, targetRoomId: "room-existing" },
+    });
+    const previewHash = preview.json<{ previewHash: string }>().previewHash;
+    const started = await app.inject({
+      method: "POST",
+      url: "/v1/context-rooms/merge-operations",
+      headers,
+      payload: {
+        sourceRoomId: createdRoomId,
+        targetRoomId: "room-existing",
+        previewHash,
+        idempotencyKey: "server-merge-test",
+      },
+    });
+    const operationId = started.json<{ id: string }>().id;
+    let operation: { status: string; commitReached: boolean } = { status: "queued", commitReached: false };
+    for (let attempt = 0; attempt < 100 && operation.status !== "completed"; attempt += 1) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+      operation = (await app.inject({
+        method: "GET",
+        url: `/v1/context-rooms/merge-operations/${operationId}`,
+        headers,
+      })).json<typeof operation>();
+    }
+    const snapshot = (await app.inject({ method: "GET", url: "/v1/context-rooms", headers })).json<{
+      rooms: Array<{ id: string }>;
+    }>();
+    await app.close();
+
+    expect(review.statusCode).toBe(200);
+    expect(reviewBody.candidates).toHaveLength(1);
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json()).toMatchObject({ error: "duplicate_review_required" });
+    expect(created.statusCode).toBe(200);
+    expect(preview.statusCode).toBe(200);
+    expect(started.statusCode).toBe(200);
+    expect(operation).toMatchObject({ status: "completed", commitReached: true });
+    expect(snapshot.rooms.map((room) => room.id)).toEqual(["room-existing"]);
   });
 
   it("supports the complete authenticated document CRUD lifecycle", async () => {

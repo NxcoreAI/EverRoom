@@ -4,7 +4,7 @@ import { PiAgentRuntime, type PiAgentRuntimeTool } from "@nxcore/agent-runtime-p
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
-import { createDocumentPiTools } from "../documents/pi-tools.js";
+import { createDocumentPiToolsWithRoomBindings } from "../documents/pi-tools.js";
 import { createOpenConnectorPiTools } from "./open-connector-tools.js";
 import { createConnectorDataPiTools } from "../connectors/pi-tools.js";
 import { createNangoPiTools } from "../connectors/nango-agent-tools.js";
@@ -17,10 +17,12 @@ import { createWebSearchPiTools } from "./web-search-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
 import { loadBuiltinAgentBundle } from "./builtin-bundles.js";
+import type { ExternalCallBudgetService } from "../external-calls/service.js";
 
 export interface AgentRuntimeIntegrationOptions {
   tools?: readonly PiAgentRuntimeTool[];
   agentResolver?: AgentResolver;
+  externalCalls?: ExternalCallBudgetService;
   /** 会话级 Room wiki 解析（plan §6.1 resolveKnowledge），knowledge 模块注入。 */
   resolveKnowledgeWikiIds?: (input: {
     runId: string;
@@ -91,9 +93,14 @@ export function createAgentRuntime(
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
   // 降级启动：AI 未配置时返回占位 runtime（run 立即 runtime_config_not_ready），
   // 等 runtime config 保存后 AgentResolver.reload 换成真实 Pi runtime。
-  if (!isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
+  if (!config.pi || !isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
+  const routedRoomByRun = new Map<string, string>();
   return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi!),
+    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi),
+    bashSandbox: {
+      allowedRoots: [agentDirectories(config, BUILTIN_AGENT_IDS.primary).workingDirectory],
+      timeoutMs: 30_000,
+    },
     runtimeRole: "user-facing",
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
@@ -101,20 +108,35 @@ export function createAgentRuntime(
   }, {
     tools: [
       ...(knowledge?.tools ?? []),
-      ...createDocumentPiTools(mcpHost),
+      ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
       ...(config.cliConnectorAgentMode === "local" && connectorSync
         ? createConnectorDataPiTools(connectorSync, config.cliConnectorSyncOwnerId ?? "local-user")
-        : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector) : []),
-      ...(nango ? createNangoPiTools(nango.manager, nango.executor) : []),
+        : config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
+      ...(nango ? createNangoPiTools(nango.manager, nango.executor, knowledge?.externalCalls) : []),
       ...(config.webSearch && knowledge?.agentResolver
-        ? createWebSearchPiTools(knowledge.agentResolver)
+        ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
         : []),
     ],
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),
     ...(knowledge?.resolveKnowledgeWikiIds
       ? { resolveKnowledgeWikiIds: knowledge.resolveKnowledgeWikiIds }
       : {}),
-    onRunFinished: (input, outcome) => mcpHost.finishAgentRun(input.sessionId, outcome, input.runId),
+    onRunFinished: async (input, outcome) => {
+      routedRoomByRun.delete(input.runId);
+      await mcpHost.finishAgentRun(input.sessionId, outcome, input.runId);
+    },
+    ...(knowledge?.externalCalls
+      ? {
+          executeMcpCall: (input, tool, invoke) => knowledge.externalCalls!.execute("MCP", tool, {
+            source: "agent",
+            runId: input.runId,
+            correlationId: input.sessionId,
+          }, async (markDispatched) => {
+            markDispatched();
+            return invoke();
+          }),
+        }
+      : {}),
   });
 }
 
@@ -153,20 +175,6 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
     systemPrompt: bundle.systemPrompt,
-  });
-}
-
-export function createContextRoomAgentRuntime(config: GatewayConfig): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi) || !config.backgroundPi?.memory) return null;
-  const { knowledge: _knowledge, mcp: _mcp, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...pi,
-    includeBashTool: false,
-    builtinTools: [],
-    maxToolCallsPerRun: 8,
-    sessionsDir: join(pi.sessionsDir, "context-room-create"),
-    workingDirectory: join(pi.workingDirectory, "context-room-create"),
-    agentDirectory: join(pi.agentDirectory, "context-room-create"),
   });
 }
 
@@ -294,6 +302,7 @@ export function createAgentResolver(config: GatewayConfig): AgentResolver {
         ...webSearch,
         systemPrompt: bundle.systemPrompt,
         requestOptions: { enable_search: true },
+        includeProviderErrorBody: false,
         ...directories,
       });
     });
@@ -321,6 +330,7 @@ export function registerWebSearchAgentIfMissing(resolver: AgentResolver, config:
       ...webSearch,
       systemPrompt: bundle.systemPrompt,
       requestOptions: { enable_search: true },
+      includeProviderErrorBody: false,
       ...directories,
     });
   });

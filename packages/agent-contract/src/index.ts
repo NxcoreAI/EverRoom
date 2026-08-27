@@ -68,6 +68,8 @@ export interface AgentSession {
 export interface AgentRun {
   id: string;
   sessionId: string;
+  /** Explicit per-run Room attribution; sessions can span multiple Rooms. */
+  roomId?: string | null;
   status: AgentRunStatus;
   prompt: string;
   lastEventSeq: number;
@@ -279,6 +281,8 @@ export interface AgentRoomReference {
 
 export interface ContextRoomSnapshotItem extends AgentRoomReference {
   data: Record<string, unknown>;
+  lifecycle?: "active" | "merging" | "merged";
+  mergedIntoRoomId?: string | null;
 }
 
 export interface ContextRoomSnapshot {
@@ -295,11 +299,120 @@ export interface SaveContextRoomSnapshotInput {
 export interface CreateContextRoomInput {
   title: string;
   description: string;
+  duplicateOverrideToken?: string;
 }
 
 export interface CreateContextRoomResult {
   room: ContextRoomSnapshotItem;
   created: boolean;
+}
+
+export type RoomAppliedEntityStatus =
+  | "weak"
+  | "ready"
+  | "promoting"
+  | "room"
+  | "archived"
+  | "suppressed";
+
+/** Room 关联的应用实体：room_entity_mentions 按实体聚合 + entities 实时状态。 */
+export interface RoomAppliedEntity {
+  entityId: string;
+  name: string;
+  kind: string;
+  status: RoomAppliedEntityStatus;
+  summary: string | null;
+  aliases: string[];
+  /** 实体晋升后回填的 rooms.id（未晋升为 null）。 */
+  linkedRoomId: string | null;
+  /** Room 内提及该实体的来源数（sourceKind + sourceId 去重）。 */
+  mentionCount: number;
+  sourceKinds: string[];
+  /** Room 内最大显著度（0-1）。 */
+  salience: number;
+  lastMentionAt: string | null;
+  evidence: string | null;
+}
+
+export interface RoomAppliedEntitiesResult {
+  roomId: string;
+  entities: RoomAppliedEntity[];
+  updatedAt: string;
+}
+
+export type RoomDuplicateConfidence = "high" | "medium" | "related" | "distinct" | "pending";
+export type RoomDuplicateCandidateStatus = "open" | "related" | "distinct" | "merged";
+
+export interface RoomDuplicateCandidate {
+  id: string;
+  roomAId: string;
+  roomBId: string;
+  roomA: { id: string; title: string; kind?: string };
+  roomB: { id: string; title: string; kind?: string };
+  nameScore: number;
+  centroidScore: number;
+  contentOverlap: number;
+  entityOverlap: number;
+  duplicateScore: number;
+  confidence: RoomDuplicateConfidence;
+  reasons: string[];
+  status: RoomDuplicateCandidateStatus;
+  updatedAt: string;
+}
+
+export interface RoomDuplicateCheckInput {
+  title: string;
+  description?: string;
+  kind?: string;
+  excludeRoomId?: string;
+}
+
+export interface RoomDuplicateCheckResult {
+  candidates: RoomDuplicateCandidate[];
+  overrideToken: string | null;
+  expiresAt: string | null;
+}
+
+export interface RoomMergeImpactCounts {
+  documents: number;
+  externalSources: number;
+  wikiFiles: number;
+  localMemories: number;
+  attributedMemories: number;
+  agentRuns: number;
+  sessionLinks: number;
+  entities: number;
+  relations: number;
+  unassignedRuns: number;
+  crossRoomSessions: number;
+}
+
+export interface RoomMergePreview {
+  sourceRoom: ContextRoomSnapshotItem;
+  targetRoom: ContextRoomSnapshotItem;
+  recommendedTargetRoomId: string;
+  impact: RoomMergeImpactCounts;
+  conflicts: string[];
+  excluded: string[];
+  previewHash: string;
+  generatedAt: string;
+}
+
+export type RoomMergeStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export interface RoomMergeOperation {
+  id: string;
+  sourceRoomId: string;
+  targetRoomId: string;
+  status: RoomMergeStatus;
+  stage: string;
+  progress: number;
+  commitReached: boolean;
+  impact: RoomMergeImpactCounts;
+  error: string | null;
+  confirmedAt: string;
+  completedAt: string | null;
+  updatedAt: string;
 }
 
 export interface StartAgentRunInput {
@@ -628,11 +741,16 @@ export interface DocumentOperationCommandResult {
 
 export interface StartDocumentOperationInput {
   capabilityId: string;
+  /**
+   * 操作溯源二选一：主 Agent 会话（sessionId + runId）或 dispatch 子 Agent 调用（invocationId）。
+   * invocationId 变体由网关归一化为 sessionId = runId = invocationId 后落库。
+   */
   context: {
     roomId: string;
     documentId?: string;
-    sessionId: string;
-    runId: string;
+    sessionId?: string;
+    runId?: string;
+    invocationId?: string;
   };
   input: Record<string, unknown>;
 }

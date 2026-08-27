@@ -2,6 +2,7 @@ import { appendFile, mkdir, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { captureSentryLog } from '../monitoring/sentry'
+import { redactDesktopSecrets, redactDesktopText } from '../security/secret-redaction'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 type ConsoleLevel = LogLevel | 'log'
@@ -74,7 +75,7 @@ function formatValue(value: unknown, key: string): string {
   if (value === null || value === undefined) return String(value)
   if (value instanceof Error) return `${value.name}: ${value.message}`
   if (typeof value === 'string') {
-    const cleaned = value
+    const cleaned = redactDesktopText(value)
       .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
       .replace(/([?&](?:token|signature|credential|secret|password)=)[^&#\s]+/gi, '$1[REDACTED]')
       .replace(/\s+/g, ' ')
@@ -112,6 +113,7 @@ function appendLogFile(
 ): void {
   const directory = logsDirectory
   if (!directory) return
+  event = redactDesktopSecrets(event)
   const entry = {
     time: now.toISOString(),
     level,
@@ -220,6 +222,7 @@ function writeDesktopLog(
   captureRemote: boolean,
   filePrefix = 'desktop',
 ): void {
+  event = redactDesktopSecrets(event)
   const now = new Date()
   const threshold = desktopLogThreshold(module)
   if (threshold === 'off' || LEVEL_ORDER[level] < LEVEL_ORDER[threshold]) return

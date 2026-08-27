@@ -28,6 +28,44 @@ function readMigrationJournal(migrationsDir: string): MigrationJournalEntry[] {
   }
 }
 
+function recordMigration(
+  sqlite: Database.Database,
+  migrationsDir: string,
+  entry: MigrationJournalEntry,
+): void {
+  if (!entry.tag || typeof entry.when !== "number") return;
+  if (sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(entry.when)) return;
+  const migrationSql = readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8");
+  sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+    .run(createHash("sha256").update(migrationSql).digest("hex"), entry.when);
+}
+
+function runAdditiveMigrationIdempotently(
+  sqlite: Database.Database,
+  migrationsDir: string,
+  tag: string,
+): void {
+  const migrationPath = join(migrationsDir, `${tag}.sql`);
+  if (!existsSync(migrationPath)) return;
+  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
+  ).get(type, name));
+  const hasColumn = (table: string, column: string) => hasObject("table", table) && new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+  ).has(column);
+
+  const sql = readFileSync(migrationPath, "utf8");
+  for (const statement of sql.split(/--> statement-breakpoint/g).map((item) => item.trim()).filter(Boolean)) {
+    const createTable = statement.match(/^CREATE TABLE(?: IF NOT EXISTS)? [`"]([^`"]+)[`"]/)?.[1];
+    if (createTable && hasObject("table", createTable)) continue;
+    const createIndex = statement.match(/^CREATE(?: UNIQUE)? INDEX(?: IF NOT EXISTS)? [`"]([^`"]+)[`"]/)?.[1];
+    if (createIndex && hasObject("index", createIndex)) continue;
+    const addColumn = statement.match(/^ALTER TABLE [`"]([^`"]+)[`"] ADD [`"]([^`"]+)[`"]+/);
+    if (addColumn && (!hasObject("table", addColumn[1]!) || hasColumn(addColumn[1]!, addColumn[2]!))) continue;
+    sqlite.exec(statement);
+  }
+}
+
 /**
  * The connector branch shipped migrations 0010-0012 with later timestamps than
  * the main branch's document migrations. On an upgraded install Drizzle would
@@ -177,6 +215,93 @@ function adoptPreReleaseConnectorMarkdownMigrations(
   })();
 }
 
+/** Reconcile databases created by feat/contextroom before its migration chain
+ * was rebased after main's 0026-0029 migrations. */
+function adoptPreMergeContextRoomMigrations(sqlite: Database.Database, migrationsDir: string): void {
+  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
+  ).get(type, name));
+  if (!hasObject("table", "__drizzle_migrations")) return;
+
+  const columnsOf = (table: string) => new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+  );
+  if (!hasObject("table", "entities") || !hasObject("table", "entity_doc_links")) return;
+  if (!["eligible_source_count", "trusted_source_count", "strong_source_count", "readiness_path", "scoring_version"]
+    .every((column) => columnsOf("entities").has(column))) return;
+  if (!["evidence_group_key", "role_weight", "source_weight", "quality_factor", "relevance_factor",
+    "effective_weight", "quality_level", "trusted", "strong", "score_reasons", "scoring_version"]
+    .every((column) => columnsOf("entity_doc_links").has(column))) return;
+
+  const requiredTables: Record<string, string[]> = {
+    room_source_memberships: [
+      "id", "room_id", "source_kind", "source_id", "source_version", "evidence_group_key",
+      "role", "effective_weight", "quality_level", "trusted", "scoring_version", "entity_indexed",
+    ],
+    room_entity_mentions: [
+      "id", "room_id", "entity_id", "source_kind", "source_id", "source_version",
+      "evidence_group_key", "salience", "relevance_factor", "quality_level", "trusted",
+    ],
+    room_relations: [
+      "id", "room_a_id", "room_b_id", "auto_score", "auto_type", "strength",
+      "shared_source_count", "shared_entity_count", "direct_mention_count", "scoring_version",
+      "pinned", "hidden", "manual_type", "manual_from_room_id", "manual_to_room_id",
+    ],
+  };
+  for (const [table, expectedColumns] of Object.entries(requiredTables)) {
+    if (!hasObject("table", table)) return;
+    if (!expectedColumns.every((column) => columnsOf(table).has(column))) return;
+  }
+  for (const index of [
+    "room_source_memberships_room_source_idx",
+    "room_source_memberships_source_idx",
+    "room_source_memberships_group_idx",
+    "room_source_memberships_room_idx",
+    "room_entity_mentions_room_entity_source_idx",
+    "room_entity_mentions_entity_idx",
+    "room_entity_mentions_room_idx",
+    "room_entity_mentions_source_idx",
+    "room_relations_pair_idx",
+    "room_relations_room_a_idx",
+    "room_relations_room_b_idx",
+    "room_relations_updated_idx",
+  ]) if (!hasObject("index", index)) return;
+
+  const journal = readMigrationJournal(migrationsDir);
+  const additiveMainTags = [
+    "0026_redundant_gertrude_yorkes",
+    "0027_low_mockingbird",
+    "0028_mighty_baron_strucker",
+  ];
+  sqlite.transaction(() => {
+    for (const tag of additiveMainTags) runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
+    for (const tag of [...additiveMainTags, "0029_long_ikaris", "0030_room_relations_and_scoring"]) {
+      const entry = journal.find((item) => item.tag === tag);
+      if (entry) recordMigration(sqlite, migrationsDir, entry);
+    }
+    const duplicateSchemaPresent = [
+      "room_duplicate_candidates",
+      "room_merge_operations",
+      "room_merge_items",
+      "room_memory_attributions",
+    ].every((table) => hasObject("table", table))
+      && ["lifecycle", "merged_into_room_id", "merged_at"].every((column) => columnsOf("context_rooms").has(column))
+      && ["lifecycle", "merged_into_room_id", "merged_at"].every((column) => columnsOf("rooms").has(column))
+      && columnsOf("agent_runs").has("room_id")
+      && [
+        "room_duplicate_candidates_pair_idx",
+        "room_duplicate_candidates_status_idx",
+        "room_merge_operations_idempotency_idx",
+        "room_merge_items_operation_resource_idx",
+        "room_memory_attributions_memory_idx",
+      ].every((index) => hasObject("index", index));
+    if (duplicateSchemaPresent) {
+      const entry = journal.find((item) => item.tag === "0031_room_duplicates");
+      if (entry) recordMigration(sqlite, migrationsDir, entry);
+    }
+  })();
+}
+
 /** Repair installs whose migration cursor advanced across the diary/perception
  * branch without applying its schema (a transient merge produced this state). */
 function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migrationsDir: string): void {
@@ -224,6 +349,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
 
   const sqlite = new Database(databasePath);
   sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("secure_delete = ON");
   sqlite.pragma("foreign_keys = ON");
   sqlite.pragma("busy_timeout = 5000");
   sqlite.pragma("synchronous = NORMAL");
@@ -231,6 +357,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   repairLegacyMigrationCursor(sqlite, migrationsDir);
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
+  adoptPreMergeContextRoomMigrations(sqlite, migrationsDir);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");

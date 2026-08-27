@@ -5,6 +5,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
   CreateContextRoomInput,
+  RoomDuplicateCheckInput,
+  RoomDuplicateCandidateStatus,
   SaveContextRoomSnapshotInput,
 } from '@nxcore/agent-contract'
 import type {
@@ -15,7 +17,7 @@ import type {
 } from '../shared/memory'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { DesktopRequestError, NxcoreDesktopApi } from '../shared/sources'
+import type { DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import {
@@ -228,6 +230,13 @@ const api: NxcoreDesktopApi = {
     listServers: () => invoke('mcp:servers:list'),
     saveServers: (servers) => invoke('mcp:servers:save', servers),
   },
+  externalCalls: {
+    listPolicies: (query) => invokeQuietly('external-calls:policies:list', query),
+    savePolicy: (input) => invoke('external-calls:policies:save', input),
+    deletePolicy: (id) => invoke('external-calls:policies:delete', id),
+    listUsage: (query) => invokeQuietly('external-calls:usage:list', query),
+    listAudits: (query) => invokeQuietly('external-calls:audits:list', query),
+  },
   screenCapture: {
     captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
     start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),
@@ -262,6 +271,25 @@ const api: NxcoreDesktopApi = {
     create: (input: CreateContextRoomInput) => invokeQuietly('context-rooms:create', input),
     syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
       invokeQuietly('context-rooms:sync-snapshot', input),
+    checkDuplicates: (input: RoomDuplicateCheckInput) => invokeQuietly('context-rooms:check-duplicates', input),
+    listDuplicateCandidates: (status?: RoomDuplicateCandidateStatus) =>
+      invokeQuietly('context-rooms:list-duplicate-candidates', status),
+    updateDuplicateCandidate: (id: string, status: 'related' | 'distinct') =>
+      invokeQuietly('context-rooms:update-duplicate-candidate', id, status),
+    previewMerge: (sourceRoomId: string, targetRoomId: string) =>
+      invokeQuietly('context-rooms:preview-merge', sourceRoomId, targetRoomId),
+    startMerge: (input) => invokeQuietly('context-rooms:start-merge', input),
+    getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
+    retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
+    cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),
+    dispatchSelectionRewrite: (input: RoomAgentSelectionRewriteInput) =>
+      invokeQuietly('context-rooms:dispatch-selection-rewrite', input),
+    getSubagentInvocation: (invocationId: string) =>
+      invokeQuietly('context-rooms:get-subagent-invocation', invocationId),
+    cancelSubagentInvocation: (invocationId: string) =>
+      invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
+    refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
+    roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
@@ -387,6 +415,7 @@ const api: NxcoreDesktopApi = {
     submitPendingIntent: (intentId, input) =>
       invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
+    resolveApproval: (approvalId, decision) => invoke('agent:resolve-approval', approvalId, decision),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),
     onEvent: (listener) => {
@@ -486,14 +515,23 @@ const api: NxcoreDesktopApi = {
     getRoomContext: (roomId) => invoke('knowledge:rooms:context', roomId),
     upsertRoom: (input) => invoke('knowledge:rooms:upsert', input),
     deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
+    getRoomGraph: (visibility) => invoke('knowledge:room-graph:get', visibility),
+    getRoomRelations: (roomId, visibility) => invoke('knowledge:room-relations:list', roomId, visibility),
+    getRoomRelationEvidence: (relationId, offset, limit) =>
+      invoke('knowledge:room-relations:evidence', relationId, offset, limit),
+    createRoomRelation: (input) => invoke('knowledge:room-relations:create', input),
+    updateRoomRelation: (relationId, input) => invoke('knowledge:room-relations:update', relationId, input),
+    removeManualRoomRelation: (relationId) => invoke('knowledge:room-relations:remove-manual', relationId),
     listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
     readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
     listWikis: () => invoke('knowledge:wikis:list'),
     getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),
   listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
     getEntity: (entityId: string) => invoke('knowledge:entities:get', entityId),
-  promoteEntity: (entityId: string) => invoke('knowledge:entities:promote', entityId),
+  promoteEntity: (entityId: string, options?: { forceNew?: boolean }) => invoke('knowledge:entities:promote', entityId, options),
+    promoteEntities: (entityIds: string[]) => invoke('knowledge:entities:promote-batch', entityIds),
     suppressEntity: (entityId: string) => invoke('knowledge:entities:suppress', entityId),
+    suppressEntities: (entityIds: string[]) => invoke('knowledge:entities:suppress-batch', entityIds),
     restoreSuppressedEntity: (entityId: string) => invoke('knowledge:entities:restore', entityId),
     mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
     listUnmatched: () => invoke('knowledge:unmatched:list'),

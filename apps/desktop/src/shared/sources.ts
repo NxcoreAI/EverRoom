@@ -24,8 +24,17 @@ import type {
   AgentSessionSnapshot,
   AgentSocketFrame,
   ContextRoomSnapshot,
+  ContextRoomSnapshotItem,
   CreateContextRoomInput,
   CreateContextRoomResult,
+  RoomDuplicateCandidate,
+  RoomDuplicateCandidateStatus,
+  RoomDuplicateCheckInput,
+  RoomDuplicateCheckResult,
+  RoomAppliedEntitiesResult,
+  RoomMergeOperation,
+  RoomMergePreview,
+  SubagentInvocation,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
   DocumentEventFrame,
@@ -85,7 +94,12 @@ import type {
   KnowledgeFileDto,
   KnowledgeFileUploadResult,
   KnowledgeRoomContextDto,
+  KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
+  KnowledgeRoomRelationDto,
+  KnowledgeRoomRelationVisibility,
+  CreateKnowledgeRoomRelationInput,
+  UpdateKnowledgeRoomRelationInput,
   KnowledgeUnmatchedItemDto,
   KnowledgeWikiDto,
   KnowledgeWikiGraphDto,
@@ -399,6 +413,10 @@ export interface RuntimeConfigSnapshot {
   availableSources: Array<'user' | 'saas' | 'default'>
   configVersion: number
   updatedAt: string
+  webSearchCredential?: {
+    configured: boolean
+    source: 'user' | 'saas' | 'env' | 'none'
+  }
   /** primary AI 四要素（provider/model/baseUrl/apiKey）是否已填写（占位空串视为未配置）。 */
   primaryConfigured?: boolean
 }
@@ -598,6 +616,18 @@ export interface NangoRuntimeStatus {
   message: string | null
 }
 
+/** Context Room 子 Agent（划词改写）dispatch 入参，见 gateway /v1/context-rooms/selection-rewrite。 */
+export interface RoomAgentSelectionRewriteInput {
+  roomId?: string
+  documentName?: string
+  selectedText: string
+  instruction?: string
+  contextBefore?: string
+  contextAfter?: string
+  blockType?: string
+  responseLanguage?: string
+}
+
 export interface NxcoreDesktopApi {
   platform: string
   pageMode: DesktopPageMode
@@ -684,7 +714,14 @@ export interface NxcoreDesktopApi {
   }
   mcp: {
     listServers(): Promise<McpServersSnapshot>
-    saveServers(servers: McpServersSnapshot['servers']): Promise<McpServersSnapshot>
+    saveServers(servers: import('./mcp').McpServersMutation): Promise<McpServersSnapshot>
+  }
+  externalCalls: {
+    listPolicies(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallPolicy>>
+    savePolicy(input: import('./external-calls').ExternalCallPolicyInput): Promise<import('./external-calls').ExternalCallPolicy>
+    deletePolicy(id: string): Promise<void>
+    listUsage(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallUsage>>
+    listAudits(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallAudit>>
   }
   screenCapture: {
     captureCurrentWindow(): Promise<WindowScreenshotResult>
@@ -723,6 +760,19 @@ export interface NxcoreDesktopApi {
     list(): Promise<ContextRoomSnapshot>
     create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
     syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
+    checkDuplicates(input: RoomDuplicateCheckInput): Promise<RoomDuplicateCheckResult>
+    listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }>
+    updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate>
+    previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview>
+    startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string }): Promise<RoomMergeOperation>
+    getMergeOperation(id: string): Promise<RoomMergeOperation>
+    retryMerge(id: string): Promise<RoomMergeOperation>
+    cancelMerge(id: string): Promise<RoomMergeOperation>
+    dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>
+    getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
+    cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
+    refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
+    roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
   }
   account: {
     status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>
@@ -825,6 +875,7 @@ export interface NxcoreDesktopApi {
       input: SubmitPendingAgentIntentInput,
     ): Promise<{ intent: PendingAgentIntent; run: AgentRun }>
     cancelRun(runId: string): Promise<AgentRun>
+    resolveApproval(approvalId: string, decision: 'approved' | 'approved_session' | 'denied'): Promise<{ approvalId: string; decision: string }>
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
@@ -896,6 +947,15 @@ export interface NxcoreDesktopApi {
     getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto>
     upsertRoom(input: { id: string; title: string; kind?: string }): Promise<KnowledgeRoomDto>
     deleteRoom(roomId: string): Promise<void>
+    getRoomGraph(visibility?: KnowledgeRoomRelationVisibility): Promise<KnowledgeRoomGraphDto>
+    getRoomRelations(roomId: string, visibility?: KnowledgeRoomRelationVisibility): Promise<KnowledgeRoomGraphDto>
+    getRoomRelationEvidence(relationId: string, offset?: number, limit?: number): Promise<{
+      items: import('./knowledge').KnowledgeRoomRelationReasonDto[]
+      total: number
+    }>
+    createRoomRelation(input: CreateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
+    updateRoomRelation(relationId: string, input: UpdateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
+    removeManualRoomRelation(relationId: string): Promise<{ relation: KnowledgeRoomRelationDto | null }>
     listWikiPages(roomId: string): Promise<{ status: string; items: KnowledgeWikiPageDto[]; pageCount: number | null }>
     readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }>
     /** 全部 Room 的 wiki 映射（Wiki 应用清单）。 */
@@ -912,8 +972,10 @@ export interface NxcoreDesktopApi {
     listEntities(status: KnowledgeEntityStatus): Promise<{ items: KnowledgeEntityDto[] }>
     getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
     /** 用户确认创建（推荐态实体走完整晋升流程）。 */
-    promoteEntity(entityId: string): Promise<{ queued: boolean; jobId: string }>
+    promoteEntity(entityId: string, options?: { forceNew?: boolean }): Promise<{ queued: boolean; jobId: string }>
+    promoteEntities(entityIds: string[]): Promise<{ items: import('./knowledge').KnowledgeBatchPromoteResultDto[] }>
     suppressEntity(entityId: string): Promise<{ ok: boolean }>
+    suppressEntities(entityIds: string[]): Promise<{ items: import('./knowledge').KnowledgeBatchSuppressResultDto[] }>
     restoreSuppressedEntity(entityId: string): Promise<{ ok: boolean }>
     /** 手动合并：from 并入 target。 */
     mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>

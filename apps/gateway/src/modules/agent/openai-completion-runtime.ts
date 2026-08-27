@@ -22,6 +22,7 @@ export interface OpenAiCompletionAgentConfig {
   maxTokens?: number;
   timeoutMs?: number;
   requestOptions?: Record<string, unknown>;
+  includeProviderErrorBody?: boolean;
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
@@ -114,8 +115,10 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
         ]),
       });
       if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(`${this.id} provider HTTP ${response.status}: ${detail.slice(0, 400)}`);
+        const detail = this.config.includeProviderErrorBody === false
+          ? ""
+          : await response.text().catch(() => "");
+        throw new Error(`${this.id} provider HTTP ${response.status}${detail ? `: ${detail.slice(0, 400)}` : ""}`);
       }
       const payload = await response.json() as {
         choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;

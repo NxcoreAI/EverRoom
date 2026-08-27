@@ -11,6 +11,85 @@ export interface KnowledgeRoomDto {
   updatedAt: string
 }
 
+export type KnowledgeRoomRelationVisibility = 'active' | 'hidden' | 'all'
+export type KnowledgeRoomRelationStrength = 'weak' | 'medium' | 'strong'
+export type KnowledgeRoomRelationManualType =
+  | 'related'
+  | 'depends_on'
+  | 'part_of'
+  | 'supports'
+  | 'blocks'
+  | 'owns'
+  | 'custom'
+
+export interface KnowledgeRoomRelationReasonDto {
+  kind: 'shared_source' | 'direct_mention' | 'shared_entity'
+  contribution: number
+  key: string
+  label: string
+  sourceKind?: string
+  sourceId?: string
+  entityId?: string
+  evidence?: string | null
+}
+
+export interface KnowledgeRoomRelationDto {
+  id: string
+  sourceRoomId: string
+  targetRoomId: string
+  directed: boolean
+  type: 'shared_evidence' | 'shared_entity' | 'mixed' | KnowledgeRoomRelationManualType
+  origin: 'auto' | 'manual' | 'hybrid'
+  score: number
+  strength: KnowledgeRoomRelationStrength
+  sharedSourceCount: number
+  sharedEntityCount: number
+  directMentionCount: number
+  pinned: boolean
+  hidden: boolean
+  label: string | null
+  note: string | null
+  topReasons: KnowledgeRoomRelationReasonDto[]
+  updatedAt: string
+}
+
+export interface KnowledgeRoomGraphDto {
+  revision: number
+  generatedAt: string
+  indexing: {
+    status: 'ready' | 'building' | 'degraded'
+    pendingSources: number
+  }
+  nodes: Array<{
+    id: string
+    title: string
+    kind: string
+    origin: string
+    updatedAt: string
+  }>
+  edges: KnowledgeRoomRelationDto[]
+}
+
+export interface CreateKnowledgeRoomRelationInput {
+  fromRoomId: string
+  toRoomId: string
+  type: KnowledgeRoomRelationManualType
+  directed?: boolean
+  label?: string | null
+  note?: string | null
+}
+
+export interface UpdateKnowledgeRoomRelationInput {
+  type?: KnowledgeRoomRelationManualType
+  directed?: boolean
+  fromRoomId?: string
+  toRoomId?: string
+  label?: string | null
+  note?: string | null
+  pinned?: boolean
+  hidden?: boolean
+}
+
 export interface KnowledgeRoomContextDto {
   roomId: string
   generatedAt: string
@@ -100,11 +179,25 @@ export interface KnowledgeEntityDto {
   roomId: string | null
   evidenceScore: number
   sourceCount: number
+  eligibleSourceCount: number
+  trustedSourceCount: number
+  strongSourceCount: number
+  readinessPath: 'standard' | 'strong' | null
+  sourceKinds: string[]
+  excludedSourceCount: number
   promoteScore: number
   promoteSources: number
   firstEvidence: string | null
   lastLinkedAt: string | null
   updatedAt: string
+  existingRoomMatch: {
+    roomId: string
+    roomTitle: string
+    entityId: string
+    confidence: 'high' | 'medium'
+    score: number
+    reasons: string[]
+  } | null
   promotion: KnowledgePromotionProgressDto | null
 }
 
@@ -116,6 +209,17 @@ export interface KnowledgeEntityLinkDto {
   sourceVersion: number
   role: string
   salience: number
+  evidenceGroupKey: string
+  roleWeight: number
+  sourceWeight: number
+  qualityFactor: number
+  relevanceFactor: number
+  effectiveWeight: number
+  qualityLevel: string
+  trusted: boolean
+  strong: boolean
+  scoreReasons: string[]
+  scoringVersion: number
   evidence: string | null
   decidedBy: string
   sourceTitle: string | null
@@ -134,6 +238,10 @@ export interface KnowledgeEntityDetailDto {
     roomId: string | null
     evidenceScore: number
     sourceCount: number
+    eligibleSourceCount: number
+    trustedSourceCount: number
+    strongSourceCount: number
+    readinessPath: 'standard' | 'strong' | null
     mergedFrom: string[]
     lastLinkedAt: string | null
     createdAt: string
@@ -141,6 +249,19 @@ export interface KnowledgeEntityDetailDto {
   }
   room: { id: string; title: string; kind: string } | null
   links: KnowledgeEntityLinkDto[]
+}
+
+export interface KnowledgeBatchPromoteResultDto {
+  entityId: string
+  status: 'queued' | 'already_queued' | 'rejected'
+  jobId: string | null
+  error: string | null
+}
+
+export interface KnowledgeBatchSuppressResultDto {
+  entityId: string
+  status: 'suppressed' | 'already_suppressed' | 'rejected'
+  error: string | null
 }
 
 /** 未识别栏条目（抽取空/失败的资料，等待人工挂载）。 */

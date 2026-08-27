@@ -48,13 +48,14 @@ export function createPlugin(
   const begin: DocumentCapabilityTool = {
     name: "context_room_write_begin",
     title: "开始创建 Room 文档",
-    description: "仅当用户已经明确要求在工作区创建、保存或写入文档且 Room 已确认后调用。若句子的创建对象是 Room、Context Room 或房间，不得调用本工具；即使用途说明中出现“文档/文件/项目”，也应调用 context_room_create。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。调用前根据上下文确定文档类型、目标读者、期望结果和格式约束，明确准备写入正文的核心内容、重点或结论，形成连贯提纲，并拟定能够准确概括正文的具体标题；上下文足够时不要机械追问。",
+    description: "仅当用户已经明确要求在工作区创建、保存或写入文档时调用。当前视口已绑定 Room 时省略 roomId；未绑定时，必须先根据文档标题、主题、拟写内容与可用 Room 的标题、类型、背景、目标和状态判断，只有存在明确唯一匹配时才填写该 Room 的 ID。无法可靠确定唯一 Room 时不得调用本工具，应调用 context_room_list 并提供最可能相关的 candidateRoomIds，等待用户选择。若句子的创建对象是 Room、Context Room 或房间，不得调用本工具；即使用途说明中出现“文档/文件/项目”，也应调用 context_room_create。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。调用前根据上下文确定文档类型、目标读者、期望结果和格式约束，明确准备写入正文的核心内容、重点或结论，形成连贯提纲，并拟定能够准确概括正文的具体标题；上下文足够时不要机械追问。",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
         mode: { type: "string", enum: ["create"] },
         title: { type: "string", minLength: 1, maxLength: 120 },
         format: { type: "string", enum: ["markdown"] },
+        roomId: { type: "string", minLength: 1, maxLength: 128 },
       },
       required: ["mode", "title", "format"],
     },
@@ -311,6 +312,7 @@ export function createPlugin(
     manifest: manifest("document.create", "mutation", "streaming_commit", "streaming-document", true, false),
     promptGuidelines: [
       "只在用户明确要求创建、保存或写入工作区文档时使用创建工具。",
+      "当前视口没有绑定 Room 时，先使用文档标题、主题和拟写内容，对照可用 Room 的标题、类型、背景、目标、状态及内容摘要判断归属。存在明确唯一匹配时，在 context_room_write_begin.roomId 中填写其 ID 并直接创建；无法可靠确定唯一目标时，调用 context_room_list，仅提交最可能相关的 2 至 5 个 candidateRoomIds，然后停止创建并等待用户选择。不得仅凭列表顺序、最近使用或宽泛词语猜测 Room。",
       "若被创建的对象是 Room、Context Room 或房间，不得使用文档创建工具；用途从句中出现文档、文件或项目不代表创建文档。“创建一个管理项目文档的 Context Room”应调用 context_room_create，“在 Context Room 里创建一份项目文档”才使用文档创建工具。",
       "写作前根据已有上下文确定文档类型、目标读者、期望结果与约束，并在内部形成连贯提纲；上下文足够时直接写，不要为了流程机械追问。",
       "文档标题与正文严格分离：context_room_write_begin.title 是唯一页面标题，并由界面以 H1 展示；后续 context_room_write_append 只能生成正文，不得再次写出标题、同义标题或任何 # 一级标题。正文主章节从 ## 开始，子章节从 ### 开始；编号章节必须保持对应层级，例如 2. 使用 ##、2.1 使用 ###。",

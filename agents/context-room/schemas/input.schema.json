@@ -1,0 +1,79 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["room-enrich", "brief-refresh", "selection-rewrite", "material-analysis"],
+      "description": "The room task to execute."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "Room title, required for room-enrich."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "Room description, required for room-enrich."
+    },
+    "roomId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Target room id, required for brief-refresh and material-analysis."
+    },
+    "roomTitle": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Optional room title for context framing."
+    },
+    "documentName": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Name of the document being edited, for selection-rewrite provenance."
+    },
+    "currentBrief": {
+      "type": "object",
+      "description": "Current room brief for brief-refresh; user-edited fields are authoritative."
+    },
+    "selectedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "description": "The selected fragment to rewrite, required for selection-rewrite."
+    },
+    "contextBefore": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Document text before the selection, style context only."
+    },
+    "contextAfter": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Document text after the selection, style context only."
+    },
+    "instruction": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Rewrite instruction for selection-rewrite, or analysis focus for material-analysis."
+    },
+    "blockType": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Markdown block type of the selection, e.g. heading, bulletList, codeBlock."
+    },
+    "formatContext": {
+      "type": "object",
+      "description": "Editor format context of the selection (marks, list nesting, code language)."
+    },
+    "responseLanguage": {
+      "type": "string",
+      "maxLength": 35,
+      "description": "BCP-47 language tag for natural-language output."
+    }
+  },
+  "required": ["task"],
+  "additionalProperties": false
+}

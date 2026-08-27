@@ -9,6 +9,7 @@ import {
 } from 'react'
 
 import type { ContextRoomKind, ContextRoomRecord } from '../types'
+import type { KnowledgeRoomRelationDto } from '../../../../../../shared/knowledge'
 import {
   PixiForceGraphCanvas,
   type PixiForceGraphCanvasHandle,
@@ -16,9 +17,14 @@ import {
 } from '../graph/PixiForceGraphCanvas'
 import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
 import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+import {
+  roomGraphLayoutDimensions,
+  roomGraphLayoutOptions,
+  roomRelationTypeColor,
+} from '../graph/roomGraphVisuals'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import { uiText } from '../adapters'
-import { createRoomGraphData } from './roomGraphModel'
+import { relationTypeLabel } from './RoomRelationControls'
 
 export interface RoomGraphCanvasHandle {
   fitView(): Promise<void>
@@ -27,8 +33,11 @@ export interface RoomGraphCanvasHandle {
 interface RoomGraphCanvasProps {
   compact?: boolean
   rooms: ContextRoomRecord[]
+  relations: KnowledgeRoomRelationDto[]
   selectedId: string | null
+  selectedRelationId?: string | null
   onOpenRoom: (roomId: string) => void
+  onSelectRelation?: (relationId: string) => void
   onSelectRoom: (roomId: string | null) => void
 }
 
@@ -41,71 +50,115 @@ const ROOM_KIND_COLORS: Record<ContextRoomKind, number> = {
   事件: 0xd06b35,
 }
 
-const ROOM_NODE_POSITIONS = [
-  [360, 220],
-  [140, 130],
-  [590, 120],
-  [180, 350],
-  [550, 355],
-  [360, 70],
-  [70, 255],
-  [655, 250],
-] as const
+const ROOM_KIND_GRAPH_ICONS: Record<ContextRoomKind, PixiForceGraphCanvasNode['icon']> = {
+  项目: 'target',
+  主题: 'book',
+  人物: 'user',
+  长期目标: 'flag',
+  议题: 'message',
+  事件: 'zap',
+}
 
 function RoomGraphCanvasComponent(
-  { compact = false, rooms, selectedId, onOpenRoom, onSelectRoom }: RoomGraphCanvasProps,
+  {
+    compact = false,
+    rooms,
+    relations,
+    selectedId,
+    selectedRelationId = null,
+    onOpenRoom,
+    onSelectRelation,
+    onSelectRoom,
+  }: RoomGraphCanvasProps,
   ref: React.ForwardedRef<RoomGraphCanvasHandle>,
 ) {
   const { t } = useLocale()
   const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
+  const fitTimerRef = useRef<number | null>(null)
   const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
-  const graph = useMemo(() => createRoomGraphData(rooms), [rooms])
   const nodeIndex = useMemo(
-    () => new Map(graph.nodes.map((node, index) => [node.id, index])),
-    [graph.nodes],
+    () => new Map(rooms.map((node, index) => [node.id, index])),
+    [rooms],
   )
-  const nodes = useMemo<PixiForceGraphCanvasNode[]>(() => graph.nodes.map((room) => ({
+  const nodes = useMemo<PixiForceGraphCanvasNode[]>(() => rooms.map((room) => ({
     color: ROOM_KIND_COLORS[room.kind],
     id: room.id,
+    icon: ROOM_KIND_GRAPH_ICONS[room.kind],
     label: room.title,
     radius: compact ? 22 : 29,
-  })), [compact, graph.nodes])
-  const edges = useMemo<PixiForceGraphEdge[]>(() => graph.edges.flatMap((edge) => {
-    const source = nodeIndex.get(edge.source)
-    const target = nodeIndex.get(edge.target)
+  })), [compact, rooms])
+  const edges = useMemo<PixiForceGraphEdge[]>(() => relations.flatMap((edge) => {
+    const source = nodeIndex.get(edge.sourceRoomId)
+    const target = nodeIndex.get(edge.targetRoomId)
+    const color = roomRelationTypeColor(edge.type)
     return source === undefined || target === undefined
       ? []
-      : [{ source, target }]
-  }), [graph.edges, nodeIndex])
+      : [{
+          id: edge.id,
+          source,
+          target,
+          label: edge.label?.trim() || relationTypeLabel(edge.type, t),
+          labelColor: color,
+          directed: edge.directed,
+          color,
+          width: edge.strength === 'strong' ? 3 : edge.strength === 'medium' ? 2.1 : 1.25,
+          alpha: edge.strength === 'strong' ? 0.92 : edge.strength === 'medium' ? 0.72 : 0.5,
+        }]
+  }), [relations, nodeIndex, t])
+  const layoutEdges = useMemo(() => relations.flatMap((edge) => (
+    nodeIndex.has(edge.sourceRoomId) && nodeIndex.has(edge.targetRoomId)
+      ? [{ source: edge.sourceRoomId, target: edge.targetRoomId }]
+      : []
+  )), [nodeIndex, relations])
+  const initialLayoutDimensions = useMemo(() => roomGraphLayoutDimensions({
+    compact,
+    nodeCount: nodes.length,
+    relationCount: relations.length,
+    screenHeight: 420,
+    screenWidth: 640,
+  }), [compact, nodes.length, relations.length])
   const fallbackPositions = useMemo(() => {
     const result = new Float32Array(nodes.length * 2)
     nodes.forEach((_, index) => {
-      result[index * 2] = ROOM_NODE_POSITIONS[index]?.[0]
-        ?? 360 + (index - ROOM_NODE_POSITIONS.length) * 70
-      result[index * 2 + 1] = ROOM_NODE_POSITIONS[index]?.[1] ?? 220
+      const angle = index * Math.PI * (3 - Math.sqrt(5))
+      const distance = Math.min(initialLayoutDimensions.width, initialLayoutDimensions.height)
+        * 0.38 * Math.sqrt(index / Math.max(1, nodes.length - 1))
+      result[index * 2] = initialLayoutDimensions.width / 2 + Math.cos(angle) * distance
+      result[index * 2 + 1] = initialLayoutDimensions.height / 2 + Math.sin(angle) * distance
     })
     return result
-  }, [nodes])
-  const resizeLayout = useCallback(
-    (width: number, height: number) => layout?.resize(width, height),
-    [layout],
-  )
+  }, [initialLayoutDimensions, nodes])
+  const resizeLayout = useCallback((width: number, height: number) => {
+    const dimensions = roomGraphLayoutDimensions({
+      compact,
+      nodeCount: nodes.length,
+      relationCount: relations.length,
+      screenHeight: height,
+      screenWidth: width,
+    })
+    layout?.resize(dimensions.width, dimensions.height)
+    if (dimensions.width > width || dimensions.height > height) {
+      if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
+      fitTimerRef.current = window.setTimeout(() => canvasRef.current?.fitView(), 500)
+    }
+  }, [compact, layout, nodes.length, relations.length])
   const readRevision = useCallback(() => layout?.revision() ?? 0, [layout])
 
   useEffect(() => {
     let next: ForceGraphLayoutController
     try {
       next = new ForceGraphLayoutController({
-        nodes: graph.nodes.map((room, index) => ({
+        nodes: rooms.map((room, index) => ({
           id: room.id,
           radius: compact ? 22 : 29,
           x: fallbackPositions[index * 2],
           y: fallbackPositions[index * 2 + 1],
         })),
-        edges: graph.edges,
-        options: compact
-          ? { collisionPadding: 8, linkDistance: 105, manyBodyStrength: -230 }
-          : undefined,
+        edges: layoutEdges,
+        options: {
+          ...roomGraphLayoutOptions({ compact, nodeCount: rooms.length, relationCount: relations.length }),
+          ...initialLayoutDimensions,
+        },
       })
     } catch (error) {
       console.error('Failed to initialize Room force graph layout', error)
@@ -117,7 +170,11 @@ function RoomGraphCanvasComponent(
       console.error('Room force graph worker failed', error)
     })
     return () => next.dispose()
-  }, [compact, fallbackPositions, graph.edges, graph.nodes])
+  }, [compact, fallbackPositions, initialLayoutDimensions, layoutEdges, relations.length, rooms])
+
+  useEffect(() => () => {
+    if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
+  }, [])
 
   useImperativeHandle(ref, () => ({
     async fitView() {
@@ -136,14 +193,16 @@ function RoomGraphCanvasComponent(
         positions={layout?.snapshot.positions ?? fallbackPositions}
         revision={layout ? readRevision : undefined}
         selectedId={selectedId}
+        selectedEdgeId={selectedRelationId}
         onResize={resizeLayout}
         onDragNode={(nodeId, x, y) => layout?.drag(nodeId, x, y)}
         onReleaseNode={(nodeId) => layout?.release(nodeId)}
         onOpenNode={onOpenRoom}
+        onSelectEdge={onSelectRelation}
         onSelectNode={onSelectRoom}
       />
       <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.roomNodes')}>
-        {graph.nodes.map((room) => (
+        {rooms.map((room) => (
           <button
             type="button"
             key={room.id}

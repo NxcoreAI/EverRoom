@@ -29,6 +29,14 @@ Gateway 业务模块不能自行选择模型端点或调用生成式模型 API�
 | `knowledge` | Knowledge 实体抽取、同一性判定与转正登记（按 Skill 分工） |
 | `web-search` | 搜索 Provider 推理与结果归纳 |
 
+当前随仓库发布的 dispatch-only 子 Agent：
+
+| Agent ID | 场景 | 调用方 |
+| --- | --- | --- |
+| `content-analyst` | 通用材料分析（事实/证据/矛盾/缺口） | 主 Agent `content_analysis` 工具 |
+| `multimodal-document-parser` | Office/PDF 解析与总结 | 主 Agent `document_analysis` 工具 |
+| `context-room` | Context Room 四项任务：Room 创建整理（room-enrich）、简报再生成（brief-refresh）、划词改写（selection-rewrite）、Room 资料分析（material-analysis） | Context Room 服务 internal_workflow 调度、主 Agent `room_analysis` 工具、桌面划词改写路由 |
+
 每个内建 Agent 强制使用独立运行目录：
 
 ```text

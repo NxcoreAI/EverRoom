@@ -1,6 +1,8 @@
+import type { RoomDocument } from '@nxcore/agent-contract'
 import type { KnowledgeRoomContextDto } from '../../../../../shared/knowledge'
 
 import type { ContextRoomActionItem, ContextRoomMaterial, ContextRoomRecord } from './types'
+import { deriveRoomTimeline } from './roomTimeline'
 
 function stableId(prefix: string, value: string): string {
   let hash = 2_166_136_261
@@ -18,6 +20,7 @@ function actionKey(item: Pick<ContextRoomActionItem, 'title' | 'source'>): strin
 export function applyGeneratedRoomContext(
   room: ContextRoomRecord,
   context: KnowledgeRoomContextDto,
+  documents: RoomDocument[] = [],
 ): ContextRoomRecord {
   const manualActions = room.actionItems.filter((item) => !item.generated)
   const previousActions = new Map(
@@ -49,16 +52,19 @@ export function applyGeneratedRoomContext(
   }))
   const actionItems = [...manualActions, ...generatedActions]
   const materials = [...manualMaterials, ...generatedMeetings]
+  const timeline = deriveRoomTimeline(room, context, documents)
   const updated: ContextRoomRecord = {
     ...room,
     generatedContext: context,
     actionItems,
     materials,
+    timeline,
     stats: {
       ...room.stats,
       docs: context.sourceDocuments.length + room.fileItems.length,
       meetings: materials.filter((item) => item.type === '会议').length,
       tasks: actionItems.length,
+      events: timeline.length,
     },
     updatedAt: context.generatedAt,
   }

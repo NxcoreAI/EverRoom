@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: context-room
+name: Context Room Agent
+description: 承接 Context Room 的创建整理、简报再生成、划词改写与资料分析
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills:
+  - ./skills/room-enrichment
+  - ./skills/brief-refresh
+  - ./skills/selection-rewrite
+  - ./skills/material-analysis
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+
+policy:
+  allowedCallers: [primary-agent, internal-workflow]
+  maxConcurrency: 2
+  timeoutSeconds: 120
+  maxToolCalls: 16

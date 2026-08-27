@@ -22,6 +22,11 @@ import {
   type ReducedAgentRunEvents,
 } from './agentRunActivity'
 import { buildAgentRunContext } from './agentRunContext'
+import {
+  applyShellApprovalEvent,
+  reducePendingShellApprovals,
+  type PendingShellApproval,
+} from './agentShellApprovals'
 
 export { mergeAgentToolEvent, reduceAgentRunEvents } from './agentRunActivity'
 export type {
@@ -121,6 +126,8 @@ export function useAgentSession(
   const [sending, setSending] = useState(false)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pendingApprovals, setPendingApprovals] = useState<PendingShellApproval[]>([])
+  const [resolvingApprovalIds, setResolvingApprovalIds] = useState<Set<string>>(() => new Set())
   const sequenceByRun = useRef(new Map<string, number>())
   const eventsByRun = useRef(new Map<string, AgentEvent[]>())
   const terminalRunIdsRef = useRef(new Set<string>())
@@ -145,6 +152,11 @@ export function useAgentSession(
       ...current,
       [event.runId]: reduceAgentRunActivity(runEvents),
     }))
+
+    if (event.type === 'approval.requested' || event.type === 'approval.resolved') {
+      setPendingApprovals((current) => applyShellApprovalEvent(current, event))
+      return
+    }
 
     if (event.type === 'run.accepted' || event.type === 'run.started') {
       if (event.type === 'run.accepted') {
@@ -335,6 +347,7 @@ export function useAgentSession(
     const nextReasoning: Record<string, string> = {}
     const nextStartedAt: Record<string, string> = {}
     const nextCompletedAt: Record<string, string> = {}
+    const nextApprovals: PendingShellApproval[] = []
     const reducedByRun = new Map<string, ReducedAgentRunEvents>()
     for (const group of eventGroups) {
       const reduced = reduceAgentRunEvents(group.events)
@@ -349,6 +362,7 @@ export function useAgentSession(
       if (reduced.reasoning) nextReasoning[group.runId] = reduced.reasoning
       if (reduced.startedAt) nextStartedAt[group.runId] = reduced.startedAt
       if (reduced.completedAt) nextCompletedAt[group.runId] = reduced.completedAt
+      nextApprovals.push(...reducePendingShellApprovals(group.events))
     }
     if (snapshot.activeRun?.startedAt) nextStartedAt[snapshot.activeRun.id] = snapshot.activeRun.startedAt
 
@@ -380,6 +394,8 @@ export function useAgentSession(
     setReasoningByRun(nextReasoning)
     setRunStartedAtByRun(nextStartedAt)
     setRunCompletedAtByRun(nextCompletedAt)
+    setPendingApprovals(nextApprovals)
+    setResolvingApprovalIds(new Set())
     setActiveRunId(snapshot.activeRun?.id ?? null)
     setSessionId(snapshot.session.id)
     setCurrentSession(snapshot.session)
@@ -435,6 +451,8 @@ export function useAgentSession(
     setRunStartedAtByRun({})
     setRunCompletedAtByRun({})
     setReasoningByRun({})
+    setPendingApprovals([])
+    setResolvingApprovalIds(new Set())
     setActiveRunId(null)
     setSessionId(null)
     setSessions([])
@@ -568,6 +586,8 @@ export function useAgentSession(
           setToolCallsByRun({})
           setActivityByRun({})
           setReasoningByRun({})
+          setPendingApprovals([])
+          setResolvingApprovalIds(new Set())
           setRunStartedAtByRun({})
           setRunCompletedAtByRun({})
           eventsByRun.current.clear()
@@ -786,6 +806,27 @@ export function useAgentSession(
     }
   }
 
+  const resolveApproval = async (
+    approvalId: string,
+    decision: 'approved' | 'approved_session' | 'denied',
+  ): Promise<void> => {
+    if (!api || resolvingApprovalIds.has(approvalId)) return
+    setResolvingApprovalIds((current) => new Set(current).add(approvalId))
+    setError(null)
+    try {
+      await api.resolveApproval(approvalId, decision)
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.approvalFailed')))
+      throw requestError
+    } finally {
+      setResolvingApprovalIds((current) => {
+        const next = new Set(current)
+        next.delete(approvalId)
+        return next
+      })
+    }
+  }
+
   return {
     activeRunId,
     activityByRun,
@@ -798,11 +839,14 @@ export function useAgentSession(
     error,
     loading: loading || sending,
     messages,
+    pendingApprovals,
     reasoningByRun,
     runCompletedAtByRun,
     runStartedAtByRun,
     scopeReady,
     renameSession,
+    resolveApproval,
+    resolvingApprovalIds,
     markSessionLinkReturned,
     selectSession,
     selectSessionById,

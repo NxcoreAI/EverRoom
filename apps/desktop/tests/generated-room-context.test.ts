@@ -1,3 +1,4 @@
+import type { RoomDocument } from '@nxcore/agent-contract'
 import type { KnowledgeRoomContextDto } from '../src/shared/knowledge'
 import { describe, expect, it } from 'vitest'
 
@@ -55,5 +56,51 @@ describe('applyGeneratedRoomContext', () => {
     }
 
     expect(applyGeneratedRoomContext(room, sameContent)).toBe(room)
+  })
+
+  it('derives the timeline from documents and meetings while keeping manual entries', () => {
+    const room = createContextRoomFixture()
+    room.timeline.push({ time: '2026-08-19 09:00', title: '手工事件', description: '用户记录', kind: 'warn' })
+    const documents: RoomDocument[] = [{
+      id: 'doc-1',
+      roomId: room.id,
+      title: '评审纪要',
+      contentJson: { type: 'doc', content: [] },
+      contentSchemaVersion: 1,
+      version: 2,
+      status: 'active',
+      activeTransactionId: null,
+      createdAt: '2026-08-19T09:00:00.000Z',
+      updatedAt: '2026-08-20T11:00:00.000Z',
+    }]
+
+    const updated = applyGeneratedRoomContext(room, context(), documents)
+
+    expect(updated.timeline.map((item) => item.title)).toEqual([
+      '会议《复盘会》',
+      '《评审纪要》更新至第 2 版',
+      '手工事件',
+    ])
+    expect(updated.timeline.every((item) => item.title === '手工事件' ? !item.generated : item.generated)).toBe(true)
+    expect(updated.stats.events).toBe(3)
+  })
+
+  it('keeps timeline derivation idempotent', () => {
+    const documents: RoomDocument[] = [{
+      id: 'doc-1',
+      roomId: 'room-test',
+      title: '评审纪要',
+      contentJson: { type: 'doc', content: [] },
+      contentSchemaVersion: 1,
+      version: 1,
+      status: 'active',
+      activeTransactionId: null,
+      createdAt: '2026-08-19T09:00:00.000Z',
+      updatedAt: '2026-08-19T09:00:00.000Z',
+    }]
+    const first = applyGeneratedRoomContext(createContextRoomFixture(), context(), documents)
+    const again = applyGeneratedRoomContext(first, context(), documents)
+
+    expect(again.timeline).toBe(first.timeline)
   })
 })

@@ -7,6 +7,7 @@ import { Type } from "@sinclair/typebox";
 import type { GatewayConfig, PiRuntimeConfig, SubagentFrameworkConfig } from "../../config.js";
 import { isPiRuntimeConfigured } from "../agent/runtime-factory.js";
 import type { LoadedSubagentRevision } from "./types.js";
+import type { ExternalCallBudgetService } from "../external-calls/service.js";
 
 export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): PiAgentRuntimeTool {
   const root = `${resolve(revision.agentDirectory)}${sep}`;
@@ -44,6 +45,7 @@ export class SubagentRuntimeManager {
   constructor(
     private readonly gatewayConfig: GatewayConfig,
     private readonly config: SubagentFrameworkConfig,
+    private readonly externalCalls?: ExternalCallBudgetService,
   ) {}
 
   acquire(revision: LoadedSubagentRevision): AgentRuntime {
@@ -92,6 +94,18 @@ export class SubagentRuntimeManager {
     ];
     return new PiAgentRuntime(config, {
       tools,
+      ...(this.externalCalls
+        ? {
+            executeMcpCall: (input, tool, invoke) => this.externalCalls!.execute("MCP", tool, {
+              source: "subagent",
+              runId: input.runId,
+              correlationId: input.sessionId,
+            }, async (markDispatched) => {
+              markDispatched();
+              return invoke();
+            }),
+          }
+        : {}),
     });
   }
 
