@@ -223,6 +223,29 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":12,"output_toke
     expect(events.at(-1)?.type).toBe("run.failed");
   });
 
+  it("reports malformed Codex output as failed when terminating an active process", async () => {
+    const { executable, root } = await fakeCodex(`
+printf '%s\\n' 'not-json'
+while :; do :; done
+`);
+    const runtime = new CodexCliAgentRuntime(executable, root, "codex:test");
+    const run = await runtime.start({
+      runId: "run-malformed-active",
+      sessionId: "session-1",
+      runtimeSessionRef: null,
+      prompt: "Do work",
+      pageLabel: "Test",
+      roomId: null,
+    });
+    const events: RuntimeEvent[] = [];
+    for await (const event of run.events) events.push(event);
+
+    expect(events.at(-1)).toMatchObject({
+      type: "run.failed",
+      payload: { message: expect.stringContaining("JSON") },
+    });
+  });
+
   it("writes the structured delegation context to Codex stdin", async () => {
     const { executable, root } = await fakeCodex(`
 cat > "${join(tmpdir(), "unused")}" 2>/dev/null || true
@@ -337,6 +360,29 @@ printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"
       "--permission-mode", "acceptEdits",
       "--resume", "imported-claude-thread",
     ]);
+  });
+
+  it("reports malformed Claude output as failed when terminating an active process", async () => {
+    const { executable, root } = await fakeClaude(`
+printf '%s\\n' 'not-json'
+while :; do :; done
+`);
+    const runtime = new ClaudeCliAgentRuntime(executable, root, "claude:test");
+    const run = await runtime.start({
+      runId: "run-claude-malformed-active",
+      sessionId: "session-claude",
+      runtimeSessionRef: null,
+      prompt: "Do work",
+      pageLabel: "Test",
+      roomId: null,
+    });
+    const events: RuntimeEvent[] = [];
+    for await (const event of run.events) events.push(event);
+
+    expect(events.at(-1)).toMatchObject({
+      type: "run.failed",
+      payload: { message: expect.stringContaining("JSON") },
+    });
   });
 });
 

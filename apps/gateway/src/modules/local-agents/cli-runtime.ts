@@ -143,6 +143,7 @@ export class CodexCliAgentRuntime implements AgentRuntime {
     let usage: Record<string, number> | undefined;
     let messageStarted = false;
     let cancelled = false;
+    let terminatedForError = false;
 
     const consumeLine = (line: string) => {
       if (!line.trim()) return;
@@ -184,6 +185,7 @@ export class CodexCliAgentRuntime implements AgentRuntime {
         if (Buffer.byteLength(buffer, "utf8") > MAX_LINE_BYTES) throw new Error("local_agent_event_too_large");
       } catch (error) {
         stderr = error instanceof Error ? error.message : String(error);
+        terminatedForError = true;
         child.kill("SIGTERM");
       }
     });
@@ -199,10 +201,11 @@ export class CodexCliAgentRuntime implements AgentRuntime {
         if (buffer.trim()) consumeLine(buffer);
       } catch (error) {
         stderr = error instanceof Error ? error.message : String(error);
+        terminatedForError = true;
       }
-      if (cancelled) {
+      if (cancelled && !terminatedForError) {
         queue.push({ type: "run.cancelled", payload: {} });
-      } else if (code === 0 && finalText) {
+      } else if (!terminatedForError && code === 0 && finalText) {
         queue.push({ type: "message.completed", payload: { role: "assistant", content: finalText } });
         queue.push({ type: "run.completed", payload: { ...(usage ? { usage } : {}) } });
       } else {
@@ -489,6 +492,7 @@ export class ClaudeCliAgentRuntime implements AgentRuntime {
     let usage: Record<string, number> | undefined;
     let messageStarted = false;
     let cancelled = false;
+    let terminatedForError = false;
     let resultFailed = false;
 
     const pushText = (value: string) => {
@@ -534,6 +538,7 @@ export class ClaudeCliAgentRuntime implements AgentRuntime {
         if (Buffer.byteLength(buffer, "utf8") > MAX_LINE_BYTES) throw new Error("local_agent_event_too_large");
       } catch (error) {
         stderr = error instanceof Error ? error.message : String(error);
+        terminatedForError = true;
         child.kill("SIGTERM");
       }
     });
@@ -547,10 +552,11 @@ export class ClaudeCliAgentRuntime implements AgentRuntime {
         if (buffer.trim()) consumeLine(buffer);
       } catch (error) {
         stderr = error instanceof Error ? error.message : String(error);
+        terminatedForError = true;
       }
-      if (cancelled) {
+      if (cancelled && !terminatedForError) {
         queue.push({ type: "run.cancelled", payload: {} });
-      } else if (code === 0 && !resultFailed && (finalText || resultText)) {
+      } else if (!terminatedForError && code === 0 && !resultFailed && (finalText || resultText)) {
         if (!finalText) pushText(resultText);
         queue.push({ type: "message.completed", payload: { role: "assistant", content: finalText || resultText } });
         queue.push({ type: "run.completed", payload: { ...(usage ? { usage } : {}) } });
