@@ -718,6 +718,49 @@ describe('RoomOverviewService', () => {
     expect(projection.freshness).toMatchObject({ sourceUpdatedAt: '2026-08-21T08:00:00.000Z' })
   })
 
+  it('keeps upcoming schedules visible when the room holds many past calendar events', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-many', title: 'Many Events', data: { id: 'room-many', title: 'Many Events' } }],
+      deletedRooms: [],
+    })
+    const syncedAt = new Date('2026-08-20T08:00:00.000Z')
+    const pastEvents: Array<typeof connectorCalendarEvents.$inferInsert> = Array.from({ length: 24 }, (_, index) => ({
+      id: `cal-past-${index}`, ownerId: 'local-user', service: 'google_calendar', connectionName: 'default',
+      sourceRecordId: `past-${index}`, sourceUpdatedAt: syncedAt, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: `hash-past-${index}`, extensionPayload: null,
+      eventId: `past-${index}`, title: `历史事件${index}`, description: '',
+      organizer: null, attendees: [], startAt: new Date(Date.UTC(2020, 0, index + 1)),
+      endAt: null, allDay: true, status: 'confirmed', location: null,
+    }))
+    const upcoming = ([
+      { daysAhead: 3, title: '即将到来的开学典礼' },
+      { daysAhead: 10, title: '较远的家长会' },
+    ] as Array<{ daysAhead: number; title: string }>).map((event, index): typeof connectorCalendarEvents.$inferInsert => ({
+      id: `cal-future-${index}`, ownerId: 'local-user', service: 'google_calendar', connectionName: 'default',
+      sourceRecordId: `future-${index}`, sourceUpdatedAt: syncedAt, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: `hash-future-${index}`, extensionPayload: null,
+      eventId: `future-${index}`, title: event.title, description: '',
+      organizer: null, attendees: [], startAt: new Date(Date.now() + event.daysAhead * 86_400_000),
+      endAt: null, allDay: false, status: 'confirmed', location: null,
+    }))
+    db.insert(connectorCalendarEvents).values([...pastEvents, ...upcoming]).run()
+    db.insert(roomSourceMemberships).values([...pastEvents, ...upcoming].map((event): typeof roomSourceMemberships.$inferInsert => ({
+      id: `mem-${event.id}`, roomId: 'room-many', sourceKind: 'calendar-event', sourceId: event.id,
+      sourceVersion: 1, evidenceGroupKey: event.id, role: 'primary', sourceTitle: event.title,
+    }))).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-many')
+    // 日程 claim 先过滤未来再截断：26 条里 24 条历史不会挤掉 2 条未来日程，按时间升序。
+    const schedules = projection.nextSteps.filter((item) => item.data?.kind === 'next_step' && item.data.itemType === 'schedule')
+    expect(schedules.map((item) => item.text)).toEqual(['即将到来的开学典礼', '较远的家长会'])
+    // 时间轴取最新 20 条：最老的历史事件被挤出，未来事件保留。
+    const timelineTitles = projection.timeline.map((item) => item.text)
+    expect(timelineTitles).not.toContain('历史事件0')
+    expect(timelineTitles).toContain('即将到来的开学典礼')
+    expect(timelineTitles).toContain('较远的家长会')
+  })
+
   it('pins fact timeline entries to their first mention instead of the latest', async () => {
     const { service, db } = await createHarness()
     service.saveSnapshot({

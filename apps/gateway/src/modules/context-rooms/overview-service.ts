@@ -65,6 +65,12 @@ function calendarStartAt(markdown: string): string | null {
   return new Date(raw).toISOString();
 }
 
+/** 日历事件按开始时间升序（缺时间沉底，同时间按 sourceId 定序）：投影的截断策略依赖此顺序。 */
+function sortByCalendarStart<T extends { startedAt: string | null; sourceId: string }>(events: T[]): T[] {
+  return events.sort((left, right) =>
+    (left.startedAt ?? "9999").localeCompare(right.startedAt ?? "9999") || left.sourceId.localeCompare(right.sourceId));
+}
+
 function correctionRow(row: typeof roomContextCorrections.$inferSelect): RoomContextCorrection {
   const targetSource = record(row.targetSource);
   const sourceKind = text(targetSource.sourceKind, 100);
@@ -244,7 +250,7 @@ export class RoomOverviewService {
     }).filter((event) => event.title);
     // 域表全缺（历史库）或部分命中：缺失的走路由快照回退解析。
     const missing = sourceIds.filter((id) => !domainRows.has(id));
-    if (missing.length === 0) return resolved;
+    if (missing.length === 0) return sortByCalendarStart(resolved);
     const snapshots = this.db.select({
       sourceId: routeDecisions.sourceId,
       sourceVersion: routeDecisions.sourceVersion,
@@ -275,7 +281,9 @@ export class RoomOverviewService {
         location: null,
       }];
     });
-    return [...resolved, ...fallback];
+    // 按开始时间升序（缺时间排尾）：投影的「未来日程取最近 N 条」与「时间轴取
+    // 最新 N 条」都依赖此顺序；与 roomTodos 的 dueAt 升序同一约定。
+    return sortByCalendarStart([...resolved, ...fallback]);
   }
 
   /** 已路由进 Room 的待办（kind "todo"）：按 dueAt 升序（无截止沉底）截 20。 */
