@@ -35,6 +35,11 @@ tools:
   - context_room_write_append
   - context_room_write_commit
   - context_room_write_abort
+  - context_room_context_get
+  - context_room_overview_regenerate
+  - context_room_correction_propose
+  - context_room_correction_apply
+  - context_room_correction_revoke
   - connector_data_search
   - connector_record_get
   - connector_sync_status

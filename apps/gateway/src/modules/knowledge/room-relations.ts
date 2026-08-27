@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, isNotNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   connectorEmails,
@@ -9,6 +9,7 @@ import {
   ingestEvents,
   jobs,
   roomDocumentLinks,
+  roomEntityFacts,
   roomEntityMentions,
   roomRelations,
   rooms,
@@ -36,6 +37,13 @@ export interface RelationIndexMentionInput {
   evidence?: string | null;
 }
 
+/** 事实记忆投影入参：entityIds 为调用方已解析的实体 id（解析不到的不链接）。 */
+export interface RelationIndexFactInput {
+  content: string;
+  type: "属性" | "关系";
+  entityIds: string[];
+}
+
 export interface RelationIndexInput {
   sourceKind: SourceKind;
   sourceId: string;
@@ -44,6 +52,12 @@ export interface RelationIndexInput {
   roomIds: string[];
   roomRoles?: Record<string, "entry" | "primary" | "mention" | "manual" | "rule">;
   mentions: RelationIndexMentionInput[];
+  facts?: RelationIndexFactInput[];
+}
+
+/** 事实内容指纹：跨来源聚合去重键（schema.roomEntityFacts.factId 同源）。 */
+export function factFingerprint(content: string): string {
+  return createHash("sha256").update(content.trim()).digest("hex").slice(0, 20);
 }
 
 export interface RoomRelationReasonDto {
@@ -118,6 +132,7 @@ function strengthOf(score: number): RoomRelationStrength {
 
 interface RelationEvidenceSnapshot {
   entities?: Array<{ entityId?: unknown; name?: unknown; salience?: unknown; evidence?: unknown }>;
+  facts?: Array<{ content?: unknown; type?: unknown; entityIds?: unknown[] }>;
   rooms?: Array<{ roomId?: unknown }>;
   linkOnlyRooms?: unknown[];
 }
@@ -178,6 +193,10 @@ export class RoomRelationRegistry {
     const roomIds = [...new Set(input.roomIds)].filter((roomId) => activeRoomIds.has(roomId));
     const now = new Date();
     this.db.transaction((tx) => {
+      tx.delete(roomEntityFacts).where(and(
+        eq(roomEntityFacts.sourceKind, input.sourceKind),
+        eq(roomEntityFacts.sourceId, input.sourceId),
+      )).run();
       tx.delete(roomEntityMentions).where(and(
         eq(roomEntityMentions.sourceKind, input.sourceKind),
         eq(roomEntityMentions.sourceId, input.sourceId),
@@ -227,6 +246,29 @@ export class RoomRelationRegistry {
             updatedAt: now,
           }).run();
         }
+        // 事实投影与 mentions 同闸：来源级整体替换，trusted 门槛一致（PRD：记忆只读展示）；
+        // 同内容去重防唯一索引 (roomId, sourceKind, sourceId, factId) 冲突。
+        const seenFactContents = new Set<string>();
+        for (const fact of input.facts ?? []) {
+          const content = fact.content.trim().slice(0, 300);
+          if (!content || !sourceScore.trusted || seenFactContents.has(content)) continue;
+          seenFactContents.add(content);
+          const entityIds = [...new Set(fact.entityIds.filter((entityId) => typeof entityId === "string"))].slice(0, 8);
+          tx.insert(roomEntityFacts).values({
+            id: randomUUID(),
+            roomId,
+            factId: factFingerprint(content),
+            content,
+            type: fact.type === "关系" ? "关系" : "属性",
+            entityIds,
+            sourceKind: input.sourceKind,
+            sourceId: input.sourceId,
+            sourceVersion: input.sourceVersion,
+            evidenceGroupKey: sourceScore.evidenceGroupKey,
+            createdAt: now,
+            updatedAt: now,
+          }).run();
+        }
       }
     });
     this.recomputeAll();
@@ -235,6 +277,7 @@ export class RoomRelationRegistry {
 
   removeSource(sourceKind: SourceKind, sourceId: string): void {
     this.db.transaction((tx) => {
+      tx.delete(roomEntityFacts).where(and(eq(roomEntityFacts.sourceKind, sourceKind), eq(roomEntityFacts.sourceId, sourceId))).run();
       tx.delete(roomEntityMentions).where(and(eq(roomEntityMentions.sourceKind, sourceKind), eq(roomEntityMentions.sourceId, sourceId))).run();
       tx.delete(roomSourceMemberships).where(and(eq(roomSourceMemberships.sourceKind, sourceKind), eq(roomSourceMemberships.sourceId, sourceId))).run();
     });
@@ -298,6 +341,20 @@ export class RoomRelationRegistry {
             evidence: typeof entity.evidence === "string" ? entity.evidence : null,
           });
         }
+        for (const fact of evidence.facts ?? []) {
+          if (typeof fact.content !== "string" || !fact.content.trim()) continue;
+          this.upsertFact({
+            roomId,
+            fact: {
+              content: fact.content,
+              type: fact.type === "关系" ? "关系" : "属性",
+              entityIds: (fact.entityIds ?? []).flatMap((entityId) => typeof entityId === "string" ? [entityId] : []),
+            },
+            sourceKind: decision.sourceKind,
+            sourceId: decision.sourceId,
+            sourceVersion: decision.sourceVersion,
+          });
+        }
       }
     }
 
@@ -309,6 +366,15 @@ export class RoomRelationRegistry {
       const version = membershipKeys.get(`${mention.roomId}\u0000${mention.sourceKind}\u0000${mention.sourceId}`);
       if (version === undefined || version !== mention.sourceVersion) {
         this.db.delete(roomEntityMentions).where(eq(roomEntityMentions.id, mention.id)).run();
+      }
+    }
+    for (const factRow of this.db.select({
+      id: roomEntityFacts.id, roomId: roomEntityFacts.roomId, sourceKind: roomEntityFacts.sourceKind,
+      sourceId: roomEntityFacts.sourceId, sourceVersion: roomEntityFacts.sourceVersion,
+    }).from(roomEntityFacts).all()) {
+      const version = membershipKeys.get(`${factRow.roomId}\u0000${factRow.sourceKind}\u0000${factRow.sourceId}`);
+      if (version === undefined || version !== factRow.sourceVersion) {
+        this.db.delete(roomEntityFacts).where(eq(roomEntityFacts.id, factRow.id)).run();
       }
     }
     this.recomputeAll();
@@ -349,12 +415,22 @@ export class RoomRelationRegistry {
       .onConflictDoUpdate({ target: [roomSourceMemberships.roomId, roomSourceMemberships.sourceKind, roomSourceMemberships.sourceId], set: values }).run();
   }
 
+  /** 回收站文档 id 集合：抽取管线的补建/回填路径据此跳过软删除来源。 */
+  private trashedDocumentIds(): Set<string> {
+    return new Set(this.db.select({ id: documents.id }).from(documents)
+      .where(isNotNull(documents.deletedAt)).all().map((row) => row.id));
+  }
+
   pendingDocumentIndexes(): Array<{ sourceId: string; sourceVersion: number; roomIds: string[] }> {
+    // 回收站文档不再补建索引：软删除后投影读侧已剔除，这里跳过可避免
+    // 启动回填给已删文档重跑抽取（白烧 LLM 并复活投影行）。
+    const trashedDocumentIds = this.trashedDocumentIds();
     const pending = new Map<string, { sourceId: string; sourceVersion: number; roomIds: string[] }>();
     for (const membership of this.db.select().from(roomSourceMemberships).where(and(
       eq(roomSourceMemberships.sourceKind, "everroom-doc"),
       eq(roomSourceMemberships.entityIndexed, false),
     )).all()) {
+      if (trashedDocumentIds.has(membership.sourceId)) continue;
       const current = pending.get(membership.sourceId) ?? {
         sourceId: membership.sourceId,
         sourceVersion: membership.sourceVersion,
@@ -365,6 +441,38 @@ export class RoomRelationRegistry {
       pending.set(membership.sourceId, current);
     }
     return [...pending.values()];
+  }
+
+  /** 事实记忆存量回填：已建成员关系但事实表无对应行的来源（一次性，完成后记标记，
+   * 无 LLM 时不标记——下次配置了 LLM 的启动仍会补抽）。 */
+  pendingFactBackfill(): Array<{ sourceKind: SourceKind; sourceId: string; sourceVersion: number; roomIds: string[] }> {
+    if (this.db.select({ value: gatewayMetadata.value }).from(gatewayMetadata)
+      .where(eq(gatewayMetadata.key, "room-facts:backfill-completed")).get()) return [];
+    const factKeys = new Set(this.db.select({
+      roomId: roomEntityFacts.roomId, sourceKind: roomEntityFacts.sourceKind, sourceId: roomEntityFacts.sourceId,
+    }).from(roomEntityFacts).all().map((row) => `${row.roomId}\u0000${row.sourceKind}\u0000${row.sourceId}`));
+    const pending = new Map<string, { sourceKind: SourceKind; sourceId: string; sourceVersion: number; roomIds: string[] }>();
+    const trashedDocumentIds = this.trashedDocumentIds();
+    for (const membership of this.db.select().from(roomSourceMemberships).all()) {
+      if (!membership.trusted) continue;
+      if (membership.sourceKind === "everroom-doc" && trashedDocumentIds.has(membership.sourceId)) continue;
+      if (factKeys.has(`${membership.roomId}\u0000${membership.sourceKind}\u0000${membership.sourceId}`)) continue;
+      const key = `${membership.sourceKind}\u0000${membership.sourceId}`;
+      const current = pending.get(key) ?? {
+        sourceKind: membership.sourceKind,
+        sourceId: membership.sourceId,
+        sourceVersion: membership.sourceVersion,
+        roomIds: [],
+      };
+      current.sourceVersion = Math.max(current.sourceVersion, membership.sourceVersion);
+      if (!current.roomIds.includes(membership.roomId)) current.roomIds.push(membership.roomId);
+      pending.set(key, current);
+    }
+    return [...pending.values()];
+  }
+
+  markFactBackfillCompleted(): void {
+    this.setMetadata("room-facts:backfill-completed", new Date().toISOString());
   }
 
   private upsertMention(input: {
@@ -399,6 +507,39 @@ export class RoomRelationRegistry {
       sourceKind: input.sourceKind, sourceId: input.sourceId, ...values,
     }).onConflictDoUpdate({
       target: [roomEntityMentions.roomId, roomEntityMentions.entityId, roomEntityMentions.sourceKind, roomEntityMentions.sourceId],
+      set: values,
+    }).run();
+  }
+
+  private upsertFact(input: {
+    roomId: string;
+    fact: RelationIndexFactInput;
+    sourceKind: SourceKind;
+    sourceId: string;
+    sourceVersion: number;
+  }): void {
+    const membership = this.db.select().from(roomSourceMemberships).where(and(
+      eq(roomSourceMemberships.roomId, input.roomId),
+      eq(roomSourceMemberships.sourceKind, input.sourceKind),
+      eq(roomSourceMemberships.sourceId, input.sourceId),
+    )).get();
+    if (!membership?.trusted) return;
+    const content = input.fact.content.trim().slice(0, 300);
+    if (!content) return;
+    const values = {
+      factId: factFingerprint(content),
+      content,
+      type: (input.fact.type === "关系" ? "关系" : "属性") as "属性" | "关系",
+      entityIds: [...new Set(input.fact.entityIds)].slice(0, 8),
+      sourceVersion: input.sourceVersion,
+      evidenceGroupKey: membership.evidenceGroupKey,
+      updatedAt: new Date(),
+    };
+    this.db.insert(roomEntityFacts).values({
+      id: randomUUID(), roomId: input.roomId,
+      sourceKind: input.sourceKind, sourceId: input.sourceId, ...values,
+    }).onConflictDoUpdate({
+      target: [roomEntityFacts.roomId, roomEntityFacts.sourceKind, roomEntityFacts.sourceId, roomEntityFacts.factId],
       set: values,
     }).run();
   }
@@ -705,6 +846,14 @@ export class RoomRelationRegistry {
       )).get();
       if (clash) this.db.delete(roomEntityMentions).where(eq(roomEntityMentions.id, row.id)).run();
       else this.db.update(roomEntityMentions).set({ entityId: intoId, updatedAt: new Date() }).where(eq(roomEntityMentions.id, row.id)).run();
+    }
+    // 事实引用的实体 id 同步改写（实体合并后不留悬挂引用）
+    const factRows = this.db.select({ id: roomEntityFacts.id, entityIds: roomEntityFacts.entityIds })
+      .from(roomEntityFacts).all()
+      .filter((row) => (row.entityIds ?? []).includes(fromId));
+    for (const row of factRows) {
+      const entityIds = [...new Set((row.entityIds ?? []).map((entityId) => entityId === fromId ? intoId : entityId))];
+      this.db.update(roomEntityFacts).set({ entityIds, updatedAt: new Date() }).where(eq(roomEntityFacts.id, row.id)).run();
     }
     this.recomputeAll();
   }

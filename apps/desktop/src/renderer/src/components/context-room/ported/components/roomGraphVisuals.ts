@@ -1,5 +1,5 @@
 import type { KnowledgeRoomRelationDto } from '../../../../../../shared/knowledge'
-import type { ForceGraphOptions } from './forceGraphProtocol'
+import type { ForceGraphOptions } from '@/components/graph'
 
 type RoomRelationType = KnowledgeRoomRelationDto['type']
 
@@ -33,15 +33,17 @@ export function roomGraphLayoutOptions({
   const density = Math.min(1, Math.max(0, averageDegree / 6))
   const scale = Math.min(1, Math.max(0, (nodeCount - 6) / 36))
 
+  // 紧凑模式跑在详情面板的小视口里：节点排得比首页全图密
+  // （最小中心距 ≈ 2×(22+8)=60px，节点不叠加），斥力/连线也相应收短。
   return compact
     ? {
-        centerStrength: 0.024,
-        collisionPadding: Math.round(18 + scale * 10),
+        centerStrength: 0.03,
+        collisionPadding: Math.round(8 + scale * 6),
         collisionStrength: 0.82,
         degreeBias: 1,
-        linkDistance: Math.round(148 + scale * 28 + density * 20),
-        linkStrength: 0.16,
-        manyBodyStrength: -Math.round(165 + scale * 80 + density * 55),
+        linkDistance: Math.round(104 + scale * 22 + density * 14),
+        linkStrength: 0.18,
+        manyBodyStrength: -Math.round(120 + scale * 56 + density * 36),
         velocityDecay: 0.59,
       }
     : {
@@ -74,7 +76,8 @@ export function roomGraphLayoutDimensions({
   const aspectRatio = Math.min(2, Math.max(1, safeWidth / safeHeight))
   const averageDegree = nodeCount > 0 ? (relationCount * 2) / nodeCount : 0
   const edgePressure = 1 + Math.min(0.7, averageDegree * 0.075)
-  const spacing = compact ? 154 : 194
+  // 紧凑模式的目标世界比首页全图小一圈（同节点数下面积更小 → 节点更密）。
+  const spacing = compact ? 106 : 194
   const targetArea = Math.max(1, nodeCount) * spacing * spacing * edgePressure
   const targetWidth = Math.sqrt(targetArea * aspectRatio)
   const targetHeight = targetWidth / aspectRatio

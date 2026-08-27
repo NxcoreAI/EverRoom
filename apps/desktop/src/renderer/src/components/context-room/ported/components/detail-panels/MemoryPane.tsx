@@ -16,31 +16,45 @@ import type { ContextRoomRecord } from '../../types';
 import { useRoomAppliedEntities } from '../../useRoomAppliedEntities';
 import { localizedUiText, uiText } from '../../adapters';
 import { EntityFactGraphCanvas } from '../EntityFactGraphCanvas';
-import { createEntityFactGraphData } from '../entityFactGraphModel';
+import { createEntityFactGraphData, type EntityFactGraphFactNode } from '../entityFactGraphModel';
 import { ActionConfirmDialog } from '../shared';
+import type { WorkspaceObjectPreview } from './ObjectPreview';
 import { PanelEmptyState } from './PanelEmptyState';
 
 export function MemoryPane({
   room,
   onOpenMemory,
   onUpdateRoom,
+  onOpenObject,
 }: {
   room: ContextRoomRecord;
   onOpenMemory: (id: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
+  /** 节点选中时同步推送右侧内容区展示详情（可选，独立渲染时不传）。 */
+  onOpenObject?: (target: WorkspaceObjectPreview) => void;
 }) {
   const { t, locale } = useLocale();
-  const appliedEntities = useRoomAppliedEntities(room.id, room.updatedAt);
+  const appliedMemory = useRoomAppliedEntities(room.id, room.updatedAt);
   const graphData = useMemo(
-    () => createEntityFactGraphData(room, appliedEntities),
-    [appliedEntities, room],
+    () => createEntityFactGraphData(room, appliedMemory),
+    [appliedMemory, room],
   );
   const [showFullGraph, setShowFullGraph] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(() => graphData.rootId);
   const [disableConfirmOpen, setDisableConfirmOpen] = useState(false);
+  // 静态快照字段（手动建 Room 时 enrich 写入）或实时应用实体/事实任一有值即渲染图谱：
+  // 自动创建的 Room 静态字段全空，数据只存在于结构化实体/事实表。
   const hasGraphContent = Boolean(
     room.memoryItems.length || room.people.length || room.graphEdges.length
+    || appliedMemory?.entities.length
+    || appliedMemory?.facts.length
   );
+  // 选中图谱节点：更新内联详情卡，并同步推送右侧内容区展示完整详情。
+  const selectNode = (nodeId: string) => {
+    setSelectedId(nodeId);
+    const node = graphData.nodes.find((candidate) => candidate.id === nodeId);
+    if (node && onOpenObject) onOpenObject({ kind: 'graph-node', node });
+  };
 
   useEffect(() => {
     setSelectedId(graphData.rootId);
@@ -61,7 +75,7 @@ export function MemoryPane({
           <EntityFactGraphCanvas
             data={graphData}
             selectedId={selectedId}
-            onSelect={(nodeId) => setSelectedId(nodeId ?? graphData.rootId)}
+            onSelect={(nodeId) => selectNode(nodeId ?? graphData.rootId)}
           />
         </div>
       </div>
@@ -69,10 +83,13 @@ export function MemoryPane({
   }
 
   const selectedNode = graphData.nodes.find((node) => node.id === selectedId) ?? graphData.nodes[0];
-  const selectedMemory = selectedNode.kind === 'fact' ? selectedNode.memory : null;
+  const selectedMemory = selectedNode.kind === 'fact' ? selectedNode.memory ?? null : null;
+  const selectedAppliedFact = selectedNode.kind === 'fact' ? selectedNode.fact ?? null : null;
   const selectedMeta =
     selectedNode.kind === 'fact'
-      ? t('contextRoom:memory.statusRoomOnlyRoom', { status: t(uiText(selectedNode.memory.status)), room: room.title })
+      ? selectedAppliedFact
+        ? t('contextRoom:memory.factSourceCount', { count: selectedAppliedFact.sourceCount })
+        : t('contextRoom:memory.statusRoomOnlyRoom', { status: t(uiText(selectedNode.memory!.status)), room: room.title })
       : selectedNode.mentionCount !== undefined
         ? t('contextRoom:memory.appliedEntityMeta', {
           type: t(uiText(selectedNode.entityType)),
@@ -88,7 +105,9 @@ export function MemoryPane({
       : isPerson
         ? UserRound
         : CircleDot;
-  const linkedFacts = graphData.edges
+  // 关联事实：应用实体按 entityId 直查（图上每条事实只连 ≤3 个实体，直查更完整）；
+  // 静态实体/根节点沿用边推导。
+  const edgeLinkedFacts = graphData.edges
     .filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id)
     .map((edge) =>
       graphData.nodes.find(
@@ -97,9 +116,15 @@ export function MemoryPane({
           node.kind === 'fact'
       )
     )
-    .filter((node): node is Extract<(typeof graphData.nodes)[number], { kind: 'fact' }> =>
-      Boolean(node)
-    );
+    .filter((node): node is EntityFactGraphFactNode => Boolean(node));
+  const linkedFacts = selectedNode.kind === 'entity' && selectedNode.entityId
+    ? (appliedMemory?.facts ?? [])
+        .filter((fact) => fact.entityIds.includes(selectedNode.entityId!))
+        .map((fact) => graphData.nodes.find(
+          (node) => node.kind === 'fact' && node.id === `applied-fact:${fact.factId}`,
+        ))
+        .filter((node): node is EntityFactGraphFactNode => Boolean(node))
+    : edgeLinkedFacts;
 
   return (
     <div className="context-room-memory-pane">
@@ -118,7 +143,7 @@ export function MemoryPane({
             <EntityFactGraphCanvas
               data={graphData}
               selectedId={selectedNode.id}
-              onSelect={(nodeId) => setSelectedId(nodeId ?? graphData.rootId)}
+              onSelect={(nodeId) => selectNode(nodeId ?? graphData.rootId)}
             />
           </div>
           <article
@@ -131,7 +156,11 @@ export function MemoryPane({
               </span>
               <span>
                 <h3>
-                  {selectedMemory ? t(uiText(selectedMemory.type)) : selectedNode.label}
+                  {selectedMemory
+                    ? t(uiText(selectedMemory.type))
+                    : selectedAppliedFact
+                      ? t(`contextRoom:memory.factType.${selectedAppliedFact.type === '关系' ? 'relation' : 'attribute'}`)
+                      : selectedNode.label}
                   {selectedNode.kind === 'entity' && selectedNode.status ? (
                     <span
                       className="context-room-memory-entity-status"
@@ -154,9 +183,11 @@ export function MemoryPane({
             ) : null}
             <section>
               <div className="context-room-memory-detail-section-head">
-                <span>{t(selectedMemory ? 'contextRoom:memory.sources' : 'contextRoom:memory.relatedMemories')}</span>
+                <span>{t(selectedNode.kind === 'fact' ? 'contextRoom:memory.sources' : 'contextRoom:memory.relatedFacts')}</span>
                 <small>
-                  {selectedMemory ? (selectedMemory.sources?.length ?? 0) : linkedFacts.length}
+                  {selectedNode.kind === 'fact'
+                    ? (selectedAppliedFact?.sources.length ?? selectedMemory?.sources?.length ?? 0)
+                    : linkedFacts.length}
                 </small>
               </div>
               <div className="context-room-memory-detail-list">
@@ -176,8 +207,30 @@ export function MemoryPane({
                         </span>
                       </button>
                     ))
-                  : linkedFacts.map((fact) => (
-                      <button type="button" key={fact.id} onClick={() => setSelectedId(fact.id)}>
+                  : selectedAppliedFact
+                    ? selectedAppliedFact.sources.map((source) => {
+                        const kindLabel = t(`contextRoom:memory.sourceKind.${source.sourceKind}`);
+                        return (
+                          <div
+                            className="context-room-memory-source-row"
+                            key={`${source.sourceKind}-${source.sourceId}`}
+                          >
+                            <span className="context-room-memory-detail-row-icon">
+                              <Link2 aria-hidden="true" />
+                            </span>
+                            <span>
+                              <b>{source.sourceTitle ?? kindLabel}</b>
+                              <small>
+                                {kindLabel}
+                                {' · '}
+                                {formatRoomUpdatedTime(source.mentionedAt, source.mentionedAt, locale, t)}
+                              </small>
+                            </span>
+                          </div>
+                        );
+                      })
+                    : linkedFacts.map((fact) => (
+                      <button type="button" key={fact.id} onClick={() => selectNode(fact.id)}>
                         <span className="context-room-memory-detail-row-icon">
                           <MessageSquareText aria-hidden="true" />
                         </span>
@@ -190,11 +243,42 @@ export function MemoryPane({
                 {selectedMemory && !selectedMemory.sources?.length ? (
                   <span className="context-room-memory-detail-empty">{t('contextRoom:memory.noSources')}</span>
                 ) : null}
-                {!selectedMemory && !linkedFacts.length ? (
-                  <span className="context-room-memory-detail-empty">{t('contextRoom:memory.noRelatedMemories')}</span>
+                {selectedNode.kind === 'entity' && !linkedFacts.length ? (
+                  <span className="context-room-memory-detail-empty">{t('contextRoom:memory.noRelatedFacts')}</span>
                 ) : null}
               </div>
             </section>
+            {selectedNode.kind === 'entity' && selectedNode.sources?.length ? (
+              <section>
+                <div className="context-room-memory-detail-section-head">
+                  <span>{t('contextRoom:memory.sourceMaterials')}</span>
+                  <small>{selectedNode.sources.length}</small>
+                </div>
+                <div className="context-room-memory-detail-list">
+                  {selectedNode.sources.map((source) => {
+                    const kindLabel = t(`contextRoom:memory.sourceKind.${source.sourceKind}`);
+                    return (
+                      <div
+                        className="context-room-memory-source-row"
+                        key={`${source.sourceKind}-${source.sourceId}`}
+                      >
+                        <span className="context-room-memory-detail-row-icon">
+                          <Link2 aria-hidden="true" />
+                        </span>
+                        <span>
+                          <b>{source.evidence ?? source.sourceTitle ?? kindLabel}</b>
+                          <small>
+                            {source.sourceTitle ? `${source.sourceTitle} · ${kindLabel}` : kindLabel}
+                            {' · '}
+                            {formatRoomUpdatedTime(source.mentionedAt, source.mentionedAt, locale, t)}
+                          </small>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
             {selectedMemory ? (
               <footer>
                 <button

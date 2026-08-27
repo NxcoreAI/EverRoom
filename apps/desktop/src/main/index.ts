@@ -252,6 +252,8 @@ const CONTEXT_ROOM_CHANNELS = {
   getSubagentInvocation: 'context-rooms:get-subagent-invocation',
   cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
   refreshBrief: 'context-rooms:refresh-brief',
+  overview: 'context-rooms:overview',
+  refreshOverview: 'context-rooms:refresh-overview',
   roomEntities: 'context-rooms:room-entities',
 } as const
 
@@ -667,13 +669,15 @@ ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(local
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
   const value = input as { module?: unknown; level?: unknown; event?: unknown }
-  if (value.module !== 'document-cursor-completion') return
+  if (value.module !== 'document-cursor-completion' && value.module !== 'context-room-overview') return
   if (value.level !== 'info' && value.level !== 'warn' && value.level !== 'error') return
   if (!value.event || typeof value.event !== 'object' || Array.isArray(value.event)) return
   try {
     const serialized = JSON.stringify(value.event)
     if (serialized.length > 16_000) return
-    logDocumentCursorCompletion(value.level, JSON.parse(serialized) as Record<string, unknown>)
+    const event = JSON.parse(serialized) as Record<string, unknown>
+    if (value.module === 'document-cursor-completion') logDocumentCursorCompletion(value.level, event)
+    else logLocalDesktop('context-room-overview', value.level, event)
   } catch {
     // Ignore malformed renderer diagnostics rather than affecting the editor.
   }
@@ -1047,9 +1051,19 @@ let managedChildSyncQueue: Promise<void> = Promise.resolve()
 
 async function syncManagedChildProcesses(snapshot: RuntimeConfigSnapshot): Promise<void> {
   const run = managedChildSyncQueue.then(async () => {
-    await syncMemoryCoreEnvironment(snapshot)
-    await syncCursorCompletionEnvironment(snapshot)
-    await syncKnowledgeServiceEnvironment(snapshot)
+    // 子进程 env 派生需要真密钥；调用方传入的 snapshot 来自 IPC/save 响应，
+    // 是脱敏版（渲染层安全边界）。排队执行时 gateway 里已是最新配置，这里
+    // 统一取未脱敏 snapshot；取失败回退脱敏版——env helper 会把掩码视为
+    // 缺失，子进程明确报「未配置」而非静默 401。
+    let secrets = snapshot
+    try {
+      secrets = await runtimeConfigBridge?.getSecrets() ?? snapshot
+    } catch (error) {
+      console.warn('[managed-children] unredacted runtime config unavailable; falling back to redacted snapshot:', error instanceof Error ? error.message : error)
+    }
+    await syncMemoryCoreEnvironment(secrets)
+    await syncCursorCompletionEnvironment(secrets)
+    await syncKnowledgeServiceEnvironment(secrets)
   })
   managedChildSyncQueue = run.catch(() => undefined)
   return run
@@ -1267,6 +1281,8 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
     bridge.cancelSubagentInvocation(invocationId))
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
 }
 

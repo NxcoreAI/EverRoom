@@ -35,8 +35,16 @@ import {
 import { cosineSimilarity, decodeCentroid } from "../knowledge/embedding.js";
 import { bigramDiceSimilarity, normalizeEntityName } from "../knowledge/entity-index.js";
 
-const SCORING_VERSION = 1;
+const SCORING_VERSION = 2;
 const OVERRIDE_TTL_MS = 10 * 60_000;
+/** 证据角色权重：入口/主力/手工/规则资料是强证据，顺带提及只算弱证据。 */
+const EVIDENCE_ROLE_WEIGHT = {
+  entry: 1,
+  primary: 1,
+  manual: 1,
+  rule: 1,
+  mention: 0.25,
+} as const;
 const ARRAY_FIELDS = [
   "materials", "memoryItems", "fileItems", "actionItems", "timeline",
   "pendingMemoryItems", "people", "graphEdges",
@@ -63,11 +71,18 @@ interface RoomFacts {
   context: ContextRow;
   knowledge: KnowledgeRoomRow | null;
   aliases: string[];
-  evidenceGroups: Set<string>;
+  /** evidenceGroupKey -> 角色权重（同组多来源取最大）。 */
+  evidenceWeights: Map<string, number>;
   entityIds: Set<string>;
   evidenceSamples: string[];
   centroid: number[] | null;
   centroidModel: string | null;
+}
+
+/** 上次评估的缓存输入：证据修订一致时复用 LLM 判定，避免非确定性重判。 */
+interface AssessmentCache {
+  evidenceRevision: string;
+  llmVerdict: "same" | "different" | "unavailable" | null;
 }
 
 interface PairAssessment {
@@ -108,12 +123,18 @@ function sortedPair(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
 }
 
-function overlapCoefficient(a: Set<string>, b: Set<string>): number {
-  const denominator = Math.min(a.size, b.size);
-  if (denominator === 0) return 0;
+/** 加权 Jaccard：单篇顺带提及的共同资料不再制造 100% 重叠的假阳性。 */
+function weightedEvidenceOverlap(a: Map<string, number>, b: Map<string, number>): number {
+  if (a.size === 0 || b.size === 0) return 0;
   let overlap = 0;
-  for (const value of a) if (b.has(value)) overlap += 1;
-  return overlap / denominator;
+  for (const [key, weight] of a) {
+    const other = b.get(key);
+    if (other !== undefined) overlap += Math.min(weight, other);
+  }
+  let total = -overlap;
+  for (const weight of a.values()) total += weight;
+  for (const weight of b.values()) total += weight;
+  return total > 0 ? overlap / total : 0;
 }
 
 function jaccard(a: Set<string>, b: Set<string>): number {
@@ -235,11 +256,16 @@ export class RoomDuplicateService {
     const mentions = this.db.select().from(roomEntityMentions)
       .where(eq(roomEntityMentions.roomId, row.id)).all()
       .filter((item) => item.trusted && (item.qualityLevel === "normal" || item.qualityLevel === "high"));
+    const evidenceWeights = new Map<string, number>();
+    for (const item of memberships) {
+      const weight = EVIDENCE_ROLE_WEIGHT[item.role];
+      evidenceWeights.set(item.evidenceGroupKey, Math.max(evidenceWeights.get(item.evidenceGroupKey) ?? 0, weight));
+    }
     return {
       context: row,
       knowledge,
       aliases: knowledge?.aliases ?? [],
-      evidenceGroups: new Set(memberships.map((item) => item.evidenceGroupKey)),
+      evidenceWeights,
       entityIds: new Set(mentions.map((item) => item.entityId)),
       evidenceSamples: mentions.flatMap((item) => item.evidence ? [item.evidence] : []).slice(0, 5),
       centroid: registryEntity?.centroid ? decodeCentroid(registryEntity.centroid) : null,
@@ -259,25 +285,51 @@ export class RoomDuplicateService {
     return round(score);
   }
 
-  private hasRelation(a: string, b: string): boolean {
+  private relationBetween(a: string, b: string): typeof roomRelations.$inferSelect | null {
     const [roomAId, roomBId] = sortedPair(a, b);
-    const relation = this.db.select().from(roomRelations)
-      .where(and(eq(roomRelations.roomAId, roomAId), eq(roomRelations.roomBId, roomBId))).get();
-    return Boolean(relation && (relation.autoScore >= 1 || relation.pinned || relation.manualType));
+    return this.db.select().from(roomRelations)
+      .where(and(eq(roomRelations.roomAId, roomAId), eq(roomRelations.roomBId, roomBId))).get() ?? null;
   }
 
-  private async assess(a: RoomFacts, b: RoomFacts): Promise<PairAssessment | null> {
+  private async assess(a: RoomFacts, b: RoomFacts, cached?: AssessmentCache | null): Promise<PairAssessment | null> {
+    // 用户 pin/手动标注的关系表达「相关但不同」，是反合并证据：整对跳过，
+    // 不再进入候选池（此前的 open 候选会随 rebuild 清理删除）。
+    const relation = this.relationBetween(a.context.id, b.context.id);
+    if (relation && (relation.pinned || relation.manualType)) return null;
     const nameScore = this.nameScore(a, b);
     const centroidScore = a.centroid && b.centroid && a.centroidModel && a.centroidModel === b.centroidModel
       ? round(cosineSimilarity(a.centroid, b.centroid)) : 0;
-    const contentOverlap = round(overlapCoefficient(a.evidenceGroups, b.evidenceGroups));
+    const contentOverlap = round(weightedEvidenceOverlap(a.evidenceWeights, b.evidenceWeights));
     const entityOverlap = round(jaccard(a.entityIds, b.entityIds));
-    const relatedByGraph = this.hasRelation(a.context.id, b.context.id);
+    const relatedByGraph = Boolean(relation && relation.autoScore >= 1);
     if (nameScore < 0.6 && centroidScore < 0.82 && contentOverlap < 0.35 && entityOverlap < 0.4 && !relatedByGraph) return null;
 
     const duplicateScore = round(nameScore * 0.3 + centroidScore * 0.3 + contentOverlap * 0.25 + entityOverlap * 0.15);
     const sameKind = (a.context.kind ?? "") === (b.context.kind ?? "");
     const exactName = nameScore === 1;
+    const evidenceRevision = hash({
+      roomA: {
+        id: a.context.id,
+        title: normalizeEntityName(a.context.title),
+        kind: a.context.kind,
+        aliases: a.aliases.map(normalizeEntityName).sort(),
+        evidenceWeights: [...a.evidenceWeights.entries()].sort(),
+        entityIds: [...a.entityIds].sort(),
+        centroid: a.centroid,
+        centroidModel: a.centroidModel,
+      },
+      roomB: {
+        id: b.context.id,
+        title: normalizeEntityName(b.context.title),
+        kind: b.context.kind,
+        aliases: b.aliases.map(normalizeEntityName).sort(),
+        evidenceWeights: [...b.evidenceWeights.entries()].sort(),
+        entityIds: [...b.entityIds].sort(),
+        centroid: b.centroid,
+        centroidModel: b.centroidModel,
+      },
+      nameScore, centroidScore, contentOverlap, entityOverlap, duplicateScore,
+    });
     const reasons: string[] = [];
     if (exactName) reasons.push("规范化标题或别名相同");
     else if (nameScore >= 0.6) reasons.push(`标题相似度 ${nameScore.toFixed(2)}`);
@@ -288,24 +340,39 @@ export class RoomDuplicateService {
 
     let confidence: PairAssessment["confidence"] = "related";
     let llmVerdict: PairAssessment["llmVerdict"] = null;
+    const applyVerdict = (verdict: "same" | "different") => {
+      llmVerdict = verdict;
+      confidence = verdict === "same"
+        ? (duplicateScore >= 0.68 || exactName ? "medium" : "pending")
+        : "related";
+    };
     if (sameKind && (exactName || (duplicateScore >= 0.82 && (contentOverlap >= 0.5 || entityOverlap >= 0.35)))) {
       confidence = "high";
     } else if (sameKind && duplicateScore >= 0.68) {
       confidence = "medium";
     } else if (duplicateScore >= 0.6 || exactName || !sameKind) {
+      // 证据修订未变时复用上次判定：LLM 非确定性重判会让置信度在 rebuild 间抖动，
+      // 且每对重复付费。上次判定失败（unavailable）不缓存，下轮重试。
+      const cachedVerdict = cached && cached.evidenceRevision === evidenceRevision
+        && (cached.llmVerdict === "same" || cached.llmVerdict === "different")
+        ? cached.llmVerdict
+        : null;
       if (this.options.judgeIdentity) {
-        try {
-          const judged = await this.options.judgeIdentity(
-            { name: a.context.title, aliases: a.aliases, kind: a.context.kind ?? "议题", evidenceSamples: a.evidenceSamples },
-            { name: b.context.title, aliases: b.aliases, kind: b.context.kind ?? "议题", evidenceSamples: b.evidenceSamples },
-          );
-          llmVerdict = judged.same ? "same" : "different";
-          reasons.push(judged.reason);
-          confidence = judged.same ? (duplicateScore >= 0.68 || exactName ? "medium" : "pending") : "related";
-        } catch {
-          llmVerdict = "unavailable";
-          confidence = duplicateScore >= 0.68 && sameKind ? "medium" : "pending";
-          reasons.push("同一性判定暂不可用");
+        if (cachedVerdict) {
+          applyVerdict(cachedVerdict);
+        } else {
+          try {
+            const judged = await this.options.judgeIdentity(
+              { name: a.context.title, aliases: a.aliases, kind: a.context.kind ?? "议题", evidenceSamples: a.evidenceSamples },
+              { name: b.context.title, aliases: b.aliases, kind: b.context.kind ?? "议题", evidenceSamples: b.evidenceSamples },
+            );
+            reasons.push(judged.reason);
+            applyVerdict(judged.same ? "same" : "different");
+          } catch {
+            llmVerdict = "unavailable";
+            confidence = duplicateScore >= 0.68 && sameKind ? "medium" : "pending";
+            reasons.push("同一性判定暂不可用");
+          }
         }
       } else if (duplicateScore >= 0.68 && sameKind) {
         confidence = "medium";
@@ -313,29 +380,6 @@ export class RoomDuplicateService {
         confidence = "pending";
       }
     }
-    const evidenceRevision = hash({
-      roomA: {
-        id: a.context.id,
-        title: normalizeEntityName(a.context.title),
-        kind: a.context.kind,
-        aliases: a.aliases.map(normalizeEntityName).sort(),
-        evidenceGroups: [...a.evidenceGroups].sort(),
-        entityIds: [...a.entityIds].sort(),
-        centroid: a.centroid,
-        centroidModel: a.centroidModel,
-      },
-      roomB: {
-        id: b.context.id,
-        title: normalizeEntityName(b.context.title),
-        kind: b.context.kind,
-        aliases: b.aliases.map(normalizeEntityName).sort(),
-        evidenceGroups: [...b.evidenceGroups].sort(),
-        entityIds: [...b.entityIds].sort(),
-        centroid: b.centroid,
-        centroidModel: b.centroidModel,
-      },
-      nameScore, centroidScore, contentOverlap, entityOverlap, duplicateScore,
-    });
     return { nameScore, centroidScore, contentOverlap, entityOverlap, duplicateScore, confidence, llmVerdict, reasons, evidenceRevision };
   }
 
@@ -347,13 +391,13 @@ export class RoomDuplicateService {
       for (let right = left + 1; right < facts.length; right += 1) {
         const a = facts[left]!;
         const b = facts[right]!;
-        const assessment = await this.assess(a, b);
-        if (!assessment) continue;
         const [roomAId, roomBId] = sortedPair(a.context.id, b.context.id);
         const pairKey = `${roomAId}:${roomBId}`;
-        seen.add(pairKey);
         const existing = this.db.select().from(roomDuplicateCandidates)
           .where(and(eq(roomDuplicateCandidates.roomAId, roomAId), eq(roomDuplicateCandidates.roomBId, roomBId))).get();
+        const assessment = await this.assess(a, b, existing);
+        if (!assessment) continue;
+        seen.add(pairKey);
         const preserveDecision = existing
           && (existing.status === "distinct" || existing.status === "related")
           && existing.evidenceRevision === assessment.evidenceRevision;
@@ -390,7 +434,11 @@ export class RoomDuplicateService {
   private candidateDto(row: typeof roomDuplicateCandidates.$inferSelect): RoomDuplicateCandidate | null {
     const roomA = this.db.select().from(contextRooms).where(eq(contextRooms.id, row.roomAId)).get();
     const roomB = this.db.select().from(contextRooms).where(eq(contextRooms.id, row.roomBId)).get();
-    if (!roomA || !roomB) return null;
+    // 任一侧 Room 已删除或已合并后，配对不再可操作：候选立即隐藏（对齐 roomOrThrow 的
+    // active 判定），避免列表/红点计数包含等不到下次 rebuild 清理的死候选。
+    if (!roomA || !roomB
+      || roomA.deletedAt || roomB.deletedAt
+      || roomA.lifecycle !== "active" || roomB.lifecycle !== "active") return null;
     return {
       id: row.id,
       roomAId: row.roomAId,
@@ -455,7 +503,7 @@ export class RoomDuplicateService {
       context: pseudoRow,
       knowledge: null,
       aliases: [],
-      evidenceGroups: new Set(),
+      evidenceWeights: new Map(),
       entityIds: new Set(),
       evidenceSamples: input.description ? [input.description.slice(0, 500)] : [],
       centroid: null,

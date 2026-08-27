@@ -67,4 +67,32 @@ describe('cursorCompletionEnvFromConfig', () => {
     expect(Object.values(env).every((value) => value !== '')).toBe(true)
     expect(env.NXCORE_CURSOR_COMPLETION_AI_API).toBeUndefined()
   })
+
+  it('treats a masked apiKey (********) as missing instead of injecting it', () => {
+    // 网关脱敏快照的掩码不得当成真 key：子进程会正常起服务、每个上游请求 401。
+    // 两段都掩码 → 整体不注入（子进程明确报「未配置」）。
+    expect(cursorCompletionEnvFromConfig({
+      primary: { ...primary, apiKey: '********' },
+      cursorCompletion: { ...cursorCompletion, apiKey: '********' },
+    })).toEqual({})
+    // 只掩码 cursorCompletion 段 → 该段不注入，primary 兜底段保留。
+    expect(cursorCompletionEnvFromConfig({
+      primary,
+      cursorCompletion: { ...cursorCompletion, apiKey: '********' },
+    })).toEqual({
+      NXCORE_AI_PROVIDER: 'openai',
+      NXCORE_AI_MODEL: 'deepseek-v4-flash',
+      NXCORE_AI_BASE_URL: 'https://dashscope.example.com/v1',
+      NXCORE_AI_API_KEY: 'sk-main',
+    })
+  })
+
+  it('treats the response-serializer placeholder ([REDACTED]) as missing too', () => {
+    // gateway preSerialization 按键名脱敏的占位（曾真实发生过：/secrets 响应
+    // 被 redactSecrets 换成 "[REDACTED]"，子进程发 Bearer [REDACTED] → 401）。
+    expect(cursorCompletionEnvFromConfig({
+      primary: { ...primary, apiKey: '[REDACTED]' },
+      cursorCompletion: { ...cursorCompletion, apiKey: '[REDACTED]' },
+    })).toEqual({})
+  })
 })

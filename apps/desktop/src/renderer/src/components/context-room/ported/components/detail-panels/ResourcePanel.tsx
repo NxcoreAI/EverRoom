@@ -1,6 +1,5 @@
 import * as Popover from '@radix-ui/react-popover';
 import {
-  ChevronLeft,
   ChevronRight,
   FileSpreadsheet,
   FileText,
@@ -14,7 +13,6 @@ import {
   Search,
   SearchX,
   Trash2,
-  X,
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
@@ -22,7 +20,6 @@ import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import {
   createContextRoomResourceLibrary,
-  getContextRoomOfficeFormat,
 } from '../../resources';
 import type {
   ContextRoomOfficeResource,
@@ -97,40 +94,6 @@ export function OfficePreview({ resource }: { resource: ContextRoomOfficeResourc
   );
 }
 
-const HOSTFS_OFFICE_EXTENSIONS = new Set(['docx', 'xlsx', 'pptx', 'pdf']);
-
-export interface LocalOfficeFile {
-  mimeType: string;
-  modifiedAt: Date;
-  name: string;
-  path: string;
-  size: number;
-}
-
-// 演示文件已移除：待接入真实文件系统索引（fileItems hostfsPath 为设备态，见 room-wiki 方案 §12）。
-const LOCAL_OFFICE_FILES: LocalOfficeFile[] = [];
-
-function HostFSOfficePicker({ onAdd, onClose }: { onAdd: (file: LocalOfficeFile) => void; onClose: () => void }) {
-  const { t } = useLocale();
-  const [path, setPath] = useState('/');
-  const folders: { name: string; path: string }[] = [];
-  const officeFiles = path === '/演示文件'
-    ? LOCAL_OFFICE_FILES.filter((entry) => HOSTFS_OFFICE_EXTENSIONS.has(entry.name.split('.').pop()?.toLowerCase() ?? ''))
-    : [];
-  const parent = path === '/' ? '/' : path.replace(/\/[^/]+$/, '') || '/';
-  return (
-    <div className="context-room-hostfs-picker" role="dialog" aria-label={t('contextRoom:resource.addOfficeFileFromFileSystem')}>
-      <header><div><strong>{t('contextRoom:resource.fileSystem')}</strong><span>{path}</span></div><button type="button" aria-label={t('contextRoom:resource.closeFileSystemPicker')} onClick={onClose}><X aria-hidden="true" /></button></header>
-      <div className="context-room-hostfs-picker-list">
-        {path !== '/' ? <button type="button" onClick={() => setPath(parent)}><ChevronLeft aria-hidden="true" /> {t('contextRoom:resource.goUp')}</button> : null}
-        {folders.map((folder) => <button type="button" key={folder.path} onClick={() => setPath(folder.path)}><Folder aria-hidden="true" /><span>{folder.name}</span><ChevronRight aria-hidden="true" /></button>)}
-        {officeFiles.map((file) => <button type="button" key={file.path} onClick={() => onAdd(file)}><FileSpreadsheet aria-hidden="true" /><span>{file.name}</span><small>{getContextRoomOfficeFormat(file.name).toUpperCase()}</small></button>)}
-        {!folders.length && !officeFiles.length ? <div className="context-room-hostfs-picker-state">{t('contextRoom:resource.noPreviewableOfficeFilesInThisFolder')}</div> : null}
-      </div>
-    </div>
-  );
-}
-
 export function ResourceTree({
   room,
   backendDocuments,
@@ -143,7 +106,6 @@ export function ResourceTree({
   onRestoreDocument,
   onDeleteDocumentPermanently,
   onEmptyTrash,
-  onAddFile,
 }: {
   room: ContextRoomRecord;
   backendDocuments: RoomDocument[];
@@ -156,7 +118,6 @@ export function ResourceTree({
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
   onEmptyTrash: (roomId: string) => Promise<void>;
-  onAddFile: (file: LocalOfficeFile) => void;
 }) {
   const { locale, t } = useLocale();
   const library = useMemo(
@@ -167,7 +128,6 @@ export function ResourceTree({
   const [expanded, setExpanded] = useState(() => new Set(
     library.folders.filter((folder) => !folder.id.endsWith(':folder:trash')).map((folder) => folder.id),
   ));
-  const [showFilePicker, setShowFilePicker] = useState(false);
   const [createPopoverOpen, setCreatePopoverOpen] = useState(false);
   const [newDocumentTitle, setNewDocumentTitle] = useState('');
   const [creatingDocument, setCreatingDocument] = useState(false);
@@ -280,8 +240,6 @@ export function ResourceTree({
   return (
     <div className="context-room-resource-tree">
       <label><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('contextRoom:resource.searchDocumentsInThisRoom')} aria-label={t('contextRoom:resource.searchDocumentsAriaLabel')} /></label>
-      <button type="button" className="context-room-resource-add-file" onClick={() => setShowFilePicker((value) => !value)}><FolderOpen aria-hidden="true" />{t('contextRoom:resource.addOfficeFileFromFileSystem')}</button>
-      {showFilePicker ? <HostFSOfficePicker onAdd={(file) => { onAddFile(file); setShowFilePicker(false); }} onClose={() => setShowFilePicker(false)} /> : null}
       {actionError ? <div className="context-room-resource-error" role="alert">{actionError}</div> : null}
       <div className="context-room-resource-scroll" role="tree" aria-label={t('contextRoom:resource.roomResources')}>
         {library.folders.map((folder) => {

@@ -10,11 +10,21 @@ import {
   navigationKey,
   navigationRequiresSessionHandoff,
   parseAgentNavigationTarget,
+  replayNavigationMode,
   type AgentNavigationRequest,
   type AgentSessionRouteRequest,
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
+import {
+  buildRoomOverviewCitationContext,
+  type RoomOverviewCitation,
+} from '@/components/context-room/roomOverviewCitation'
+import {
+  isRoomOverviewProjectionToolName,
+  publishRoomOverviewChanged,
+} from '@/components/context-room/roomOverviewChange'
+import { recordRoomOverviewDiagnostic } from '@/components/context-room/roomOverviewDiagnostics'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import type { PageId } from '@/data/navigation'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -37,11 +47,15 @@ export function AgentPanel({
   navigationRequest,
   sessionRouteRequest,
   onNavigate,
+  onRestoreRoomTab,
   onNavigationConsumed,
   onOpenSessionLink,
   onOpenDocument,
   onSessionRouteConsumed,
   focusRequest = 0,
+  roomCitations,
+  onRemoveRoomCitation,
+  onClearRoomCitations,
 }: {
   pageId: PageId
   pageLabel: string
@@ -51,16 +65,19 @@ export function AgentPanel({
   navigationRequest: AgentNavigationRequest | null
   sessionRouteRequest: AgentSessionRouteRequest | null
   onNavigate: (request: AgentNavigationRequest) => void
+  onRestoreRoomTab: (target: AgentNavigationRequest['target']) => void
   onNavigationConsumed: (key: string) => void
   onOpenSessionLink: (link: AgentSessionLink, destination: 'source' | 'target') => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onSessionRouteConsumed: (key: string) => void
   focusRequest?: number
+  roomCitations: RoomOverviewCitation[]
+  onRemoveRoomCitation: (citationId: string) => void
+  onClearRoomCitations: () => void
 }) {
   const { t } = useLocale()
   const [draft, setDraft] = useState('')
   const { refreshFromBackend } = useContextRoomState()
-  const [selectedText, setSelectedText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [pendingNavigationByRun, setPendingNavigationByRun] = useState<Record<string, AgentNavigationTarget>>({})
   const [composerResetKey, setComposerResetKey] = useState(0)
@@ -69,9 +86,26 @@ export function AgentPanel({
   const handledNavigationKeysRef = useRef(new Set<string>())
   const handledRequestKeysRef = useRef(new Set<string>())
   const handledSessionRouteKeysRef = useRef(new Set<string>())
-  const selectedTextSummary = selectedText.replace(/\s+/g, ' ').trim()
-  const contextSummary = selectedTextSummary
-    ? `${pageLabel} · “${selectedTextSummary}”`
+  const handledOverviewToolIdsRef = useRef(new Set<string>())
+  const citationSectionLabel = (citation: RoomOverviewCitation) => t(citation.section === 'overview'
+      ? 'contextRoom:overviewDashboard.roomOverview'
+      : citation.section === 'status'
+        ? 'contextRoom:overviewDashboard.currentStatus'
+        : citation.section === 'next_steps'
+          ? 'contextRoom:overviewDashboard.suggestedNextSteps'
+          : citation.section === 'entities'
+            ? 'contextRoom:overviewDashboard.relatedMemoryEntities'
+            : 'contextRoom:overviewDashboard.roomTimeline')
+  const citationItems = roomCitations.map((citation) => {
+    const summary = citation.text.replace(/\s+/g, ' ').trim()
+    return {
+      id: citation.id,
+      label: `${citationSectionLabel(citation)} · “${summary}”`,
+      detail: citation.comment ? `${summary}\n${t('surface:agentComposer.referenceComment')}：${citation.comment}` : summary,
+    }
+  })
+  const contextSummary = roomCitations.length
+    ? `${roomCitations[0]?.roomTitle ?? pageLabel} · ${t('surface:agentComposer.countReferences', { count: roomCitations.length })}`
     : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
@@ -100,7 +134,6 @@ export function AgentPanel({
   }, [focusRequest])
 
   useEffect(() => {
-    setSelectedText('')
     setComposerResetKey((current) => current + 1)
   }, [pageLabel])
 
@@ -108,30 +141,17 @@ export function AgentPanel({
     if (previousSessionIdRef.current === session.sessionId) return
     if (previousSessionIdRef.current !== null) {
       setDraft('')
-      setSelectedText('')
+      if (roomCitations.length) onClearRoomCitations()
       setComposerResetKey((current) => current + 1)
     }
     previousSessionIdRef.current = session.sessionId
     setPendingNavigationByRun({})
-  }, [session.sessionId])
-
-  useEffect(() => {
-    const readWorkspaceSelection = () => {
-      const selection = document.getSelection()
-      if (!selection || selection.isCollapsed) return
-      const anchor = selection.anchorNode
-      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
-      if (!anchorElement?.closest('.workspace-main')) return
-      const text = selection.toString().trim()
-      if (text) setSelectedText(text.slice(0, 8_000))
-    }
-    document.addEventListener('selectionchange', readWorkspaceSelection)
-    return () => document.removeEventListener('selectionchange', readWorkspaceSelection)
-  }, [])
+  }, [onClearRoomCitations, roomCitations.length, session.sessionId])
 
   useEffect(() => {
     if (!session.sessionId || navigationRequest) return
     const tools = Object.values(session.toolCallsByRun).flat()
+    const roomIds = new Set(rooms.map((room) => room.id))
     for (const tool of tools) {
       if (tool.status !== 'completed') continue
       const target = parseAgentNavigationTarget(tool.result)
@@ -147,6 +167,22 @@ export function AgentPanel({
       ))
       if (alreadyLinked) {
         handledNavigationKeysRef.current.add(key)
+        continue
+      }
+      const replayMode = replayNavigationMode({
+        toolRunId: tool.runId,
+        activeRunId: session.activeRunId,
+        target,
+        roomIds,
+      })
+      if (replayMode === 'skip') {
+        handledNavigationKeysRef.current.add(key)
+        continue
+      }
+      if (replayMode === 'defer') continue
+      if (replayMode === 'restore-tab') {
+        handledNavigationKeysRef.current.add(key)
+        onRestoreRoomTab(target)
         continue
       }
       handledNavigationKeysRef.current.add(key)
@@ -170,7 +206,39 @@ export function AgentPanel({
       }
       return
     }
-  }, [navigationRequest, onNavigate, pageId, pageLabel, refreshFromBackend, roomId, session.sessionId, session.sessionLinks, session.toolCallsByRun])
+  }, [navigationRequest, onNavigate, onRestoreRoomTab, pageId, pageLabel, refreshFromBackend, roomId, rooms, session.activeRunId, session.sessionId, session.sessionLinks, session.toolCallsByRun])
+
+  useEffect(() => {
+    for (const tool of Object.values(session.toolCallsByRun).flat()) {
+      const createsProposal = tool.name === 'context_room_correction_propose'
+      const projectionToolName = isRoomOverviewProjectionToolName(tool.name) ? tool.name : null
+      if (!createsProposal && !projectionToolName) continue
+      if (handledOverviewToolIdsRef.current.has(tool.id)) continue
+      if (tool.status === 'error' || tool.status === 'stopped') {
+        handledOverviewToolIdsRef.current.add(tool.id)
+        recordRoomOverviewDiagnostic('correction.tool_failed', {
+          roomId,
+          toolName: tool.name,
+          toolId: tool.id,
+          runId: tool.runId,
+          status: tool.status,
+          errorPresent: Boolean(tool.error),
+        }, tool.status === 'error' ? 'error' : 'warn')
+        continue
+      }
+      if (tool.status !== 'completed') continue
+      handledOverviewToolIdsRef.current.add(tool.id)
+      if (createsProposal) {
+        recordRoomOverviewDiagnostic('correction.proposal_created', {
+          roomId,
+          toolId: tool.id,
+          runId: tool.runId,
+        })
+        continue
+      }
+      if (projectionToolName) publishRoomOverviewChanged(tool.result, roomId, projectionToolName)
+    }
+  }, [roomId, session.toolCallsByRun])
 
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
@@ -224,7 +292,9 @@ export function AgentPanel({
   const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = []) => {
     if ((!prompt.trim() && files.length === 0) || !agentAvailable) return
     const submittedPrompt = prompt.trim()
-    const submittedContext = selectedText
+    const submittedContext = roomCitations.length
+      ? buildRoomOverviewCitationContext(roomCitations)
+      : ''
     setDraft('')
     setSubmitting(true)
     try {
@@ -246,7 +316,7 @@ export function AgentPanel({
         }))
       }
       await session.sendPrompt(submittedPrompt || '请分析我上传的文件。', submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
-      setSelectedText('')
+      if (roomCitations.length) onClearRoomCitations()
       setComposerResetKey((current) => current + 1)
     } catch {
       setDraft(submittedPrompt)
@@ -312,14 +382,16 @@ export function AgentPanel({
     <AgentComposer
       ref={composerRef}
       contextSummary={contextSummary}
-      hasSelectedText={Boolean(selectedText)}
+      contextItems={citationItems}
+      hasSelectedText={roomCitations.length > 0}
       resetKey={composerResetKey}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
       available={agentAvailable}
       onChange={setDraft}
-      onClearContext={() => setSelectedText('')}
+      onClearContext={onClearRoomCitations}
+      onRemoveContext={onRemoveRoomCitation}
       onStop={() => void session.stop()}
       onSubmit={(files) => void sendPrompt(draft, undefined, files)}
     />
@@ -336,7 +408,7 @@ export function AgentPanel({
           sessions={session.sessions}
           onCreate={async () => {
             setDraft('')
-            setSelectedText('')
+            if (roomCitations.length) onClearRoomCitations()
             setComposerResetKey((current) => current + 1)
             return session.createSession()
           }}
@@ -344,7 +416,7 @@ export function AgentPanel({
           onRename={session.renameSession}
           onSelect={async (selectedSession) => {
             setDraft('')
-            setSelectedText('')
+            if (roomCitations.length) onClearRoomCitations()
             setComposerResetKey((current) => current + 1)
             await session.selectSession(selectedSession)
           }}

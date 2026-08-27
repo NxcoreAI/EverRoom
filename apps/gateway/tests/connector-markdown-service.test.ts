@@ -10,6 +10,7 @@ import {
   connectorMarkdownArtifacts,
   connectorMarkdownOutbox,
   connectorRecords,
+  connectorTodos,
 } from "../src/infrastructure/database/schema.js";
 import { ConnectorMarkdownService } from "../src/modules/connectors/markdown-service.js";
 import type { IngestService } from "../src/modules/ingest/service.js";
@@ -243,6 +244,64 @@ describe("ConnectorMarkdownService", () => {
         source: { ref: { sourceKind: "connector-record", sourceId: "generic-row-1" } },
         originChannel: "connector",
       });
+    } finally {
+      await test.service.dispose();
+      test.database.sqlite.close();
+    }
+  });
+
+  it("materializes a connector todo as structured Markdown and ingests via the connector-todo ref", async () => {
+    const test = await fixture();
+    const now = new Date("2026-08-20T03:00:00.000Z");
+    test.database.db.insert(connectorTodos).values({
+      id: "todo-row-1",
+      ownerId: "local-user",
+      service: "google_tasks",
+      connectionName: "default",
+      sourceRecordId: "task-source-1",
+      sourceUpdatedAt: now,
+      syncedAt: now,
+      schemaVersion: 1,
+      promptVersion: 1,
+      contentHash: "todo-source-hash",
+      extensionPayload: null,
+      todoId: "task-1",
+      title: "补充天线参数",
+      notes: "见评审会结论",
+      status: "needsAction",
+      dueAt: new Date("2026-09-01T01:00:00.000Z"),
+      completedAt: null,
+      priority: "high",
+      listId: "list-1",
+      listName: "卫星项目",
+    }).run();
+
+    try {
+      await test.service.initialize();
+      await test.service.dispose();
+
+      const artifact = test.database.db.select().from(connectorMarkdownArtifacts).get()!;
+      expect(artifact).toMatchObject({
+        resourceType: "todo",
+        ingestSourceId: "todo-row-1",
+        rendererVersion: "todo-v1",
+        status: "ready",
+        ingestStatus: "succeeded",
+      });
+      const markdown = await readFile(join(test.directory, artifact.activePath), "utf8");
+      expect(markdown).toContain("# 补充天线参数");
+      expect(markdown).toContain("## 待办信息");
+      expect(markdown).toContain("- 状态：needsAction");
+      expect(markdown).toContain("- 优先级：high");
+      expect(markdown).toContain("- 清单：卫星项目");
+      expect(markdown).toContain("## 备注");
+      expect(markdown).toContain("见评审会结论");
+      expect(markdown).toContain('source_kind: "todo"');
+      expect(test.ingest.ingest).toHaveBeenCalledWith({
+        source: { ref: { sourceKind: "connector-todo", sourceId: "todo-row-1" } },
+        originChannel: "connector",
+      });
+      expect(test.service.getByIngestSource("todo", "todo-row-1")?.id).toBe(artifact.id);
     } finally {
       await test.service.dispose();
       test.database.sqlite.close();

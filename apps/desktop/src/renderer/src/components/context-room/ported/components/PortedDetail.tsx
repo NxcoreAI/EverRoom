@@ -4,7 +4,6 @@ import { useLocale } from '../../../../i18n/LocaleContext'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
 import {
-  createContextRoomFileItem,
   createContextRoomResourceLibrary,
   getRoomResource,
 } from '../resources'
@@ -15,7 +14,6 @@ import { ObjectDetailView } from './ObjectDetailView'
 import type { DetailObject } from './ObjectDetailView'
 import type { DetailPane } from './RoomIconSidebar'
 import type { WorkspaceObjectPreview } from './detail-panels'
-import type { LocalOfficeFile } from './detail-panels/ResourcePanel'
 import { MailDetailDialog } from './detail-workspace/MailDetailDialog'
 import { WorkspaceLayout } from './detail-workspace/WorkspaceLayout'
 
@@ -133,26 +131,6 @@ export function PortedDetail({
     if (resource) openResource(resource)
   }, [locale, onCreateDocument, openResource, room])
 
-  const addLocalFile = useCallback((file: LocalOfficeFile) => {
-    const item = createContextRoomFileItem(file, locale)
-    onUpdateRoom((current) => {
-      if (current.fileItems.some((candidate) => candidate.hostfsPath === file.path)) return current
-      return {
-        ...current,
-        fileItems: [...current.fileItems, item],
-        stats: { ...current.stats, docs: current.stats.docs + 1 },
-      }
-    })
-    setSelectedResourceId(`${room.id}:file:${item.id}`)
-    setSelectedObject(null)
-    layout.setPanels(['documents'])
-    layout.setPanelWeights([1])
-    layout.setActivePanelIndex(0)
-    layout.setMiddleHidden(false)
-    layout.setMobileContent(true)
-    setActivePane('documents')
-  }, [layout, locale, onUpdateRoom, room.id, setActivePane])
-
   useEffect(() => {
     const resource = library.resources.find((candidate) =>
       candidate.kind === 'cloud-doc' && candidate.binding.docId === focusedDocumentId)
@@ -184,7 +162,9 @@ export function PortedDetail({
       ? 'schedule'
       : target.kind === 'task'
         ? 'tasks'
-        : 'relations'
+        : target.kind === 'graph-node'
+          ? 'memories'
+          : 'relations'
     setSelectedObject(target)
     setSelectedResourceId(null)
     if (!layout.panels.includes(pane)) layout.switchPane(pane)
@@ -244,7 +224,6 @@ export function PortedDetail({
           onEmptyTrash={onEmptyTrash}
           onSelectResource={openResource}
           onOpenWikiPage={openWikiPage}
-          onAddFile={addLocalFile}
           onOpenMemory={setSelectedMemoryId}
           onOpenObject={openObject}
           onCloseObject={() => {

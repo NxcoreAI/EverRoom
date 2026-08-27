@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
+import { repairContextRoomSchema } from "./context-room-compatibility.js";
 
 export interface DatabaseClient {
   db: BetterSQLite3Database<typeof schema>;
@@ -358,6 +359,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   adoptPreMergeContextRoomMigrations(sqlite, migrationsDir);
+  repairContextRoomSchema(sqlite);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");

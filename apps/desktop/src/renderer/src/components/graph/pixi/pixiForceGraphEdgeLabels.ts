@@ -90,7 +90,7 @@ export function createPixiForceGraphEdgeLabelManager({
         if (edge.id === selectedEdgeId || edge.source === hoveredIndex || edge.target === hoveredIndex) desired.add(index)
       })
 
-      if (scale >= scaleThreshold && bounds) {
+      if (hoveredIndex === null && scale >= scaleThreshold && bounds) {
         for (let index = 0; index < edges.length && desired.size < maxLabels; index += 1) {
           const edge = edges[index]
           if (!edge?.label) continue

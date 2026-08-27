@@ -9,7 +9,7 @@ import {
   createForceGraphSharedMemory,
 } from './forceGraphProtocol'
 
-interface ForceGraphWorkerLike {
+export interface ForceGraphWorkerLike {
   onerror: ((event: ErrorEvent) => void) | null
   onmessage: ((event: MessageEvent<ForceGraphWorkerResponse>) => void) | null
   postMessage(message: ForceGraphWorkerRequest): void
@@ -24,7 +24,7 @@ export interface ForceGraphLayoutSnapshot {
 
 function defaultWorkerFactory(): ForceGraphWorkerLike {
   return new Worker(new URL('./forceGraph.worker.ts', import.meta.url), {
-    name: 'wiki-force-layout',
+    name: 'force-graph-layout',
     type: 'module',
   })
 }
@@ -54,11 +54,11 @@ export class ForceGraphLayoutController {
     if (new Set(nodeIds).size !== nodeIds.length) {
       throw new Error('Force graph node IDs must be unique')
     }
-    const memory = createForceGraphSharedMemory(nodes.length)
+    const shared = createForceGraphSharedMemory(nodes.length)
     this.snapshot = {
-      control: memory.control,
+      control: shared.control,
       nodeIds,
-      positions: memory.positions,
+      positions: shared.positions,
     }
     this.worker = workerFactory()
     this.ready = new Promise<void>((resolve, reject) => {
@@ -73,8 +73,8 @@ export class ForceGraphLayoutController {
       nodes,
       edges,
       options: { ...DEFAULT_FORCE_GRAPH_OPTIONS, ...options },
-      positionsBuffer: memory.positionsBuffer,
-      controlBuffer: memory.controlBuffer,
+      positionsBuffer: shared.positionsBuffer,
+      controlBuffer: shared.controlBuffer,
     })
   }
 

@@ -40,6 +40,8 @@ import { RoomDuplicateService } from "../modules/context-rooms/duplicate-service
 import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { ContextRoomAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/context-rooms/room-agent.js";
 import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
+import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
+import { createRoomOverviewAgentTools } from "../modules/context-rooms/overview-agent-tools.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
@@ -355,7 +357,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoConnectorManager.startPolling(pollingIntervalMs);
   }
 
-  app.addHook("preSerialization", async (_request, _reply, payload) => redactSecrets(payload));
+  // /v1/runtime-config/secrets 是唯一允许真密钥出站的端点：主进程派生托管
+  // 子进程 env 用（token 鉴权，token 只在主进程）；若在此脱敏，子进程会拿
+  // "[REDACTED]" 当 key 起服务并静默 401。其余响应一律按键名/注册密钥脱敏。
+  app.addHook("preSerialization", async (request, _reply, payload) => {
+    if (request.routeOptions.url === "/v1/runtime-config/secrets") return payload;
+    return redactSecrets(payload);
+  });
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
@@ -413,6 +421,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(runtimeConfigRoutes(runtimeConfigManager));
   const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir });
   const contextRoomService = new ContextRoomService(db);
+  const roomOverviewService = new RoomOverviewService(db, contextRoomService);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
   const documentService = new DocumentService(db, documentEventBroker, (document) => {
@@ -489,6 +498,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
+  // 手动建 Room：enrich 实体回写时认领到本 Room，使后续资料路由能命中（与推荐晋升同语义）
+  contextRoomService.setRoomEntityClaimer((roomId, entities) =>
+    knowledgeService.claimRoomEntities(roomId, entities));
   roomDuplicateService.initialize();
   const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
   let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
@@ -537,9 +549,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   // Room 创建整理走 internal_workflow 异步调度；logger 供失败降级日志。
-  contextRoomService.setRoomAgentDispatcher(new ContextRoomAgentDispatcher(subagentOrchestrator), (bindings, message) => {
+  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
+  contextRoomService.setRoomAgentDispatcher(contextRoomAgentDispatcher, (bindings, message) => {
     app.log.warn(bindings, message);
   });
+  roomOverviewService.setRoomAgentDispatcher(contextRoomAgentDispatcher);
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
   const recoveredSubagentInvocations = subagentOrchestrator.initialize();
   if (recoveredSubagentInvocations > 0) {
@@ -547,13 +561,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   registerPrimaryAgent(agentResolver, config, documentMcpHost, {
     externalCalls,
-    ...(subagentConfig.enabled
-      ? {
-          tools: createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
+    tools: [
+      ...createRoomOverviewAgentTools(roomOverviewService),
+      ...(subagentConfig.enabled
+        ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
-          }),
-        }
-      : {}),
+          })
+        : []),
+    ],
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
       ? {
@@ -862,7 +877,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(contextRoomRoutes(
     contextRoomService,
     roomDuplicateService,
-    subagentConfig.enabled ? new ContextRoomAgentDispatcher(subagentOrchestrator) : undefined,
+    subagentConfig.enabled ? contextRoomAgentDispatcher : undefined,
+    roomOverviewService,
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(documentRoutes(documentService));
@@ -1008,13 +1024,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   perceptionService.initialize();
   // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
   // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
+  // 日历事件走独立 sourceKind "calendar-event"（与 CLI 引用路径同词表），
+  // 否则 room 路由投影里的来源标签/关联记忆都会把它当邮件。
   nangoConnectorManager.setMemorySink((input) =>
     ingestService.ingestConnector({
-      kind: input.kind === "document" ? "cloud-doc" : "mail",
+      kind: input.kind === "document" ? "cloud-doc" : input.kind === "calendar" ? "calendar-event" : "mail",
       sourceId: `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
       dataType: input.kind,
       title: input.title,
       markdown: input.markdown,
+      // 连接级 sourceTag 进 ②b 规则信号：规则可把整个连接（如学校日历）确定性归到 Room。
+      entrySignals: { sourceTag: `connector:${input.provider}:${input.connectionId}` },
       ...(config.knowledge?.routerEnabled ? {} : { pipelines: { room: false, wiki: false, memory: true } }),
     }).then(() => undefined));
   documentOutboxWorker = new DocumentOutboxWorker(

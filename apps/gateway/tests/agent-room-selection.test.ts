@@ -255,6 +255,32 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
+  it('routes a Room overview refresh to the durable regenerate tool', async () => {
+    const { rooms, runtime, service, sqlite } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [{ id: 'room-current', title: '当前 Room', data: { id: 'room-current', title: '当前 Room' } }],
+      deletedRooms: [],
+    })
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '更新一下当前room的overview',
+      idempotencyKey: 'room-overview-regenerate-routing',
+      context: { selectedRoomId: 'room-current' },
+    })
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
+    await service.startRun(session.id, {
+      prompt: '把 overview 改成用户指定的新内容',
+      idempotencyKey: 'room-overview-explicit-correction-routing',
+      context: { selectedRoomId: 'room-current' },
+    })
+
+    expect(runtime.starts[0]?.prompt).toContain('必须调用 context_room_overview_regenerate')
+    expect(runtime.starts[0]?.prompt).toContain('禁止只在聊天正文中拟写')
+    expect(runtime.starts[1]?.prompt).toBe('把 overview 改成用户指定的新内容')
+    sqlite.close()
+  })
+
   it('resolves a merged Room id to the active target for new Agent runs', async () => {
     const { db, rooms, runtime, service, sqlite } = await createHarness()
     rooms.saveSnapshot({

@@ -11,6 +11,7 @@ import type { Logger } from "pino";
 import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
+  connectorTodos,
   documents,
   entities as entitiesTable,
   entityDocLinks,
@@ -910,10 +911,97 @@ describe("连接器接入：归一化直传共用台账与扇出", () => {
     test.sqlite.close();
   });
 
+  it("日历：kind=calendar-event 独立台账 kind，dataType=calendar 区分，幂等去重", async () => {
+    const test = await engineForTest();
+    const unit = {
+      kind: "calendar-event" as const,
+      sourceId: "connector:google-calendar:c1:calendar:ev-1",
+      dataType: "calendar" as const,
+      title: "评审会",
+      markdown: "# 评审会\n\n时间：明天 10:00\n\n过方案",
+    };
+
+    const first = await test.service.ingestConnector(unit);
+    expect(first).toMatchObject({
+      deduped: false,
+      dataType: "calendar",
+      pipelines: { room: true, wiki: true, memory: true },
+      routeJobId: "route-job-1",
+    });
+    expect(test.knowledge.submitEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKind: "calendar-event",
+      sourceId: unit.sourceId,
+      title: "评审会",
+    }));
+
+    const again = await test.service.ingestConnector(unit);
+    expect(again.deduped).toBe(true);
+    const event = test.sqlite.prepare("SELECT * FROM ingest_events").get() as Record<string, unknown>;
+    expect(event.source_kind).toBe("calendar-event");
+    expect(event.data_type).toBe("calendar");
+    test.sqlite.close();
+  });
+
+  it("待办：connector-todo ref 回读域表渲染 markdown，台账 kind=todo，occurredAt 取 dueAt，幂等去重", async () => {
+    const test = await engineForTest();
+    const now = new Date("2026-08-20T03:00:00.000Z");
+    test.db.insert(connectorTodos).values({
+      id: "todo-row-1",
+      ownerId: "local-user",
+      service: "google_tasks",
+      connectionName: "default",
+      sourceRecordId: "task-source-1",
+      sourceUpdatedAt: now,
+      syncedAt: now,
+      schemaVersion: 1,
+      promptVersion: 1,
+      contentHash: "todo-hash",
+      extensionPayload: null,
+      todoId: "task-1",
+      title: "补充天线参数",
+      notes: "见评审会结论",
+      status: "needsAction",
+      dueAt: new Date("2026-09-01T01:00:00.000Z"),
+      completedAt: null,
+      priority: "high",
+      listId: "list-1",
+      listName: "卫星项目",
+    }).run();
+
+    const first = await test.service.ingest({
+      source: { ref: { sourceKind: "connector-todo", sourceId: "todo-row-1" } },
+      originChannel: "connector",
+    });
+    expect(first).toMatchObject({
+      deduped: false,
+      dataType: "connector-todo",
+      detectedBy: "source-kind",
+      title: "补充天线参数",
+      source: { sourceKind: "todo", sourceId: "todo-row-1", sourceVersion: 1 },
+      originChannel: "connector",
+    });
+    expect(test.knowledge.submitEnvelope).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKind: "todo",
+      sourceId: "todo-row-1",
+      title: "补充天线参数",
+      markdown: expect.stringContaining("## 待办信息"),
+    }));
+
+    const again = await test.service.ingest({
+      source: { ref: { sourceKind: "connector-todo", sourceId: "todo-row-1" } },
+      originChannel: "connector",
+    });
+    expect(again.deduped).toBe(true);
+    const event = test.sqlite.prepare("SELECT * FROM ingest_events").get() as Record<string, unknown>;
+    expect(event.source_kind).toBe("todo");
+    expect(event.data_type).toBe("connector-todo");
+    test.sqlite.close();
+  });
+
   it("router 未开启时显式降级为仅记忆链路（引擎 room 依赖 router）", async () => {
     const test = await engineForTest();
     const result = await test.service.ingestConnector({
-      kind: "mail",
+      kind: "calendar-event",
       sourceId: "connector:google-calendar:c1:calendar:ev-1",
       dataType: "calendar",
       title: "评审会",

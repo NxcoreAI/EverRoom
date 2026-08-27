@@ -2,13 +2,15 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { Application, Container, Graphics, ParticleContainer, Sprite, Text, Ticker } from 'pixi.js'
 import { Viewport } from 'pixi-viewport'
 
+import './graphShell.css'
+
 import {
   createPixiForceGraphRenderer,
   type PixiForceGraphDependencies,
   type PixiForceGraphEdge,
   type PixiForceGraphNode,
   type PixiForceGraphRenderer,
-} from './PixiForceGraphRenderer'
+} from './pixi/PixiForceGraphRenderer'
 
 const PIXI_DEPENDENCIES = {
   Application,
@@ -26,12 +28,14 @@ export interface PixiForceGraphCanvasNode extends PixiForceGraphNode {
 }
 
 export interface PixiForceGraphCanvasHandle {
-  fitView(): void
+  fitView(minScale?: number): void
 }
 
 interface PixiForceGraphCanvasProps {
   ariaLabel: string
   className: string
+  /** 面板只作视口：初始视野对准内容中心、保持原始缩放（世界可大于面板，拖拽平移浏览）。 */
+  centerOnMount?: boolean
   edges: readonly PixiForceGraphEdge[]
   nodes: readonly PixiForceGraphCanvasNode[]
   onResize?: (width: number, height: number) => void
@@ -49,6 +53,7 @@ interface PixiForceGraphCanvasProps {
 /** React lifecycle shell for the PIXI force-graph renderer. */
 export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiForceGraphCanvasProps>(function PixiForceGraphCanvas({
   ariaLabel,
+  centerOnMount = false,
   className,
   edges,
   nodes,
@@ -69,8 +74,8 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
   propsRef.current = { nodes, onDragNode, onOpenNode, onReleaseNode, onResize, onSelectEdge, onSelectNode }
 
   useImperativeHandle(ref, () => ({
-    fitView() {
-      rendererRef.current?.fitView()
+    fitView(minScale?: number) {
+      rendererRef.current?.fitView(minScale)
     },
   }), [])
 
@@ -83,6 +88,7 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
 
     try {
       const nextRenderer = createPixiForceGraphRenderer({
+        centerOnMount,
         dependencies: PIXI_DEPENDENCIES,
         edges,
         host: host as unknown as Parameters<typeof createPixiForceGraphRenderer>[0]['host'],
@@ -125,7 +131,7 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
       observer?.observe(host)
       resize()
     } catch (error) {
-      console.error('Failed to initialize PIXI Wiki graph renderer', error)
+      console.error('Failed to initialize PIXI force graph renderer', error)
     }
 
     return () => {
@@ -133,7 +139,7 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
       if (rendererRef.current === renderer) rendererRef.current = null
       renderer?.destroy()
     }
-  }, [ariaLabel, edges, nodes, positions, revision])
+  }, [ariaLabel, centerOnMount, edges, nodes, positions, revision])
 
   useEffect(() => {
     const selectedIndex = selectedId ? nodes.findIndex((node) => node.id === selectedId) : null
@@ -144,5 +150,6 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
     rendererRef.current?.setSelectedEdgeId(selectedEdgeId)
   }, [selectedEdgeId])
 
-  return <div ref={hostRef} className={className} />
+  // 内核自带中性壳层类，领域 className 退化为纯修饰（背景/高度覆盖等）。
+  return <div ref={hostRef} className={`nx-graph-canvas ${className}`} />
 })
