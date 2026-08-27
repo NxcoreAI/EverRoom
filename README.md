@@ -2,25 +2,49 @@
 
 <img src="./everroom_logo/everroom_full.png" alt="Everroom logo" width="360">
 
-# Everroom
 
-**The local-first context workspace between your data and AI agents.**
 
-Connect data. Build evidence. Govern memory. Move work forward.
+**A local-first personal context workspace for your files, conversations, memory, and AI agents.**
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+Connect information. Understand context. Move work forward.
 
-![Build](https://github.com/NxcoreAI/EverRoom/actions/workflows/app-windows-ci.yml/badge.svg?branch=main)
-![Maintenance](https://img.shields.io/github/commit-activity/y/NxcoreAI/EverRoom?label=maintenance)
+# EverRoom
+
+[English](./README.md) | [简体中文](./README.zh-CN.md) | [Website](https://r.nxcore.ai/)
+
+[![Star History Rank](https://api.star-history.com/badge?repo=NxcoreAI/EverRoom&type=rank)](https://www.star-history.com/nxcoreai/everroom)
+
 ![Stars](https://img.shields.io/github/stars/NxcoreAI/EverRoom?style=flat&label=stars)
 ![Version](https://img.shields.io/github/package-json/v/NxcoreAI/EverRoom?filename=apps%2Fdesktop%2Fpackage.json&label=version)
-![Status](https://img.shields.io/badge/status-alpha-f59e0b)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 </div>
 
 > [!IMPORTANT]
 > Everroom is under active development. macOS is the current development target. APIs, storage schemas, and agent contracts may change while the first complete local workflow is being finished.
+
+## What is Everroom?
+
+Everroom gives your work a place where information, memory, and action stay connected. Bring in the files, conversations, meetings, repositories, and services that matter; organize them into a **Context Room**; then write, decide, and delegate with an Agent that can see the right context.
+
+It is the layer between your data and AI: more alive than a file store, more grounded than a chat box, and designed to help you take the next step instead of merely generating another answer.
+
+> **Let AI keep understanding you, so everything you build can keep working for you.**
+
+### The product loop
+
+```mermaid
+flowchart LR
+    A["Connect information"] --> B["Build a Context Room"]
+    B --> C["Write and remember"]
+    C --> D["Let Agent move work forward"]
+    D --> A
+```
+
+1. **Connect information** from local files, repositories, meetings, audio, and optional services such as Feishu, Slack, Notion, or Gmail.
+2. **Build a Context Room** for a project, topic, person, or responsibility. Sources, decisions, Wiki pages, tasks, and memory stay together without becoming one unbounded prompt.
+3. **Write and remember** in Context Docs, capture real-world conversations, and keep important knowledge traceable to its source.
+4. **Move work forward** with scoped Agent sessions, scheduled tasks, diary automation, and the Agent Office view.
 
 ## Why Everroom exists
 
@@ -80,13 +104,16 @@ The main branch now contains the first integrated product loop. Some features re
 
 | Area | Status | Available today |
 | --- | --- | --- |
-| Desktop workspace | Available | Electron + React shell, source management, Agent, Memory, Knowledge, Room, and Docs surfaces |
+| Desktop workspace | Available | Electron + React workspace with Home, Rooms, Documents, Memory, Sources, Files, Diary, and Agent Office |
 | Local Gateway | Available | Fastify 5 service supervised by Electron, REST/WebSocket/OpenAPI boundary, health and readiness checks |
-| Evidence and ingest | Available, evolving | Unified intake, normalization for Markdown/text and office/web formats, content hashes, versions, provenance, policy snapshots, and ingest ledger |
-| Knowledge Rooms | Available, evolving | Room registry, per-Room Wiki, entity routing, evidence accumulation, promotion, source attach/revert, Wiki search/read tools |
+| Evidence and ingest | Available, evolving | Unified intake, Markdown/text and office/web normalization, content hashes, versions, provenance, policy snapshots, and ingest ledger |
+| Knowledge Rooms | Available, evolving | Room registry, per-Room Wiki, entity routing, evidence accumulation, promotion, source attach/revert, and Wiki search/read tools |
 | Memory | Available when enabled | Pi Agent capture plus MemoryCore L0-L3 pipeline; desktop overview, conversations, atomic memories, scenarios, profile, search, and graceful unavailable states |
 | Agent sessions | Available | Persistent sessions, runs, streaming events, cancellation, independent runtime sessions, and scoped memory/knowledge/document tools |
 | Context Docs | Available, evolving | Versioned Tiptap documents, block-aware operations, reviewable Agent edits, MCP access, and transactional downstream ingest |
+| Reality Perception | Available, evolving | User-triggered microphone/system-audio capture, transcription, and reviewable conversation records |
+| Agent work management | Available, evolving | Agent Office presence, scheduled runs, diary tasks, and explicit run-now controls |
+| Files and understanding | Available, evolving | Local file browser, parsing and indexing pipeline, office/web document understanding, and source-linked artifacts |
 | Connectors | Foundation available | Managed local OpenConnector + `oo` bridge, optional Nango integrations, and Feishu issue automation; provider coverage is still expanding |
 
 ## Technical path
@@ -198,6 +225,23 @@ NXCORE_AI_API=openai-responses
 
 The same boundary can target compatible OpenAI-style providers. Keep credentials in the Gateway environment; they are never sent to the renderer.
 
+Generative model calls in the Gateway are resolved through `AgentResolver` using stable Agent IDs. Primary chat, connector sync, transcription summaries, Cursor Completion, Knowledge workflows, and Web Search use independent runtime and workspace directories. Business modules do not call model APIs directly; embeddings remain a non-generative infrastructure capability outside Agent Resolver.
+
+NxCore Gateway also exposes the bearer-protected `/v1/mcp/documents/:sessionId` Streamable HTTP MCP endpoint for authenticated clients.
+
+#### File-driven subagents
+
+Subagents can be dispatched only by the primary Agent or internal Gateway workflows. They do not expose independent chat entry points. Gateway scans the repository-root `agents` directory by default; builds copy it into `dist/agents` for Desktop packaging. Development and tests can override the location:
+
+```dotenv
+NXCORE_SUBAGENTS_ENABLED=true
+NXCORE_SUBAGENTS_DIR=/absolute/path/to/everroom-agents
+```
+
+Each first-level directory represents one Agent and contains an `agent.yaml`, its system prompt, and optional skills. MCP servers reference names already configured in Settings, and `includeTools` must explicitly limit the tools visible to that Agent. Gateway creates an immutable revision when definitions change, so running invocations continue on their original revision.
+
+Every `SKILL.md` requires `name` and `description` YAML frontmatter. Subagents can read only their own skill snapshot through the restricted `read` tool, not arbitrary workspace or device files. See [`docs/subagent-framework-design.zh-CN.md`](./docs/subagent-framework-design.zh-CN.md) for the full schema and policy model.
+
 ### Optional local MemoryCore and Knowledge services
 
 The desktop supervises compatible local services when their feature flags are enabled. The defaults are loopback endpoints:
@@ -223,10 +267,10 @@ pnpm package:mac  # Create macOS DMG and ZIP artifacts
 
 ## Gateway and local data
 
-During desktop development:
+During desktop development, Electron discovers the Gateway through its runtime manifest. The port is dynamic by default so multiple local instances do not collide. Set `NXCORE_GATEWAY_DEV_PORT` only when you need a stable development port:
 
-- API base URL: `http://127.0.0.1:3210`
-- OpenAPI UI: `http://127.0.0.1:3210/docs`
+- API base URL: `http://127.0.0.1:<discovered-port>`
+- OpenAPI UI: `http://127.0.0.1:<discovered-port>/docs`
 - Liveness: `GET /v1/health/live`
 - Readiness: `GET /v1/health/ready`
 
@@ -235,9 +279,11 @@ Health and API documentation routes are public on the loopback listener. Other r
 ```bash
 pnpm --dir apps/gateway dev -- \
   --data-dir .data \
-  --port 3210 \
+  --port 4100 \
   --token local-development-token
 ```
+
+For a fixed desktop development port, use `NXCORE_GATEWAY_DEV_PORT=4100 pnpm dev`.
 
 On macOS, runtime data is stored under:
 
@@ -287,8 +333,8 @@ The next milestones are about making the loop more dependable and portable, rath
 3. Make Room profiles and Wiki retrieval more useful for long-running projects while keeping routing conservative.
 4. Complete Context Docs operation recovery, conflict handling, and richer citation-aware Agent workflows.
 5. Expand replaceable Agent adapters beyond Pi, including Codex, Claude Code, and OpenCode integrations where their contracts permit.
-6. Add explicit, user-initiated capture workflows with strong privacy exclusions.
-7. Evaluate optional sync and collaboration only after the local data model and audit boundaries are stable.
+6. Expand bidirectional desktop/mobile sync and remote Agent control while keeping local permission boundaries explicit.
+7. Improve Windows support, privacy exclusions, installation, and release reliability.
 
 Continuous screen recording, autonomous multi-agent DAGs, enterprise administration, and mandatory cloud synchronization remain outside the first release scope.
 
