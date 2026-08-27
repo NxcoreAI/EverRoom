@@ -106,6 +106,12 @@ export const DATA_TYPES: DataTypeDef[] = [
     defaults: { room: true, wiki: true, memory: false },
   },
   {
+    key: "connector-todo",
+    label: "连接器待办",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: false },
+  },
+  {
     key: "connector-record",
     label: "连接器结构化记录",
     matchExtensions: [],
@@ -146,6 +152,7 @@ export type RefSourceKind =
   | "connector-email"
   | "connector-document"
   | "connector-calendar"
+  | "connector-todo"
   | "connector-record";
 
 export interface IngestSourceInput {

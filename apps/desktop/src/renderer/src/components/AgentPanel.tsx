@@ -16,6 +16,11 @@ import {
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { RoomOverviewCitation } from '@/components/context-room/roomOverviewCitation'
+import {
+  isRoomOverviewProjectionToolName,
+  publishRoomOverviewChanged,
+} from '@/components/context-room/roomOverviewChange'
+import { recordRoomOverviewDiagnostic } from '@/components/context-room/roomOverviewDiagnostics'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import type { PageId } from '@/data/navigation'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -181,10 +186,33 @@ export function AgentPanel({
 
   useEffect(() => {
     for (const tool of Object.values(session.toolCallsByRun).flat()) {
-      if (tool.status !== 'completed' || handledOverviewToolIdsRef.current.has(tool.id)) continue
-      if (tool.name !== 'context_room_correction_apply' && tool.name !== 'context_room_correction_revoke') continue
+      const createsProposal = tool.name === 'context_room_correction_propose'
+      const projectionToolName = isRoomOverviewProjectionToolName(tool.name) ? tool.name : null
+      if (!createsProposal && !projectionToolName) continue
+      if (handledOverviewToolIdsRef.current.has(tool.id)) continue
+      if (tool.status === 'error' || tool.status === 'stopped') {
+        handledOverviewToolIdsRef.current.add(tool.id)
+        recordRoomOverviewDiagnostic('correction.tool_failed', {
+          roomId,
+          toolName: tool.name,
+          toolId: tool.id,
+          runId: tool.runId,
+          status: tool.status,
+          errorPresent: Boolean(tool.error),
+        }, tool.status === 'error' ? 'error' : 'warn')
+        continue
+      }
+      if (tool.status !== 'completed') continue
       handledOverviewToolIdsRef.current.add(tool.id)
-      window.dispatchEvent(new CustomEvent('nxcore:room-overview-changed', { detail: { roomId } }))
+      if (createsProposal) {
+        recordRoomOverviewDiagnostic('correction.proposal_created', {
+          roomId,
+          toolId: tool.id,
+          runId: tool.runId,
+        })
+        continue
+      }
+      if (projectionToolName) publishRoomOverviewChanged(tool.result, roomId, projectionToolName)
     }
   }, [roomId, session.toolCallsByRun])
 

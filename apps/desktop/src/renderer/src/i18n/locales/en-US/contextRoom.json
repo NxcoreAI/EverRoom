@@ -308,6 +308,7 @@
   "memory.sourceKind.file": "Uploaded files",
   "memory.sourceKind.mail": "Email",
   "memory.sourceKind.reality-event": "Meetings",
+  "memory.sourceKind.todo": "To-dos",
   "memory.sourceKind.visual-event": "Visual records",
   "memory.sourceMaterials": "Source materials",
   "memory.sources": "Sources",

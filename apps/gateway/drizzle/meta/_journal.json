@@ -239,6 +239,13 @@
       "when": 1787817600000,
       "tag": "0034_room_overviews_and_corrections",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1787834563870,
+      "tag": "0035_eager_hannibal_king",
+      "breakpoints": true
     }
   ]
 }

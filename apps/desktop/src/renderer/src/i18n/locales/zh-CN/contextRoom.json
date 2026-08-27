@@ -308,6 +308,7 @@
   "memory.sourceKind.file": "上传文件",
   "memory.sourceKind.mail": "邮件",
   "memory.sourceKind.reality-event": "会议",
+  "memory.sourceKind.todo": "待办",
   "memory.sourceKind.visual-event": "视觉记录",
   "memory.sourceMaterials": "来源资料",
   "memory.sources": "来源",

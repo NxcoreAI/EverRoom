@@ -22,7 +22,7 @@ import { ENTITY_KINDS, type EntityKind } from "./llm.js";
 
 export type EntityStatus = "weak" | "ready" | "promoting" | "room" | "archived" | "suppressed";
 export type LinkRole = "primary" | "mention" | "manual";
-export type SourceKind = "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc" | "calendar-event" | "connector-record";
+export type SourceKind = "everroom-doc" | "reality-event" | "visual-event" | "mail" | "file" | "cloud-doc" | "calendar-event" | "todo" | "connector-record";
 export type EvidenceQualityLevel = "excluded" | "uncertain" | "low" | "normal" | "high";
 export type ReadinessPath = "standard" | "strong";
 
@@ -51,6 +51,7 @@ export const SOURCE_WEIGHTS: Record<SourceKind, number> = {
   "reality-event": 1.0,
   mail: 0.6,
   "calendar-event": 0.5,
+  todo: 0.5,
   "visual-event": 0.4,
   "connector-record": 0.4,
 };

@@ -3056,7 +3056,9 @@ export class KnowledgeService {
             ...connectorSources.map((item) => ({
               title: item.title,
               markdown: item.markdown,
-              label: item.sourceKind === "calendar-event" ? "日历事件" : "邮件",
+              label: item.sourceKind === "calendar-event"
+                ? "日历事件"
+                : item.sourceKind === "todo" ? "待办" : "邮件",
             })),
           ],
         );
@@ -3097,7 +3099,7 @@ export class KnowledgeService {
    * nango 历史日历曾落 "mail" kind，一并列回收敛。
    */
   private roomConnectorSources(roomId: string): Array<{
-    sourceKind: "mail" | "calendar-event";
+    sourceKind: "mail" | "calendar-event" | "todo";
     sourceId: string;
     version: number;
     title: string;
@@ -3110,7 +3112,7 @@ export class KnowledgeService {
       .from(roomSourceMemberships)
       .where(and(
         eq(roomSourceMemberships.roomId, roomId),
-        inArray(roomSourceMemberships.sourceKind, ["mail", "calendar-event"]),
+        inArray(roomSourceMemberships.sourceKind, ["mail", "calendar-event", "todo"]),
       ))
       .all();
     if (memberships.length === 0) return [];
@@ -3124,7 +3126,7 @@ export class KnowledgeService {
     })
       .from(routeDecisions)
       .where(and(
-        inArray(routeDecisions.sourceKind, ["mail", "calendar-event"]),
+        inArray(routeDecisions.sourceKind, ["mail", "calendar-event", "todo"]),
         or(...memberships.map((item) =>
           and(eq(routeDecisions.sourceKind, item.sourceKind), eq(routeDecisions.sourceId, item.sourceId)))),
         isNotNull(routeDecisions.sourceMarkdown),
@@ -3133,14 +3135,14 @@ export class KnowledgeService {
       .all();
     const latest = new Map<string, (typeof snapshots)[number]>();
     for (const snapshot of snapshots) {
-      const key = `${snapshot.sourceKind} ${snapshot.sourceId}`;
+      const key = `${snapshot.sourceKind}\x00${snapshot.sourceId}`;
       if (!latest.has(key)) latest.set(key, snapshot);
     }
     return [...latest.values()]
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, 8)
       .map((snapshot) => ({
-        sourceKind: snapshot.sourceKind as "mail" | "calendar-event",
+        sourceKind: snapshot.sourceKind as "mail" | "calendar-event" | "todo",
         sourceId: snapshot.sourceId,
         version: snapshot.sourceVersion,
         title: snapshot.sourceTitle?.trim() || "（无标题）",
@@ -3161,7 +3163,7 @@ export interface RoomContextSummary extends RoomContextResult {
   }>;
   /** 参与本次生成的已路由连接器来源（邮件/日历），供前端展示与测试断言。 */
   sourceConnectors: Array<{
-    sourceKind: "mail" | "calendar-event";
+    sourceKind: "mail" | "calendar-event" | "todo";
     sourceId: string;
     version: number;
     title: string;

@@ -281,7 +281,7 @@ export interface ConnectorSyncJobConfig {
   action?: string;
   allowedActions: string[];
   dataset: string;
-  resourceType: "email" | "document" | "calendar" | "generic";
+  resourceType: "email" | "document" | "calendar" | "todo" | "generic";
   connectionName?: string;
   input: Record<string, unknown>;
   goal: string;
@@ -552,8 +552,9 @@ function parseConnectorSyncJobs(value: string): ConnectorSyncJobConfig[] {
     const resourceType = typeof job.resourceType === "string"
       ? job.resourceType.trim()
       : inferConnectorResourceType(String(job.dataset));
-    if (resourceType !== "email" && resourceType !== "document" && resourceType !== "calendar" && resourceType !== "generic") {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, or generic`);
+    if (resourceType !== "email" && resourceType !== "document" && resourceType !== "calendar"
+      && resourceType !== "todo" && resourceType !== "generic") {
+      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, todo, or generic`);
     }
     const action = typeof job.action === "string" && job.action.trim() ? job.action.trim() : undefined;
     if (job.allowedActions !== undefined && (!Array.isArray(job.allowedActions)
@@ -600,10 +601,11 @@ function parseConnectorSyncJobs(value: string): ConnectorSyncJobConfig[] {
   });
 }
 
-function inferConnectorResourceType(dataset: string): "email" | "document" | "calendar" | "generic" {
+function inferConnectorResourceType(dataset: string): "email" | "document" | "calendar" | "todo" | "generic" {
   const normalized = dataset.trim().toLowerCase();
   if (/mail|email|message/.test(normalized)) return "email";
   if (/doc|page|file/.test(normalized)) return "document";
+  if (/task|todo/.test(normalized)) return "todo";
   if (/calendar|event|schedule/.test(normalized)) return "calendar";
   return "generic";
 }

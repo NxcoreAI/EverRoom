@@ -9,6 +9,7 @@ import {
   connectorDocuments,
   connectorEmails,
   connectorRecords,
+  connectorTodos,
   documents,
   ingestEvents,
   parsedContents,
@@ -47,6 +48,7 @@ import {
   connectorDocumentToMarkdown,
   connectorEmailToMarkdown,
   connectorGenericRecordToMarkdown,
+  connectorTodoToMarkdown,
 } from "./connector-markdown.js";
 import { IngestFilterService, type FilterItem } from "./filter-agent.js";
 
@@ -75,6 +77,7 @@ export type LedgerSourceKind =
   | "mail"
   | "cloud-doc"
   | "calendar-event"
+  | "todo"
   | "connector-record"
   | "visual-event";
 
@@ -177,9 +180,9 @@ export class IngestService {
    * 历史上曾复用 "mail" 靠 dataType 区分，路由投影里会显成错误来源标签）。
    */
   async ingestConnector(unit: {
-    kind: "cloud-doc" | "mail" | "calendar-event";
+    kind: "cloud-doc" | "mail" | "calendar-event" | "todo";
     sourceId: string;
-    dataType: "document" | "mail" | "calendar";
+    dataType: "document" | "mail" | "calendar" | "todo";
     title: string;
     markdown: string;
     occurredAt?: string;
@@ -465,6 +468,26 @@ export class IngestService {
           markdown,
           contentHash: contentHashOf(Buffer.from(markdown, "utf8")),
           occurredAt: input.occurredAt ?? isoDate(row.startAt ?? row.sourceUpdatedAt),
+          origin: input.originChannel ?? "connector",
+        });
+      }
+      case "connector-todo": {
+        const row = this.db.select().from(connectorTodos).where(eq(connectorTodos.id, sourceId)).get();
+        if (!row) throw new IngestError(`connector_todos 无此行：${sourceId}`, "ref_not_found", 404);
+        const markdown = connectorTodoToMarkdown(row);
+        return this.processNormalized({
+          ...input,
+          entrySignals: input.entrySignals ?? { sourceTag: `connector:${row.service}` },
+        }, {
+          sourceKind: "todo",
+          sourceId,
+          sourceVersion: this.nextLedgerVersion("todo", sourceId),
+          dataType: input.dataType ?? "connector-todo",
+          detectedBy: input.dataType ? "explicit" : "source-kind",
+          title: input.title ?? row.title,
+          markdown,
+          contentHash: contentHashOf(Buffer.from(markdown, "utf8")),
+          occurredAt: input.occurredAt ?? isoDate(row.dueAt ?? row.completedAt ?? row.sourceUpdatedAt),
           origin: input.originChannel ?? "connector",
         });
       }

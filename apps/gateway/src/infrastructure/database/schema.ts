@@ -181,7 +181,7 @@ export const connectorPromptProfiles = sqliteTable(
   {
     id: text("id").primaryKey(),
     service: text("service").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
     name: text("name").notNull(),
     version: integer("version").notNull(),
     template: text("template").notNull(),
@@ -207,7 +207,7 @@ export const connectorSyncJobs = sqliteTable(
     action: text("action").notNull(),
     allowedActions: text("allowed_actions", { mode: "json" }).$type<string[]>().notNull().default([]),
     dataset: text("dataset").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull().default("generic"),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull().default("generic"),
     connectionName: text("connection_name"),
     input: text("input", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     goal: text("goal").notNull().default(""),
@@ -419,6 +419,29 @@ export const connectorCalendarEvents = sqliteTable(
   ],
 );
 
+export const connectorTodos = sqliteTable(
+  "connector_todos",
+  {
+    ...connectorDomainColumns,
+    todoId: text("todo_id").notNull(),
+    title: text("title").notNull(),
+    notes: text("notes").notNull(),
+    /** null = 来源未提供（needsAction/completed 等语义由连接器 Skill 归一）。 */
+    status: text("status"),
+    dueAt: integer("due_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    priority: text("priority"),
+    listId: text("list_id"),
+    listName: text("list_name"),
+  },
+  (table) => [
+    uniqueIndex("connector_todos_owner_source_idx")
+      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
+    index("connector_todos_owner_due_idx").on(table.ownerId, table.dueAt),
+    index("connector_todos_owner_todo_idx").on(table.ownerId, table.todoId),
+  ],
+);
+
 export const connectorMarkdownArtifacts = sqliteTable(
   "connector_markdown_artifacts",
   {
@@ -426,7 +449,7 @@ export const connectorMarkdownArtifacts = sqliteTable(
     ownerId: text("owner_id").notNull(),
     service: text("service").notNull(),
     connectionName: text("connection_name").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
     sourceRecordId: text("source_record_id").notNull(),
     ingestSourceId: text("ingest_source_id").notNull(),
     activePath: text("active_path").notNull(),
@@ -457,7 +480,7 @@ export const connectorMarkdownOutbox = sqliteTable(
   {
     id: text("id").primaryKey(),
     ownerId: text("owner_id").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
     ingestSourceId: text("ingest_source_id").notNull(),
     operation: text("operation", { enum: ["upsert", "delete"] }).notNull(),
     sourceContentHash: text("source_content_hash").notNull(),
@@ -1183,7 +1206,7 @@ export const entityDocLinks = sqliteTable(
     id: text("id").primaryKey(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1237,7 +1260,7 @@ export const roomSourceMemberships = sqliteTable(
     id: text("id").primaryKey(),
     roomId: text("room_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1272,7 +1295,7 @@ export const roomEntityMentions = sqliteTable(
     roomId: text("room_id").notNull(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1318,7 +1341,7 @@ export const roomEntityFacts = sqliteTable(
     /** 涉及实体（抽取名称经 resolveMentionEntity 解析后的 id；解析不到的不进表）。 */
     entityIds: text("entity_ids", { mode: "json" }).$type<string[]>(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1404,7 +1427,7 @@ export const routeDecisions = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull().default("everroom-doc"),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -2009,7 +2032,7 @@ export const ingestEvents = sqliteTable(
     /** ing-<uuid12> */
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
