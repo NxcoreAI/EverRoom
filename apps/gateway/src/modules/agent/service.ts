@@ -223,6 +223,7 @@ function navigationTargetKey(target: AgentNavigationTarget): string {
 const EXTERNAL_CONNECTOR_REQUEST = /(?:Gmail|GitHub|Google Drive|Slack|Notion|Dropbox|日历|邮件|邮箱|云盘|连接器|第三方服务|OAuth|API)/iu;
 const ROOM_OVERVIEW_REGENERATION_REQUEST = /(?:(?:更新|刷新|重新生成|重生成|重算|重新整理).{0,32}(?:(?:当前|这个)\s*)?(?:Room\s*)?(?:overview|总览|概览)|\b(?:refresh|regenerate|rebuild|update)\b.{0,48}\b(?:room\s+)?(?:overview|summary)\b)/iu;
 const ROOM_OVERVIEW_EXPLICIT_REPLACEMENT = /(?:改成|改为|替换为|纠正|更正|澄清|\breplace\b.{0,24}\bwith\b|\bchange\b.{0,24}\bto\b)/iu;
+const ROOM_OVERVIEW_CITATION_CONTEXT = /(?:^|\n)引用\s+\d+\n区块：(overview|status|next_steps|entities|timeline)\n引用文本：/u;
 const AGENT_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/u;
 
 function normalizeAgentLocale(value: string | undefined): string | undefined {
@@ -247,6 +248,11 @@ function runtimePrompt(
     && ROOM_OVERVIEW_REGENERATION_REQUEST.test(input.prompt)
     && !ROOM_OVERVIEW_EXPLICIT_REPLACEMENT.test(input.prompt)
       ? "本轮是基于当前 Room 已收录资料更新总览的明确请求。必须调用 context_room_overview_regenerate 完成并保存更新；禁止只在聊天正文中拟写或展示一个未保存的新 overview。"
+      : null;
+  const roomCitationRouting = hasSelectedRoom
+    && selectedText
+    && ROOM_OVERVIEW_CITATION_CONTEXT.test(selectedText)
+      ? "本轮包含由 Room 总览选区交互生成的引用纠正。先调用 context_room_context_get 定位引用所属 claim，再调用 context_room_correction_apply_citation 在当前回合直接保存并应用；禁止创建待确认 proposal，禁止要求用户再次确认。"
       : null;
   const connectorRouting = EXTERNAL_CONNECTOR_REQUEST.test(input.prompt)
     ? connectorMode === "local"
@@ -279,6 +285,7 @@ function runtimePrompt(
     "</selected_text>",
     "",
     "用户请求：",
+    roomCitationRouting ?? '',
     connectorRouting ?? '',
     attachmentContext ?? '',
     input.prompt,

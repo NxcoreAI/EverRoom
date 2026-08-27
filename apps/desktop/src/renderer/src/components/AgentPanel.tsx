@@ -18,6 +18,7 @@ import { useAgentSession } from '@/components/agent/useAgentSession'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import {
   buildRoomOverviewCitationContext,
+  buildRoomOverviewCitationPrompt,
   type RoomOverviewCitation,
 } from '@/components/context-room/roomOverviewCitation'
 import {
@@ -107,6 +108,7 @@ export function AgentPanel({
   const contextSummary = roomCitations.length
     ? `${roomCitations[0]?.roomTitle ?? pageLabel} · ${t('surface:agentComposer.countReferences', { count: roomCitations.length })}`
     : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
+  const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations)
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
@@ -290,8 +292,8 @@ export function AgentPanel({
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
   const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = []) => {
-    if ((!prompt.trim() && files.length === 0) || !agentAvailable) return
-    const submittedPrompt = prompt.trim()
+    if ((!prompt.trim() && !citationPrompt && files.length === 0) || !agentAvailable) return
+    const submittedPrompt = prompt.trim() || citationPrompt
     const submittedContext = roomCitations.length
       ? buildRoomOverviewCitationContext(roomCitations)
       : ''
@@ -319,7 +321,7 @@ export function AgentPanel({
       if (roomCitations.length) onClearRoomCitations()
       setComposerResetKey((current) => current + 1)
     } catch {
-      setDraft(submittedPrompt)
+      setDraft(prompt.trim())
     } finally {
       setSubmitting(false)
     }
@@ -384,6 +386,7 @@ export function AgentPanel({
       contextSummary={contextSummary}
       contextItems={citationItems}
       hasSelectedText={roomCitations.length > 0}
+      hasSubmittableContext={Boolean(citationPrompt)}
       resetKey={composerResetKey}
       value={draft}
       active={Boolean(session.activeRunId)}

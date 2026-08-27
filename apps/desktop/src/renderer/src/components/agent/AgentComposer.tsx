@@ -58,6 +58,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary: string
   contextItems: Array<{ id: string; label: string; detail: string }>
   hasSelectedText: boolean
+  hasSubmittableContext: boolean
   resetKey: number
   value: string
   active: boolean
@@ -74,6 +75,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary,
   contextItems,
   hasSelectedText,
+  hasSubmittableContext,
   loading,
   resetKey,
   value,
@@ -494,7 +496,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0) || loading || voiceBusy}>
+            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading || voiceBusy}>
               <ArrowUp aria-hidden="true" />
             </button>
           )}

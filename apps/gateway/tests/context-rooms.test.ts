@@ -1,9 +1,11 @@
 import type { SubagentInvocation } from '@nxcore/agent-contract'
+import { Ajv } from 'ajv'
 import { eq } from 'drizzle-orm'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { bundledAgentDefinitionsDir } from '../src/config.js'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   connectorCalendarEvents,
@@ -880,10 +882,54 @@ describe('RoomOverviewService', () => {
     }).overview.status[0]?.text).toBe('Confirmed status')
   })
 
+  it('applies a citation-backed correction immediately and validates the current projection', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-citation-correction',
+        title: 'Citation Room',
+        data: {
+          id: 'room-citation-correction',
+          title: 'Citation Room',
+          generatedContext: { overview: 'This overview is much too long for the Room.' },
+        },
+      }],
+      deletedRooms: [],
+    })
+    const overviews = new RoomOverviewService(db, service)
+    const result = overviews.applyCitation('room-citation-correction', {
+      operation: 'content_replace',
+      section: 'overview',
+      originalText: 'much too long',
+      replacementText: 'Short overview.',
+      rationale: 'User asked to shorten the cited text',
+      entryPoint: 'agent',
+    }, { sessionId: 'session-citation', runId: 'run-citation' })
+
+    expect(result.correction).toMatchObject({
+      status: 'applied',
+      sessionId: 'session-citation',
+      originalText: 'much too long',
+      replacementText: 'Short overview.',
+    })
+    expect(result.overview.overview[0]).toMatchObject({ text: 'Short overview.', corrected: true })
+    expect(() => overviews.applyCitation('room-citation-correction', {
+      operation: 'content_replace',
+      section: 'overview',
+      originalText: 'text no longer present',
+      replacementText: 'Should not apply',
+      rationale: 'Stale citation',
+      entryPoint: 'agent',
+    }, { sessionId: 'session-citation', runId: 'run-stale' }))
+      .toThrow('room_correction_citation_not_found')
+  })
+
   it('keeps applied corrections on top of a newly generated overview base', async () => {
     let generation = 0
+    const dispatchInputs: RoomAgentDispatchInput[] = []
     const dispatcher: RoomAgentDispatcher = {
-      dispatch: async () => {
+      dispatch: async (input) => {
+        dispatchInputs.push(input)
         generation += 1
         return completedInvocation(JSON.stringify({
           overview: [{ key: 'summary', text: 'Fresh generated overview', aspect: 'summary', evidenceRefs: [] }],
@@ -926,5 +972,15 @@ describe('RoomOverviewService', () => {
     expect(regenerated.status[0]?.id).toBe(firstGenerated.status[0]?.id)
     expect(regenerated.status[0]?.data).toMatchObject({ kind: 'status', category: 'blocker', state: 'active' })
     expect(regenerated.nextSteps[0]?.text).toBe('Generated next step')
+
+    const schema = JSON.parse(await readFile(
+      join(bundledAgentDefinitionsDir(), 'context-room/schemas/input.schema.json'),
+      'utf8',
+    )) as Record<string, unknown>
+    const validate = new Ajv({ allErrors: true }).compile(schema)
+    for (const input of dispatchInputs) {
+      const accepted = validate({ task: input.task, ...input.taskInput })
+      expect(accepted, JSON.stringify(validate.errors)).toBe(true)
+    }
   })
 })

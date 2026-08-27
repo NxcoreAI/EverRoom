@@ -42,3 +42,15 @@ export function buildRoomOverviewCitationContext(citations: readonly RoomOvervie
     ...(citation.comment ? [`用户评论：${citation.comment}`] : []),
   ].join('\n')).join('\n\n');
 }
+
+export function buildRoomOverviewCitationPrompt(citations: readonly RoomOverviewCitation[]): string {
+  const comments = citations
+    .map((citation) => citation.comment?.trim() ?? '')
+    .filter(Boolean);
+  if (comments.length === 0) return '';
+  if (comments.length === 1) return comments[0]!;
+  return [
+    '请分别处理以下引用评论：',
+    ...comments.map((comment, index) => `${index + 1}. ${comment}`),
+  ].join('\n');
+}

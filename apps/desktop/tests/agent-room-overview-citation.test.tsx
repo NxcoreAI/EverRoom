@@ -186,6 +186,54 @@ describe('Agent Room overview citation submission', () => {
     )
   })
 
+  it('uses citation comments as the prompt when the composer is empty', async () => {
+    const onClearRoomCitations = vi.fn()
+    const citations: RoomOverviewCitation[] = [{
+      id: 'citation-comment',
+      roomId: 'room-1',
+      roomTitle: '产品发布',
+      section: 'overview',
+      text: '这是一段过长的总览内容',
+      comment: '写短一点',
+    }]
+    await act(async () => root.render(panel(citations, () => undefined, onClearRoomCitations)))
+
+    expect(composerProps.hasSubmittableContext).toBe(true)
+    await act(async () => {
+      (composerProps.onSubmit as (files: File[]) => void)([])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendPrompt).toHaveBeenCalledWith(
+      '写短一点',
+      '引用 1\n区块：overview\n引用文本：这是一段过长的总览内容\n用户评论：写短一点',
+      'room-1',
+      undefined,
+      undefined,
+      undefined,
+    )
+    expect(onClearRoomCitations).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not submit a comment-free citation without a composer request', async () => {
+    const citations: RoomOverviewCitation[] = [{
+      id: 'citation-only',
+      roomId: 'room-1',
+      roomTitle: '产品发布',
+      section: 'status',
+      text: '当前状态',
+    }]
+    await act(async () => root.render(panel(citations, () => undefined, () => undefined)))
+
+    expect(composerProps.hasSubmittableContext).toBe(false)
+    await act(async () => {
+      (composerProps.onSubmit as (files: File[]) => void)([])
+      await Promise.resolve()
+    })
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('publishes the applied projection for an immediate Room overview update', async () => {
     const updated: RoomOverviewProjection = {
       roomId: 'room-1',

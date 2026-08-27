@@ -47,6 +47,10 @@ function text(value: unknown, maxLength = 4_000): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+function comparableText(value: unknown): string {
+  return text(value).replace(/\s+/gu, " ");
+}
+
 function isoTime(value: unknown): string | null {
   const normalized = text(value, 120);
   if (!normalized || !Number.isFinite(Date.parse(normalized))) return null;
@@ -413,10 +417,53 @@ export class RoomOverviewService {
   ): RoomContextCorrection {
     const resolved = this.requireRoom(roomId);
     this.validateProposal(resolved, input);
+    return this.insertCorrection(resolved, input, "proposed", agentContext);
+  }
+
+  applyCitation(
+    roomId: string,
+    input: ProposeRoomContextCorrectionInput,
+    agentContext: { sessionId: string; runId: string },
+  ): { correction: RoomContextCorrection; overview: RoomOverviewProjection } {
+    const resolved = this.requireRoom(roomId);
+    this.validateProposal(resolved, input);
+    const citedText = comparableText(input.originalText);
+    if (!citedText) throw new Error("room_correction_citation_required");
+
+    const projection = this.get(resolved);
+    const key = input.section === "next_steps" ? "nextSteps" : input.section;
+    const claims = projection[key];
+    const candidates = input.targetClaimId
+      ? claims.filter((claim) => claim.id === input.targetClaimId)
+      : claims.filter((claim) => comparableText(claim.text).includes(citedText));
+    if (candidates.length === 0) throw new Error("room_correction_citation_not_found");
+    if (candidates.length > 1) throw new Error("room_correction_citation_ambiguous");
+    const target = candidates[0]!;
+    if (!comparableText(target.text).includes(citedText)) {
+      throw new Error("room_correction_citation_mismatch");
+    }
+    if (input.targetSource && !hasSource(target, input.targetSource)) {
+      throw new Error("room_correction_source_mismatch");
+    }
+
+    const correction = this.insertCorrection(resolved, {
+      ...input,
+      targetClaimId: target.id,
+      entryPoint: "agent",
+    }, "applied", agentContext);
+    return { correction, overview: this.reproject(resolved) };
+  }
+
+  private insertCorrection(
+    roomId: string,
+    input: ProposeRoomContextCorrectionInput,
+    status: "proposed" | "applied",
+    agentContext?: { sessionId: string; runId: string },
+  ): RoomContextCorrection {
     const now = new Date();
     const row = this.db.insert(roomContextCorrections).values({
       id: randomUUID(),
-      roomId: resolved,
+      roomId,
       operation: input.operation,
       section: input.section,
       targetClaimId: text(input.targetClaimId, 200) || null,
@@ -425,10 +472,11 @@ export class RoomOverviewService {
       originalText: text(input.originalText) || null,
       replacementText: text(input.replacementText) || null,
       rationale: text(input.rationale, 2_000),
-      status: "proposed",
+      status,
       entryPoint: input.entryPoint,
       sessionId: agentContext?.sessionId ?? (text(input.sessionId, 200) || null),
       proposedByRunId: agentContext?.runId ?? null,
+      appliedAt: status === "applied" ? now : null,
       createdAt: now,
       updatedAt: now,
     }).returning().get();
