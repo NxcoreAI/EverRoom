@@ -50,6 +50,7 @@ interface LoginResult {
   refreshToken: string
   user: { id: string; tenantId: string; email?: string | null; phone?: string | null; name?: string }
   device: { id: string; name?: string; platform?: string }
+  registration?: { accountCreated: boolean; invitationApplied: boolean }
 }
 
 interface CloudJob {
@@ -238,6 +239,7 @@ interface PendingOidcLogin {
   nonce: string
   codeVerifier: string
   redirectUri: string
+  invitationCode?: string
   resolve: (status: CloudAccountStatus) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
@@ -470,7 +472,12 @@ export class SaasClient {
     return this.currentStatus()
   }
 
-  async loginWithOidc(provider: CloudOidcProvider): Promise<CloudAccountStatus> {
+  async validateInvitationCode(invitationCode: string): Promise<{ valid: true }> {
+    await this.initialize()
+    return this.publicRequest('/app/auth/invitation-code/validate', { method: 'POST', data: { invitationCode } })
+  }
+
+  async loginWithOidc(provider: CloudOidcProvider, invitationCode?: string): Promise<CloudAccountStatus> {
     await this.initialize()
     this.cancelOidcLogin('新的登录请求已开始。')
 
@@ -488,6 +495,7 @@ export class SaasClient {
     authorizationUrl.searchParams.set('code_challenge_method', 'S256')
     authorizationUrl.searchParams.set('state', state)
     authorizationUrl.searchParams.set('nonce', nonce)
+    authorizationUrl.searchParams.set('prompt', 'login')
     authorizationUrl.searchParams.set('direct_sign_in', `social:${this.connectorIds[provider]}`)
 
     const result = new Promise<CloudAccountStatus>((resolveLogin, rejectLogin) => {
@@ -502,6 +510,7 @@ export class SaasClient {
         nonce,
         codeVerifier,
         redirectUri,
+        ...(invitationCode ? { invitationCode } : {}),
         resolve: resolveLogin,
         reject: rejectLogin,
         timeout,
@@ -936,7 +945,7 @@ export class SaasClient {
       const data = await this.publicRequest<LoginResult>('/app/auth/oidc/logto', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token.id_token}` },
-        data: await this.deviceDetails(),
+        data: { ...(await this.deviceDetails()), ...(pending.invitationCode ? { invitationCode: pending.invitationCode } : {}) },
       })
       if (this.pendingOidcLogin !== pending) return
       if (claims.email_verified === true && typeof claims.email === 'string') {
@@ -989,6 +998,7 @@ export class SaasClient {
       apiBaseUrl: this.baseUrl,
       ...(this.account ? { user: this.account.user, device: this.account.device } : {}),
       ...(this.subscription ? { subscription: this.subscription } : {}),
+      ...(this.account?.registration ? { registration: this.account.registration } : {}),
     }
   }
 

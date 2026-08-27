@@ -52,12 +52,14 @@ describe('SaasClient OIDC loopback callback', () => {
     const openExternal = vi.fn(async () => undefined)
     Object.defineProperty(client, 'openExternal', { value: openExternal })
 
-    const loginPromise = client.loginWithOidc('google')
+    const loginPromise = client.loginWithOidc('google', 'ER-2345-ABCD-JKLM')
     loginPromise.catch(() => undefined) // 避免 token 请求失败产生 unhandled rejection
     await vi.waitFor(() => {
       expect(openExternal).toHaveBeenCalledTimes(1)
     })
     expect(authorizationUrl(openExternal.mock.calls[0])).toContain(`redirect_uri=${encodeURIComponent(LOOPBACK_REDIRECT_URI)}`)
+    expect((client as unknown as {pendingOidcLogin:{invitationCode?:string}}).pendingOidcLogin.invitationCode).toBe('ER-2345-ABCD-JKLM')
+    expect(authorizationParam(authorizationUrl(openExternal.mock.calls[0]), 'prompt')).toBe('login')
     const state = authorizationParam(authorizationUrl(openExternal.mock.calls[0]), 'state')
 
     const response = await requestLoopback(`/auth/callback?state=${encodeURIComponent(state)}&code=stub-authorization-code`)

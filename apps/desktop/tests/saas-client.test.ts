@@ -44,3 +44,18 @@ describe('SaasClient summary tag contract', () => {
     })
   })
 })
+
+describe('SaasClient invitation code contract', () => {
+  it('validates the code through the public auth endpoint', async () => {
+    const client = Object.create(SaasClient.prototype) as SaasClient
+    const publicRequest = vi.fn(async () => ({ valid: true as const }))
+    Object.defineProperty(client, 'initialize', { value: vi.fn(async () => undefined) })
+    Object.defineProperty(client, 'publicRequest', { value: publicRequest })
+
+    await expect(client.validateInvitationCode('ER-2345-ABCD-JKLM')).resolves.toEqual({ valid: true })
+    expect(publicRequest).toHaveBeenCalledWith('/app/auth/invitation-code/validate', {
+      method: 'POST',
+      data: { invitationCode: 'ER-2345-ABCD-JKLM' },
+    })
+  })
+})
