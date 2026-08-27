@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
+import obsidianLogo from '../../../../assets/obsidian.svg';
 
 import type { ContextRoomRecord } from '../types';
 import { localizedUiText, uiText } from '../adapters';
@@ -124,6 +125,7 @@ export function HomeView({
   rooms,
   deletedRooms,
   onCreateRoom,
+  onMountObsidian,
   onRenameRoom,
   onDeleteRoom,
   onRestoreRoom,
@@ -135,6 +137,7 @@ export function HomeView({
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
   onCreateRoom: (draft: DraftRoom) => Promise<void>;
+  onMountObsidian: () => Promise<void>;
   onRenameRoom: (roomId: string, name: string) => void;
   onDeleteRoom: (roomId: string) => void;
   onRestoreRoom: (roomId: string) => void;
@@ -181,6 +184,9 @@ export function HomeView({
                     onClick={() => setNewRoomOpen(true)}
                   >
                     <Plus aria-hidden="true" />
+                  </button>
+                  <button type="button" aria-label={t('surface:obsidian.mount')} title={t('surface:obsidian.mount')} className="context-room-add-room" onClick={() => void onMountObsidian()}>
+                    <img className="obsidian-app-icon" src={obsidianLogo} alt="" />
                   </button>
                   {deletedRooms.length ? (
                     <button

@@ -7,7 +7,7 @@ interface EmptyContextRoomInput {
   background: string
   goal: string
   briefStatus: string
-  origin?: 'user' | 'auto'
+  origin?: 'user' | 'auto' | 'source'
 }
 
 export function createEmptyContextRoom(input: EmptyContextRoomInput): ContextRoomRecord {

@@ -94,6 +94,80 @@ describe('collectImportCandidates', () => {
 })
 
 describe('FilesGatewayBridge.importPathsOnce', () => {
+  it('imports an Obsidian project with stable project provenance and memory-only pipelines', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-obsidian-memory-'))
+    temporaryDirectories.push(directory)
+    await mkdir(join(directory, 'Project'))
+    await writeFile(join(directory, 'Project', 'brief.md'), '# Brief')
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/v1/files/capabilities')) {
+        return new Response(JSON.stringify({ items: [{ extension: '.md', manualImport: true }] }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      const metadata = JSON.parse(String((init?.body as FormData).get('metadata'))) as Record<string, unknown>
+      expect(metadata).toMatchObject({
+        sourceKind: 'manual-upload',
+        sourceKey: 'obsidian:vault-project:resource-brief',
+        provider: 'Obsidian · Product Vault',
+        connectionId: 'vault-project',
+        relativePath: 'Project/brief.md',
+        pipelines: { room: false, wiki: false, memory: true },
+      })
+      expect(metadata).not.toHaveProperty('roomId')
+      return new Response(JSON.stringify({
+        fileEntryId: 'file-obsidian', fileVersionId: 'version-obsidian',
+        versionDeduped: false, jobId: 'job-obsidian',
+      }), { headers: { 'Content-Type': 'application/json' } })
+    })
+    const supervisor = {
+      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
+    } as unknown as GatewaySupervisor
+
+    await expect(new FilesGatewayBridge(supervisor).importObsidianProject({
+      rootPath: directory,
+      projectId: 'vault-project',
+      projectName: 'Product Vault',
+      pipelines: { room: false, wiki: false, memory: true },
+      resourceIdsByRelativePath: { 'Project/brief.md': 'resource-brief' },
+    })).resolves.toEqual([expect.objectContaining({ filename: 'Project/brief.md', error: null })])
+  })
+
+  it('does not put large Markdown-heavy Obsidian projects into high-risk review', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-obsidian-large-'))
+    temporaryDirectories.push(directory)
+    await Promise.all(Array.from({ length: 101 }, (_, index) => writeFile(join(directory, `note-${index}.md`), `# ${index}`)))
+    const enqueueManual = vi.fn()
+    const highRiskImports = {
+      enqueueManual,
+      enqueueAuto: vi.fn(),
+      setManualResolver: vi.fn(),
+      setAutoResolver: vi.fn(),
+      discardAutoSource: vi.fn(),
+    } satisfies HighRiskImportQueue
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).endsWith('/v1/files/capabilities')) {
+        return new Response(JSON.stringify({ items: [{ extension: '.md', manualImport: true }] }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({
+        fileEntryId: 'file-entry', fileVersionId: 'file-version', versionDeduped: false, jobId: 'job',
+      }), { headers: { 'Content-Type': 'application/json' } })
+    })
+    const supervisor = { getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }) } as unknown as GatewaySupervisor
+
+    const outcomes = await new FilesGatewayBridge(supervisor, highRiskImports).importObsidianProject({
+      rootPath: directory,
+      projectId: 'large-vault',
+      projectName: 'Large Vault',
+      pipelines: { room: false, wiki: false, memory: true },
+    })
+
+    expect(outcomes).toHaveLength(101)
+    expect(enqueueManual).not.toHaveBeenCalled()
+  })
+
   it('filters with gateway capabilities and imports through the unified manual path', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-import-once-'))
     temporaryDirectories.push(directory)

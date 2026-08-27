@@ -18,6 +18,7 @@ import type { WorkspaceObjectPreview } from './detail-panels'
 import type { LocalOfficeFile } from './detail-panels/ResourcePanel'
 import { MailDetailDialog } from './detail-workspace/MailDetailDialog'
 import { WorkspaceLayout } from './detail-workspace/WorkspaceLayout'
+import { ObsidianImportDialog } from '../../../pages/sources/ObsidianImportDialog'
 
 export function PortedDetail({
   room,
@@ -68,6 +69,7 @@ export function PortedDetail({
   const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
   const [selectedMailId, setSelectedMailId] = useState<string | null>(null)
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
+  const [obsidianImportOpen, setObsidianImportOpen] = useState(false)
   const handledDocumentFocusKey = useRef<string | null>(null)
   const [standaloneObject, setStandaloneObject] = useState<DetailObject | null>(() => {
     if (!initialObject) return null
@@ -254,12 +256,16 @@ export function PortedDetail({
           onOpenRoom={onOpenRoom}
           onToggleTask={toggleTask}
           onUpdateRoom={onUpdateRoom}
+          onImportObsidian={() => setObsidianImportOpen(true)}
         />
         <MailDetailDialog
           room={room}
           mailId={selectedMailId}
           onClose={() => setSelectedMailId(null)}
         />
+        {obsidianImportOpen ? <ObsidianImportDialog target={{ kind: 'room', roomId: room.id }} roomName={room.title} onClose={() => setObsidianImportOpen(false)} onImported={() => {
+          void window.nxcore?.knowledge.getRoomContext(room.id).catch(() => undefined)
+        }} /> : null}
         <button
           type="button"
           className="context-room-visually-hidden"

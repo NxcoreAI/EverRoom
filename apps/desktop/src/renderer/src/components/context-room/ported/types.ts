@@ -234,7 +234,7 @@ export interface ContextRoomRecord {
   lastViewed: string;
   roomCode: string;
   /** gateway 注册表来源（room-wiki 方案）：auto = 路由层自动创建（打开即认领翻转为 user）。 */
-  origin?: 'user' | 'auto';
+  origin?: 'user' | 'auto' | 'source';
   brief: ContextRoomBrief;
   stats: ContextRoomStats;
   riskCount: number;
