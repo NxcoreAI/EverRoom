@@ -431,7 +431,7 @@ export interface ExternalConversationPage {
   nextCursor: string | null;
 }
 
-export type LocalAgentProvider = "codex" | "claude" | "opencode" | "custom";
+export type LocalAgentProvider = "codex" | "claude" | "openclaw" | "opencode" | "custom";
 export type LocalAgentStatus = "discovered" | "verified" | "history_available" | "unavailable";
 export type AgentInvocationMode = "explicit_switch" | "delegated_subagent";
 export type AgentWorkspacePermissionProfile = "inspect" | "workspace_write" | "full_access";

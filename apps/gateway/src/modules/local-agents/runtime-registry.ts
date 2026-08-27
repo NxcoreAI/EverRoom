@@ -4,7 +4,7 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { resolve } from "node:path";
 import { A2ALocalAgentRuntime } from "./a2a-runtime.js";
 import { LocalA2AHost } from "./a2a-host.js";
-import { ClaudeCliAgentRuntime } from "./cli-runtime.js";
+import { ClaudeCliAgentRuntime, OpenClawCliAgentRuntime } from "./cli-runtime.js";
 
 export class LocalAgentRuntimeRegistry {
   private readonly runtimes = new Map<string, AgentRuntime>();
@@ -13,7 +13,7 @@ export class LocalAgentRuntimeRegistry {
     const runtimeKey = `${target.id}\0${resolve(target.workingDirectory)}`;
     const cached = this.runtimes.get(runtimeKey);
     if (cached) return cached;
-    if (target.provider !== "codex" && target.provider !== "claude") {
+    if (target.provider !== "codex" && target.provider !== "claude" && target.provider !== "openclaw") {
       throw new Error("local_agent_provider_not_supported");
     }
     this.assertCard(target.card);
@@ -22,7 +22,11 @@ export class LocalAgentRuntimeRegistry {
           new LocalA2AHost(target.executablePath, target.workingDirectory, target.id),
           target.id,
         )
-      : new ClaudeCliAgentRuntime(
+      : target.provider === "claude" ? new ClaudeCliAgentRuntime(
+          target.executablePath,
+          target.workingDirectory,
+          target.id,
+        ) : new OpenClawCliAgentRuntime(
           target.executablePath,
           target.workingDirectory,
           target.id,

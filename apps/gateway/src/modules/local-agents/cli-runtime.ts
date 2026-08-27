@@ -1,4 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { RuntimeCapabilities } from "@nxcore/agent-contract";
 import {
   AsyncEventQueue,
@@ -16,6 +19,7 @@ interface ActiveCliRun {
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
+const MAX_OPENCLAW_JSON_BYTES = 4 * 1024 * 1024;
 const INHERITED_ENV_KEYS = [
   'HOME', 'USER', 'LOGNAME', 'PATH', 'SHELL', 'TMPDIR',
   'LANG', 'LC_ALL', 'TERM', 'COLORTERM', 'CODEX_HOME',
@@ -23,6 +27,8 @@ const INHERITED_ENV_KEYS = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
   'CLAUDE_CODE_OAUTH_TOKEN',
+  'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH', 'OPENCLAW_GATEWAY_TOKEN',
+  'OPENCLAW_GATEWAY_PASSWORD', 'OPENCLAW_CONTAINER',
 ] as const;
 
 function childEnvironment(): NodeJS.ProcessEnv {
@@ -230,6 +236,184 @@ function claudeUsage(value: unknown): Record<string, number> | undefined {
     cacheRead: number("cache_read_input_tokens"),
     cacheWrite: number("cache_creation_input_tokens"),
   };
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function openClawText(value: unknown): string {
+  const response = record(value);
+  const result = record(response?.result) ?? response;
+  const payloads = Array.isArray(result?.payloads) ? result.payloads : [];
+  return payloads.flatMap((payload) => {
+    const item = record(payload);
+    return typeof item?.text === "string" ? [item.text] : [];
+  }).join("\n\n").trim();
+}
+
+function openClawUsage(value: unknown): Record<string, number> | undefined {
+  const response = record(value);
+  const result = record(response?.result) ?? response;
+  const meta = record(result?.meta);
+  const agentMeta = record(meta?.agentMeta);
+  const usage = record(agentMeta?.usage);
+  if (!usage) return undefined;
+  const number = (key: string) => typeof usage[key] === "number" ? usage[key] as number : 0;
+  return {
+    input: number("input"),
+    output: number("output"),
+    cacheRead: number("cacheRead"),
+    cacheWrite: number("cacheWrite"),
+  };
+}
+
+function openClawError(value: unknown): string | null {
+  const response = record(value);
+  if (!response) return "OpenClaw returned an invalid response";
+  const result = record(response.result) ?? response;
+  const meta = record(result.meta);
+  if (typeof meta?.error === "string" && meta.error.trim()) return meta.error.trim();
+  const failedPayload = Array.isArray(result.payloads)
+    ? result.payloads.map(record).find((payload) => payload?.isError === true)
+    : null;
+  if (typeof failedPayload?.text === "string" && failedPayload.text.trim()) return failedPayload.text.trim();
+  if (typeof response.status === "string" && response.status !== "ok") {
+    return typeof response.summary === "string" && response.summary.trim()
+      ? response.summary.trim()
+      : `OpenClaw run ended with status ${response.status}`;
+  }
+  return null;
+}
+
+/** Runs one OpenClaw turn through its configured local Gateway. */
+export class OpenClawCliAgentRuntime implements AgentRuntime {
+  readonly id: string;
+  private readonly active = new Map<string, ActiveCliRun>();
+
+  constructor(
+    private readonly executablePath: string,
+    private readonly workingDirectory: string,
+    installationId: string,
+  ) {
+    this.id = `local:openclaw:${installationId}`;
+  }
+
+  async getCapabilities(): Promise<RuntimeCapabilities> {
+    return { streaming: false, reasoning: false, tools: true, steering: false, resume: true };
+  }
+
+  async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
+    if (this.active.has(input.runId)) throw new Error("local_agent_run_already_active");
+    const queue = new AsyncEventQueue<RuntimeEvent>();
+    const sessionId = input.runtimeSessionRef ?? `everroom-${input.sessionId}`;
+    const promptDirectory = await mkdtemp(join(tmpdir(), "everroom-openclaw-prompt-"));
+    const promptPath = join(promptDirectory, "message.txt");
+    await writeFile(promptPath, delegationPrompt(input), { encoding: "utf8", mode: 0o600 });
+    const args = [
+      "--no-color",
+      "agent",
+      "--session-id", sessionId,
+      "--message-file", promptPath,
+      "--json",
+    ];
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(this.executablePath, args, {
+        cwd: this.workingDirectory,
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: childEnvironment(),
+      });
+    } catch (error) {
+      await rm(promptDirectory, { recursive: true, force: true });
+      throw error;
+    }
+    this.active.set(input.runId, { child, queue });
+    child.stdin.end();
+    queue.push({ type: "run.started", payload: { agentId: this.id, transport: "openclaw-json" } });
+    if (!input.runtimeSessionRef) {
+      queue.push({ type: "runtime.session.updated", payload: { runtimeSessionRef: sessionId } });
+    }
+    this.consume(input.runId, child, queue, promptDirectory);
+    return { runId: input.runId, runtimeSessionRef: sessionId, events: queue };
+  }
+
+  async resume(input: ResumeRuntimeRunInput): Promise<RuntimeRun> {
+    return this.start(input);
+  }
+
+  async sendInput(): Promise<void> {
+    throw new Error("local_agent_steering_not_supported");
+  }
+
+  async cancel(runId: string): Promise<void> {
+    this.active.get(runId)?.child.kill("SIGTERM");
+  }
+
+  async deleteSession(): Promise<void> {}
+
+  async dispose(): Promise<void> {
+    for (const run of this.active.values()) run.child.kill("SIGTERM");
+  }
+
+  private consume(
+    runId: string,
+    child: ChildProcessWithoutNullStreams,
+    queue: AsyncEventQueue<RuntimeEvent>,
+    promptDirectory: string,
+  ): void {
+    let stdout = "";
+    let stderr = "";
+    let cancelled = false;
+    let terminatedForError = false;
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout = `${stdout}${chunk.toString("utf8")}`;
+      if (Buffer.byteLength(stdout, "utf8") > MAX_OPENCLAW_JSON_BYTES) {
+        stderr = "local_agent_event_too_large";
+        terminatedForError = true;
+        child.kill("SIGTERM");
+      }
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString("utf8")}`.slice(-MAX_STDERR_BYTES);
+    });
+    child.on("error", (error) => { stderr = error.message; });
+    child.on("exit", (_code, signal) => { cancelled = signal === "SIGTERM"; });
+    child.on("close", async (code) => {
+      await rm(promptDirectory, { recursive: true, force: true }).catch(() => undefined);
+      if (cancelled && !terminatedForError) {
+        queue.push({ type: "run.cancelled", payload: {} });
+      } else if (code === 0) {
+        try {
+          const response = JSON.parse(stdout) as unknown;
+          const responseError = openClawError(response);
+          if (responseError) throw new Error(responseError);
+          const finalText = openClawText(response);
+          if (!finalText) throw new Error("OpenClaw returned no reply");
+          queue.push({ type: "message.started", payload: { role: "assistant" } });
+          queue.push({ type: "message.delta", payload: { delta: finalText } });
+          queue.push({ type: "message.completed", payload: { role: "assistant", content: finalText } });
+          const usage = openClawUsage(response);
+          queue.push({ type: "run.completed", payload: { ...(usage ? { usage } : {}) } });
+        } catch (error) {
+          queue.push({
+            type: "run.failed",
+            payload: { message: error instanceof Error ? error.message : String(error) },
+          });
+        }
+      } else {
+        queue.push({
+          type: "run.failed",
+          payload: { message: stderr.trim() || `OpenClaw exited with status ${code ?? "unknown"}` },
+        });
+      }
+      queue.end();
+      this.active.delete(runId);
+    });
+  }
 }
 
 export class ClaudeCliAgentRuntime implements AgentRuntime {

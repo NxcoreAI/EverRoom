@@ -4,7 +4,7 @@ export function localAgentForImportedConversation(
   agents: LocalAgentInstallation[],
   conversation: ExternalConversationSummary,
 ): LocalAgentInstallation | null {
-  if (conversation.provider !== 'codex' && conversation.provider !== 'claude') return null
+  if (conversation.provider !== 'codex' && conversation.provider !== 'claude' && conversation.provider !== 'openclaw') return null
   const available = agents.filter((agent) => (
     agent.callable
     && agent.invocationSupported

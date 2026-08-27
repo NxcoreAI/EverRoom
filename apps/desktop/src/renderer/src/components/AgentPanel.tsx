@@ -162,7 +162,7 @@ export function AgentPanel({
 
   const selectExternalConversation = useCallback((conversation: ExternalConversationSummary | null) => {
     setSelectedExternalConversation(conversation)
-    if (!conversation || (conversation.provider !== 'codex' && conversation.provider !== 'claude')) return
+    if (!conversation || (conversation.provider !== 'codex' && conversation.provider !== 'claude' && conversation.provider !== 'openclaw')) return
     const matchingAgent = localAgentForImportedConversation(localAgents, conversation)
     if (matchingAgent) setSelectedLocalAgent(matchingAgent)
   }, [localAgents])

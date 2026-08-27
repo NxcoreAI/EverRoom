@@ -265,6 +265,7 @@ export function agentRoutes(
               provider: Type.Union([
                 Type.Literal("codex"),
                 Type.Literal("claude"),
+                Type.Literal("openclaw"),
                 Type.Literal("opencode"),
                 Type.Literal("custom"),
               ]),

@@ -12,6 +12,7 @@ import type {
 const PROVIDERS: Array<{ provider: LocalAgentProvider; names: string[]; label: string; historyPaths: string[] }> = [
   { provider: 'codex', names: ['codex'], label: 'Codex', historyPaths: ['.codex'] },
   { provider: 'claude', names: ['claude'], label: 'Claude Code', historyPaths: ['.claude'] },
+  { provider: 'openclaw', names: ['openclaw'], label: 'OpenClaw', historyPaths: ['.openclaw'] },
   { provider: 'opencode', names: ['opencode'], label: 'OpenCode', historyPaths: ['.config/opencode', '.opencode'] },
 ]
 
@@ -125,7 +126,7 @@ function card(provider: LocalAgentProvider, label: string, version: string | nul
     description: `本机 ${label} Agent（由 EverRoom Adapter 接入）`,
     version: version ?? 'unknown',
     supportedInterfaces: [],
-    capabilities: { streaming: true, pushNotifications: false },
+    capabilities: { streaming: provider !== 'openclaw', pushNotifications: false },
     defaultInputModes: ['text/plain', 'application/json'],
     defaultOutputModes: ['text/plain', 'application/json'],
     skills: [{
@@ -183,7 +184,7 @@ export function createLocalAgentDiscovery(options: LocalAgentDiscoveryOptions = 
           version: probe.version,
           status,
           callable,
-          invocationSupported: callable && (provider === 'codex' || provider === 'claude'),
+          invocationSupported: callable && (provider === 'codex' || provider === 'claude' || provider === 'openclaw'),
           historyAvailable: histories.length > 0,
           historyPaths: histories,
           card: card(provider, label, probe.version),

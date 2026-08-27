@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { ExternalConversationSummary, LocalAgentInstallation } from '@nxcore/agent-contract'
 import { localAgentForImportedConversation } from './localAgentConversation'
 
-const installation = (provider: 'codex' | 'claude', id = `${provider}:/usr/local/bin/${provider}`) => ({
+const installation = (provider: 'codex' | 'claude' | 'openclaw', id = `${provider}:/usr/local/bin/${provider}`) => ({
   id,
   provider,
-  displayName: provider === 'codex' ? 'Codex' : 'Claude Code',
+  displayName: provider === 'codex' ? 'Codex' : provider === 'claude' ? 'Claude Code' : 'OpenClaw',
   executablePath: `/usr/local/bin/${provider}`,
   version: '1.0.0',
   status: 'verified',
@@ -46,7 +46,10 @@ describe('localAgentForImportedConversation', () => {
     expect(localAgentForImportedConversation(agents, conversation('codex', null))?.id).toBe('codex:other')
   })
 
-  it('does not switch Agents for OpenClaw history', () => {
-    expect(localAgentForImportedConversation([installation('claude')], conversation('openclaw', null))).toBeNull()
+  it('matches imported OpenClaw history to a callable OpenClaw installation', () => {
+    expect(localAgentForImportedConversation(
+      [installation('claude'), installation('openclaw')],
+      conversation('openclaw', null),
+    )?.provider).toBe('openclaw')
   })
 })

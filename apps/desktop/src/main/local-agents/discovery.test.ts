@@ -24,8 +24,11 @@ describe('local agent discovery', () => {
     await mkdir(bin, { recursive: true })
     await mkdir(join(home, '.claude'), { recursive: true })
     const codex = join(bin, 'codex')
+    const openclaw = join(bin, 'openclaw')
     await writeFile(codex, '#!/bin/sh\nprintf "codex-cli 9.9.9\\n"\n', 'utf8')
+    await writeFile(openclaw, '#!/bin/sh\nprintf "OpenClaw 2026.7.1\\n"\n', 'utf8')
     await chmod(codex, 0o755)
+    await chmod(openclaw, 0o755)
 
     const discovery = createLocalAgentDiscovery({
       env: { PATH: [bin, '/usr/bin', '/bin'].join(delimiter) },
@@ -51,6 +54,14 @@ describe('local agent discovery', () => {
         callable: false,
         historyAvailable: true,
         status: 'history_available',
+      }),
+      expect.objectContaining({
+        provider: 'openclaw',
+        executablePath: openclaw,
+        version: 'OpenClaw 2026.7.1',
+        callable: true,
+        invocationSupported: true,
+        status: 'verified',
       }),
     ]))
     expect(agents.some((agent) => agent.provider === 'opencode')).toBe(false)

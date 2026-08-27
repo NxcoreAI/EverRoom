@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { RuntimeEvent } from "@nxcore/agent-runtime";
-import { ClaudeCliAgentRuntime, CodexCliAgentRuntime } from "../src/modules/local-agents/cli-runtime.js";
+import { ClaudeCliAgentRuntime, CodexCliAgentRuntime, OpenClawCliAgentRuntime } from "../src/modules/local-agents/cli-runtime.js";
 import { LocalA2AHost } from "../src/modules/local-agents/a2a-host.js";
 import { A2ALocalAgentRuntime } from "../src/modules/local-agents/a2a-runtime.js";
 import { LocalAgentRuntimeRegistry } from "../src/modules/local-agents/runtime-registry.js";
@@ -27,6 +27,15 @@ async function fakeClaude(script: string): Promise<{ executable: string; root: s
   const root = await mkdtemp(join(tmpdir(), "everroom-claude-runtime-"));
   roots.push(root);
   const executable = join(root, "claude");
+  await writeFile(executable, `#!/bin/sh\n${script}\n`, "utf8");
+  await chmod(executable, 0o755);
+  return { executable, root };
+}
+
+async function fakeOpenClaw(script: string): Promise<{ executable: string; root: string }> {
+  const root = await mkdtemp(join(tmpdir(), "everroom-openclaw-runtime-"));
+  roots.push(root);
+  const executable = join(root, "openclaw");
   await writeFile(executable, `#!/bin/sh\n${script}\n`, "utf8");
   await chmod(executable, 0o755);
   return { executable, root };
@@ -328,5 +337,65 @@ printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"
       "--permission-mode", "acceptEdits",
       "--resume", "imported-claude-thread",
     ]);
+  });
+});
+
+describe("OpenClawCliAgentRuntime", () => {
+  it("maps JSON output and uses a stable OpenClaw session id", async () => {
+    const { executable, root } = await fakeOpenClaw(`
+printf '%s\\n' '{"payloads":[{"text":"OpenClaw result"}],"meta":{"agentMeta":{"usage":{"input":7,"output":3,"cacheRead":2,"cacheWrite":1}}}}'
+`);
+    const runtime = new OpenClawCliAgentRuntime(executable, root, "openclaw:test");
+    const run = await runtime.start({
+      runId: "run-openclaw",
+      sessionId: "session-openclaw",
+      runtimeSessionRef: null,
+      prompt: "Do work",
+      pageLabel: "Test",
+      roomId: null,
+    });
+    const events: RuntimeEvent[] = [];
+    for await (const event of run.events) events.push(event);
+
+    expect(run.runtimeSessionRef).toBe("everroom-session-openclaw");
+    expect(events).toContainEqual({
+      type: "runtime.session.updated",
+      payload: { runtimeSessionRef: "everroom-session-openclaw" },
+    });
+    expect(events).toContainEqual({
+      type: "message.completed",
+      payload: { role: "assistant", content: "OpenClaw result" },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "run.completed",
+      payload: { usage: { input: 7, output: 3, cacheRead: 2, cacheWrite: 1 } },
+    });
+  });
+
+  it("resumes through the native session without exposing structured context in argv", async () => {
+    const { executable, root } = await fakeOpenClaw("exit 0");
+    const argvPath = join(root, "argv.txt");
+    const promptPath = join(root, "prompt.txt");
+    await writeFile(executable, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvPath}"\ncp "$6" "${promptPath}"\nprintf '%s\\n' '{"result":{"payloads":[{"text":"Continued"}]}}'\n`, "utf8");
+    const runtime = new OpenClawCliAgentRuntime(executable, root, "openclaw:test");
+    const run = await runtime.start({
+      runId: "run-openclaw-resume",
+      sessionId: "session-openclaw",
+      runtimeSessionRef: "native-openclaw-session",
+      prompt: "Continue",
+      pageLabel: "Test",
+      roomId: null,
+    });
+    for await (const _event of run.events) {
+      // Drain before reading the fake executable's captured arguments.
+    }
+
+    const argv = (await readFile(argvPath, "utf8")).trim().split("\n");
+    expect(argv.slice(0, 5)).toEqual([
+      "--no-color", "agent", "--session-id", "native-openclaw-session", "--message-file",
+    ]);
+    expect(argv[5]).not.toContain("Continue");
+    expect(argv.slice(-1)).toEqual(["--json"]);
+    expect(await readFile(promptPath, "utf8")).toBe("Continue");
   });
 });
