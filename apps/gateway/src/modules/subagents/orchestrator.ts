@@ -189,6 +189,11 @@ export class SubagentOrchestrator {
     }).run();
 
     const runtime = this.runtimeManager.acquire(definition.revision);
+    this.runtimeManager.prepareSubmittedResult(
+      definition.revision.id,
+      invocationId,
+      input.input ?? null,
+    );
     const promise = this.executeInvocation(invocationId, definition, runtime);
     this.active.set(invocationId, { runtime, promise });
     return { invocationId, completion: promise, joined: false };
@@ -243,6 +248,9 @@ export class SubagentOrchestrator {
       "<everroom-subagent-task>",
       `任务：${row.task}`,
       `结构化输入：${JSON.stringify(row.input)}`,
+      ...(definition.revision.outputSchema
+        ? ["结果提交：结束前必须调用 subagent_submit_result。只有该工具成功接收的参数会作为正式结果，最终文本不会被解析为结构化结果。"]
+        : []),
       "</everroom-subagent-task>",
     ].join("\n");
 
@@ -302,6 +310,7 @@ export class SubagentOrchestrator {
     }
 
     let result: SubagentInvocationResult | null = null;
+    const submittedResult = this.runtimeManager.takeSubmittedResult(definition.revision.id, invocationId);
     if (isCompletedStatus(terminal)) {
       result = { text: finalText };
       if (Buffer.byteLength(finalText, "utf8") > 512 * 1024) {
@@ -310,16 +319,12 @@ export class SubagentOrchestrator {
         result = null;
       }
       if (result && definition.revision.outputSchema) {
-        try {
-          const structuredOutput: unknown = JSON.parse(finalText);
-          if (!this.validateSchema(definition.revision.outputSchema, structuredOutput)) {
-            throw new Error("output does not match schema");
-          }
-          result.structuredOutput = structuredOutput;
-        } catch (error) {
+        if (submittedResult === null) {
           terminal = "failed";
-          terminalError = `subagent_output_schema_invalid: ${error instanceof Error ? error.message : String(error)}`;
+          terminalError = "subagent_result_not_submitted";
           result = null;
+        } else {
+          result.structuredOutput = submittedResult;
         }
       }
     }

@@ -11,6 +11,7 @@ import {
 } from '@/components/agent/agentNavigation'
 import { AppErrorDialog } from '@/components/AppErrorDialog'
 import { AppToast } from '@/components/AppToast'
+import { RemoteAgentNotificationView } from '@/components/RemoteAgentNotificationView'
 import { HighRiskImportReview } from '@/components/HighRiskImportReview'
 import { PageCanvas } from '@/components/PageCanvas'
 import { Sidebar } from '@/components/Sidebar'
@@ -39,6 +40,7 @@ import { onDocumentOperationNavigation } from '@/components/context-room/operati
 import { useLocale } from '@/i18n/LocaleContext'
 import { workspaceTabSwipeTarget } from '@/workspaceTabSwipe'
 import './App.css'
+import type { AgentNotificationTarget } from '../../shared/notifications'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
 const TAB_SWIPE_THRESHOLD = 72
@@ -84,6 +86,7 @@ export function App() {
   const [agentRoomCitations, setAgentRoomCitations] = useState<RoomOverviewCitation[]>([])
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
+  const [remoteNotificationTarget, setRemoteNotificationTarget] = useState<AgentNotificationTarget | null>(null)
   const [agentDocumentFocus, setAgentDocumentFocus] = useState<{
     roomId: string
     documentId: string
@@ -236,6 +239,15 @@ export function App() {
         : [...current, room]
     ))
   }, [availableContextRooms])
+
+  useEffect(() => {
+    const open = (event: Event) => {
+      const room = (event as CustomEvent<ContextRoomWorkspaceTab>).detail
+      if (room?.id && room.title) openContextRoomTab(room)
+    }
+    window.addEventListener('nxcore:room:open', open as EventListener)
+    return () => window.removeEventListener('nxcore:room:open', open as EventListener)
+  }, [openContextRoomTab])
 
   useEffect(() => {
     if (activePage !== 'settings') {
@@ -554,6 +566,31 @@ export function App() {
     navigate(route.pageId)
   }
 
+  useEffect(() => window.nxcore?.notifications.onOpenTarget((target) => {
+    void window.nxcore?.account.status({ quiet: true }).then((account) => {
+      if (account.device?.id !== target.sourceDeviceId) {
+        setRemoteNotificationTarget(target)
+        return
+      }
+      setRemoteNotificationTarget(null)
+      setAgentOpen(true)
+      setAgentSessionRouteRequest({
+        key: `notification:${target.notificationId}`,
+        pageId: target.roomId ? 'rooms' : 'home',
+        roomId: target.roomId,
+        sessionId: target.sessionId,
+        runId: target.runId,
+      })
+      if (target.roomId) {
+        setActivePage('rooms')
+        setActiveContextRoomId(target.roomId)
+      } else {
+        setActivePage('home')
+        setActiveContextRoomId(null)
+      }
+    }).catch(() => setRemoteNotificationTarget(target))
+  }), [])
+
   return (
     // 启动 gate（最外层）：未配置 AI runtime config 时先登录/手动配置，
     // 连通测试通过才进入后续 onboarding 与应用。
@@ -708,6 +745,9 @@ export function App() {
       <HighRiskImportReview />
       <AppToast />
       <AppErrorDialog />
+      {remoteNotificationTarget ? (
+        <RemoteAgentNotificationView target={remoteNotificationTarget} onClose={() => setRemoteNotificationTarget(null)} />
+      ) : null}
       {generatedMemoryNotice ? (
         <section className="memory-generated-dialog" role="dialog" aria-modal="true" aria-labelledby="memory-generated-dialog-title">
           <div className="memory-generated-dialog-mark" aria-hidden="true"><BrainCircuit /></div>

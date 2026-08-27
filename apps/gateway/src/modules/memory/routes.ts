@@ -366,6 +366,24 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
       ),
     );
 
+    app.post(
+      "/v1/memory/conversation/import",
+      {
+        schema: {
+          tags: ["memory"],
+          body: Type.Object({
+            sessionId: Type.String({ minLength: 1, maxLength: 100, pattern: "^[A-Za-z0-9._:-]+$" }),
+            messages: Type.Array(Type.Object({
+              role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
+              content: Type.String({ minLength: 1, maxLength: 20_000 }),
+              timestamp: Type.String({ minLength: 10, maxLength: 40 }),
+            }), { minItems: 1, maxItems: 200 }),
+          }),
+        },
+      },
+      async (request) => service.importConversation(request.body),
+    );
+
     app.delete(
       "/v1/memory/conversation",
       {

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 
-import type { ClipperService } from "./service.js";
+import { MAX_CLIPPER_ASSETS, type ClipperService } from "./service.js";
 
 const IdParams = Type.Object({
   captureId: Type.String({ minLength: 8, maxLength: 200 }),
@@ -15,6 +15,9 @@ const AssetParams = Type.Object({
 const FileParams = Type.Object({ fileEntryId: Type.String({ minLength: 1, maxLength: 200 }) });
 const AssetContentParams = Type.Object({ assetId: Type.String({ minLength: 8, maxLength: 200 }) });
 const CaptureListQuery = Type.Object({
+  query: Type.Optional(Type.String({ maxLength: 500 })),
+  filter: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("favorite"), Type.Literal("processing")])),
+  sort: Type.Optional(Type.Union([Type.Literal("newest"), Type.Literal("oldest")])),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, default: 100 })),
   offset: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
 });
@@ -39,7 +42,7 @@ const CaptureBody = Type.Object({
     altText: Type.Optional(Type.String({ maxLength: 1_000 })),
     width: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
     height: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
-  }), { maxItems: 20 }),
+  }), { maxItems: MAX_CLIPPER_ASSETS }),
 });
 
 export function clipperRoutes(service: ClipperService): FastifyPluginAsyncTypebox {
@@ -52,7 +55,31 @@ export function clipperRoutes(service: ClipperService): FastifyPluginAsyncTypebo
           querystring: CaptureListQuery,
         },
       },
-      async (request) => service.listCaptures(request.query.limit, request.query.offset),
+      async (request) => service.listCaptures(request.query),
+    );
+
+    app.patch(
+      "/v1/clipper/captures/:captureId/favorite",
+      {
+        schema: {
+          tags: ["clipper"],
+          params: IdParams,
+          body: Type.Object({ favorite: Type.Boolean() }),
+        },
+      },
+      async (request, reply) => {
+        const capture = service.setFavorite(request.params.captureId, request.body.favorite);
+        return capture ?? reply.code(404).send({ error: "clipper_capture_not_found" });
+      },
+    );
+
+    app.get(
+      "/v1/clipper/captures/:captureId",
+      { schema: { tags: ["clipper"], params: IdParams } },
+      async (request, reply) => {
+        const capture = service.detail(request.params.captureId, true);
+        return capture ?? reply.code(404).send({ error: "clipper_capture_not_found" });
+      },
     );
 
     app.post(
@@ -71,11 +98,11 @@ export function clipperRoutes(service: ClipperService): FastifyPluginAsyncTypebo
     app.put(
       "/v1/clipper/captures/:captureId/assets/:assetId",
       {
-        bodyLimit: 3 * 1024 * 1024,
+        bodyLimit: 28 * 1024 * 1024,
         schema: {
           tags: ["clipper"],
           params: AssetParams,
-          body: Type.Object({ data: Type.String({ minLength: 4, maxLength: 2_850_000 }) }),
+          body: Type.Object({ data: Type.String({ minLength: 4, maxLength: 27_962_028 }) }),
         },
       },
       async (request, reply) => {
@@ -105,12 +132,12 @@ export function clipperRoutes(service: ClipperService): FastifyPluginAsyncTypebo
           body: Type.Object({ failures: Type.Array(Type.Object({
             assetId: Type.String({ minLength: 8, maxLength: 200 }),
             code: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-          }), { maxItems: 20 }) }),
+          }), { maxItems: MAX_CLIPPER_ASSETS }) }),
         },
       },
       async (request, reply) => {
         try {
-          return service.finalizeCapture(request.params.captureId, request.body.failures);
+          return await service.finalizeCapture(request.params.captureId, request.body.failures);
         } catch (error) {
           const code = error instanceof Error ? error.message : "clipper_finalize_failed";
           return reply.code(code === "clipper_capture_not_found" ? 404 : 400).send({ error: code });

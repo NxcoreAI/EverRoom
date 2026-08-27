@@ -4,10 +4,16 @@ import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { PiAgentRuntime, type PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import { Type } from "@sinclair/typebox";
+import { Ajv, type ValidateFunction } from "ajv";
 import type { GatewayConfig, PiRuntimeConfig, SubagentFrameworkConfig } from "../../config.js";
 import { isPiRuntimeConfigured } from "../agent/runtime-factory.js";
 import type { LoadedSubagentRevision } from "./types.js";
 import type { ExternalCallBudgetService } from "../external-calls/service.js";
+
+export type SubagentResultValidator = (
+  invocationInput: unknown,
+  result: Record<string, unknown>,
+) => void;
 
 export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): PiAgentRuntimeTool {
   const root = `${resolve(revision.agentDirectory)}${sep}`;
@@ -38,9 +44,101 @@ export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): P
   };
 }
 
+export class SubagentResultCollector {
+  private readonly submissions = new Map<string, { revisionId: string; value: unknown }>();
+  private readonly invocations = new Map<string, { revisionId: string; input: unknown }>();
+  private readonly validators = new WeakMap<Record<string, unknown>, ValidateFunction>();
+  private readonly ajv = new Ajv({ strict: false, allErrors: true });
+
+  createTool(
+    revision: LoadedSubagentRevision,
+    validateResult?: SubagentResultValidator,
+  ): PiAgentRuntimeTool | null {
+    const schema = revision.outputSchema;
+    if (!schema) return null;
+    return {
+      name: "subagent_submit_result",
+      label: "Submit result",
+      description: "提交本次子 Agent 调用的正式结构化结果。参数必须完整符合输出 Schema；校验失败时修正后重试。",
+      parameters: schema,
+      executionMode: "sequential",
+      execute: async (input, params) => {
+        const invocation = this.invocations.get(input.runId);
+        if (!invocation || invocation.revisionId !== revision.id) {
+          throw new Error("subagent_result_invocation_mismatch");
+        }
+        if (this.submissions.has(input.runId)) {
+          throw new Error("subagent_result_already_submitted");
+        }
+        const validator = this.validatorFor(schema);
+        if (!validator(params)) {
+          throw new Error(`subagent_result_schema_invalid: ${this.ajv.errorsText(validator.errors)}`);
+        }
+        validateResult?.(invocation.input, params);
+        this.submissions.set(input.runId, {
+          revisionId: revision.id,
+          value: structuredClone(params),
+        });
+        return {
+          content: JSON.stringify({ accepted: true, invocationId: input.runId }),
+          details: { accepted: true, invocationId: input.runId },
+        };
+      },
+      classifyFailure: (error, input) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.startsWith("subagent_result_")) return null;
+        const recoverable = !message.startsWith("subagent_result_invocation_mismatch")
+          && !message.startsWith("subagent_result_already_submitted");
+        return {
+          category: message.split(":", 1)[0]!,
+          recoverable,
+          ...(recoverable ? { recommendedTool: "subagent_submit_result" } : {}),
+          instruction: recoverable
+            ? `正式结果未被接收：${message}。请根据输出 Schema 和已读取证据修正全部参数，然后重试一次。`
+            : `正式结果无法再次提交：${message}。`,
+          retryKey: input.runId,
+          maxAttempts: recoverable ? 1 : 0,
+        };
+      },
+    };
+  }
+
+  prepare(revisionId: string, runId: string, input: unknown): void {
+    this.submissions.delete(runId);
+    this.invocations.set(runId, { revisionId, input: structuredClone(input) });
+  }
+
+  take(revisionId: string, runId: string): unknown | null {
+    const submitted = this.submissions.get(runId);
+    this.submissions.delete(runId);
+    this.invocations.delete(runId);
+    return submitted?.revisionId === revisionId ? submitted.value : null;
+  }
+
+  discard(runId: string): void {
+    this.submissions.delete(runId);
+    this.invocations.delete(runId);
+  }
+
+  clear(): void {
+    this.submissions.clear();
+    this.invocations.clear();
+  }
+
+  private validatorFor(schema: Record<string, unknown>): ValidateFunction {
+    const existing = this.validators.get(schema);
+    if (existing) return existing;
+    const validator = this.ajv.compile(schema);
+    this.validators.set(schema, validator);
+    return validator;
+  }
+}
+
 export class SubagentRuntimeManager {
   private readonly runtimes = new Map<string, AgentRuntime>();
   private readonly agentTools = new Map<string, () => PiAgentRuntimeTool[]>();
+  private readonly agentResultValidators = new Map<string, SubagentResultValidator>();
+  private readonly resultCollector = new SubagentResultCollector();
 
   constructor(
     private readonly gatewayConfig: GatewayConfig,
@@ -64,9 +162,25 @@ export class SubagentRuntimeManager {
     this.agentTools.set(agentId, factory);
   }
 
+  registerAgentResultValidator(agentId: string, validator: SubagentResultValidator): void {
+    if (this.runtimes.size > 0) {
+      throw new Error("subagent_result_validator_must_be_registered_before_runtime_acquire");
+    }
+    this.agentResultValidators.set(agentId, validator);
+  }
+
+  takeSubmittedResult(revisionId: string, runId: string): unknown | null {
+    return this.resultCollector.take(revisionId, runId);
+  }
+
+  prepareSubmittedResult(revisionId: string, runId: string, input: unknown): void {
+    this.resultCollector.prepare(revisionId, runId, input);
+  }
+
   async dispose(): Promise<void> {
     await Promise.all([...this.runtimes.values()].map((runtime) => runtime.dispose()));
     this.runtimes.clear();
+    this.resultCollector.clear();
   }
 
   /**
@@ -91,6 +205,13 @@ export class SubagentRuntimeManager {
     const tools = [
       ...(revision.manifest.skills.length > 0 ? [createSubagentSkillReadTool(revision)] : []),
       ...(this.agentTools.get(revision.manifest.id)?.() ?? []),
+      ...(() => {
+        const submitResult = this.resultCollector.createTool(
+          revision,
+          this.agentResultValidators.get(revision.manifest.id),
+        );
+        return submitResult ? [submitResult] : [];
+      })(),
     ];
     return new PiAgentRuntime(config, {
       tools,

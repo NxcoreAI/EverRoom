@@ -10,13 +10,14 @@ import { SubagentOrchestrator } from "../src/modules/subagents/orchestrator.js";
 import { SubagentRegistry } from "../src/modules/subagents/registry.js";
 import {
   createSubagentSkillReadTool,
+  SubagentResultCollector,
   SubagentRuntimeManager,
 } from "../src/modules/subagents/runtime-manager.js";
 
 const temporaryDirectories: string[] = [];
 const logger = { info: () => undefined, warn: () => undefined };
 
-async function createFixture(options: { inputSchema?: boolean } = {}) {
+async function createFixture(options: { inputSchema?: boolean; outputSchema?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "everroom-subagents-"));
   temporaryDirectories.push(root);
   const definitionsDir = join(root, "agents");
@@ -42,6 +43,14 @@ async function createFixture(options: { inputSchema?: boolean } = {}) {
       additionalProperties: false,
     }), "utf8");
   }
+  if (options.outputSchema) {
+    await writeFile(join(bundleDir, "output.schema.json"), JSON.stringify({
+      type: "object",
+      properties: { answer: { type: "string", minLength: 1 } },
+      required: ["answer"],
+      additionalProperties: false,
+    }), "utf8");
+  }
   await writeFile(join(bundleDir, "agent.yaml"), [
     "schemaVersion: 1",
     "id: researcher",
@@ -55,6 +64,7 @@ async function createFixture(options: { inputSchema?: boolean } = {}) {
     "  - server: search",
     "    includeTools: [search]",
     ...(options.inputSchema ? ["inputSchema: ./input.schema.json"] : []),
+    ...(options.outputSchema ? ["outputSchema: ./output.schema.json"] : []),
     "policy:",
     "  allowedCallers: [primary-agent]",
     "  timeoutMs: 10000",
@@ -198,6 +208,78 @@ describe("filesystem subagent framework", () => {
     await orchestrator.dispose();
     fixture.database.sqlite.close();
   }, 15_000);
+
+  it("accepts formal results only through the schema-validated submit tool and isolates concurrent runs", async () => {
+    const fixture = await createFixture({ outputSchema: true });
+    await fixture.registry.initialize();
+    const revision = fixture.registry.get("researcher")!.revision;
+    const collector = new SubagentResultCollector();
+    const tool = collector.createTool(revision)!;
+    const context = (runId: string) => ({
+      runId,
+      sessionId: runId,
+      runtimeSessionRef: null,
+      prompt: "submit",
+      pageLabel: "Subagent",
+      roomId: null,
+    });
+
+    await expect(tool.execute(context("run-unbound"), { answer: "unbound" }))
+      .rejects.toThrow("subagent_result_invocation_mismatch");
+    collector.prepare(revision.id, "run-invalid", {});
+    await expect(tool.execute(context("run-invalid"), {}))
+      .rejects.toThrow("subagent_result_schema_invalid");
+    expect(collector.take(revision.id, "run-invalid")).toBeNull();
+
+    collector.prepare(revision.id, "run-a", { topic: "A" });
+    collector.prepare(revision.id, "run-b", { topic: "B" });
+    await Promise.all([
+      tool.execute(context("run-a"), { answer: "A" }),
+      tool.execute(context("run-b"), { answer: "B" }),
+    ]);
+    expect(collector.take(revision.id, "run-b")).toEqual({ answer: "B" });
+    expect(collector.take(revision.id, "run-a")).toEqual({ answer: "A" });
+    collector.prepare(revision.id, "run-c", {});
+    await expect(tool.execute(context("run-c"), { answer: "first" })).resolves.toBeDefined();
+    await expect(tool.execute(context("run-c"), { answer: "second" }))
+      .rejects.toThrow("subagent_result_already_submitted");
+
+    fixture.database.sqlite.close();
+  });
+
+  it("does not parse a final text message as a formal result when submission is missing", async () => {
+    const fixture = await createFixture({ outputSchema: true });
+    await fixture.registry.initialize();
+    const runtimeManager = new SubagentRuntimeManager(
+      { agentRuntime: "fake" } as GatewayConfig,
+      fixture.config,
+    );
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+    orchestrator.initialize();
+
+    const invocation = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Return a JSON-looking answer",
+      input: {},
+      idempotencyKey: "missing-submit-result",
+      source: "primary_agent",
+      parentRunId: "parent-run",
+    });
+    expect(invocation).toMatchObject({
+      status: "failed",
+      result: null,
+      errorMessage: "subagent_result_not_submitted",
+    });
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  });
 
   it("degrades to UnconfiguredAgentRuntime when pi fields are empty and invalidate() clears the cache", async () => {
     const fixture = await createFixture({});

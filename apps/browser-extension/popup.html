@@ -5,22 +5,52 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>EverRoom</title>
     <style>
-      :root { color-scheme: light; font: 13px/1.4 system-ui, sans-serif; }
-      body { width: 280px; margin: 0; padding: 16px; color: #1d2528; }
-      h1 { margin: 0 0 8px; font-size: 16px; }
-      p { color: #647074; margin: 0 0 14px; }
-      button { width: 100%; border: 0; border-radius: 6px; padding: 9px 12px; background: #256f65; color: white; cursor: pointer; }
-      button.secondary { margin-top: 8px; background: #edf2f1; color: #1d2528; }
-      button:disabled { cursor: default; opacity: .45; }
-      #status { margin: 12px 0; padding: 9px; border-radius: 6px; background: #f4f6f5; }
+      :root { color-scheme:light; font:12px/1.45 "Avenir Next",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif; }
+      * { box-sizing:border-box; letter-spacing:0; }
+      body { width:320px; margin:0; color:#151a22; background:#f6f7f9; }
+      header { display:flex; align-items:center; justify-content:space-between; min-height:48px; padding:0 14px; border-bottom:1px solid #e1e5eb; background:#fff; }
+      .brand { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:650; }
+      .brand-mark { display:grid; place-items:center; width:24px; height:24px; border-radius:6px; color:#fff; background:#151a22; }
+      #connection { display:inline-flex; align-items:center; gap:5px; color:#536070; font-size:10px; }
+      #connection::before { width:6px; height:6px; border-radius:50%; background:#a9b2be; content:""; }
+      #connection[data-state="paired"]::before { background:#2f9d69; } #connection[data-state="unavailable"]::before,#connection[data-state="error"]::before { background:#d44545; }
+      main { padding:14px; }
+      .page { display:grid; grid-template-columns:34px minmax(0,1fr); gap:10px; padding:11px; border:1px solid #e1e5eb; border-radius:8px; background:#fff; }
+      .favicon { display:grid; place-items:center; width:34px; height:34px; overflow:hidden; border-radius:6px; color:#536070; background:#eef1f5; font-size:15px; font-weight:650; }
+      .favicon img { width:100%; height:100%; object-fit:cover; }
+      .page-copy { min-width:0; } #page-title { overflow:hidden; font-size:12px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+      #page-domain { overflow:hidden; margin-top:2px; color:#536070; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+      #status { min-height:34px; margin:10px 0 0; color:#536070; font-size:11px; }
+      .progress { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin:13px 0; }
+      .step { display:grid; justify-items:center; gap:5px; color:#8a95a3; font-size:9px; text-align:center; }
+      .step i { position:relative; display:grid; place-items:center; width:21px; height:21px; border:1px solid #d7dce4; border-radius:50%; background:#fff; font-style:normal; }
+      .step + .step i::before { position:absolute; right:20px; width:calc((320px - 28px - 50px) / 4); height:1px; background:#d7dce4; content:""; }
+      .step[data-state="active"] { color:#3d6ff6; }.step[data-state="active"] i { border-color:#3d6ff6; box-shadow:0 0 0 3px rgb(61 111 246 / 12%); }
+      .step[data-state="done"] { color:#237a53; }.step[data-state="done"] i { border-color:#237a53; color:#fff; background:#237a53; }.step[data-state="done"] i::before { background:#237a53; }
+      .step[data-state="error"] { color:#c23c3c; }.step[data-state="error"] i { border-color:#c23c3c; }
+      button { width:100%; min-height:38px; border:1px solid #3d6ff6; border-radius:7px; padding:0 12px; color:#fff; background:#3d6ff6; cursor:pointer; font:inherit; font-weight:600; }
+      button.secondary { margin-top:7px; border-color:#e1e5eb; color:#151a22; background:#fff; }
+      button:disabled { cursor:default; opacity:.45; }
+      button:focus-visible { outline:3px solid rgb(61 111 246 / 24%); outline-offset:2px; }
+      #connect[data-hidden="true"],#retry[data-hidden="true"] { display:none; }
+      @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; } }
     </style>
   </head>
   <body>
-    <h1>EverRoom</h1>
-    <p id="status">Checking local connection...</p>
-    <button id="connect">Connect to this app</button>
-    <button id="send" class="secondary">Save current page</button>
-    <button id="retry" class="secondary" disabled>Retry missing images</button>
+    <header><div class="brand"><span class="brand-mark">E</span>EverRoom</div><span id="connection" data-state="idle">Checking</span></header>
+    <main>
+      <section class="page"><div class="favicon" id="favicon">W</div><div class="page-copy"><div id="page-title">Current page</div><div id="page-domain">-</div></div></section>
+      <p id="status" role="status" aria-live="polite">Checking local connection...</p>
+      <div class="progress" aria-label="Save progress">
+        <span class="step" data-step="extract"><i>1</i><b data-label="extract">Extract</b></span>
+        <span class="step" data-step="save"><i>2</i><b data-label="save">Save</b></span>
+        <span class="step" data-step="images"><i>3</i><b data-label="images">Images</b></span>
+        <span class="step" data-step="done"><i>4</i><b data-label="done">Done</b></span>
+      </div>
+      <button id="connect">Connect to this app</button>
+      <button id="send">Save current page</button>
+      <button id="retry" class="secondary" data-hidden="true">Retry missing images</button>
+    </main>
     <script type="module" src="popup.js"></script>
   </body>
 </html>

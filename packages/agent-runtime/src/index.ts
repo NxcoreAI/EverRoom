@@ -2,6 +2,7 @@ import type {
   AgentAttachmentKind,
   AgentActiveDocumentContext,
   AgentEventType,
+  LocalAgentDelegationContext,
   AgentRoomReference,
   RuntimeCapabilities,
 } from "@nxcore/agent-contract";
@@ -32,6 +33,8 @@ export interface StartRuntimeRunInput {
   recallMemory?: boolean;
   toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
+  /** Structured handoff for an explicitly selected external/local Agent. */
+  delegationContext?: LocalAgentDelegationContext;
 }
 
 export interface RuntimeAttachment {

@@ -46,4 +46,22 @@ describe('LocalFolderConnector scan policy', () => {
     ])
     expect(result.failed).toBe(0)
   })
+
+  it('does not enter special-application work directories inside a scanned folder', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'everroom-local-special-folder-'))
+    temporaryDirectories.push(rootPath)
+    const vaultPath = join(rootPath, 'Obsidian Vault')
+    await mkdir(join(vaultPath, '.obsidian'), { recursive: true })
+    await writeFile(join(rootPath, 'ordinary.md'), '# Ordinary')
+    await writeFile(join(vaultPath, 'private.md'), '# Vault note')
+
+    const result = await new LocalFolderConnector(undefined, (path) => path === vaultPath || path.startsWith(`${vaultPath}/`)).scan({
+      id: 'source-1',
+      kind: 'local-folder',
+      name: 'fixture',
+      config: { rootPath },
+    })
+
+    expect(result.items.map((item) => item.path)).toEqual(['ordinary.md'])
+  })
 })

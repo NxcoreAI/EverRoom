@@ -57,6 +57,7 @@ export interface LocalFileExportTarget {
     sourceUri: string
     sourceModifiedAt: string
   }): Promise<FileImportAcceptedDto>
+  delete?(fileId: string): Promise<unknown>
 }
 
 export interface LocalFolderConnectionResult {
@@ -836,6 +837,14 @@ export class LocalDataService {
     return scan
   }
 
+  async rescanLocalFolders(): Promise<void> {
+    const sources = this.database.prepare(`
+      SELECT id FROM data_sources
+      WHERE kind = 'local-folder' AND status != 'paused' AND disconnected_at IS NULL
+    `).all() as unknown as Array<{ id: string }>
+    await Promise.allSettled(sources.map((source) => this.sync(source.id)))
+  }
+
   setPaused(id: string, paused: boolean): DataSourceSummary {
     if (this.disconnectingSources.has(id)) throw new Error('数据源正在清理，请稍候。')
     if (this.activeScans.has(id)) throw new Error('同步进行中，请等待完成后再更改状态。')
@@ -1117,6 +1126,12 @@ export class LocalDataService {
         for (const item of missingItems) markMissing.run(runId, changedAt, item.id)
         counts.removed = missingItems.length
       }
+      if (source.kind === 'local-folder' && connector.isExcludedPath) {
+        const excludedItemIds = allExistingItems
+          .filter((item) => connector.isExcludedPath!(this.toConnection(source), item.relative_path))
+          .map((item) => item.id)
+        await this.cleanupExcludedExports(excludedItemIds)
+      }
 
       const finishedAt = new Date().toISOString()
       this.finishRun(runId, 'success', counts, finishedAt, null)
@@ -1240,6 +1255,32 @@ export class LocalDataService {
       stream.on('error', reject)
       stream.on('end', () => resolve(hash.digest('hex')))
     })
+  }
+
+  private async cleanupExcludedExports(itemIds: string[]): Promise<void> {
+    if (!this.fileExports?.delete || itemIds.length === 0) return
+    const findExports = this.database.prepare(`
+      SELECT DISTINCT source_exports.file_entry_id AS file_entry_id
+      FROM source_exports
+      JOIN source_versions ON source_versions.id = source_exports.source_version_id
+      WHERE source_versions.source_item_id = ? AND source_exports.file_entry_id IS NOT NULL
+    `)
+    const clearExport = this.database.prepare(
+      'UPDATE source_exports SET file_entry_id = NULL, file_version_id = NULL, updated_at = ? WHERE file_entry_id = ?',
+    )
+    const fileIds = new Set<string>()
+    for (const itemId of itemIds) {
+      const rows = findExports.all(itemId) as unknown as Array<{ file_entry_id: string }>
+      for (const row of rows) fileIds.add(row.file_entry_id)
+    }
+    for (const fileId of fileIds) {
+      try {
+        await this.fileExports.delete(fileId)
+        clearExport.run(new Date().toISOString(), fileId)
+      } catch {
+        // Keep the binding so a later exclusion rescan can retry cleanup.
+      }
+    }
   }
 
   private async storeObject(item: ConnectorItem, hash: string): Promise<void> {

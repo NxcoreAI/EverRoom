@@ -17,7 +17,7 @@ function coerceKnowledgeKind(kind: string): ContextRoomKind {
 }
 
 export function shouldSyncRoomToKnowledge(room: ContextRoomRecord): boolean {
-  return room.origin !== 'auto' && !isDemoContextRoomId(room.id)
+  return room.origin !== 'auto' && room.origin !== 'source' && !isDemoContextRoomId(room.id)
 }
 
 export function shouldDeleteRoomFromKnowledge(room: ContextRoomRecord): boolean {

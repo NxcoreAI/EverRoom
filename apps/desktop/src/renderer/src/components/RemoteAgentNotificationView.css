@@ -1,0 +1,17 @@
+.remote-agent-view { position: fixed; inset: 0; z-index: 1200; display: grid; grid-template-rows: 72px minmax(0, 1fr); background: var(--surface); color: var(--text); }
+.remote-agent-view > header { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: center; gap: 12px; padding: 0 22px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
+.remote-agent-view > header button { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; }
+.remote-agent-view > header svg { width: 17px; height: 17px; }
+.remote-agent-view > header h1 { margin: 0; overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.remote-agent-view > header span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.remote-agent-view > main { width: min(820px, 100%); margin: 0 auto; overflow-y: auto; padding: 28px 30px 80px; }
+.remote-agent-state { display: grid; min-height: 240px; place-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.remote-agent-state svg { width: 22px; height: 22px; }
+.remote-agent-message { margin: 0 0 24px; padding-left: 14px; border-left: 2px solid transparent; line-height: 1.65; }
+.remote-agent-message[data-target-run='true'] { border-left-color: var(--accent); }
+.remote-agent-message[data-role='user'] { margin-left: 18%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-alt); }
+.remote-agent-message > span { display: block; margin-bottom: 7px; color: var(--muted); font-size: 10px; text-transform: capitalize; }
+.remote-agent-message p { margin: 0 0 10px; }
+.remote-agent-message pre { overflow-x: auto; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); }
+.remote-agent-message code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (max-width: 700px) { .remote-agent-view > main { padding: 22px 18px 64px; } .remote-agent-message[data-role='user'] { margin-left: 8%; } }

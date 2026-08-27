@@ -1,11 +1,15 @@
-import { ChevronDown, ChevronRight, Eraser, Eye, File, FolderOpen, HardDrive, Pause, Play, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, Eraser, ExternalLink, Eye, File, FolderOpen, Import, Pause, Play, RefreshCw, Unplug } from 'lucide-react'
 
 import type { DataSourceSummary, SourceFileSummary } from '../../../../../shared/sources'
+import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../../../../../shared/obsidian'
 import { EVIDENCE_STATUS_LABELS, FILE_STATUS_LABELS, formatBytes, formatDate, SOURCE_STATUS_LABELS } from './sourceFormatters'
 import { useLocale } from '@/i18n/LocaleContext'
+import { SourceIcon } from './SourceIcon'
 
 export function SourceTable({
   sources,
+  vaults,
+  obsidianCandidates,
   loading,
   busyId,
   expandedSourceId,
@@ -18,8 +22,16 @@ export function SourceTable({
   onOpenEvidence,
   onPreviewFile,
   onShowFile,
+  obsidianExpanded,
+  onToggleObsidian,
+  onRescanObsidian,
+  onOpenVaultRoom,
+  onDisconnectVault,
+  onImportObsidianCandidate,
 }: {
   sources: DataSourceSummary[]
+  vaults: ObsidianVaultBinding[]
+  obsidianCandidates: ObsidianVaultCandidate[]
   loading: boolean
   busyId: string | null
   expandedSourceId: string | null
@@ -32,8 +44,23 @@ export function SourceTable({
   onOpenEvidence: (sourceId: string, fileId: string) => void
   onPreviewFile: (sourceId: string, fileId: string) => void
   onShowFile: (sourceId: string, fileId: string) => void
+  obsidianExpanded: boolean
+  onToggleObsidian: () => void
+  onRescanObsidian: () => void
+  onOpenVaultRoom: (vault: ObsidianVaultBinding) => void
+  onDisconnectVault: (vault: ObsidianVaultBinding) => void
+  onImportObsidianCandidate: (candidate: ObsidianVaultCandidate) => void
 }) {
   const { locale, t } = useLocale()
+  const obsidianBusy = busyId === 'obsidian'
+  const pendingCandidates = obsidianCandidates.filter((candidate) => !candidate.mountedVaultId)
+  const obsidianProjectCount = vaults.length + pendingCandidates.length
+  const obsidianFileCount = vaults.reduce((total, vault) => total + vault.noteCount + vault.attachmentCount, 0)
+    + pendingCandidates.reduce((total, candidate) => total + candidate.noteCount + candidate.attachmentCount, 0)
+  const obsidianNoteCount = vaults.reduce((total, vault) => total + vault.noteCount, 0)
+    + pendingCandidates.reduce((total, candidate) => total + candidate.noteCount, 0)
+  const obsidianStatus = vaults.some((vault) => vault.status !== 'connected') ? 'error' : pendingCandidates.length > 0 ? 'pending' : 'connected'
+  const obsidianUpdatedAt = vaults.reduce<string | null>((latest, vault) => !latest || vault.updatedAt > latest ? vault.updatedAt : latest, null)
   return (
     <div className="data-table source-table">
       <div className="table-head"><span>{t('surface:sourceTable.name')}</span><span>{t('surface:sourceTable.files')}</span><span>{t('surface:sourceTable.status')}</span><span>{t('surface:sourceTable.lastSynced')}</span><span>{t('surface:sourceTable.actions')}</span></div>
@@ -49,7 +76,7 @@ export function SourceTable({
                 <button type="button" className="source-expand-button" aria-label={t(expanded ? 'surface:sourceTable.collapseFileList' : 'surface:sourceTable.viewFileList', { name: source.name })} aria-expanded={expanded} onClick={() => onToggleFiles(source.id)}>
                   {expanded ? <ChevronDown aria-hidden="true" strokeWidth={1.8} /> : <ChevronRight aria-hidden="true" strokeWidth={1.8} />}
                 </button>
-                <span className="item-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span>
+                <span className="item-icon" data-source-kind={source.kind}><SourceIcon kind={source.kind} /></span>
                 <span className="source-name-copy"><strong>{source.name}</strong><small title={source.rootPath}>{source.rootPath}</small></span>
               </span>
               <button type="button" className="source-count source-count-button" onClick={() => onToggleFiles(source.id)}>
@@ -98,6 +125,49 @@ export function SourceTable({
           </div>
         )
       })}
+      {obsidianProjectCount > 0 ? (
+        <div className="source-record obsidian-source-record">
+          <div className="table-row">
+            <span className="name-cell">
+              <button type="button" className="source-expand-button" aria-label={t(obsidianExpanded ? 'surface:sources.collapseObsidianProjects' : 'surface:sources.viewObsidianProjects')} aria-expanded={obsidianExpanded} onClick={onToggleObsidian}>
+                {obsidianExpanded ? <ChevronDown aria-hidden="true" strokeWidth={1.8} /> : <ChevronRight aria-hidden="true" strokeWidth={1.8} />}
+              </button>
+              <span className="item-icon obsidian-source-icon"><SourceIcon kind="obsidian-vault" /></span>
+              <span className="source-name-copy"><strong>Obsidian</strong><small>{pendingCandidates.length > 0 ? t('surface:sources.obsidianProjectsWithPending', { watched: vaults.length, pending: pendingCandidates.length }) : t('surface:sources.obsidianWatchedProjects', { count: vaults.length })}</small></span>
+            </span>
+            <button type="button" className="source-count source-count-button" onClick={onToggleObsidian}>
+              <strong>{obsidianFileCount}</strong><small>{t('surface:sources.obsidianNotesAndProjects', { notes: obsidianNoteCount, projects: obsidianProjectCount })}</small>
+            </button>
+            <span className="status-cell" data-status={obsidianStatus}><span className="status-dot active" />{t(obsidianStatus === 'connected' ? 'surface:sourceTable.synced' : obsidianStatus === 'pending' ? 'surface:sources.pendingImport' : 'surface:sources.partlyOffline')}</span>
+            <span>{formatDate(obsidianUpdatedAt, locale, t)}</span>
+            <span className="source-actions">
+              <button type="button" className="icon-button" aria-label={t('surface:sources.rescanObsidian')} title={t('surface:sources.rescanObsidian')} disabled={obsidianBusy} onClick={onRescanObsidian}><RefreshCw className={obsidianBusy ? 'is-spinning' : undefined} aria-hidden="true" strokeWidth={1.8} /></button>
+            </span>
+          </div>
+          {obsidianExpanded ? <div className="obsidian-projects-panel">
+            <div className="obsidian-projects-head"><span>{t('surface:sources.obsidianProject')}</span><span>{t('surface:sourceTable.files')}</span><span>{t('surface:sourceTable.status')}</span><span>{t('surface:sources.destination')}</span><span /></div>
+            {vaults.map((vault) => <div className="obsidian-project-row" key={vault.id}>
+              <span className="obsidian-project-name"><SourceIcon kind="obsidian-vault" /><strong>{vault.name}</strong></span>
+              <span>{vault.noteCount + vault.attachmentCount}<small>{t('surface:sources.obsidianCount', { attachments: vault.attachmentCount })}</small></span>
+              <span className="status-cell" data-status={vault.status === 'connected' ? 'connected' : 'error'}><span className="status-dot active" />{t(vault.status === 'connected' ? 'surface:obsidian.connected' : 'surface:obsidian.offline')}</span>
+              <span>{t(vault.mountMode === 'memory' ? 'surface:sources.obsidianMemory' : vault.mountMode === 'embedded' ? 'surface:sources.obsidianRoomPart' : 'surface:sources.obsidianProjectRoom')}</span>
+              <span className="source-actions">
+                {vault.mountMode !== 'memory' ? <button type="button" className="icon-button" aria-label={t('surface:sources.openRoom')} title={t('surface:sources.openRoom')} onClick={() => onOpenVaultRoom(vault)}><ExternalLink aria-hidden="true" strokeWidth={1.8} /></button> : null}
+                <button type="button" className="icon-button danger" aria-label={t('surface:obsidian.disconnect')} title={t('surface:obsidian.disconnect')} disabled={busyId === vault.id} onClick={() => onDisconnectVault(vault)}><Unplug aria-hidden="true" strokeWidth={1.8} /></button>
+              </span>
+            </div>)}
+            {pendingCandidates.map((candidate) => <div className="obsidian-project-row" key={candidate.id} data-status="pending">
+              <span className="obsidian-project-name"><SourceIcon kind="obsidian-vault" /><strong>{candidate.name}</strong></span>
+              <span>{candidate.noteCount + candidate.attachmentCount}<small>{t('surface:sources.obsidianCount', { attachments: candidate.attachmentCount })}</small></span>
+              <span className="status-cell" data-status="pending"><span className="status-dot" />{t('surface:sources.pendingImport')}</span>
+              <span>{t('surface:sources.notImported')}</span>
+              <span className="source-actions">
+                <button type="button" className="icon-button" aria-label={t('surface:sources.importObsidianProject', { name: candidate.name })} title={t('surface:sources.importIntoMemory')} disabled={busyId === candidate.id} onClick={() => onImportObsidianCandidate(candidate)}><Import className={busyId === candidate.id ? 'is-spinning' : undefined} aria-hidden="true" strokeWidth={1.8} /></button>
+              </span>
+            </div>)}
+          </div> : null}
+        </div>
+      ) : null}
     </div>
   )
 }

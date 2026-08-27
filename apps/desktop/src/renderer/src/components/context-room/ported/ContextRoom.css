@@ -555,6 +555,11 @@
   height: 14px;
 }
 
+.context-room-my-actions .context-room-add-room .obsidian-app-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .context-room-duplicate-button {
   position: relative;
 }
@@ -2158,12 +2163,12 @@
   margin-top: auto;
   border-top: 1px solid var(--cr-border);
   border-radius: 0;
-  color: #217346;
+  color: var(--cr-blue);
 }
 
 .context-room-workspace-tabs > .context-room-workspace-tabs-footer:hover {
-  background: #e9f3ed;
-  color: #185c37;
+  background: var(--cr-surface-hover);
+  color: var(--cr-blue);
 }
 
 .context-room-workspace-tabs button.is-dragging {

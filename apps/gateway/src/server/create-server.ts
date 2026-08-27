@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 import type { FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -18,9 +18,15 @@ import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
 import { DocumentOperationService } from "../modules/documents/operations/service.js";
 import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
+import { NotificationBridgeClient } from "../modules/notifications/bridge-client.js";
+import { NotificationMcpHost } from "../modules/notifications/mcp-host.js";
+import { notificationMcpRoutes } from "../modules/notifications/mcp-routes.js";
+import { createNotificationPiTools } from "../modules/notifications/pi-tools.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
+import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
+import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import {
   createAgentResolver,
   createIngestFilterAgentRuntime,
@@ -50,6 +56,8 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { DataMigrationService } from "../modules/data-migrations/service.js";
+import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { FileClusteringService } from "../modules/files/clustering-service.js";
@@ -79,7 +87,10 @@ import { perceptionRoutes } from "../modules/perception/routes.js";
 import { PerceptionService } from "../modules/perception/service.js";
 import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
 import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
-import { createDocumentUnderstandingTools } from "../modules/document-understanding/tools.js";
+import {
+  createDocumentAnalysisResultValidator,
+  createDocumentUnderstandingTools,
+} from "../modules/document-understanding/tools.js";
 import { diaryRoutes } from "../modules/diary/routes.js";
 import { DiaryService } from "../modules/diary/service.js";
 import { AgentSchedulerService } from "../modules/agent-scheduler/service.js";
@@ -101,6 +112,7 @@ import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { createSubagentPiTools } from "../modules/subagents/tools.js";
+import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
@@ -253,7 +265,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const disableRequestLogging = gatewayHttpLogLevel !== "debug" && gatewayHttpLogLevel !== "info";
   const app = Fastify({
     loggerInstance: gatewayLogger.logger,
-    disableRequestLogging,
+    logController: new LogController({ disableRequestLogging }),
     routerOptions: {
       // knowledge 文件路由的 id 可能是 caller_ref（如 connector:provider:<uuid>:<docId>），
       // URL 编码后超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
@@ -465,6 +477,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       app.log[level](fields, event);
     },
   );
+  const notificationMcpHost = new NotificationMcpHost(
+    config.notificationBridge ? new NotificationBridgeClient(config.notificationBridge) : null,
+  );
+  const externalDocumentProjectionService = new ExternalDocumentProjectionService(
+    db,
+    documentService,
+    documentOperationService,
+    documentMcpHost.capabilities,
+  );
   await documentMcpHost.capabilities.recover();
   const agentResolver = createAgentResolver(config);
   // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
@@ -566,8 +587,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
-          })
+         })
         : []),
+      ...createNotificationPiTools(notificationMcpHost),
     ],
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
@@ -581,6 +603,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       : {}),
   }, cliConnectorSyncService, nangoAgentTools);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
+  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -605,6 +628,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentMcpHost,
     config.cliConnectorAgentMode ?? "direct",
     false,
+    (target) => localAgentRuntimeRegistry.resolve(target),
   );
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
@@ -718,7 +742,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
   filesService.initializeCatalog();
-  const clipperService = new ClipperService(db, filesService, config.dataDir);
+  const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
+  dataMigrationService.setFilesService(filesService);
+  agentService.setExternalConversationResolver(dataMigrationService);
+  agentService.setFilesService(filesService);
+  const clipperService = new ClipperService(db, filesService, config.dataDir, createVlmProvider(config));
+  await clipperService.initialize();
   const documentUnderstandingService = new DocumentUnderstandingService(
     db,
     filesService,
@@ -736,11 +765,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
     return null;
   };
-  runtimeConfigManager.onChange(() =>
-    documentUnderstandingService.replaceVisualProvider(createVlmProvider(config)));
+  runtimeConfigManager.onChange(() => {
+    const visualProvider = createVlmProvider(config);
+    documentUnderstandingService.replaceVisualProvider(visualProvider);
+    clipperService.replaceVisualProvider(visualProvider);
+  });
   subagentRuntimeManager.registerAgentTools(
     "multimodal-document-parser",
     () => createDocumentUnderstandingTools(documentUnderstandingService),
+  );
+  subagentRuntimeManager.registerAgentResultValidator(
+    "multimodal-document-parser",
+    createDocumentAnalysisResultValidator(documentUnderstandingService),
   );
   cliConnectorSyncService.setFilesService(filesService);
   const fileClusteringService = new FileClusteringService(
@@ -829,12 +865,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
+    await clipperService.dispose();
     await filesService.dispose();
     await fileClusteringService.dispose();
     await nangoConnectorManager.dispose();
     nangoConnectorDb.close();
     clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
+    await localAgentRuntimeRegistry.dispose();
     await subagentOrchestrator.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
@@ -851,6 +889,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     knowledgeService.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
+    await notificationMcpHost.close();
     sqlite.close();
     await gatewayLogger.close();
   });
@@ -881,6 +920,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     roomOverviewService,
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
+  await app.register(notificationMcpRoutes(notificationMcpHost));
   await app.register(documentRoutes(documentService));
   await app.register(documentOperationRoutes(
     documentOperationService,
@@ -899,8 +939,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       agentService.validateDocumentOperationContext(context);
     },
   ));
+  await app.register(externalDocumentProjectionRoutes(
+    externalDocumentProjectionService,
+    (context) => agentService.validateDocumentOperationContext(context),
+  ));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(dataMigrationRoutes(dataMigrationService));
   await app.register(filesRoutes(filesService, {
     // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档
     requestKnowledgeCleanup: (fileId) => {
@@ -989,6 +1034,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ingestService.recoverPendingFilters();
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
+    const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);
     return ingestService.ingest({
       source: { ref: {
         sourceKind: "file",
@@ -997,6 +1043,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       } },
       ...(input.pipelines ? { pipelines: input.pipelines } : {}),
       ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(versionContext?.entry.sourceKind === "web-clipper" ? { originChannel: "web-clipper" as const } : {}),
     });
   });
   realityService.setReadySink(async (event) => {

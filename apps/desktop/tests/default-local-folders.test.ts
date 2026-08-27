@@ -227,6 +227,44 @@ describe('default local folders', () => {
     }
   })
 
+  it('removes an existing ordinary-file projection when its directory becomes a special app workspace', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-special-folder-cleanup-'))
+    temporaryDirectories.push(fixtureRoot)
+    const documents = join(fixtureRoot, 'Documents')
+    const vault = join(documents, 'Product Vault')
+    await mkdir(vault, { recursive: true })
+    await writeFile(join(vault, 'brief.md'), '# Brief')
+    const excluded = new Set<string>()
+    const deleteFile = vi.fn(async () => ({ deleted: true }))
+    const importLocalFile = vi.fn(async () => ({
+      fileEntryId: 'file-vault-brief', fileVersionId: 'version-vault-brief', jobId: 'job-1',
+      contentHash: 'a'.repeat(64), blobDeduped: false, versionDeduped: false,
+    }))
+    const extensions = new Set(['.md'])
+    const service = new LocalDataService(
+      join(fixtureRoot, 'data'),
+      new ConnectorRegistry().register(new LocalFolderConnector(extensions, (path) => excluded.has(vault) && (path === vault || path.startsWith(`${vault}/`)))),
+      { capabilities: async () => ({ items: [] }), importLocalFile, importConnectorFile: vi.fn(), delete: deleteFile },
+      extensions,
+    )
+    await service.initialize()
+    try {
+      await service.addLocalFolder(documents)
+      for (let attempt = 0; attempt < 100 && importLocalFile.mock.calls.length === 0; attempt += 1) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5))
+      }
+      expect(service.listFiles(service.listSources()[0]!.id)[0]).toMatchObject({ relativePath: 'Product Vault/brief.md', exists: true })
+
+      excluded.add(vault)
+      await service.rescanLocalFolders()
+
+      expect(service.listFiles(service.listSources()[0]!.id)[0]).toMatchObject({ relativePath: 'Product Vault/brief.md', exists: false })
+      expect(deleteFile).toHaveBeenCalledWith('file-vault-brief')
+    } finally {
+      await service.shutdown()
+    }
+  })
+
   it('hides and permanently skips high-risk files rejected from auto-scan', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-high-risk-reject-'))
     temporaryDirectories.push(fixtureRoot)

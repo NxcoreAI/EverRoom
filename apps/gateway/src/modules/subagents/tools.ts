@@ -293,6 +293,11 @@ export function createSubagentPiTools(
           parentRunId: run.runId,
           ...(signal ? { signal } : {}),
         });
+        const structured = invocation.result?.structuredOutput as {
+          summary?: unknown;
+          facts?: unknown;
+          missingFields?: unknown;
+        } | undefined;
         const normalized = normalizeDocumentSummary(invocation.result);
         return {
           content: JSON.stringify({
@@ -300,6 +305,8 @@ export function createSubagentPiTools(
             agentId: invocation.agentDefinitionId,
             status: invocation.status,
             summary: normalized.summary,
+            facts: Array.isArray(structured?.facts) ? structured.facts : null,
+            missingFields: Array.isArray(structured?.missingFields) ? structured.missingFields : null,
             outputFormat: normalized.outputFormat,
             ...(normalized.warning ? { warning: normalized.warning } : {}),
             result: invocation.result,

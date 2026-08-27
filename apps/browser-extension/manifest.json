@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "EverRoom",
-  "version": "0.2.2",
+  "version": "0.2.8",
   "description": "Save the current page as Markdown to EverRoom on this computer.",
   "permissions": ["storage", "activeTab", "contextMenus", "scripting"],
   "host_permissions": ["http://127.0.0.1:47831/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

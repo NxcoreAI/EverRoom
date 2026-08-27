@@ -33,6 +33,7 @@ export interface AgentSessionRouteRequest {
   pageId: PageId
   roomId: string | null
   sessionId: string
+  runId?: string | null
   blockId?: string | null
 }
 

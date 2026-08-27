@@ -23,7 +23,10 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
   readonly kind = 'local-folder' as const
   readonly capabilities = ['pull', 'incremental', 'watch'] as const
 
-  constructor(private readonly scanExtensions: ReadonlySet<string> = LOCAL_AUTO_SCAN_EXTENSIONS) {}
+  constructor(
+    private readonly scanExtensions: ReadonlySet<string> = LOCAL_AUTO_SCAN_EXTENSIONS,
+    private readonly excludedPath: (absolutePath: string) => boolean = () => false,
+  ) {}
 
   getConnectionKey(config: LocalFolderConfig): string {
     return resolve(config.rootPath)
@@ -36,6 +39,7 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
     let failed = 0
 
     const visit = async (directory: string, isRoot = false): Promise<void> => {
+      if (this.excludedPath(resolve(directory))) return
       let entries
       try {
         entries = await readdir(directory, { withFileTypes: true })
@@ -87,7 +91,10 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
     onError?: () => void,
   ): ConnectorSubscription | null {
     try {
-      const watcher = watch(connection.config.rootPath, { recursive: true }, onChange)
+      const watcher = watch(connection.config.rootPath, { recursive: true }, (_event, filename) => {
+        if (filename && this.excludedPath(resolve(connection.config.rootPath, filename.toString()))) return
+        onChange()
+      })
       let closedByCaller = false
       let reportedError = false
       const reportError = () => {
@@ -124,5 +131,9 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
       throw new Error('文件位置超出已授权目录。')
     }
     return localPath
+  }
+
+  isExcludedPath(connection: ConnectorConnection<LocalFolderConfig>, itemPath: string): boolean {
+    return this.excludedPath(this.resolveLocalPath(connection, itemPath))
   }
 }

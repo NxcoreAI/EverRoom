@@ -99,12 +99,10 @@
 
 @keyframes recording-spin { to { transform: rotate(360deg); } }
 
-.cassette-switch { position: relative; display: grid; width: 112px; height: 64px; grid-template-rows: 12px 31px 13px; gap: 1px; padding: 4px 7px; overflow: hidden; border: 1px solid #202528; border-radius: 6px; outline-offset: 3px; background: #343a3d; color: #e9e1cf; box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), inset 0 -2px 0 rgb(0 0 0 / 20%), 0 2px 5px rgb(20 24 27 / 18%); cursor: pointer; transition: transform 150ms cubic-bezier(.16,1,.3,1), border-color 150ms ease, filter 150ms ease; contain: layout style paint; }
+.cassette-switch { position: relative; display: grid; width: 112px; height: 64px; flex: 0 0 112px; grid-template-rows: 12px 31px 13px; gap: 1px; padding: 4px 7px; overflow: hidden; border: 1px solid #202528; border-radius: 6px; background: #343a3d; color: #e9e1cf; box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), inset 0 -2px 0 rgb(0 0 0 / 20%), 0 2px 5px rgb(20 24 27 / 18%); contain: layout style paint; }
 .cassette-switch::before,.cassette-switch::after { position: absolute; top: 5px; width: 3px; height: 3px; border-radius: 50%; background: #181c1e; box-shadow: 0 0 0 1px rgb(255 255 255 / 8%); content: ''; }
 .cassette-switch::before { left: 4px; }.cassette-switch::after { right: 4px; }
-.cassette-switch:hover:not(:disabled) { border-color: #111517; filter: brightness(1.05); }
-.cassette-switch:active:not(:disabled) { transform: scale(.98); }
-.cassette-switch:disabled { cursor: wait; opacity: .68; }
+.cassette-switch[data-busy='true'] { opacity: .72; }
 .cassette-topline { display: flex; align-items: center; justify-content: space-between; color: #bcb5a7; font-size: 6px; font-weight: 750; letter-spacing: .08em; line-height: 1; }
 .cassette-state { display: inline-flex; min-width: 35px; align-items: center; justify-content: flex-end; gap: 3px; }
 .cassette-state > i { width: 5px; height: 5px; border-radius: 50%; background: #77776e; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 30%); }
@@ -170,57 +168,45 @@
   opacity: 0.92;
 }
 
-/* 录音开始后,磁带卡下方的计时条,宽度与磁带卡一致。 */
-.cassette-control-column {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-}
-
-.cassette-control-column .cassette-switch {
-  width: 100%;
-}
-
-.cassette-recording-timer {
-  display: inline-flex;
-  width: 112px;
-  height: 24px;
+.capture-console {
+  display: grid;
+  width: min(570px, 100%);
+  grid-template-columns: 112px minmax(150px, 1fr) auto;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 1px solid color-mix(in srgb, #c14452 42%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, #c14452 8%, #fff);
-  color: #a13641;
-  font: 650 14px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-  animation: cassette-timer-enter 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: 0 5px 18px rgb(20 26 32 / 5%);
 }
 
-.cassette-recording-timer > i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #d65449;
-  animation: cassette-rec-light 1.4s ease-in-out infinite;
+.capture-console[data-state='recording'] { border-color: #dfb8bd; box-shadow: 0 0 0 1px rgb(196 72 79 / 8%), 0 7px 22px rgb(83 28 32 / 8%); }
+.capture-console-copy { min-width: 0; }
+.capture-console-copy > span { display: block; margin-bottom: 4px; color: var(--subtle); font-size: 11px; font-weight: 650; }
+.capture-console-copy > strong { display: block; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.capture-console-copy > small { display: flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.capture-console-copy > small svg { width: 13px; height: 13px; }
+.capture-console-actions { display: flex; align-items: center; gap: 7px; }
+.capture-primary-button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 1px solid #263038; border-radius: 6px; background: #263038; color: #fff; cursor: pointer; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.capture-primary-button:hover:not(:disabled) { background: #151c21; }
+.capture-primary-button[data-recording='true'] { border-color: #b33c45; background: #c4484f; }
+.capture-primary-button[data-recording='true']:hover:not(:disabled) { background: #ae3841; }
+.capture-primary-button:disabled { cursor: wait; opacity: .58; }
+.capture-primary-button svg { width: 14px; height: 14px; }
+.capture-primary-button time { padding-left: 3px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.capture-settings-button { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); color: var(--muted); cursor: pointer; }
+.capture-settings-button:hover { border-color: var(--border-strong); color: var(--text); }
+.capture-settings-button svg { width: 16px; height: 16px; }
+
+@media (max-width: 820px) {
+  .capture-console { grid-template-columns: 112px minmax(0, 1fr); }
+  .capture-console-actions { grid-column: 1 / -1; justify-content: flex-end; }
 }
 
-.cassette-recording-timer[data-recording='false'] {
-  border-color: color-mix(in srgb, #ad7628 42%, transparent);
-  background: color-mix(in srgb, #ad7628 8%, #fff);
-  color: #8a5c1c;
-  font-size: 13px;
-}
-
-.cassette-recording-timer[data-recording='false'] > i {
-  background: #ad7628;
-}
-
-@keyframes cassette-timer-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
+@media (max-width: 520px) {
+  .capture-console { grid-template-columns: 1fr; }
+  .cassette-switch { display: none; }
+  .capture-console-actions { grid-column: 1; justify-content: stretch; }
+  .capture-primary-button { flex: 1; }
 }

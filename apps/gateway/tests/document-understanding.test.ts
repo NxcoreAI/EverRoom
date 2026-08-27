@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase, type DatabaseClient } from "../src/infrastructure/database/client.js";
 import { parsedDocuments } from "../src/infrastructure/database/schema.js";
 import { DocumentUnderstandingService } from "../src/modules/document-understanding/service.js";
-import { createDocumentUnderstandingTools } from "../src/modules/document-understanding/tools.js";
+import {
+  createDocumentAnalysisResultValidator,
+  createDocumentUnderstandingTools,
+} from "../src/modules/document-understanding/tools.js";
 import { DOCUMENT_PARSER_REVISION } from "../src/modules/document-understanding/types.js";
 import { extractOoxmlAssets } from "../src/modules/document-understanding/assets.js";
 import { FilesService } from "../src/modules/files/service.js";
@@ -98,6 +101,31 @@ describe("DocumentUnderstandingService", () => {
     expect(test.database.db.select().from(parsedDocuments).all()).toHaveLength(1);
     expect(test.service.markdownForFile(imported.fileEntryId)).toContain("Quarterly report body");
     expect(test.service.markdownForFile("file-missing")).toBeNull();
+
+    const validateResult = createDocumentAnalysisResultValidator(test.service);
+    const formalResult = {
+      status: "partial",
+      summary: "This is a quarterly report.",
+      facts: [{ key: "topic", value: "Quarterly report body", evidenceRefs: [first!.artifact.blocks[0]!.id] }],
+      missingFields: [],
+      artifactId: first!.id,
+      fileVersionId: imported.fileVersionId,
+      format: "pdf",
+      pageCount: first!.artifact.pages.length,
+      blockCount: first!.artifact.blocks.length,
+      tableCount: first!.artifact.tables.length,
+      valid: true,
+      issues: [],
+      warnings: first!.artifact.warnings,
+      requiresReview: true,
+    };
+    expect(() => validateResult({ fileVersionId: imported.fileVersionId }, formalResult)).not.toThrow();
+    expect(() => validateResult({ fileVersionId: imported.fileVersionId }, {
+      ...formalResult,
+      facts: [{ key: "topic", value: "Quarterly report body", evidenceRefs: ["block-missing"] }],
+    })).toThrow("subagent_result_evidence_not_found:block-missing");
+    expect(() => validateResult({ fileVersionId: "another-version" }, formalResult))
+      .toThrow("subagent_result_file_version_mismatch");
 
     const tools = createDocumentUnderstandingTools(test.service);
     const run = {

@@ -31,8 +31,12 @@
 .folder-settings-onboarding-folder-icon svg { width: 15px; height: 15px; }
 .folder-settings-onboarding-option > span:nth-child(3) { display: grid; min-width: 0; gap: 4px; }
 .folder-settings-onboarding-option strong { color: var(--text); font-size: 12px; }
+.folder-settings-onboarding-option small { color: var(--muted); font-size: 10px; line-height: 1.35; }
 .folder-settings-onboarding-option > svg { width: 15px; height: 15px; color: var(--icon-task); }
 .folder-settings-onboarding-option > svg.folder-settings-onboarding-failed-icon { color: var(--danger); }
+.folder-settings-onboarding-app { background: color-mix(in srgb, #7c3aed 3%, var(--surface)); }
+.folder-settings-onboarding-obsidian-icon { border-color: color-mix(in srgb, #7c3aed 30%, var(--border)); background: color-mix(in srgb, #7c3aed 9%, var(--surface)); color: #6d28d9; }
+.folder-settings-onboarding-obsidian-icon img { width: 17px; height: 17px; }
 .folder-settings-onboarding-custom-list { display: grid; gap: 8px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface-alt); }
 .folder-settings-onboarding-custom-list > span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .folder-settings-onboarding-custom-list > div { display: grid; grid-template-columns: 15px minmax(0, 1fr) 15px; align-items: center; gap: 8px; color: var(--text); }

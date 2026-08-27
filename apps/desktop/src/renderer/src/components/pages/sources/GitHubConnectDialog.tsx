@@ -1,6 +1,7 @@
-import { Github, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
+import { SourceIcon } from './SourceIcon'
 
 export interface GitHubConnectionInput {
   repository: string
@@ -39,7 +40,7 @@ export function GitHubConnectDialog({
           <label className="source-connect-check"><input type="checkbox" checked={values.syncIssues} onChange={(event) => onChange({ ...values, syncIssues: event.target.checked })} />{t('surface:gitHubConnectDialog.syncIssuesAndComments')}</label>
           <footer>
             <button type="button" className="secondary-button" onClick={onClose}>{t('surface:gitHubConnectDialog.cancel')}</button>
-            <button type="submit" className="primary-button" disabled={busy}><Github aria-hidden="true" strokeWidth={1.8} />{t('surface:gitHubConnectDialog.connect')}</button>
+            <button type="submit" className="primary-button" disabled={busy}><SourceIcon kind="github" />{t('surface:gitHubConnectDialog.connect')}</button>
           </footer>
         </form>
       </section>

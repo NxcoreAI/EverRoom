@@ -17,7 +17,7 @@ import type {
 
 const DEFAULT_PORT = 47831
 const PAIRING_TTL_MS = 5 * 60 * 1000
-const MAX_BODY_BYTES = 8 * 1024 * 1024
+const MAX_BODY_BYTES = 30 * 1024 * 1024
 const STORE_URL = process.env.NXCORE_BROWSER_EXTENSION_STORE_URL?.trim()
   || 'https://chromewebstore.google.com/'
 const EXPECTED_EXTENSION_ID = process.env.NXCORE_BROWSER_EXTENSION_ID?.trim() || null
@@ -506,7 +506,7 @@ export class BrowserExtensionService {
           return
         }
         const body = await readJson(request)
-        const data = safeString(body.data, 2_850_000)
+        const data = safeString(body.data, 27_962_028)
         if (!data) {
           jsonResponse(response, 400, { code: 'capture_asset_invalid' })
           return
@@ -522,7 +522,7 @@ export class BrowserExtensionService {
           return
         }
         const body = await readJson(request)
-        const failures = Array.isArray(body.failures) ? body.failures.slice(0, 20).flatMap((item) => {
+        const failures = Array.isArray(body.failures) ? body.failures.slice(0, 100).flatMap((item) => {
           if (!item || typeof item !== 'object' || Array.isArray(item)) return []
           const assetId = safeString((item as Record<string, unknown>).assetId, 200)
           const code = safeString((item as Record<string, unknown>).code, 100)
@@ -559,6 +559,7 @@ export class BrowserExtensionService {
     const url = text(body.url, 4_000)
     const canonicalUrl = text(body.canonicalUrl, 4_000)
     if (!/^https?:\/\//i.test(url) || !/^https?:\/\//i.test(canonicalUrl)) throw new Error('capture_url_invalid')
+    if (Array.isArray(body.assets) && body.assets.length > 100) throw new Error('capture_too_many_assets')
     return {
       captureId: text(body.captureId, 200),
       url,
@@ -570,7 +571,7 @@ export class BrowserExtensionService {
       markdown: text(body.markdown, 6 * 1024 * 1024),
       capturedAt: text(body.capturedAt, 100),
       extractorVersion: text(body.extractorVersion, 100),
-      assets: Array.isArray(body.assets) ? body.assets.slice(0, 20).map((value) => {
+      assets: Array.isArray(body.assets) ? body.assets.slice(0, 100).map((value) => {
         if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('capture_asset_invalid')
         const asset = value as Record<string, unknown>
         const id = text(asset.id, 200)

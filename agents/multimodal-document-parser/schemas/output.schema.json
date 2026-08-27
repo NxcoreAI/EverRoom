@@ -3,8 +3,29 @@
   "properties": {
     "status": { "type": "string", "enum": ["complete", "partial", "failed"] },
     "summary": { "type": "string", "minLength": 1 },
-    "artifactId": { "type": "string" },
-    "fileVersionId": { "type": "string" },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "minLength": 1 },
+          "value": { "type": ["string", "null"] },
+          "evidenceRefs": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "required": ["key", "value", "evidenceRefs"],
+        "additionalProperties": false
+      }
+    },
+    "missingFields": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "artifactId": { "type": "string", "minLength": 1 },
+    "fileVersionId": { "type": "string", "minLength": 1 },
     "format": { "type": "string", "enum": ["pdf", "docx", "xlsx", "pptx", "legacy-office"] },
     "pageCount": { "type": "integer", "minimum": 0 },
     "blockCount": { "type": "integer", "minimum": 0 },
@@ -15,7 +36,7 @@
     "requiresReview": { "type": "boolean" }
   },
   "required": [
-    "status", "summary", "artifactId", "fileVersionId", "format", "pageCount",
+    "status", "summary", "facts", "missingFields", "artifactId", "fileVersionId", "format", "pageCount",
     "blockCount", "tableCount", "valid", "issues", "warnings", "requiresReview"
   ],
   "additionalProperties": false
