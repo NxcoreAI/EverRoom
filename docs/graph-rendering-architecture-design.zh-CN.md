@@ -92,6 +92,22 @@ L1 布局内核  graph/layout/* 职责：d3-force 计算、SAB 协议（纯计�
 > 落地形态：`useForceGraphLayout()` 已实现并接入三个画布（含测试注入用 `workerFactory`）；
 > `<ForceGraphSurface>` 壳组件为可选后续 —— 样板已被 hook 吸收，Surface 只在需要统一
 > fitView 策略/a11y 结构时再引入。
+> 世界尺寸策略（2026-08-27）：已实现为 L3 的「自然世界下限」——`useForceGraphLayout.resize`
+> 以初始化 options 的 width/height（缺省 640×420）为下限，宿主面板小于自然世界时只收窄
+> 视口（pixi-viewport 拖拽平移/滚轮缩放浏览），布局世界不随面板压缩；面板更大时世界随之
+> 放大（与原行为一致）。配套：渲染层 `centerOnMount`（初始视野对准内容中心、保持原始
+> 缩放）与 `fitView(minScale)`（minScale 1 = 只居中不缩小，用于紧凑面板）。
+> 视野对准策略（2026-08-27）：世界尺寸变化或 Worker 坐标首次就绪后，节点群会被力导向
+> 拉向新的世界中心（resize 重热 alpha 0.08，迁移持续 1~2 秒），视野停在原处会一直偏向
+> 聚集区左上方——`useForceGraphLayout` 的 `settleFit` 选项（传 `canvasRef` 启用）在
+> 延时 delayMs 与 3×delayMs 各调一次 `canvasRef.fitView(minScale)` 重新对准。渲染层
+> 另有兜底：宿主挂载时未布局（0×0）导致 `centerOnMount` 按 640×420 兜底尺寸居中的，
+> 第一次拿到真实尺寸时补居中一次（之后不再，避免抢用户平移）；`centerOnMount` 在
+> Worker 活缓冲尚未发布过坐标（revision 0、缓冲全 0）时推迟到首帧有效坐标再居中，
+> 否则按全 0 坐标居中会把视野钉在世界原点（左上角）。`settleFit.follow` 再进一步：
+> 布局收敛期间相机逐帧 `fitView` 跟随内容（首帧坐标只是初始站位，节点群随后收拢/
+> 迁移，固定视野必然产生「首帧 vs 稳定后」的跳变），revision 连续 ~200ms 无更新、
+> 超时 3 秒或用户拖动节点后停止跟随。
 
 ```tsx
 // 新增 hook：三个画布共同的布局生命周期

@@ -40,4 +40,31 @@ describe('Room graph visuals', () => {
     expect(denseOptions.linkDistance).toBeGreaterThan(smallOptions.linkDistance!)
     expect(denseOptions.manyBodyStrength).toBeLessThan(smallOptions.manyBodyStrength!)
   })
+
+  it('keeps the compact detail-pane graph denser than the full-size home graph', () => {
+    const compactDimensions = roomGraphLayoutDimensions({
+      compact: true,
+      nodeCount: 10,
+      relationCount: 18,
+      screenHeight: 420,
+      screenWidth: 480,
+    })
+    const fullDimensions = roomGraphLayoutDimensions({
+      compact: false,
+      nodeCount: 10,
+      relationCount: 18,
+      screenHeight: 420,
+      screenWidth: 640,
+    })
+    const compactOptions = roomGraphLayoutOptions({ compact: true, nodeCount: 10, relationCount: 18 })
+    const fullOptions = roomGraphLayoutOptions({ compact: false, nodeCount: 10, relationCount: 18 })
+
+    // 详情面板空间小：同规模图的世界面积与节点间距都比首页全图小。
+    expect(compactDimensions.width * compactDimensions.height)
+      .toBeLessThan(fullDimensions.width * fullDimensions.height)
+    expect(compactOptions.collisionPadding!).toBeLessThan(fullOptions.collisionPadding!)
+    expect(compactOptions.linkDistance!).toBeLessThan(fullOptions.linkDistance!)
+    expect(compactOptions.manyBodyStrength!)
+      .toBeGreaterThan(fullOptions.manyBodyStrength!)
+  })
 })

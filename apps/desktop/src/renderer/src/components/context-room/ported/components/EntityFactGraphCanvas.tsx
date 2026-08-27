@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 
 import type { RoomAppliedEntityStatus } from '@nxcore/agent-contract'
 import {
   PixiForceGraphCanvas,
+  type PixiForceGraphCanvasHandle,
   type PixiForceGraphCanvasNode,
   type ForceGraphOptions,
   type PixiForceGraphEdge,
@@ -10,6 +11,9 @@ import {
 } from '@/components/graph'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import type { EntityFactGraphData, EntityFactGraphNode } from './entityFactGraphModel'
+
+/** 详情面板小视口：布局稳定后只居中、不缩小；收敛期间相机逐帧跟随内容。 */
+const SETTLE_FIT = { minScale: 1, follow: true }
 
 interface EntityFactGraphCanvasProps {
   data: EntityFactGraphData
@@ -58,6 +62,7 @@ const LAYOUT_OPTIONS: Partial<ForceGraphOptions> = {
 
 export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFactGraphCanvasProps) {
   const { t } = useLocale()
+  const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
   const nodeIndex = useMemo(
     () => new Map(data.nodes.map((node, index) => [node.id, index])),
     [data.nodes],
@@ -105,12 +110,16 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
     edges: layoutEdges,
     options: LAYOUT_OPTIONS,
     label: 'Entity/fact force graph',
+    canvasRef,
+    settleFit: SETTLE_FIT,
   })
 
   return (
     <div className="context-room-entity-fact-graph-shell nx-graph-shell">
       <PixiForceGraphCanvas
+        ref={canvasRef}
         ariaLabel={t('contextRoom:graphs.entityFactCanvas')}
+        centerOnMount
         className="context-room-entity-fact-graph-canvas"
         edges={edges}
         nodes={nodes}

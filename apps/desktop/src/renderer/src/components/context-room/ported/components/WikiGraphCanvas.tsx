@@ -1,13 +1,17 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 
 import type { KnowledgeWikiGraphDto } from '../../../../../../shared/knowledge'
 import {
   PixiForceGraphCanvas,
+  type PixiForceGraphCanvasHandle,
   type PixiForceGraphCanvasNode,
   type PixiForceGraphEdge,
   useForceGraphLayout,
 } from '@/components/graph'
 import { useLocale } from '../../../../i18n/LocaleContext'
+
+/** 详情面板小视口：布局稳定后只居中、不缩小；收敛期间相机逐帧跟随内容。 */
+const SETTLE_FIT = { minScale: 1, follow: true }
 
 function nodeRadius(node: KnowledgeWikiGraphDto['nodes'][number]) {
   return Math.min(28, 18 + node.inLinks * 2)
@@ -31,6 +35,7 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
   onSelectPage: (path: string) => void
 }) {
   const { t } = useLocale()
+  const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
   const nodeIndex = useMemo(
     () => new Map(graph.nodes.map((node, index) => [node.id, index])),
     [graph.nodes],
@@ -59,6 +64,8 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
     nodes: layoutNodes,
     edges: graph.edges,
     label: 'Wiki force graph',
+    canvasRef,
+    settleFit: SETTLE_FIT,
   })
   const selectedId = selectedPath
     ? graph.nodes.find((node) => node.path === selectedPath)?.id ?? null
@@ -67,7 +74,9 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
   return (
     <div className="context-room-graph-shell context-room-wiki-graph nx-graph-shell">
       <PixiForceGraphCanvas
+        ref={canvasRef}
         ariaLabel={t('contextRoom:graphs.wikiCanvas')}
+        centerOnMount
         className="context-room-graph-canvas"
         edges={edges}
         nodes={nodes}

@@ -99,8 +99,10 @@ export function createPixiForceGraphRenderer(
     (largest, node) => Math.max(largest, positiveDimension(node.radius ?? nodeRadius, nodeRadius)),
     nodeRadius,
   )
-  const width = positiveDimension(host.clientWidth, 640)
-  const height = positiveDimension(host.clientHeight, 420)
+  const hostWidth = host.clientWidth
+  const hostHeight = host.clientHeight
+  const width = positiveDimension(hostWidth, 640)
+  const height = positiveDimension(hostHeight, 420)
   const renderResolution = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1
   const app = new dependencies.Application({
     antialias: true,
@@ -228,6 +230,10 @@ export function createPixiForceGraphRenderer(
   let destroyed = false
   let screenWidth = width
   let screenHeight = height
+  // centerOnMount 的两个待补状态（赋值见下方 centerOnMount 块；drawFrame
+  // 会被同步调用一次，声明必须先于该调用，故放在这里）。
+  let centerOnLayoutPending = false
+  let centerOnFirstTickPending = false
   const nodeAlphaTargets = new Float32Array(sprites.length)
   nodeAlphaTargets.fill(1)
   const focusAlpha = 0.16
@@ -371,6 +377,13 @@ export function createPixiForceGraphRenderer(
     if (destroyed) return
     const startRevision = options.revision?.() ?? 0
     if ((startRevision & 1) === 1) return
+    // Worker 首帧坐标就绪后再补初始居中（见下方 centerOnMount 说明）。
+    // 居中用的是当时的 screenWidth/screenHeight，连「宿主未布局」的欠账一起还清。
+    if (centerOnFirstTickPending && startRevision > 0) {
+      centerOnFirstTickPending = false
+      centerOnLayoutPending = false
+      centerOnContent()
+    }
     for (let index = 0; index < sprites.length; index += 1) {
       setSpritePosition(sprites[index]!, positions[index * 2] ?? 0, positions[index * 2 + 1] ?? 0)
       const sprite = sprites[index]!
@@ -415,8 +428,7 @@ export function createPixiForceGraphRenderer(
   dependencies.Ticker.shared.add(drawFrame)
   drawFrame()
 
-  const fitView = () => {
-    if (destroyed || nodes.length === 0) return
+  const contentBounds = () => {
     let minX = Number.POSITIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY
     let maxX = Number.NEGATIVE_INFINITY
@@ -431,13 +443,46 @@ export function createPixiForceGraphRenderer(
       maxX = Math.max(maxX, x! + radius)
       maxY = Math.max(maxY, y! + radius + 24)
     })
-    if (!Number.isFinite(minX)) return
-    const scale = Math.min(4, Math.max(0.2, Math.min(
-      Math.max(1, screenWidth - 48) / Math.max(1, maxX - minX),
-      Math.max(1, screenHeight - 48) / Math.max(1, maxY - minY),
+    if (!Number.isFinite(minX)) return null
+    return { minX, minY, maxX, maxY }
+  }
+
+  const centerOnContent = () => {
+    const bounds = contentBounds()
+    if (!bounds) return
+    viewport.moveCenter?.((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2)
+  }
+
+  // 面板只决定视口：世界大于面板时初始视野对准内容中心、保持原始缩放，
+  // 用户通过视口平移（drag 插件）浏览画布其余部分，而不是把世界压进面板。
+  // 两个时机陷阱，都不能在创建瞬间同步居中：
+  // 1. 渲染器可能在 Worker 首次 publish 前创建（共享坐标缓冲全 0），按全 0
+  //    坐标居中会把视野钉在世界原点（左上角）——推迟到首帧有效坐标再居中；
+  // 2. 宿主尚未布局（隐藏 tab / 入场动画容器）时构造尺寸是 640×420 兜底值，
+  //    按它居中会偏——记录待补状态，等第一次拿到真实尺寸再居中一次
+  //    （之后的面板调整不再抢用户的平移）。
+  if (options.centerOnMount) {
+    // 仅当坐标来自 Worker 活缓冲（有 revision 提供方）且尚未发布过（0）时推迟；
+    // 静态坐标数组（无 revision）本身有效，直接居中。
+    const revision = options.revision ? options.revision() : null
+    if (revision === 0) {
+      centerOnFirstTickPending = true
+    } else {
+      centerOnContent()
+    }
+    centerOnLayoutPending = !(hostWidth > 0 && hostHeight > 0)
+  }
+
+  const fitView = (minScale = 0.2) => {
+    if (destroyed || nodes.length === 0) return
+    const bounds = contentBounds()
+    if (!bounds) return
+    const scale = Math.min(4, Math.max(minScale, Math.min(
+      Math.max(1, screenWidth - 48) / Math.max(1, bounds.maxX - bounds.minX),
+      Math.max(1, screenHeight - 48) / Math.max(1, bounds.maxY - bounds.minY),
     )))
     viewport.setZoom?.(scale, false)
-    viewport.moveCenter?.((minX + maxX) / 2, (minY + maxY) / 2)
+    viewport.moveCenter?.((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2)
   }
 
   return {
@@ -460,6 +505,10 @@ export function createPixiForceGraphRenderer(
       screenHeight = safeHeight
       app.renderer.resize?.(safeWidth, safeHeight)
       viewport.resize?.(safeWidth, safeHeight, safeWidth, safeHeight)
+      if (centerOnLayoutPending && !centerOnFirstTickPending && (safeWidth !== width || safeHeight !== height)) {
+        centerOnLayoutPending = false
+        centerOnContent()
+      }
     },
     setSelectedIndex(nextIndex) {
       if (destroyed || nextIndex === selectedIndex) return

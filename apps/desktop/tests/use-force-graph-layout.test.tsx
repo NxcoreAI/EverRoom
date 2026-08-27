@@ -2,9 +2,10 @@ import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ForceGraphWorkerLike } from '../src/renderer/src/components/graph/layout/forceGraphLayout'
-import type {
-  ForceGraphWorkerRequest,
-  ForceGraphWorkerResponse,
+import {
+  ForceGraphControlIndex,
+  type ForceGraphWorkerRequest,
+  type ForceGraphWorkerResponse,
 } from '../src/renderer/src/components/graph/layout/forceGraphProtocol'
 import {
   useForceGraphLayout,
@@ -37,13 +38,37 @@ class FakeForceGraphWorker implements ForceGraphWorkerLike {
 
 let latest: UseForceGraphLayoutResult | null = null
 
-function ForceGraphLayoutProbe({ nodes, edges, options, label, workerFactory }: UseForceGraphLayoutInput) {
-  latest = useForceGraphLayout({ nodes, edges, options, label, workerFactory })
+function ForceGraphLayoutProbe({ nodes, edges, options, label, workerFactory, canvasRef, settleFit }: UseForceGraphLayoutInput) {
+  latest = useForceGraphLayout({ nodes, edges, options, label, workerFactory, canvasRef, settleFit })
   return null
+}
+
+/** 浏览器 rAF 语义的最小桩：handle 取消后回调不再触发，pump 按 FIFO 执行。 */
+function stubRequestAnimationFrame() {
+  const pending = new Map<number, FrameRequestCallback>()
+  let nextHandle = 1
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    const handle = nextHandle
+    nextHandle += 1
+    pending.set(handle, callback)
+    return handle
+  })
+  vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+    pending.delete(handle)
+  })
+  return {
+    pumpFrame() {
+      const oldest = pending.entries().next().value
+      if (!oldest) return
+      pending.delete(oldest[0])
+      oldest[1](0)
+    },
+  }
 }
 
 afterEach(() => {
   latest = null
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -135,8 +160,199 @@ describe('useForceGraphLayout', () => {
       { type: 'RELEASE', id: 'a' },
     ])
 
+    act(() => {
+      latest?.resize(300, 200)
+      latest?.resize(1000, 700)
+    })
+    // 布局世界有自然下限（缺省 640×420）：面板小于自然世界时只收窄视口，
+    // 世界保持自然尺寸；面板更大时世界随之放大（与原行为一致）。
+    expect(created[1]!.posted.slice(4)).toEqual([
+      { type: 'resize', width: 640, height: 420 },
+      { type: 'resize', width: 1000, height: 700 },
+    ])
+
     await act(async () => { renderer.unmount() })
     expect(created[1]!.terminated).toBe(true)
+  })
+
+  it('uses the options world size as the natural floor for resize', async () => {
+    const created: FakeForceGraphWorker[] = []
+    const workerFactory = () => {
+      const worker = new FakeForceGraphWorker()
+      created.push(worker)
+      return worker
+    }
+    const options = { width: 900, height: 700 }
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <ForceGraphLayoutProbe
+          nodes={[{ id: 'a' }]}
+          edges={[]}
+          options={options}
+          label="Test graph"
+          workerFactory={workerFactory}
+        />,
+      )
+    })
+
+    act(() => { latest?.resize(500, 400) })
+    expect(created[0]!.posted.at(-1)).toEqual({ type: 'resize', width: 900, height: 700 })
+
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('re-fits the view through the canvas handle when positions go live or the world changes', async () => {
+    vi.useFakeTimers()
+    try {
+      const created: FakeForceGraphWorker[] = []
+      const workerFactory = () => {
+        const worker = new FakeForceGraphWorker()
+        created.push(worker)
+        return worker
+      }
+      const fitView = vi.fn()
+      const canvasRef = { current: { fitView } }
+      const settleFit = { minScale: 1, delayMs: 400 }
+
+      let renderer!: TestRenderer.ReactTestRenderer
+      await act(async () => {
+        renderer = TestRenderer.create(
+          <ForceGraphLayoutProbe
+            nodes={[{ id: 'a' }]}
+            edges={[]}
+            label="Test graph"
+            workerFactory={workerFactory}
+            canvasRef={canvasRef}
+            settleFit={settleFit}
+          />,
+        )
+      })
+
+      // 布局坐标就绪（挂载）即安排对准：一次在延时后，一次在 3 倍延时后补迁移尾巴。
+      expect(fitView).not.toHaveBeenCalled()
+      await act(async () => { await vi.advanceTimersByTimeAsync(400) })
+      expect(fitView).toHaveBeenCalledTimes(1)
+      expect(fitView).toHaveBeenCalledWith(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(800) })
+      expect(fitView).toHaveBeenCalledTimes(2)
+
+      // 世界尺寸变化（超出自然下限）→ 重新安排对准。
+      act(() => { latest?.resize(900, 700) })
+      expect(created[0]!.posted.at(-1)).toEqual({ type: 'resize', width: 900, height: 700 })
+      await act(async () => { await vi.advanceTimersByTimeAsync(400) })
+      expect(fitView).toHaveBeenCalledTimes(3)
+
+      // 世界从 900×700 收回 640×420 也是一次尺寸变化（节点群会迁回世界中心），
+      // 上一轮未触发的补对准被清掉，换新一轮两次对准。
+      act(() => { latest?.resize(300, 200) })
+      expect(created[0]!.posted.at(-1)).toEqual({ type: 'resize', width: 640, height: 420 })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(fitView).toHaveBeenCalledTimes(5)
+
+      // 卸载清掉待触发的对准。
+      act(() => { latest?.resize(1000, 800) })
+      await act(async () => { renderer.unmount() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(fitView).toHaveBeenCalledTimes(5)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops following the content once the user drags a node', async () => {
+    const raf = stubRequestAnimationFrame()
+    const created: FakeForceGraphWorker[] = []
+    const workerFactory = () => {
+      const worker = new FakeForceGraphWorker()
+      created.push(worker)
+      return worker
+    }
+    const fitView = vi.fn()
+    const canvasRef = { current: { fitView } }
+    const settleFit = { minScale: 1, follow: true }
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <ForceGraphLayoutProbe
+          nodes={[{ id: 'a' }]}
+          edges={[]}
+          label="Test graph"
+          workerFactory={workerFactory}
+          canvasRef={canvasRef}
+          settleFit={settleFit}
+        />,
+      )
+    })
+    const initialize = created[0]!.posted[0]
+    if (initialize?.type !== 'initialize') throw new Error('worker not initialized')
+    const control = new Int32Array(initialize.controlBuffer)
+    const bumpRevision = () => { Atomics.add(control, ForceGraphControlIndex.Revision, 2) }
+
+    // Worker 每帧发布新坐标（revision 前进）→ 相机逐帧 fitView 跟随。
+    bumpRevision()
+    await act(async () => { raf.pumpFrame() })
+    expect(fitView).toHaveBeenCalledWith(1)
+    expect(fitView.mock.calls.length).toBeGreaterThanOrEqual(1)
+
+    // 用户拖动节点 → 立即停止跟随（之后 revision 再前进也不再 fitView）。
+    act(() => { latest?.drag('a', 5, 5) })
+    const countAfterDrag = fitView.mock.calls.length
+    bumpRevision()
+    await act(async () => {
+      raf.pumpFrame()
+      raf.pumpFrame()
+    })
+    expect(fitView.mock.calls.length).toBe(countAfterDrag)
+
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('stops following once the layout stops publishing new positions', async () => {
+    const raf = stubRequestAnimationFrame()
+    const created: FakeForceGraphWorker[] = []
+    const workerFactory = () => {
+      const worker = new FakeForceGraphWorker()
+      created.push(worker)
+      return worker
+    }
+    const fitView = vi.fn()
+    const canvasRef = { current: { fitView } }
+    const settleFit = { minScale: 1, follow: true }
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <ForceGraphLayoutProbe
+          nodes={[{ id: 'a' }]}
+          edges={[]}
+          label="Test graph"
+          workerFactory={workerFactory}
+          canvasRef={canvasRef}
+          settleFit={settleFit}
+        />,
+      )
+    })
+    const initialize = created[0]!.posted[0]
+    if (initialize?.type !== 'initialize') throw new Error('worker not initialized')
+    const control = new Int32Array(initialize.controlBuffer)
+    Atomics.add(control, ForceGraphControlIndex.Revision, 2)
+
+    await act(async () => { raf.pumpFrame() })
+    expect(fitView.mock.calls.length).toBeGreaterThanOrEqual(1)
+
+    // revision 不再前进：跟随循环连续若干帧无变化后自行停止。
+    for (let frame = 0; frame < 20; frame += 1) {
+      await act(async () => { raf.pumpFrame() })
+    }
+    const settledCount = fitView.mock.calls.length
+    Atomics.add(control, ForceGraphControlIndex.Revision, 2)
+    await act(async () => { raf.pumpFrame() })
+    expect(fitView.mock.calls.length).toBe(settledCount)
+
+    await act(async () => { renderer.unmount() })
   })
 
   it('surfaces worker errors through ready and keeps the binding usable', async () => {

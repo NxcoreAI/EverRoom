@@ -168,6 +168,8 @@ export interface PixiForceGraphRendererOptions {
   edges: readonly PixiForceGraphEdge[]
   dependencies: PixiForceGraphDependencies
   createIconTexture?: PixiForceGraphIconTextureFactory
+  /** 面板只作视口时：创建后把视野对准内容包围盒中心（保持原始缩放，拖拽平移浏览）。 */
+  centerOnMount?: boolean
   nodeRadius?: number
   nodeColor?: number | string
   edgeColor?: number | string
@@ -200,7 +202,8 @@ export interface PixiForceGraphRenderer {
   readonly sprites: readonly PixiSprite[]
   activeLabelCount(): number
   createdLabelCount(): number
-  fitView(): void
+  /** 缩放至内容恰好入屏；minScale 为缩放下限（如 1 = 只居中不缩小）。 */
+  fitView(minScale?: number): void
   hitTest(x: number, y: number): number | null | undefined
   resize(width: number, height: number): void
   setHoveredIndex(index: number | null): void

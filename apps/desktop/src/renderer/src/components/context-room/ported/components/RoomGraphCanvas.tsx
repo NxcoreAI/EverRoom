@@ -1,7 +1,6 @@
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -73,7 +72,6 @@ function RoomGraphCanvasComponent(
 ) {
   const { t } = useLocale()
   const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
-  const fitTimerRef = useRef<number | null>(null)
   const nodeIndex = useMemo(
     () => new Map(rooms.map((node, index) => [node.id, index])),
     [rooms],
@@ -108,12 +106,14 @@ function RoomGraphCanvasComponent(
       ? [{ source: edge.sourceRoomId, target: edge.targetRoomId }]
       : []
   )), [nodeIndex, relations])
+  // 标称屏幕尺寸决定布局世界的自然下限：紧凑详情面板用更小的标称宽度，
+  // 让初始世界（以及 resize 下限）比首页全图小一圈。
   const initialLayoutDimensions = useMemo(() => roomGraphLayoutDimensions({
     compact,
     nodeCount: nodes.length,
     relationCount: relations.length,
     screenHeight: 420,
-    screenWidth: 640,
+    screenWidth: compact ? 480 : 640,
   }), [compact, nodes.length, relations.length])
   const fallbackPositions = useMemo(() => {
     const result = new Float32Array(nodes.length * 2)
@@ -136,11 +136,20 @@ function RoomGraphCanvasComponent(
     ...roomGraphLayoutOptions({ compact, nodeCount: rooms.length, relationCount: relations.length }),
     ...initialLayoutDimensions,
   }), [compact, initialLayoutDimensions, relations.length, rooms.length])
+  // 布局开跑或世界随面板变化后，等力导向稳定再把视野对准内容：
+  // 紧凑面板只居中不缩小（minScale 1），全屏总览整体适配；
+  // 收敛期间相机逐帧跟随内容，避免首帧与稳定后的视野跳变。
+  const settleFit = useMemo(
+    () => ({ minScale: compact ? 1 : undefined, follow: true }),
+    [compact],
+  )
   const layout = useForceGraphLayout({
     nodes: layoutNodes,
     edges: layoutEdges,
     options: layoutOptions,
     label: 'Room force graph',
+    canvasRef,
+    settleFit,
   })
   const resizeLayout = useCallback((width: number, height: number) => {
     const dimensions = roomGraphLayoutDimensions({
@@ -150,16 +159,10 @@ function RoomGraphCanvasComponent(
       screenHeight: height,
       screenWidth: width,
     })
-    layout.controller?.resize(dimensions.width, dimensions.height)
-    if (dimensions.width > width || dimensions.height > height) {
-      if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
-      fitTimerRef.current = window.setTimeout(() => canvasRef.current?.fitView(), 500)
-    }
-  }, [compact, layout.controller, nodes.length, relations.length])
-
-  useEffect(() => () => {
-    if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
-  }, [])
+    // layout.resize 以初始自适应尺寸为下限：面板（视口）再小也不压缩布局世界；
+    // 世界变化后的视野对准由 settleFit 策略负责。
+    layout.resize(dimensions.width, dimensions.height)
+  }, [compact, layout.resize, nodes.length, relations.length])
 
   useImperativeHandle(ref, () => ({
     async fitView() {
@@ -172,6 +175,7 @@ function RoomGraphCanvasComponent(
       <PixiForceGraphCanvas
         ref={canvasRef}
         ariaLabel={t('contextRoom:graphs.roomRelationsCanvas')}
+        centerOnMount
         className="context-room-graph-canvas"
         edges={edges}
         nodes={nodes}

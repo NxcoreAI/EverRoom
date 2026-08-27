@@ -797,6 +797,95 @@ describe('PixiForceGraphRenderer', () => {
     expect(fakes.particles[0]?.update).toHaveBeenCalledTimes(1)
   })
 
+  it('centers the initial view on content at natural zoom when centerOnMount is set', async () => {
+    const fakes = createFakes()
+    await createPixiForceGraphRenderer({
+      centerOnMount: true,
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions: new Float32Array([100, 200, 300, 240]),
+    })
+    const viewport = fakes.viewports[0]!
+    // 内容包围盒（含半径 18 与标签预留 24）：(82,182)-(318,282)，中心 (200,232)。
+    // 只居中、不缩放：世界大于面板时通过视口平移浏览，而不是压进面板。
+    expect(viewport.calls).toContain('moveCenter:200,232')
+    expect(viewport.calls.some((call) => call.startsWith('setZoom:'))).toBe(false)
+  })
+
+  it('re-centers once when the host reports its real size after mounting hidden', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      centerOnMount: true,
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: { ...createHost(), clientWidth: 0, clientHeight: 0 },
+      nodes: [{}, {}],
+      positions: new Float32Array([100, 200, 300, 240]),
+    })
+    const viewport = fakes.viewports[0]!
+    // 宿主 0×0（隐藏 tab / 入场动画容器）：构造时按 640×420 兜底居中一次。
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toEqual(['moveCenter:200,232'])
+
+    // 真实尺寸到来 → 补居中一次；之后的面板微调不再抢用户的平移。
+    renderer.resize(400, 300)
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toHaveLength(2)
+    renderer.resize(380, 280)
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toHaveLength(2)
+  })
+
+  it('waits for the first worker frame before centering when the shared buffer is still empty', async () => {
+    const fakes = createFakes()
+    const positions = new Float32Array(4)
+    let revision = 0
+    await createPixiForceGraphRenderer({
+      centerOnMount: true,
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions,
+      revision: () => revision,
+    })
+    const viewport = fakes.viewports[0]!
+    // 渲染器可能在 Worker 首次 publish 前创建（共享坐标缓冲全 0）：
+    // 不能按全 0 坐标居中——那会把视野钉在世界原点（左上角）。
+    fakes.ticker.tick()
+    expect(viewport.calls.some((call) => call.startsWith('moveCenter:'))).toBe(false)
+
+    // Worker 首帧坐标写入（revision 为偶数）后，下一帧对准内容中心。
+    positions.set([100, 200, 300, 240])
+    revision = 2
+    fakes.ticker.tick()
+    expect(viewport.calls).toContain('moveCenter:200,232')
+    // 只补一次：后续帧不再重复居中。
+    fakes.ticker.tick()
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toHaveLength(1)
+  })
+
+  it('honors the fitView minimum scale when content is larger than the screen', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions: new Float32Array([0, 0, 2000, 1400]),
+    })
+    const viewport = fakes.viewports[0]!
+
+    renderer.fitView(1)
+    // minScale 1：内容超出屏幕时保持原始缩放、只居中（紧凑面板语义）。
+    expect(viewport.scale.x).toBe(1)
+    expect(viewport.calls).toContain('moveCenter:1000,712')
+
+    renderer.fitView()
+    // 缺省 minScale 0.2：整体可见优先，允许缩小到内容入屏。
+    expect(viewport.scale.x).toBeGreaterThan(0.2)
+    expect(viewport.scale.x).toBeLessThan(1)
+  })
+
   it('resizes viewport and releases ticker, texture, viewport, sprites, and app resources', async () => {
     const fakes = createFakes()
     const host = createHost()
