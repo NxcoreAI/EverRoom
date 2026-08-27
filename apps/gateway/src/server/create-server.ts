@@ -18,9 +18,15 @@ import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
 import { DocumentOperationService } from "../modules/documents/operations/service.js";
 import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
+import { NotificationBridgeClient } from "../modules/notifications/bridge-client.js";
+import { NotificationMcpHost } from "../modules/notifications/mcp-host.js";
+import { notificationMcpRoutes } from "../modules/notifications/mcp-routes.js";
+import { createNotificationPiTools } from "../modules/notifications/pi-tools.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
+import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
+import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import {
   createAgentResolver,
   createIngestFilterAgentRuntime,
@@ -45,6 +51,8 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { DataMigrationService } from "../modules/data-migrations/service.js";
+import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { FileClusteringService } from "../modules/files/clustering-service.js";
@@ -99,6 +107,7 @@ import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { createSubagentPiTools } from "../modules/subagents/tools.js";
+import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
@@ -443,6 +452,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       app.log[level](fields, event);
     },
   );
+  const notificationMcpHost = new NotificationMcpHost(
+    config.notificationBridge ? new NotificationBridgeClient(config.notificationBridge) : null,
+  );
+  const externalDocumentProjectionService = new ExternalDocumentProjectionService(
+    db,
+    documentService,
+    documentOperationService,
+    documentMcpHost.capabilities,
+  );
   await documentMcpHost.capabilities.recover();
   const agentResolver = createAgentResolver(config);
   // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
@@ -514,11 +532,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   registerPrimaryAgent(agentResolver, config, documentMcpHost, {
     ...(subagentConfig.enabled
       ? {
-          tools: createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
-            resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
-          }),
+          tools: [
+            ...createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
+              resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
+            }),
+            ...createNotificationPiTools(notificationMcpHost),
+          ],
         }
-      : {}),
+      : { tools: createNotificationPiTools(notificationMcpHost) }),
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
       ? {
@@ -531,6 +552,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       : {}),
   }, cliConnectorSyncService, nangoAgentTools);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
+  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -555,6 +577,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentMcpHost,
     config.cliConnectorAgentMode ?? "direct",
     false,
+    (target) => localAgentRuntimeRegistry.resolve(target),
   );
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
@@ -663,6 +686,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
   filesService.initializeCatalog();
+  const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
+  dataMigrationService.setFilesService(filesService);
+  agentService.setExternalConversationResolver(dataMigrationService);
+  agentService.setFilesService(filesService);
   const clipperService = new ClipperService(db, filesService, config.dataDir, createVlmProvider(config));
   await clipperService.initialize();
   const documentUnderstandingService = new DocumentUnderstandingService(
@@ -789,6 +816,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoConnectorDb.close();
     clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
+    await localAgentRuntimeRegistry.dispose();
     await subagentOrchestrator.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
@@ -804,6 +832,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     knowledgeService.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
+    await notificationMcpHost.close();
     sqlite.close();
     await gatewayLogger.close();
   });
@@ -812,14 +841,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(mcpRoutes(config));
   await app.register(contextRoomRoutes(contextRoomService));
   await app.register(documentMcpRoutes(documentMcpHost));
+  await app.register(notificationMcpRoutes(notificationMcpHost));
   await app.register(documentRoutes(documentService));
   await app.register(documentOperationRoutes(
     documentOperationService,
     documentMcpHost.capabilities,
     (context) => agentService.validateDocumentOperationContext(context),
   ));
+  await app.register(externalDocumentProjectionRoutes(
+    externalDocumentProjectionService,
+    (context) => agentService.validateDocumentOperationContext(context),
+  ));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(dataMigrationRoutes(dataMigrationService));
   await app.register(filesRoutes(filesService, {
     // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档
     requestKnowledgeCleanup: (fileId) => {

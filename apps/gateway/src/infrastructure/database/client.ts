@@ -177,6 +177,37 @@ function adoptPreReleaseConnectorMarkdownMigrations(
   })();
 }
 
+/** Adopt late development migrations when their complete schema was already
+ * applied under a discarded migration cursor. This prevents duplicate ALTER
+ * statements while still allowing partially upgraded databases to migrate. */
+function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations")) return;
+  const hasColumn = (table: string, column: string) => hasTable(table) && new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+  ).has(column);
+  const entries = readMigrationJournal(migrationsDir);
+  const record = (tag: string) => {
+    const entry = entries.find((item) => item.tag === tag);
+    if (!entry?.tag || typeof entry.when !== "number") return;
+    if (sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(entry.when)) return;
+    const migrationSql = readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8");
+    sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+      .run(createHash("sha256").update(migrationSql).digest("hex"), entry.when);
+  };
+
+  if (hasColumn("clipper_captures", "favorited_at")) record("0032_clipper_favorites");
+  if (hasTable("agent_session_participants")
+    && hasColumn("agent_sessions", "active_agent_id")
+    && hasColumn("agent_runs", "agent_id")
+    && hasColumn("agent_runs", "invocation_mode")
+    && hasColumn("agent_messages", "author_agent_id")) {
+    record("0033_multi_agent_conversations");
+  }
+}
+
 /** Repair installs whose migration cursor advanced across the diary/perception
  * branch without applying its schema (a transient merge produced this state). */
 function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migrationsDir: string): void {
@@ -231,6 +262,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   repairLegacyMigrationCursor(sqlite, migrationsDir);
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
+  adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");

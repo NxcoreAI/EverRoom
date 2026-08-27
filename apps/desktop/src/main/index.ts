@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { rm, writeFile } from 'node:fs/promises'
-import { join, parse, resolve } from 'node:path'
+import { basename, extname, join, parse, resolve } from 'node:path'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -9,7 +9,9 @@ import { loadEnvFile } from 'node:process'
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
+  DocumentOperationCommandInput,
   SaveRoomDocumentInput,
+  StartAgentRunInput,
   StartDocumentOperationInput,
 } from '@nxcore/agent-contract'
 
@@ -61,6 +63,9 @@ import { RecordingStore } from './recording/recording-store'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
+import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
+import { MacosPushNotificationService } from './cloud/macos-push-notifications'
+import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
 import { AsrCoordinator } from './asr/asr-coordinator'
 import {
   configureDesktopLogger,
@@ -96,6 +101,13 @@ import {
 import { DESKTOP_PAGE_MODE_ENV, resolveDesktopPageMode } from '../shared/page-mode'
 import { BrowserExtensionService } from './browser-extension/browser-extension-service'
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
+import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
+import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
+import { createLocalAgentDiscovery, isSafeLocalAgentPath } from './local-agents/discovery'
+import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-binding-store'
+import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
+import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
+import { MigrationCoordinator } from './migrations/coordinator'
 
 const APP_NAME = 'EverRoom'
 
@@ -161,6 +173,10 @@ protocol.registerSchemesAsPrivileged([
     scheme: CLIPPER_ASSET_SCHEME,
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
+  {
+    scheme: OBSIDIAN_VAULT_ASSET_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
 ])
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -185,8 +201,33 @@ const SOURCE_CHANNELS = {
   disconnect: 'sources:disconnect',
 } as const
 
+const OBSIDIAN_CHANNELS = {
+  pickAndMount: 'obsidian:pick-and-mount',
+  discover: 'obsidian:discover',
+  pickCandidate: 'obsidian:pick-candidate',
+  importCandidate: 'obsidian:import-candidate',
+  discoveryChanged: 'obsidian:discovery-changed',
+  list: 'obsidian:list',
+  tree: 'obsidian:tree',
+  readNote: 'obsidian:read-note',
+  saveNote: 'obsidian:save-note',
+  createNote: 'obsidian:create-note',
+  moveNote: 'obsidian:move-note',
+  trashNote: 'obsidian:trash-note',
+  addAttachment: 'obsidian:add-attachment',
+  rescan: 'obsidian:rescan',
+  disconnect: 'obsidian:disconnect',
+  changed: 'obsidian:changed',
+} as const
+
 const GATEWAY_CHANNELS = {
   status: 'gateway:status',
+} as const
+const MIGRATION_CHANNELS = {
+  discover: 'migrations:discover', chooseOpenClaw: 'migrations:choose-openclaw', importOpenClaw: 'migrations:import-openclaw',
+  importNotionZip: 'migrations:import-notion-zip', sources: 'migrations:sources', runs: 'migrations:runs', cancel: 'migrations:cancel',
+  retry: 'migrations:retry', reimport: 'migrations:reimport', clear: 'migrations:clear', conversations: 'migrations:conversations',
+  preview: 'migrations:preview', progress: 'migrations:progress',
 } as const
 const BROWSER_EXTENSION_CHANNELS = {
   status: 'browser-extension:status',
@@ -239,6 +280,9 @@ const CONTEXT_ROOM_CHANNELS = {
 } as const
 
 const AGENT_CHANNELS = {
+  discoverLocalAgents: 'agent:discover-local-agents',
+  importLocalAgentHistory: 'agent:import-local-agent-history',
+  bindLocalAgentWorkspace: 'agent:bind-local-agent-workspace',
   getStatus: 'agent:get-status',
   getUsage: 'agent:get-usage',
   listSessions: 'agent:list-sessions',
@@ -330,6 +374,7 @@ const ACCOUNT_CHANNELS = {
   devices: 'account:devices',
   login: 'account:login',
   oidcLogin: 'account:oidc-login',
+  invitationCodeValidate: 'account:invitation-code-validate',
   oidcCancel: 'account:oidc-cancel',
   logout: 'account:logout',
   keyringStatus: 'account:keyring-status',
@@ -405,6 +450,7 @@ const FILES_CHANNELS = {
   list: 'files:list',
   listClipCaptures: 'files:clipper-captures:list',
   getClipCaptureDetail: 'files:clipper-captures:detail',
+  setClipCaptureFavorite: 'files:clipper-captures:favorite',
   get: 'files:get',
   readMarkdown: 'files:read-markdown',
   readDataUrl: 'files:read-data-url',
@@ -500,6 +546,7 @@ function handleGroup<TChannels extends Record<string, string>>(
 function installIpcRouters(): void {
   const channelGroups = [
     SOURCE_CHANNELS,
+    OBSIDIAN_CHANNELS,
     GATEWAY_CHANNELS,
     RUNTIME_CONFIG_CHANNELS,
     OPEN_CONNECTOR_CHANNELS,
@@ -518,6 +565,7 @@ function installIpcRouters(): void {
     MCP_CHANNELS,
     FILES_CHANNELS,
     INGEST_CHANNELS,
+    MIGRATION_CHANNELS,
     SCREEN_CAPTURE_CHANNELS,
     BROWSER_EXTENSION_CHANNELS,
     PERCEPTION_CHANNELS,
@@ -566,6 +614,7 @@ function registerBrowserExtensionHandlers(service: BrowserExtensionService): voi
 }
 
 let localDataService: LocalDataService | null = null
+let obsidianVaultService: ObsidianVaultService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
 let browserExtensionService: BrowserExtensionService | null = null
 let clipperAssetBridge: FilesGatewayBridge | null = null
@@ -585,11 +634,15 @@ let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
 let diaryGatewayBridge: DiaryGatewayBridge | null = null
 let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
+let migrationCoordinator: MigrationCoordinator | null = null
 let recordingStore: RecordingStore | null = null
 let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
 let agentStatusReporter: AgentStatusReporter | null = null
 let remoteAgentCommandClient: RemoteAgentCommandClient | null = null
+let agentNotificationBridgeServer: AgentNotificationBridgeServer | null = null
+let macosPushNotifications: MacosPushNotificationService | null = null
+let pendingAgentNotificationTarget: AgentNotificationTarget | null = null
 let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
 let privateSyncScheduler: PrivateSyncScheduler | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
@@ -603,6 +656,33 @@ const captureAndQueueCurrentWindow = async () => {
   return result
 }
 const screenshotScheduler = createWindowScreenshotScheduler(captureAndQueueCurrentWindow)
+
+function sendPendingAgentNotificationTarget(): void {
+  const target = pendingAgentNotificationTarget
+  const window = BrowserWindow.getAllWindows()[0]
+  if (!target || !window || window.isDestroyed() || window.webContents.isDestroyed() || window.webContents.isLoadingMainFrame()) return
+  pendingAgentNotificationTarget = null
+  window.webContents.send('notifications:open-target', target)
+}
+
+function openAgentNotificationTarget(target: AgentNotificationTarget): void {
+  pendingAgentNotificationTarget = target
+  let window = BrowserWindow.getAllWindows()[0]
+  if (!window || window.isDestroyed()) {
+    window = createWindow()
+  }
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+  sendPendingAgentNotificationTarget()
+}
+
+app.on('ready', (_event, launchInfo) => {
+  const target = parseAgentNotificationTarget(launchInfo)
+  if (target) pendingAgentNotificationTarget = target
+})
+
+ipcMain.on('notifications:renderer-ready', () => sendPendingAgentNotificationTarget())
 
 function logRendererRequestError(input: unknown): void {
   if (!input || typeof input !== 'object') return
@@ -687,6 +767,192 @@ function requireSearchQuery(value: unknown): string {
   const query = value.trim()
   if (query.length < 1 || query.length > 200) throw new Error('请输入 1 到 200 个字符。')
   return query
+}
+
+function registerObsidianHandlers(service: ObsidianVaultService): void {
+  const syncMemoryVault = async (vaultId: string) => {
+    if (!gatewaySupervisor) return []
+    const vault = service.list().find((item) => item.id === vaultId)
+    if (!vault || !vault.memoryEnabled) return []
+    const bridge = new FilesGatewayBridge(gatewaySupervisor)
+    const resources = (await service.tree(vaultId)).resources
+    const outcomes = await bridge.importObsidianProject({
+      rootPath: service.vaultRootPath(vaultId),
+      projectId: vault.id,
+      projectName: vault.name,
+      pipelines: { room: false, wiki: false, memory: true },
+      resourceIdsByRelativePath: Object.fromEntries(resources.map((resource) => [resource.relativePath, resource.id])),
+    })
+    for (const outcome of outcomes) {
+      if (outcome.fileId) await service.setMemoryProjectionFileId(vaultId, outcome.filename, outcome.fileId)
+    }
+    for (const fileId of service.takeRemovedMemoryProjectionFileIds(vaultId)) {
+      await bridge.delete(fileId).catch(() => undefined)
+    }
+    return outcomes
+  }
+  const projectRoomVault = async (vaultId: string) => {
+    if (!gatewaySupervisor) return
+    const vault = service.list().find((item) => item.id === vaultId)
+    if (!vault || vault.mountMode === 'memory') return
+    const bridge = new FilesGatewayBridge(gatewaySupervisor)
+    const documents = new DocumentGatewayBridge(gatewaySupervisor)
+    for (const note of service.projectionNotes(vaultId)) {
+      await bridge.projectVaultNote(note).then(async (result) => {
+        await service.setProjectionFileId(vaultId, note.resourceId, result.fileEntryId)
+      }).catch((error) => {
+        console.warn('Unable to project Obsidian note', { vaultId, relativePath: note.relativePath, error })
+      })
+      await service.readNote(vaultId, note.resourceId).then(async (snapshot) => {
+        const projected = await documents.syncExternalProjection({
+          sourceKind: 'obsidian-vault',
+          sourceId: vaultId,
+          resourceId: note.resourceId,
+          roomId: note.roomId,
+          relativePath: note.relativePath,
+          sourceHash: snapshot.sourceHash,
+          title: basename(note.relativePath, extname(note.relativePath)),
+          markdown: snapshot.markdown,
+        })
+        await service.setProjectionDocumentId(vaultId, note.resourceId, projected.documentId)
+      }).catch((error) => {
+        console.warn('Unable to sync Obsidian document projection', { vaultId, relativePath: note.relativePath, error })
+      })
+    }
+    for (const fileId of service.takeRemovedProjectionFileIds(vaultId)) {
+      await bridge.delete(fileId).catch(() => undefined)
+    }
+    for (const documentId of service.takeRemovedProjectionDocumentIds(vaultId)) {
+      await documents.removeExternalDocumentProjection(documentId).catch(() => undefined)
+    }
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('knowledge:changed')
+    }
+  }
+  service.onChanged((event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(OBSIDIAN_CHANNELS.changed, event)
+    }
+    const vault = service.list().find((item) => item.id === event.vaultId)
+    if (vault?.memoryEnabled) void syncMemoryVault(event.vaultId)
+    if (vault && vault.mountMode !== 'memory') void projectRoomVault(event.vaultId)
+  })
+  service.onDiscoveryChanged((event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(OBSIDIAN_CHANNELS.discoveryChanged, event)
+    }
+    void localDataService?.rescanLocalFolders()
+  })
+  for (const vault of service.list()) {
+    if (vault.memoryEnabled) void syncMemoryVault(vault.id)
+    if (vault.mountMode !== 'memory') void projectRoomVault(vault.id)
+  }
+  handle(OBSIDIAN_CHANNELS.pickAndMount, async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const selection = parent && !parent.isDestroyed()
+      ? await dialog.showOpenDialog(parent, {
+        title: '选择 Obsidian Vault',
+        buttonLabel: '挂载为 Room',
+        properties: ['openDirectory'],
+      })
+      : await dialog.showOpenDialog({
+        title: '选择 Obsidian Vault',
+        buttonLabel: '挂载为 Room',
+        properties: ['openDirectory'],
+      })
+    const rootPath = selection.filePaths[0]
+    if (selection.canceled || !rootPath) return null
+    const vault = await service.mount(rootPath)
+    if (gatewaySupervisor) {
+      await new KnowledgeGatewayBridge(gatewaySupervisor).upsertRoom({
+        id: vault.roomId,
+        title: vault.name,
+        kind: '项目',
+      })
+      void projectRoomVault(vault.id)
+    }
+    return vault
+  })
+  handle(OBSIDIAN_CHANNELS.discover, () => service.discover())
+  handle(OBSIDIAN_CHANNELS.pickCandidate, async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: '选择 Obsidian Vault',
+      buttonLabel: '添加到列表',
+      properties: ['openDirectory'],
+    }
+    const selection = parent && !parent.isDestroyed()
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    const rootPath = selection.filePaths[0]
+    return selection.canceled || !rootPath ? null : service.registerCandidate(rootPath)
+  })
+  handle(OBSIDIAN_CHANNELS.importCandidate, async (
+    _event,
+    candidateId: string,
+    target: { kind: 'memory' } | { kind: 'room'; roomId: string },
+  ) => {
+    if (!gatewaySupervisor) throw new Error('本地服务尚未就绪。')
+    const rootPath = service.candidatePath(candidateId)
+    const candidate = await service.registerCandidate(rootPath)
+    if (target.kind === 'room') {
+      if (typeof target.roomId !== 'string' || !target.roomId.trim()) throw new Error('请选择目标 Room。')
+      const vault = await service.mount(rootPath, target.roomId, 'embedded', service.candidateRegistryId(candidateId))
+      void projectRoomVault(vault.id)
+      return { kind: 'room' as const, vault }
+    }
+    const vault = await service.mount(rootPath, undefined, 'memory', service.candidateRegistryId(candidateId))
+    const outcomes = await syncMemoryVault(vault.id)
+    return {
+      kind: 'memory' as const,
+      projectName: candidate.name,
+      total: outcomes.length,
+      succeeded: outcomes.filter((outcome) => !outcome.error).length,
+      failed: outcomes.filter((outcome) => Boolean(outcome.error)).length,
+    }
+  })
+  handle(OBSIDIAN_CHANNELS.list, () => service.list())
+  handle(OBSIDIAN_CHANNELS.rescan, async (_event, vaultId: string) => service.rescan(vaultId))
+  handle(OBSIDIAN_CHANNELS.tree, (_event, vaultId: string) => service.tree(vaultId))
+  handle(OBSIDIAN_CHANNELS.readNote, (_event, vaultId: string, resourceId: string) =>
+    service.readNote(vaultId, resourceId))
+  handle(OBSIDIAN_CHANNELS.saveNote, (_event, vaultId: string, resourceId: string, markdown: string, expectedSourceHash: string) =>
+    service.saveNote(vaultId, resourceId, markdown, expectedSourceHash))
+  handle(OBSIDIAN_CHANNELS.createNote, (_event, vaultId: string, relativePath: string, markdown?: string) =>
+    service.createNote(vaultId, relativePath, markdown))
+  handle(OBSIDIAN_CHANNELS.moveNote, (_event, vaultId: string, resourceId: string, relativePath: string, expectedSourceHash: string) =>
+    service.moveNote(vaultId, resourceId, relativePath, expectedSourceHash))
+  handle(OBSIDIAN_CHANNELS.trashNote, (_event, vaultId: string, resourceId: string, expectedSourceHash: string) =>
+    service.trashNote(vaultId, resourceId, expectedSourceHash))
+  handle(OBSIDIAN_CHANNELS.addAttachment, async (event, vaultId: string, noteRelativePath?: string) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: '添加 Vault 附件',
+      buttonLabel: '添加',
+      properties: ['openFile'],
+      filters: [{ name: '图片与 PDF', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf'] }],
+    }
+    const selection = parent && !parent.isDestroyed()
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    const sourcePath = selection.filePaths[0]
+    return selection.canceled || !sourcePath ? null : service.addAttachment(vaultId, sourcePath, noteRelativePath)
+  })
+  handle(OBSIDIAN_CHANNELS.disconnect, async (_event, vaultId: string) => {
+    const vault = service.list().find((item) => item.id === vaultId)
+    const projectionFileIds = vault
+      ? [...new Set([...service.projectionFileIds(vaultId), ...service.memoryProjectionFileIds(vaultId)])]
+      : []
+    if (gatewaySupervisor) {
+      const bridge = new FilesGatewayBridge(gatewaySupervisor)
+      for (const fileId of projectionFileIds) await bridge.delete(fileId).catch(() => undefined)
+      await new DocumentGatewayBridge(gatewaySupervisor).removeExternalProjections(vaultId).catch(() => undefined)
+    }
+    await service.disconnect(vaultId)
+    if (vault?.mountMode === 'dedicated' && gatewaySupervisor) {
+      await new KnowledgeGatewayBridge(gatewaySupervisor).deleteRoom(vault.roomId).catch(() => undefined)
+    }
+  })
 }
 
 function registerSourceHandlers(service: LocalDataService, credentials: CredentialStore): void {
@@ -1188,6 +1454,22 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
 }
 
+function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
+  handle(MIGRATION_CHANNELS.discover, () => coordinator.discover())
+  handle(MIGRATION_CHANNELS.chooseOpenClaw, () => coordinator.chooseOpenClaw())
+  handle(MIGRATION_CHANNELS.importOpenClaw, (_event, id?: string) => coordinator.importOpenClaw(id))
+  handle(MIGRATION_CHANNELS.importNotionZip, () => coordinator.importNotionZip())
+  handle(MIGRATION_CHANNELS.sources, () => coordinator.sources())
+  handle(MIGRATION_CHANNELS.runs, (_event, sourceId?: string) => coordinator.runs(sourceId))
+  handle(MIGRATION_CHANNELS.cancel, (_event, runId: string) => coordinator.cancel(runId))
+  handle(MIGRATION_CHANNELS.retry, (_event, runId: string) => coordinator.retry(runId))
+  handle(MIGRATION_CHANNELS.reimport, (_event, sourceId: string) => coordinator.reimport(sourceId))
+  handle(MIGRATION_CHANNELS.clear, (_event, sourceId: string) => coordinator.clear(sourceId))
+  handle(MIGRATION_CHANNELS.conversations, (_event, input) => new MigrationsGatewayBridge(gatewaySupervisor!).conversations(input))
+  handle(MIGRATION_CHANNELS.preview, (_event, id: string) => new MigrationsGatewayBridge(gatewaySupervisor!).preview(id))
+  coordinator.onProgress((progress) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(MIGRATION_CHANNELS.progress, progress)))
+}
+
 function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void {
   handle(CONNECTOR_SYNC_CHANNELS.status, () => bridge.status())
   handle(CONNECTOR_SYNC_CHANNELS.accounts, () => bridge.accounts())
@@ -1205,7 +1487,69 @@ function registerConnectorSyncHandlers(bridge: ConnectorSyncGatewayBridge): void
   handle(CONNECTOR_SYNC_CHANNELS.record, (_event, id) => bridge.record(id))
 }
 
-function registerAgentHandlers(bridge: AgentGatewayBridge): void {
+function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator: MigrationCoordinator): void {
+  const localAgentDiscovery = createLocalAgentDiscovery()
+  let localAgents: LocalAgentInstallation[] = []
+  const workspaceBindings = new Map<string, LocalAgentWorkspaceBinding>()
+  const workspaceBindingStore = new LocalAgentWorkspaceBindingStore(
+    join(app.getPath('userData'), 'local-agent-workspaces.json'),
+  )
+  const scanLocalAgents = async () => {
+    localAgents = await localAgentDiscovery.scan()
+    return localAgents
+  }
+  handle(AGENT_CHANNELS.discoverLocalAgents, scanLocalAgents)
+  handle(AGENT_CHANNELS.bindLocalAgentWorkspace, async (event, agentId: string, sessionId: string) => {
+    if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
+      await scanLocalAgents()
+    }
+    if (!localAgents.some((agent) => agent.id === agentId && agent.invocationSupported)) {
+      throw new Error('选择的本机 Agent 当前不可调用。')
+    }
+    let existing = [...workspaceBindings.values()].find((binding) => (
+      binding.agentId === agentId && binding.sessionId === sessionId
+    ))
+    if (!existing) {
+      const stored = await workspaceBindingStore.find(agentId, sessionId)
+      if (stored) {
+        existing = { ...stored, token: randomUUID() }
+        workspaceBindings.set(existing.token, existing)
+      }
+    }
+    if (existing) return existing
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: '选择 Agent 工作区',
+      buttonLabel: '授权并使用此目录',
+      properties: ['openDirectory', 'createDirectory'],
+    }
+    const result = parent && !parent.isDestroyed()
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    const rootPath = result.filePaths[0]
+    if (result.canceled || !rootPath) return null
+    const stored = await workspaceBindingStore.save({
+      agentId,
+      sessionId,
+      rootPath,
+      permissionProfile: 'workspace_write',
+    })
+    const binding: LocalAgentWorkspaceBinding = {
+      ...stored,
+      token: randomUUID(),
+    }
+    workspaceBindings.set(binding.token, binding)
+    return binding
+  })
+  handle(AGENT_CHANNELS.importLocalAgentHistory, async (_event, agentId: string) => {
+    let installation = localAgents.find((agent) => agent.id === agentId)
+    if (!installation) {
+      await scanLocalAgents()
+      installation = localAgents.find((agent) => agent.id === agentId)
+    }
+    if (!installation?.historyAvailable) throw new Error('未找到该本机 Agent 的聊天记录。')
+    return migrationCoordinator.importLocalAgentHistory(installation)
+  })
   handle(AGENT_CHANNELS.getStatus, () => bridge.getStatus())
   handle(AGENT_CHANNELS.getUsage, (_event, range) => bridge.getUsage(range))
   handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
@@ -1214,11 +1558,56 @@ function registerAgentHandlers(bridge: AgentGatewayBridge): void {
   handle(AGENT_CHANNELS.listSessionLinks, (_event, sessionId) => bridge.listSessionLinks(sessionId))
   handle(AGENT_CHANNELS.markSessionLinkReturned, (_event, linkId) => bridge.markSessionLinkReturned(linkId))
   handle(AGENT_CHANNELS.updateSession, (_event, sessionId, input) => bridge.updateSession(sessionId, input))
-  handle(AGENT_CHANNELS.deleteSession, (_event, sessionId) => bridge.deleteSession(sessionId))
+  handle(AGENT_CHANNELS.deleteSession, async (_event, sessionId) => {
+    await bridge.deleteSession(sessionId)
+    await workspaceBindingStore.removeSession(sessionId)
+    for (const [token, binding] of workspaceBindings) {
+      if (binding.sessionId === sessionId) workspaceBindings.delete(token)
+    }
+  })
   handle(AGENT_CHANNELS.getSession, (_event, sessionId) => bridge.getSession(sessionId))
   handle(AGENT_CHANNELS.getEvents, (_event, sessionId, runId, afterSeq) =>
     bridge.getEvents(sessionId, runId, afterSeq))
-  handle(AGENT_CHANNELS.startRun, (_event, sessionId, input) => bridge.startRun(sessionId, input))
+  handle(AGENT_CHANNELS.startRun, async (_event, sessionId, input) => {
+    const request = input as StartAgentRunInput
+    if (!request.targetAgentId || request.targetAgentId === 'main') {
+      const { localAgent: _discarded, ...safeRequest } = request
+      return bridge.startRun(sessionId, {
+        ...safeRequest,
+        ...(request.targetAgentId === 'main' ? { targetAgentId: 'main' } : {}),
+      })
+    }
+    let installation = localAgents.find((agent) => agent.id === request.targetAgentId)
+    if (!installation) {
+      await scanLocalAgents()
+      installation = localAgents.find((agent) => agent.id === request.targetAgentId)
+    }
+    if (!installation?.callable || !installation.invocationSupported || !installation.executablePath) {
+      throw new Error('选择的本机 Agent 当前不可调用。请重新扫描或检查安装。')
+    }
+    if (!isSafeLocalAgentPath(installation.executablePath)) {
+      throw new Error('本机 Agent 的可执行文件路径无效。')
+    }
+    const binding = request.workspaceBindingToken
+      ? workspaceBindings.get(request.workspaceBindingToken)
+      : null
+    if (!binding || binding.agentId !== installation.id || binding.sessionId !== sessionId) {
+      throw new Error('请先为该 Agent 选择并授权工作区。')
+    }
+    const validatedBinding = await workspaceBindingStore.validate(binding)
+    return bridge.startRun(sessionId, {
+      ...request,
+      localAgent: {
+        id: installation.id,
+        provider: installation.provider,
+        displayName: installation.displayName,
+        executablePath: installation.executablePath,
+        workingDirectory: validatedBinding.rootPath,
+        permissionProfile: validatedBinding.permissionProfile,
+        card: installation.card,
+      },
+    })
+  })
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
     bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
@@ -1237,7 +1626,11 @@ function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void
   })
 }
 
-function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: DocumentAssetStore): void {
+function registerDocumentHandlers(
+  bridge: DocumentGatewayBridge,
+  assets: DocumentAssetStore,
+  vaults?: ObsidianVaultService | null,
+): void {
   handleGroup(DOCUMENT_CHANNELS, {
     list: (_event, roomId) => bridge.list(roomId),
     listTrash: (_event, roomId) => bridge.listTrash(roomId),
@@ -1257,8 +1650,38 @@ function registerDocumentHandlers(bridge: DocumentGatewayBridge, assets: Documen
       return bridge.startOperation(input)
     },
     getOperation: (_event, operationId, context) => bridge.getOperation(operationId, context),
-    executeOperationCommand: (_event, operationId, input) =>
-      bridge.executeOperationCommand(operationId, input),
+    executeOperationCommand: async (_event, operationId: string, input: DocumentOperationCommandInput) => {
+      if (!vaults || (input.type !== 'review.apply' && input.type !== 'item.accept')) {
+        return bridge.executeOperationCommand(operationId, input)
+      }
+      const operation = await bridge.getOperation(operationId, input.context)
+      const note = operation.documentId ? vaults.noteForDocument(operation.documentId) : null
+      if (!note || !input.context) return bridge.executeOperationCommand(operationId, input)
+      const prepared = await bridge.prepareExternalPatch({ operationId, command: input })
+      const current = await vaults.readNote(note.vaultId, note.resourceId)
+      let resultingSourceHash = current.sourceHash
+      if (current.sourceHash === prepared.expectedSourceHash) {
+        const saved = await vaults.saveNoteForAgent(
+          note.vaultId,
+          note.resourceId,
+          prepared.markdown,
+          prepared.expectedSourceHash,
+        )
+        if (saved.status === 'conflict') {
+          throw new Error('VAULT_SOURCE_CONFLICT: Obsidian 已修改该笔记，请比较磁盘版本后重新审阅。')
+        }
+        resultingSourceHash = saved.snapshot.sourceHash
+      } else if (current.markdown !== prepared.markdown) {
+        throw new Error('VAULT_SOURCE_CONFLICT: Obsidian 已修改该笔记，请比较磁盘版本后重新审阅。')
+      }
+      const completed = await bridge.completeExternalPatch({
+        preparationId: prepared.preparationId,
+        resultingSourceHash,
+        context: input.context,
+      })
+      vaults.notifyChanged(note.vaultId)
+      return completed
+    },
     storeImage: (_event, documentId, input) => assets.storeImage(documentId, input),
     import: (_event, input: ImportRoomDocumentInput) => {
       assertNoEmbeddedDocumentImages(input?.contentJson)
@@ -1331,7 +1754,9 @@ function registerFilesHandlers(
     }
   })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
-  handle(FILES_CHANNELS.listClipCaptures, (_event, limit?: number, offset?: number) => bridge.listClipCaptures(limit, offset))
+  handle(FILES_CHANNELS.listClipCaptures, (_event, input) => bridge.listClipCaptures(input))
+  handle(FILES_CHANNELS.setClipCaptureFavorite, (_event, captureId: string, favorite: boolean) =>
+    bridge.setClipCaptureFavorite(captureId, favorite))
   handle(FILES_CHANNELS.getClipCaptureDetail, (_event, captureId: string) => bridge.getClipCaptureDetail(captureId))
   handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
   handle(
@@ -1558,7 +1983,11 @@ async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promi
   return account
 }
 
-function registerAccountHandlers(client: SaasClient, onAccountChanged?: (account: CloudAccountStatus) => void): void {
+function registerAccountHandlers(
+  client: SaasClient,
+  onAccountChanged?: (account: CloudAccountStatus) => void,
+  beforeLogout?: () => Promise<void>,
+): void {
   handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(async () => {
     const account = await syncAccountMonitoring(client.status(refreshSubscription === true))
     onAccountChanged?.(account)
@@ -1579,20 +2008,52 @@ function registerAccountHandlers(client: SaasClient, onAccountChanged?: (account
       return account
     })
   })
-  handle(ACCOUNT_CHANNELS.oidcLogin, (_event, provider: unknown) => {
+  handle(ACCOUNT_CHANNELS.invitationCodeValidate, (_event, invitationCode: unknown) => {
+    if (typeof invitationCode !== 'string') throw new Error('无效的邀请码。')
+    return rateLimitAware(() => client.validateInvitationCode(invitationCode))
+  })
+  handle(ACCOUNT_CHANNELS.oidcLogin, (_event, input: unknown) => {
+    const value=typeof input==='string'?{provider:input}:input&&typeof input==='object'?input as {provider?:unknown;invitationCode?:unknown}:{}
+    const provider=value.provider
     if (provider !== 'apple' && provider !== 'google') throw new Error('不支持的登录方式。')
+    if (value.invitationCode !== undefined && typeof value.invitationCode !== 'string') throw new Error('无效的邀请码。')
+    const invitationCode=typeof value.invitationCode==='string'?value.invitationCode:undefined
     return rateLimitAware(async () => {
-      const account = await syncAccountMonitoring(client.loginWithOidc(provider))
+      const account = await syncAccountMonitoring(client.loginWithOidc(provider,invitationCode))
       onAccountChanged?.(account)
       return account
     })
   })
   handle(ACCOUNT_CHANNELS.oidcCancel, () => client.cancelOidcLogin())
   handle(ACCOUNT_CHANNELS.logout, () => rateLimitAware(async () => {
+    await beforeLogout?.()
     const account = await syncAccountMonitoring(client.logout())
     onAccountChanged?.(account)
     return account
   }))
+}
+
+function registerNotificationHandlers(client: SaasClient): void {
+  handle('notifications:preferences', () => rateLimitAware(() => client.notificationPreferences()))
+  handle('notifications:update-preferences', (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('Invalid notification preferences')
+    const value = input as Partial<NotificationPreferences>
+    if ([value.enabled, value.iosEnabled, value.macosEnabled].some((item) => item !== undefined && typeof item !== 'boolean')) {
+      throw new Error('Invalid notification preferences')
+    }
+    return rateLimitAware(() => client.updateNotificationPreferences(value))
+  })
+  handle('notifications:cloud-sessions', (_event, deviceId: unknown) => {
+    if (typeof deviceId !== 'string' || !deviceId.trim()) throw new Error('Invalid notification device')
+    return rateLimitAware(() => client.listCloudAgentSessions(deviceId))
+  })
+  handle('notifications:cloud-messages', (_event, deviceId: unknown, sessionId: unknown, before: unknown) => {
+    if (typeof deviceId !== 'string' || !deviceId.trim() || typeof sessionId !== 'string' || !sessionId.trim()) {
+      throw new Error('Invalid notification session')
+    }
+    if (before !== undefined && typeof before !== 'string') throw new Error('Invalid notification cursor')
+    return rateLimitAware(() => client.listCloudAgentSessionMessages(deviceId, sessionId, before))
+  })
 }
 
 function registerPrivateTranscriptionHandlers(
@@ -1763,7 +2224,7 @@ function registerPerceptionAndDiaryHandlers(): void {
   })
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -1839,6 +2300,7 @@ function createWindow(): void {
     })
   }
   window.once('ready-to-show', () => window.show())
+  window.webContents.on('did-finish-load', () => sendPendingAgentNotificationTarget())
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
@@ -1850,6 +2312,7 @@ function createWindow(): void {
   } else {
     void window.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  return window
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
@@ -1866,6 +2329,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error) => {
     console.error('Failed to initialize local document assets', error)
+  })
+  obsidianVaultService = new ObsidianVaultService(dataDirectory, (path) => shell.trashItem(path))
+  await obsidianVaultService.initialize().catch((error) => {
+    console.error('Failed to initialize Obsidian Vault service', error)
   })
   screenshotOutbox = new ScreenshotOutbox(
     join(dataDirectory, 'perception', 'screenshot-outbox.json'),
@@ -1888,7 +2355,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return new Response('Not found', { status: 404 })
     }
   })
+  protocol.handle(OBSIDIAN_VAULT_ASSET_SCHEME, async (request) => {
+    try {
+      const url = new URL(request.url)
+      const [vaultId, resourceId] = url.pathname.replace(/^\//, '').split('/').map(decodeURIComponent)
+      if (url.hostname !== 'local' || !vaultId || !resourceId || !obsidianVaultService) {
+        return new Response('Not found', { status: 404 })
+      }
+      const asset = await obsidianVaultService.asset(vaultId, resourceId)
+      return new Response(new Uint8Array(asset.buffer), {
+        headers: { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=60' },
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
   installIpcRouters()
+  registerObsidianHandlers(obsidianVaultService)
   registerSystemClipboardHandler()
   registerGatewayHandlers()
   browserExtensionService = new BrowserExtensionService(dataDirectory)
@@ -1952,12 +2435,24 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       ? randomUUID()
       : nangoUrl ? configuredNangoSecret : ''
     const nangoBootstrapPending = nangoUrl && nangoSupervisor && !nangoSecretIsUuidV4 ? '1' : '0'
+    agentNotificationBridgeServer = new AgentNotificationBridgeServer(() => saasClient)
+    const notificationBridge = await agentNotificationBridgeServer.start().catch((error) => {
+      console.warn('Agent notification bridge unavailable; notification tool stays disabled.', error)
+      agentNotificationBridgeServer = null
+      return null
+    })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       {
         // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
         // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
         NXCORE_AGENT_RUNTIME: 'pi',
+        ...(notificationBridge
+          ? {
+            NXCORE_NOTIFICATION_BRIDGE_URL: notificationBridge.baseUrl,
+            NXCORE_NOTIFICATION_BRIDGE_TOKEN: notificationBridge.token,
+          }
+          : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
@@ -2031,15 +2526,19 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
     registerConnectorHandlers(connectorGatewayBridge)
     // Agent status reporting is attached after the authenticated SaaS client is created below.
-    registerMemoryHandlers(new MemoryGatewayBridge(gatewaySupervisor))
+    const memoryGatewayBridge = new MemoryGatewayBridge(gatewaySupervisor)
+    registerMemoryHandlers(memoryGatewayBridge)
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
-    registerDocumentHandlers(documentGatewayBridge, documentAssets)
+    registerDocumentHandlers(documentGatewayBridge, documentAssets, obsidianVaultService)
     registerDocumentPdfExportHandler()
     registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
     const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'))
     await highRiskImports.initialize()
     const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)
+    migrationCoordinator = new MigrationCoordinator(new MigrationsGatewayBridge(gatewaySupervisor), filesGatewayBridge, () => BrowserWindow.getAllWindows()[0] ?? null, join(dataDirectory, 'migrations', 'sources.json'))
+    await migrationCoordinator.initialize()
+    registerMigrationHandlers(migrationCoordinator)
     clipperAssetBridge = filesGatewayBridge
     browserExtensionService?.setCaptureHandlers({
       create: (capture) => filesGatewayBridge.createClipCapture(capture),
@@ -2055,6 +2554,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     recordingStore = new RecordingStore(recordingsDirectory)
     saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
     void saasClient.initialize()
+    macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
+    macosPushNotifications.install()
+    registerNotificationHandlers(saasClient)
     agentStatusReporter = new AgentStatusReporter(saasClient)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor, agentStatusReporter)
     agentStatusReporter.setSessionsProvider(async () => (await agentGatewayBridge!.listAllSessionSnapshots()).map((snapshot) => ({
@@ -2064,7 +2566,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       messages: snapshot.messages.slice(-120),
     })))
     remoteAgentCommandClient = new RemoteAgentCommandClient(saasClient, agentGatewayBridge)
-    registerAgentHandlers(agentGatewayBridge)
+    registerAgentHandlers(agentGatewayBridge, migrationCoordinator)
     cursorCompletionAgentBridge = new AgentGatewayBridge(cursorCompletionSupervisor)
     registerCursorCompletionAgentHandlers(cursorCompletionAgentBridge)
     agentStatusReporter.start()
@@ -2111,6 +2613,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
     privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
     if (initialAccount?.authenticated) remoteAgentCommandClient.start()
+    if (initialAccount?.authenticated) void macosPushNotifications.registerAuthenticatedDevice()
     privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
     // 物化闸门已下沉到 service.materialize（见 setMaterializeGate 注释），
     // 这里只管启动一次性物化本身。
@@ -2160,8 +2663,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         remoteAgentCommandClient?.start()
         agentStatusReporter?.reportNow()
         transcriptionProcessingCoordinator?.wake()
+        void macosPushNotifications?.registerAuthenticatedDevice()
       }
-    })
+    }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve())
     registerRuntimeConfigHandlers(saasClient)
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
@@ -2179,7 +2683,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       .filter((item) => item.connectorImport)
       .map((item) => item.extension.toLowerCase()))
     const connectors = new ConnectorRegistry()
-      .register(new LocalFolderConnector(autoScanExtensions))
+      .register(new LocalFolderConnector(autoScanExtensions, (path) => obsidianVaultService?.isPathExcluded(path) ?? false))
       .register(new GitHubConnector((key) => credentials.get(key)))
       .register(new GoogleDocsConnector((key) => credentials.get(key)))
       .register(new NotionConnector((key) => credentials.get(key)))
@@ -2202,6 +2706,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     privateSyncScheduler = null
     await browserExtensionService?.stop()
     browserExtensionService = null
+    await agentNotificationBridgeServer?.stop()
+    agentNotificationBridgeServer = null
+    macosPushNotifications?.stop()
+    macosPushNotifications = null
     const service = localDataService
     localDataService = null
     await service?.shutdown()
@@ -2247,6 +2755,7 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   shutdownStarted = true
   const service = localDataService
+  const vaults = obsidianVaultService
   const browserExtension = browserExtensionService
   const gateway = gatewaySupervisor
   const connectorCli = ooCliBridge
@@ -2266,7 +2775,10 @@ app.on('before-quit', (event) => {
   const pendingScreenshots = screenshotOutbox
   const cloud = saasClient
   const privateSync = privateSyncScheduler
+  const notificationBridge = agentNotificationBridgeServer
+  const pushNotificationsService = macosPushNotifications
   localDataService = null
+  obsidianVaultService = null
   browserExtensionService = null
   gatewaySupervisor = null
   ooCliBridge = null
@@ -2292,7 +2804,11 @@ app.on('before-quit', (event) => {
   screenshotOutbox = null
   screenshotScheduler.stop()
   privateSyncScheduler = null
+  agentNotificationBridgeServer = null
+  macosPushNotifications = null
   privateSync?.stop()
+  void notificationBridge?.stop()
+  pushNotificationsService?.stop()
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
   agentBridge?.dispose()
@@ -2304,6 +2820,7 @@ app.on('before-quit', (event) => {
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
   void Promise.allSettled([
     service?.shutdown(),
+    vaults?.shutdown(),
     browserExtension?.stop(),
     recordings?.dispose(),
     pendingScreenshots?.dispose(),

@@ -218,6 +218,34 @@
       "when": 1787650775832,
       "tag": "0031_acoustic_doctor_spectrum",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1787756400000,
+      "tag": "0032_clipper_favorites",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1787756500000,
+      "tag": "0033_multi_agent_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1787756600000,
+      "tag": "0034_external_document_projections",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1787756700000,
+      "tag": "0035_data_migrations",
+      "breakpoints": true
     }
   ]
 }

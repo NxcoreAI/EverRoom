@@ -19,6 +19,7 @@
     "db:migrate": "tsx src/bin/migrate.ts"
   },
   "dependencies": {
+    "@a2a-js/sdk": "1.0.1",
     "@fastify/multipart": "^10.1.1",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
@@ -46,6 +47,7 @@
     "drizzle-orm": "^0.45.2",
     "email-reply-parser": "^2.3.9",
     "exceljs": "^4.4.0",
+    "express": "^5.2.1",
     "fastify": "^5.11.3",
     "fastify-plugin": "^6.0.0",
     "html-to-text": "^10.0.0",
@@ -72,6 +74,7 @@
     "@types/ali-oss": "^6.23.3",
     "@types/better-sqlite3": "^9.6.0",
     "@types/cross-spawn": "^6.0.6",
+    "@types/express": "^5.0.6",
     "@types/hast": "^3.0.5",
     "@types/html-to-text": "^9.0.4",
     "@types/mailparser": "^3.4.6",
