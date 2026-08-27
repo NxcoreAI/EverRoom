@@ -125,33 +125,37 @@ describe('Context Room overview Agent tools', () => {
 
   it('directly applies a citation-backed correction in the current run', async () => {
     const applied = {
-      correction: correction('citation-correction', 'applied', 'session-1'),
+      corrections: [correction('citation-correction', 'applied', 'session-1')],
       overview: projection(6),
     }
-    const applyCitation = vi.fn(() => applied)
+    const applyCitations = vi.fn(() => applied)
 
-    const result = await tools({ applyCitation }).context_room_correction_apply_citation!.execute(run({
+    const result = await tools({ applyCitations }).context_room_correction_apply_citation!.execute(run({
       prompt: '写短一点',
     }), {
+      edits: [{
+        operation: 'content_replace',
+        section: 'overview',
+        targetClaimId: 'overview:summary',
+        originalText: 'Old overview',
+        replacementText: 'Short overview',
+        rationale: '用户认为原文太长',
+      }],
+    })
+
+    expect(applyCitations).toHaveBeenCalledWith('room-1', [expect.objectContaining({
       operation: 'content_replace',
       section: 'overview',
       targetClaimId: 'overview:summary',
       originalText: 'Old overview',
       replacementText: 'Short overview',
-      rationale: '用户认为原文太长',
-    })
-
-    expect(applyCitation).toHaveBeenCalledWith('room-1', expect.objectContaining({
-      operation: 'content_replace',
-      section: 'overview',
-      originalText: 'Old overview',
-      replacementText: 'Short overview',
       entryPoint: 'agent',
-    }), {
+    })], {
       sessionId: 'session-1',
       runId: 'run-confirm',
     })
     expect(result.details).toEqual(applied)
+    expect(result.content).toContain('原子应用 1 条')
     expect(result.content).toContain('无需再次确认')
   })
 })

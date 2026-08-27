@@ -24,6 +24,7 @@ export type RoomOverviewTextSelection = ViewportPoint & {
   range: Range
   section: RoomOverviewCitationSection
   text: string
+  claimRefs: Array<{ claimId: string; text: string }>
 }
 
 type PendingCitation = RoomOverviewTextSelection & {
@@ -89,7 +90,19 @@ export function readRoomOverviewTextSelection(
   const rect = range.getBoundingClientRect()
   if (!text || rect.width === 0 || rect.height === 0) return null
 
-  return { range, section, text, ...actionPoint(rect) }
+  const selectionNodes = new Set([elementOf(selection.anchorNode), elementOf(selection.focusNode)])
+  const claimRefs = [...anchor.querySelectorAll<HTMLElement>('[data-room-citation-claim-id]')]
+    .filter((element) => {
+      if (typeof range.intersectsNode === 'function') return range.intersectsNode(element)
+      return [...selectionNodes].some((node) => node && (element === node || element.contains(node)))
+    })
+    .map((element) => ({
+      claimId: element.dataset.roomCitationClaimId?.trim() ?? '',
+      text: (element.dataset.roomCitationClaimText ?? element.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    }))
+    .filter((claim) => claim.claimId && claim.text)
+
+  return { range, section, text, claimRefs, ...actionPoint(rect) }
 }
 
 function highlightRegistry(): { delete: (name: string) => void; set: (name: string, value: unknown) => void } | undefined {
@@ -229,6 +242,7 @@ export function RoomOverviewCitationControls({
       roomTitle,
       section: pendingCitation.section,
       text: pendingCitation.text,
+      ...(pendingCitation.claimRefs.length ? { claimRefs: pendingCitation.claimRefs } : {}),
       ...(comment ? { comment } : {}),
     }
     citedRangesRef.current.set(id, pendingCitation.range)

@@ -47,7 +47,10 @@ function CitationFixture() {
     <section ref={rootRef} data-testid="citation-root">
       <RoomOverviewCitationControls rootRef={rootRef} roomId="room-1" roomTitle="产品发布" />
       {ROOM_OVERVIEW_CITATION_SECTIONS.map((section) => (
-        <p key={section} data-room-citation-section={section}>{section} content</p>
+        <p key={section} data-room-citation-section={section}>
+          <span data-room-citation-claim-id={`${section}:claim-1`}>{section} content</span>
+          {section === 'overview' ? <span data-room-citation-claim-id="overview:claim-2">second overview claim</span> : null}
+        </p>
       ))}
       <p data-testid="unsupported">latest resources content</p>
       <p data-room-citation-section="resources">invalid section content</p>
@@ -100,6 +103,29 @@ describe('Room overview selected-text citation UI', () => {
     const invalid = container.querySelector<HTMLElement>('[data-room-citation-section="resources"]')!
     expect(readRoomOverviewTextSelection(citationRoot, fakeSelection(unsupported))).toBeNull()
     expect(readRoomOverviewTextSelection(citationRoot, fakeSelection(invalid))).toBeNull()
+  })
+
+  it('captures every claim crossed by a selection in the same section', () => {
+    const citationRoot = container.querySelector<HTMLElement>('[data-testid="citation-root"]')!
+    const claims = container.querySelectorAll<HTMLElement>('[data-room-citation-section="overview"] [data-room-citation-claim-id]')
+    const range = {
+      cloneRange: () => range,
+      getBoundingClientRect: () => selectionRect,
+      intersectsNode: (node: Node) => [...claims].includes(node as HTMLElement),
+    } as unknown as Range
+    const selection = {
+      anchorNode: claims[0]!.firstChild,
+      focusNode: claims[1]!.firstChild,
+      getRangeAt: () => range,
+      isCollapsed: false,
+      rangeCount: 1,
+      toString: () => 'overview content second overview claim',
+    } as unknown as Selection
+
+    expect(readRoomOverviewTextSelection(citationRoot, selection)?.claimRefs).toEqual([
+      { claimId: 'overview:claim-1', text: 'overview content' },
+      { claimId: 'overview:claim-2', text: 'second overview claim' },
+    ])
   })
 
   it('does not offer the action for unsupported content', async () => {
@@ -178,6 +204,7 @@ describe('Room overview selected-text citation UI', () => {
     await selectAndAdd('overview', '第一段引用', '这里的目标已经变化')
     expect(citations[0]).toMatchObject({
       roomId: 'room-1', section: 'overview', text: '第一段引用', comment: '这里的目标已经变化',
+      claimRefs: [{ claimId: 'overview:claim-1', text: 'overview content' }],
     })
     expect(container.querySelector('.context-room-citation-badge')).not.toBeNull()
 

@@ -132,6 +132,7 @@ describe('Agent Room overview citation submission', () => {
       roomTitle: '产品发布',
       section: 'next_steps',
       text: '本周五前完成发布清单',
+      claimRefs: [{ claimId: 'next_steps:release', text: '本周五前完成发布清单' }],
       comment: '负责人需要更新',
     }, {
       id: 'citation-2',
@@ -158,7 +159,7 @@ describe('Agent Room overview citation submission', () => {
 
     expect(sendPrompt).toHaveBeenCalledWith(
       '负责人应改为王敏',
-      '引用 1\n区块：next_steps\n引用文本：本周五前完成发布清单\n用户评论：负责人需要更新\n\n引用 2\n区块：status\n引用文本：当前仍在等待设计确认',
+      '引用 1\n区块：next_steps\n引用文本：本周五前完成发布清单\n命中 Claims：\n- next_steps:release：本周五前完成发布清单\n用户评论：负责人需要更新\n\n引用 2\n区块：status\n引用文本：当前仍在等待设计确认',
       'room-1',
       undefined,
       undefined,

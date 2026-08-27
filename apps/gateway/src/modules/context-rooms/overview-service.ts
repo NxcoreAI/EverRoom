@@ -432,12 +432,36 @@ export class RoomOverviewService {
     input: ProposeRoomContextCorrectionInput,
     agentContext: { sessionId: string; runId: string },
   ): { correction: RoomContextCorrection; overview: RoomOverviewProjection } {
+    const result = this.applyCitations(roomId, [input], agentContext);
+    return { correction: result.corrections[0]!, overview: result.overview };
+  }
+
+  applyCitations(
+    roomId: string,
+    inputs: ProposeRoomContextCorrectionInput[],
+    agentContext: { sessionId: string; runId: string },
+  ): { corrections: RoomContextCorrection[]; overview: RoomOverviewProjection } {
     const resolved = this.requireRoom(roomId);
-    this.validateProposal(resolved, input);
+    if (inputs.length === 0 || inputs.length > 20) throw new Error("room_correction_citation_batch_invalid");
+    const projection = this.get(resolved);
+    const normalized = inputs.map((input) => this.resolveCitationCorrection(resolved, projection, input));
+    const targets = normalized.map((input) => `${input.section}:${input.targetClaimId}`);
+    if (new Set(targets).size !== targets.length) throw new Error("room_correction_citation_duplicate_target");
+
+    const rows = this.db.transaction((tx) => normalized.map((input) => tx.insert(roomContextCorrections)
+      .values(this.correctionValues(resolved, input, "applied", agentContext))
+      .returning().get()));
+    return { corrections: rows.map(correctionRow), overview: this.reproject(resolved) };
+  }
+
+  private resolveCitationCorrection(
+    roomId: string,
+    projection: RoomOverviewProjection,
+    input: ProposeRoomContextCorrectionInput,
+  ): ProposeRoomContextCorrectionInput {
+    this.validateProposal(roomId, input);
     const citedText = comparableText(input.originalText);
     if (!citedText) throw new Error("room_correction_citation_required");
-
-    const projection = this.get(resolved);
     const key = input.section === "next_steps" ? "nextSteps" : input.section;
     const claims = projection[key];
     const candidates = input.targetClaimId
@@ -453,12 +477,11 @@ export class RoomOverviewService {
       throw new Error("room_correction_source_mismatch");
     }
 
-    const correction = this.insertCorrection(resolved, {
+    return {
       ...input,
       targetClaimId: target.id,
       entryPoint: "agent",
-    }, "applied", agentContext);
-    return { correction, overview: this.reproject(resolved) };
+    };
   }
 
   private insertCorrection(
@@ -467,8 +490,20 @@ export class RoomOverviewService {
     status: "proposed" | "applied",
     agentContext?: { sessionId: string; runId: string },
   ): RoomContextCorrection {
+    const row = this.db.insert(roomContextCorrections).values(
+      this.correctionValues(roomId, input, status, agentContext),
+    ).returning().get();
+    return correctionRow(row);
+  }
+
+  private correctionValues(
+    roomId: string,
+    input: ProposeRoomContextCorrectionInput,
+    status: "proposed" | "applied",
+    agentContext?: { sessionId: string; runId: string },
+  ): typeof roomContextCorrections.$inferInsert {
     const now = new Date();
-    const row = this.db.insert(roomContextCorrections).values({
+    return {
       id: randomUUID(),
       roomId,
       operation: input.operation,
@@ -486,8 +521,7 @@ export class RoomOverviewService {
       appliedAt: status === "applied" ? now : null,
       createdAt: now,
       updatedAt: now,
-    }).returning().get();
-    return correctionRow(row);
+    };
   }
 
   apply(

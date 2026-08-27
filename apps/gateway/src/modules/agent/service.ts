@@ -252,7 +252,7 @@ function runtimePrompt(
   const roomCitationRouting = hasSelectedRoom
     && selectedText
     && ROOM_OVERVIEW_CITATION_CONTEXT.test(selectedText)
-      ? "本轮包含由 Room 总览选区交互生成的引用纠正。先调用 context_room_context_get 定位引用所属 claim，再调用 context_room_correction_apply_citation 在当前回合直接保存并应用；禁止创建待确认 proposal，禁止要求用户再次确认。"
+      ? "本轮包含由 Room 总览选区交互生成的引用纠正。先调用 context_room_context_get 核对引用上下文中的 claim ID 和当前全文，为每个命中 claim 生成一条独立 edit，再调用 context_room_correction_apply_citation 在当前回合原子保存并应用。跨 claim 合并时替换保留的 claim 并 suppress 其余 claim；禁止把多条 claim 拼成一个 originalText，禁止创建待确认 proposal，禁止要求用户再次确认。"
       : null;
   const connectorRouting = EXTERNAL_CONNECTOR_REQUEST.test(input.prompt)
     ? connectorMode === "local"

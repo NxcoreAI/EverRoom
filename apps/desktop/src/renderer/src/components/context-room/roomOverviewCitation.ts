@@ -20,6 +20,7 @@ export interface RoomOverviewCitation {
   roomTitle: string;
   section: RoomOverviewCitationSection;
   text: string;
+  claimRefs?: Array<{ claimId: string; text: string }>;
   comment?: string;
 }
 
@@ -39,6 +40,10 @@ export function buildRoomOverviewCitationContext(citations: readonly RoomOvervie
     `引用 ${index + 1}`,
     `区块：${citation.section}`,
     `引用文本：${citation.text}`,
+    ...(citation.claimRefs?.length ? [
+      "命中 Claims：",
+      ...citation.claimRefs.map((claim) => `- ${claim.claimId}：${claim.text}`),
+    ] : []),
     ...(citation.comment ? [`用户评论：${citation.comment}`] : []),
   ].join('\n')).join('\n\n');
 }

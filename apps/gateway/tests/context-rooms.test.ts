@@ -929,6 +929,54 @@ describe('RoomOverviewService', () => {
       .toThrow('room_correction_citation_not_found')
   })
 
+  it('validates every citation before atomically applying a cross-claim batch', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-citation-batch',
+        title: 'Citation Batch Room',
+        data: {
+          id: 'room-citation-batch',
+          title: 'Citation Batch Room',
+          brief: { background: 'First overview claim', goal: 'Second overview claim' },
+          generatedContext: { overview: 'First overview claim' },
+        },
+      }],
+      deletedRooms: [],
+    })
+    const overviews = new RoomOverviewService(db, service)
+    const original = overviews.get('room-citation-batch')
+    expect(original.overview.length).toBeGreaterThanOrEqual(2)
+    const [first, second] = original.overview
+    const edit = (claim: typeof first, replacementText: string) => ({
+      operation: 'content_replace' as const,
+      section: 'overview' as const,
+      targetClaimId: claim!.id,
+      originalText: claim!.text,
+      replacementText,
+      rationale: 'User shortened a cross-claim selection',
+      entryPoint: 'agent' as const,
+    })
+
+    expect(() => overviews.applyCitations('room-citation-batch', [
+      edit(first, 'Short first claim'),
+      { ...edit(second, 'Short second claim'), originalText: 'stale second claim' },
+    ], { sessionId: 'session-batch', runId: 'run-invalid-batch' }))
+      .toThrow('room_correction_citation_mismatch')
+    expect(overviews.list('room-citation-batch')).toHaveLength(0)
+
+    const applied = overviews.applyCitations('room-citation-batch', [
+      edit(first, 'Short first claim'),
+      edit(second, 'Short second claim'),
+    ], { sessionId: 'session-batch', runId: 'run-valid-batch' })
+    expect(applied.corrections).toHaveLength(2)
+    expect(applied.corrections.every((item) => item.status === 'applied')).toBe(true)
+    expect(applied.overview.overview.map((item) => item.text)).toEqual([
+      'Short first claim',
+      'Short second claim',
+    ])
+  })
+
   it('keeps applied corrections on top of a newly generated overview base', async () => {
     let generation = 0
     const dispatchInputs: RoomAgentDispatchInput[] = []
