@@ -216,6 +216,80 @@ function adoptPreReleaseConnectorMarkdownMigrations(
   })();
 }
 
+/** Repair installs whose migration cursor advanced past the room duplicate
+ * migration even though that additive migration was only partially applied. */
+function repairIncompleteRoomDuplicateMigration(
+  sqlite: Database.Database,
+  migrationsDir: string,
+): void {
+  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
+  ).get(type, name));
+  if (!hasObject("table", "__drizzle_migrations")) return;
+
+  const entry = readMigrationJournal(migrationsDir).find((item) => item.tag === "0031_room_duplicates");
+  if (!entry?.tag || typeof entry.when !== "number") return;
+  const latest = sqlite.prepare(
+    "SELECT MAX(created_at) AS created_at FROM __drizzle_migrations",
+  ).get() as { created_at?: number | null } | undefined;
+  if (typeof latest?.created_at !== "number" || latest.created_at < entry.when) return;
+
+  const requiredTableColumns: Record<string, string[]> = {
+    room_duplicate_candidates: [
+      "id", "room_a_id", "room_b_id", "name_score", "centroid_score", "content_overlap",
+      "entity_overlap", "duplicate_score", "confidence", "llm_verdict", "reasons", "status",
+      "evidence_revision", "scoring_version", "created_at", "updated_at",
+    ],
+    room_merge_operations: [
+      "id", "source_room_id", "target_room_id", "idempotency_key", "preview_hash", "status",
+      "stage", "progress", "commit_reached", "impact", "error", "confirmed_at", "completed_at",
+      "created_at", "updated_at",
+    ],
+    room_merge_items: [
+      "id", "operation_id", "resource_type", "resource_id", "before_room_id", "after_room_id",
+      "before_value", "fingerprint", "status", "created_at", "updated_at",
+    ],
+    room_memory_attributions: [
+      "id", "room_id", "memory_id", "source_kind", "source_id", "confidence", "created_at", "updated_at",
+    ],
+  };
+  const requiredBaseColumns: Record<string, string[]> = {
+    agent_runs: ["room_id"],
+    context_rooms: ["lifecycle", "merged_into_room_id", "merged_at"],
+    rooms: ["lifecycle", "merged_into_room_id", "merged_at"],
+  };
+  if (!Object.keys(requiredBaseColumns).every((table) => hasObject("table", table))) return;
+
+  const columnsOf = (table: string) => new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+  );
+  const tablesComplete = Object.entries(requiredTableColumns).every(([table, columns]) =>
+    hasObject("table", table) && columns.every((column) => columnsOf(table).has(column))
+  );
+  const baseColumnsComplete = Object.entries(requiredBaseColumns).every(([table, columns]) =>
+    columns.every((column) => columnsOf(table).has(column))
+  );
+  const indexesComplete = [
+    "room_duplicate_candidates_pair_idx",
+    "room_duplicate_candidates_status_idx",
+    "room_duplicate_candidates_room_a_idx",
+    "room_duplicate_candidates_room_b_idx",
+    "room_memory_attributions_memory_idx",
+    "room_memory_attributions_room_idx",
+    "room_merge_items_operation_resource_idx",
+    "room_merge_items_operation_idx",
+    "room_merge_operations_idempotency_idx",
+    "room_merge_operations_rooms_idx",
+    "room_merge_operations_status_idx",
+  ].every((index) => hasObject("index", index));
+  if (tablesComplete && baseColumnsComplete && indexesComplete) return;
+
+  sqlite.transaction(() => {
+    runAdditiveMigrationIdempotently(sqlite, migrationsDir, entry.tag!);
+    recordMigration(sqlite, migrationsDir, entry);
+  })();
+}
+
 /** Adopt late development migrations when their complete schema was already
  * applied under a discarded migration cursor. This prevents duplicate ALTER
  * statements while still allowing partially upgraded databases to migrate. */
@@ -422,6 +496,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   repairLegacyMigrationCursor(sqlite, migrationsDir);
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
+  repairIncompleteRoomDuplicateMigration(sqlite, migrationsDir);
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
   adoptPreMergeContextRoomMigrations(sqlite, migrationsDir);
   repairContextRoomSchema(sqlite);

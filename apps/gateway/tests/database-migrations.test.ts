@@ -13,6 +13,52 @@ afterEach(async () => {
 });
 
 describe("database migrations", () => {
+  it("repairs room duplicate tables skipped by an advanced migration cursor", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-room-duplicates-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+    const beforeRestart = createDatabase(databasePath, migrationsDir);
+    beforeRestart.sqlite.exec("DROP TABLE room_merge_items");
+    beforeRestart.sqlite.exec("DROP TABLE room_memory_attributions");
+    beforeRestart.sqlite.exec("DROP TABLE room_duplicate_candidates");
+    beforeRestart.sqlite.exec("DROP TABLE room_merge_operations");
+    beforeRestart.sqlite.close();
+
+    const repaired = createDatabase(databasePath, migrationsDir);
+    const tables = repaired.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    ).all() as Array<{ name: string }>;
+    const indexes = repaired.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name",
+    ).all() as Array<{ name: string }>;
+    const operationUpdate = repaired.sqlite.prepare(
+      "UPDATE room_merge_operations SET status = 'queued' WHERE status = 'running'",
+    ).run();
+    repaired.sqlite.close();
+
+    expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "room_duplicate_candidates",
+      "room_merge_operations",
+      "room_merge_items",
+      "room_memory_attributions",
+    ]));
+    expect(indexes.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "room_duplicate_candidates_pair_idx",
+      "room_duplicate_candidates_status_idx",
+      "room_duplicate_candidates_room_a_idx",
+      "room_duplicate_candidates_room_b_idx",
+      "room_memory_attributions_memory_idx",
+      "room_memory_attributions_room_idx",
+      "room_merge_items_operation_resource_idx",
+      "room_merge_items_operation_idx",
+      "room_merge_operations_idempotency_idx",
+      "room_merge_operations_rooms_idx",
+      "room_merge_operations_status_idx",
+    ]));
+    expect(operationUpdate.changes).toBe(0);
+  });
+
   it("repairs pre-release Context Room overview tables without losing projections", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-room-overview-migration-test-"));
     temporaryDirectories.push(dataDir);
