@@ -2789,6 +2789,59 @@ export class KnowledgeService {
     return true;
   }
 
+  /**
+   * 规则回填：对存量「无归属」（primaryRoomId 空，如 linked/awaiting_review）的
+   * 连接器来源重放 ②b 规则层。sourceTag 从 sourceId 确定性推导，titleKeyword
+   * 对决策快照标题匹配；命中即落 rule/execute 决策并排 relation-index job 补
+   * Room 投影（不排 wiki ingest——回填零 LLM 成本，新到事件走完整链路）。
+   * 幂等：最新决策已 execute（primaryRoomId 非空）的来源天然跳过。
+   */
+  replayRoutingRule(ruleId: string): { ok: true; matched: number; replayed: number } | { ok: false; error: string } {
+    const rule = this.db.select().from(routingRules).where(eq(routingRules.id, ruleId)).get();
+    if (!rule) return { ok: false, error: "rule_not_found" };
+    if (!rule.enabled) return { ok: false, error: "rule_disabled" };
+    const matcher = (rule.matcher ?? {}) as Record<string, string | undefined>;
+    if (matcher.threadId !== undefined || matcher.filenamePrefix !== undefined || matcher.creatorId !== undefined) {
+      // 决策快照不含这些入口信号，无法确定性重放
+      return { ok: false, error: "matcher_not_replayable" };
+    }
+
+    const latest = new Map<string, typeof routeDecisions.$inferSelect>();
+    for (const decision of this.db.select().from(routeDecisions)
+      .where(inArray(routeDecisions.sourceKind, ["mail", "cloud-doc", "calendar-event", "todo", "connector-record"]))
+      .orderBy(desc(routeDecisions.createdAt)).all()) {
+      const key = `${decision.sourceKind}\x00${decision.sourceId}`;
+      if (!latest.has(key) && decision.status !== "reverted") latest.set(key, decision);
+    }
+
+    let matched = 0;
+    let replayed = 0;
+    for (const decision of latest.values()) {
+      // 最新决策已归房（含上次回填写入的 rule/execute 行）：幂等跳过。
+      if (decision.primaryRoomId) continue;
+      const sourceTag = connectorSourceTagOf(decision.sourceId);
+      if (matcher.sourceTag !== undefined && sourceTag !== matcher.sourceTag) continue;
+      if (matcher.titleKeyword !== undefined && !(decision.sourceTitle ?? "").includes(matcher.titleKeyword)) continue;
+      matched += 1;
+      const result = this.router.routeByRule({
+        ref: { kind: decision.sourceKind, id: decision.sourceId, version: decision.sourceVersion },
+        title: decision.sourceTitle ?? decision.sourceId,
+        markdown: decision.sourceMarkdown ?? "",
+        ...(sourceTag ? { entrySignals: { sourceTag } } : {}),
+      });
+      if (!result) continue;
+      replayed += 1;
+      this.insertJob(ROOM_RELATION_INDEX_JOB_TYPE, {
+        sourceKind: decision.sourceKind,
+        sourceId: decision.sourceId,
+        sourceVersion: decision.sourceVersion,
+        roomIds: result.roomIds,
+      });
+    }
+    if (replayed > 0) this.wake();
+    return { ok: true, matched, replayed };
+  }
+
   // ───────────────────────── Room 注册表（plan §3.1/§7.2） ─────────────────────────
 
   roomGraph(visibility: RoomRelationVisibility = "active"): RoomGraphDto {
@@ -3168,4 +3221,15 @@ export interface RoomContextSummary extends RoomContextResult {
     version: number;
     title: string;
   }>;
+}
+
+/**
+ * 连接器来源的确定性标签：sourceId 形如 connector:<provider>:<connectionId>:<kind>:<id>
+ * （nango 直传）时推导为连接级 `connector:<provider>:<connectionId>`，与 nango
+ * ingest 入口写入信封的 entrySignals.sourceTag 同构；非连接器 sourceId 返回 null。
+ */
+export function connectorSourceTagOf(sourceId: string): string | null {
+  if (!sourceId.startsWith("connector:")) return null;
+  const [provider, connectionId] = sourceId.slice("connector:".length).split(":");
+  return provider && connectionId ? `connector:${provider}:${connectionId}` : null;
 }

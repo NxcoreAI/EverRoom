@@ -1033,6 +1033,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       dataType: input.kind,
       title: input.title,
       markdown: input.markdown,
+      // 连接级 sourceTag 进 ②b 规则信号：规则可把整个连接（如学校日历）确定性归到 Room。
+      entrySignals: { sourceTag: `connector:${input.provider}:${input.connectionId}` },
       ...(config.knowledge?.routerEnabled ? {} : { pipelines: { room: false, wiki: false, memory: true } }),
     }).then(() => undefined));
   documentOutboxWorker = new DocumentOutboxWorker(

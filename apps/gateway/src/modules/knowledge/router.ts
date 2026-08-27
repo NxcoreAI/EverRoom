@@ -368,6 +368,24 @@ export class KnowledgeRouter {
     });
   }
 
+  /**
+   * ②b 规则层单独重放（存量连接器来源回填）：只对给定信封跑规则匹配，
+   * 命中才落 execute 决策（decidedBy=rule）；未命中返回 null、不写任何行。
+   * 不跑 ①③（入口/LLM 抽取）——回填是确定性、零 LLM 成本的操作。
+   */
+  routeByRule(envelope: DocEnvelope): RouteResult | null {
+    const ruleHit = this.matchRule(envelope);
+    if (!ruleHit) return null;
+    return this.persist(envelope, {
+      disposition: "execute",
+      roomId: ruleHit.roomId,
+      decidedBy: "rule",
+      confidence: 1,
+      reason: `命中路由规则 ${ruleHit.ruleId}（${ruleHit.describe}）`,
+      evidence: { ruleId: ruleHit.ruleId, replayed: true },
+    });
+  }
+
   // ───────────────────────── ①② 决策层 ─────────────────────────
 
   /**

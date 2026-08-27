@@ -186,11 +186,12 @@ export class IngestService {
     title: string;
     markdown: string;
     occurredAt?: string;
+    entrySignals?: IngestInput["entrySignals"];
     pipelines?: Pipelines;
   }): Promise<IngestResult> {
     const contentHash = contentHashOf(Buffer.from(unit.markdown, "utf8"));
     return this.processNormalized(
-      { pipelines: unit.pipelines },
+      { pipelines: unit.pipelines, ...(unit.entrySignals ? { entrySignals: unit.entrySignals } : {}) },
       {
         sourceKind: unit.kind,
         sourceId: unit.sourceId,
