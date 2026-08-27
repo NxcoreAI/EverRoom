@@ -66,7 +66,7 @@ function pendingIntent(targetCapability: 'document.edit' | 'document.continue'):
   }
 }
 
-describe('Agent pending document intent UI', () => {
+describe('AgentChatView', () => {
   beforeEach(() => {
     vi.stubGlobal('window', {
       addEventListener: vi.fn(),
@@ -147,4 +147,74 @@ describe('Agent pending document intent UI', () => {
       )
     },
   )
+
+  it('scrolls to and highlights a notification run after its messages load', async () => {
+    const scrollIntoView = vi.fn()
+    const onNotificationRunLocated = vi.fn()
+    const targetNode = {
+      dataset: { agentMessageId: 'assistant-2' },
+      scrollIntoView,
+    }
+    const conversationNode = {
+      querySelectorAll: () => [targetNode],
+      scrollHeight: 800,
+      scrollTop: 0,
+    }
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        notificationRunTarget={{ key: 'notification-1', runId: 'run-2' }}
+        onNotificationRunLocated={onNotificationRunLocated}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{ 'run-2': '2026-08-20T00:00:01.000Z' }}
+        runStartedAtByRun={{ 'run-2': '2026-08-20T00:00:00.000Z' }}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    await act(async () => {
+      renderer.update(renderView([{
+        id: 'assistant-2',
+        sessionId: 'session-1',
+        runId: 'run-2',
+        role: 'assistant',
+        content: '目标运行结果',
+        createdAt: '2026-08-20T00:00:01.000Z',
+      }]))
+    })
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' })
+    expect(onNotificationRunLocated).toHaveBeenCalledWith('notification-1')
+    expect(renderer.root.findByProps({ 'data-agent-message-id': 'assistant-2' }).props['data-notification-target'])
+      .toBe('true')
+    act(() => renderer.unmount())
+  })
 })

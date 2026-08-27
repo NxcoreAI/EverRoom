@@ -289,6 +289,8 @@ export function AgentChatView({
   error,
   loading,
   messages,
+  notificationRunTarget,
+  onNotificationRunLocated,
   onRetryPrompt,
   onOpenSessionLink,
   onRejectDocumentIntent,
@@ -313,6 +315,8 @@ export function AgentChatView({
   error: string | null
   loading: boolean
   messages: DisplayAgentMessage[]
+  notificationRunTarget?: { key: string; runId: string } | null
+  onNotificationRunLocated?: (key: string) => void
   onRetryPrompt: (prompt: string, runId: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
   onRejectDocumentIntent: () => void
@@ -344,6 +348,10 @@ export function AgentChatView({
     intent: PendingAgentIntent
     toolId: string | null
   } | null>(null)
+  const [highlightedNotificationTarget, setHighlightedNotificationTarget] = useState<{
+    key: string
+    messageId: string
+  } | null>(null)
   const handledDocumentSelectionsRef = useRef(new Set<string>())
   const { documentsByRoom } = useRoomDocumentsState()
   const conversationRef = useRef<HTMLDivElement>(null)
@@ -362,6 +370,15 @@ export function AgentChatView({
     [currentSessionId, sessionLinks],
   )
   const linkedRun = useLinkedAgentRun(incomingLink ?? null)
+  const notificationTargetMessageId = useMemo(() => {
+    if (!notificationRunTarget) return null
+    const runMessages = messages.filter((message) => (
+      message.runId === notificationRunTarget.runId && message.role !== 'system'
+    ))
+    return runMessages.find((message) => message.role === 'assistant')?.id
+      ?? runMessages[0]?.id
+      ?? null
+  }, [messages, notificationRunTarget])
 
   const latestStreamingMessage = useMemo(
     () => [...messages].reverse().find((message) => (
@@ -479,9 +496,9 @@ export function AgentChatView({
 
   useEffect(() => {
     const element = conversationRef.current
-    if (!element) return
+    if (!element || notificationTargetMessageId) return
     element.scrollTop = element.scrollHeight
-  }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, toolCallsByRun])
+  }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, toolCallsByRun])
 
   useLayoutEffect(() => {
     if (scopeReady) setEmptyLayout(confirmedEmpty)
@@ -532,6 +549,35 @@ export function AgentChatView({
     const timer = window.setTimeout(() => setContentReady(true), wasEmpty ? 320 : 80)
     return () => window.clearTimeout(timer)
   }, [confirmedEmpty, currentSessionId, loading, scopeReady])
+
+  useLayoutEffect(() => {
+    if (!contentReady || !notificationRunTarget || !notificationTargetMessageId) return
+    const conversation = conversationRef.current
+    if (!conversation) return
+    const target = Array.from(conversation.querySelectorAll<HTMLElement>('[data-agent-message-id]'))
+      .find((element) => element.dataset.agentMessageId === notificationTargetMessageId)
+    if (!target) return
+
+    target.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'center',
+    })
+    setHighlightedNotificationTarget({
+      key: notificationRunTarget.key,
+      messageId: notificationTargetMessageId,
+    })
+    onNotificationRunLocated?.(notificationRunTarget.key)
+  }, [contentReady, notificationRunTarget, notificationTargetMessageId, onNotificationRunLocated])
+
+  useEffect(() => {
+    if (!highlightedNotificationTarget) return
+    const timer = window.setTimeout(() => {
+      setHighlightedNotificationTarget((current) => (
+        current?.key === highlightedNotificationTarget.key ? null : current
+      ))
+    }, 2_400)
+    return () => window.clearTimeout(timer)
+  }, [highlightedNotificationTarget])
 
   const copyMessage = async (messageId: string, content: string) => {
     try {
@@ -596,14 +642,24 @@ export function AgentChatView({
             if (message.role === 'user') {
               return (
                 <Fragment key={message.id}>
-                  <article className="agent-message" data-role="user"><p>{message.content}</p></article>
+                  <article
+                    className="agent-message"
+                    data-agent-message-id={message.id}
+                    data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
+                    data-role="user"
+                  ><p>{message.content}</p></article>
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 </Fragment>
               )
             }
 
             return (
-              <div key={message.id} className="agent-assistant-turn">
+              <div
+                key={message.id}
+                className="agent-assistant-turn"
+                data-agent-message-id={message.id}
+                data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
+              >
                 {!runHasUserMessage ? (
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 ) : null}

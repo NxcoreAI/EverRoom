@@ -18,6 +18,13 @@ import type {
 } from '../../shared/sources'
 import type { RealityTag } from '@nxcore/reality-contract'
 import type { AgentSession, AgentSessionSnapshot } from '@nxcore/agent-contract'
+import type {
+  AgentNotificationRequest,
+  AgentNotificationResult,
+  CloudAgentMessagePage,
+  CloudAgentSessionSummary,
+  NotificationPreferences,
+} from '../../shared/notifications'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
 import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
@@ -445,6 +452,44 @@ export class SaasClient {
     if (!this.account || !this.accessToken) return false
     await this.request('/app/agent/status', { method: 'PUT', data: input })
     return true
+  }
+
+  async notificationPreferences(): Promise<NotificationPreferences> {
+    await this.initialize()
+    return this.request('/app/notifications/preferences')
+  }
+
+  async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
+    await this.initialize()
+    return this.request('/app/notifications/preferences', { method: 'PUT', data: input })
+  }
+
+  async registerPushToken(provider: 'expo' | 'apns', token: string): Promise<void> {
+    await this.initialize()
+    await this.request('/app/notifications/device', { method: 'PUT', data: { provider, token } })
+  }
+
+  async removePushToken(provider: 'expo' | 'apns'): Promise<void> {
+    await this.initialize()
+    if (!this.account || !this.accessToken) return
+    await this.request('/app/notifications/device', { method: 'DELETE', data: { provider } })
+  }
+
+  async createAgentNotification(input: AgentNotificationRequest): Promise<AgentNotificationResult> {
+    await this.initialize()
+    return this.request('/app/notifications/agent', { method: 'PUT', data: input })
+  }
+
+  async listCloudAgentSessions(deviceId: string): Promise<CloudAgentSessionSummary[]> {
+    await this.initialize()
+    return this.request(`/app/agent/devices/${encodeURIComponent(deviceId)}/sessions?limit=200&offset=0`)
+  }
+
+  async listCloudAgentSessionMessages(deviceId: string, sessionId: string, before?: string): Promise<CloudAgentMessagePage> {
+    await this.initialize()
+    const query = new URLSearchParams({ limit: '500' })
+    if (before) query.set('before', before)
+    return this.request(`/app/agent/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`)
   }
 
   async agentStreamCredentials(): Promise<AgentStreamCredentials | null> {
