@@ -10,12 +10,14 @@ export type ContextRoomKind = typeof CONTEXT_ROOM_KINDS[number];
 
 export type ContextRoomAgentTask =
   | "room-enrich"
+  | "room-overview"
   | "brief-refresh"
   | "selection-rewrite"
   | "material-analysis";
 
 const TASK_LABELS: Record<ContextRoomAgentTask, string> = {
   "room-enrich": "整理新创建的 Context Room",
+  "room-overview": "生成 Context Room 总览",
   "brief-refresh": "再生成 Context Room 简报",
   "selection-rewrite": "改写文档选区",
   "material-analysis": "分析 Context Room 资料",
@@ -40,6 +42,33 @@ export interface ContextRoomBriefRefresh {
   decisions: string[];
 }
 
+export interface ContextRoomOverviewSynthesis {
+  overview: Array<{
+    key: string | null;
+    text: string;
+    aspect: "summary" | "background" | "goal";
+    confidence: number | null;
+    evidenceRefs: string[];
+  }>;
+  status: Array<{
+    key: string | null;
+    text: string;
+    category: "conclusion" | "progress" | "problem" | "blocker";
+    state: "active" | "resolved" | "unknown";
+    confidence: number | null;
+    evidenceRefs: string[];
+  }>;
+  nextSteps: Array<{
+    key: string | null;
+    text: string;
+    owner: string | null;
+    dueAt: string | null;
+    priority: "high" | "medium" | "low" | null;
+    confidence: number | null;
+    evidenceRefs: string[];
+  }>;
+}
+
 function text(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
@@ -51,6 +80,16 @@ function textArray(value: unknown, maxItems: number, maxLength: number): string[
         return normalized ? [normalized] : [];
       }).slice(0, maxItems)
     : [];
+}
+
+function confidence(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(1, value))
+    : null;
+}
+
+function nullableText(value: unknown, maxLength: number): string | null {
+  return text(value, maxLength) || null;
 }
 
 function objectFromOutput(content: string): Record<string, unknown> {
@@ -155,6 +194,104 @@ export function parseBriefRefresh(content: string): ContextRoomBriefRefresh {
     status: text(value.status, 500),
     risks: textArray(value.risks, 6, 300),
     decisions: textArray(value.decisions, 6, 300),
+  };
+}
+
+export function parseRoomOverviewSynthesis(content: string): ContextRoomOverviewSynthesis {
+  const value = objectFromOutput(content);
+  const parseOverview = (input: unknown): ContextRoomOverviewSynthesis["overview"] => {
+    const items = Array.isArray(input) ? input : [input];
+    return items.flatMap((item) => {
+      if (typeof item === "string") {
+        const normalized = text(item, 2_000);
+        return normalized ? [{ key: null, text: normalized, aspect: "summary" as const, confidence: null, evidenceRefs: [] }] : [];
+      }
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const row = item as Record<string, unknown>;
+      const normalized = text(row.text, 2_000);
+      if (!normalized) return [];
+      const aspect = ["summary", "background", "goal"].includes(String(row.aspect))
+        ? row.aspect as "summary" | "background" | "goal"
+        : "summary";
+      return [{
+        key: nullableText(row.key, 120),
+        text: normalized,
+        aspect,
+        confidence: confidence(row.confidence),
+        evidenceRefs: textArray(row.evidenceRefs, 20, 300),
+      }];
+    }).slice(0, 6);
+  };
+  const parseStatus = (input: unknown): ContextRoomOverviewSynthesis["status"] => {
+    const items = Array.isArray(input) ? input : [input];
+    return items.flatMap((item) => {
+      if (typeof item === "string") {
+        const normalized = text(item, 1_000);
+        return normalized ? [{
+          key: null,
+          text: normalized,
+          category: "conclusion" as const,
+          state: "unknown" as const,
+          confidence: null,
+          evidenceRefs: [],
+        }] : [];
+      }
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const row = item as Record<string, unknown>;
+      const normalized = text(row.text, 1_000);
+      if (!normalized) return [];
+      const category = ["conclusion", "progress", "problem", "blocker"].includes(String(row.category))
+        ? row.category as "conclusion" | "progress" | "problem" | "blocker"
+        : "conclusion";
+      const state = ["active", "resolved", "unknown"].includes(String(row.state))
+        ? row.state as "active" | "resolved" | "unknown"
+        : "unknown";
+      return [{
+        key: nullableText(row.key, 120),
+        text: normalized,
+        category,
+        state,
+        confidence: confidence(row.confidence),
+        evidenceRefs: textArray(row.evidenceRefs, 20, 300),
+      }];
+    }).slice(0, 12);
+  };
+  const parseNextSteps = (input: unknown): ContextRoomOverviewSynthesis["nextSteps"] => (
+    (Array.isArray(input) ? input : []).flatMap((item) => {
+      if (typeof item === "string") {
+        const normalized = text(item, 500);
+        return normalized ? [{
+          key: null,
+          text: normalized,
+          owner: null,
+          dueAt: null,
+          priority: null,
+          confidence: null,
+          evidenceRefs: [],
+        }] : [];
+      }
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const row = item as Record<string, unknown>;
+      const normalized = text(row.text, 500);
+      if (!normalized) return [];
+      const priority = ["high", "medium", "low"].includes(String(row.priority))
+        ? row.priority as "high" | "medium" | "low"
+        : null;
+      return [{
+        key: nullableText(row.key, 120),
+        text: normalized,
+        owner: nullableText(row.owner, 120),
+        dueAt: nullableText(row.dueAt, 120),
+        priority,
+        confidence: confidence(row.confidence),
+        evidenceRefs: textArray(row.evidenceRefs, 20, 300),
+      }];
+    }).slice(0, 12)
+  );
+  return {
+    overview: parseOverview(value.overview),
+    status: parseStatus(value.status),
+    nextSteps: parseNextSteps(value.nextSteps),
   };
 }
 

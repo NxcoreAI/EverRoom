@@ -11,7 +11,7 @@ import {
   WikiPane,
   type WorkspaceObjectPreview,
 } from '../detail-panels';
-import { ResourceTree, type LocalOfficeFile } from '../detail-panels/ResourcePanel';
+import { ResourceTree } from '../detail-panels/ResourcePanel';
 
 export function WorkspacePaneBody({
   pane,
@@ -27,7 +27,6 @@ export function WorkspacePaneBody({
   onRestoreDocument,
   onDeleteDocumentPermanently,
   onEmptyTrash,
-  onAddFile,
   onOpenMemory,
   onOpenObject,
   rooms,
@@ -48,7 +47,6 @@ export function WorkspacePaneBody({
   onRestoreDocument: (document: RoomDocument) => Promise<void>;
   onDeleteDocumentPermanently: (document: RoomDocument) => Promise<void>;
   onEmptyTrash: (roomId: string) => Promise<void>;
-  onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (id: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   rooms: ContextRoomRecord[];
@@ -70,7 +68,6 @@ export function WorkspacePaneBody({
         onRestoreDocument={onRestoreDocument}
         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
         onEmptyTrash={onEmptyTrash}
-        onAddFile={onAddFile}
       />
     );
   }
@@ -85,7 +82,12 @@ export function WorkspacePaneBody({
   }
   if (pane === 'memories') {
     return (
-      <MemoryPane room={room} onOpenMemory={onOpenMemory} onUpdateRoom={onUpdateRoom} />
+      <MemoryPane
+        room={room}
+        onOpenMemory={onOpenMemory}
+        onUpdateRoom={onUpdateRoom}
+        onOpenObject={onOpenObject}
+      />
     );
   }
   if (pane === 'wiki') {

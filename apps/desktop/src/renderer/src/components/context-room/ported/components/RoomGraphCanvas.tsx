@@ -1,11 +1,9 @@
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
-  useState,
 } from 'react'
 
 import type { ContextRoomKind, ContextRoomRecord } from '../types'
@@ -14,14 +12,14 @@ import {
   PixiForceGraphCanvas,
   type PixiForceGraphCanvasHandle,
   type PixiForceGraphCanvasNode,
-} from '../graph/PixiForceGraphCanvas'
-import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
-import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+  type PixiForceGraphEdge,
+  useForceGraphLayout,
+} from '@/components/graph'
 import {
   roomGraphLayoutDimensions,
   roomGraphLayoutOptions,
   roomRelationTypeColor,
-} from '../graph/roomGraphVisuals'
+} from './roomGraphVisuals'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import { uiText } from '../adapters'
 import { relationTypeLabel } from './RoomRelationControls'
@@ -74,8 +72,6 @@ function RoomGraphCanvasComponent(
 ) {
   const { t } = useLocale()
   const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
-  const fitTimerRef = useRef<number | null>(null)
-  const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const nodeIndex = useMemo(
     () => new Map(rooms.map((node, index) => [node.id, index])),
     [rooms],
@@ -110,12 +106,14 @@ function RoomGraphCanvasComponent(
       ? [{ source: edge.sourceRoomId, target: edge.targetRoomId }]
       : []
   )), [nodeIndex, relations])
+  // 标称屏幕尺寸决定布局世界的自然下限：紧凑详情面板用更小的标称宽度，
+  // 让初始世界（以及 resize 下限）比首页全图小一圈。
   const initialLayoutDimensions = useMemo(() => roomGraphLayoutDimensions({
     compact,
     nodeCount: nodes.length,
     relationCount: relations.length,
     screenHeight: 420,
-    screenWidth: 640,
+    screenWidth: compact ? 480 : 640,
   }), [compact, nodes.length, relations.length])
   const fallbackPositions = useMemo(() => {
     const result = new Float32Array(nodes.length * 2)
@@ -128,6 +126,31 @@ function RoomGraphCanvasComponent(
     })
     return result
   }, [initialLayoutDimensions, nodes])
+  const layoutNodes = useMemo(() => rooms.map((room, index) => ({
+    id: room.id,
+    radius: compact ? 22 : 29,
+    x: fallbackPositions[index * 2],
+    y: fallbackPositions[index * 2 + 1],
+  })), [compact, fallbackPositions, rooms])
+  const layoutOptions = useMemo(() => ({
+    ...roomGraphLayoutOptions({ compact, nodeCount: rooms.length, relationCount: relations.length }),
+    ...initialLayoutDimensions,
+  }), [compact, initialLayoutDimensions, relations.length, rooms.length])
+  // 布局开跑或世界随面板变化后，等力导向稳定再把视野对准内容：
+  // 紧凑面板只居中不缩小（minScale 1），全屏总览整体适配；
+  // 收敛期间相机逐帧跟随内容，避免首帧与稳定后的视野跳变。
+  const settleFit = useMemo(
+    () => ({ minScale: compact ? 1 : undefined, follow: true }),
+    [compact],
+  )
+  const layout = useForceGraphLayout({
+    nodes: layoutNodes,
+    edges: layoutEdges,
+    options: layoutOptions,
+    label: 'Room force graph',
+    canvasRef,
+    settleFit,
+  })
   const resizeLayout = useCallback((width: number, height: number) => {
     const dimensions = roomGraphLayoutDimensions({
       compact,
@@ -136,45 +159,10 @@ function RoomGraphCanvasComponent(
       screenHeight: height,
       screenWidth: width,
     })
-    layout?.resize(dimensions.width, dimensions.height)
-    if (dimensions.width > width || dimensions.height > height) {
-      if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
-      fitTimerRef.current = window.setTimeout(() => canvasRef.current?.fitView(), 500)
-    }
-  }, [compact, layout, nodes.length, relations.length])
-  const readRevision = useCallback(() => layout?.revision() ?? 0, [layout])
-
-  useEffect(() => {
-    let next: ForceGraphLayoutController
-    try {
-      next = new ForceGraphLayoutController({
-        nodes: rooms.map((room, index) => ({
-          id: room.id,
-          radius: compact ? 22 : 29,
-          x: fallbackPositions[index * 2],
-          y: fallbackPositions[index * 2 + 1],
-        })),
-        edges: layoutEdges,
-        options: {
-          ...roomGraphLayoutOptions({ compact, nodeCount: rooms.length, relationCount: relations.length }),
-          ...initialLayoutDimensions,
-        },
-      })
-    } catch (error) {
-      console.error('Failed to initialize Room force graph layout', error)
-      setLayout(null)
-      return
-    }
-    setLayout(next)
-    void next.ready.catch((error) => {
-      console.error('Room force graph worker failed', error)
-    })
-    return () => next.dispose()
-  }, [compact, fallbackPositions, initialLayoutDimensions, layoutEdges, relations.length, rooms])
-
-  useEffect(() => () => {
-    if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
-  }, [])
+    // layout.resize 以初始自适应尺寸为下限：面板（视口）再小也不压缩布局世界；
+    // 世界变化后的视野对准由 settleFit 策略负责。
+    layout.resize(dimensions.width, dimensions.height)
+  }, [compact, layout.resize, nodes.length, relations.length])
 
   useImperativeHandle(ref, () => ({
     async fitView() {
@@ -183,20 +171,21 @@ function RoomGraphCanvasComponent(
   }), [])
 
   return (
-    <div className="context-room-graph-shell">
+    <div className="context-room-graph-shell nx-graph-shell">
       <PixiForceGraphCanvas
         ref={canvasRef}
         ariaLabel={t('contextRoom:graphs.roomRelationsCanvas')}
+        centerOnMount
         className="context-room-graph-canvas"
         edges={edges}
         nodes={nodes}
-        positions={layout?.snapshot.positions ?? fallbackPositions}
-        revision={layout ? readRevision : undefined}
+        positions={layout.positions ?? fallbackPositions}
+        revision={layout.revision}
         selectedId={selectedId}
         selectedEdgeId={selectedRelationId}
         onResize={resizeLayout}
-        onDragNode={(nodeId, x, y) => layout?.drag(nodeId, x, y)}
-        onReleaseNode={(nodeId) => layout?.release(nodeId)}
+        onDragNode={layout.drag}
+        onReleaseNode={layout.release}
         onOpenNode={onOpenRoom}
         onSelectEdge={onSelectRelation}
         onSelectNode={onSelectRoom}

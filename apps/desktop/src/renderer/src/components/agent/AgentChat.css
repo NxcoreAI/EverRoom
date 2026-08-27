@@ -1419,6 +1419,79 @@
   outline: 0;
 }
 
+.agent-context-citations {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.agent-context-citations::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-context-citation {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 250px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 3px 0 8px;
+  border: 1px solid #dce5f4;
+  border-radius: 7px;
+  background: #f3f7fc;
+  color: #3f5877;
+}
+
+.agent-context-citation > svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: #4f7fb8;
+}
+
+.agent-context-citation > span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-context-citation > button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #7890ad;
+}
+
+.agent-context-citation > button:hover {
+  background: #e3ebf5;
+  color: #335d8f;
+}
+
+.agent-context-citation > button:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.34);
+  outline-offset: 1px;
+}
+
+.agent-context-citation > button svg {
+  width: 12px;
+  height: 12px;
+}
+
 .agent-file-input {
   position: absolute;
   width: 1px;

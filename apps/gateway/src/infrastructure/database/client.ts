@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
+import { repairContextRoomSchema } from "./context-room-compatibility.js";
 
 export interface DatabaseClient {
   db: BetterSQLite3Database<typeof schema>;
@@ -227,6 +228,23 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
   ).has(column);
   const entries = readMigrationJournal(migrationsDir);
+  let latestMainMigrationsEnsured = false;
+  const ensureLatestMainMigrations = () => {
+    if (latestMainMigrationsEnsured) return;
+    latestMainMigrationsEnsured = true;
+    const tags = [
+      "0033_room_entity_facts",
+      "0034_room_overviews_and_corrections",
+      "0035_eager_hannibal_king",
+    ];
+    sqlite.transaction(() => {
+      for (const tag of tags) runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
+      for (const tag of tags) {
+        const entry = entries.find((item) => item.tag === tag);
+        if (entry) recordMigration(sqlite, migrationsDir, entry);
+      }
+    })();
+  };
   const record = (tag: string) => {
     const entry = entries.find((item) => item.tag === tag);
     if (!entry?.tag || typeof entry.when !== "number") return;
@@ -240,19 +258,25 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     && ["visual_status", "visual_kind", "visual_summary", "visual_ocr_text", "visual_key_points",
       "visual_entities", "visual_relevance", "visual_quality", "visual_model", "visual_prompt_version",
       "cover_score"].every((column) => hasColumn("clipper_assets", column))) {
-    record("0033_odd_cardiac");
+    ensureLatestMainMigrations();
+    record("0036_odd_cardiac");
   }
   if (hasColumn("clipper_assets", "visual_content_role")
     && hasColumn("clipper_assets", "visual_noise_reason")) {
-    record("0034_acoustic_doctor_spectrum");
+    ensureLatestMainMigrations();
+    record("0037_acoustic_doctor_spectrum");
   }
-  if (hasColumn("clipper_captures", "favorited_at")) record("0035_clipper_favorites");
+  if (hasColumn("clipper_captures", "favorited_at")) {
+    ensureLatestMainMigrations();
+    record("0038_clipper_favorites");
+  }
   if (hasTable("agent_session_participants")
     && hasColumn("agent_sessions", "active_agent_id")
     && hasColumn("agent_runs", "agent_id")
     && hasColumn("agent_runs", "invocation_mode")
     && hasColumn("agent_messages", "author_agent_id")) {
-    record("0036_multi_agent_conversations");
+    ensureLatestMainMigrations();
+    record("0039_multi_agent_conversations");
   }
 }
 
@@ -400,6 +424,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
   adoptPreMergeContextRoomMigrations(sqlite, migrationsDir);
+  repairContextRoomSchema(sqlite);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");

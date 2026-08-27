@@ -308,6 +308,8 @@ const api: NxcoreDesktopApi = {
     cancelSubagentInvocation: (invocationId: string) =>
       invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
     refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
+    overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
+    refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
     roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
   },
   account: {

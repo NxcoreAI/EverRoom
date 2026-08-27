@@ -894,6 +894,18 @@ describe("gateway server", () => {
       },
     });
 
+    // secrets 端点：主进程派生托管子进程 env 用，返回未脱敏真值（掩码会让
+    // 子进程起服务后每个上游请求 401）。
+    const secrets = await app.inject({ method: "GET", url: "/v1/runtime-config/secrets", headers });
+    expect(secrets.statusCode).toBe(200);
+    expect(secrets.json()).toMatchObject({
+      primaryConfigured: true,
+      config: {
+        primary: { apiKey: "user-key" },
+        knowledge: { embedding: { apiKey: "embed-key" } },
+      },
+    });
+
     // 连通测试端点：配置完整但端点不可达 → valid=false 且带 unreachable 原因。
     // bridge 实际发 POST 带 {} body（axios 空 body POST 会补 form-urlencoded
     // 头触发 415，见 runtime-config-bridge 注释）。

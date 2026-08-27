@@ -44,12 +44,16 @@ describe('embeddingFieldsFromConfig', () => {
     expect(embeddingFieldsFromConfig(null)).toBeNull()
   })
 
-  it('keeps a masked apiKey (********) as-is for comparison purposes', () => {
-    // 主进程拿到的是未脱敏 save 响应;此用例固化掩码不会被视为有效 key 之外的分支:
-    // 掩码串非空,按普通 key 处理(调用方从 save 响应读取,不应出现掩码)。
+  it('treats a masked apiKey (********) as missing', () => {
+    // 网关脱敏快照的掩码不得当成真 key 注入 MemoryCore（会当真 key 用，
+    // 每个上游请求静默 401）；掩码按未配置处理，MemoryCore 走降级路径。
     expect(embeddingFieldsFromConfig({
       knowledge: { embedding: { provider: 'p', model: 'm', baseUrl: 'u', apiKey: '********' } },
-    })?.apiKey).toBe('********')
+    })).toBeNull()
+    // 响应序列化器的 "[REDACTED]" 占位同理。
+    expect(embeddingFieldsFromConfig({
+      knowledge: { embedding: { provider: 'p', model: 'm', baseUrl: 'u', apiKey: '[REDACTED]' } },
+    })).toBeNull()
   })
 })
 
@@ -69,6 +73,11 @@ describe('memoryCoreLlmEnv', () => {
     expect(memoryCoreLlmEnv({ primary: {} })).toBeNull()
     expect(memoryCoreLlmEnv({})).toBeNull()
     expect(memoryCoreLlmEnv(null)).toBeNull()
+  })
+
+  it('returns null when apiKey is a redaction mask (******** / [REDACTED])', () => {
+    expect(memoryCoreLlmEnv({ primary: { baseUrl: 'u', apiKey: '********', model: 'm' } })).toBeNull()
+    expect(memoryCoreLlmEnv({ primary: { baseUrl: 'u', apiKey: '[REDACTED]', model: 'm' } })).toBeNull()
   })
 })
 

@@ -6,7 +6,10 @@
  * NXCORE_CURSOR_COMPLETION_AI_* 缺项回退 NXCORE_AI_*——因此两段都注入。
  * 不产空串值：子进程的 loadEnvFile 不覆盖已存在的 env 键，注入 "" 会把
  * 它自己的 .env fallback 打死（过渡期 .env 还有值时）。
+ * 脱敏占位（********）等同缺失：不注入掩码，子进程明确报「未配置」而非静默 401。
  */
+
+import { isMaskedRuntimeConfigSecret } from "../../shared/sources"
 
 /** AI 段的可选透传键（camelCase → ENV 大写蛇形）。 */
 const OPTIONAL_STRING_KEYS = ["api", "reasoning"] as const
@@ -24,7 +27,7 @@ function sectionEnv(
   if (!section || typeof section !== "object") return {}
   const text = (key: string): string => {
     const raw = section[key]
-    return typeof raw === "string" ? raw.trim() : ""
+    return typeof raw === "string" && !isMaskedRuntimeConfigSecret(raw) ? raw.trim() : ""
   }
   // 四要素齐全才注入整套（半套会让子进程 boot 校验直接拒启）。
   if (!text("provider") || !text("model") || !text("baseUrl") || !text("apiKey")) return {}

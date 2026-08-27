@@ -139,6 +139,28 @@ describe("③′⑤ LLM 输出解析", () => {
     expect(() => parseExtractionResponse("我觉得没有实体")).toThrow();
   });
 
+  it("事实解析：类型白名单回落属性、实体引用过滤、按内容去重", () => {
+    const result = parseExtractionResponse(JSON.stringify({
+      summary: "s",
+      entities: [{ name: "林薇", kind: "人物", salience: 0.9, evidence: "依据" }],
+      facts: [
+        { content: "林薇负责 V1 视觉设计", type: "属性", entities: ["林薇", "V1"] },
+        { content: "林薇负责 V1 视觉设计", type: "关系", entities: ["林薇"] },
+        { content: "未知类型回落属性", type: "事件", entities: ["林薇", "", 42] },
+        { content: "   ", type: "属性", entities: [] },
+      ],
+    }));
+    // 同内容保留后到形态（实体引用更全的通常在后）；空内容跳过。
+    expect(result.facts).toEqual([
+      { content: "林薇负责 V1 视觉设计", type: "关系", entities: ["林薇"] },
+      { content: "未知类型回落属性", type: "属性", entities: ["林薇"] },
+    ]);
+  });
+
+  it("旧输出无 facts 字段回落空数组（历史决策重放兼容）", () => {
+    expect(parseExtractionResponse('{"summary":"s","entities":[]}').facts).toEqual([]);
+  });
+
   it("判定输出：same 必须是布尔", () => {
     expect(parseJudgeResponse('{"same":true,"reason":"同一项目"}')).toMatchObject({ same: true });
     expect(() => parseJudgeResponse('{"same":"yes"}')).toThrow();
@@ -419,6 +441,39 @@ async function registryForTest() {
   const { db, sqlite } = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
   return { registry: new EntityRegistry(db), sqlite };
 }
+
+describe("实体认领：手动建 Room（ED4 户口扩展）", () => {
+  it("未绑定实体（含 kind 不同与新建）认领，已绑定他房/搁置/空名不动", async () => {
+    const { registry, sqlite } = await registryForTest();
+
+    const incubating = registry.createEntity({ name: "星舟项目", kind: "项目" });
+    const otherOwned = registry.createEntity({ name: "张三", kind: "人物" });
+    registry.promoteToRoom(otherOwned.id, "room-existing");
+    const dismissed = registry.createEntity({ name: "李四", kind: "人物" });
+    registry.suppress(dismissed.id);
+    // 其他 Room 的户口实体（同名也不抢）
+    registry.seedRoomEntity({ id: "room-existing", title: "张三工作室", kind: "议题" });
+
+    const claimed = registry.claimEntitiesForRoom("room-manual", [
+      { name: "星舟项目", kind: "主题" }, // 命中未绑定；kind 不同仍按名认领（身份以名为准）
+      { name: "张三", kind: "人物" }, // 已属于其他 Room → 不抢
+      { name: "李四", kind: "人物" }, // 用户搁置 → 不认领
+      { name: "张三工作室", kind: "议题" }, // 他房户口实体 → 不抢
+      { name: "新话题", kind: "主题" }, // 未命中 → 新建并绑定
+      { name: "  ", kind: "主题" }, // 空名 → 跳过
+    ]);
+
+    expect(claimed).toBe(2);
+    expect(registry.getEntity(incubating.id)).toMatchObject({ status: "room", roomId: "room-manual" });
+    expect(registry.getEntity(otherOwned.id)).toMatchObject({ status: "room", roomId: "room-existing" });
+    expect(registry.getEntity(dismissed.id)).toMatchObject({ status: "suppressed", roomId: null });
+    const fresh = registry.loadResolutionPool().find((entity) => entity.name === "新话题");
+    expect(fresh).toMatchObject({ status: "room", roomId: "room-manual" });
+    // 幂等：已认领实体重复认领不重复计数。
+    expect(registry.claimEntitiesForRoom("room-manual", [{ name: "星舟项目", kind: "项目" }])).toBe(0);
+    sqlite.close();
+  });
+});
 
 describe("实体注册表：V2 证据聚合", () => {
   it("ready 推荐按证据总分从高到低返回", async () => {

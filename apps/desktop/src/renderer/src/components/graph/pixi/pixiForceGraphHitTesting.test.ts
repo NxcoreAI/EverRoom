@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { findNearestGraphEdge, findNearestGraphNode } from './pixiForceGraphHitTesting'
 
-describe('Room graph hit testing', () => {
+describe('force graph hit testing', () => {
   it('selects nodes before nearby relation edges', () => {
     const positions = new Float32Array([0, 0, 100, 0])
     const nodes = [{ radius: 20 }, { radius: 20 }]

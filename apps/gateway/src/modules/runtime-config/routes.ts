@@ -57,6 +57,15 @@ export function runtimeConfigRoutes(manager: RuntimeConfigManager): FastifyPlugi
       return withFlag(manager.snapshot(true));
     });
     /**
+     * 仅供桌面主进程派生托管子进程 env 用：未脱敏 snapshot（真 apiKey）。
+     * 与其余路由同走 token 鉴权——token 只在主进程，渲染层取不到；渲染层
+     * 永远只拿上面那些脱敏快照。cursor-completion / knowledge / memory-core
+     * 子进程没有 RuntimeConfigManager，spawn env 是唯一配置通道：给掩码
+     * "********" 它们能正常起服务，然后每个上游请求 401。
+     */
+    app.get("/v1/runtime-config/secrets", { schema: { tags: ["runtime-config"] } }, async () =>
+      withFlag(manager.snapshot(false)));
+    /**
      * 连通测试（启动 gate 放行前的最后一关）：对当前生效配置的 LLM 端点发
      * 一次 max_tokens=1 的真实请求，2xx 才算 valid。凭据不回传——apiKey
      * 校验发生在 gateway 侧，渲染层只拿到 valid/error。body 可有可无（POST

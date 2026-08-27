@@ -352,12 +352,179 @@ export interface RoomAppliedEntity {
   salience: number;
   lastMentionAt: string | null;
   evidence: string | null;
+  /** 来源提及明细（每来源一条），最新在前，最多 8 条。 */
+  sources: RoomAppliedEntitySource[];
+}
+
+/** 实体在某来源资料中的一次提及（来源归属 + 证据句 + 时间）。 */
+export interface RoomAppliedEntitySource {
+  sourceKind: string;
+  sourceId: string;
+  /** 来源资料标题（room_source_memberships 冗余标题，可能为 null）。 */
+  sourceTitle: string | null;
+  evidence: string | null;
+  /** 该来源最近一次提及时间。 */
+  mentionedAt: string;
+}
+
+/** Room 事实记忆：room_entity_facts 按 factId 跨来源聚合去重（PRD CR-014）。 */
+export interface RoomAppliedFact {
+  /** 内容指纹（sha256 前 20 位），同内容跨来源同 id。
+   * type: 事实类型（属性 = 单实体性质；关系 = 实体间关系）。 */
+  factId: string;
+  content: string;
+  type: "属性" | "关系";
+  /** 事实涉及的实体 id（解析不到实体的为空数组 → 图谱连根节点）。 */
+  entityIds: string[];
+  /** 涉及实体名（与 entityIds 对齐；实体被清理时可能短于 entityIds）。 */
+  entityNames: string[];
+  /** 陈述该事实的来源数。 */
+  sourceCount: number;
+  lastMentionAt: string | null;
+  /** 来源明细，最新在前，最多 8 条。 */
+  sources: RoomAppliedEntitySource[];
 }
 
 export interface RoomAppliedEntitiesResult {
   roomId: string;
   entities: RoomAppliedEntity[];
+  /** Room 记忆图谱的事实节点数据（与实体同端点一次返回）。 */
+  facts: RoomAppliedFact[];
   updatedAt: string;
+}
+
+export type RoomOverviewSection =
+  | "overview"
+  | "status"
+  | "next_steps"
+  | "timeline"
+  | "entities";
+
+export type RoomContextCorrectionOperation =
+  | "content_replace"
+  | "content_add"
+  | "content_suppress"
+  | "fact_correct"
+  | "fact_add"
+  | "source_remove"
+  | "source_reassign";
+
+export type RoomContextCorrectionStatus = "proposed" | "applied" | "revoked";
+
+export interface RoomOverviewEvidence {
+  sourceKind: string;
+  sourceId: string;
+  sourceTitle: string | null;
+  /** 支撑 claim 的原文片段；不存在可定位片段时为 null。 */
+  excerpt?: string | null;
+  /** 该证据在来源中被观察到的时间。 */
+  observedAt?: string | null;
+  sourceVersion?: number | null;
+}
+
+export type RoomOverviewClaimData =
+  | {
+      kind: "overview";
+      aspect: "summary" | "background" | "goal";
+    }
+  | {
+      kind: "status";
+      category: "conclusion" | "progress" | "problem" | "blocker";
+      state: "active" | "resolved" | "unknown";
+    }
+  | {
+      kind: "next_step";
+      itemType: "schedule" | "task" | "suggestion";
+      actionId: string | null;
+      owner: string | null;
+      dueAt: string | null;
+      status: string | null;
+      priority: "high" | "medium" | "low" | null;
+    }
+  | {
+      kind: "timeline";
+      eventType: "source" | "fact" | "meeting" | "task" | "decision" | "milestone" | "update" | "other";
+      title: string;
+      description: string | null;
+      certainty: "fact" | "inference";
+    }
+  | {
+      kind: "entity";
+      entityId: string;
+      entityKind: string;
+      entityStatus: RoomAppliedEntityStatus;
+      linkedRoomId: string | null;
+      salience: number;
+      mentionCount: number;
+    };
+
+export interface RoomOverviewClaim {
+  id: string;
+  section: RoomOverviewSection;
+  text: string;
+  origin: "fact" | "inference" | "user";
+  confidence: number | null;
+  evidence: RoomOverviewEvidence[];
+  corrected: boolean;
+  occurredAt?: string | null;
+  /** 区块专属的机器可读数据。缺省表示由旧版投影读取。 */
+  data?: RoomOverviewClaimData;
+}
+
+export interface RoomOverviewFreshness {
+  state: "fresh" | "stale";
+  /** 所有参与投影的事实、资料和 Room 数据中的最新时间。 */
+  sourceUpdatedAt: string | null;
+  generatedAt: string;
+  staleSince: string | null;
+  /** 需要语义重新生成的区块；事实型时间轴、实体和待办可先增量更新。 */
+  staleSections?: RoomOverviewSection[];
+}
+
+export interface RoomOverviewProjection {
+  roomId: string;
+  revision: number;
+  generatedAt: string;
+  stale: boolean;
+  freshness?: RoomOverviewFreshness;
+  overview: RoomOverviewClaim[];
+  status: RoomOverviewClaim[];
+  nextSteps: RoomOverviewClaim[];
+  timeline: RoomOverviewClaim[];
+  entities: RoomOverviewClaim[];
+  appliedCorrectionIds: string[];
+}
+
+export interface RoomContextCorrection {
+  id: string;
+  roomId: string;
+  operation: RoomContextCorrectionOperation;
+  section: RoomOverviewSection;
+  targetClaimId: string | null;
+  targetSource?: RoomOverviewEvidence | null;
+  targetRoomId?: string | null;
+  originalText: string | null;
+  replacementText: string | null;
+  rationale: string;
+  status: RoomContextCorrectionStatus;
+  entryPoint: "overview" | "section" | "agent";
+  sessionId: string | null;
+  createdAt: string;
+  appliedAt: string | null;
+  revokedAt: string | null;
+}
+
+export interface ProposeRoomContextCorrectionInput {
+  operation: RoomContextCorrectionOperation;
+  section: RoomOverviewSection;
+  targetClaimId?: string;
+  targetSource?: RoomOverviewEvidence;
+  targetRoomId?: string;
+  originalText?: string;
+  replacementText?: string;
+  rationale: string;
+  entryPoint: "overview" | "section" | "agent";
+  sessionId?: string;
 }
 
 export type RoomDuplicateConfidence = "high" | "medium" | "related" | "distinct" | "pending";

@@ -69,6 +69,8 @@ export interface ContextRoomTimelineItem {
   kind: 'done' | 'warn' | 'info';
   /** true = 从文档/生成上下文确定性派生，刷新时整体重建；缺省视为手工条目保留。 */
   generated?: boolean;
+  /** 生成条目的来源文档（事件→资料的真实关联，概览时间轴「相关资料」按它解析跳转）；手工条目无。 */
+  sourceDocumentId?: string;
 }
 
 export interface ContextRoomMaterial {

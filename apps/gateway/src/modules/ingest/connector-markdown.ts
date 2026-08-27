@@ -3,6 +3,7 @@ import type {
   connectorDocuments,
   connectorEmails,
   connectorRecords,
+  connectorTodos,
 } from "../../infrastructure/database/schema.js";
 import { convertEmailBody, type EmailBodyConversion } from "./email-content.js";
 
@@ -10,6 +11,7 @@ type ConnectorEmail = typeof connectorEmails.$inferSelect;
 type ConnectorDocument = typeof connectorDocuments.$inferSelect;
 type ConnectorCalendarEvent = typeof connectorCalendarEvents.$inferSelect;
 type ConnectorRecord = typeof connectorRecords.$inferSelect;
+export type ConnectorTodo = typeof connectorTodos.$inferSelect;
 
 function iso(value: Date | null): string | null {
   return value?.toISOString() ?? null;
@@ -140,6 +142,19 @@ export function connectorCalendarEventToMarkdown(row: ConnectorCalendarEvent): s
     ["event_id", row.eventId],
     ["source_updated_at", iso(row.sourceUpdatedAt)],
   ])}# ${row.title}\n\n## 日程信息\n\n- 状态：${row.status || "-"}\n- 开始：${iso(row.startAt) ?? "-"}\n- 结束：${iso(row.endAt) ?? "-"}\n- 全天：${row.allDay ? "是" : "否"}\n- 地点：${row.location || "-"}\n- 组织者：${person(row.organizer)}\n\n## 参与者\n\n${attendees}\n\n## 描述\n\n${row.description || "(无描述)"}\n`;
+}
+
+export function connectorTodoToMarkdown(row: ConnectorTodo): string {
+  const notes = row.notes.replace(/\r\n?/g, "\n").trim() || "(无备注)";
+  return `${frontmatter([
+    ["source_kind", "todo"],
+    ["connector", row.service],
+    ["connector_record_id", row.id],
+    ["source_record_id", row.sourceRecordId],
+    ["todo_id", row.todoId],
+    ["list_id", row.listId],
+    ["source_updated_at", iso(row.sourceUpdatedAt)],
+  ])}# ${heading(row.title)}\n\n## 待办信息\n\n- 状态：${row.status || "-"}\n- 截止：${iso(row.dueAt) ?? "-"}\n- 完成时间：${iso(row.completedAt) ?? "-"}\n- 优先级：${row.priority || "-"}\n- 清单：${row.listName || "-"}\n\n## 备注\n\n${notes}\n`;
 }
 
 export function connectorGenericRecordToMarkdown(row: ConnectorRecord): string {

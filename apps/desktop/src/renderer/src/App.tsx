@@ -30,6 +30,11 @@ import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
+import {
+  ROOM_OVERVIEW_CITATION_ADD_EVENT,
+  clearRoomOverviewCitation,
+  type RoomOverviewCitation,
+} from '@/components/context-room/roomOverviewCitation'
 import { onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -78,6 +83,7 @@ export function App() {
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
   const [agentOpen, setAgentOpen] = useState(true)
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
+  const [agentRoomCitations, setAgentRoomCitations] = useState<RoomOverviewCitation[]>([])
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
   const [remoteNotificationTarget, setRemoteNotificationTarget] = useState<AgentNotificationTarget | null>(null)
@@ -134,6 +140,25 @@ export function App() {
       return new Set([...current, stage])
     })
   }, [])
+
+  useEffect(() => {
+    const addCitation = (event: Event) => {
+      const citation = (event as CustomEvent<RoomOverviewCitation>).detail
+      if (activePage !== 'rooms' || !citation?.text || citation.roomId !== activeContextRoomId) return
+      setAgentRoomCitations((current) => [...current.filter((item) => item.id !== citation.id), citation])
+      setAgentOpen(true)
+      setAgentFocusRequest((request) => request + 1)
+    }
+    window.addEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, addCitation as EventListener)
+    return () => window.removeEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, addCitation as EventListener)
+  }, [activeContextRoomId, activePage])
+
+  useEffect(() => {
+    if (!agentRoomCitations.length || (activePage === 'rooms'
+      && agentRoomCitations.every((citation) => citation.roomId === activeContextRoomId))) return
+    agentRoomCitations.forEach((citation) => clearRoomOverviewCitation(citation.id))
+    setAgentRoomCitations([])
+  }, [activeContextRoomId, activePage, agentRoomCitations])
 
   const completeAutomaticOnboarding = useCallback(() => {
     writeFullOnboardingCompleted()
@@ -203,6 +228,17 @@ export function App() {
     setActivePage('rooms')
     setActiveContextRoomId(room.id)
   }, [])
+
+  // 重启后回放历史导航只把 Room 标签页恢复显示，不切换页面、不激活 Room。
+  const restoreContextRoomTab = useCallback((target: AgentNavigationRequest['target']) => {
+    const room = availableContextRooms.find((item) => item.id === target.roomId)
+    if (!room) return
+    setContextRoomTabs((current) => (
+      current.some((tab) => tab.id === room.id)
+        ? current.map((tab) => tab.id === room.id ? room : tab)
+        : [...current, room]
+    ))
+  }, [availableContextRooms])
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -689,11 +725,21 @@ export function App() {
           navigationRequest={agentNavigationRequest}
           sessionRouteRequest={agentSessionRouteRequest}
           onNavigate={navigateFromAgent}
+          onRestoreRoomTab={restoreContextRoomTab}
           onNavigationConsumed={(key) => setAgentNavigationRequest((current) => current?.key === key ? null : current)}
           onOpenSessionLink={openAgentSessionLink}
           onOpenDocument={openDocumentTarget}
           onSessionRouteConsumed={(key) => setAgentSessionRouteRequest((current) => current?.key === key ? null : current)}
           focusRequest={agentFocusRequest}
+          roomCitations={agentRoomCitations}
+          onRemoveRoomCitation={(citationId) => {
+            clearRoomOverviewCitation(citationId)
+            setAgentRoomCitations((current) => current.filter((citation) => citation.id !== citationId))
+          }}
+          onClearRoomCitations={() => {
+            agentRoomCitations.forEach((citation) => clearRoomOverviewCitation(citation.id))
+            setAgentRoomCitations([])
+          }}
         />
       ) : null}
       <HighRiskImportReview />

@@ -18,6 +18,7 @@ import {
   connectorSyncJobVersions,
   connectorSyncJobs,
   connectorSyncRuns,
+  connectorTodos,
 } from "../../infrastructure/database/schema.js";
 import { spawn } from "node:child_process";
 import {
@@ -77,9 +78,14 @@ const BUILTIN_PROMPT_PROFILES = [
     name: "Google Calendar 日程标准化", version: 1, schemaVersion: 1,
     template: "领域字段、时区语义和异常处理规则由 connector-sync Agent 的 google-calendar-sync Skill 提供。",
   },
+  {
+    id: "google-tasks-sync-v1", service: "google_tasks", resourceType: "todo" as const,
+    name: "Google Tasks 待办标准化", version: 1, schemaVersion: 1,
+    template: "领域字段、状态语义和异常处理规则由 connector-sync Agent 的 google-tasks-sync Skill 提供。",
+  },
 ];
 
-type ConnectorResourceType = "email" | "document" | "calendar";
+type ConnectorResourceType = "email" | "document" | "calendar" | "todo";
 
 interface AgentSyncStats {
   inserted: number;
@@ -128,7 +134,7 @@ export interface ConnectorSyncJobInput {
   name: string;
   service: string;
   dataset: string;
-  resourceType: "email" | "document" | "calendar" | "generic";
+  resourceType: "email" | "document" | "calendar" | "todo" | "generic";
   connectionName?: string | null;
   allowedActions: string[];
   input: Record<string, unknown>;
@@ -510,7 +516,8 @@ export class ConnectorSyncService {
   listPromptProfiles(service?: string, resourceType?: string) {
     const conditions = [eq(connectorPromptProfiles.status, "published" as const)];
     if (service) conditions.push(eq(connectorPromptProfiles.service, service));
-    if (resourceType === "email" || resourceType === "document" || resourceType === "calendar" || resourceType === "generic") {
+    if (resourceType === "email" || resourceType === "document" || resourceType === "calendar"
+      || resourceType === "todo" || resourceType === "generic") {
       conditions.push(eq(connectorPromptProfiles.resourceType, resourceType));
     }
     return this.db.select().from(connectorPromptProfiles).where(and(...conditions))
@@ -698,12 +705,14 @@ export class ConnectorSyncService {
           ...(searchAllDomains || resourceType === "email" ? this.queryEmails(query, domainLimit) : []),
           ...(searchAllDomains || resourceType === "document" ? this.queryDocuments(query, domainLimit) : []),
           ...(searchAllDomains || resourceType === "calendar" ? this.queryCalendarEvents(query, domainLimit) : []),
+          ...(searchAllDomains || resourceType === "todo" ? this.queryTodos(query, domainLimit) : []),
         ].sort((left, right) => right.syncedAt.localeCompare(left.syncedAt) || right.id.localeCompare(left.id))
       : [];
     const domainTotal = resourceType || searchAllDomains
       ? (searchAllDomains || resourceType === "email" ? this.countEmails(query) : 0)
         + (searchAllDomains || resourceType === "document" ? this.countDocuments(query) : 0)
         + (searchAllDomains || resourceType === "calendar" ? this.countCalendarEvents(query) : 0)
+        + (searchAllDomains || resourceType === "todo" ? this.countTodos(query) : 0)
       : 0;
     if (domainTotal > 0) {
       return { items: domainRecords.slice(offset, offset + limit), total: domainTotal, limit, offset };
@@ -754,6 +763,16 @@ export class ConnectorSyncService {
       sourceUpdatedAt: iso(event.sourceUpdatedAt),
       startAt: iso(event.startAt),
       endAt: iso(event.endAt),
+    };
+    const todo = this.db.select().from(connectorTodos)
+      .where(and(eq(connectorTodos.ownerId, ownerId), eq(connectorTodos.id, recordId), isNull(connectorTodos.deletedAt))).get();
+    if (todo) return {
+      resourceType: "todo" as const,
+      ...todo,
+      syncedAt: todo.syncedAt.toISOString(),
+      sourceUpdatedAt: iso(todo.sourceUpdatedAt),
+      dueAt: iso(todo.dueAt),
+      completedAt: iso(todo.completedAt),
     };
     const generic = this.db.select().from(connectorRecords).where(and(
       eq(connectorRecords.ownerId, ownerId),
@@ -846,6 +865,28 @@ export class ConnectorSyncService {
       }));
   }
 
+  private queryTodos(query: ConnectorRecordQuery, limit = Math.min(query.limit ?? 20, 100)) {
+    const conditions = [eq(connectorTodos.ownerId, query.ownerId), isNull(connectorTodos.deletedAt)];
+    if (query.service) conditions.push(eq(connectorTodos.service, query.service));
+    if (query.query?.trim()) {
+      const value = `%${query.query.trim()}%`;
+      conditions.push(or(
+        like(connectorTodos.todoId, value), like(connectorTodos.title, value),
+        like(connectorTodos.notes, value), like(connectorTodos.listName, value),
+      )!);
+    }
+    return this.db.select().from(connectorTodos).where(and(...conditions))
+      .orderBy(desc(connectorTodos.syncedAt), desc(connectorTodos.id)).limit(limit).all()
+      .map((row) => ({
+        id: row.id, resourceType: "todo" as const, service: row.service, sourceRecordId: row.sourceRecordId,
+        title: row.title, snippet: row.notes.slice(0, 500), status: row.status,
+        dueAt: iso(row.dueAt), completedAt: iso(row.completedAt), priority: row.priority,
+        listName: row.listName, sourceUpdatedAt: iso(row.sourceUpdatedAt),
+        syncedAt: row.syncedAt.toISOString(), freshness: "fresh" as const,
+        matchedBy: query.query ? ["todo_text"] : ["dataset"],
+      }));
+  }
+
   private countEmails(query: ConnectorRecordQuery): number {
     const conditions = [eq(connectorEmails.ownerId, query.ownerId), isNull(connectorEmails.deletedAt)];
     if (query.service) conditions.push(eq(connectorEmails.service, query.service));
@@ -886,13 +927,29 @@ export class ConnectorSyncService {
       .from(connectorCalendarEvents).where(and(...conditions)).all().length;
   }
 
+  private countTodos(query: ConnectorRecordQuery): number {
+    const conditions = [eq(connectorTodos.ownerId, query.ownerId), isNull(connectorTodos.deletedAt)];
+    if (query.service) conditions.push(eq(connectorTodos.service, query.service));
+    if (query.query?.trim()) {
+      const value = `%${query.query.trim()}%`;
+      conditions.push(or(
+        like(connectorTodos.todoId, value), like(connectorTodos.title, value),
+        like(connectorTodos.notes, value), like(connectorTodos.listName, value),
+      )!);
+    }
+    return this.db.select({ id: connectorTodos.id })
+      .from(connectorTodos).where(and(...conditions)).all().length;
+  }
+
   private domainRecordCount(ownerId?: string): number {
     const emailCondition = ownerId ? and(eq(connectorEmails.ownerId, ownerId), isNull(connectorEmails.deletedAt)) : isNull(connectorEmails.deletedAt);
     const documentCondition = ownerId ? and(eq(connectorDocuments.ownerId, ownerId), isNull(connectorDocuments.deletedAt)) : isNull(connectorDocuments.deletedAt);
     const calendarCondition = ownerId ? and(eq(connectorCalendarEvents.ownerId, ownerId), isNull(connectorCalendarEvents.deletedAt)) : isNull(connectorCalendarEvents.deletedAt);
+    const todoCondition = ownerId ? and(eq(connectorTodos.ownerId, ownerId), isNull(connectorTodos.deletedAt)) : isNull(connectorTodos.deletedAt);
     return this.db.select({ id: connectorEmails.id }).from(connectorEmails).where(emailCondition).all().length
       + this.db.select({ id: connectorDocuments.id }).from(connectorDocuments).where(documentCondition).all().length
-      + this.db.select({ id: connectorCalendarEvents.id }).from(connectorCalendarEvents).where(calendarCondition).all().length;
+      + this.db.select({ id: connectorCalendarEvents.id }).from(connectorCalendarEvents).where(calendarCondition).all().length
+      + this.db.select({ id: connectorTodos.id }).from(connectorTodos).where(todoCondition).all().length;
   }
 
   private seedPromptProfiles(now: Date): void {
@@ -943,7 +1000,8 @@ export class ConnectorSyncService {
       throw new Error(`promptOverride must not exceed ${String(MAX_PROMPT_OVERRIDE_LENGTH)} characters`);
     }
     if (input.resourceType !== "email" && input.resourceType !== "document"
-      && input.resourceType !== "calendar" && input.resourceType !== "generic") {
+      && input.resourceType !== "calendar" && input.resourceType !== "todo"
+      && input.resourceType !== "generic") {
       throw new Error("Unsupported connector resource type");
     }
     const intervalMs = Math.max(Math.trunc(input.intervalMs), MIN_INTERVAL_MS);
@@ -2319,7 +2377,7 @@ type ConnectorWriteDatabase = Pick<GatewayDatabase, "select" | "insert" | "updat
 function enqueueMarkdown(
   db: ConnectorWriteDatabase,
   ownerId: string,
-  resourceType: "email" | "document" | "calendar" | "generic",
+  resourceType: "email" | "document" | "calendar" | "todo" | "generic",
   ingestSourceId: string,
   operation: "upsert" | "delete",
   sourceContentHash: string,
@@ -2406,6 +2464,18 @@ function validateDomainRecord(resourceType: ConnectorResourceType, record: Recor
     optionalText(record.ownerName, "ownerName");
     optionalText(record.documentType, "documentType");
     optionalText(record.sourceUrl, "sourceUrl");
+    return;
+  }
+  if (resourceType === "todo") {
+    requiredText(record.todoId, "todoId");
+    requiredText(record.title, "title");
+    if (typeof record.notes !== "string") throw new Error("notes must be a string");
+    optionalText(record.status, "status");
+    dateValue(record.dueAt, "dueAt");
+    dateValue(record.completedAt, "completedAt");
+    optionalText(record.priority, "priority");
+    optionalText(record.listId, "listId");
+    optionalText(record.listName, "listName");
     return;
   }
   requiredText(record.eventId, "eventId");
@@ -2522,6 +2592,46 @@ function upsertDomainRecord(
     if (outcome !== "unchanged") enqueueMarkdown(db, common.ownerId, "document", values.id, "upsert", hash, syncedAt);
     return outcome;
   }
+  if (resourceType === "todo") {
+    const existing = db.select({
+      id: connectorTodos.id,
+      contentHash: connectorTodos.contentHash,
+      deletedAt: connectorTodos.deletedAt,
+    })
+      .from(connectorTodos).where(and(
+        eq(connectorTodos.ownerId, common.ownerId),
+        eq(connectorTodos.service, common.service),
+        eq(connectorTodos.connectionName, common.connectionName),
+        eq(connectorTodos.sourceRecordId, common.sourceRecordId),
+      )).get();
+    const normalized = {
+      ...common,
+      todoId: requiredText(record.todoId, "todoId"),
+      title: requiredText(record.title, "title"),
+      notes: String(record.notes ?? ""),
+      status: optionalText(record.status, "status"),
+      dueAt: dateValue(record.dueAt, "dueAt"),
+      completedAt: dateValue(record.completedAt, "completedAt"),
+      priority: optionalText(record.priority, "priority"),
+      listId: optionalText(record.listId, "listId"),
+      listName: optionalText(record.listName, "listName"),
+    };
+    const hash = contentHash(normalized);
+    const values = {
+      ...normalized,
+      id: existing?.id ?? randomUUID(),
+      syncedAt,
+      contentHash: hash,
+      deletedAt: null,
+    };
+    db.insert(connectorTodos).values(values).onConflictDoUpdate({
+      target: [connectorTodos.ownerId, connectorTodos.service, connectorTodos.connectionName, connectorTodos.sourceRecordId],
+      set: values,
+    }).run();
+    const outcome = existing ? existing.contentHash === hash && !existing.deletedAt ? "unchanged" : "updated" : "inserted";
+    if (outcome !== "unchanged") enqueueMarkdown(db, common.ownerId, "todo", values.id, "upsert", hash, syncedAt);
+    return outcome;
+  }
   const existing = db.select({
     id: connectorCalendarEvents.id,
     contentHash: connectorCalendarEvents.contentHash,
@@ -2572,7 +2682,9 @@ function connectorSyncPrompt(job: typeof connectorSyncJobs.$inferSelect): string
       ? "notion-sync"
       : job.service === "google_calendar"
         ? "google-calendar-sync"
-        : null;
+        : job.service === "google_tasks"
+          ? "google-tasks-sync"
+          : null;
   return [
     `使用 connector-sync Agent 的 ${skillName ?? "通用连接器同步规则"} Skill 处理本次 ${job.service}/${resourceType} 同步。`,
     `同步目标：${job.goal}`,
@@ -2629,6 +2741,7 @@ function resourceTypeFromDataset(dataset: string): ConnectorResourceType | null 
   const normalized = dataset.trim().toLowerCase();
   if (/mail|email|message/.test(normalized)) return "email";
   if (/doc|page|file/.test(normalized)) return "document";
+  if (/task|todo/.test(normalized)) return "todo";
   if (/calendar|event|schedule/.test(normalized)) return "calendar";
   return null;
 }

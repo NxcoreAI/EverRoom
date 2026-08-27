@@ -110,6 +110,17 @@ export interface PixiViewportConstructor {
   }): PixiViewport
 }
 
+/**
+ * 图标纹理工厂：按 icon 名生成纹理，返回 null 表示该图标无纹理（节点不画图标）。
+ * 渲染层内置一套默认图标；使用面注入自定义工厂即可扩展图标词表，无需改内核。
+ */
+export type PixiForceGraphIconTextureFactory = (
+  icon: string,
+  dependencies: PixiForceGraphDependencies,
+  renderer: PixiRenderer,
+  resolution: number,
+) => PixiTexture | null
+
 export interface PixiForceGraphDependencies {
   Application: PixiApplicationConstructor
   Container: new () => PixiContainer
@@ -128,7 +139,8 @@ export interface PixiForceGraphDependencies {
 
 export interface PixiForceGraphNode {
   color?: number | string
-  icon?: 'book' | 'flag' | 'message' | 'target' | 'user' | 'zap'
+  /** 图标名，含义由使用面定义；渲染层只负责按名取纹理（见 PixiForceGraphIconTextureFactory）。 */
+  icon?: string
   label?: string
   radius?: number
 }
@@ -155,6 +167,9 @@ export interface PixiForceGraphRendererOptions {
   nodes: readonly PixiForceGraphNode[]
   edges: readonly PixiForceGraphEdge[]
   dependencies: PixiForceGraphDependencies
+  createIconTexture?: PixiForceGraphIconTextureFactory
+  /** 面板只作视口时：创建后把视野对准内容包围盒中心（保持原始缩放，拖拽平移浏览）。 */
+  centerOnMount?: boolean
   nodeRadius?: number
   nodeColor?: number | string
   edgeColor?: number | string
@@ -187,7 +202,8 @@ export interface PixiForceGraphRenderer {
   readonly sprites: readonly PixiSprite[]
   activeLabelCount(): number
   createdLabelCount(): number
-  fitView(): void
+  /** 缩放至内容恰好入屏；minScale 为缩放下限（如 1 = 只居中不缩小）。 */
+  fitView(minScale?: number): void
   hitTest(x: number, y: number): number | null | undefined
   resize(width: number, height: number): void
   setHoveredIndex(index: number | null): void

@@ -54,9 +54,11 @@ export function WorkspaceContent({
     ? 'schedule'
     : selectedObject?.kind === 'task'
       ? 'tasks'
-      : selectedObject
-        ? 'relations'
-        : null;
+      : selectedObject?.kind === 'graph-node'
+        ? 'memories'
+        : selectedObject
+          ? 'relations'
+          : null;
   const visibleObject = selectedObjectOwner && panels.includes(selectedObjectOwner)
     ? selectedObject
     : null;

@@ -1160,5 +1160,28 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         return reply.code(204).send();
       },
     );
+
+    app.post(
+      "/v1/knowledge/rules/:id/backfill",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
+          response: {
+            200: Type.Object({ matched: Type.Integer(), replayed: Type.Integer() }),
+            400: Type.Object({ error: Type.String() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = service.replayRoutingRule(request.params.id);
+        if (!result.ok) {
+          const code = result.error === "rule_not_found" ? 404 : 400;
+          return reply.code(code).send(errorOf(result.error));
+        }
+        return { matched: result.matched, replayed: result.replayed };
+      },
+    );
   };
 }

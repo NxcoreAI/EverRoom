@@ -9,6 +9,7 @@ systemPrompt: ./SYSTEM.md
 
 skills:
   - ./skills/room-enrichment
+  - ./skills/room-overview
   - ./skills/brief-refresh
   - ./skills/selection-rewrite
   - ./skills/material-analysis
