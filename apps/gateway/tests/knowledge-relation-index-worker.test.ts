@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createDatabase } from '../src/infrastructure/database/client.js'
-import { jobs, rooms } from '../src/infrastructure/database/schema.js'
+import { documents, jobs, rooms } from '../src/infrastructure/database/schema.js'
 import { ROOM_RELATION_INDEX_JOB_TYPE } from '../src/modules/knowledge/room-relations.js'
 import { KnowledgeService } from '../src/modules/knowledge/service.js'
 
@@ -41,6 +41,13 @@ describe('knowledge relation index worker', () => {
       { id: 'room-a', title: 'Room A', kind: '项目' },
       { id: 'room-b', title: 'Room B', kind: '项目' },
     ]).run()
+    // 投影 job 要求来源文档存活（回收站/已删除文档不投影，防复活）。
+    db.insert(documents).values({
+      id: 'shared-document',
+      title: 'Shared document',
+      contentJson: { type: 'doc' },
+      version: 1,
+    }).run()
     db.insert(jobs).values({
       id: 'relation-index-job',
       type: ROOM_RELATION_INDEX_JOB_TYPE,

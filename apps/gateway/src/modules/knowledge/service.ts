@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { DocumentEvent, RoomDocument, TiptapJsonContent } from "@nxcore/agent-contract";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { KnowledgeLlmConfig } from "../../config.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -12,6 +12,7 @@ import {
   jobs,
   roomDocumentLinks,
   roomEntityMentions,
+  roomSourceMemberships,
   roomWikis,
   routeDecisions,
   routingRules,
@@ -563,6 +564,27 @@ export class KnowledgeService {
         }
       }
     }
+    // 事实记忆存量回填：老来源补抽 facts（PRD CR-014：Room 记忆 = 实体 + 事实）。
+    // 一次性：完成后记标记；无 LLM 时不标记，等配置后下次启动再补。
+    const pendingFactSources = this.relationRegistry.pendingFactBackfill();
+    if (pendingFactSources.length > 0) {
+      if (this.llm) {
+        this.relationRegistry.markIndexing("building");
+        for (const source of pendingFactSources) {
+          this.insertJob(ROOM_RELATION_INDEX_JOB_TYPE, {
+            sourceKind: source.sourceKind,
+            sourceId: source.sourceId,
+            sourceVersion: source.sourceVersion,
+            roomIds: source.roomIds,
+          });
+        }
+        this.relationRegistry.markFactBackfillCompleted();
+        this.logger.info(
+          { event: "knowledge.room_facts.backfill_enqueued", sources: pendingFactSources.length },
+          "fact memory backfill enqueued for indexed sources",
+        );
+      }
+    }
     this.logger.info(
       { event: "knowledge.room_relations.backfilled", ...relationBackfill },
       "Room relation projections rebuilt from durable facts",
@@ -898,10 +920,12 @@ export class KnowledgeService {
   }
 
   private getDocumentWithRoom(documentId: string): { document: RoomDocument; roomId: string } | null {
+    // 回收站文档视同不存在：软删除后不再进入路由/抽取（恢复时 lifecycle 会
+    // 重发 document.changed 重新入队），避免已删文档被重新投影。
     const row = this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
       .from(documents)
       .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
-      .where(eq(documents.id, documentId))
+      .where(and(eq(documents.id, documentId), isNull(documents.deletedAt)))
       .orderBy(asc(roomDocumentLinks.linkedAt))
       .get();
     if (!row) return null;
@@ -909,7 +933,9 @@ export class KnowledgeService {
   }
 
   private getDocument(documentId: string): RoomDocument | null {
-    const row = this.db.select().from(documents).where(eq(documents.id, documentId)).get();
+    // 同上：回收站文档对抽取管线不可见（job 兜底抽取/信封还原都会据此跳过）。
+    const row = this.db.select().from(documents)
+      .where(and(eq(documents.id, documentId), isNull(documents.deletedAt))).get();
     if (!row) return null;
     return this.toRoomDocument(row, null);
   }
@@ -1450,6 +1476,9 @@ export class KnowledgeService {
 
   /** Relation projection is asynchronous and never changes routing or recommendation state. */
   private async runRelationIndexJob(payload: RelationIndexJobPayload): Promise<void> {
+    // 回收站文档直接跳过：积压 job 里可能还排着删除前入队的投影任务，
+    // 放行会把已删文档的投影行重新写回（读侧剔除只是展示层兜底）。
+    if (payload.sourceKind === "everroom-doc" && !this.getDocument(payload.sourceId)) return;
     const activeRoomIds = this.db.select({ id: rooms.id }).from(rooms)
       .where(and(inArray(rooms.id, payload.roomIds), isNull(rooms.deletedAt))).all().map((room) => room.id);
     if (activeRoomIds.length === 0) {
@@ -1463,6 +1492,7 @@ export class KnowledgeService {
     )).orderBy(desc(routeDecisions.createdAt)).get();
     const evidence = (decision?.evidence ?? {}) as {
       entities?: Array<{ entityId?: unknown; role?: unknown; salience?: unknown; evidence?: unknown }>;
+      facts?: Array<{ content?: unknown; type?: unknown; entityIds?: unknown[] }>;
     };
     let sourceTitle = decision?.sourceTitle ?? payload.sourceId;
     let mentions: RelationIndexInput["mentions"] = [];
@@ -1473,7 +1503,19 @@ export class KnowledgeService {
         evidence: typeof item.evidence === "string" ? item.evidence : null,
       }] : []);
     }
-    if (mentions.length === 0 && this.llm) {
+    let facts: RelationIndexInput["facts"] = [];
+    if (Array.isArray(evidence.facts)) {
+      facts = evidence.facts.flatMap((item) => {
+        if (typeof item.content !== "string" || !item.content.trim()) return [];
+        return [{
+          content: item.content,
+          type: item.type === "关系" ? "关系" as const : "属性" as const,
+          entityIds: (item.entityIds ?? []).flatMap((entityId) => typeof entityId === "string" ? [entityId] : []),
+        }];
+      });
+    }
+    // 兜底抽取：mentions 或 facts 任一缺失且 LLM 可用即补抽一次（入口文档 ED5 无路由抽取，靠这里补实体+事实）
+    if ((mentions.length === 0 || facts.length === 0) && this.llm) {
       let envelope: DocEnvelope | null = null;
       if (payload.sourceKind === "everroom-doc") {
         const document = this.getDocument(payload.sourceId);
@@ -1489,11 +1531,25 @@ export class KnowledgeService {
       }
       if (envelope) {
         const extracted = await this.llm.extract(envelope.title, envelope.markdown);
-        mentions = extracted.entities.map((item) => ({
-          entityId: this.relationRegistry.resolveMentionEntity(item.name, item.kind),
-          salience: item.salience,
-          evidence: item.evidence || null,
-        }));
+        const extractedEntityIds = new Map(extracted.entities.map((item) =>
+          [item.name, this.relationRegistry.resolveMentionEntity(item.name, item.kind)]));
+        if (mentions.length === 0) {
+          mentions = extracted.entities.map((item) => ({
+            entityId: extractedEntityIds.get(item.name)!,
+            salience: item.salience,
+            evidence: item.evidence || null,
+          }));
+        }
+        if (facts.length === 0) {
+          facts = extracted.facts.map((fact) => ({
+            content: fact.content,
+            type: fact.type,
+            entityIds: fact.entities.flatMap((name) => {
+              const entityId = extractedEntityIds.get(name);
+              return entityId ? [entityId] : [];
+            }),
+          }));
+        }
       }
     } else if (mentions.length === 0) {
       this.relationRegistry.markIndexing("degraded");
@@ -1521,6 +1577,7 @@ export class KnowledgeService {
       roomIds: activeRoomIds,
       roomRoles,
       mentions,
+      facts,
     });
   }
 
@@ -2877,6 +2934,21 @@ export class KnowledgeService {
     return this.toRoomDto(row!);
   }
 
+  /**
+   * 手动建 Room 的实体认领（ContextRoom enrich 回写触发）：绑定后本 Room
+   * 成为路由目标，后续资料解析命中这些实体即沉淀进来（与推荐晋升同语义）。
+   * 返回实际认领数。
+   */
+  claimRoomEntities(roomId: string, entities: Array<{ name: string; kind: string }>): number {
+    const canonical = this.canonicalRoomId(roomId);
+    const claimed = this.entityRegistry.claimEntitiesForRoom(canonical, entities);
+    if (claimed > 0) {
+      this.relationRegistry.recomputeAll();
+      this.roomDuplicateIndexTrigger?.();
+    }
+    return claimed;
+  }
+
   /** 软删除（默认策略：wiki 归档不删、documents/links 保留、候选池剔除）。 */
   deleteRoom(roomId: string): boolean {
     const existing = this.db.select({ id: rooms.id }).from(rooms).where(eq(rooms.id, roomId)).get();
@@ -2949,7 +3021,12 @@ export class KnowledgeService {
       version: document.version,
       updatedAt: document.updatedAt.toISOString(),
     }));
-    const key = sourceDocuments.map((item) => `${item.documentId}:${item.version}`).join(" ");
+    // 已路由进本 Room 的连接器邮件/日历：详情的日程、待办生成由此覆盖（正文取路由审计快照）。
+    const connectorSources = this.roomConnectorSources(roomId);
+    const key = [
+      ...sourceDocuments.map((item) => `${item.documentId}:${item.version}`),
+      ...connectorSources.map((item) => `${item.sourceKind}:${item.sourceId}:${item.version}`),
+    ].join("\u0000");
     const cached = this.roomContextCache.get(roomId);
     if (cached?.key === key) return cached.value;
 
@@ -2964,18 +3041,29 @@ export class KnowledgeService {
       actionItems: [],
       meetings: [],
     };
-    let cacheable = !this.llm || rows.length === 0;
-    if (this.llm && rows.length > 0) {
+    const sourceCount = rows.length + connectorSources.length;
+    let cacheable = !this.llm || sourceCount === 0;
+    if (this.llm && sourceCount > 0) {
       const room = this.db.select({ title: rooms.title }).from(rooms).where(eq(rooms.id, roomId)).get();
       try {
         const generated = await this.llm.summarizeRoom(
           room?.title ?? roomId,
-          rows.map(({ document }) => ({
-            title: document.title,
-            markdown: tiptapToMarkdown(document.contentJson as TiptapJsonContent),
-          })),
+          [
+            ...rows.map(({ document }) => ({
+              title: document.title,
+              markdown: tiptapToMarkdown(document.contentJson as TiptapJsonContent),
+            })),
+            ...connectorSources.map((item) => ({
+              title: item.title,
+              markdown: item.markdown,
+              label: item.sourceKind === "calendar-event" ? "日历事件" : "邮件",
+            })),
+          ],
         );
-        const sourceTitles = new Set(sourceDocuments.map((document) => document.title));
+        const sourceTitles = new Set([
+          ...sourceDocuments.map((document) => document.title),
+          ...connectorSources.map((item) => item.title),
+        ]);
         context = {
           ...generated,
           status: generated.status || fallbackStatus,
@@ -2994,10 +3082,71 @@ export class KnowledgeService {
       roomId,
       generatedAt: new Date().toISOString(),
       sourceDocuments,
+      sourceConnectors: connectorSources.map(({ sourceKind, sourceId, version, title }) => ({
+        sourceKind, sourceId, version, title,
+      })),
       ...context,
     };
     if (cacheable) this.roomContextCache.set(roomId, { key, value });
     return value;
+  }
+
+  /**
+   * 本 Room 已路由命中的连接器来源（邮件/日历）：按 (kind,id) 取最新一版
+   * route_decisions 的正文快照，按路由时间倒序截 8 条（LLM 预算内，排在文档之后）。
+   * nango 历史日历曾落 "mail" kind，一并列回收敛。
+   */
+  private roomConnectorSources(roomId: string): Array<{
+    sourceKind: "mail" | "calendar-event";
+    sourceId: string;
+    version: number;
+    title: string;
+    markdown: string;
+  }> {
+    const memberships = this.db.select({
+      sourceKind: roomSourceMemberships.sourceKind,
+      sourceId: roomSourceMemberships.sourceId,
+    })
+      .from(roomSourceMemberships)
+      .where(and(
+        eq(roomSourceMemberships.roomId, roomId),
+        inArray(roomSourceMemberships.sourceKind, ["mail", "calendar-event"]),
+      ))
+      .all();
+    if (memberships.length === 0) return [];
+    const snapshots = this.db.select({
+      sourceKind: routeDecisions.sourceKind,
+      sourceId: routeDecisions.sourceId,
+      sourceVersion: routeDecisions.sourceVersion,
+      sourceTitle: routeDecisions.sourceTitle,
+      sourceMarkdown: routeDecisions.sourceMarkdown,
+      createdAt: routeDecisions.createdAt,
+    })
+      .from(routeDecisions)
+      .where(and(
+        inArray(routeDecisions.sourceKind, ["mail", "calendar-event"]),
+        or(...memberships.map((item) =>
+          and(eq(routeDecisions.sourceKind, item.sourceKind), eq(routeDecisions.sourceId, item.sourceId)))),
+        isNotNull(routeDecisions.sourceMarkdown),
+      ))
+      .orderBy(desc(routeDecisions.sourceVersion))
+      .all();
+    const latest = new Map<string, (typeof snapshots)[number]>();
+    for (const snapshot of snapshots) {
+      const key = `${snapshot.sourceKind} ${snapshot.sourceId}`;
+      if (!latest.has(key)) latest.set(key, snapshot);
+    }
+    return [...latest.values()]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 8)
+      .map((snapshot) => ({
+        sourceKind: snapshot.sourceKind as "mail" | "calendar-event",
+        sourceId: snapshot.sourceId,
+        version: snapshot.sourceVersion,
+        title: snapshot.sourceTitle?.trim() || "（无标题）",
+        markdown: snapshot.sourceMarkdown ?? "",
+      }))
+      .filter((item) => item.markdown.length > 0);
   }
 }
 
@@ -3009,5 +3158,12 @@ export interface RoomContextSummary extends RoomContextResult {
     title: string;
     version: number;
     updatedAt: string;
+  }>;
+  /** 参与本次生成的已路由连接器来源（邮件/日历），供前端展示与测试断言。 */
+  sourceConnectors: Array<{
+    sourceKind: "mail" | "calendar-event";
+    sourceId: string;
+    version: number;
+    title: string;
   }>;
 }

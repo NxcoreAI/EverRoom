@@ -587,6 +587,51 @@ export const contextRooms = sqliteTable(
   ],
 );
 
+export const roomOverviews = sqliteTable(
+  "room_overviews",
+  {
+    roomId: text("room_id").primaryKey().references(() => contextRooms.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull().default(1),
+    baseProjection: text("base_projection", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    projection: text("projection", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    generatedAt: integer("generated_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("room_overviews_updated_idx").on(table.updatedAt)],
+);
+
+export const roomContextCorrections = sqliteTable(
+  "room_context_corrections",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull().references(() => contextRooms.id, { onDelete: "cascade" }),
+    operation: text("operation", {
+      enum: ["content_replace", "content_add", "content_suppress", "fact_correct", "fact_add", "source_remove", "source_reassign"],
+    }).notNull(),
+    section: text("section", {
+      enum: ["overview", "status", "next_steps", "timeline", "entities"],
+    }).notNull(),
+    targetClaimId: text("target_claim_id"),
+    targetSource: text("target_source", { mode: "json" }).$type<Record<string, unknown> | null>(),
+    targetRoomId: text("target_room_id"),
+    originalText: text("original_text"),
+    replacementText: text("replacement_text"),
+    rationale: text("rationale").notNull(),
+    status: text("status", { enum: ["proposed", "applied", "revoked"] }).notNull().default("proposed"),
+    entryPoint: text("entry_point", { enum: ["overview", "section", "agent"] }).notNull(),
+    sessionId: text("session_id"),
+    proposedByRunId: text("proposed_by_run_id"),
+    appliedAt: integer("applied_at", { mode: "timestamp_ms" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("room_context_corrections_room_status_idx").on(table.roomId, table.status),
+    index("room_context_corrections_session_idx").on(table.sessionId),
+  ],
+);
+
 export const agentRuns = sqliteTable(
   "agent_runs",
   {
@@ -1252,6 +1297,49 @@ export const roomEntityMentions = sqliteTable(
     index("room_entity_mentions_entity_idx").on(table.entityId),
     index("room_entity_mentions_room_idx").on(table.roomId),
     index("room_entity_mentions_source_idx").on(table.sourceKind, table.sourceId),
+  ],
+);
+
+/**
+ * 事实记忆投影（PRD 6.6.1：描述实体属性或实体间关系的明确陈述）。
+ * 与 room_entity_mentions 同语义：来源级投影，replaceSource 按来源整体替换；
+ * 同一事实跨来源 = 多行，读取侧按 factId（sha256(content) 指纹）聚合去重。
+ */
+export const roomEntityFacts = sqliteTable(
+  "room_entity_facts",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    /** 全局内容指纹：sha256(content) 前 20 位，跨来源去重键。 */
+    factId: text("fact_id").notNull(),
+    content: text("content").notNull(),
+    /** 属性 = 单一实体的性质/状态/归属；关系 = 实体间关系。 */
+    type: text("type", { enum: ["属性", "关系"] }).notNull().default("属性"),
+    /** 涉及实体（抽取名称经 resolveMentionEntity 解析后的 id；解析不到的不进表）。 */
+    entityIds: text("entity_ids", { mode: "json" }).$type<string[]>(),
+    sourceKind: text("source_kind", {
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+    }).notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceVersion: integer("source_version").notNull(),
+    evidenceGroupKey: text("evidence_group_key").notNull().default(""),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_entity_facts_room_source_fact_idx").on(
+      table.roomId,
+      table.sourceKind,
+      table.sourceId,
+      table.factId,
+    ),
+    index("room_entity_facts_room_idx").on(table.roomId),
+    index("room_entity_facts_source_idx").on(table.sourceKind, table.sourceId),
+    index("room_entity_facts_fact_idx").on(table.factId),
   ],
 );
 

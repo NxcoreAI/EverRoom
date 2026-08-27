@@ -287,15 +287,27 @@ export class KnowledgeRouter {
     const pool = this.deps.registry.loadResolutionPool();
     const resolvedLinks: Array<{ entity: EntityRow; role: LinkRole; salience: number; evidence: string }> = [];
     const linked: Array<{ entity: EntityRow; role: LinkRole; salience: number; evidence: string }> = [];
+    // 事实引用的实体名 → 已解析实体 id（含用户手动挂载的实体）
+    const factEntityIds = new Map<string, string>();
 
     for (const item of entities) {
       const role = roles.get(item.name) ?? "mention";
       const resolved = await this.resolveEntity(item, pool, documentVector);
       if (resolved) pool.push(resolved);
       const entity = resolved ?? this.deps.registry.createEntity({ name: item.name, kind: item.kind });
+      factEntityIds.set(item.name, entity.id);
       if (userPinned.has(entity.id)) continue; // 用户手动挂载优先，不被重抽取覆盖
       resolvedLinks.push({ entity, role, salience: item.salience, evidence: item.evidence });
     }
+
+    const factEvidence = extraction.facts.map((fact) => ({
+      content: fact.content,
+      type: fact.type,
+      entityIds: fact.entities.flatMap((name) => {
+        const entityId = factEntityIds.get(name);
+        return entityId ? [entityId] : [];
+      }),
+    }));
 
     const updatedEntities = new Map(this.deps.registry.replaceResolutionLinks(
       envelope.ref.kind,
@@ -343,7 +355,7 @@ export class KnowledgeRouter {
         reason: targets.length === 1
           ? `解析命中已晋升实体「${lead.name}」（证据分 ${lead.evidenceScore.toFixed(1)}）`
           : `解析命中 ${targets.length} 个已晋升实体（主「${lead.name}」），正文多房沉淀`,
-        evidence: this.evidenceOf(extraction.summary, linked),
+        evidence: this.evidenceOf(extraction.summary, linked, factEvidence),
       });
     }
     return this.persist(envelope, {
@@ -352,7 +364,7 @@ export class KnowledgeRouter {
       decidedBy: "resolution",
       confidence: 1,
       reason: `挂链 ${linked.length} 个实体（均未晋升，孵化中）`,
-      evidence: this.evidenceOf(extraction.summary, linked),
+      evidence: this.evidenceOf(extraction.summary, linked, factEvidence),
     });
   }
 
@@ -509,6 +521,7 @@ export class KnowledgeRouter {
   private evidenceOf(
     summary: string,
     linked: Array<{ entity: EntityRow; role: LinkRole; salience: number; evidence: string }>,
+    facts?: Array<{ content: string; type: "属性" | "关系"; entityIds: string[] }>,
   ): Record<string, unknown> {
     return {
       summary: summary || null,
@@ -522,6 +535,12 @@ export class KnowledgeRouter {
         evidence: evidence || null,
         evidenceScore: entity.evidenceScore,
         sourceCount: entity.sourceCount,
+      })),
+      // 事实记忆快照（entityIds 已解析），relation-index job 免二次抽取直接投影
+      facts: (facts ?? []).map((fact) => ({
+        content: fact.content,
+        type: fact.type,
+        entityIds: fact.entityIds,
       })),
     };
   }

@@ -802,11 +802,16 @@
   background-size: 24px 24px;
 }
 
+/* 过渡别名：盒模型契约已上收到 graph/graphShell.css 的 .nx-graph-*；
+   此处旧选择器保留一个过渡期，避免外部覆盖样式失效。 */
 .context-room-graph-shell,
 .context-room-graph-canvas {
+  position: relative;
   width: 100%;
+  max-width: 100%;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .context-room-graph-canvas {
@@ -815,9 +820,11 @@
 }
 
 .context-room-graph-canvas canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
   touch-action: none;
 }
 
@@ -4142,6 +4149,71 @@
   line-height: 1.65;
 }
 
+.context-room-object-preview-desc {
+  margin: 14px 0 0;
+  color: var(--cr-muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.context-room-object-preview > section {
+  margin-top: 14px;
+}
+
+/* 来源资料行（只读）：与内联详情卡同款，此处作用域放宽到右侧内容区。 */
+.context-room-object-preview .context-room-memory-source-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  text-align: left;
+}
+
+.context-room-object-preview .context-room-memory-source-row > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-room-object-preview .context-room-memory-source-row b {
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-object-preview .context-room-memory-source-row small {
+  color: var(--cr-tertiary);
+  font-size: 10.5px;
+}
+
+.context-room-object-preview .context-room-memory-detail-row-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--cr-tertiary);
+}
+
+.context-room-object-preview .context-room-memory-detail-row-icon svg {
+  width: 12px;
+  height: 12px;
+  color: currentColor;
+}
+
 @keyframes context-room-spin {
   to {
     transform: rotate(360deg);
@@ -4481,6 +4553,60 @@
   overflow: auto;
   padding: 24px 32px 40px;
   background: var(--cr-canvas);
+}
+
+::highlight(room-overview-citation) {
+  background: color-mix(in srgb, var(--cr-blue) 22%, transparent);
+  color: inherit;
+}
+
+.context-room-selection-to-agent {
+  position: fixed;
+  z-index: 120;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+  background: #fff;
+  color: #24292f;
+  box-shadow: 0 6px 18px rgba(31, 35, 40, 0.14);
+  font-size: 11px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.context-room-selection-to-agent:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-selection-to-agent svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-citation-badge {
+  position: fixed;
+  z-index: 119;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--cr-surface);
+  border-radius: 50%;
+  background: var(--cr-blue);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(31, 35, 40, 0.18);
+  pointer-events: none;
+}
+
+.context-room-citation-badge svg {
+  width: 9px;
+  height: 9px;
 }
 
 .context-room-dashboard-hero {
@@ -10446,16 +10572,8 @@
   background-size: 22px 22px;
 }
 
-.context-room-entity-fact-graph-shell,
-.context-room-entity-fact-graph-canvas {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-}
-
-.context-room-entity-fact-graph-canvas canvas {
-  display: block;
-}
+/* 实体事实图谱壳层盒模型已上收到 graph/graphShell.css 的 .nx-graph-shell/canvas
+   （内核组件自动附加），此处领域类名仅保留语义锚点，不再持有盒模型规则。 */
 
 .context-room-memory-inline-detail,
 .context-room-related-inline-detail {
@@ -10641,6 +10759,29 @@
 }
 
 .context-room-memory-inline-detail .context-room-memory-detail-list button > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* 来源资料行是只读展示（PRD：图谱只读，管理动作在记忆应用完成）。 */
+.context-room-memory-inline-detail .context-room-memory-source-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  text-align: left;
+}
+
+.context-room-memory-inline-detail .context-room-memory-source-row > span:last-child {
   display: flex;
   min-width: 0;
   flex: 1;

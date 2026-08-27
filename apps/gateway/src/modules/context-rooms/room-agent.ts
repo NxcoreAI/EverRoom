@@ -10,12 +10,14 @@ export type ContextRoomKind = typeof CONTEXT_ROOM_KINDS[number];
 
 export type ContextRoomAgentTask =
   | "room-enrich"
+  | "room-overview"
   | "brief-refresh"
   | "selection-rewrite"
   | "material-analysis";
 
 const TASK_LABELS: Record<ContextRoomAgentTask, string> = {
   "room-enrich": "整理新创建的 Context Room",
+  "room-overview": "生成 Context Room 总览",
   "brief-refresh": "再生成 Context Room 简报",
   "selection-rewrite": "改写文档选区",
   "material-analysis": "分析 Context Room 资料",
@@ -38,6 +40,12 @@ export interface ContextRoomBriefRefresh {
   status: string;
   risks: string[];
   decisions: string[];
+}
+
+export interface ContextRoomOverviewSynthesis {
+  overview: string;
+  status: string;
+  nextSteps: string[];
 }
 
 function text(value: unknown, maxLength: number): string {
@@ -155,6 +163,15 @@ export function parseBriefRefresh(content: string): ContextRoomBriefRefresh {
     status: text(value.status, 500),
     risks: textArray(value.risks, 6, 300),
     decisions: textArray(value.decisions, 6, 300),
+  };
+}
+
+export function parseRoomOverviewSynthesis(content: string): ContextRoomOverviewSynthesis {
+  const value = objectFromOutput(content);
+  return {
+    overview: text(value.overview, 2_000),
+    status: text(value.status, 1_000),
+    nextSteps: textArray(value.nextSteps, 8, 500),
   };
 }
 

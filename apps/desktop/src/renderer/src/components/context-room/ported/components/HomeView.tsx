@@ -202,12 +202,18 @@ export function HomeView({
     const api = window.nxcore?.contextRooms;
     if (!api) return;
     let active = true;
-    void api.listDuplicateCandidates('open').then((result) => {
-      if (active) setDuplicateCandidateCount(result.items.filter(isMergeRecommendationCandidate).length);
-    }).catch(() => {
-      // The management dialog surfaces service errors when the user opens it.
-    });
-    return () => { active = false; };
+    const refreshDuplicateCount = () => {
+      void api.listDuplicateCandidates('open').then((result) => {
+        if (active) setDuplicateCandidateCount(result.items.filter(isMergeRecommendationCandidate).length);
+      }).catch(() => {
+        // The management dialog surfaces service errors when the user opens it.
+      });
+    };
+    refreshDuplicateCount();
+    // rooms 变化会触发网关防抖重建候选（含 LLM 同一性判定），首次读取可能拿到
+    // 重建前的旧候选；延迟补拉一次对齐重建后的结果，避免红点与弹窗不一致。
+    const trailingRefresh = setTimeout(refreshDuplicateCount, 5_000);
+    return () => { active = false; clearTimeout(trailingRefresh); };
   }, [rooms]);
 
   const submitRoom = async (draft: DraftRoom) => {

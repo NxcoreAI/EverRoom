@@ -12,7 +12,7 @@ import {
   type PixiTicker,
   type PixiText,
   type PixiViewport,
-} from '../src/renderer/src/components/context-room/ported/graph/PixiForceGraphRenderer'
+} from '../src/renderer/src/components/graph/pixi/PixiForceGraphRenderer'
 
 class FakeTicker implements PixiTicker {
   readonly callbacks = new Set<() => void>()
@@ -428,6 +428,43 @@ describe('PixiForceGraphRenderer', () => {
       [80, 90],
       [140, 150],
     ])
+  })
+
+  it('uses an injected icon texture factory and skips unknown icon names', async () => {
+    const fakes = createFakes()
+    const customTexture = new FakeTexture()
+    const createIconTexture = vi.fn((icon: string) => (
+      icon === 'attribute' || icon === 'relation' ? customTexture : null
+    ))
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      createIconTexture,
+      edges: [],
+      host: createHost(),
+      nodes: [
+        { icon: 'attribute' },
+        { icon: 'relation' },
+        { icon: 'attribute' },
+        { icon: 'no-such-icon' },
+      ],
+      positions: new Float32Array([0, 0, 10, 0, 20, 0, 30, 0]),
+    })
+
+    // 三种图标名各建一个容器；未知名容器存在但没有 sprite，同名共享同一纹理。
+    expect(renderer.iconParticleContainers).toHaveLength(3)
+    expect(fakes.particles[1]?.children).toHaveLength(2)
+    expect(fakes.particles[2]?.children).toHaveLength(1)
+    expect(fakes.particles[3]?.children).toHaveLength(0)
+    expect((fakes.particles[1]?.children[0] as FakeSprite).texture).toBe(customTexture)
+    expect((fakes.particles[1]?.children[1] as FakeSprite).texture).toBe(customTexture)
+    expect((fakes.particles[2]?.children[0] as FakeSprite).texture).toBe(customTexture)
+    // 负缓存：4 个节点 3 种图标名，工厂只调用 3 次（未知名也只问一次）。
+    expect(createIconTexture).toHaveBeenCalledTimes(3)
+    expect([...new Set(createIconTexture.mock.calls.map(([icon]) => icon))].sort())
+      .toEqual(['attribute', 'no-such-icon', 'relation'])
+
+    renderer.destroy()
+    expect(customTexture.destroyed).toBe(true)
   })
 
   it('raises label texture resolution in stable steps while zooming in', async () => {

@@ -252,6 +252,8 @@ const CONTEXT_ROOM_CHANNELS = {
   getSubagentInvocation: 'context-rooms:get-subagent-invocation',
   cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
   refreshBrief: 'context-rooms:refresh-brief',
+  overview: 'context-rooms:overview',
+  refreshOverview: 'context-rooms:refresh-overview',
   roomEntities: 'context-rooms:room-entities',
 } as const
 
@@ -924,7 +926,9 @@ async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promi
   const bridge = runtimeConfigBridge
   try {
     const supervisor = memoryCoreSupervisor
-    const initialConnection = supervisor?.getConnection() ?? null
+    // 复用模式的连接可能指向已死的残留实例（残留进程随后退出的场景）：
+    // 先自愈成托管实例，否则 restart 对非托管连接是 no-op，死连接一直被注入。
+    const initialConnection = supervisor ? await supervisor.ensureHealthy() : null
     if (!supervisor || !initialConnection) {
       // MemoryCoreSupervisor returns null for an explicitly configured
       // external instance. In that mode Gateway already inherited the
@@ -1277,6 +1281,8 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
     bridge.cancelSubagentInvocation(invocationId))
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
 }
 

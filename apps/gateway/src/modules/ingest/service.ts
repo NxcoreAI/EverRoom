@@ -173,11 +173,11 @@ export class IngestService {
    * 连接器接入（unified-ingest-plan U4「json 信封」预留位的落地形态）：
    * 归一化 markdown 由连接器模块渲染好直传（家在 connectors.sqlite，引擎不回读），
    * 共用台账（闸1 同源同指纹幂等）与三链路扇出。
-   * ponytail: calendar 复用 sourceKind "mail"（schema 预留位只有 mail/cloud-doc），
-   * 靠 dataType=calendar 区分；要独立枚举时再加迁移。
+   * calendar 用独立的 sourceKind "calendar-event"（台账/路由信封枚举均已含；
+   * 历史上曾复用 "mail" 靠 dataType 区分，路由投影里会显成错误来源标签）。
    */
   async ingestConnector(unit: {
-    kind: "cloud-doc" | "mail";
+    kind: "cloud-doc" | "mail" | "calendar-event";
     sourceId: string;
     dataType: "document" | "mail" | "calendar";
     title: string;

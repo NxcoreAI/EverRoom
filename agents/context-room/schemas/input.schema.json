@@ -3,7 +3,7 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["room-enrich", "brief-refresh", "selection-rewrite", "material-analysis"],
+      "enum": ["room-enrich", "room-overview", "brief-refresh", "selection-rewrite", "material-analysis"],
       "description": "The room task to execute."
     },
     "title": {

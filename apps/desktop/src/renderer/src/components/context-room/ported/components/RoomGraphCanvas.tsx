@@ -5,7 +5,6 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
-  useState,
 } from 'react'
 
 import type { ContextRoomKind, ContextRoomRecord } from '../types'
@@ -14,14 +13,14 @@ import {
   PixiForceGraphCanvas,
   type PixiForceGraphCanvasHandle,
   type PixiForceGraphCanvasNode,
-} from '../graph/PixiForceGraphCanvas'
-import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
-import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+  type PixiForceGraphEdge,
+  useForceGraphLayout,
+} from '@/components/graph'
 import {
   roomGraphLayoutDimensions,
   roomGraphLayoutOptions,
   roomRelationTypeColor,
-} from '../graph/roomGraphVisuals'
+} from './roomGraphVisuals'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import { uiText } from '../adapters'
 import { relationTypeLabel } from './RoomRelationControls'
@@ -75,7 +74,6 @@ function RoomGraphCanvasComponent(
   const { t } = useLocale()
   const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
   const fitTimerRef = useRef<number | null>(null)
-  const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const nodeIndex = useMemo(
     () => new Map(rooms.map((node, index) => [node.id, index])),
     [rooms],
@@ -128,6 +126,22 @@ function RoomGraphCanvasComponent(
     })
     return result
   }, [initialLayoutDimensions, nodes])
+  const layoutNodes = useMemo(() => rooms.map((room, index) => ({
+    id: room.id,
+    radius: compact ? 22 : 29,
+    x: fallbackPositions[index * 2],
+    y: fallbackPositions[index * 2 + 1],
+  })), [compact, fallbackPositions, rooms])
+  const layoutOptions = useMemo(() => ({
+    ...roomGraphLayoutOptions({ compact, nodeCount: rooms.length, relationCount: relations.length }),
+    ...initialLayoutDimensions,
+  }), [compact, initialLayoutDimensions, relations.length, rooms.length])
+  const layout = useForceGraphLayout({
+    nodes: layoutNodes,
+    edges: layoutEdges,
+    options: layoutOptions,
+    label: 'Room force graph',
+  })
   const resizeLayout = useCallback((width: number, height: number) => {
     const dimensions = roomGraphLayoutDimensions({
       compact,
@@ -136,41 +150,12 @@ function RoomGraphCanvasComponent(
       screenHeight: height,
       screenWidth: width,
     })
-    layout?.resize(dimensions.width, dimensions.height)
+    layout.controller?.resize(dimensions.width, dimensions.height)
     if (dimensions.width > width || dimensions.height > height) {
       if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
       fitTimerRef.current = window.setTimeout(() => canvasRef.current?.fitView(), 500)
     }
-  }, [compact, layout, nodes.length, relations.length])
-  const readRevision = useCallback(() => layout?.revision() ?? 0, [layout])
-
-  useEffect(() => {
-    let next: ForceGraphLayoutController
-    try {
-      next = new ForceGraphLayoutController({
-        nodes: rooms.map((room, index) => ({
-          id: room.id,
-          radius: compact ? 22 : 29,
-          x: fallbackPositions[index * 2],
-          y: fallbackPositions[index * 2 + 1],
-        })),
-        edges: layoutEdges,
-        options: {
-          ...roomGraphLayoutOptions({ compact, nodeCount: rooms.length, relationCount: relations.length }),
-          ...initialLayoutDimensions,
-        },
-      })
-    } catch (error) {
-      console.error('Failed to initialize Room force graph layout', error)
-      setLayout(null)
-      return
-    }
-    setLayout(next)
-    void next.ready.catch((error) => {
-      console.error('Room force graph worker failed', error)
-    })
-    return () => next.dispose()
-  }, [compact, fallbackPositions, initialLayoutDimensions, layoutEdges, relations.length, rooms])
+  }, [compact, layout.controller, nodes.length, relations.length])
 
   useEffect(() => () => {
     if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current)
@@ -183,20 +168,20 @@ function RoomGraphCanvasComponent(
   }), [])
 
   return (
-    <div className="context-room-graph-shell">
+    <div className="context-room-graph-shell nx-graph-shell">
       <PixiForceGraphCanvas
         ref={canvasRef}
         ariaLabel={t('contextRoom:graphs.roomRelationsCanvas')}
         className="context-room-graph-canvas"
         edges={edges}
         nodes={nodes}
-        positions={layout?.snapshot.positions ?? fallbackPositions}
-        revision={layout ? readRevision : undefined}
+        positions={layout.positions ?? fallbackPositions}
+        revision={layout.revision}
         selectedId={selectedId}
         selectedEdgeId={selectedRelationId}
         onResize={resizeLayout}
-        onDragNode={(nodeId, x, y) => layout?.drag(nodeId, x, y)}
-        onReleaseNode={(nodeId) => layout?.release(nodeId)}
+        onDragNode={layout.drag}
+        onReleaseNode={layout.release}
         onOpenNode={onOpenRoom}
         onSelectEdge={onSelectRelation}
         onSelectNode={onSelectRoom}

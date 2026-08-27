@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { ContextRoomService } from "./service.js";
 import { DuplicateReviewRequiredError, type RoomDuplicateService } from "./duplicate-service.js";
 import type { RoomAgentDispatcher } from "./room-agent.js";
+import type { RoomOverviewService } from "./overview-service.js";
 
 const RoomData = Type.Object({}, { additionalProperties: true });
 const RoomSnapshotItem = Type.Object({
@@ -11,11 +12,21 @@ const RoomSnapshotItem = Type.Object({
   kind: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
   data: RoomData,
 });
+const OverviewSection = Type.Union([
+  Type.Literal("overview"), Type.Literal("status"), Type.Literal("next_steps"),
+  Type.Literal("timeline"), Type.Literal("entities"),
+]);
+const CorrectionOperation = Type.Union([
+  Type.Literal("content_replace"), Type.Literal("content_add"), Type.Literal("content_suppress"),
+  Type.Literal("fact_correct"), Type.Literal("fact_add"), Type.Literal("source_remove"),
+  Type.Literal("source_reassign"),
+]);
 
 export function contextRoomRoutes(
   service: ContextRoomService,
   duplicates?: RoomDuplicateService,
   roomAgent?: RoomAgentDispatcher,
+  overviews?: RoomOverviewService,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.get(
@@ -244,6 +255,138 @@ export function contextRoomRoutes(
             return reply.code(503).send({ error: code, message: "Context Room agent is not available" });
           }
           return reply.code(502).send({ error: code, message: "Context Room brief refresh failed" });
+        }
+      },
+    );
+
+    app.get(
+      "/v1/context-rooms/:roomId/overview",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return overviews.get(request.params.roomId);
+        } catch (error) {
+          if (error instanceof Error && error.message === "context_room_not_found") {
+            return reply.code(404).send({ error: error.message });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/context-rooms/:roomId/overview/refresh",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return await overviews.regenerate(request.params.roomId);
+        } catch (error) {
+          if (error instanceof Error && error.message === "context_room_not_found") {
+            return reply.code(404).send({ error: error.message });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.get(
+      "/v1/context-rooms/:roomId/corrections",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => overviews
+        ? { items: overviews.list(request.params.roomId) }
+        : reply.code(503).send({ error: "room_overview_service_unavailable" }),
+    );
+
+    app.post(
+      "/v1/context-rooms/:roomId/correction-proposals",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+          body: Type.Object({
+            operation: CorrectionOperation,
+            section: OverviewSection,
+            targetClaimId: Type.Optional(Type.String({ maxLength: 200 })),
+            targetSource: Type.Optional(Type.Object({
+              sourceKind: Type.String({ minLength: 1, maxLength: 100 }),
+              sourceId: Type.String({ minLength: 1, maxLength: 256 }),
+              sourceTitle: Type.Union([Type.String({ maxLength: 500 }), Type.Null()]),
+            }, { additionalProperties: false })),
+            targetRoomId: Type.Optional(Type.String({ maxLength: 128 })),
+            originalText: Type.Optional(Type.String({ maxLength: 4_000 })),
+            replacementText: Type.Optional(Type.String({ maxLength: 4_000 })),
+            rationale: Type.String({ minLength: 1, maxLength: 2_000 }),
+            entryPoint: Type.Union([Type.Literal("overview"), Type.Literal("section"), Type.Literal("agent")]),
+            sessionId: Type.Optional(Type.String({ maxLength: 200 })),
+          }, { additionalProperties: false }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return overviews.propose(request.params.roomId, request.body);
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "room_correction_invalid";
+          return reply.code(code === "context_room_not_found" ? 404 : 400).send({ error: code });
+        }
+      },
+    );
+
+    app.post(
+      "/v1/context-rooms/:roomId/correction-proposals/:proposalId/apply",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            proposalId: Type.String({ minLength: 1, maxLength: 200 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return overviews.apply(request.params.roomId, request.params.proposalId);
+        } catch (error) {
+          return reply.code(409).send({ error: error instanceof Error ? error.message : "room_correction_apply_failed" });
+        }
+      },
+    );
+
+    app.post(
+      "/v1/context-rooms/:roomId/corrections/:correctionId/revoke",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            correctionId: Type.String({ minLength: 1, maxLength: 200 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return overviews.revoke(request.params.roomId, request.params.correctionId);
+        } catch (error) {
+          return reply.code(409).send({ error: error instanceof Error ? error.message : "room_correction_revoke_failed" });
         }
       },
     );

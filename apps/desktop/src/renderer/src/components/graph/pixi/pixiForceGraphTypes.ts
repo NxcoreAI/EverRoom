@@ -110,6 +110,17 @@ export interface PixiViewportConstructor {
   }): PixiViewport
 }
 
+/**
+ * 图标纹理工厂：按 icon 名生成纹理，返回 null 表示该图标无纹理（节点不画图标）。
+ * 渲染层内置一套默认图标；使用面注入自定义工厂即可扩展图标词表，无需改内核。
+ */
+export type PixiForceGraphIconTextureFactory = (
+  icon: string,
+  dependencies: PixiForceGraphDependencies,
+  renderer: PixiRenderer,
+  resolution: number,
+) => PixiTexture | null
+
 export interface PixiForceGraphDependencies {
   Application: PixiApplicationConstructor
   Container: new () => PixiContainer
@@ -128,7 +139,8 @@ export interface PixiForceGraphDependencies {
 
 export interface PixiForceGraphNode {
   color?: number | string
-  icon?: 'book' | 'flag' | 'message' | 'target' | 'user' | 'zap'
+  /** 图标名，含义由使用面定义；渲染层只负责按名取纹理（见 PixiForceGraphIconTextureFactory）。 */
+  icon?: string
   label?: string
   radius?: number
 }
@@ -155,6 +167,7 @@ export interface PixiForceGraphRendererOptions {
   nodes: readonly PixiForceGraphNode[]
   edges: readonly PixiForceGraphEdge[]
   dependencies: PixiForceGraphDependencies
+  createIconTexture?: PixiForceGraphIconTextureFactory
   nodeRadius?: number
   nodeColor?: number | string
   edgeColor?: number | string

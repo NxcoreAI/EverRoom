@@ -42,6 +42,10 @@ const DEFAULT_BASE_URL = `http://127.0.0.1:${MEMORY_CORE_PORT}`
 // 全新数据目录 + 多服务并行冷启动（tsx 编译争抢 IO）时 30s 不够，实测可超一分钟。
 const STARTUP_TIMEOUT_MS = 120_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
+// 意外退出后的自动重生：指数退避，连续失败到上限后放弃（等下一次 sync 恢复）。
+const RESPAWN_BASE_DELAY_MS = 5_000
+const RESPAWN_MAX_DELAY_MS = 60_000
+const MAX_RESPAWN_ATTEMPTS = 5
 
 type MemoryLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'off'
 
@@ -73,6 +77,10 @@ export class MemoryCoreSupervisor {
   private connection: MemoryCoreConnection | null = null
   private stopping = false
   private lastError: string | null = null
+  /** 最近一次注入托管实例的 AI 覆盖 env（null = 未覆盖，沿用进程 env；重生时复用）。 */
+  private lastAiEnvironment: Record<string, string> | null = null
+  private respawnTimer: NodeJS.Timeout | null = null
+  private respawnAttempts = 0
 
   constructor(private readonly dataDirectory: string) {}
 
@@ -135,6 +143,7 @@ export class MemoryCoreSupervisor {
     )
     this.child = child
     this.stopping = false
+    this.lastAiEnvironment = options.aiEnvironment ?? null
     child.stdin.end()
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
@@ -146,12 +155,17 @@ export class MemoryCoreSupervisor {
       if (!this.stopping) {
         this.lastError = `MemoryCore 进程已退出（code=${String(code)}, signal=${String(signal)}）`
         console.error(this.lastError)
+        // 启动失败（connection 尚未置为 managed）不在此重生——start() 会抛给
+        // 调用方，由 sync / respawn 的 catch 决定重试。
+        const apiKey = this.connection?.managed ? this.connection.apiKey : null
+        if (apiKey !== null) this.scheduleRespawn(apiKey)
       }
     })
 
     try {
       await this.waitUntilReady(child)
       this.connection = { baseUrl: DEFAULT_BASE_URL, apiKey, managed: true }
+      this.respawnAttempts = 0
       console.info(`[memory-core] managed instance ready at ${DEFAULT_BASE_URL} (pid=${child.pid})`)
       return this.connection
     } catch (error) {
@@ -167,12 +181,69 @@ export class MemoryCoreSupervisor {
   }
 
   /**
+   * 意外退出后的自愈：托管实例崩溃（code=1 等运行期错误）时只记 lastError
+   * 没有任何恢复路径——连接一直指向死端口，只能重启应用。这里按指数退避
+   * 自动重生（端口与 apiKey 不变，gateway 注入的 env 依然有效）；连续失败
+   * 到上限后放弃，等下一次 runtime config sync 触发 restart。
+   */
+  private scheduleRespawn(apiKey: string): void {
+    if (this.respawnTimer) return
+    if (this.respawnAttempts >= MAX_RESPAWN_ATTEMPTS) {
+      console.error(`[memory-core] giving up auto-restart after ${MAX_RESPAWN_ATTEMPTS} failed attempts`)
+      return
+    }
+    this.respawnAttempts += 1
+    const attempt = this.respawnAttempts
+    const delayMs = Math.min(RESPAWN_BASE_DELAY_MS * 2 ** (attempt - 1), RESPAWN_MAX_DELAY_MS)
+    console.warn(`[memory-core] auto-restarting crashed instance in ${delayMs}ms (attempt ${attempt}/${MAX_RESPAWN_ATTEMPTS})`)
+    this.respawnTimer = setTimeout(() => {
+      this.respawnTimer = null
+      void this.respawn(apiKey)
+    }, delayMs)
+  }
+
+  private async respawn(apiKey: string): Promise<void> {
+    // 定时器触发时 sync 路径可能已自行 restart（child 就绪）。
+    if (this.stopping || this.child) return
+    this.connection = null
+    try {
+      await this.start({ apiKey, aiEnvironment: this.lastAiEnvironment })
+      console.info('[memory-core] auto-restart recovered managed instance')
+    } catch (error) {
+      console.error('[memory-core] auto-restart failed:', error)
+      this.scheduleRespawn(apiKey)
+    }
+  }
+
+  /**
+   * 连接自愈入口：连接指向的实例已死（复用目标随后退出、托管实例重生耗尽
+   * 重试等）时清掉连接并拉起托管实例——否则 getConnection 永远返回死连接
+   * （restart 对非托管连接是 no-op），应用只能重启恢复。实例在跑（child
+   * 就绪）或在重生退避队列中时不打扰。
+   */
+  async ensureHealthy(): Promise<MemoryCoreConnection | null> {
+    const connection = this.connection
+    if (!connection) return null
+    if (this.child || this.respawnTimer) return connection
+    if (await this.probe()) return connection
+    console.warn('[memory-core] instance at 8420 is gone; recovering with managed start')
+    this.connection = null
+    return this.start()
+  }
+
+  /**
    * 重启托管实例以应用新的 AI 环境(MemoryCore 启动时解析配置,无热加载)。
    * 复用旧 apiKey,busy/外部/复用模式不重启。失败抛出,连接置空。
+   * 复用模式但目标实例已死时降级为托管拉起（带新 env），不再原地返回死连接。
    */
   async restart(aiEnvironment: Record<string, string> | null): Promise<MemoryCoreConnection | null> {
     const connection = this.connection
-    if (!connection?.managed) return connection
+    if (!connection?.managed) {
+      if (!connection || await this.probe()) return connection
+      console.warn('[memory-core] reused instance at 8420 is gone during restart; starting managed instance')
+      this.connection = null
+      return this.start({ aiEnvironment: aiEnvironment ?? undefined })
+    }
     const apiKey = connection.apiKey
     await this.shutdown()
     return this.start({ apiKey, aiEnvironment: aiEnvironment ?? undefined })
@@ -185,6 +256,10 @@ export class MemoryCoreSupervisor {
   async shutdown(): Promise<void> {
     const child = this.child
     this.connection = null
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer)
+      this.respawnTimer = null
+    }
     if (!child) return
 
     this.stopping = true
@@ -216,9 +291,23 @@ export class MemoryCoreSupervisor {
       if (!processGroupKill()) finish()
     })
     // 孙进程可能比 wrapper 晚退出几百毫秒：等待端口释放，避免 start() 的
-    // probe 抢在残留进程死亡前把它当成「可复用实例」。
-    const deadline = Date.now() + 3_000
-    while (Date.now() < deadline && await this.probe()) await delay(100)
+    // probe 抢在残留进程死亡前把它当成「可复用实例」。wrapper 的 exit 事件
+    // 会取消上面的 SIGKILL 兜底——吞掉 SIGTERM 的孙进程继续占着端口时，
+    // 3s 等待耗尽后 start() 会把垂死进程当成外部实例复用，托管实例从此
+    // 不再拉起（断联直到重启应用）。端口仍被占就整组 SIGKILL 再等释放。
+    const deadline = Date.now() + 10_000
+    let escalated = false
+    while (Date.now() < deadline && await this.probe()) {
+      if (!escalated) {
+        escalated = true
+        try { process.kill(-child.pid!, 'SIGKILL') } catch { /* 组已死：占用者非本组进程 */ }
+        this.killChild(child, 'SIGKILL')
+      }
+      await delay(100)
+    }
+    if (await this.probe()) {
+      console.warn('[memory-core] port 8420 still occupied after shutdown; next start may reuse the lingering instance')
+    }
     this.child = null
     this.lastError = null
   }

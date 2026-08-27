@@ -1,5 +1,5 @@
 import type { KnowledgeRoomRelationDto } from '../../../../../../shared/knowledge'
-import type { ForceGraphOptions } from './forceGraphProtocol'
+import type { ForceGraphOptions } from '@/components/graph'
 
 type RoomRelationType = KnowledgeRoomRelationDto['type']
 

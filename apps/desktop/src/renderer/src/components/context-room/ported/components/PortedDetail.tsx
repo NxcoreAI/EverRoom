@@ -184,7 +184,9 @@ export function PortedDetail({
       ? 'schedule'
       : target.kind === 'task'
         ? 'tasks'
-        : 'relations'
+        : target.kind === 'graph-node'
+          ? 'memories'
+          : 'relations'
     setSelectedObject(target)
     setSelectedResourceId(null)
     if (!layout.panels.includes(pane)) layout.switchPane(pane)

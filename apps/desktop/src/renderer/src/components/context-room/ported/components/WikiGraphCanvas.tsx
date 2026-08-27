@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 
 import type { KnowledgeWikiGraphDto } from '../../../../../../shared/knowledge'
 import {
   PixiForceGraphCanvas,
   type PixiForceGraphCanvasNode,
-} from '../graph/PixiForceGraphCanvas'
-import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
-import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+  type PixiForceGraphEdge,
+  useForceGraphLayout,
+} from '@/components/graph'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
 function nodeRadius(node: KnowledgeWikiGraphDto['nodes'][number]) {
@@ -31,7 +31,6 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
   onSelectPage: (path: string) => void
 }) {
   const { t } = useLocale()
-  const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const nodeIndex = useMemo(
     () => new Map(graph.nodes.map((node, index) => [node.id, index])),
     [graph.nodes],
@@ -52,47 +51,32 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
     return source === undefined || target === undefined ? [] : [{ source, target }]
   }), [graph.edges, nodeIndex])
   const fallbackPositions = useMemo(() => initialPositions(nodes.length), [nodes.length])
-  const resizeLayout = useCallback(
-    (width: number, height: number) => layout?.resize(width, height),
-    [layout],
+  const layoutNodes = useMemo(
+    () => graph.nodes.map((node) => ({ id: node.id, radius: nodeRadius(node) })),
+    [graph.nodes],
   )
-  const readRevision = useCallback(() => layout?.revision() ?? 0, [layout])
+  const layout = useForceGraphLayout({
+    nodes: layoutNodes,
+    edges: graph.edges,
+    label: 'Wiki force graph',
+  })
   const selectedId = selectedPath
     ? graph.nodes.find((node) => node.path === selectedPath)?.id ?? null
     : null
 
-  useEffect(() => {
-    let next: ForceGraphLayoutController
-    try {
-      next = new ForceGraphLayoutController({
-        nodes: graph.nodes.map((node) => ({ id: node.id, radius: nodeRadius(node) })),
-        edges: graph.edges,
-      })
-    } catch (error) {
-      console.error('Failed to initialize Wiki force graph layout', error)
-      setLayout(null)
-      return
-    }
-    setLayout(next)
-    void next.ready.catch((error) => {
-      console.error('Wiki force graph worker failed', error)
-    })
-    return () => next.dispose()
-  }, [graph.edges, graph.nodes])
-
   return (
-    <div className="context-room-graph-shell context-room-wiki-graph">
+    <div className="context-room-graph-shell context-room-wiki-graph nx-graph-shell">
       <PixiForceGraphCanvas
         ariaLabel={t('contextRoom:graphs.wikiCanvas')}
         className="context-room-graph-canvas"
         edges={edges}
         nodes={nodes}
-        positions={layout?.snapshot.positions ?? fallbackPositions}
-        revision={layout ? readRevision : undefined}
+        positions={layout.positions ?? fallbackPositions}
+        revision={layout.revision}
         selectedId={selectedId}
-        onResize={resizeLayout}
-        onDragNode={(nodeId, x, y) => layout?.drag(nodeId, x, y)}
-        onReleaseNode={(nodeId) => layout?.release(nodeId)}
+        onResize={layout.resize}
+        onDragNode={layout.drag}
+        onReleaseNode={layout.release}
         onSelectNode={(nodeId) => {
           if (!nodeId) return
           const path = pathById.get(nodeId)

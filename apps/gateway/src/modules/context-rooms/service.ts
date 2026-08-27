@@ -7,12 +7,14 @@ import type {
   CreateContextRoomResult,
   RoomAppliedEntitiesResult,
   RoomAppliedEntity,
+  RoomAppliedEntitySource,
+  RoomAppliedFact,
   RoomAppliedEntityStatus,
   SaveContextRoomSnapshotInput,
 } from "@nxcore/agent-contract";
-import { and, asc, eq, isNull, notInArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, notInArray, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { contextRooms, entities as entitiesTable, roomEntityMentions } from "../../infrastructure/database/schema.js";
+import { contextRooms, documents, entities as entitiesTable, roomEntityFacts, roomEntityMentions, roomSourceMemberships } from "../../infrastructure/database/schema.js";
 import {
   fallbackContextRoomEnrichment,
   invocationText,
@@ -248,6 +250,8 @@ export class ContextRoomService {
   private duplicateService: RoomDuplicateService | null = null;
   private roomAgent: RoomAgentDispatcher | null = null;
   private roomAgentLogger: ((bindings: Record<string, unknown>, message: string) => void) | null = null;
+  private roomEntityClaimer:
+    ((roomId: string, entities: Array<{ name: string; kind: string }>) => number | void) | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,
@@ -255,6 +259,16 @@ export class ContextRoomService {
 
   setDuplicateService(service: RoomDuplicateService): void {
     this.duplicateService = service;
+  }
+
+  /**
+   * 注入实体认领回调（create-server 接 KnowledgeService.claimRoomEntities）：
+   * enrich 实体回写时把描述中出现的实体绑定到本 Room，使其成为路由目标。
+   */
+  setRoomEntityClaimer(
+    claimer: ((roomId: string, entities: Array<{ name: string; kind: string }>) => number | void) | null,
+  ): void {
+    this.roomEntityClaimer = claimer;
   }
 
   /**
@@ -325,31 +339,49 @@ export class ContextRoomService {
   roomAppliedEntities(roomId: string): RoomAppliedEntitiesResult {
     const resolved = this.resolveRoomId(roomId);
     if (!resolved) throw new Error("context_room_not_found");
-    const rows = this.db.select({ entity: entitiesTable, mention: roomEntityMentions })
+    const rows = this.db.select({
+      entity: entitiesTable,
+      mention: roomEntityMentions,
+      sourceTitle: roomSourceMemberships.sourceTitle,
+    })
       .from(roomEntityMentions)
       .innerJoin(entitiesTable, eq(roomEntityMentions.entityId, entitiesTable.id))
-      .where(eq(roomEntityMentions.roomId, resolved))
+      // 来源标题冗余在 room_source_memberships（同 Room 同来源一行），拿不到就置 null。
+      .leftJoin(roomSourceMemberships, and(
+        eq(roomSourceMemberships.roomId, roomEntityMentions.roomId),
+        eq(roomSourceMemberships.sourceKind, roomEntityMentions.sourceKind),
+        eq(roomSourceMemberships.sourceId, roomEntityMentions.sourceId),
+      ))
+      // 回收站文档的投影读侧剔除：软删除不清投影（恢复即回、不重抽），
+      // 但图谱/详情不能继续展示已删文档的实体与事实。非文档来源不受影响。
+      .leftJoin(documents, and(
+        eq(documents.id, roomEntityMentions.sourceId),
+        eq(roomEntityMentions.sourceKind, "everroom-doc"),
+      ))
+      .where(and(
+        eq(roomEntityMentions.roomId, resolved),
+        or(isNull(documents.deletedAt), ne(roomEntityMentions.sourceKind, "everroom-doc")),
+      ))
       .all();
     const grouped = new Map<string, {
       entity: typeof entitiesTable.$inferSelect;
-      sources: Set<string>;
+      sources: Map<string, Omit<RoomAppliedEntitySource, "mentionedAt"> & { mentionedAt: Date }>;
       sourceKinds: Set<string>;
       salience: number;
       lastMentionAt: Date | null;
       evidence: string | null;
       evidenceAt: Date | null;
     }>();
-    for (const { entity, mention } of rows) {
+    for (const { entity, mention, sourceTitle } of rows) {
       const current = grouped.get(entity.id) ?? {
         entity,
-        sources: new Set<string>(),
+        sources: new Map<string, Omit<RoomAppliedEntitySource, "mentionedAt"> & { mentionedAt: Date }>(),
         sourceKinds: new Set<string>(),
         salience: 0,
         lastMentionAt: null,
         evidence: null,
         evidenceAt: null,
       };
-      current.sources.add(`${mention.sourceKind}:${mention.sourceId}`);
       current.sourceKinds.add(mention.sourceKind);
       current.salience = Math.max(current.salience, mention.salience);
       if (!current.lastMentionAt || mention.updatedAt > current.lastMentionAt) {
@@ -358,6 +390,18 @@ export class ContextRoomService {
       if (mention.evidence && (!current.evidenceAt || mention.updatedAt >= current.evidenceAt)) {
         current.evidence = mention.evidence;
         current.evidenceAt = mention.updatedAt;
+      }
+      // 唯一索引保证每来源一行；Map 兜底防 schema 漂移，同来源保留最新。
+      const sourceKey = `${mention.sourceKind}:${mention.sourceId}`;
+      const existing = current.sources.get(sourceKey);
+      if (!existing || mention.updatedAt >= existing.mentionedAt) {
+        current.sources.set(sourceKey, {
+          sourceKind: mention.sourceKind,
+          sourceId: mention.sourceId,
+          sourceTitle: sourceTitle ?? existing?.sourceTitle ?? null,
+          evidence: mention.evidence ?? existing?.evidence ?? null,
+          mentionedAt: mention.updatedAt,
+        });
       }
       grouped.set(entity.id, current);
     }
@@ -374,12 +418,109 @@ export class ContextRoomService {
       salience: item.salience,
       lastMentionAt: item.lastMentionAt?.toISOString() ?? null,
       evidence: item.evidence,
+      sources: [...item.sources.values()]
+        .sort((a, b) => b.mentionedAt.getTime() - a.mentionedAt.getTime())
+        .slice(0, 8)
+        .map((source) => ({
+          sourceKind: source.sourceKind,
+          sourceId: source.sourceId,
+          sourceTitle: source.sourceTitle,
+          evidence: source.evidence,
+          mentionedAt: source.mentionedAt.toISOString(),
+        })),
     })).sort((a, b) => (
       b.mentionCount - a.mentionCount
       || b.salience - a.salience
       || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
     )).slice(0, 100);
-    return { roomId: resolved, entities, updatedAt: new Date().toISOString() };
+
+    // 事实记忆：按 factId 跨来源聚合去重（同内容多来源 = sourceCount 累计）
+    const factRows = this.db.select({
+      fact: roomEntityFacts,
+      sourceTitle: roomSourceMemberships.sourceTitle,
+    })
+      .from(roomEntityFacts)
+      .leftJoin(roomSourceMemberships, and(
+        eq(roomSourceMemberships.roomId, roomEntityFacts.roomId),
+        eq(roomSourceMemberships.sourceKind, roomEntityFacts.sourceKind),
+        eq(roomSourceMemberships.sourceId, roomEntityFacts.sourceId),
+      ))
+      // 同上：回收站文档的事实读侧剔除，行保留到永久删除（恢复免重抽）。
+      .leftJoin(documents, and(
+        eq(documents.id, roomEntityFacts.sourceId),
+        eq(roomEntityFacts.sourceKind, "everroom-doc"),
+      ))
+      .where(and(
+        eq(roomEntityFacts.roomId, resolved),
+        or(isNull(documents.deletedAt), ne(roomEntityFacts.sourceKind, "everroom-doc")),
+      ))
+      .all();
+    const factsGrouped = new Map<string, {
+      content: string;
+      type: RoomAppliedFact["type"];
+      entityIds: Set<string>;
+      sources: Map<string, Omit<RoomAppliedEntitySource, "mentionedAt"> & { mentionedAt: Date }>;
+      lastMentionAt: Date | null;
+    }>();
+    for (const { fact, sourceTitle } of factRows) {
+      const current = factsGrouped.get(fact.factId) ?? {
+        content: fact.content,
+        type: fact.type,
+        entityIds: new Set<string>(),
+        sources: new Map<string, Omit<RoomAppliedEntitySource, "mentionedAt"> & { mentionedAt: Date }>(),
+        lastMentionAt: null,
+      };
+      for (const entityId of fact.entityIds ?? []) current.entityIds.add(entityId);
+      const sourceKey = `${fact.sourceKind}:${fact.sourceId}`;
+      const existing = current.sources.get(sourceKey);
+      if (!existing || fact.updatedAt >= existing.mentionedAt) {
+        current.sources.set(sourceKey, {
+          sourceKind: fact.sourceKind,
+          sourceId: fact.sourceId,
+          sourceTitle: sourceTitle ?? existing?.sourceTitle ?? null,
+          evidence: fact.content,
+          mentionedAt: fact.updatedAt,
+        });
+      }
+      if (!current.lastMentionAt || fact.updatedAt > current.lastMentionAt) {
+        current.lastMentionAt = fact.updatedAt;
+      }
+      factsGrouped.set(fact.factId, current);
+    }
+    const entityIdByNameRow = factRows.length > 0
+      ? new Map(this.db.select({ id: entitiesTable.id, name: entitiesTable.name })
+        .from(entitiesTable)
+        .where(inArray(entitiesTable.id, [...new Set(factRows.flatMap(({ fact }) => fact.entityIds ?? []))]))
+        .all().map((row) => [row.id, row.name]))
+      : new Map<string, string>();
+    const facts: RoomAppliedFact[] = [...factsGrouped.entries()].map(([factId, item]) => {
+      // 只保留仍存在的实体（id/name 对齐；被清理实体的事实保留、图谱连根）
+      const entityIds = [...item.entityIds].filter((entityId) => entityIdByNameRow.has(entityId));
+      return {
+        factId,
+        content: item.content,
+        type: item.type,
+        entityIds,
+        entityNames: entityIds.map((entityId) => entityIdByNameRow.get(entityId)!),
+        sourceCount: item.sources.size,
+        lastMentionAt: item.lastMentionAt?.toISOString() ?? null,
+        sources: [...item.sources.values()]
+          .sort((a, b) => b.mentionedAt.getTime() - a.mentionedAt.getTime())
+          .slice(0, 8)
+          .map((source) => ({
+            sourceKind: source.sourceKind,
+            sourceId: source.sourceId,
+            sourceTitle: source.sourceTitle,
+            evidence: source.evidence,
+            mentionedAt: source.mentionedAt.toISOString(),
+          })),
+      };
+    }).sort((a, b) => (
+      b.sourceCount - a.sourceCount
+      || (b.lastMentionAt ?? "").localeCompare(a.lastMentionAt ?? "")
+      || (a.content < b.content ? -1 : a.content > b.content ? 1 : 0)
+    )).slice(0, 50);
+    return { roomId: resolved, entities, facts, updatedAt: new Date().toISOString() };
   }
 
   async createRoom(input: CreateContextRoomInput): Promise<CreateContextRoomResult> {
@@ -563,7 +704,34 @@ export class ContextRoomService {
       data,
       updatedAt: new Date(),
     }).where(eq(contextRooms.id, roomId)).run();
+    this.claimEnrichmentEntities(roomId, enrichment.entities);
     return true;
+  }
+
+  /**
+   * 把 enrich 抽出的实体认领到本 Room（路由目标化）。认领失败只记日志，
+   * 不影响 enrich 回写结果——静态展示数据已落库，认领是路由增强。
+   */
+  private claimEnrichmentEntities(roomId: string, entities: ContextRoomEnrichment["entities"]): void {
+    const claimable = entities.filter((entity) => entity.name.trim());
+    if (claimable.length === 0 || !this.roomEntityClaimer) return;
+    try {
+      const claimed = this.roomEntityClaimer(
+        roomId,
+        claimable.map(({ name, kind }) => ({ name, kind })),
+      );
+      if (typeof claimed === "number" && claimed > 0) {
+        this.roomAgentLogger?.(
+          { roomId, claimed, total: claimable.length },
+          "context room enrichment entities claimed for routing",
+        );
+      }
+    } catch (error) {
+      this.roomAgentLogger?.(
+        { roomId, error: error instanceof Error ? error.message : String(error) },
+        "context room entity claim failed; enrichment kept",
+      );
+    }
   }
 
   /** 调度子 Agent 再生成 Room 简报并回写；返回更新后的 Room 快照。 */

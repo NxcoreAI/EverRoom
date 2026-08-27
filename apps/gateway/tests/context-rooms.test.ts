@@ -1,16 +1,21 @@
 import type { SubagentInvocation } from '@nxcore/agent-contract'
+import { eq } from 'drizzle-orm'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
+  documents as documentsTable,
   entities as entitiesTable,
+  roomEntityFacts,
   roomEntityMentions,
+  roomSourceMemberships,
 } from '../src/infrastructure/database/schema.js'
 import type { RoomAgentDispatcher, RoomAgentDispatchInput } from '../src/modules/context-rooms/room-agent.js'
 import { CONTEXT_ROOM_AGENT_ID } from '../src/modules/context-rooms/room-agent.js'
 import { ContextRoomService } from '../src/modules/context-rooms/service.js'
+import { RoomOverviewService } from '../src/modules/context-rooms/overview-service.js'
 
 const temporaryDirectories: string[] = []
 
@@ -134,6 +139,8 @@ describe('ContextRoomService', () => {
   it('creates the Room immediately with fallback content and applies the async enrichment', async () => {
     const { dispatcher, calls } = gatedDispatcher()
     const { service, sqlite } = await createHarness(dispatcher)
+    const claimedEntities: Array<{ roomId: string; entities: Array<{ name: string; kind: string }> }> = []
+    service.setRoomEntityClaimer((roomId, entities) => { claimedEntities.push({ roomId, entities }) })
 
     const first = await service.createRoom({
       title: ' Campus Life ',
@@ -184,6 +191,10 @@ describe('ContextRoomService', () => {
     })
     // 回写完成后清除标记，快照不再携带内部任务字段。
     expect(service.getSnapshot().rooms[0]?.data).not.toHaveProperty('roomAgentTask')
+    // enrich 抽出的实体同步触发认领（路由目标化）；kind 原样透传，由认领侧解析。
+    expect(claimedEntities).toEqual([
+      { roomId: first.room.id, entities: [{ name: '校园社团', kind: '组织' }] },
+    ])
     expect(service.getSnapshot().rooms[0]?.data.timeline).toEqual([
       expect.objectContaining({ title: 'Room 已创建', kind: 'info', generated: true }),
       expect.objectContaining({ title: 'Room 创建整理完成', kind: 'done', generated: true }),
@@ -324,6 +335,9 @@ describe('ContextRoomService', () => {
     ]).run()
     const now = new Date()
     const later = new Date(now.getTime() + 1_000)
+    db.insert(roomSourceMemberships).values([
+      { id: 's1', roomId: 'room-1', sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceVersion: 1, evidenceGroupKey: 'g1', role: 'primary', sourceTitle: 'V1 项目结论' },
+    ]).run()
     db.insert(roomEntityMentions).values([
       { id: 'm1', roomId: 'room-1', entityId: 'entity-a', sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceVersion: 1, evidenceGroupKey: 'g1', salience: 0.6, evidence: '林薇负责设计', createdAt: now, updatedAt: now },
       { id: 'm2', roomId: 'room-1', entityId: 'entity-a', sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'g2', salience: 0.4, createdAt: now, updatedAt: now },
@@ -349,6 +363,12 @@ describe('ContextRoomService', () => {
     expect(result.entities[0]?.aliases).toEqual(['薇薇'])
     expect(result.entities[0]?.sourceKinds).toEqual(['everroom-doc', 'mail'])
     expect(result.entities[0]?.lastMentionAt).toBe(now.toISOString())
+    // 来源明细：标题取 room_source_memberships（mail-1 无 membership → null），
+    // 同时刻插入按稳定排序保持插入顺序。
+    expect(result.entities[0]?.sources).toEqual([
+      { sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceTitle: 'V1 项目结论', evidence: '林薇负责设计', mentionedAt: now.toISOString() },
+      { sourceKind: 'mail', sourceId: 'mail-1', sourceTitle: null, evidence: null, mentionedAt: now.toISOString() },
+    ])
     expect(result.entities[1]).toMatchObject({
       entityId: 'entity-b',
       status: 'weak',
@@ -357,7 +377,92 @@ describe('ContextRoomService', () => {
       evidence: 'V1 发布计划',
       lastMentionAt: later.toISOString(),
     })
+    expect(result.entities[1]?.sources).toEqual([
+      { sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceTitle: 'V1 项目结论', evidence: 'V1 发布计划', mentionedAt: later.toISOString() },
+    ])
     expect(result.updatedAt).toBeTruthy()
+    sqlite.close()
+  })
+
+  it('aggregates applied facts by content fingerprint across sources', async () => {
+    const { service, db, sqlite } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-1', title: 'Room 1', data: { id: 'room-1', title: 'Room 1' } }],
+      deletedRooms: [],
+    })
+    db.insert(entitiesTable).values([
+      { id: 'entity-a', name: '林薇', kind: '人物', status: 'room' },
+    ]).run()
+    const now = new Date()
+    const later = new Date(now.getTime() + 1_000)
+    db.insert(roomSourceMemberships).values([
+      { id: 's1', roomId: 'room-1', sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceVersion: 1, evidenceGroupKey: 'g1', role: 'primary', sourceTitle: 'V1 项目结论' },
+      { id: 's2', roomId: 'room-1', sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'g2', role: 'mention', sourceTitle: '设计周报' },
+    ]).run()
+    db.insert(roomEntityFacts).values([
+      { id: 'f1', roomId: 'room-1', factId: 'fact-x', content: '林薇负责 V1 视觉设计', type: '属性', entityIds: ['entity-a', 'entity-gone'], sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceVersion: 1, evidenceGroupKey: 'g1', createdAt: now, updatedAt: now },
+      { id: 'f2', roomId: 'room-1', factId: 'fact-x', content: '林薇负责 V1 视觉设计', type: '属性', entityIds: ['entity-a'], sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'g2', createdAt: now, updatedAt: later },
+      { id: 'f3', roomId: 'room-1', factId: 'fact-y', content: 'V1 目标 7-30 交付', type: '关系', entityIds: [], sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceVersion: 1, evidenceGroupKey: 'g1', createdAt: now, updatedAt: now },
+      { id: 'f4', roomId: 'room-other', factId: 'fact-z', content: '别的 Room 的事实', type: '属性', entityIds: [], sourceKind: 'mail', sourceId: 'mail-2', sourceVersion: 1, evidenceGroupKey: 'g3', createdAt: now, updatedAt: now },
+    ]).run()
+
+    const result = service.roomAppliedEntities('room-1')
+    expect(result.facts).toHaveLength(2)
+    // sourceCount 降序：fact-x（2 来源）在前；被清理实体（entity-gone）剔除，id/name 对齐。
+    expect(result.facts[0]).toMatchObject({
+      factId: 'fact-x',
+      content: '林薇负责 V1 视觉设计',
+      type: '属性',
+      entityIds: ['entity-a'],
+      entityNames: ['林薇'],
+      sourceCount: 2,
+      lastMentionAt: later.toISOString(),
+    })
+    expect(result.facts[0]?.sources).toEqual([
+      { sourceKind: 'mail', sourceId: 'mail-1', sourceTitle: '设计周报', evidence: '林薇负责 V1 视觉设计', mentionedAt: later.toISOString() },
+      { sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceTitle: 'V1 项目结论', evidence: '林薇负责 V1 视觉设计', mentionedAt: now.toISOString() },
+    ])
+    expect(result.facts[1]).toMatchObject({ factId: 'fact-y', entityIds: [], entityNames: [], sourceCount: 1 })
+    sqlite.close()
+  })
+
+  it('hides projections of trashed documents and restores them on revive', async () => {
+    const { service, db, sqlite } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-1', title: 'Room 1', data: { id: 'room-1', title: 'Room 1' } }],
+      deletedRooms: [],
+    })
+    db.insert(entitiesTable).values([
+      { id: 'entity-ts', name: 'TypeScript', kind: '主题', status: 'weak' },
+      { id: 'entity-lin', name: '林薇', kind: '人物', status: 'room' },
+    ]).run()
+    const now = new Date()
+    db.insert(documentsTable).values({
+      id: 'doc-1', title: 'TypeScript 入门指南', contentJson: { type: 'doc' }, version: 1, deletedAt: now,
+    }).run()
+    db.insert(roomSourceMemberships).values([
+      { id: 's1', roomId: 'room-1', sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceVersion: 1, evidenceGroupKey: 'g1', role: 'primary', sourceTitle: 'TypeScript 入门指南' },
+      { id: 's2', roomId: 'room-1', sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'g2', role: 'mention', sourceTitle: '设计周报' },
+    ]).run()
+    db.insert(roomEntityMentions).values([
+      { id: 'm1', roomId: 'room-1', entityId: 'entity-ts', sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceVersion: 1, evidenceGroupKey: 'g1', salience: 0.8, createdAt: now, updatedAt: now },
+      { id: 'm2', roomId: 'room-1', entityId: 'entity-lin', sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'g2', salience: 0.8, createdAt: now, updatedAt: now },
+    ]).run()
+    db.insert(roomEntityFacts).values([
+      { id: 'f1', roomId: 'room-1', factId: 'fact-ts', content: 'TypeScript 是 JavaScript 的超集', type: '属性', entityIds: ['entity-ts'], sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceVersion: 1, evidenceGroupKey: 'g1', createdAt: now, updatedAt: now },
+      { id: 'f2', roomId: 'room-1', factId: 'fact-mail', content: '林薇负责 V1 视觉设计', type: '属性', entityIds: ['entity-lin'], sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'g2', createdAt: now, updatedAt: now },
+    ]).run()
+
+    // 回收站文档的实体与事实读侧剔除；投影像保留（恢复即回，不重抽）。
+    const trashed = service.roomAppliedEntities('room-1')
+    expect(trashed.entities.map((entity) => entity.name)).toEqual(['林薇'])
+    expect(trashed.facts.map((fact) => fact.factId)).toEqual(['fact-mail'])
+
+    db.update(documentsTable).set({ deletedAt: null }).where(eq(documentsTable.id, 'doc-1')).run()
+    const restored = service.roomAppliedEntities('room-1')
+    // sort() 按码点：ASCII 的 TypeScript 排在中文名之前。
+    expect(restored.entities.map((entity) => entity.name).sort()).toEqual(['TypeScript', '林薇'])
+    expect(restored.facts.map((fact) => fact.factId).sort()).toEqual(['fact-mail', 'fact-ts'])
     sqlite.close()
   })
 
@@ -370,5 +475,78 @@ describe('ContextRoomService', () => {
     expect(service.roomAppliedEntities('room-1')).toMatchObject({ roomId: 'room-1', entities: [] })
     expect(() => service.roomAppliedEntities('missing-room')).toThrow('context_room_not_found')
     sqlite.close()
+  })
+})
+
+describe('RoomOverviewService', () => {
+  it('persists confirmed corrections outside the Room snapshot and restores content after revoke', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-overview',
+        title: 'Overview Room',
+        data: {
+          id: 'room-overview',
+          title: 'Overview Room',
+          brief: { background: 'Original overview', goal: 'Ship', status: 'Blocked by budget' },
+          generatedContext: { overview: 'Original overview', status: 'Blocked by budget', nextSteps: ['Wait'] },
+          timeline: [],
+        },
+      }],
+      deletedRooms: [],
+    })
+    const overviews = new RoomOverviewService(db, service)
+    const original = overviews.get('room-overview')
+    const proposal = overviews.propose('room-overview', {
+      operation: 'content_replace',
+      section: 'status',
+      targetClaimId: original.status[0]!.id,
+      originalText: 'Blocked by budget',
+      replacementText: 'Waiting for legal approval',
+      rationale: 'User clarified the actual blocker',
+      entryPoint: 'overview',
+    })
+
+    expect(overviews.get('room-overview').status[0]?.text).toBe('Blocked by budget')
+    const applied = overviews.apply('room-overview', proposal.id)
+    expect(applied.overview.status).toMatchObject([{ text: 'Waiting for legal approval', origin: 'user', corrected: true }])
+    expect(service.getSnapshot().rooms[0]?.data).toMatchObject({
+      generatedContext: { status: 'Blocked by budget' },
+    })
+
+    const reloaded = new RoomOverviewService(db, service)
+    expect(reloaded.get('room-overview').status[0]?.text).toBe('Waiting for legal approval')
+    expect(reloaded.revoke('room-overview', proposal.id).overview.status[0]?.text).toBe('Blocked by budget')
+  })
+
+  it('requires a later Agent run in the same session before applying a proposal', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-agent-correction',
+        title: 'Agent Room',
+        data: { id: 'room-agent-correction', title: 'Agent Room', brief: { status: 'Old status' }, timeline: [] },
+      }],
+      deletedRooms: [],
+    })
+    const overviews = new RoomOverviewService(db, service)
+    const proposal = overviews.propose('room-agent-correction', {
+      operation: 'content_replace',
+      section: 'status',
+      originalText: 'Old status',
+      replacementText: 'Confirmed status',
+      rationale: 'User clarification',
+      entryPoint: 'agent',
+    }, { sessionId: 'session-1', runId: 'run-propose' })
+
+    expect(() => overviews.apply('room-agent-correction', proposal.id, {
+      sessionId: 'session-1', runId: 'run-propose',
+    })).toThrow('room_correction_confirmation_required')
+    expect(() => overviews.apply('room-agent-correction', proposal.id, {
+      sessionId: 'session-2', runId: 'run-confirm',
+    })).toThrow('room_correction_confirmation_required')
+    expect(overviews.apply('room-agent-correction', proposal.id, {
+      sessionId: 'session-1', runId: 'run-confirm',
+    }).overview.status[0]?.text).toBe('Confirmed status')
   })
 })

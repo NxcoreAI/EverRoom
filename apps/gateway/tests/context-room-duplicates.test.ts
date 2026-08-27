@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
@@ -10,11 +10,13 @@ import {
   contextRooms,
   documents,
   roomDocumentLinks,
+  roomDuplicateCandidates,
   roomMemoryAttributions,
+  roomRelations,
   roomSourceMemberships,
   rooms,
 } from '../src/infrastructure/database/schema.js'
-import { DuplicateReviewRequiredError, RoomDuplicateService } from '../src/modules/context-rooms/duplicate-service.js'
+import { DuplicateReviewRequiredError, RoomDuplicateService, type RoomDuplicateServiceOptions } from '../src/modules/context-rooms/duplicate-service.js'
 import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 import { eq } from 'drizzle-orm'
 
@@ -24,14 +26,39 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
-async function harness() {
+async function harness(judgeIdentity?: RoomDuplicateServiceOptions['judgeIdentity']) {
   const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-room-duplicates-'))
   temporaryDirectories.push(dataDir)
   const database = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
-  const duplicates = new RoomDuplicateService(database.db)
+  const duplicates = new RoomDuplicateService(database.db, judgeIdentity ? { judgeIdentity } : {})
   const roomsService = new ContextRoomService(database.db)
   roomsService.setDuplicateService(duplicates)
   return { ...database, duplicates, roomsService }
+}
+
+async function seedMembership(
+  db: ReturnType<typeof createDatabase>['db'],
+  roomId: string,
+  sourceId: string,
+  role: 'entry' | 'primary' | 'mention' | 'manual' | 'rule',
+) {
+  const now = new Date()
+  db.insert(roomSourceMemberships).values({
+    id: `membership-${roomId}-${sourceId}`,
+    roomId,
+    sourceKind: 'cloud-doc',
+    sourceId,
+    sourceVersion: 1,
+    sourceTitle: `资料-${sourceId}`,
+    evidenceGroupKey: `cloud-doc:${sourceId}`,
+    role,
+    effectiveWeight: 1,
+    qualityLevel: 'normal',
+    trusted: true,
+    entityIndexed: true,
+    createdAt: now,
+    updatedAt: now,
+  }).run()
 }
 
 async function waitForMerge(duplicates: RoomDuplicateService, operationId: string) {
@@ -103,6 +130,135 @@ describe('RoomDuplicateService', () => {
       roomBId: 'room-b',
       contentOverlap: 1,
     })
+    sqlite.close()
+  })
+
+  it('hides candidates immediately when either room is deleted or merged, without waiting for a rebuild', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-a', title: '产品发布', kind: '项目', data: { id: 'room-a', title: '产品发布' } },
+        { id: 'room-b', title: '产品发布记录', kind: '项目', data: { id: 'room-b', title: '产品发布记录' } },
+        { id: 'room-c', title: '产品发布存档', kind: '项目', data: { id: 'room-c', title: '产品发布存档' } },
+      ],
+      deletedRooms: [],
+    })
+    const now = new Date()
+    for (const roomId of ['room-a', 'room-b', 'room-c']) {
+      db.insert(roomSourceMemberships).values({
+        id: `membership-${roomId}`,
+        roomId,
+        sourceKind: 'cloud-doc',
+        sourceId: 'launch-plan',
+        sourceVersion: 1,
+        sourceTitle: '发布计划',
+        evidenceGroupKey: 'cloud-doc:launch-plan',
+        role: 'primary',
+        effectiveWeight: 1,
+        qualityLevel: 'normal',
+        trusted: true,
+        entityIndexed: true,
+        createdAt: now,
+        updatedAt: now,
+      }).run()
+    }
+    await duplicates.rebuildCandidates()
+    expect(duplicates.listCandidates('open')).toHaveLength(3)
+
+    // 软删除 room-b：涉及它的候选立即隐藏（读时过滤，不依赖下次 rebuild 清理）。
+    db.update(contextRooms).set({ deletedAt: now }).where(eq(contextRooms.id, 'room-b')).run()
+    expect(duplicates.listCandidates('open')).toHaveLength(1)
+
+    // 已合并（lifecycle=merged）同样隐藏；恢复 active 后候选重新可见。
+    db.update(contextRooms).set({ deletedAt: null, lifecycle: 'merged', mergedIntoRoomId: 'room-a' }).where(eq(contextRooms.id, 'room-b')).run()
+    expect(duplicates.listCandidates('open')).toHaveLength(1)
+    db.update(contextRooms).set({ lifecycle: 'active', mergedIntoRoomId: null }).where(eq(contextRooms.id, 'room-b')).run()
+    expect(duplicates.listCandidates('open')).toHaveLength(3)
+    sqlite.close()
+  })
+
+  it('reuses the cached identity verdict while evidence is unchanged and re-judges after it changes', async () => {
+    const judge = vi.fn(async () => ({ same: true, reason: '同名且描述同一主题' }))
+    const { db, duplicates, roomsService, sqlite } = await harness(judge)
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-a', title: '校园生活', kind: '主题', data: { id: 'room-a', title: '校园生活' } },
+        // 同名不同 kind：进入灰区，依赖同一性判定。
+        { id: 'room-b', title: '校园生活', kind: '项目', data: { id: 'room-b', title: '校园生活' } },
+      ],
+      deletedRooms: [],
+    })
+
+    await duplicates.rebuildCandidates()
+    expect(judge).toHaveBeenCalledTimes(1)
+    const stored = () => db.select().from(roomDuplicateCandidates).get()
+    expect(stored()).toMatchObject({ confidence: 'medium', llmVerdict: 'same' })
+
+    // 证据未变：复用判定，不重判（LLM 非确定性重判会让置信度抖动）。
+    await duplicates.rebuildCandidates()
+    expect(judge).toHaveBeenCalledTimes(1)
+    expect(stored()).toMatchObject({ confidence: 'medium', llmVerdict: 'same' })
+
+    // 新增证据改变修订号：重新判定。
+    seedMembership(db, 'room-a', 'diary-1', 'primary')
+    await duplicates.rebuildCandidates()
+    expect(judge).toHaveBeenCalledTimes(2)
+    expect(stored()).toMatchObject({ confidence: 'medium', llmVerdict: 'same' })
+    sqlite.close()
+  })
+
+  it('downgrades mention-only shared evidence so a passing mention no longer creates a candidate', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-a', title: '晨会纪要', kind: '主题', data: { id: 'room-a', title: '晨会纪要' } },
+        { id: 'room-b', title: '产品规划', kind: '主题', data: { id: 'room-b', title: '产品规划' } },
+      ],
+      deletedRooms: [],
+    })
+    // room-b 以主力资料持有 S；room-a 只顺带提及 S。标题不相似、无实体/语义信号。
+    seedMembership(db, 'room-b', 'shared-doc', 'primary')
+    seedMembership(db, 'room-a', 'shared-doc', 'mention')
+
+    expect(await duplicates.rebuildCandidates()).toBe(0)
+    expect(duplicates.listCandidates('open')).toHaveLength(0)
+
+    // 提升为双方主力资料后恢复强证据，候选重新出现。
+    db.update(roomSourceMemberships).set({ role: 'primary' })
+      .where(eq(roomSourceMemberships.id, 'membership-room-a-shared-doc')).run()
+    expect(await duplicates.rebuildCandidates()).toBe(1)
+    expect(duplicates.listCandidates('open')).toHaveLength(1)
+    sqlite.close()
+  })
+
+  it('skips pairs the user curated a relation for, whether pinned or manually typed', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-a', title: '产品发布', kind: '项目', data: { id: 'room-a', title: '产品发布' } },
+        { id: 'room-b', title: '产品发布记录', kind: '项目', data: { id: 'room-b', title: '产品发布记录' } },
+      ],
+      deletedRooms: [],
+    })
+    seedMembership(db, 'room-a', 'launch-plan', 'primary')
+    seedMembership(db, 'room-b', 'launch-plan', 'primary')
+    expect(await duplicates.rebuildCandidates()).toBe(1)
+
+    // 用户手动标注关系 = 「相关但不同」：整对退出候选池，open 候选被清理。
+    db.insert(roomRelations).values({
+      id: 'relation-1', roomAId: 'room-a', roomBId: 'room-b',
+      manualType: 'related', manualFromRoomId: 'room-a', manualToRoomId: 'room-b',
+    }).run()
+    expect(await duplicates.rebuildCandidates()).toBe(0)
+    expect(duplicates.listCandidates('open')).toHaveLength(0)
+
+    // pinned 关系同样跳过。
+    db.update(roomRelations).set({ manualType: null, pinned: true }).where(eq(roomRelations.id, 'relation-1')).run()
+    expect(await duplicates.rebuildCandidates()).toBe(0)
+
+    // 解除人工关系后候选恢复。
+    db.update(roomRelations).set({ pinned: false }).where(eq(roomRelations.id, 'relation-1')).run()
+    expect(await duplicates.rebuildCandidates()).toBe(1)
     sqlite.close()
   })
 

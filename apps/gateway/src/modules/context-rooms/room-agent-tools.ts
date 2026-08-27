@@ -3,7 +3,16 @@ import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import { Type } from "@sinclair/typebox";
 import type { TiptapJsonContent } from "@nxcore/agent-contract";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { documents, roomDocumentLinks } from "../../infrastructure/database/schema.js";
+import {
+  contextRooms,
+  documents,
+  entities,
+  roomContextCorrections,
+  roomDocumentLinks,
+  roomEntityFacts,
+  roomEntityMentions,
+  roomSourceMemberships,
+} from "../../infrastructure/database/schema.js";
 import type { MemoryService } from "../memory/service.js";
 import { tiptapToMarkdown } from "../knowledge/tiptap-markdown.js";
 
@@ -27,7 +36,7 @@ function memoryToolErrorText(label: string, error: unknown): string {
  * dispatch 子 Agent 的 Pi 配置由 SubagentRuntimeManager 从 backgroundPi 剥除
  * memory/knowledge/mcp 构建，因此检索能力在这里以显式只读工具提供：
  * - memory_search / conversation_search：复用 MemoryService（与主 Agent 记忆工具同源）。
- * - room_context_get：Room 文档清单 + Markdown 正文（截断），供简报再生成与资料分析。
+ * - room_context_get：Room 信息、事实、来源、纠正与文档正文，供总览生成与资料分析。
  */
 export function createContextRoomAgentTools(deps: {
   db: GatewayDatabase;
@@ -94,13 +103,18 @@ export function createContextRoomAgentTools(deps: {
   const roomContextGet: PiAgentRuntimeTool = {
     name: "room_context_get",
     label: "读取 Room 资料",
-    description: "读取指定 Room 已收录的文档清单与 Markdown 正文（超长截断）。用于简报再生成与资料分析。",
+    description: "读取指定 Room 的信息、结构化事实、来源、已应用纠正，以及文档 Markdown 正文（超长截断）。用于总览生成与资料分析。",
     parameters: Type.Object({
       roomId: Type.String({ minLength: 1, maxLength: 128 }),
     }, { additionalProperties: false }),
     execute: async (_run, params) => {
       const roomId = String(params.roomId ?? "").trim();
       if (!roomId) throw new Error("room_context_room_id_required");
+      const room = db.select().from(contextRooms).where(and(
+        eq(contextRooms.id, roomId),
+        isNull(contextRooms.deletedAt),
+      )).get();
+      if (!room || room.lifecycle !== "active") throw new Error("context_room_not_found");
       const rows = db.select({ document: documents })
         .from(roomDocumentLinks)
         .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
@@ -142,6 +156,48 @@ export function createContextRoomAgentTools(deps: {
       });
       const payload = {
         roomId,
+        room: {
+          title: room.title,
+          kind: room.kind,
+          brief: isRecord(room.data.brief) ? room.data.brief : {},
+          timeline: Array.isArray(room.data.timeline) ? room.data.timeline.slice(0, 100) : [],
+        },
+        facts: db.select({
+          factId: roomEntityFacts.factId,
+          content: roomEntityFacts.content,
+          type: roomEntityFacts.type,
+          sourceKind: roomEntityFacts.sourceKind,
+          sourceId: roomEntityFacts.sourceId,
+          sourceTitle: roomSourceMemberships.sourceTitle,
+          updatedAt: roomEntityFacts.updatedAt,
+        }).from(roomEntityFacts).leftJoin(roomSourceMemberships, and(
+          eq(roomSourceMemberships.roomId, roomEntityFacts.roomId),
+          eq(roomSourceMemberships.sourceKind, roomEntityFacts.sourceKind),
+          eq(roomSourceMemberships.sourceId, roomEntityFacts.sourceId),
+        )).where(eq(roomEntityFacts.roomId, roomId)).all().slice(0, 200).map((fact) => ({
+          ...fact,
+          updatedAt: fact.updatedAt.toISOString(),
+        })),
+        entities: db.select({
+          id: entities.id,
+          name: entities.name,
+          kind: entities.kind,
+          summary: entities.summary,
+          evidence: roomEntityMentions.evidence,
+          sourceKind: roomEntityMentions.sourceKind,
+          sourceId: roomEntityMentions.sourceId,
+        }).from(roomEntityMentions).innerJoin(entities, eq(entities.id, roomEntityMentions.entityId))
+          .where(eq(roomEntityMentions.roomId, roomId)).all().slice(0, 200),
+        appliedCorrections: db.select().from(roomContextCorrections).where(and(
+          eq(roomContextCorrections.roomId, roomId),
+          eq(roomContextCorrections.status, "applied"),
+        )).all().map((correction) => ({
+          operation: correction.operation,
+          section: correction.section,
+          originalText: correction.originalText,
+          replacementText: correction.replacementText,
+          rationale: correction.rationale,
+        })),
         documentCount: rows.length,
         ...(rows.length > collected.length ? { omittedDocuments: rows.length - collected.length } : {}),
         ...(truncatedDocuments > 0 ? { truncatedDocuments } : {}),

@@ -2,13 +2,15 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { Application, Container, Graphics, ParticleContainer, Sprite, Text, Ticker } from 'pixi.js'
 import { Viewport } from 'pixi-viewport'
 
+import './graphShell.css'
+
 import {
   createPixiForceGraphRenderer,
   type PixiForceGraphDependencies,
   type PixiForceGraphEdge,
   type PixiForceGraphNode,
   type PixiForceGraphRenderer,
-} from './PixiForceGraphRenderer'
+} from './pixi/PixiForceGraphRenderer'
 
 const PIXI_DEPENDENCIES = {
   Application,
@@ -125,7 +127,7 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
       observer?.observe(host)
       resize()
     } catch (error) {
-      console.error('Failed to initialize PIXI Wiki graph renderer', error)
+      console.error('Failed to initialize PIXI force graph renderer', error)
     }
 
     return () => {
@@ -144,5 +146,6 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
     rendererRef.current?.setSelectedEdgeId(selectedEdgeId)
   }, [selectedEdgeId])
 
-  return <div ref={hostRef} className={className} />
+  // 内核自带中性壳层类，领域 className 退化为纯修饰（背景/高度覆盖等）。
+  return <div ref={hostRef} className={`nx-graph-canvas ${className}`} />
 })

@@ -2,7 +2,7 @@
  * LLM 层（entity-room-plan §4.1/§4.2/§4.4）：只做开放式抽取与身份判定，
  * 不做归属判决（ED2）。三个调用点：
  *
- * - extract          资料 → { summary, entities[] }（取代原 summarize + arbitrate）
+ * - extract          资料 → { summary, entities[], facts[] }（取代原 summarize + arbitrate）
  * - judgeEntityIdentity 模糊带/撞名的同一性判定（ED8：系统自主收敛，不打扰用户）
  * - registerEntity   晋升时一次"转正登记"：依据句 → 规范 name + Room 概述 + aliases（ED7）
  *
@@ -35,9 +35,17 @@ export interface ExtractedEntity {
   evidence: string;
 }
 
+/** 事实记忆（PRD：描述实体属性或实体间关系的明确陈述），entities 为涉及的实体规范名。 */
+export interface ExtractedFact {
+  content: string;
+  type: "属性" | "关系";
+  entities: string[];
+}
+
 export interface ExtractionResult {
   summary: string;
   entities: ExtractedEntity[];
+  facts: ExtractedFact[];
 }
 
 export interface RoomContextResult {
@@ -94,17 +102,17 @@ export class KnowledgeLlm {
     return this.chatJson("entity-extraction", prompt, parseExtractionResponse);
   }
 
-  /** Room 当前文档集合 → 只读的详情投影，不参与资料归属判决。 */
+  /** Room 当前文档集合 → 只读的详情投影，不参与资料归属判决。连接器来源带 label 标注类型。 */
   async summarizeRoom(
     roomTitle: string,
-    sourceDocuments: Array<{ title: string; markdown: string }>,
+    sourceDocuments: Array<{ title: string; markdown: string; label?: string }>,
   ): Promise<RoomContextResult> {
     const prompt = [
       `Room：${roomTitle}`,
       `今天日期：${new Date().toISOString().slice(0, 10)}`,
       "",
       ...sourceDocuments.slice(0, 12).flatMap((document, index) => [
-        `--- 资料 ${index + 1}：《${document.title}》 ---`,
+        `--- 资料 ${index + 1}${document.label ? `（${document.label}）` : ""}：《${document.title}》 ---`,
         document.markdown.slice(0, 6_000),
         "",
       ]),
@@ -233,6 +241,8 @@ function parseJsonObject(content: string): Record<string, unknown> {
  * 严格解析抽取输出（导出供单测）：
  * summary/ entities[].{name,kind,salience,evidence} 逐字段校验 + 越界修正；
  * 同名实体去重（保 salience 高者），数量封顶 10。
+ * facts[].{content,type,entities} 同样严格解析：按 content 去重、封顶 10；
+ * 旧输出无 facts 字段时回落空数组（兼容历史决策重放）。
  */
 export function parseExtractionResponse(content: string): ExtractionResult {
   const raw = parseJsonObject(content);
@@ -257,7 +267,28 @@ export function parseExtractionResponse(content: string): ExtractionResult {
     if (!existing || candidate.salience > existing.salience) byName.set(name, candidate);
   }
 
-  return { summary, entities: [...byName.values()].slice(0, 10) };
+  const factsRaw = Array.isArray(raw.facts) ? raw.facts : [];
+  const factsByContent = new Map<string, ExtractedFact>();
+  for (const item of factsRaw) {
+    if (typeof item !== "object" || item === null) continue;
+    const fact = item as Record<string, unknown>;
+    const factContent = typeof fact.content === "string" ? fact.content.trim().slice(0, 300) : "";
+    if (!factContent) continue;
+    const typeRaw = typeof fact.type === "string" ? fact.type.trim() : "";
+    const type: ExtractedFact["type"] = typeRaw === "关系" ? "关系" : "属性";
+    const entities = (Array.isArray(fact.entities) ? fact.entities : [])
+      .flatMap((name) => (typeof name === "string" ? [name.trim().slice(0, 120)] : []))
+      .filter((name) => name.length > 0)
+      .slice(0, 4);
+    // 同内容只保留一条（后到覆盖：保留最新形态，实体引用更全的通常在后）
+    factsByContent.set(factContent, { content: factContent, type, entities });
+  }
+
+  return {
+    summary,
+    entities: [...byName.values()].slice(0, 10),
+    facts: [...factsByContent.values()].slice(0, 10),
+  };
 }
 
 export function parseRoomContextResponse(content: string): RoomContextResult {

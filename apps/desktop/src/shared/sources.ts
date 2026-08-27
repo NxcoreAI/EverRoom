@@ -32,6 +32,7 @@ import type {
   RoomDuplicateCheckInput,
   RoomDuplicateCheckResult,
   RoomAppliedEntitiesResult,
+  RoomOverviewProjection,
   RoomMergeOperation,
   RoomMergePreview,
   SubagentInvocation,
@@ -783,6 +784,8 @@ export interface NxcoreDesktopApi {
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
+    overview(roomId: string): Promise<RoomOverviewProjection>
+    refreshOverview(roomId: string): Promise<RoomOverviewProjection>
     roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
   }
   account: {

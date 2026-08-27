@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ForceGraphLayoutController } from '../src/renderer/src/components/context-room/ported/graph/forceGraphLayout'
+import { ForceGraphLayoutController } from '../src/renderer/src/components/graph/layout/forceGraphLayout'
 import {
   DEFAULT_FORCE_GRAPH_OPTIONS,
   ForceGraphControlIndex,
@@ -8,12 +8,12 @@ import {
   createForceGraphSharedMemory,
   type ForceGraphWorkerRequest,
   type ForceGraphWorkerResponse,
-} from '../src/renderer/src/components/context-room/ported/graph/forceGraphProtocol'
-import { createForceGraphSimulation } from '../src/renderer/src/components/context-room/ported/graph/forceGraphSimulation'
+} from '../src/renderer/src/components/graph/layout/forceGraphProtocol'
+import { createForceGraphSimulation } from '../src/renderer/src/components/graph/layout/forceGraphSimulation'
 import {
   roomGraphLayoutDimensions,
   roomGraphLayoutOptions,
-} from '../src/renderer/src/components/context-room/ported/graph/roomGraphVisuals'
+} from '../src/renderer/src/components/context-room/ported/components/roomGraphVisuals'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -328,7 +328,7 @@ describe('force graph shared layout', () => {
   it('publishes worker ticks through shared memory without coordinate messages', async () => {
     const postMessage = vi.fn()
     vi.stubGlobal('postMessage', postMessage)
-    await import('../src/renderer/src/components/context-room/ported/graph/forceGraph.worker')
+    await import('../src/renderer/src/components/graph/layout/forceGraph.worker')
     const memory = createForceGraphSharedMemory(2)
     const handler = globalThis.onmessage
     expect(handler).toBeTypeOf('function')

@@ -4,7 +4,7 @@ import {
   ROOM_RELATION_TYPE_COLORS,
   roomGraphLayoutDimensions,
   roomGraphLayoutOptions,
-} from '../src/renderer/src/components/context-room/ported/graph/roomGraphVisuals'
+} from '../src/renderer/src/components/context-room/ported/components/roomGraphVisuals'
 
 describe('Room graph visuals', () => {
   it('assigns a distinct stable color to every relationship type', () => {

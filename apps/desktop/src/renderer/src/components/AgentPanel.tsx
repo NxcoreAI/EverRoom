@@ -15,6 +15,7 @@ import {
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
+import type { RoomOverviewCitation } from '@/components/context-room/roomOverviewCitation'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import type { PageId } from '@/data/navigation'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -42,6 +43,8 @@ export function AgentPanel({
   onOpenDocument,
   onSessionRouteConsumed,
   focusRequest = 0,
+  roomCitation,
+  onClearRoomCitation,
 }: {
   pageId: PageId
   pageLabel: string
@@ -56,6 +59,8 @@ export function AgentPanel({
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onSessionRouteConsumed: (key: string) => void
   focusRequest?: number
+  roomCitation: RoomOverviewCitation | null
+  onClearRoomCitation: () => void
 }) {
   const { t } = useLocale()
   const [draft, setDraft] = useState('')
@@ -69,9 +74,21 @@ export function AgentPanel({
   const handledNavigationKeysRef = useRef(new Set<string>())
   const handledRequestKeysRef = useRef(new Set<string>())
   const handledSessionRouteKeysRef = useRef(new Set<string>())
+  const handledOverviewToolIdsRef = useRef(new Set<string>())
   const selectedTextSummary = selectedText.replace(/\s+/g, ' ').trim()
+  const citationSection = roomCitation
+    ? t(roomCitation.section === 'overview'
+      ? 'contextRoom:overviewDashboard.roomOverview'
+      : roomCitation.section === 'status'
+        ? 'contextRoom:overviewDashboard.currentStatus'
+        : roomCitation.section === 'next_steps'
+          ? 'contextRoom:overviewDashboard.suggestedNextSteps'
+          : roomCitation.section === 'entities'
+            ? 'contextRoom:overviewDashboard.relatedMemoryEntities'
+            : 'contextRoom:overviewDashboard.roomTimeline')
+    : null
   const contextSummary = selectedTextSummary
-    ? `${pageLabel} · “${selectedTextSummary}”`
+    ? `${roomCitation?.roomTitle ?? pageLabel}${citationSection ? ` · ${citationSection}` : ''} · “${selectedTextSummary}”`
     : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
@@ -116,18 +133,8 @@ export function AgentPanel({
   }, [session.sessionId])
 
   useEffect(() => {
-    const readWorkspaceSelection = () => {
-      const selection = document.getSelection()
-      if (!selection || selection.isCollapsed) return
-      const anchor = selection.anchorNode
-      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement
-      if (!anchorElement?.closest('.workspace-main')) return
-      const text = selection.toString().trim()
-      if (text) setSelectedText(text.slice(0, 8_000))
-    }
-    document.addEventListener('selectionchange', readWorkspaceSelection)
-    return () => document.removeEventListener('selectionchange', readWorkspaceSelection)
-  }, [])
+    setSelectedText(roomCitation?.text.slice(0, 8_000) ?? '')
+  }, [roomCitation])
 
   useEffect(() => {
     if (!session.sessionId || navigationRequest) return
@@ -171,6 +178,15 @@ export function AgentPanel({
       return
     }
   }, [navigationRequest, onNavigate, pageId, pageLabel, refreshFromBackend, roomId, session.sessionId, session.sessionLinks, session.toolCallsByRun])
+
+  useEffect(() => {
+    for (const tool of Object.values(session.toolCallsByRun).flat()) {
+      if (tool.status !== 'completed' || handledOverviewToolIdsRef.current.has(tool.id)) continue
+      if (tool.name !== 'context_room_correction_apply' && tool.name !== 'context_room_correction_revoke') continue
+      handledOverviewToolIdsRef.current.add(tool.id)
+      window.dispatchEvent(new CustomEvent('nxcore:room-overview-changed', { detail: { roomId } }))
+    }
+  }, [roomId, session.toolCallsByRun])
 
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
@@ -224,7 +240,9 @@ export function AgentPanel({
   const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = []) => {
     if ((!prompt.trim() && files.length === 0) || !agentAvailable) return
     const submittedPrompt = prompt.trim()
-    const submittedContext = selectedText
+    const submittedContext = roomCitation
+      ? `当前 Room 总览引用\n区块：${roomCitation.section}\n引用文本：${selectedText}`
+      : selectedText
     setDraft('')
     setSubmitting(true)
     try {
@@ -247,6 +265,7 @@ export function AgentPanel({
       }
       await session.sendPrompt(submittedPrompt || '请分析我上传的文件。', submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
       setSelectedText('')
+      if (roomCitation) onClearRoomCitation()
       setComposerResetKey((current) => current + 1)
     } catch {
       setDraft(submittedPrompt)
@@ -319,7 +338,10 @@ export function AgentPanel({
       loading={session.loading || submitting}
       available={agentAvailable}
       onChange={setDraft}
-      onClearContext={() => setSelectedText('')}
+      onClearContext={() => {
+        setSelectedText('')
+        if (roomCitation) onClearRoomCitation()
+      }}
       onStop={() => void session.stop()}
       onSubmit={(files) => void sendPrompt(draft, undefined, files)}
     />

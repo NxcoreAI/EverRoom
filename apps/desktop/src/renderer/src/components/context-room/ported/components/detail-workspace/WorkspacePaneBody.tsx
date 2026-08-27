@@ -85,7 +85,12 @@ export function WorkspacePaneBody({
   }
   if (pane === 'memories') {
     return (
-      <MemoryPane room={room} onOpenMemory={onOpenMemory} onUpdateRoom={onUpdateRoom} />
+      <MemoryPane
+        room={room}
+        onOpenMemory={onOpenMemory}
+        onUpdateRoom={onUpdateRoom}
+        onOpenObject={onOpenObject}
+      />
     );
   }
   if (pane === 'wiki') {

@@ -76,6 +76,22 @@ describe('deriveRoomTimeline', () => {
     expect(timeline.every((item) => item.generated)).toBe(true)
   })
 
+  it('carries the source document reference for overview resource links', () => {
+    const timeline = deriveRoomTimeline(
+      { timeline: [] },
+      contextFixture([
+        { title: '复盘会', when: '2026-08-21 10:30', participants: ['林薇'], sourceTitle: '评审纪要' },
+        { title: '外部访谈', when: '2026-08-22 15:00', participants: ['张三'], sourceTitle: '外部转录' },
+      ]),
+      [documentFixture()],
+    )
+
+    // 文档事件与 sourceTitle 命中的会议带引用；来源非 Room 文档的会议不带（概览不显示「相关资料」）
+    expect(timeline.find((item) => item.title === '会议《外部访谈》')?.sourceDocumentId).toBeUndefined()
+    expect(timeline.find((item) => item.title === '会议《复盘会》')?.sourceDocumentId).toBe('doc-1')
+    expect(timeline.find((item) => item.title === '《评审纪要》已收录于 Room')?.sourceDocumentId).toBe('doc-1')
+  })
+
   it('skips drafts, deleted documents and unparseable meeting times', () => {
     const timeline = deriveRoomTimeline(
       { timeline: [] },

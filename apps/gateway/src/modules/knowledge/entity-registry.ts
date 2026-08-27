@@ -17,6 +17,7 @@ import {
   rooms,
 } from "../../infrastructure/database/schema.js";
 import { blendCentroid, decodeCentroid, encodeCentroid } from "./embedding.js";
+import { normalizeEntityName } from "./entity-index.js";
 import { ENTITY_KINDS, type EntityKind } from "./llm.js";
 
 export type EntityStatus = "weak" | "ready" | "promoting" | "room" | "archived" | "suppressed";
@@ -441,6 +442,33 @@ export class EntityRegistry {
     this.db.update(rooms).set({ entityId: id, updatedAt: now })
       .where(eq(rooms.id, room.id)).run();
     return this.getEntity(id);
+  }
+
+  /**
+   * 手动建 Room 的实体认领（ED4 户口扩展，enrich 实体回写时调用）：
+   * 按归一化名精确匹配现有实体（name/aliases，同 router 精确档；
+   * 不要求 kind 一致——身份以名为准），未命中则以给定 kind 新建。
+   * 仅认领未绑定的（weak/ready/新建）：已绑定其他 Room 的不抢、
+   * 用户搁置（suppressed/archived）与在途晋升（promoting）不动。
+   * 认领后实体 status=room + roomId 回填，本 Room 即成为路由目标。
+   */
+  claimEntitiesForRoom(roomId: string, inputs: Array<{ name: string; kind: string }>): number {
+    let claimed = 0;
+    const seen = new Set<string>();
+    const rows = this.db.select().from(entities).all();
+    for (const input of inputs) {
+      const normalized = normalizeEntityName(input.name);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      const existing = rows.find((entity) =>
+        [entity.name, ...(entity.aliases ?? [])].some((value) => normalizeEntityName(value) === normalized));
+      const target = existing ?? this.createEntity({ name: input.name, kind: input.kind });
+      if (!target) continue;
+      if (target.roomId) continue; // 已绑定（含本 Room 户口实体）：幂等跳过 / 不抢
+      if (target.status !== "weak" && target.status !== "ready") continue;
+      if (this.promoteToRoom(target.id, roomId)) claimed += 1;
+    }
+    return claimed;
   }
 
   private scoringOf(input: EntityLinkInput): EvidenceScoreBreakdown {

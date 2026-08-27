@@ -29,6 +29,11 @@ import type { ThemeId } from '@/components/ThemeSwitcher'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
+import {
+  ROOM_OVERVIEW_CITATION_ADD_EVENT,
+  clearRoomOverviewCitation,
+  type RoomOverviewCitation,
+} from '@/components/context-room/roomOverviewCitation'
 import { onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
@@ -76,6 +81,7 @@ export function App() {
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
   const [agentOpen, setAgentOpen] = useState(true)
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
+  const [agentRoomCitation, setAgentRoomCitation] = useState<RoomOverviewCitation | null>(null)
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
   const [agentDocumentFocus, setAgentDocumentFocus] = useState<{
@@ -131,6 +137,27 @@ export function App() {
       return new Set([...current, stage])
     })
   }, [])
+
+  useEffect(() => {
+    const addCitation = (event: Event) => {
+      const citation = (event as CustomEvent<RoomOverviewCitation>).detail
+      if (!citation?.text || citation.roomId !== activeContextRoomId) return
+      setAgentRoomCitation((current) => {
+        if (current && current.id !== citation.id) clearRoomOverviewCitation(current.id)
+        return citation
+      })
+      setAgentOpen(true)
+      setAgentFocusRequest((request) => request + 1)
+    }
+    window.addEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, addCitation as EventListener)
+    return () => window.removeEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, addCitation as EventListener)
+  }, [activeContextRoomId])
+
+  useEffect(() => {
+    if (!agentRoomCitation || agentRoomCitation.roomId === activeContextRoomId) return
+    clearRoomOverviewCitation(agentRoomCitation.id)
+    setAgentRoomCitation(null)
+  }, [activeContextRoomId, agentRoomCitation])
 
   const completeAutomaticOnboarding = useCallback(() => {
     writeFullOnboardingCompleted()
@@ -657,6 +684,11 @@ export function App() {
           onOpenDocument={openDocumentTarget}
           onSessionRouteConsumed={(key) => setAgentSessionRouteRequest((current) => current?.key === key ? null : current)}
           focusRequest={agentFocusRequest}
+          roomCitation={agentRoomCitation}
+          onClearRoomCitation={() => {
+            if (agentRoomCitation) clearRoomOverviewCitation(agentRoomCitation.id)
+            setAgentRoomCitation(null)
+          }}
         />
       ) : null}
       <HighRiskImportReview />

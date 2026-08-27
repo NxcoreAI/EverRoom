@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 
 import type { RoomAppliedEntityStatus } from '@nxcore/agent-contract'
 import {
   PixiForceGraphCanvas,
   type PixiForceGraphCanvasNode,
-} from '../graph/PixiForceGraphCanvas'
-import type { PixiForceGraphEdge } from '../graph/PixiForceGraphRenderer'
-import { ForceGraphLayoutController } from '../graph/forceGraphLayout'
+  type ForceGraphOptions,
+  type PixiForceGraphEdge,
+  useForceGraphLayout,
+} from '@/components/graph'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import type { EntityFactGraphData, EntityFactGraphNode } from './entityFactGraphModel'
 
@@ -48,9 +49,15 @@ function fallbackPosition(index: number, ring: number): [number, number] {
   return [260 + Math.cos(angle) * ring, 140 + Math.sin(angle) * ring]
 }
 
+/** 紧凑小图：近距斥力 + 短连线，常量引用保证布局不因渲染重建。 */
+const LAYOUT_OPTIONS: Partial<ForceGraphOptions> = {
+  collisionPadding: 8,
+  linkDistance: 82,
+  manyBodyStrength: -140,
+}
+
 export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFactGraphCanvasProps) {
   const { t } = useLocale()
-  const [layout, setLayout] = useState<ForceGraphLayoutController | null>(null)
   const nodeIndex = useMemo(
     () => new Map(data.nodes.map((node, index) => [node.id, index])),
     [data.nodes],
@@ -83,54 +90,36 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
     })
     return result
   }, [data.nodes])
-  const resizeLayout = useCallback(
-    (width: number, height: number) => layout?.resize(width, height),
-    [layout],
+  const layoutNodes = useMemo(() => data.nodes.map((node, index) => ({
+    id: node.id,
+    radius: node.kind === 'entity' ? 12 : 6,
+    x: positions[index * 2],
+    y: positions[index * 2 + 1],
+  })), [data.nodes, positions])
+  const layoutEdges = useMemo(
+    () => data.edges.map((edge) => ({ source: edge.source, target: edge.target })),
+    [data.edges],
   )
-  const readRevision = useCallback(() => layout?.revision() ?? 0, [layout])
-
-  useEffect(() => {
-    let next: ForceGraphLayoutController
-    try {
-      next = new ForceGraphLayoutController({
-        nodes: data.nodes.map((node, index) => ({
-          id: node.id,
-          radius: node.kind === 'entity' ? 12 : 6,
-          x: positions[index * 2],
-          y: positions[index * 2 + 1],
-        })),
-        edges: data.edges.map((edge) => ({ source: edge.source, target: edge.target })),
-        options: {
-          collisionPadding: 8,
-          linkDistance: 82,
-          manyBodyStrength: -140,
-        },
-      })
-    } catch (error) {
-      console.error('Failed to initialize entity/fact force graph layout', error)
-      setLayout(null)
-      return
-    }
-    setLayout(next)
-    void next.ready.catch((error) => {
-      console.error('Entity/fact force graph worker failed', error)
-    })
-    return () => next.dispose()
-  }, [data.edges, data.nodes, positions])
+  const layout = useForceGraphLayout({
+    nodes: layoutNodes,
+    edges: layoutEdges,
+    options: LAYOUT_OPTIONS,
+    label: 'Entity/fact force graph',
+  })
 
   return (
-    <div className="context-room-entity-fact-graph-shell">
+    <div className="context-room-entity-fact-graph-shell nx-graph-shell">
       <PixiForceGraphCanvas
         ariaLabel={t('contextRoom:graphs.entityFactCanvas')}
         className="context-room-entity-fact-graph-canvas"
         edges={edges}
         nodes={nodes}
-        positions={layout?.snapshot.positions ?? positions}
-        revision={layout ? readRevision : undefined}
+        positions={layout.positions ?? positions}
+        revision={layout.revision}
         selectedId={selectedId}
-        onResize={resizeLayout}
-        onDragNode={(nodeId, x, y) => layout?.drag(nodeId, x, y)}
-        onReleaseNode={(nodeId) => layout?.release(nodeId)}
+        onResize={layout.resize}
+        onDragNode={layout.drag}
+        onReleaseNode={layout.release}
         onSelectNode={onSelect}
       />
       <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.entityFactNodes')}>

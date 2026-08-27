@@ -33,12 +33,16 @@ function createSolidCircleTexture(
   return texture
 }
 
-function createNodeIconTexture(
+/** 内置默认图标词表（target/book/user/flag/message/zap）；未知名返回 null（不画图标）。 */
+export function createDefaultNodeIconTexture(
+  icon: string,
   dependencies: PixiForceGraphDependencies,
   renderer: PixiRenderer,
-  icon: NonNullable<PixiForceGraphRendererOptions['nodes'][number]['icon']>,
   resolution: number,
-): PixiTexture {
+): PixiTexture | null {
+  const known = icon === 'target' || icon === 'book' || icon === 'user'
+    || icon === 'flag' || icon === 'message' || icon === 'zap'
+  if (!known) return null
   const graphics = new dependencies.Graphics()
   graphics.lineStyle(2.2, 0xffffff, 1)
   if (icon === 'target') {
@@ -189,14 +193,19 @@ export function createPixiForceGraphRenderer(
     particleContainer.addChild(sprite)
     return sprite
   })
-  const iconTextures = new Map<NonNullable<(typeof nodes)[number]['icon']>, PixiTexture>()
+  const createIconTexture = options.createIconTexture ?? createDefaultNodeIconTexture
+  const iconTextures = new Map<string, PixiTexture | null>()
   const iconSprites = nodes.map((node, index) => {
     if (!node.icon) return null
-    let iconTexture = iconTextures.get(node.icon)
-    if (!iconTexture) {
-      iconTexture = createNodeIconTexture(dependencies, app.renderer, node.icon, Math.min(4, renderResolution * 2))
-      iconTextures.set(node.icon, iconTexture)
+    // 负缓存：工厂对未知名返回 null 只问一次，避免每个节点重复调用工厂。
+    if (!iconTextures.has(node.icon)) {
+      iconTextures.set(
+        node.icon,
+        createIconTexture(node.icon, dependencies, app.renderer, Math.min(4, renderResolution * 2)),
+      )
     }
+    const iconTexture = iconTextures.get(node.icon)
+    if (!iconTexture) return null
     const sprite = new dependencies.Sprite(iconTexture)
     sprite.anchor?.set(0.5)
     const radius = positiveDimension(node.radius ?? nodeRadius, nodeRadius)
@@ -501,7 +510,7 @@ export function createPixiForceGraphRenderer(
       app.stage.removeChild?.(viewport)
       viewport.destroy({ children: false })
       texture.destroy(true)
-      for (const iconTexture of iconTextures.values()) iconTexture.destroy(true)
+      for (const iconTexture of iconTextures.values()) iconTexture?.destroy(true)
       app.destroy(true, { children: true })
     },
   }
