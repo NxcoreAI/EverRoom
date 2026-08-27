@@ -770,6 +770,33 @@ function requireSearchQuery(value: unknown): string {
 }
 
 function registerObsidianHandlers(service: ObsidianVaultService): void {
+  const cleanupRemovedVault = async (event: {
+    vaultId: string
+    roomId: string
+    mountMode: 'dedicated' | 'embedded' | 'memory'
+    projectionFileIds: string[]
+    memoryProjectionFileIds: string[]
+  }, attemptsRemaining = 120): Promise<void> => {
+    if (!gatewaySupervisor) {
+      if (attemptsRemaining > 0) {
+        const timer = setTimeout(() => {
+          void cleanupRemovedVault(event, attemptsRemaining - 1)
+        }, 1_000)
+        timer.unref()
+      }
+      return
+    }
+    const files = new FilesGatewayBridge(gatewaySupervisor)
+    const fileIds = new Set([...event.projectionFileIds, ...event.memoryProjectionFileIds])
+    for (const fileId of fileIds) await files.delete(fileId).catch(() => undefined)
+    await new DocumentGatewayBridge(gatewaySupervisor).removeExternalProjections(event.vaultId).catch(() => undefined)
+    if (event.mountMode === 'dedicated') {
+      await new KnowledgeGatewayBridge(gatewaySupervisor).deleteRoom(event.roomId).catch(() => undefined)
+    }
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('knowledge:changed')
+    }
+  }
   const syncMemoryVault = async (vaultId: string) => {
     if (!gatewaySupervisor) return []
     const vault = service.list().find((item) => item.id === vaultId)
@@ -837,6 +864,12 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     if (vault?.memoryEnabled) void syncMemoryVault(event.vaultId)
     if (vault && vault.mountMode !== 'memory') void projectRoomVault(event.vaultId)
   })
+  service.onRemoved(async (event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(OBSIDIAN_CHANNELS.changed, event)
+    }
+    await cleanupRemovedVault(event)
+  })
   service.onDiscoveryChanged((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(OBSIDIAN_CHANNELS.discoveryChanged, event)
@@ -890,19 +923,21 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
   handle(OBSIDIAN_CHANNELS.importCandidate, async (
     _event,
     candidateId: string,
-    target: { kind: 'memory' } | { kind: 'room'; roomId: string },
+    target: { kind: 'memory'; enableRegistryAutoImport?: boolean } | { kind: 'room'; roomId: string },
   ) => {
     if (!gatewaySupervisor) throw new Error('本地服务尚未就绪。')
     const rootPath = service.candidatePath(candidateId)
+    const registryId = service.candidateRegistryId(candidateId)
     const candidate = await service.registerCandidate(rootPath)
     if (target.kind === 'room') {
       if (typeof target.roomId !== 'string' || !target.roomId.trim()) throw new Error('请选择目标 Room。')
-      const vault = await service.mount(rootPath, target.roomId, 'embedded', service.candidateRegistryId(candidateId))
+      const vault = await service.mount(rootPath, target.roomId, 'embedded', registryId)
       void projectRoomVault(vault.id)
       return { kind: 'room' as const, vault }
     }
-    const vault = await service.mount(rootPath, undefined, 'memory', service.candidateRegistryId(candidateId))
+    const vault = await service.mount(rootPath, undefined, 'memory', registryId)
     const outcomes = await syncMemoryVault(vault.id)
+    if (registryId && target.enableRegistryAutoImport !== false) await service.setRegisteredVaultAutoImport(true)
     return {
       kind: 'memory' as const,
       projectName: candidate.name,
@@ -939,19 +974,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     return selection.canceled || !sourcePath ? null : service.addAttachment(vaultId, sourcePath, noteRelativePath)
   })
   handle(OBSIDIAN_CHANNELS.disconnect, async (_event, vaultId: string) => {
-    const vault = service.list().find((item) => item.id === vaultId)
-    const projectionFileIds = vault
-      ? [...new Set([...service.projectionFileIds(vaultId), ...service.memoryProjectionFileIds(vaultId)])]
-      : []
-    if (gatewaySupervisor) {
-      const bridge = new FilesGatewayBridge(gatewaySupervisor)
-      for (const fileId of projectionFileIds) await bridge.delete(fileId).catch(() => undefined)
-      await new DocumentGatewayBridge(gatewaySupervisor).removeExternalProjections(vaultId).catch(() => undefined)
-    }
     await service.disconnect(vaultId)
-    if (vault?.mountMode === 'dedicated' && gatewaySupervisor) {
-      await new KnowledgeGatewayBridge(gatewaySupervisor).deleteRoom(vault.roomId).catch(() => undefined)
-    }
   })
 }
 

@@ -44,6 +44,7 @@ interface StoredResource extends ObsidianVaultResource {
 interface StoredVault extends ObsidianVaultBinding {
   rootPath: string
   registryId?: string
+  registryManaged?: boolean
   resources: StoredResource[]
 }
 
@@ -51,6 +52,9 @@ interface StoreFile {
   version: 1
   vaults: StoredVault[]
   knownVaultRoots?: string[]
+  autoImportRegisteredVaults?: boolean
+  ignoredRegistryIds?: string[]
+  ignoredVaultRoots?: string[]
 }
 
 interface DiscoveredVault {
@@ -58,6 +62,21 @@ interface DiscoveredVault {
   registryId: string | null
   discoveredFrom: ObsidianVaultCandidate['discoveredFrom']
   lastOpenedAt: string | null
+}
+
+interface ObsidianRegistrySnapshot {
+  authoritative: boolean
+  vaults: DiscoveredVault[]
+}
+
+export interface ObsidianVaultRemovedEvent {
+  vaultId: string
+  roomId: string
+  mountMode: ObsidianVaultMountMode
+  projectionFileIds: string[]
+  projectionDocumentIds: string[]
+  memoryProjectionFileIds: string[]
+  updatedAt: string
 }
 
 export interface ObsidianRegistryDiscoveryOptions {
@@ -130,29 +149,40 @@ export function isPathInsideRoots(path: string, roots: readonly string[], platfo
   })
 }
 
-export async function discoverRegisteredObsidianVaultPaths(
+async function readObsidianRegistry(
   options: ObsidianRegistryDiscoveryOptions = {},
-): Promise<DiscoveredVault[]> {
+): Promise<ObsidianRegistrySnapshot> {
   const registryPath = obsidianRegistryPath(options)
   try {
     const parsed = JSON.parse(await readFile(registryPath, 'utf8')) as {
       vaults?: Record<string, { path?: unknown; ts?: unknown }>
     }
-    if (!parsed.vaults || typeof parsed.vaults !== 'object') return []
-    return Object.entries(parsed.vaults).flatMap(([registryId, vault]) => {
+    if (!parsed.vaults || typeof parsed.vaults !== 'object' || Array.isArray(parsed.vaults)) {
+      return { authoritative: false, vaults: [] }
+    }
+    const vaults = Object.entries(parsed.vaults).flatMap(([registryId, vault]) => {
       if (typeof vault.path !== 'string' || !vault.path.trim()) return []
       const timestamp = typeof vault.ts === 'number' && Number.isFinite(vault.ts) ? new Date(vault.ts).toISOString() : null
       return [{ rootPath: vault.path, registryId, discoveredFrom: 'registry' as const, lastOpenedAt: timestamp }]
     })
+    return { authoritative: true, vaults }
   } catch {
-    return []
+    return { authoritative: false, vaults: [] }
   }
+}
+
+export async function discoverRegisteredObsidianVaultPaths(
+  options: ObsidianRegistryDiscoveryOptions = {},
+): Promise<DiscoveredVault[]> {
+  return (await readObsidianRegistry(options)).vaults
 }
 
 export class ObsidianVaultService {
   private readonly storePath: string
   private readonly listeners = new Set<(event: ObsidianVaultChangedEvent) => void>()
   private readonly discoveryListeners = new Set<(event: ObsidianDiscoveryChangedEvent) => void>()
+  private readonly removalListeners = new Set<(event: ObsidianVaultRemovedEvent) => void | Promise<void>>()
+  private readonly pendingRemovalEvents: ObsidianVaultRemovedEvent[] = []
   private readonly watchers = new Map<string, FSWatcher>()
   private readonly scanTimers = new Map<string, NodeJS.Timeout>()
   private readonly removedProjectionFileIds = new Map<string, Set<string>>()
@@ -162,8 +192,15 @@ export class ObsidianVaultService {
   private readonly discoveredPaths = new Map<string, string>()
   private readonly discoveredRegistryIds = new Map<string, string>()
   private readonly knownVaultRoots = new Set<string>()
+  private readonly ignoredRegistryIds = new Set<string>()
+  private readonly ignoredVaultRoots = new Set<string>()
+  private autoImportRegisteredVaults = false
+  private lastRegistrySignature: string | null = null
+  private registryRefreshQueue: Promise<void> = Promise.resolve()
   private registryWatcher: FSWatcher | null = null
   private registryTimer: NodeJS.Timeout | null = null
+  private registryPollTimer: NodeJS.Timeout | null = null
+  private registryReadRetryTimer: NodeJS.Timeout | null = null
   private registryRetryTimer: NodeJS.Timeout | null = null
   private shuttingDown = false
 
@@ -181,15 +218,26 @@ export class ObsidianVaultService {
       if (parsed.version === 1 && Array.isArray(parsed.vaults)) {
         this.vaults = parsed.vaults.map((vault) => {
           const mountMode = vault.mountMode ?? 'dedicated'
-          return { ...vault, mountMode, memoryEnabled: vault.memoryEnabled ?? mountMode === 'memory' }
+          const memoryEnabled = vault.memoryEnabled ?? mountMode === 'memory'
+          return {
+            ...vault,
+            mountMode,
+            memoryEnabled,
+            registryManaged: vault.registryManaged ?? (mountMode === 'memory' && memoryEnabled && Boolean(vault.registryId)),
+          }
         })
+        this.autoImportRegisteredVaults = parsed.autoImportRegisteredVaults
+          ?? this.vaults.some((vault) => vault.memoryEnabled && Boolean(vault.registryId))
         for (const root of parsed.knownVaultRoots ?? []) this.knownVaultRoots.add(root)
+        for (const registryId of parsed.ignoredRegistryIds ?? []) this.ignoredRegistryIds.add(registryId)
+        for (const root of parsed.ignoredVaultRoots ?? []) this.ignoredVaultRoots.add(root)
       }
     } catch {
       this.vaults = []
     }
     await this.refreshRegisteredVaultRoots(false)
     this.startRegistryWatcher()
+    this.startRegistryPolling()
     await Promise.all(this.vaults.map(async (vault) => {
       try {
         await access(vault.rootPath)
@@ -207,10 +255,15 @@ export class ObsidianVaultService {
     this.shuttingDown = true
     if (this.registryTimer) clearTimeout(this.registryTimer)
     this.registryTimer = null
+    if (this.registryPollTimer) clearInterval(this.registryPollTimer)
+    this.registryPollTimer = null
     if (this.registryRetryTimer) clearTimeout(this.registryRetryTimer)
     this.registryRetryTimer = null
+    if (this.registryReadRetryTimer) clearTimeout(this.registryReadRetryTimer)
+    this.registryReadRetryTimer = null
     this.registryWatcher?.close()
     this.registryWatcher = null
+    await this.registryRefreshQueue.catch(() => undefined)
     for (const timer of this.scanTimers.values()) clearTimeout(timer)
     this.scanTimers.clear()
     for (const watcher of this.watchers.values()) watcher.close()
@@ -226,6 +279,17 @@ export class ObsidianVaultService {
   onDiscoveryChanged(listener: (event: ObsidianDiscoveryChangedEvent) => void): () => void {
     this.discoveryListeners.add(listener)
     return () => this.discoveryListeners.delete(listener)
+  }
+
+  onRemoved(listener: (event: ObsidianVaultRemovedEvent) => void | Promise<void>): () => void {
+    this.removalListeners.add(listener)
+    const pending = this.pendingRemovalEvents.splice(0)
+    if (pending.length) {
+      void Promise.all(pending.map((event) => listener(event))).catch((error) => {
+        console.warn('Unable to process queued Obsidian Vault removal', error)
+      })
+    }
+    return () => this.removalListeners.delete(listener)
   }
 
   excludedRootPaths(): string[] {
@@ -253,6 +317,7 @@ export class ObsidianVaultService {
     for (const item of [...registered, ...scanned]) {
       const rootPath = await this.validateVaultRoot(item.rootPath).catch(() => null)
       if (!rootPath) continue
+      if (item.discoveredFrom === 'scan' && this.isIgnoredVaultRoot(rootPath)) continue
       if (await this.rememberVaultRoot(rootPath, false)) rootsChanged = true
       const current = byRoot.get(rootPath)
       if (!current || current.discoveredFrom === 'scan') byRoot.set(rootPath, { ...item, rootPath })
@@ -294,6 +359,8 @@ export class ObsidianVaultService {
   async mount(rootPath: string, roomId?: string, mountMode: ObsidianVaultMountMode = 'dedicated', registryId?: string | null): Promise<ObsidianVaultBinding> {
     const root = await this.validateVaultRoot(rootPath)
     const effectiveRegistryId = registryId ?? await this.registeredVaultIdForRoot(root)
+    if (effectiveRegistryId) this.ignoredRegistryIds.delete(effectiveRegistryId)
+    this.forgetIgnoredVaultRoot(root)
     await this.rememberVaultRoot(root)
     const existing = this.vaults.find((vault) => resolve(vault.rootPath) === resolve(root))
     if (existing) {
@@ -306,7 +373,10 @@ export class ObsidianVaultService {
         throw new Error(`该 Vault 已导入到另一个 Room（${existing.name}）。`)
       }
       existing.status = 'connected'
-      if (effectiveRegistryId) existing.registryId = effectiveRegistryId
+      if (effectiveRegistryId) {
+        existing.registryId = effectiveRegistryId
+        if (existing.mountMode === 'memory') existing.registryManaged = true
+      }
       await this.scan(existing.id, false)
       this.startWatching(existing.id)
       await this.persist()
@@ -319,6 +389,7 @@ export class ObsidianVaultService {
       mountMode,
       memoryEnabled: mountMode === 'memory',
       ...(effectiveRegistryId ? { registryId: effectiveRegistryId } : {}),
+      registryManaged: mountMode === 'memory' && Boolean(effectiveRegistryId),
       name: basename(root),
       rootPath: root,
       attachmentFolderPath: await this.readAttachmentFolder(root),
@@ -368,10 +439,43 @@ export class ObsidianVaultService {
     return changed
   }
 
-  private async refreshRegisteredVaultRoots(notify = true): Promise<void> {
-    const registered = await discoverRegisteredObsidianVaultPaths(this.discoveryOptions)
+  async setRegisteredVaultAutoImport(enabled: boolean): Promise<void> {
+    if (this.autoImportRegisteredVaults === enabled) return
+    this.autoImportRegisteredVaults = enabled
+    await this.persist()
+    if (enabled) await this.refreshRegisteredVaultRoots()
+  }
+
+  private refreshRegisteredVaultRoots(notify = true, retryInvalidRead = true): Promise<void> {
+    const refresh = this.registryRefreshQueue.then(() => this.reconcileRegisteredVaultRoots(notify, retryInvalidRead))
+    this.registryRefreshQueue = refresh.catch(() => undefined)
+    return refresh
+  }
+
+  private async reconcileRegisteredVaultRoots(notify: boolean, retryInvalidRead: boolean): Promise<void> {
+    const snapshot = await readObsidianRegistry(this.discoveryOptions)
+    if (!snapshot.authoritative) {
+      if (retryInvalidRead && !this.registryReadRetryTimer && !this.shuttingDown) {
+        this.registryReadRetryTimer = setTimeout(() => {
+          this.registryReadRetryTimer = null
+          void this.refreshRegisteredVaultRoots(notify, false).catch(() => undefined)
+        }, 500)
+      }
+      return
+    }
+    if (this.registryReadRetryTimer) clearTimeout(this.registryReadRetryTimer)
+    this.registryReadRetryTimer = null
+    const registered = snapshot.vaults
+    const registrySignature = JSON.stringify(registered
+      .map((item) => [item.registryId, comparablePath(item.rootPath, this.discoveryOptions.platform ?? process.platform), item.lastOpenedAt])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0]))))
+    const registryChanged = registrySignature !== this.lastRegistrySignature
+    this.lastRegistrySignature = registrySignature
+    const registeredIds = new Set(registered.map((item) => item.registryId).filter((id): id is string => Boolean(id)))
     let changed = false
     const reboundVaults: StoredVault[] = []
+    const importedVaults: StoredVault[] = []
+    const removedVaults: ObsidianVaultRemovedEvent[] = []
     for (const item of registered) {
       const root = await this.validateVaultRoot(item.rootPath).catch(() => null)
       if (!root) continue
@@ -379,9 +483,16 @@ export class ObsidianVaultService {
       const boundByRegistry = this.vaults.find((vault) => vault.registryId === item.registryId)
       const boundByPath = this.vaults.find((vault) => comparablePath(vault.rootPath, this.discoveryOptions.platform ?? process.platform) === comparablePath(root, this.discoveryOptions.platform ?? process.platform))
       const bound = boundByRegistry ?? boundByPath
-      if (!bound) continue
-      if (!bound.registryId) {
-        bound.registryId = item.registryId ?? undefined
+      if (!bound) {
+        if (!this.autoImportRegisteredVaults || !item.registryId || this.ignoredRegistryIds.has(item.registryId)) continue
+        const imported = await this.mount(root, undefined, 'memory', item.registryId)
+        importedVaults.push(this.requireVault(imported.id))
+        changed = true
+        continue
+      }
+      if (item.registryId && bound.registryId !== item.registryId && (!boundByRegistry || boundByPath === bound)) {
+        bound.registryId = item.registryId
+        if (bound.mountMode === 'memory') bound.registryManaged = true
         changed = true
       }
       if (resolve(bound.rootPath) === resolve(root)) continue
@@ -396,9 +507,16 @@ export class ObsidianVaultService {
       reboundVaults.push(bound)
       changed = true
     }
+    for (const vault of [...this.vaults]) {
+      if (!vault.registryManaged || vault.mountMode !== 'memory' || !vault.registryId || registeredIds.has(vault.registryId)) continue
+      removedVaults.push(this.removeVault(vault, { suppressRoot: true, ignoreRegistry: false }))
+      changed = true
+    }
     if (changed) await this.persist()
     for (const vault of reboundVaults) this.emit(vault)
-    if (notify) this.emitDiscoveryChanged()
+    for (const vault of importedVaults) this.emit(vault)
+    for (const event of removedVaults) await this.emitRemoved(event)
+    if (notify && (changed || registryChanged)) this.emitDiscoveryChanged()
   }
 
   private startRegistryWatcher(): void {
@@ -422,6 +540,14 @@ export class ObsidianVaultService {
       this.registryWatcher = null
       this.scheduleRegistryWatcherRetry()
     }
+  }
+
+  private startRegistryPolling(): void {
+    if (this.registryPollTimer || this.shuttingDown) return
+    this.registryPollTimer = setInterval(() => {
+      void this.refreshRegisteredVaultRoots().catch(() => undefined)
+    }, 1_000)
+    this.registryPollTimer.unref()
   }
 
   private scheduleRegistryWatcherRetry(): void {
@@ -722,10 +848,10 @@ export class ObsidianVaultService {
   }
 
   async disconnect(vaultId: string): Promise<void> {
-    this.watchers.get(vaultId)?.close()
-    this.watchers.delete(vaultId)
-    this.vaults = this.vaults.filter((vault) => vault.id !== vaultId)
+    const vault = this.requireVault(vaultId)
+    const event = this.removeVault(vault, { suppressRoot: true, ignoreRegistry: true })
     await this.persist()
+    await this.emitRemoved(event)
   }
 
   async asset(vaultId: string, resourceId: string): Promise<{ buffer: Buffer; mime: string }> {
@@ -924,8 +1050,49 @@ export class ObsidianVaultService {
   }
 
   private binding(vault: StoredVault): ObsidianVaultBinding {
-    const { resources: _resources, rootPath: _rootPath, registryId: _registryId, ...binding } = vault
+    const {
+      resources: _resources,
+      rootPath: _rootPath,
+      registryId: _registryId,
+      registryManaged: _registryManaged,
+      ...binding
+    } = vault
     return { ...binding }
+  }
+
+  private isIgnoredVaultRoot(rootPath: string): boolean {
+    const expected = comparablePath(rootPath, this.discoveryOptions.platform ?? process.platform)
+    return [...this.ignoredVaultRoots].some((root) => comparablePath(root, this.discoveryOptions.platform ?? process.platform) === expected)
+  }
+
+  private forgetIgnoredVaultRoot(rootPath: string): void {
+    const expected = comparablePath(rootPath, this.discoveryOptions.platform ?? process.platform)
+    for (const root of this.ignoredVaultRoots) {
+      if (comparablePath(root, this.discoveryOptions.platform ?? process.platform) === expected) this.ignoredVaultRoots.delete(root)
+    }
+  }
+
+  private removeVault(
+    vault: StoredVault,
+    options: { suppressRoot: boolean; ignoreRegistry: boolean },
+  ): ObsidianVaultRemovedEvent {
+    if (options.ignoreRegistry && vault.registryId) this.ignoredRegistryIds.add(vault.registryId)
+    if (options.suppressRoot) this.ignoredVaultRoots.add(vault.rootPath)
+    this.watchers.get(vault.id)?.close()
+    this.watchers.delete(vault.id)
+    const scanTimer = this.scanTimers.get(vault.id)
+    if (scanTimer) clearTimeout(scanTimer)
+    this.scanTimers.delete(vault.id)
+    this.vaults = this.vaults.filter((item) => item.id !== vault.id)
+    return {
+      vaultId: vault.id,
+      roomId: vault.roomId,
+      mountMode: vault.mountMode,
+      projectionFileIds: vault.resources.flatMap((resource) => resource.projectionFileId ? [resource.projectionFileId] : []),
+      projectionDocumentIds: vault.resources.flatMap((resource) => resource.projectionDocumentId ? [resource.projectionDocumentId] : []),
+      memoryProjectionFileIds: vault.resources.flatMap((resource) => resource.memoryProjectionFileId ? [resource.memoryProjectionFileId] : []),
+      updatedAt: new Date().toISOString(),
+    }
   }
 
   private emit(vault: StoredVault): void {
@@ -936,6 +1103,14 @@ export class ObsidianVaultService {
   private emitDiscoveryChanged(): void {
     const event = { updatedAt: new Date().toISOString() }
     for (const listener of this.discoveryListeners) listener(event)
+  }
+
+  private async emitRemoved(event: ObsidianVaultRemovedEvent): Promise<void> {
+    if (this.removalListeners.size === 0) {
+      this.pendingRemovalEvents.push(event)
+      return
+    }
+    await Promise.all([...this.removalListeners].map((listener) => listener(event)))
   }
 
   private assetUrl(vaultId: string, resourceId: string): string {
@@ -964,6 +1139,9 @@ export class ObsidianVaultService {
       version: 1,
       vaults: this.vaults,
       knownVaultRoots: [...this.knownVaultRoots],
+      autoImportRegisteredVaults: this.autoImportRegisteredVaults,
+      ignoredRegistryIds: [...this.ignoredRegistryIds],
+      ignoredVaultRoots: [...this.ignoredVaultRoots],
     } satisfies StoreFile, null, 2), 'utf8')
   }
 }

@@ -79,7 +79,7 @@ export interface ObsidianVaultApi {
   pickAndMount(): Promise<ObsidianVaultBinding | null>
   discover(): Promise<ObsidianVaultCandidate[]>
   pickCandidate(): Promise<ObsidianVaultCandidate | null>
-  importCandidate(candidateId: string, target: { kind: 'memory' } | { kind: 'room'; roomId: string }): Promise<
+  importCandidate(candidateId: string, target: { kind: 'memory'; enableRegistryAutoImport?: boolean } | { kind: 'room'; roomId: string }): Promise<
     | { kind: 'memory'; projectName: string; total: number; succeeded: number; failed: number }
     | { kind: 'room'; vault: ObsidianVaultBinding }
   >
