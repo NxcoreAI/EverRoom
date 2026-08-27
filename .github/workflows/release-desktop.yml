@@ -121,7 +121,8 @@ jobs:
         run: |
           args=()
           if [[ -n "$CSC_LINK" ]]; then
-            args+=(--config '{"mac":{"notarize":true,"hardenedRuntime":true}}')
+            echo '{"mac":{"notarize":true,"hardenedRuntime":true}}' > "$RUNNER_TEMP/sign-config.json"
+            args+=(--config "$RUNNER_TEMP/sign-config.json")
             if [[ -f apps/desktop/build/embedded.provisionprofile ]]; then
               args+=(-c.mac.provisioningProfile=build/embedded.provisionprofile)
             fi
