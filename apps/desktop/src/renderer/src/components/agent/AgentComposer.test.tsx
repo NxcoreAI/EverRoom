@@ -4,7 +4,6 @@ import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/state/toast', () => ({ showToast: vi.fn() }))
-vi.mock('@/state/realitySettings', () => ({ loadRealitySettings: vi.fn() }))
 vi.mock('@/i18n/LocaleContext', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/i18n/LocaleContext')>()
   return {
@@ -182,6 +181,13 @@ describe('AgentComposer external conversation command', () => {
     expect(onSelectAgent).toHaveBeenCalledWith(localAgent)
   })
 
+  it('renders the current Agent as an unframed identity line', () => {
+    const { renderer } = renderComposer({ selectedAgent: localAgent })
+
+    expect(renderer.root.findAllByProps({ className: 'agent-current-agent' })).toHaveLength(1)
+    expect(renderer.root.findAllByProps({ className: 'agent-mention-selection' })).toHaveLength(0)
+  })
+
   it('renders command surfaces above the prompt without changing the prompt layout', () => {
     const { renderer } = renderComposer({ value: '/' })
     const popover = renderer.root.findByProps({ className: 'agent-composer-popover agent-command-picker' })
@@ -190,6 +196,13 @@ describe('AgentComposer external conversation command', () => {
     expect(popover.parent?.props.className).toBe('agent-composer-shell')
     expect(prompt.findAllByProps({ className: 'agent-command-picker' })).toHaveLength(0)
     expect(renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' }).props['aria-expanded']).toBe(true)
+  })
+
+  it('does not render a voice input control', () => {
+    const { renderer } = renderComposer()
+
+    expect(renderer.root.findAllByProps({ 'aria-label': '语音输入' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ className: 'agent-prompt-voice' })).toHaveLength(0)
   })
 
   it('ignores stale search responses and never loads previews on hover', async () => {
