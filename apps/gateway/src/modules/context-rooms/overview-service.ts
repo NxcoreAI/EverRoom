@@ -319,6 +319,14 @@ export class RoomOverviewService {
     applied = this.rooms.roomAppliedEntities(roomId),
   ): string | null {
     const row = this.db.select().from(contextRooms).where(eq(contextRooms.id, roomId)).get();
+    // 连接器源的水位用「路由进房时间」（membership.updatedAt），不用事件的
+    // startedAt/dueAt：回填的历史日程不会推进水位（概览不刷新），未来的
+    // 日程（如 2031 假日）反而会把水位顶到未来、Room 永久显示过期。
+    const connectorRoutedAt = this.db.select({ updatedAt: roomSourceMemberships.updatedAt })
+      .from(roomSourceMemberships)
+      .where(eq(roomSourceMemberships.roomId, roomId))
+      .all()
+      .map((membership) => membership.updatedAt.toISOString());
     const candidates = [
       row?.updatedAt.toISOString(),
       isoTime(record(row?.data).updatedAt),
@@ -326,8 +334,7 @@ export class RoomOverviewService {
       ...applied.entities.map((entity) => entity.lastMentionAt),
       // 文档更新/日历路由/待办路由也应把投影标记为待刷新。
       ...this.roomDocuments(roomId).map((document) => document.updatedAt),
-      ...this.roomCalendarEvents(roomId).map((event) => event.startedAt),
-      ...this.roomTodos(roomId).map((todo) => todo.dueAt),
+      ...connectorRoutedAt,
     ].filter((value): value is string => Boolean(value));
     return candidates.sort((left, right) => right.localeCompare(left))[0] ?? null;
   }

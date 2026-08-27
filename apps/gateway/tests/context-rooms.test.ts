@@ -10,6 +10,7 @@ import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   connectorCalendarEvents,
   connectorTodos,
+  contextRooms,
   documents as documentsTable,
   entities as entitiesTable,
   roomDocumentLinks,
@@ -675,10 +676,13 @@ describe('RoomOverviewService', () => {
       },
     ]).run()
     db.insert(roomSourceMemberships).values([
-      { id: 'conn-cal', roomId: 'room-connector', sourceKind: 'calendar-event', sourceId: 'cal-conn-1', sourceVersion: 1, evidenceGroupKey: 'cal', role: 'primary', sourceTitle: '发射协调会' },
-      { id: 'conn-todo-1', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-1', sourceVersion: 1, evidenceGroupKey: 't1', role: 'primary', sourceTitle: '补充天线参数' },
-      { id: 'conn-todo-done', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-done', sourceVersion: 1, evidenceGroupKey: 't2', role: 'primary', sourceTitle: '已完成待办' },
+      { id: 'conn-cal', roomId: 'room-connector', sourceKind: 'calendar-event', sourceId: 'cal-conn-1', sourceVersion: 1, evidenceGroupKey: 'cal', role: 'primary', sourceTitle: '发射协调会', updatedAt: new Date('2026-08-21T08:00:00.000Z') },
+      { id: 'conn-todo-1', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-1', sourceVersion: 1, evidenceGroupKey: 't1', role: 'primary', sourceTitle: '补充天线参数', updatedAt: new Date('2026-08-20T09:00:00.000Z') },
+      { id: 'conn-todo-done', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-done', sourceVersion: 1, evidenceGroupKey: 't2', role: 'primary', sourceTitle: '已完成待办', updatedAt: new Date('2026-08-20T09:00:00.000Z') },
     ]).run()
+
+    // 房间行刚被 saveSnapshot 写成 now：回拨，让连接器路由时间成为水位最大者。
+    db.update(contextRooms).set({ updatedAt: new Date('2026-08-19T08:00:00.000Z') }).where(eq(contextRooms.id, 'room-connector')).run()
 
     const projection = new RoomOverviewService(db, service).refresh('room-connector')
     // 确定性 schedule claim：来自 connector 域表的精确开始时间；同 sourceId 的 LLM meeting 不再重复。
@@ -709,8 +713,9 @@ describe('RoomOverviewService', () => {
       occurredAt: '2026-12-01T02:00:00.000Z',
       data: { kind: 'timeline', eventType: 'meeting' },
     })
-    // freshness 候选纳入日程开始时间与待办 dueAt：取最大者。
-    expect(projection.freshness).toMatchObject({ sourceUpdatedAt: '2026-12-01T02:00:00.000Z' })
+    // freshness 水位用连接器源的路由进房时间（membership.updatedAt）：
+    // 事件 startedAt/dueAt 不参与——历史回填也能推进水位，未来日程不会把水位顶到未来。
+    expect(projection.freshness).toMatchObject({ sourceUpdatedAt: '2026-08-21T08:00:00.000Z' })
   })
 
   it('pins fact timeline entries to their first mention instead of the latest', async () => {
