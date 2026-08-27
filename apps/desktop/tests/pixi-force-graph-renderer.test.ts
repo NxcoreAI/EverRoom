@@ -496,6 +496,37 @@ describe('PixiForceGraphRenderer', () => {
     expect(fakes.texts.filter((label) => label.visible).map((label) => label.text)).toEqual(['Relation 3'])
   })
 
+  it('hides unrelated relationship labels while a node is hovered at high zoom', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [
+        { id: 'edge-0', source: 0, target: 1, label: 'Focused relation' },
+        { id: 'edge-1', source: 2, target: 3, label: 'Unrelated relation' },
+      ],
+      host: createHost(),
+      nodes: Array.from({ length: 4 }, () => ({})),
+      positions: new Float32Array([10, 20, 80, 20, 150, 20, 220, 20]),
+    })
+
+    const viewport = fakes.viewports[0]!
+    viewport.scale.x = 2
+    viewport.visibleBounds = { x: 0, y: 0, width: 300, height: 100 }
+    fakes.ticker.tick()
+    expect(fakes.texts.filter((label) => label.visible).map((label) => label.text))
+      .toEqual(['Focused relation', 'Unrelated relation'])
+
+    renderer.setHoveredIndex(0)
+    fakes.ticker.tick()
+    expect(fakes.texts.filter((label) => label.visible).map((label) => label.text))
+      .toEqual(['Focused relation'])
+
+    renderer.setHoveredIndex(null)
+    fakes.ticker.tick()
+    expect(fakes.texts.filter((label) => label.visible).map((label) => label.text))
+      .toEqual(['Focused relation', 'Unrelated relation'])
+  })
+
   it('culls labels to visible nodes and never grows the reusable text pool past its cap', async () => {
     const fakes = createFakes()
     const renderer = await createPixiForceGraphRenderer({
