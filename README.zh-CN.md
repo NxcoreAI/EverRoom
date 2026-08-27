@@ -355,6 +355,7 @@ Everroom/
 │   ├── agent-contract/   # 共享 Agent 协议与事件类型
 │   ├── agent-runtime/    # Runtime 接口与开发 adapter
 │   ├── agent-runtime-pi/ # Pi runtime、记忆、知识和连接器工具
+│   ├── connector-contract/ # 共享 Connector 同步与标准化数据协议
 │   ├── document-model/   # 纯文档规范化与块引用
 │   └── reality-contract/ # 现实感知与事件共享协议
 └── docs/                 # 产品、架构和实施说明
