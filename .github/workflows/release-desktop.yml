@@ -17,7 +17,6 @@ jobs:
   macos:
     runs-on: macos-14
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
       NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
       NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
       NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
@@ -86,7 +85,26 @@ jobs:
           test -f apps/desktop/build/nango-runtime/packages/server/dist/server.js
 
       - name: Package macOS arm64
-        run: pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never
+        shell: bash
+        env:
+          # MAC_CERTS: base64 of the "Developer ID Application" .p12
+          # MAC_CERTS_PASSWORD: password of that .p12
+          MAC_CERTS: ${{ secrets.MAC_CERTS }}
+          MAC_CERTS_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          args=()
+          if [[ -n "$MAC_CERTS" ]]; then
+            export CSC_LINK="$MAC_CERTS"
+            export CSC_KEY_PASSWORD="$MAC_CERTS_PASSWORD"
+            args+=(--config '{"mac":{"notarize":true,"hardenedRuntime":true}}')
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            echo "::warning::MAC_CERTS is not configured; producing an unsigned build."
+          fi
+          pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never "${args[@]}"
 
       - name: Audit package contents
         shell: bash
@@ -134,6 +152,8 @@ jobs:
 
       - name: Verify artifacts
         shell: bash
+        env:
+          MAC_CERTS: ${{ secrets.MAC_CERTS }}
         run: |
           app_path="$(find release -type d -name EverRoom.app -print -quit)"
           dmgs=(release/*.dmg)
@@ -144,6 +164,10 @@ jobs:
           test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
           hdiutil verify "${dmgs[0]}"
           unzip -t "${zips[0]}"
+          if [[ -n "$MAC_CERTS" ]]; then
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            spctl -a -t exec -vv "$app_path"
+          fi
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -193,11 +217,16 @@ jobs:
           for asset in "${expected[@]}"; do
             test -f "$asset" || { echo "Missing release asset: $asset" >&2; exit 1; }
           done
+          if [[ -n "${{ secrets.MAC_CERTS }}" ]]; then
+            notes="Signed and notarized Apple Silicon builds."
+          else
+            notes="Unsigned Apple Silicon development builds. macOS Gatekeeper may require manual approval before first launch."
+          fi
           gh release create "$GITHUB_REF_NAME" "${expected[@]}" \
             --verify-tag \
             --prerelease \
             --generate-notes \
-            --notes "Unsigned Apple Silicon development builds. macOS Gatekeeper may require manual approval before first launch."
+            --notes "$notes"
 
   notify:
     needs: [macos, publish]
