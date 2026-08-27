@@ -192,9 +192,15 @@ export function HomeView({
   const [recentlyDeleted, setRecentlyDeleted] = useState<ContextRoomRecord | null>(null);
   const visibleRooms = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return normalized
+    const matched = normalized
       ? rooms.filter((room) => room.title.toLowerCase().includes(normalized))
       : rooms;
+    // 按更新时间倒序（与卡片上的“N 分钟前”同一时间戳）；缺时间戳的旧记录沉底。
+    const updatedAtOf = (room: ContextRoomRecord) => {
+      const time = room.updatedAt ? new Date(room.updatedAt).getTime() : Number.NaN;
+      return Number.isFinite(time) ? time : 0;
+    };
+    return [...matched].sort((left, right) => updatedAtOf(right) - updatedAtOf(left));
   }, [query, rooms]);
   const homeRooms = query.trim() ? visibleRooms : visibleRooms.slice(0, 6);
 

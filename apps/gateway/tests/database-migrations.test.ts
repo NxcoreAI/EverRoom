@@ -13,6 +13,72 @@ afterEach(async () => {
 });
 
 describe("database migrations", () => {
+  it("repairs pre-release Context Room overview tables without losing projections", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-room-overview-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+    const beforeUpgrade = createDatabase(databasePath, migrationsDir);
+    const projection = JSON.stringify({
+      overview: { text: "Preserved overview" },
+      status: { text: "active" },
+    });
+    beforeUpgrade.sqlite.prepare(
+      "INSERT INTO context_rooms (id, title, data, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("room-legacy-overview", "Legacy overview", "{}", 0, 1, 1);
+    beforeUpgrade.sqlite.exec("DROP TABLE room_overviews");
+    beforeUpgrade.sqlite.exec(`
+      CREATE TABLE room_overviews (
+        room_id text PRIMARY KEY NOT NULL,
+        revision integer DEFAULT 1 NOT NULL,
+        projection text NOT NULL,
+        generated_at integer NOT NULL,
+        updated_at integer NOT NULL,
+        FOREIGN KEY (room_id) REFERENCES context_rooms(id) ON DELETE cascade
+      )
+    `);
+    beforeUpgrade.sqlite.exec(
+      "CREATE INDEX room_overviews_updated_idx ON room_overviews (updated_at)",
+    );
+    beforeUpgrade.sqlite.prepare(
+      "INSERT INTO room_overviews (room_id, revision, projection, generated_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("room-legacy-overview", 3, projection, 10, 11);
+    beforeUpgrade.sqlite.exec("ALTER TABLE room_context_corrections DROP COLUMN proposed_by_run_id");
+    beforeUpgrade.sqlite.close();
+
+    const upgraded = createDatabase(databasePath, migrationsDir);
+    const overviewColumns = upgraded.sqlite.prepare("PRAGMA table_info(room_overviews)")
+      .all() as Array<{ name: string; notnull: number }>;
+    const correctionColumns = upgraded.sqlite.prepare("PRAGMA table_info(room_context_corrections)")
+      .all() as Array<{ name: string }>;
+    const overview = upgraded.sqlite.prepare(
+      "SELECT revision, base_projection, projection, generated_at, updated_at FROM room_overviews WHERE room_id = ?",
+    ).get("room-legacy-overview");
+    const indexes = upgraded.sqlite.prepare("PRAGMA index_list(room_overviews)")
+      .all() as Array<{ name: string }>;
+    upgraded.sqlite.close();
+
+    expect(overviewColumns.find(({ name }) => name === "base_projection")?.notnull).toBe(1);
+    expect(correctionColumns.map(({ name }) => name)).toContain("proposed_by_run_id");
+    expect(overview).toEqual({
+      revision: 3,
+      base_projection: projection,
+      projection,
+      generated_at: 10,
+      updated_at: 11,
+    });
+    expect(indexes.map(({ name }) => name)).toContain("room_overviews_updated_idx");
+
+    const reopened = createDatabase(databasePath, migrationsDir);
+    expect(reopened.sqlite.prepare(
+      "SELECT base_projection, projection FROM room_overviews WHERE room_id = ?",
+    ).get("room-legacy-overview")).toEqual({
+      base_projection: projection,
+      projection,
+    });
+    reopened.sqlite.close();
+  });
+
   it("creates the document outbox polling index", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-outbox-index-test-"));
     temporaryDirectories.push(dataDir);

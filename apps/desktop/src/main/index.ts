@@ -669,13 +669,15 @@ ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(local
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
   const value = input as { module?: unknown; level?: unknown; event?: unknown }
-  if (value.module !== 'document-cursor-completion') return
+  if (value.module !== 'document-cursor-completion' && value.module !== 'context-room-overview') return
   if (value.level !== 'info' && value.level !== 'warn' && value.level !== 'error') return
   if (!value.event || typeof value.event !== 'object' || Array.isArray(value.event)) return
   try {
     const serialized = JSON.stringify(value.event)
     if (serialized.length > 16_000) return
-    logDocumentCursorCompletion(value.level, JSON.parse(serialized) as Record<string, unknown>)
+    const event = JSON.parse(serialized) as Record<string, unknown>
+    if (value.module === 'document-cursor-completion') logDocumentCursorCompletion(value.level, event)
+    else logLocalDesktop('context-room-overview', value.level, event)
   } catch {
     // Ignore malformed renderer diagnostics rather than affecting the editor.
   }
@@ -926,9 +928,7 @@ async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promi
   const bridge = runtimeConfigBridge
   try {
     const supervisor = memoryCoreSupervisor
-    // 复用模式的连接可能指向已死的残留实例（残留进程随后退出的场景）：
-    // 先自愈成托管实例，否则 restart 对非托管连接是 no-op，死连接一直被注入。
-    const initialConnection = supervisor ? await supervisor.ensureHealthy() : null
+    const initialConnection = supervisor?.getConnection() ?? null
     if (!supervisor || !initialConnection) {
       // MemoryCoreSupervisor returns null for an explicitly configured
       // external instance. In that mode Gateway already inherited the

@@ -8,6 +8,7 @@ import {
   isSelectionRewriteInvocationAuthorized,
   parseBriefRefresh,
   parseContextRoomEnrichment,
+  parseRoomOverviewSynthesis,
 } from '../src/modules/context-rooms/room-agent.js'
 
 function invocation(overrides: Partial<SubagentInvocation>): SubagentInvocation {
@@ -103,6 +104,31 @@ describe('Context Room Agent enrichment parsing', () => {
       status: '进行中',
       risks: ['风险一'],
       decisions: ['决策一'],
+    })
+  })
+
+  it('parses structured overview claims and remains compatible with legacy strings', () => {
+    expect(parseRoomOverviewSynthesis(JSON.stringify({
+      overview: [{ key: 'delivery-phase', text: '交付进入验证阶段', aspect: 'summary', confidence: 1.2, evidenceRefs: ['fact-1'] }],
+      status: [
+        { text: '接口已联调', category: 'progress', state: 'active', confidence: 0.9, evidenceRefs: ['doc:1'] },
+        { text: '等待法务', category: 'blocker', state: 'active', evidenceRefs: [] },
+      ],
+      nextSteps: [{ text: '完成验收', owner: '林薇', dueAt: '2026-09-01', priority: 'high', evidenceRefs: ['fact-2'] }],
+    }))).toEqual({
+      overview: [{ key: 'delivery-phase', text: '交付进入验证阶段', aspect: 'summary', confidence: 1, evidenceRefs: ['fact-1'] }],
+      status: [
+        { key: null, text: '接口已联调', category: 'progress', state: 'active', confidence: 0.9, evidenceRefs: ['doc:1'] },
+        { key: null, text: '等待法务', category: 'blocker', state: 'active', confidence: null, evidenceRefs: [] },
+      ],
+      nextSteps: [{ key: null, text: '完成验收', owner: '林薇', dueAt: '2026-09-01', priority: 'high', confidence: null, evidenceRefs: ['fact-2'] }],
+    })
+    expect(parseRoomOverviewSynthesis(JSON.stringify({
+      overview: '旧版概览', status: '旧版状态', nextSteps: ['旧版下一步'],
+    }))).toMatchObject({
+      overview: [{ key: null, text: '旧版概览', aspect: 'summary' }],
+      status: [{ key: null, text: '旧版状态', category: 'conclusion', state: 'unknown' }],
+      nextSteps: [{ key: null, text: '旧版下一步', owner: null, dueAt: null }],
     })
   })
 })

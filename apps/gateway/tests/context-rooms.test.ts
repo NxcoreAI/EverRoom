@@ -6,11 +6,15 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
+  connectorCalendarEvents,
+  connectorTodos,
   documents as documentsTable,
   entities as entitiesTable,
+  roomDocumentLinks,
   roomEntityFacts,
   roomEntityMentions,
   roomSourceMemberships,
+  routeDecisions,
 } from '../src/infrastructure/database/schema.js'
 import type { RoomAgentDispatcher, RoomAgentDispatchInput } from '../src/modules/context-rooms/room-agent.js'
 import { CONTEXT_ROOM_AGENT_ID } from '../src/modules/context-rooms/room-agent.js'
@@ -479,6 +483,332 @@ describe('ContextRoomService', () => {
 })
 
 describe('RoomOverviewService', () => {
+  it('builds typed, evidence-backed claims for every overview section', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-structured',
+        title: 'Structured Room',
+        data: {
+          id: 'room-structured',
+          title: 'Structured Room',
+          brief: {
+            background: '准备 V1 交付', goal: '九月发布', status: '正在联调',
+            risks: ['法务审批可能延期'], decisions: ['先发布桌面版'],
+          },
+          generatedContext: {
+            nextSteps: ['整理发布说明'],
+            actionItems: [
+              { id: 'task-1', title: '完成验收', owner: '林薇', dueDate: '2026-09-01T09:00:00.000Z', status: '进行中', priority: '高', source: { type: 'task', name: '项目任务', objectId: 'task-1' } },
+              { id: 'task-done', title: '已完成事项', status: '已完成' },
+            ],
+            meetings: [{ id: 'meeting-1', title: '发布评审', when: '2026-08-30T02:00:00.000Z', sourceTitle: '团队日历' }],
+          },
+          timeline: [{ time: '2026-08-15T10:00:00.000Z', title: 'Agent 初步判断', description: '可能进入验收', generated: true }],
+        },
+      }],
+      deletedRooms: [],
+    })
+    db.insert(entitiesTable).values({
+      id: 'entity-owner', name: '林薇', kind: '人物', status: 'ready', summary: 'V1 负责人',
+    }).run()
+    const observedAt = new Date('2026-08-14T10:00:00.000Z')
+    db.insert(roomSourceMemberships).values({
+      id: 'source-structured', roomId: 'room-structured', sourceKind: 'mail', sourceId: 'mail-1',
+      sourceVersion: 3, evidenceGroupKey: 'group-1', role: 'primary', sourceTitle: '交付周报',
+    }).run()
+    db.insert(roomEntityMentions).values({
+      id: 'mention-owner', roomId: 'room-structured', entityId: 'entity-owner', sourceKind: 'mail',
+      sourceId: 'mail-1', sourceVersion: 3, evidenceGroupKey: 'group-1', salience: 0.9,
+      evidence: '林薇负责 V1', createdAt: observedAt, updatedAt: observedAt,
+    }).run()
+    db.insert(roomEntityFacts).values({
+      id: 'fact-row-1', roomId: 'room-structured', factId: 'fact-release', content: 'V1 已进入联调', type: '属性',
+      entityIds: ['entity-owner'], sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 3,
+      evidenceGroupKey: 'group-1', createdAt: observedAt, updatedAt: observedAt,
+    }).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-structured')
+    expect(projection.overview.map((item) => item.data)).toEqual([
+      { kind: 'overview', aspect: 'summary' },
+      { kind: 'overview', aspect: 'goal' },
+    ])
+    expect(projection.status.map((item) => item.data)).toEqual([
+      { kind: 'status', category: 'conclusion', state: 'active' },
+      { kind: 'status', category: 'problem', state: 'active' },
+      { kind: 'status', category: 'conclusion', state: 'active' },
+    ])
+    expect(projection.nextSteps.map((item) => [item.text, item.data?.kind === 'next_step' ? item.data.itemType : null]))
+      .toEqual([['发布评审', 'schedule'], ['完成验收', 'task'], ['整理发布说明', 'suggestion']])
+    expect(projection.nextSteps[1]?.data).toMatchObject({
+      actionId: 'task-1', owner: '林薇', dueAt: '2026-09-01T09:00:00.000Z', priority: 'high',
+    })
+    expect(projection.entities[0]).toMatchObject({
+      id: expect.stringMatching(/^entities:/),
+      evidence: [{ sourceKind: 'mail', sourceId: 'mail-1', sourceTitle: '交付周报', excerpt: '林薇负责 V1' }],
+      data: { kind: 'entity', entityId: 'entity-owner', entityKind: '人物', entityStatus: 'ready', salience: 0.9, mentionCount: 1 },
+    })
+    expect(projection.timeline.map((item) => item.text)).toEqual(['Agent 初步判断：可能进入验收', 'V1 已进入联调'])
+    expect(projection.timeline[0]?.data).toMatchObject({ kind: 'timeline', certainty: 'inference' })
+    expect(projection.timeline[1]).toMatchObject({
+      id: expect.stringMatching(/^timeline:/),
+      data: { kind: 'timeline', eventType: 'fact', certainty: 'fact' },
+      evidence: [{ sourceKind: 'mail', sourceId: 'mail-1', excerpt: 'V1 已进入联调' }],
+    })
+    expect(projection.freshness).toMatchObject({ state: 'fresh', staleSince: null })
+  })
+
+  it('derives timeline events from linked documents and routed calendar sources', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-events', title: 'Events Room', data: { id: 'room-events', title: 'Events Room' } }],
+      deletedRooms: [],
+    })
+    const createdAt = new Date('2026-08-10T08:00:00.000Z')
+    const updatedAt = new Date('2026-08-20T08:00:00.000Z')
+    db.insert(documentsTable).values([
+      { id: 'doc-created', title: '需求说明', contentJson: { type: 'doc' }, version: 1, status: 'active', createdAt, updatedAt: createdAt },
+      { id: 'doc-updated', title: '评审纪要', contentJson: { type: 'doc' }, version: 2, status: 'active', createdAt: new Date('2026-08-05T08:00:00.000Z'), updatedAt },
+      { id: 'doc-draft', title: '草稿文档', contentJson: { type: 'doc' }, version: 1, status: 'draft', createdAt, updatedAt: createdAt },
+      { id: 'doc-deleted', title: '已删文档', contentJson: { type: 'doc' }, version: 1, status: 'active', deletedAt: createdAt, createdAt, updatedAt: createdAt },
+    ]).run()
+    db.insert(roomDocumentLinks).values([
+      { roomId: 'room-events', documentId: 'doc-created' },
+      { roomId: 'room-events', documentId: 'doc-updated' },
+      { roomId: 'room-events', documentId: 'doc-draft' },
+      { roomId: 'room-events', documentId: 'doc-deleted' },
+    ]).run()
+    db.insert(roomSourceMemberships).values([
+      { id: 'cal-source', roomId: 'room-events', sourceKind: 'calendar-event', sourceId: 'cal-1', sourceVersion: 2, evidenceGroupKey: 'cal', role: 'primary', sourceTitle: '发布评审' },
+      { id: 'cal-plain', roomId: 'room-events', sourceKind: 'calendar-event', sourceId: 'cal-2', sourceVersion: 1, evidenceGroupKey: 'cal2', role: 'mention', sourceTitle: '明天对齐会' },
+    ]).run()
+    db.insert(routeDecisions).values([
+      {
+        id: 'decision-cal-1-old', sourceKind: 'calendar-event', sourceId: 'cal-1', sourceVersion: 1,
+        sourceTitle: '发布评审（旧）', sourceMarkdown: '# 发布评审（旧）\n\n时间：2026-08-01T02:00:00.000Z → 2026-08-01T03:00:00.000Z',
+        confidence: 0.9, status: 'confirmed',
+      },
+      {
+        id: 'decision-cal-1', sourceKind: 'calendar-event', sourceId: 'cal-1', sourceVersion: 2,
+        sourceTitle: '发布评审', sourceMarkdown: '# 发布评审\n\n时间：2026-08-18T02:00:00.000Z → 2026-08-18T03:00:00.000Z（Asia/Shanghai）',
+        confidence: 0.9, status: 'confirmed',
+      },
+      {
+        id: 'decision-cal-2', sourceKind: 'calendar-event', sourceId: 'cal-2', sourceVersion: 1,
+        sourceTitle: '明天对齐会', sourceMarkdown: '# 明天对齐会\n\n时间：明天 10:00 → 明天 11:00',
+        confidence: 0.8, status: 'confirmed',
+      },
+    ]).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-events')
+    expect(projection.timeline.map((item) => item.text)).toEqual([
+      '《评审纪要》更新至第 2 版：文档内容已保存新版本。',
+      '发布评审',
+      '《需求说明》已收录于 Room：已作为资料归入本 Room，参与后续上下文生成。',
+      '明天对齐会',
+    ])
+    expect(projection.timeline[0]).toMatchObject({
+      occurredAt: updatedAt.toISOString(),
+      evidence: [{ sourceKind: 'everroom-doc', sourceId: 'doc-updated', sourceTitle: '评审纪要' }],
+      data: { kind: 'timeline', eventType: 'update' },
+    })
+    expect(projection.timeline[1]).toMatchObject({
+      occurredAt: '2026-08-18T02:00:00.000Z',
+      evidence: [{ sourceKind: 'calendar-event', sourceId: 'cal-1', sourceTitle: '发布评审' }],
+      data: { kind: 'timeline', eventType: 'meeting' },
+    })
+    expect(projection.timeline[2]).toMatchObject({
+      occurredAt: createdAt.toISOString(),
+      data: { kind: 'timeline', eventType: 'source' },
+    })
+    // 自然语言时间解析不到：无日期，沉底但不丢事件。
+    expect(projection.timeline[3]).toMatchObject({ occurredAt: null })
+  })
+
+  it('projects connector calendar rows and todos deterministically into nextSteps and timeline', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-connector',
+        title: 'Connector Room',
+        data: {
+          id: 'room-connector',
+          title: 'Connector Room',
+          // LLM 生成的 meeting：一条与连接器日历同 sourceId（应被确定性 claim 取代），一条非连接器来源（保留）。
+          generatedContext: {
+            meetings: [
+              { id: 'cal-conn-1', title: '发射协调会', when: '2026-12-01T02:00:00.000Z', sourceTitle: '发射协调会' },
+              { id: 'legacy-meet', title: '旧周会', when: '2026-11-01T02:00:00.000Z', sourceTitle: '旧周会' },
+            ],
+          },
+        },
+      }],
+      deletedRooms: [],
+    })
+    const syncedAt = new Date('2026-08-20T08:00:00.000Z')
+    db.insert(connectorCalendarEvents).values({
+      id: 'cal-conn-1', ownerId: 'local-user', service: 'google_calendar', connectionName: 'default',
+      sourceRecordId: 'event-source-1', sourceUpdatedAt: syncedAt, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: 'cal-hash', extensionPayload: null,
+      eventId: 'event-1', title: '发射协调会', description: '对齐发射窗口',
+      organizer: null, attendees: [], startAt: new Date('2026-12-01T02:00:00.000Z'),
+      endAt: new Date('2026-12-01T03:00:00.000Z'), allDay: false, status: 'confirmed', location: '发射场',
+    }).run()
+    db.insert(connectorTodos).values([
+      {
+        id: 'todo-1', ownerId: 'local-user', service: 'google_tasks', connectionName: 'default',
+        sourceRecordId: 'task-source-1', sourceUpdatedAt: syncedAt, syncedAt, schemaVersion: 1, promptVersion: 1,
+        contentHash: 'todo-hash-1', extensionPayload: null,
+        todoId: 'task-1', title: '补充天线参数', notes: '', status: 'needsAction',
+        dueAt: new Date('2026-09-05T01:00:00.000Z'), completedAt: null, priority: 'high',
+        listId: 'list-1', listName: '卫星项目',
+      },
+      {
+        id: 'todo-done', ownerId: 'local-user', service: 'google_tasks', connectionName: 'default',
+        sourceRecordId: 'task-source-2', sourceUpdatedAt: syncedAt, syncedAt, schemaVersion: 1, promptVersion: 1,
+        contentHash: 'todo-hash-2', extensionPayload: null,
+        todoId: 'task-2', title: '已完成待办', notes: '', status: 'completed',
+        dueAt: new Date('2026-08-01T01:00:00.000Z'), completedAt: new Date('2026-08-02T01:00:00.000Z'), priority: null,
+        listId: 'list-1', listName: '卫星项目',
+      },
+    ]).run()
+    db.insert(roomSourceMemberships).values([
+      { id: 'conn-cal', roomId: 'room-connector', sourceKind: 'calendar-event', sourceId: 'cal-conn-1', sourceVersion: 1, evidenceGroupKey: 'cal', role: 'primary', sourceTitle: '发射协调会' },
+      { id: 'conn-todo-1', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-1', sourceVersion: 1, evidenceGroupKey: 't1', role: 'primary', sourceTitle: '补充天线参数' },
+      { id: 'conn-todo-done', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-done', sourceVersion: 1, evidenceGroupKey: 't2', role: 'primary', sourceTitle: '已完成待办' },
+    ]).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-connector')
+    // 确定性 schedule claim：来自 connector 域表的精确开始时间；同 sourceId 的 LLM meeting 不再重复。
+    const schedules = projection.nextSteps.filter((item) => item.data?.kind === 'next_step' && item.data.itemType === 'schedule')
+    // 按 dueAt 升序：旧周会（11 月）在前，发射协调会（12 月）在后；同 sourceId 的 LLM claim 只保留确定性一条。
+    expect(schedules.map((item) => item.text)).toEqual(['旧周会', '发射协调会'])
+    expect(schedules[1]).toMatchObject({
+      evidence: [{ sourceKind: 'calendar-event', sourceId: 'cal-conn-1', sourceTitle: '发射协调会' }],
+      data: { kind: 'next_step', itemType: 'schedule', dueAt: '2026-12-01T02:00:00.000Z', status: 'scheduled' },
+    })
+    expect(projection.nextSteps.filter((item) => item.text === '发射协调会')).toHaveLength(1)
+    // 确定性 task claim：未完成待办进入 nextSteps；已完成的不进。
+    const tasks = projection.nextSteps.filter((item) => item.data?.kind === 'next_step' && item.data.itemType === 'task')
+    expect(tasks.map((item) => item.text)).toEqual(['补充天线参数'])
+    expect(tasks[0]).toMatchObject({
+      evidence: [{ sourceKind: 'todo', sourceId: 'todo-1', sourceTitle: '补充天线参数' }],
+      data: { kind: 'next_step', itemType: 'task', dueAt: '2026-09-05T01:00:00.000Z', status: 'needsAction', priority: 'high' },
+    })
+    // 时间轴：待办任务事件（未完成取 dueAt、已完成取 completedAt）与日历会议事件（域表精确时间）。
+    const timelineByTitle = new Map(projection.timeline.map((item) => [item.text, item]))
+    expect(timelineByTitle.get('补充天线参数')).toMatchObject({
+      occurredAt: '2026-09-05T01:00:00.000Z',
+      evidence: [{ sourceKind: 'todo', sourceId: 'todo-1' }],
+      data: { kind: 'timeline', eventType: 'task', certainty: 'fact' },
+    })
+    expect(timelineByTitle.get('已完成待办')).toMatchObject({ occurredAt: '2026-08-02T01:00:00.000Z' })
+    expect(timelineByTitle.get('发射协调会')).toMatchObject({
+      occurredAt: '2026-12-01T02:00:00.000Z',
+      data: { kind: 'timeline', eventType: 'meeting' },
+    })
+    // freshness 候选纳入日程开始时间与待办 dueAt：取最大者。
+    expect(projection.freshness).toMatchObject({ sourceUpdatedAt: '2026-12-01T02:00:00.000Z' })
+  })
+
+  it('pins fact timeline entries to their first mention instead of the latest', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-facts', title: 'Facts Room', data: { id: 'room-facts', title: 'Facts Room' } }],
+      deletedRooms: [],
+    })
+    const firstMentionAt = new Date('2026-07-01T08:00:00.000Z')
+    const latestMentionAt = new Date('2026-08-25T08:00:00.000Z')
+    db.insert(roomSourceMemberships).values([
+      { id: 'fact-source-a', roomId: 'room-facts', sourceKind: 'mail', sourceId: 'mail-a', sourceVersion: 1, evidenceGroupKey: 'a', role: 'primary', sourceTitle: '七月周报' },
+      { id: 'fact-source-b', roomId: 'room-facts', sourceKind: 'mail', sourceId: 'mail-b', sourceVersion: 1, evidenceGroupKey: 'b', role: 'mention', sourceTitle: '八月周报' },
+    ]).run()
+    db.insert(roomEntityFacts).values([
+      { id: 'fact-row-a', roomId: 'room-facts', factId: 'fact-pin', content: 'V1 已进入联调', type: '属性', entityIds: [], sourceKind: 'mail', sourceId: 'mail-a', sourceVersion: 1, evidenceGroupKey: 'a', createdAt: firstMentionAt, updatedAt: firstMentionAt },
+      { id: 'fact-row-b', roomId: 'room-facts', factId: 'fact-pin', content: 'V1 已进入联调', type: '属性', entityIds: [], sourceKind: 'mail', sourceId: 'mail-b', sourceVersion: 1, evidenceGroupKey: 'b', createdAt: latestMentionAt, updatedAt: latestMentionAt },
+    ]).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-facts')
+    expect(projection.timeline).toHaveLength(1)
+    expect(projection.timeline[0]).toMatchObject({
+      occurredAt: firstMentionAt.toISOString(),
+      evidence: [
+        { sourceKind: 'mail', sourceId: 'mail-b', sourceTitle: '八月周报' },
+        { sourceKind: 'mail', sourceId: 'mail-a', sourceTitle: '七月周报' },
+      ],
+    })
+  })
+
+  it('keeps a multi-source fact when a correction removes only one source', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-evidence', title: 'Evidence Room', data: { id: 'room-evidence', title: 'Evidence Room' } }],
+      deletedRooms: [],
+    })
+    const now = new Date()
+    db.insert(roomSourceMemberships).values([
+      { id: 'source-a', roomId: 'room-evidence', sourceKind: 'mail', sourceId: 'mail-a', sourceVersion: 1, evidenceGroupKey: 'a', role: 'primary', sourceTitle: '邮件 A' },
+      { id: 'source-b', roomId: 'room-evidence', sourceKind: 'calendar-event', sourceId: 'meeting-b', sourceVersion: 1, evidenceGroupKey: 'b', role: 'primary', sourceTitle: '会议 B' },
+    ]).run()
+    db.insert(roomEntityFacts).values([
+      { id: 'fact-a', roomId: 'room-evidence', factId: 'shared-fact', content: '发布日期为九月一日', type: '属性', entityIds: [], sourceKind: 'mail', sourceId: 'mail-a', sourceVersion: 1, evidenceGroupKey: 'a', createdAt: now, updatedAt: now },
+      { id: 'fact-b', roomId: 'room-evidence', factId: 'shared-fact', content: '发布日期为九月一日', type: '属性', entityIds: [], sourceKind: 'calendar-event', sourceId: 'meeting-b', sourceVersion: 1, evidenceGroupKey: 'b', createdAt: now, updatedAt: now },
+    ]).run()
+    const overviews = new RoomOverviewService(db, service)
+    const original = overviews.refresh('room-evidence')
+    const proposal = overviews.propose('room-evidence', {
+      operation: 'source_remove', section: 'timeline',
+      targetSource: { sourceKind: 'mail', sourceId: 'mail-a', sourceTitle: '邮件 A' },
+      rationale: '邮件被错误归入本 Room', entryPoint: 'overview',
+    })
+    const applied = overviews.apply('room-evidence', proposal.id).overview
+    expect(original.timeline[0]?.evidence).toHaveLength(2)
+    expect(applied.timeline).toHaveLength(1)
+    expect(applied.timeline[0]).toMatchObject({
+      corrected: true,
+      evidence: [{ sourceKind: 'calendar-event', sourceId: 'meeting-b', sourceTitle: '会议 B' }],
+    })
+  })
+
+  it('incrementally refreshes fact sections and marks semantic sections stale', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-incremental', title: 'Incremental Room',
+        data: { id: 'room-incremental', title: 'Incremental Room', generatedContext: { overview: '保留的概览', status: '保留的状态', nextSteps: ['保留的建议'] } },
+      }],
+      deletedRooms: [],
+    })
+    const overviews = new RoomOverviewService(db, service)
+    const initial = overviews.refresh('room-incremental')
+    const observedAt = new Date(Date.now() + 60_000)
+    db.insert(roomSourceMemberships).values({
+      id: 'incremental-source', roomId: 'room-incremental', sourceKind: 'mail', sourceId: 'mail-new',
+      sourceVersion: 1, evidenceGroupKey: 'incremental', role: 'primary', sourceTitle: '最新周报',
+    }).run()
+    db.insert(roomEntityFacts).values({
+      id: 'incremental-fact-row', roomId: 'room-incremental', factId: 'incremental-fact',
+      content: '联调已经完成', type: '属性', entityIds: [], sourceKind: 'mail', sourceId: 'mail-new',
+      sourceVersion: 1, evidenceGroupKey: 'incremental', createdAt: observedAt, updatedAt: observedAt,
+    }).run()
+
+    const updated = overviews.get('room-incremental')
+    expect(updated.revision).toBe(initial.revision + 1)
+    expect(updated.overview[0]?.text).toBe('保留的概览')
+    expect(updated.status[0]?.text).toBe('保留的状态')
+    expect(updated.nextSteps.map((item) => item.text)).toContain('保留的建议')
+    expect(updated.timeline[0]).toMatchObject({ text: '联调已经完成', origin: 'fact' })
+    expect(updated).toMatchObject({
+      stale: true,
+      freshness: {
+        state: 'stale',
+        sourceUpdatedAt: observedAt.toISOString(),
+        staleSections: ['overview', 'status', 'next_steps'],
+      },
+    })
+    expect(overviews.get('room-incremental').revision).toBe(updated.revision)
+  })
+
   it('persists confirmed corrections outside the Room snapshot and restores content after revoke', async () => {
     const { service, db } = await createHarness()
     service.saveSnapshot({
@@ -548,5 +878,53 @@ describe('RoomOverviewService', () => {
     expect(overviews.apply('room-agent-correction', proposal.id, {
       sessionId: 'session-1', runId: 'run-confirm',
     }).overview.status[0]?.text).toBe('Confirmed status')
+  })
+
+  it('keeps applied corrections on top of a newly generated overview base', async () => {
+    let generation = 0
+    const dispatcher: RoomAgentDispatcher = {
+      dispatch: async () => {
+        generation += 1
+        return completedInvocation(JSON.stringify({
+          overview: [{ key: 'summary', text: 'Fresh generated overview', aspect: 'summary', evidenceRefs: [] }],
+          status: [{
+            key: 'primary-blocker',
+            text: generation === 1 ? 'Generated old blocker' : 'Rephrased generated blocker',
+            category: 'blocker', state: 'active', evidenceRefs: [],
+          }],
+          nextSteps: [{ key: 'next-release', text: 'Generated next step', evidenceRefs: [] }],
+        }))
+      },
+      dispatchDetached: async () => 'detached',
+    }
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-regenerate',
+        title: 'Regenerate Room',
+        data: { id: 'room-regenerate', title: 'Regenerate Room', brief: { status: 'Initial' }, timeline: [] },
+      }],
+      deletedRooms: [],
+    })
+    const overviews = new RoomOverviewService(db, service)
+    overviews.setRoomAgentDispatcher(dispatcher)
+    const firstGenerated = await overviews.regenerate('room-regenerate')
+    const proposal = overviews.propose('room-regenerate', {
+      operation: 'content_replace',
+      section: 'status',
+      targetClaimId: firstGenerated.status[0]!.id,
+      originalText: firstGenerated.status[0]!.text,
+      replacementText: 'User-confirmed blocker',
+      rationale: 'The user clarified the blocker',
+      entryPoint: 'agent',
+    })
+    overviews.apply('room-regenerate', proposal.id)
+
+    const regenerated = await overviews.regenerate('room-regenerate')
+    expect(regenerated.overview[0]?.text).toBe('Fresh generated overview')
+    expect(regenerated.status[0]?.text).toBe('User-confirmed blocker')
+    expect(regenerated.status[0]?.id).toBe(firstGenerated.status[0]?.id)
+    expect(regenerated.status[0]?.data).toMatchObject({ kind: 'status', category: 'blocker', state: 'active' })
+    expect(regenerated.nextSteps[0]?.text).toBe('Generated next step')
   })
 })

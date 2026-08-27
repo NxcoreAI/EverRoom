@@ -1,4 +1,4 @@
-import { ArrowUp, FileText, LoaderCircle, Mic, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, FileText, LoaderCircle, Mic, Plus, Quote, Square, X } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -56,6 +56,7 @@ function errorMessage(error: unknown, t: Translate): string {
 
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary: string
+  contextItems: Array<{ id: string; label: string; detail: string }>
   hasSelectedText: boolean
   resetKey: number
   value: string
@@ -64,18 +65,21 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   loading: boolean
   onChange: (value: string) => void
   onClearContext: () => void
+  onRemoveContext: (id: string) => void
   onStop: () => void
   onSubmit: (files: File[]) => void
 }>(function AgentComposer({
   active,
   available,
   contextSummary,
+  contextItems,
   hasSelectedText,
   loading,
   resetKey,
   value,
   onChange,
   onClearContext,
+  onRemoveContext,
   onStop,
   onSubmit,
 }, ref) {
@@ -117,7 +121,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   useLayoutEffect(() => {
     resizeTextarea()
-  }, [attachments.length, value])
+  }, [attachments.length, contextItems.length, value])
 
   useEffect(() => {
     const shell = shellRef.current
@@ -388,6 +392,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       }}
     >
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
+        {contextItems.length > 0 ? (
+          <div className="agent-context-citations" aria-label={t('surface:agentComposer.referencedRoomContent')}>
+            {contextItems.map((item) => (
+              <span key={item.id} className="agent-context-citation" title={item.detail}>
+                <Quote aria-hidden="true" />
+                <span>{item.label}</span>
+                <button
+                  type="button"
+                  aria-label={t('surface:agentComposer.removeReference')}
+                  title={t('surface:agentComposer.removeReference')}
+                  onClick={() => onRemoveContext(item.id)}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <textarea
           ref={textareaRef}
           aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
@@ -462,7 +484,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           <span className="agent-composer-context" title={contextSummary}>
             <span>{contextSummary}</span>
             {hasSelectedText ? (
-              <button type="button" aria-label={t('surface:agentComposer.removeSelectedText')} title={t('surface:agentComposer.removeSelectedText')} onClick={onClearContext}>
+              <button type="button" aria-label={t('surface:agentComposer.clearAllReferences')} title={t('surface:agentComposer.clearAllReferences')} onClick={onClearContext}>
                 <X aria-hidden="true" />
               </button>
             ) : null}

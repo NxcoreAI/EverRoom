@@ -14,7 +14,6 @@ import {
   shouldDeleteRoomFromKnowledge,
   shouldSyncRoomToKnowledge,
 } from './knowledgeRoomSync'
-import { applyGeneratedRoomContext } from './generatedRoomContext'
 
 const AllRoomsView = lazy(() =>
   import('./components/AllRoomsView').then((module) => ({ default: module.AllRoomsView })),
@@ -57,16 +56,6 @@ export function PortedContextRoom({
   const roomDocuments = useRoomDocumentsState()
   const reportedRoomsRef = useRef(new Map<string, string>())
   const deletedKnowledgeRoomsRef = useRef(new Set<string>())
-  const roomContextRequestRef = useRef(0)
-  const activeDocuments = activeRoomId
-    ? roomDocuments.documentsByRoom[activeRoomId] ?? []
-    : []
-  const activeDocumentKey = activeDocuments
-    .map((document) => `${document.id}:${document.version}:${document.status}`)
-    .sort()
-    .join('\u0000')
-  const hasDocumentContext = activeDocuments.length > 0
-    || Boolean(activeRoom?.generatedContext?.sourceDocuments.length)
 
   const syncKnowledgeRooms = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge
@@ -154,32 +143,6 @@ export function PortedContextRoom({
     if (!activeRoomId) return
     void roomDocuments.refreshRoom(activeRoomId).catch(() => undefined)
   }, [activeRoomId, roomDocuments.refreshRoom])
-
-  useEffect(() => {
-    if (!activeRoomId || !hasDocumentContext || !window.nxcore?.knowledge?.getRoomContext) return
-    const requestId = roomContextRequestRef.current + 1
-    roomContextRequestRef.current = requestId
-    const timer = window.setTimeout(() => {
-      void window.nxcore!.knowledge.getRoomContext(activeRoomId).then((context) => {
-        if (roomContextRequestRef.current !== requestId || context.roomId !== activeRoomId) return
-        setState((current) => {
-          const room = current.rooms.find((item) => item.id === activeRoomId)
-          if (!room) return current
-          const updated = applyGeneratedRoomContext(
-            room,
-            context,
-            roomDocuments.documentsByRoom[activeRoomId] ?? [],
-          )
-          if (updated === room) return current
-          return {
-            ...current,
-            rooms: current.rooms.map((item) => item.id === activeRoomId ? updated : item),
-          }
-        })
-      }).catch(() => undefined)
-    }, 800)
-    return () => window.clearTimeout(timer)
-  }, [activeDocumentKey, activeRoomId, hasDocumentContext, setState])
 
   useEffect(() => {
     if (homeRequest === handledHomeRequest.current) return

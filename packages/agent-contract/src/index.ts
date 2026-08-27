@@ -395,7 +395,48 @@ export interface RoomOverviewEvidence {
   sourceKind: string;
   sourceId: string;
   sourceTitle: string | null;
+  /** 支撑 claim 的原文片段；不存在可定位片段时为 null。 */
+  excerpt?: string | null;
+  /** 该证据在来源中被观察到的时间。 */
+  observedAt?: string | null;
+  sourceVersion?: number | null;
 }
+
+export type RoomOverviewClaimData =
+  | {
+      kind: "overview";
+      aspect: "summary" | "background" | "goal";
+    }
+  | {
+      kind: "status";
+      category: "conclusion" | "progress" | "problem" | "blocker";
+      state: "active" | "resolved" | "unknown";
+    }
+  | {
+      kind: "next_step";
+      itemType: "schedule" | "task" | "suggestion";
+      actionId: string | null;
+      owner: string | null;
+      dueAt: string | null;
+      status: string | null;
+      priority: "high" | "medium" | "low" | null;
+    }
+  | {
+      kind: "timeline";
+      eventType: "source" | "fact" | "meeting" | "task" | "decision" | "milestone" | "update" | "other";
+      title: string;
+      description: string | null;
+      certainty: "fact" | "inference";
+    }
+  | {
+      kind: "entity";
+      entityId: string;
+      entityKind: string;
+      entityStatus: RoomAppliedEntityStatus;
+      linkedRoomId: string | null;
+      salience: number;
+      mentionCount: number;
+    };
 
 export interface RoomOverviewClaim {
   id: string;
@@ -406,6 +447,18 @@ export interface RoomOverviewClaim {
   evidence: RoomOverviewEvidence[];
   corrected: boolean;
   occurredAt?: string | null;
+  /** 区块专属的机器可读数据。缺省表示由旧版投影读取。 */
+  data?: RoomOverviewClaimData;
+}
+
+export interface RoomOverviewFreshness {
+  state: "fresh" | "stale";
+  /** 所有参与投影的事实、资料和 Room 数据中的最新时间。 */
+  sourceUpdatedAt: string | null;
+  generatedAt: string;
+  staleSince: string | null;
+  /** 需要语义重新生成的区块；事实型时间轴、实体和待办可先增量更新。 */
+  staleSections?: RoomOverviewSection[];
 }
 
 export interface RoomOverviewProjection {
@@ -413,6 +466,7 @@ export interface RoomOverviewProjection {
   revision: number;
   generatedAt: string;
   stale: boolean;
+  freshness?: RoomOverviewFreshness;
   overview: RoomOverviewClaim[];
   status: RoomOverviewClaim[];
   nextSteps: RoomOverviewClaim[];

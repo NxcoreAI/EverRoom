@@ -1,11 +1,4 @@
-import type { RoomDocument } from '@nxcore/agent-contract'
-
 import type { AppLocale } from '../../../i18n/LocaleContext'
-import type { KnowledgeRoomContextDto } from '../../../../../shared/knowledge'
-import type { ContextRoomRecord, ContextRoomTimelineItem } from './types'
-
-/** 派生条目上限：约束快照体积；展示密度由时间轴视图过滤负责。 */
-const TIMELINE_LIMIT = 50
 
 /** ISO 8601 日期时间（含 "2026-08-21 10:30" 空格变体，时区标记可选）。 */
 const ISO_LIKE_PATTERN = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?)?/u
@@ -29,6 +22,7 @@ function isoLikeDate(text: string): Date | null {
 /**
  * 时间轴时间解析：ISO 优先（文档时间戳都是 ISO，走旧 MM-DD 启发式会跨年错位），
  * 其后保留演示文案的 今天/昨天/MM-DD 规则；不可解析返回 null。
+ * （事件派生已在网关侧投影完成，前端只负责解析与展示。）
  */
 export function parseTimelineDate(value: string, now = new Date()): Date | null {
   const text = value.trim()
@@ -58,77 +52,4 @@ export function formatTimelineTime(value: string, locale: AppLocale, now = new D
     day: 'numeric',
     ...(match[4] ? { hour: '2-digit', minute: '2-digit' } : {}),
   }).format(date)
-}
-
-function timelineKey(item: ContextRoomTimelineItem): string {
-  return `${item.kind}\u0000${item.title}\u0000${item.time}`
-}
-
-/**
- * 时间轴派生（与 actionItems/materials 同模式）：手工条目原样保留，
- * 生成条目确定性来自 Room 文档与生成上下文——LLM 不参与，时间均取自真实数据。
- */
-export function deriveRoomTimeline(
-  room: Pick<ContextRoomRecord, 'timeline'>,
-  context: Pick<KnowledgeRoomContextDto, 'meetings'>,
-  documents: RoomDocument[],
-): ContextRoomTimelineItem[] {
-  const manual = room.timeline.filter((item) => !item.generated)
-  const generated: ContextRoomTimelineItem[] = []
-  const activeDocuments = documents.filter((document) => document.status === 'active' && !document.deletedAt)
-  for (const document of activeDocuments) {
-    if (document.version > 1) {
-      generated.push({
-        time: document.updatedAt,
-        title: `《${document.title}》更新至第 ${document.version} 版`,
-        description: '文档内容已保存新版本。',
-        kind: 'done',
-        generated: true,
-        sourceDocumentId: document.id,
-      })
-    } else {
-      generated.push({
-        time: document.createdAt,
-        title: `《${document.title}》已收录于 Room`,
-        description: '已作为资料归入本 Room，参与后续上下文生成。',
-        kind: 'info',
-        generated: true,
-        sourceDocumentId: document.id,
-      })
-    }
-  }
-  const documentIdByTitle = new Map(activeDocuments.map((document) => [document.title, document.id]))
-  const now = new Date()
-  for (const meeting of context.meetings) {
-    // 时间不可解析的会议（如“待定”）无法落到任何时间范围，跳过
-    if (!parseTimelineDate(meeting.when, now)) continue
-    // 会议按生成上下文给出的 sourceTitle 关联来源文档；对不上（来源非文档）则不带引用
-    const sourceDocumentId = documentIdByTitle.get(meeting.sourceTitle)
-    generated.push({
-      time: meeting.when,
-      title: `会议《${meeting.title}》`,
-      description: `${meeting.participants.length} 人参与，源自《${meeting.sourceTitle}》。`,
-      kind: 'info',
-      generated: true,
-      ...(sourceDocumentId ? { sourceDocumentId } : {}),
-    })
-  }
-  // 手工条目在前：先占住键，派生条目与手工重复时被丢弃
-  const seen = new Set<string>()
-  return [...manual, ...generated]
-    .filter((item) => {
-      const key = timelineKey(item)
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    .map((item, index) => ({ item, index, date: parseTimelineDate(item.time, now) }))
-    .sort((left, right) => {
-      if (left.date && right.date) return right.date.getTime() - left.date.getTime()
-      if (left.date) return -1
-      if (right.date) return 1
-      return left.index - right.index
-    })
-    .slice(0, TIMELINE_LIMIT)
-    .map(({ item }) => item)
 }

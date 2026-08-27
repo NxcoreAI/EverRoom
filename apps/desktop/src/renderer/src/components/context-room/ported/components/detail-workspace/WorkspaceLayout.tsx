@@ -8,7 +8,6 @@ import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResourc
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { DETAIL_TABS as TABS, type DetailPane } from '../RoomIconSidebar';
 import { OverviewDashboard, type WorkspaceObjectPreview } from '../detail-panels';
-import type { LocalOfficeFile } from '../detail-panels/ResourcePanel';
 import { WorkspaceContent } from './WorkspaceContent';
 import { WorkspacePaneBody } from './WorkspacePaneBody';
 
@@ -67,7 +66,6 @@ export function WorkspaceLayout({
   onEmptyTrash,
   onSelectResource,
   onOpenWikiPage,
-  onAddFile,
   onOpenMemory,
   onOpenObject,
   onCloseObject,
@@ -127,7 +125,6 @@ export function WorkspaceLayout({
   onEmptyTrash: (roomId: string) => Promise<void>;
   onSelectResource: (resource: ContextRoomResource) => void;
   onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
-  onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (memoryId: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   onCloseObject: () => void;
@@ -240,6 +237,7 @@ export function WorkspaceLayout({
           <OverviewDashboard
             room={room}
             backendDocuments={backendDocuments}
+            knowledgeFiles={knowledgeFiles}
             onSelectResource={onSelectResource}
             onOpenObject={onOpenObject}
             onToggleTask={onToggleTask}
@@ -314,7 +312,6 @@ export function WorkspaceLayout({
                         onRestoreDocument={onRestoreDocument}
                         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
                         onEmptyTrash={onEmptyTrash}
-                        onAddFile={onAddFile}
                         onOpenMemory={onOpenMemory}
                         onToggleTask={onToggleTask}
                         onUpdateRoom={onUpdateRoom}
