@@ -1,0 +1,38 @@
+diff --git a/dist/cjs/util.js b/dist/cjs/util.js
+index 77e64b56872bc65bcb0f60ecfbec84eb3da02c6f..37b8b99569fdf6f7ba5117f70a1b2667d54db9c8 100644
+--- a/dist/cjs/util.js
++++ b/dist/cjs/util.js
+@@ -1,3 +1,4 @@
++
+ "use strict";
+ var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+     if (k2 === undefined) k2 = k;
+@@ -100,12 +101,25 @@ async function detectElectronPlatform(opts) {
+ exports.detectElectronPlatform = detectElectronPlatform;
+ /**
+  * This function returns a promise resolving the file path if file binary.
++ * isbinaryfile 的 null-byte 启发式把 PNG/字体/.pak/tz 数据全判为二进制，
++ * 导致上千次无意义 codesign+timestamp。改为只认 Mach-O 魔数；非代码文件由外层
++ * bundle 签名的 CodeResources 清单 seal。若上游修复（osx-sign walkAsync 检测）可移除本 patch。
+  */
++const MACHO_MAGICS = new Set([0xfeedface, 0xfeedfacf, 0xcafebabe, 0xbebafeca]);
+ async function getFilePathIfBinary(filePath) {
+-    if (await (0, isbinaryfile_1.isBinaryFile)(filePath)) {
+-        return filePath;
++    const fsp = require('fs').promises;
++    const fd = await fsp.open(filePath, 'r');
++    try {
++        const buf = Buffer.alloc(4);
++        const { bytesRead } = await fd.read(buf, 0, 4, 0);
++        if (bytesRead < 4) {
++            return null;
++        }
++        return MACHO_MAGICS.has(buf.readUInt32LE(0)) || MACHO_MAGICS.has(buf.readUInt32BE(0)) ? filePath : null;
++    }
++    finally {
++        await fd.close();
+     }
+-    return null;
+ }
+ /**
+  * This function returns a promise validating opts.app, the application to be signed or flattened.

@@ -1,6 +1,6 @@
-import { cpSync, existsSync, globSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, globSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const desktopRoot = resolve(import.meta.dirname, '..')
@@ -154,6 +154,31 @@ for (const libDir of findLibDirs(join(stagingRoot, 'packages', 'node_modules')))
 rmSync(outputRoot, { recursive: true, force: true })
 cpSync(stagingRoot, outputRoot, { recursive: true })
 rmSync(stagingRoot, { recursive: true, force: true })
+
+// webapp public/images/template-logos 的 logo 别名在 submodule 里是绝对软链，
+// cpSync 原样保留；打进 .app 后 codesign --verify --strict 报
+// "invalid destination for symbolic link in bundle"。物化越界软链、删除悬空软链；
+// 包内相对软链（下方 @nangohq/*，尚未创建）不受影响。
+const materializeEscapingSymlinks = (directory) => {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      materializeEscapingSymlinks(path)
+    } else if (entry.isSymbolicLink()) {
+      const target = resolve(dirname(path), readlinkSync(path))
+      if (target.startsWith(`${outputRoot}${sep}`) && existsSync(target)) continue
+      if (existsSync(target)) {
+        const materialized = join(dirname(path), `.${entry.name}.real`)
+        cpSync(target, materialized, { recursive: true })
+        rmSync(path, { force: true })
+        renameSync(materialized, path)
+      } else {
+        rmSync(path, { force: true, recursive: true })
+      }
+    }
+  }
+}
+materializeEscapingSymlinks(outputRoot)
 
 // pnpm materialized the `file:` workspace deps as real dirs under
 // packages/node_modules/@nangohq/*. @nangohq/utils computes projectRoot from

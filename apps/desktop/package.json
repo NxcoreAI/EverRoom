@@ -160,12 +160,19 @@
         "filter": [
           "**/*",
           "!**/.env*",
+          "!**/node_modules/@datadog/*/prebuilds/linux*/**",
+          "!**/node_modules/@datadog/*/prebuilds/win32*/**",
+          "!**/node_modules/@datadog/*/prebuilds/darwin-x64/**",
+          "!**/node_modules/@embedded-postgres/linux-*/**",
           "!**/*.{map,ts,tsx,mts,cts}"
         ]
       }
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "signIgnore": [
+        "native/share/"
+      ],
       "icon": "build/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
