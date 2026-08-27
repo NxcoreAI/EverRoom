@@ -74,6 +74,7 @@ export interface BrowserExtensionClipperCapture {
   errorMessage: string | null
   createdAt: string
   updatedAt: string
+  favoritedAt: string | null
   artifact: {
     schemaVersion: number
     excerpt: string
@@ -120,6 +121,20 @@ export interface BrowserExtensionClipperCapture {
     visualNoiseReason: string | null
     coverScore: number | null
   }>
+}
+
+export interface BrowserExtensionClipperListInput {
+  query?: string
+  filter?: 'all' | 'favorite' | 'processing'
+  sort?: 'newest' | 'oldest'
+  limit?: number
+  offset?: number
+}
+
+export interface BrowserExtensionClipperListResult {
+  items: BrowserExtensionClipperCapture[]
+  total: number
+  counts: { all: number; favorite: number; processing: number }
 }
 
 export interface BrowserExtensionStatus {

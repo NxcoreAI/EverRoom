@@ -156,6 +156,15 @@ async function uploadPendingAssets(tabId, capture, accessToken, result, permitte
   let largeImagesDecision = null;
   let largeImagesConfirmation = null;
   const pendingAssets = (capture.assets || []).filter((asset) => pending.has(asset.id));
+  let completedAssets = 0;
+  const reportProgress = (stage) => {
+    if (typeof chrome.runtime?.sendMessage !== 'function') return;
+    try {
+      const result = chrome.runtime.sendMessage({ type: 'everroom:capture-progress', stage, current: completedAssets, total: pendingAssets.length });
+      result?.catch?.(() => undefined);
+    } catch { /* Popup may be closed while capture continues. */ }
+  };
+  void reportProgress('images');
   const retryCapture = { tabId, capture: { captureId: capture.captureId, assets: capture.assets || [] } };
   if (pendingAssets.length > 0) await chrome.storage.local.set({ retryCapture });
   const fail = (asset, code) => failureByAsset.set(asset.id, { assetId: asset.id, code: code || 'asset_unavailable' });
@@ -177,6 +186,9 @@ async function uploadPendingAssets(tabId, capture, accessToken, result, permitte
         }
       } catch {
         fail(asset, 'asset_upload_failed');
+      } finally {
+        completedAssets += 1;
+        void reportProgress('images');
       }
     });
     uploadQueue = task.catch(() => undefined);
@@ -221,6 +233,7 @@ async function uploadPendingAssets(tabId, capture, accessToken, result, permitte
   await Promise.all(workers);
   await uploadQueue;
   const failures = [...failureByAsset.values()];
+  void reportProgress('finalizing');
   let finalized;
   try {
     finalized = await fetch(`${BRIDGE}/v1/browser/captures/${encodeURIComponent(capture.captureId)}/finalize`, {

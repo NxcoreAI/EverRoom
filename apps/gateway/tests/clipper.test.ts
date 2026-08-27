@@ -106,6 +106,22 @@ describe("web clipper", () => {
     await test.close();
   });
 
+  it("searches, filters, sorts, paginates, and persists favorites", async () => {
+    const test = await serviceForTest();
+    await test.service.createCapture({ ...captureInput("capture-query-alpha"), title: "Alpha research", capturedAt: "2026-08-22T08:00:00.000Z" });
+    await test.service.createCapture({ ...captureInput("capture-query-beta"), title: "Beta field notes", capturedAt: "2026-08-24T08:00:00.000Z" });
+
+    expect(test.service.setFavorite("capture-query-alpha", true)?.favoritedAt).toEqual(expect.any(String));
+    expect(test.service.listCaptures({ query: "research", filter: "favorite", sort: "oldest", limit: 30, offset: 0 })).toMatchObject({
+      total: 1,
+      counts: { all: 1, favorite: 1 },
+      items: [{ id: "capture-query-alpha", title: "Alpha research", favoritedAt: expect.any(String) }],
+    });
+    expect(test.service.listCaptures({ filter: "processing", limit: 1, offset: 1 })).toMatchObject({ total: 2, items: [{ id: "capture-query-alpha" }] });
+    expect(test.service.setFavorite("capture-query-alpha", false)?.favoritedAt).toBeNull();
+    await test.close();
+  });
+
   it("stores verified image bytes in the shared CAS and finalizes partial failures", async () => {
     const test = await serviceForTest();
     const input = captureInput("capture-example-0003");

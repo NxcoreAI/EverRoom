@@ -15,6 +15,9 @@ const AssetParams = Type.Object({
 const FileParams = Type.Object({ fileEntryId: Type.String({ minLength: 1, maxLength: 200 }) });
 const AssetContentParams = Type.Object({ assetId: Type.String({ minLength: 8, maxLength: 200 }) });
 const CaptureListQuery = Type.Object({
+  query: Type.Optional(Type.String({ maxLength: 500 })),
+  filter: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("favorite"), Type.Literal("processing")])),
+  sort: Type.Optional(Type.Union([Type.Literal("newest"), Type.Literal("oldest")])),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, default: 100 })),
   offset: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
 });
@@ -52,7 +55,22 @@ export function clipperRoutes(service: ClipperService): FastifyPluginAsyncTypebo
           querystring: CaptureListQuery,
         },
       },
-      async (request) => service.listCaptures(request.query.limit, request.query.offset),
+      async (request) => service.listCaptures(request.query),
+    );
+
+    app.patch(
+      "/v1/clipper/captures/:captureId/favorite",
+      {
+        schema: {
+          tags: ["clipper"],
+          params: IdParams,
+          body: Type.Object({ favorite: Type.Boolean() }),
+        },
+      },
+      async (request, reply) => {
+        const capture = service.setFavorite(request.params.captureId, request.body.favorite);
+        return capture ?? reply.code(404).send({ error: "clipper_capture_not_found" });
+      },
     );
 
     app.get(

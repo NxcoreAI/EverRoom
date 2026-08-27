@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -87,6 +87,7 @@ export interface ClipperCaptureDto {
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  favoritedAt: string | null;
   artifact: null | {
     schemaVersion: number;
     excerpt: string;
@@ -102,6 +103,23 @@ export interface ClipperCaptureDto {
   };
   entities: ClipperEntityDto[];
   assets: ClipperAssetDto[];
+}
+
+export type ClipperCaptureFilter = "all" | "favorite" | "processing";
+export type ClipperCaptureSort = "newest" | "oldest";
+
+export interface ClipperCaptureListInput {
+  query?: string;
+  filter?: ClipperCaptureFilter;
+  sort?: ClipperCaptureSort;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ClipperCaptureListResult {
+  items: ClipperCaptureDto[];
+  total: number;
+  counts: { all: number; favorite: number; processing: number };
 }
 
 export interface ClipperAssetDto {
@@ -607,6 +625,7 @@ export class ClipperService {
       errorMessage: capture.errorMessage,
       createdAt: capture.createdAt.toISOString(),
       updatedAt: capture.updatedAt.toISOString(),
+      favoritedAt: capture.favoritedAt?.toISOString() ?? null,
       artifact: artifact ? {
         schemaVersion: artifact.schemaVersion,
         excerpt: artifact.excerpt,
@@ -640,16 +659,41 @@ export class ClipperService {
     return capture ? this.detail(capture.id) : null;
   }
 
-  listCaptures(limit = 100, offset = 0): { items: ClipperCaptureDto[]; total: number } {
-    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 200) : 100;
-    const safeOffset = Number.isFinite(offset) ? Math.max(Math.trunc(offset), 0) : 0;
-    const rows = this.db.select({ id: clipperCaptures.id }).from(clipperCaptures)
-      .orderBy(desc(clipperCaptures.capturedAt)).limit(safeLimit).offset(safeOffset).all();
-    const total = this.db.select({ id: clipperCaptures.id }).from(clipperCaptures).all().length;
-    return {
-      items: rows.map(({ id }) => this.detail(id, false)).filter((item): item is ClipperCaptureDto => Boolean(item)),
-      total,
+  listCaptures(inputOrLimit: ClipperCaptureListInput | number = {}, legacyOffset = 0): ClipperCaptureListResult {
+    const input: ClipperCaptureListInput = typeof inputOrLimit === "number"
+      ? { limit: inputOrLimit, offset: legacyOffset }
+      : inputOrLimit;
+    const safeLimit = Number.isFinite(input.limit) ? Math.min(Math.max(Math.trunc(input.limit!), 1), 200) : 100;
+    const safeOffset = Number.isFinite(input.offset) ? Math.max(Math.trunc(input.offset!), 0) : 0;
+    const query = input.query?.trim().toLocaleLowerCase() ?? "";
+    const filter = input.filter ?? "all";
+    const order = input.sort === "oldest" ? asc(clipperCaptures.capturedAt) : desc(clipperCaptures.capturedAt);
+    const all = this.db.select({ id: clipperCaptures.id }).from(clipperCaptures).orderBy(order).all()
+      .map(({ id }) => this.detail(id, false)).filter((item): item is ClipperCaptureDto => Boolean(item));
+    const isProcessing = (item: ClipperCaptureDto) => Object.values(item.understanding)
+      .some((state) => state === "pending" || state === "processing");
+    const matchesQuery = (item: ClipperCaptureDto) => !query || [
+      item.title, item.author, item.artifact?.excerpt, ...item.entities.map((entity) => entity.name),
+    ].filter(Boolean).join(" ").toLocaleLowerCase().includes(query);
+    const searched = all.filter(matchesQuery);
+    const counts = {
+      all: searched.length,
+      favorite: searched.filter((item) => item.favoritedAt !== null).length,
+      processing: searched.filter(isProcessing).length,
     };
+    const filtered = searched.filter((item) => filter === "favorite"
+      ? item.favoritedAt !== null
+      : filter === "processing" ? isProcessing(item) : true);
+    return { items: filtered.slice(safeOffset, safeOffset + safeLimit), total: filtered.length, counts };
+  }
+
+  setFavorite(captureId: string, favorite: boolean): ClipperCaptureDto | null {
+    const capture = this.db.select({ id: clipperCaptures.id }).from(clipperCaptures)
+      .where(eq(clipperCaptures.id, captureId)).get();
+    if (!capture) return null;
+    this.db.update(clipperCaptures).set({ favoritedAt: favorite ? new Date() : null, updatedAt: new Date() })
+      .where(eq(clipperCaptures.id, captureId)).run();
+    return this.detail(captureId, false);
   }
 
   async assetContent(referenceKey: string): Promise<{ buffer: Buffer; mime: string } | null> {
