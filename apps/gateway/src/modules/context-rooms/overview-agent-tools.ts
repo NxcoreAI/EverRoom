@@ -26,19 +26,37 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
   const contextGet: PiAgentRuntimeTool = {
     name: "context_room_context_get",
     label: "读取 Room 总览上下文",
-    description: "读取当前 Room 的权威总览、事实来源及已应用纠正。回答 Room 问题或提出纠正前调用。",
+    description: "读取当前 Room 的权威总览、事实来源、已应用纠正，以及当前会话仍待确认的纠正 proposal。回答 Room 问题、提出纠正或处理用户确认前调用。",
     parameters: Type.Object({ roomId: Type.Optional(Type.String({ maxLength: 128 })) }, { additionalProperties: false }),
     execute: async (input, params) => {
       const roomId = resolveRoomId(input, params);
       const overview = service.get(roomId);
-      const corrections = service.list(roomId).filter((item) => item.status === "applied");
-      return { content: JSON.stringify({ overview, corrections }), details: { roomId, overview, corrections } };
+      const corrections = service.list(roomId);
+      const appliedCorrections = corrections.filter((item) => item.status === "applied");
+      const pendingCorrections = corrections.filter((item) =>
+        item.status === "proposed" && item.sessionId === input.sessionId);
+      const payload = { overview, corrections: appliedCorrections, pendingCorrections };
+      return { content: JSON.stringify(payload), details: { roomId, ...payload } };
+    },
+  };
+  const regenerate: PiAgentRuntimeTool = {
+    name: "context_room_overview_regenerate",
+    label: "更新 Room 总览",
+    description: "当用户要求根据当前 Room 已收录的最新资料更新、刷新或重新生成总览时调用。该操作直接重新生成并保存新版总览，不用于用户指定原文和替换文本的纠正。完成后如实说明总览已更新。",
+    parameters: Type.Object({ roomId: Type.Optional(Type.String({ maxLength: 128 })) }, { additionalProperties: false }),
+    execute: async (input, params) => {
+      const roomId = resolveRoomId(input, params);
+      const overview = await service.regenerate(roomId);
+      return {
+        content: "Room 总览已根据当前资料重新生成并保存。",
+        details: { roomId, overview },
+      };
     },
   };
   const propose: PiAgentRuntimeTool = {
     name: "context_room_correction_propose",
     label: "提出 Room 纠正",
-    description: "把用户对当前 Room 的明确纠正整理成待确认 proposal。调用后必须向用户说明原内容、拟改内容和影响，并停止；不得在同一轮调用 apply。信息不足时先追问，不调用本工具。",
+    description: "把用户对当前 Room 的明确纠正整理成待确认 proposal。只要已经形成具体的原内容和拟改内容，就必须先成功调用本工具，不能只在聊天正文中虚构提案。调用成功后说明改动并停止；不得在同一轮调用 apply。信息不足时先追问。",
     parameters: Type.Object({
       roomId: Type.Optional(Type.String({ maxLength: 128 })),
       operation: Operation,
@@ -73,7 +91,7 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
   const apply: PiAgentRuntimeTool = {
     name: "context_room_correction_apply",
     label: "应用已确认的 Room 纠正",
-    description: "仅在用户当前消息明确确认某个既有 proposal 后调用。不能应用本轮刚创建的 proposal。",
+    description: "仅在用户当前消息明确确认 context_room_context_get 返回的当前会话既有 pendingCorrections 后调用，使用其中精确 proposal id。不能应用本轮刚创建的 proposal。",
     parameters: Type.Object({
       roomId: Type.Optional(Type.String({ maxLength: 128 })),
       proposalId: Type.String({ minLength: 1, maxLength: 200 }),
@@ -98,5 +116,5 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
       return { content: "纠正已撤销，总览已经重新生成。", details: result };
     },
   };
-  return [contextGet, propose, apply, revoke];
+  return [contextGet, regenerate, propose, apply, revoke];
 }
