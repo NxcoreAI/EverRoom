@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 import type { FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -265,7 +265,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const disableRequestLogging = gatewayHttpLogLevel !== "debug" && gatewayHttpLogLevel !== "info";
   const app = Fastify({
     loggerInstance: gatewayLogger.logger,
-    disableRequestLogging,
+    logController: new LogController({ disableRequestLogging }),
     routerOptions: {
       // knowledge 文件路由的 id 可能是 caller_ref（如 connector:provider:<uuid>:<docId>），
       // URL 编码后超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
