@@ -26,6 +26,8 @@ export class RuntimeConfigBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
   get(): Promise<RuntimeConfigSnapshot> { return this.request('/v1/runtime-config') }
+  /** 仅供主进程：未脱敏 snapshot（派生托管子进程 env 需要真密钥）。不得转发给渲染层。 */
+  getSecrets(): Promise<RuntimeConfigSnapshot> { return this.request('/v1/runtime-config/secrets') }
   saveUser(config: unknown): Promise<RuntimeConfigSnapshot> {
     const key = (config as { webSearch?: { apiKey?: unknown } } | null)?.webSearch?.apiKey
     if (typeof key === 'object' && key && 'operation' in key && key.operation === 'set' && 'value' in key && typeof key.value === 'string') {

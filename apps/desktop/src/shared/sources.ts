@@ -421,6 +421,17 @@ export interface RuntimeConfigSnapshot {
   primaryConfigured?: boolean
 }
 
+/** gateway 侧两种密钥占位值：快照 redact() 的 "********" 与响应序列化器的 "[REDACTED]"。 */
+export const RUNTIME_CONFIG_SECRET_MASKS = ['********', '[REDACTED]'] as const
+
+/**
+ * 值是否为脱敏占位。派生托管子进程 env 时掩码等同缺失：注入占位串
+ * 子进程能正常起服务、随后每个上游请求静默 401；宁可整套不注入，让它明确报「未配置」。
+ */
+export function isMaskedRuntimeConfigSecret(value: unknown): boolean {
+  return typeof value === 'string' && (RUNTIME_CONFIG_SECRET_MASKS as readonly string[]).includes(value.trim())
+}
+
 export interface RuntimeConfigTestResult {
   valid: boolean
   error?: string

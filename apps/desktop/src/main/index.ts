@@ -1047,9 +1047,19 @@ let managedChildSyncQueue: Promise<void> = Promise.resolve()
 
 async function syncManagedChildProcesses(snapshot: RuntimeConfigSnapshot): Promise<void> {
   const run = managedChildSyncQueue.then(async () => {
-    await syncMemoryCoreEnvironment(snapshot)
-    await syncCursorCompletionEnvironment(snapshot)
-    await syncKnowledgeServiceEnvironment(snapshot)
+    // 子进程 env 派生需要真密钥；调用方传入的 snapshot 来自 IPC/save 响应，
+    // 是脱敏版（渲染层安全边界）。排队执行时 gateway 里已是最新配置，这里
+    // 统一取未脱敏 snapshot；取失败回退脱敏版——env helper 会把掩码视为
+    // 缺失，子进程明确报「未配置」而非静默 401。
+    let secrets = snapshot
+    try {
+      secrets = await runtimeConfigBridge?.getSecrets() ?? snapshot
+    } catch (error) {
+      console.warn('[managed-children] unredacted runtime config unavailable; falling back to redacted snapshot:', error instanceof Error ? error.message : error)
+    }
+    await syncMemoryCoreEnvironment(secrets)
+    await syncCursorCompletionEnvironment(secrets)
+    await syncKnowledgeServiceEnvironment(secrets)
   })
   managedChildSyncQueue = run.catch(() => undefined)
   return run

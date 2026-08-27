@@ -355,7 +355,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoConnectorManager.startPolling(pollingIntervalMs);
   }
 
-  app.addHook("preSerialization", async (_request, _reply, payload) => redactSecrets(payload));
+  // /v1/runtime-config/secrets 是唯一允许真密钥出站的端点：主进程派生托管
+  // 子进程 env 用（token 鉴权，token 只在主进程）；若在此脱敏，子进程会拿
+  // "[REDACTED]" 当 key 起服务并静默 401。其余响应一律按键名/注册密钥脱敏。
+  app.addHook("preSerialization", async (request, _reply, payload) => {
+    if (request.routeOptions.url === "/v1/runtime-config/secrets") return payload;
+    return redactSecrets(payload);
+  });
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
