@@ -1230,6 +1230,84 @@
   text-align: center;
 }
 
+.local-agent-settings-section > header {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+}
+
+.local-agent-list {
+  display: grid;
+  gap: 0;
+  margin: 4px 16px 14px;
+  border: 1px solid var(--border, #e5e3dd);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.local-agent-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 18px auto auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 54px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.local-agent-row + .local-agent-row { border-top: 1px solid var(--border, #e5e3dd); }
+.local-agent-row > div { display: grid; gap: 2px; min-width: 0; }
+.local-agent-row strong { font-size: 12px; font-weight: 650; }
+.local-agent-row small { overflow: hidden; color: var(--muted, #6f6a60); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.local-agent-row > svg { width: 14px; color: #858d98; }
+
+.local-agent-provider {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 6px;
+  background: #f0f2f5;
+  color: #4f5967;
+}
+
+.local-agent-provider svg { width: 15px; height: 15px; }
+
+.local-agent-status {
+  color: #7b8490;
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.local-agent-row[data-ready='true'] .local-agent-status { color: #18794e; }
+
+.local-agent-import-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.local-agent-import-button svg { width: 15px; height: 15px; }
+
+.local-agent-import-result { color: #18794e; padding: 0 16px 10px; }
+
+.local-agent-empty {
+  display: grid;
+  gap: 4px;
+  padding: 18px 16px;
+  margin: 4px 16px 14px;
+  border: 1px dashed var(--border, #e5e3dd);
+  border-radius: 7px;
+  color: var(--muted, #6f6a60);
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .local-agent-settings-section > header { grid-template-columns: 38px minmax(0, 1fr); }
+  .local-agent-settings-section > header .secondary-button { grid-column: 2; justify-self: start; }
+  .local-agent-row { grid-template-columns: 30px minmax(0, 1fr) auto auto; }
+  .local-agent-row > svg { display: none; }
+}
+
 .mcp-config-path {
   display: block;
   margin: 0 16px 14px;
