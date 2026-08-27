@@ -144,8 +144,13 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
         if (failed.length > 0) throw new Error(t('surface:settings.folderGuide.failed'))
       }
       if (obsidianSelected && !obsidianImported && obsidianVaults.length > 0) {
-        for (const vault of obsidianVaults.filter((item) => !item.memoryEnabled)) {
-          const result = await window.nxcore?.obsidian.importCandidate(vault.id, { kind: 'memory' })
+        const pendingVaults = obsidianVaults.filter((item) => !item.memoryEnabled)
+        const lastRegistryIndex = pendingVaults.map((item) => item.discoveredFrom).lastIndexOf('registry')
+        for (const [index, vault] of pendingVaults.entries()) {
+          const result = await window.nxcore?.obsidian.importCandidate(vault.id, {
+            kind: 'memory',
+            enableRegistryAutoImport: index === lastRegistryIndex,
+          })
           if (result?.kind === 'memory' && result.failed > 0) {
             throw new Error(t('surface:settings.folderGuide.obsidianPartialFailure', {
               name: result.projectName,

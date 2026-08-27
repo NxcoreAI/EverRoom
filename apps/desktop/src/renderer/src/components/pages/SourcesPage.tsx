@@ -9,7 +9,7 @@ import type {
   SourceChangeEvent,
   SourceFileSummary,
 } from '../../../../shared/sources'
-import type { ObsidianVaultBinding } from '../../../../shared/obsidian'
+import type { ObsidianVaultBinding, ObsidianVaultCandidate } from '../../../../shared/obsidian'
 import type { MigrationRun, MigrationSource } from '@nxcore/agent-contract'
 import { PageHeader } from './PageHeader'
 import { ConnectSourceMenu, type ConnectorProviderId } from './sources/ConnectSourceMenu'
@@ -56,6 +56,7 @@ export function SourcesPage() {
   const api = window.nxcore?.sources
   const [sources, setSources] = useState<DataSourceSummary[]>([])
   const [vaults, setVaults] = useState<ObsidianVaultBinding[]>([])
+  const [obsidianCandidates, setObsidianCandidates] = useState<ObsidianVaultCandidate[]>([])
   const [loading, setLoading] = useState(Boolean(api))
   const [busyId, setBusyId] = useState<string | null>(null)
   const [deletionProgress, setDeletionProgress] = useState<DeletionProgress | null>(null)
@@ -80,6 +81,8 @@ export function SourcesPage() {
   const [migrationRuns, setMigrationRuns] = useState<MigrationRun[]>([])
   const [obsidianImportOpen, setObsidianImportOpen] = useState(false)
   const [obsidianExpanded, setObsidianExpanded] = useState(false)
+  const obsidianDiscoveryRequestRef = useRef(0)
+  const obsidianCandidateIdsRef = useRef(new Set<string>())
 
   const refreshMigrations = useCallback(async () => {
     if (!window.nxcore?.migrations) return
@@ -123,10 +126,48 @@ export function SourcesPage() {
   useEffect(() => {
     const obsidian = window.nxcore?.obsidian
     if (!obsidian) return
-    const refresh = () => void obsidian.list().then(setVaults).catch(() => undefined)
-    refresh()
-    return obsidian.onChanged(refresh)
+    const refreshVaults = () => void obsidian.list().then(setVaults).catch(() => undefined)
+    const refreshDiscovery = (expandNewProjects = false) => {
+      const request = ++obsidianDiscoveryRequestRef.current
+      void obsidian.discover().then((candidates) => {
+        if (request !== obsidianDiscoveryRequestRef.current) return
+        const hasNewProject = candidates.some((candidate) => !candidate.mountedVaultId && !obsidianCandidateIdsRef.current.has(candidate.id))
+        obsidianCandidateIdsRef.current = new Set(candidates.map((candidate) => candidate.id))
+        setObsidianCandidates(candidates)
+        if (expandNewProjects && hasNewProject) setObsidianExpanded(true)
+      }).catch(() => undefined)
+    }
+    const unsubscribeChanged = obsidian.onChanged(refreshVaults)
+    const unsubscribeDiscovery = obsidian.onDiscoveryChanged(() => refreshDiscovery(true))
+    refreshVaults()
+    refreshDiscovery()
+    return () => {
+      obsidianDiscoveryRequestRef.current += 1
+      unsubscribeChanged()
+      unsubscribeDiscovery()
+    }
   }, [])
+
+  const importObsidianCandidate = async (candidate: ObsidianVaultCandidate) => {
+    const obsidian = window.nxcore?.obsidian
+    if (!obsidian) return
+    setBusyId(candidate.id)
+    setMessage(null)
+    try {
+      const result = await obsidian.importCandidate(candidate.id, { kind: 'memory' })
+      if (result.kind === 'memory') {
+        setMessage(t('surface:obsidian.memoryImportComplete', { name: result.projectName, succeeded: result.succeeded, failed: result.failed }))
+      }
+      const [nextVaults, nextCandidates] = await Promise.all([obsidian.list(), obsidian.discover()])
+      setVaults(nextVaults)
+      obsidianCandidateIdsRef.current = new Set(nextCandidates.map((item) => item.id))
+      setObsidianCandidates(nextCandidates)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t('surface:obsidian.importFailed'))
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   const disconnectVault = async (vault: ObsidianVaultBinding) => {
     if (!window.nxcore?.obsidian || !window.confirm(t('surface:sources.obsidianDisconnectConfirm', { name: vault.name }))) return
@@ -134,6 +175,9 @@ export function SourcesPage() {
     try {
       await window.nxcore.obsidian.disconnect(vault.id)
       setVaults((current) => current.filter((item) => item.id !== vault.id))
+      const nextCandidates = await window.nxcore.obsidian.discover()
+      obsidianCandidateIdsRef.current = new Set(nextCandidates.map((item) => item.id))
+      setObsidianCandidates(nextCandidates)
       setMessage(t('surface:sources.obsidianDisconnected', { name: vault.name }))
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t('surface:sources.obsidianDisconnectFailed'))
@@ -144,12 +188,15 @@ export function SourcesPage() {
 
   const rescanObsidian = async () => {
     const obsidian = window.nxcore?.obsidian
-    if (!obsidian || vaults.length === 0) return
+    if (!obsidian) return
     setBusyId('obsidian')
     setMessage(null)
     try {
       await Promise.all(vaults.map((vault) => obsidian.rescan(vault.id)))
-      setVaults(await obsidian.list())
+      const [nextVaults, nextCandidates] = await Promise.all([obsidian.list(), obsidian.discover()])
+      setVaults(nextVaults)
+      obsidianCandidateIdsRef.current = new Set(nextCandidates.map((item) => item.id))
+      setObsidianCandidates(nextCandidates)
       setMessage(t('surface:sources.obsidianRescanned'))
     } catch (error) {
       setMessage(error instanceof Error ? error.message : t('surface:sources.obsidianRescanFailed'))
@@ -438,8 +485,8 @@ export function SourcesPage() {
       {deletionProgress ? <div className="source-feedback source-delete-progress" role="status"><div className="source-delete-progress-copy"><strong>{deletionProgress.message}</strong><span className="source-delete-progress-track"><span style={{ width: `${deletionProgress.percent}%` }} /></span></div><b>{deletionProgress.percent}%</b></div> : message ? <div className="source-feedback" role="status">{message}</div> : null}
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
       {api && sources.length > 0 ? <EvidenceSearch query={searchQuery} results={searchResults} searching={searching} onQueryChange={setSearchQuery} onSearch={(event) => void searchEvidence(event)} onClear={() => { setSearchQuery(''); setSearchResults(null) }} onOpen={(result) => void openEvidence(result.sourceId, result.fileId, result.id)} /> : null}
-      {api && !loading && sources.length === 0 && vaults.length === 0 ? <div className="sources-empty"><span className="sources-empty-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span><strong>{t('surface:sources.noSourcesConnectedYet')}</strong><p>{t('surface:sources.connectASourceAndProductWillTrackVersions', { product: PRODUCT_NAME })}</p><button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><Plus aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.connectFolder')}</button></div> : null}
-      {api && (loading || sources.length > 0 || vaults.length > 0) ? <SourceTable sources={sources} vaults={vaults} loading={loading} busyId={busyId} expandedSourceId={expandedSourceId} filesBySource={filesBySource} filesLoadingId={filesLoadingId} onToggleFiles={(id) => setExpandedSourceId((current) => current === id ? null : id)} onSync={(source) => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={(source) => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onClear={clearSourceData} onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)} onPreviewFile={(sourceId, fileId) => void previewFile(sourceId, fileId)} onShowFile={showFile} obsidianExpanded={obsidianExpanded} onToggleObsidian={() => setObsidianExpanded((current) => !current)} onRescanObsidian={() => void rescanObsidian()} onOpenVaultRoom={(vault) => window.dispatchEvent(new CustomEvent('nxcore:room:open', { detail: { id: vault.roomId, title: vault.name } }))} onDisconnectVault={(vault) => void disconnectVault(vault)} /> : null}
+      {api && !loading && sources.length === 0 && vaults.length === 0 && obsidianCandidates.length === 0 ? <div className="sources-empty"><span className="sources-empty-icon"><HardDrive aria-hidden="true" strokeWidth={1.8} /></span><strong>{t('surface:sources.noSourcesConnectedYet')}</strong><p>{t('surface:sources.connectASourceAndProductWillTrackVersions', { product: PRODUCT_NAME })}</p><button type="button" className="primary-button" disabled={busyId === 'new'} onClick={() => void addLocalFolder()}><Plus aria-hidden="true" strokeWidth={1.8} />{t('surface:sources.connectFolder')}</button></div> : null}
+      {api && (loading || sources.length > 0 || vaults.length > 0 || obsidianCandidates.length > 0) ? <SourceTable sources={sources} vaults={vaults} obsidianCandidates={obsidianCandidates} loading={loading} busyId={busyId} expandedSourceId={expandedSourceId} filesBySource={filesBySource} filesLoadingId={filesLoadingId} onToggleFiles={(id) => setExpandedSourceId((current) => current === id ? null : id)} onSync={(source) => void runAction(source.id, async () => { const result = await api.sync(source.id); setMessage(describeSync(result, t)) })} onTogglePaused={(source) => void runAction(source.id, () => api.setPaused(source.id, source.status === 'connected'))} onClear={clearSourceData} onOpenEvidence={(sourceId, fileId) => void openEvidence(sourceId, fileId)} onPreviewFile={(sourceId, fileId) => void previewFile(sourceId, fileId)} onShowFile={showFile} obsidianExpanded={obsidianExpanded} onToggleObsidian={() => setObsidianExpanded((current) => !current)} onRescanObsidian={() => void rescanObsidian()} onOpenVaultRoom={(vault) => window.dispatchEvent(new CustomEvent('nxcore:room:open', { detail: { id: vault.roomId, title: vault.name } }))} onDisconnectVault={(vault) => void disconnectVault(vault)} onImportObsidianCandidate={(candidate) => void importObsidianCandidate(candidate)} /> : null}
       <div className="sources-connector-heading migration-heading"><h2>{t('surface:sources.migrationRecords')}</h2><p>{t('surface:sources.notionAiChatUnavailable')}</p></div>
       {migrationSources.length ? <div className="data-table migration-table">
         <div className="table-head"><span>{t('surface:sourceTable.name')}</span><span>{t('surface:sources.importMethod')}</span><span>{t('surface:sourceTable.status')}</span><span>{t('surface:sources.importedContent')}</span><span>{t('surface:sourceTable.actions')}</span></div>
@@ -463,7 +510,13 @@ export function SourcesPage() {
       {obsidianImportOpen ? <ObsidianImportDialog target={{ kind: 'memory' }} onClose={() => setObsidianImportOpen(false)} onImported={(result) => {
         if (result.kind !== 'memory') return
         setMessage(t('surface:obsidian.memoryImportComplete', { name: result.projectName, succeeded: result.succeeded, failed: result.failed }))
-        void window.nxcore?.obsidian.list().then(setVaults).catch(() => undefined)
+        const obsidian = window.nxcore?.obsidian
+        if (!obsidian) return
+        void Promise.all([obsidian.list(), obsidian.discover()]).then(([nextVaults, nextCandidates]) => {
+          setVaults(nextVaults)
+          obsidianCandidateIdsRef.current = new Set(nextCandidates.map((item) => item.id))
+          setObsidianCandidates(nextCandidates)
+        }).catch(() => undefined)
       }} /> : null}
     </div>
   )

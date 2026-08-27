@@ -1,12 +1,12 @@
 import { FolderPlus, LoaderCircle, RefreshCw, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ObsidianVaultCandidate } from '../../../../../shared/obsidian'
 import { useLocale } from '@/i18n/LocaleContext'
 import obsidianLogo from '@/assets/obsidian.svg'
 
 export function ObsidianImportDialog({ target, roomName, onClose, onImported }: {
-  target: { kind: 'memory' } | { kind: 'room'; roomId: string }
+  target: { kind: 'memory'; enableRegistryAutoImport?: boolean } | { kind: 'room'; roomId: string }
   roomName?: string
   onClose: () => void
   onImported: (result: Awaited<ReturnType<NonNullable<typeof window.nxcore>['obsidian']['importCandidate']>>) => void
@@ -17,24 +17,37 @@ export function ObsidianImportDialog({ target, roomName, onClose, onImported }: 
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const discoveryRequestRef = useRef(0)
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     const api = window.nxcore?.obsidian
     if (!api) return
+    const request = ++discoveryRequestRef.current
     setLoading(true)
     setError(null)
     try {
       const items = await api.discover()
+      if (request !== discoveryRequestRef.current) return
       setCandidates(items)
       setSelectedId((current) => current && items.some((item) => item.id === current) ? current : items[0]?.id ?? null)
     } catch (caught) {
+      if (request !== discoveryRequestRef.current) return
       setError(caught instanceof Error ? caught.message : t('surface:obsidian.discoveryFailed'))
     } finally {
-      setLoading(false)
+      if (request === discoveryRequestRef.current) setLoading(false)
     }
-  }
+  }, [t])
 
-  useEffect(() => { void refresh() }, [])
+  useEffect(() => {
+    const obsidian = window.nxcore?.obsidian
+    if (!obsidian) return
+    const unsubscribe = obsidian.onDiscoveryChanged(() => void refresh())
+    void refresh()
+    return () => {
+      discoveryRequestRef.current += 1
+      unsubscribe()
+    }
+  }, [refresh])
 
   const addManual = async () => {
     const candidate = await window.nxcore?.obsidian.pickCandidate()

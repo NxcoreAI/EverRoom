@@ -2051,6 +2051,10 @@ summary:focus-visible {
   background: var(--subtle);
 }
 
+.status-cell[data-status='pending'] .status-dot {
+  background: #b7791f;
+}
+
 .status-cell[data-status='error'] {
   color: #9c231a;
 }
@@ -2118,6 +2122,7 @@ summary:focus-visible {
 .obsidian-project-row > span { min-width: 0; }
 .obsidian-project-row > span:nth-child(2) { display: grid; gap: 2px; color: var(--text); font-weight: 650; }
 .obsidian-project-row small { color: var(--subtle); font-size: 9px; font-weight: 400; }
+.obsidian-project-row[data-status='pending'] { background: color-mix(in srgb, #b7791f 5%, transparent); }
 .obsidian-project-name { display: flex; align-items: center; gap: 9px; }
 .obsidian-project-name > .source-icon { width: 17px; height: 17px; flex: 0 0 17px; }
 .obsidian-project-name strong { overflow: hidden; color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
