@@ -99,7 +99,8 @@ jobs:
           if [[ -n "$MAC_CERTS" ]]; then
             export CSC_LINK="$MAC_CERTS"
             export CSC_KEY_PASSWORD="$MAC_CERTS_PASSWORD"
-            args+=(--config '{"mac":{"notarize":true,"hardenedRuntime":true}}')
+            echo '{"mac":{"notarize":true,"hardenedRuntime":true}}' > "$RUNNER_TEMP/sign-config.json"
+            args+=(--config "$RUNNER_TEMP/sign-config.json")
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             echo "::warning::MAC_CERTS is not configured; producing an unsigned build."
