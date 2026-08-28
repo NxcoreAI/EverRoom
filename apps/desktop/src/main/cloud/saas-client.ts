@@ -464,12 +464,12 @@ export class SaasClient {
     return this.request('/app/notifications/preferences', { method: 'PUT', data: input })
   }
 
-  async registerPushToken(provider: 'expo' | 'apns', token: string): Promise<void> {
+  async registerPushToken(provider: 'fcm' | 'apns', token: string): Promise<void> {
     await this.initialize()
     await this.request('/app/notifications/device', { method: 'PUT', data: { provider, token } })
   }
 
-  async removePushToken(provider: 'expo' | 'apns'): Promise<void> {
+  async removePushToken(provider: 'fcm' | 'apns'): Promise<void> {
     await this.initialize()
     if (!this.account || !this.accessToken) return
     await this.request('/app/notifications/device', { method: 'DELETE', data: { provider } })
