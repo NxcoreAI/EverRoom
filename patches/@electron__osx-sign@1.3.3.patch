@@ -1,5 +1,5 @@
 diff --git a/dist/cjs/util.js b/dist/cjs/util.js
-index 77e64b56872bc65bcb0f60ecfbec84eb3da02c6f..37b8b99569fdf6f7ba5117f70a1b2667d54db9c8 100644
+index 77e64b56872bc65bcb0f60ecfbec84eb3da02c6f..93d5c82c72fddcaa032083dd1d2aab141d7c30ab 100644
 --- a/dist/cjs/util.js
 +++ b/dist/cjs/util.js
 @@ -1,3 +1,4 @@
@@ -7,7 +7,7 @@ index 77e64b56872bc65bcb0f60ecfbec84eb3da02c6f..37b8b99569fdf6f7ba5117f70a1b2667
  "use strict";
  var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
      if (k2 === undefined) k2 = k;
-@@ -100,12 +101,25 @@ async function detectElectronPlatform(opts) {
+@@ -100,12 +101,27 @@ async function detectElectronPlatform(opts) {
  exports.detectElectronPlatform = detectElectronPlatform;
  /**
   * This function returns a promise resolving the file path if file binary.
@@ -19,18 +19,20 @@ index 77e64b56872bc65bcb0f60ecfbec84eb3da02c6f..37b8b99569fdf6f7ba5117f70a1b2667
  async function getFilePathIfBinary(filePath) {
 -    if (await (0, isbinaryfile_1.isBinaryFile)(filePath)) {
 -        return filePath;
-+    const fsp = require('fs').promises;
-+    const fd = await fsp.open(filePath, 'r');
++    // walkAsync 用无界 Promise.all 递归展开整棵 .app，裸 fs.promises.open 会同时
++    // 打开上万 fd 触发 EMFILE。改走 fs-extra（graceful-fs）的回调式 open/read/close，
++    // graceful-fs 自带 EMFILE 重试队列，超限时排队等待而不是报错。
++    const buf = Buffer.alloc(4);
++    const fd = await new Promise((resolve, reject) => fs.open(filePath, 'r', (err, opened) => (err ? reject(err) : resolve(opened))));
 +    try {
-+        const buf = Buffer.alloc(4);
-+        const { bytesRead } = await fd.read(buf, 0, 4, 0);
++        const bytesRead = await new Promise((resolve, reject) => fs.read(fd, buf, 0, 4, 0, (err, br) => (err ? reject(err) : resolve(br))));
 +        if (bytesRead < 4) {
 +            return null;
 +        }
 +        return MACHO_MAGICS.has(buf.readUInt32LE(0)) || MACHO_MAGICS.has(buf.readUInt32BE(0)) ? filePath : null;
 +    }
 +    finally {
-+        await fd.close();
++        await new Promise((resolve) => fs.close(fd, () => resolve()));
      }
 -    return null;
  }
