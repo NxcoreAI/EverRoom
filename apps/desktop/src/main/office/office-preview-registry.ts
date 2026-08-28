@@ -1,14 +1,17 @@
-import { extname } from 'node:path'
-
 import type { BrowserWindow } from 'electron'
 
-import { OFFICE_TEST_INSTANCE_ID, type OfficePreviewKind } from '../../shared/sources'
+import {
+  OFFICE_TEST_INSTANCE_ID,
+  officePreviewKindForFileName,
+  type OfficePreviewKind,
+} from '../../shared/sources'
 import {
   loadPreparedGenOfficeRuntime,
   preparedGenOfficeFixture,
   type PreparedGenOfficeRuntime,
 } from './office-runtime'
 import { OfficeViewManager, prepareOfficeDocument } from './office-view-manager'
+import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
 import { SpreadsheetViewManager } from './spreadsheet-view-manager'
 
@@ -37,14 +40,8 @@ interface OfficePreviewInstance {
   view: OfficePreviewView
 }
 
-/** 内嵌 Office 文件扩展名 → 预览运行时分流（与 files:open-original 的白名单一致）。 */
-export function officePreviewKindFor(fileName: string): OfficePreviewKind | null {
-  const extension = extname(fileName).toLowerCase()
-  if (extension === '.docx' || extension === '.doc') return 'docx'
-  if (extension === '.pptx' || extension === '.ppt') return 'slides'
-  if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
-  return null
-}
+/** 内嵌 Office 文件扩展名 → 预览运行时分流（shared 实现，渲染端入口与 files:open-original 共用同一白名单）。 */
+export const officePreviewKindFor = officePreviewKindForFileName
 
 /**
  * 顶栏 Office 预览标签的主进程侧：按 fileId 多开/复用 genoffice 视图实例，
@@ -149,6 +146,9 @@ export class OfficePreviewRegistry {
     }
     if (kind === 'slides') {
       return SlidesViewManager.create(window, runtime.slides, file)
+    }
+    if (kind === 'pdf') {
+      return PdfViewManager.create(window, runtime.pdf, file)
     }
     return SpreadsheetViewManager.create(window, runtime.sheets, file)
   }

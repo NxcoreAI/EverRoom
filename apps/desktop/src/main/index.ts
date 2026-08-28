@@ -1,9 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { createReadStream, readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, extname, join, parse, resolve } from 'node:path'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
+import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
@@ -17,7 +18,7 @@ import type {
 
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
 import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
-import { OFFICE_TEST_INSTANCE_ID } from '../shared/sources'
+import { OFFICE_TEST_INSTANCE_ID, officePreviewKindForFileName } from '../shared/sources'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
@@ -1940,6 +1941,13 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.openFile, (_event, fileId: string) => bridge.openFile(fileId))
 }
 
+/** 本体字节的 sha256（流式；与网关 fileBlobs.contentHash 同算法），预览实例的内容指纹。 */
+async function hashFileBytes(path: string): Promise<string> {
+  const hash = createHash('sha256')
+  await pipeline(createReadStream(path), hash)
+  return hash.digest('hex')
+}
+
 function registerFilesHandlers(
   bridge: FilesGatewayBridge,
   highRiskImports: HighRiskImportCoordinator,
@@ -1970,13 +1978,21 @@ function registerFilesHandlers(
   handle(FILES_CHANNELS.openOriginal, async (
     event,
     fileId: string,
-    originalName: string,
-    contentHash: string,
+    originalName?: string,
+    contentHash?: string,
   ) => {
+    // 文件页入口自带列表里的 originalName/contentHash；Context Room 等 knowledge
+    // 文件入口只带文件名——其 id 可能是统一导入目录条目，遗留通道的 /v1/files/:id
+    // 详情查不到（file_not_found）。存储路径走双轨 storage 端点，内容指纹直接对
+    // 本体字节取 sha256（与网关 contentHash 同算法：重传新版本 → hash 变 → 原地重建）。
+    if (!originalName) {
+      await bridge.openOriginal(fileId)
+      return { openedWith: 'external' as const }
+    }
     const extension = extname(originalName).toLowerCase()
     // 内嵌预览覆盖 OOXML；.doc/.xls/.ppt 旧格式经 LibreOffice 转 OOXML 后同样内嵌。
     const legacy = extension === '.doc' || extension === '.xls' || extension === '.ppt'
-    if (!['.docx', '.doc', '.xlsx', '.xlsm', '.xls', '.pptx', '.ppt'].includes(extension)) {
+    if (officePreviewKindForFileName(originalName) === null) {
       await bridge.openOriginal(fileId)
       return { openedWith: 'external' as const }
     }
@@ -1984,13 +2000,14 @@ function registerFilesHandlers(
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
     const storagePath = await bridge.storagePath(fileId)
+    const effectiveHash = contentHash ?? await hashFileBytes(storagePath)
     // 顶栏预览标签支持多开：同 fileId 复用实例，hash 变化原地重建；激活由渲染端驱动。
     // 旧格式依赖本机 LibreOffice：未安装或转换失败时回退外部应用打开。
     let descriptor
     try {
       descriptor = await officePreviewRegistry.open(window, {
         id: fileId,
-        contentHash,
+        contentHash: effectiveHash,
         originalName,
         storagePath,
       })
@@ -2004,7 +2021,12 @@ function registerFilesHandlers(
       await bridge.openOriginal(fileId)
       return { openedWith: 'external' as const }
     }
-    return { openedWith: 'office' as const, instanceId: descriptor.id, kind: descriptor.kind }
+    return {
+      openedWith: 'office' as const,
+      instanceId: descriptor.id,
+      kind: descriptor.kind,
+      title: descriptor.title,
+    }
   })
   bridge.onImportProgress((event) => {
     for (const window of BrowserWindow.getAllWindows()) {

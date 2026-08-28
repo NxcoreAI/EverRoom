@@ -40,10 +40,18 @@ export interface GenOfficeSlidesRuntime {
   slidesIsDirty(webContentsId: number): boolean
 }
 
+export interface GenOfficePdfRuntime {
+  configurePdfRuntime(config: { preloadPath: string; rendererFile?: string }): void
+  createPdfView(openPath?: string | null, options?: { readonly?: boolean }): WebContentsView
+  requestPdfClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
+  pdfIsDirty(webContentsId: number): boolean
+}
+
 export interface PreparedGenOfficeRuntime {
   docs: GenOfficeDocsRuntime
   sheets: GenOfficeSheetsRuntime
   slides: GenOfficeSlidesRuntime
+  pdf: GenOfficePdfRuntime
   root: string
 }
 
@@ -70,6 +78,9 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
   const slidesMainEntry = join(root, 'slides', 'main', 'embed.js')
   const slidesPreloadPath = join(root, 'slides', 'preload', 'index.js')
   const slidesRendererFile = join(root, 'slides', 'renderer', 'index.html')
+  const pdfMainEntry = join(root, 'pdf', 'main', 'embed.js')
+  const pdfPreloadPath = join(root, 'pdf', 'preload', 'index.js')
+  const pdfRendererFile = join(root, 'pdf', 'renderer', 'index.html')
   const sidecarPath = join(root, 'native', process.platform === 'win32' ? 'xlsx-sidecar.exe' : 'xlsx-sidecar')
   for (const path of [
     mainEntry,
@@ -81,6 +92,9 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
     slidesMainEntry,
     slidesPreloadPath,
     slidesRendererFile,
+    pdfMainEntry,
+    pdfPreloadPath,
+    pdfRendererFile,
     sidecarPath,
   ]) {
     if (!existsSync(path)) {
@@ -99,5 +113,8 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
   const slidesRequire = createRequire(slidesMainEntry)
   const slides = slidesRequire(slidesMainEntry) as GenOfficeSlidesRuntime
   slides.configureSlidesRuntime({ preloadPath: slidesPreloadPath, rendererFilePath: slidesRendererFile })
-  return { docs, sheets, slides, root }
+  const pdfRequire = createRequire(pdfMainEntry)
+  const pdf = pdfRequire(pdfMainEntry) as GenOfficePdfRuntime
+  pdf.configurePdfRuntime({ preloadPath: pdfPreloadPath, rendererFile: pdfRendererFile })
+  return { docs, sheets, slides, pdf, root }
 }

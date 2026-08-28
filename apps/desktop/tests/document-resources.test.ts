@@ -42,7 +42,7 @@ function knowledgeFile(id: string, name: string): KnowledgeFileDto {
 }
 
 describe('Context Room document resource mapping', () => {
-  it('localizes generated file metadata and Office previews', () => {
+  it('localizes generated file metadata without a placeholder Office preview payload', () => {
     const item = createContextRoomFileItem({
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       modifiedAt: new Date('2026-08-15T09:00:00.000Z'),
@@ -58,15 +58,15 @@ describe('Context Room document resource mapping', () => {
     expect(item.source).toBe('File system /Users/test/plan.xlsx')
     expect(resource).toMatchObject({
       kind: 'office-file',
-      preview: {
-        columns: ['Item', 'Owner', 'Status', 'Updated'],
-        rows: [
-          ['Release materials', 'Lin Wei', 'In progress', 'Today'],
-          ['Source traceability', 'Zhou Ming', 'Pending confirmation', 'Yesterday'],
-          ['Beta package', 'Lu Yuan', 'Planned', '07-30'],
-        ],
+      format: 'xlsx',
+      source: {
+        type: 'hostfs',
+        path: '/Users/test/plan.xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       },
     })
+    // 占位预览数据已移除：Office 文件改走顶栏内嵌预览标签打开
+    expect(resource && 'preview' in resource).toBe(false)
   })
 
   it('shows only Gateway documents in the cloud document folder', () => {

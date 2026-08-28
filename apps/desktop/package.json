@@ -165,6 +165,8 @@
           "!**/node_modules/@datadog/*/prebuilds/win32*/**",
           "!**/node_modules/@datadog/*/prebuilds/darwin-x64/**",
           "!**/node_modules/@embedded-postgres/linux-*/**",
+          "!**/node_modules/@embedded-postgres/darwin-x64/**",
+          "!**/node_modules/@embedded-postgres/windows-x64/**",
           "!**/*.{map,ts,tsx,mts,cts}"
         ]
       },

@@ -9,7 +9,6 @@ import { DocumentContent } from '../detail-panels/DocumentPane';
 import { KnowledgeFileExternalCard } from '../detail-panels/KnowledgeFileExternalCard';
 import { KnowledgeFileReader } from '../detail-panels/KnowledgeFileReader';
 import { PanelEmptyState } from '../detail-panels/PanelEmptyState';
-import { OfficePreview } from '../detail-panels/ResourcePanel';
 import { WikiPageReader } from '../detail-panels/WikiPageReader';
 import { isMarkdownFileName } from '../../../knowledgeMarkdownImport';
 
@@ -63,8 +62,6 @@ export function WorkspaceContent({
           onBackendDocumentChange={onBackendDocumentChange}
           onDeleteDocument={onDeleteDocument}
         />
-      ) : selectedResource?.kind === 'office-file' ? (
-        <OfficePreview resource={selectedResource} />
       ) : selectedResource?.kind === 'knowledge-file' ? (
         isMarkdownFileName(selectedResource.originalName)
           ? <KnowledgeFileReader resource={selectedResource} />

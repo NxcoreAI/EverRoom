@@ -4,6 +4,7 @@ import {
   ChevronRight,
   FileSpreadsheet,
   FileText,
+  FileType,
   LayoutGrid,
   LockKeyhole,
   PanelRightClose,
@@ -22,6 +23,7 @@ const officeTabIcons: Record<OfficePreviewKind, LucideIcon> = {
   docx: FileText,
   spreadsheet: FileSpreadsheet,
   slides: Presentation,
+  pdf: FileType,
 }
 
 export function TopBar({

@@ -4,6 +4,7 @@ import { useLocale } from '../../../../i18n/LocaleContext'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
 import { isMarkdownFileName } from '../../knowledgeMarkdownImport'
+import { officePreviewKindForFileName } from '../../../../../../shared/sources'
 import {
   createContextRoomResourceLibrary,
   getRoomResource,
@@ -108,11 +109,18 @@ export function PortedDetail({
 
   const openResource = useCallback((resource: ContextRoomResource) => {
     if (resource.roomId !== room.id) return
+    // Office 可预览文件：顶栏新标签打开内嵌只读预览，不在编辑栏内展示
+    if (resource.kind === 'knowledge-file' && officePreviewKindForFileName(resource.originalName)) {
+      window.dispatchEvent(new CustomEvent('nxcore:office:open', {
+        detail: { fileId: resource.fileId, originalName: resource.originalName },
+      }))
+      return
+    }
     setSelectedObject(null)
     setSelectedResourceId(resource.id)
     if (!layout.panels.includes('documents')) layout.switchPane('documents')
     layout.setMobileContent(true)
-    // 非 md 上传文件：选中即用系统默认应用打开原件（面板内只留状态卡片）
+    // 非 md 且无内嵌预览的上传文件：选中即用系统默认应用打开原件（面板内只留状态卡片）
     if (resource.kind === 'knowledge-file' && !isMarkdownFileName(resource.originalName)) {
       void window.nxcore?.knowledge?.openFile(resource.fileId).catch(() => undefined)
     }
@@ -192,6 +200,13 @@ export function PortedDetail({
         ?? library.resources.find((candidate) =>
           candidate.kind === 'office-file' && candidate.id === `${room.id}:file:${source.sourceId}`)
       if (resource) {
+        // Office 可预览文件与资源树一致：顶栏新标签打开
+        if (resource.kind === 'knowledge-file' && officePreviewKindForFileName(resource.originalName)) {
+          window.dispatchEvent(new CustomEvent('nxcore:office:open', {
+            detail: { fileId: resource.fileId, originalName: resource.originalName },
+          }))
+          return
+        }
         openInContentArea(resource)
         return
       }
