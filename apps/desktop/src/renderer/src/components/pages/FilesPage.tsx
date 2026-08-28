@@ -248,7 +248,9 @@ export function FilesPage() {
   const classifiedFilesByCategory = useMemo(() => groupCatalogFiles(files), [files])
 
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
-  const categoryCards = useMemo(() => FILE_CATEGORY_DEFINITIONS.map((definition) => ({
+  const categoryCards = useMemo(() => FILE_CATEGORY_DEFINITIONS
+    .filter((definition) => definition.key !== 'clipper')
+    .map((definition) => ({
     ...definition,
     files: (classifiedFilesByCategory.get(definition.key) ?? []).filter(({ file }) => {
       if (!normalizedSearch) return true

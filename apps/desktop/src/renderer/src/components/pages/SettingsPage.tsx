@@ -2,6 +2,7 @@ import {
   Activity,
   AudioLines,
   Brain,
+  Bell,
   Camera,
   CalendarClock,
   Cloud,
@@ -36,16 +37,20 @@ import googleLogo from '@/assets/google-logo.svg'
 import type { CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import type { BrowserExtensionStatus } from '../../../../shared/browser-extension'
+import type { NotificationPreferences } from '../../../../shared/notifications'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
 import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
+import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSettingsSection'
 import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
+import { InvitationCodeField, useInvitationCode } from '@/components/account/InvitationCodeField'
 import './SettingsPage.css'
 
 const SETTINGS_NAV = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
+  { id: 'settings-notifications', label: 'surface:settings.notifications', description: 'surface:settings.notificationsDescription', icon: Bell },
   { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', description: 'surface:settings.usageAndBudgetsDescription', icon: Activity },
@@ -134,6 +139,9 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [extensionStatus, setExtensionStatus] = useState<BrowserExtensionStatus | null>(null)
   const [extensionBusy, setExtensionBusy] = useState(false)
   const [extensionError, setExtensionError] = useState<string | null>(null)
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null)
+  const [notificationBusy, setNotificationBusy] = useState(false)
+  const invitation = useInvitationCode()
 
   useEffect(() => {
     const api = window.nxcore?.browserExtension
@@ -188,6 +196,26 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       window.clearInterval(timer)
     }
   }, [account?.authenticated, account?.user?.id])
+
+  useEffect(() => {
+    if (!account?.authenticated || !window.nxcore) {
+      setNotificationPreferences(null)
+      return
+    }
+    let cancelled = false
+    void window.nxcore.notifications.preferences()
+      .then((preferences) => { if (!cancelled) setNotificationPreferences(preferences) })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [account?.authenticated, account?.user?.id])
+
+  const updateNotificationPreference = (input: Partial<NotificationPreferences>) => {
+    if (!window.nxcore || notificationBusy) return
+    setNotificationBusy(true)
+    void window.nxcore.notifications.updatePreferences(input)
+      .then(setNotificationPreferences)
+      .finally(() => setNotificationBusy(false))
+  }
 
   useEffect(() => {
     const removeListener = window.nxcore?.transcriptions.onSyncCompleted(({ completedAt }) => {
@@ -285,9 +313,13 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
   const loginWithOidc = async (provider: CloudOidcProvider) => {
     if (!window.nxcore) return
+    let invitationCode:string|undefined
+    try { invitationCode=await invitation.prepare() } catch { return }
     setPending(provider)
     try {
-      setAccount(await window.nxcore.account.loginWithOidc(provider))
+      const nextAccount=await window.nxcore.account.loginWithOidc(provider,invitationCode)
+      setAccount(nextAccount)
+      if(invitationCode&&nextAccount.registration)window.alert(t(nextAccount.registration.invitationApplied?'surface:settings.invitationCodeApplied':'surface:settings.invitationCodeExistingUser'))
       try {
         window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
         window.sessionStorage.setItem('everroom:post-login-room-check', '1')
@@ -295,7 +327,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         // Session storage is optional; mounted gates still receive the event.
       }
       window.dispatchEvent(new CustomEvent('everroom-post-login-onboarding-check'))
-    } catch {
+    } catch (error) {
+      if(invitationCode&&error instanceof Error&&/invitation code/i.test(error.message))invitation.markInvalid()
       // The preload request interceptor reports the error globally.
     } finally {
       setPending(null)
@@ -793,6 +826,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         ) : (
           <div className="cloud-login-content">
+            <InvitationCodeField value={invitation.code} state={invitation.state} open={invitation.open} disabled={isBusy} onChange={invitation.change} onToggle={()=>invitation.setOpen(value=>!value)}/>
             <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
               <button
                 className="social-login-button apple-login"
@@ -833,6 +867,39 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         )}
       </section>
 
+      {account?.authenticated && notificationPreferences ? (
+        <section id="settings-notifications" className="reality-settings-section settings-anchor-section" aria-labelledby="notification-settings-title">
+          <header>
+            <span><Bell aria-hidden="true" /></span>
+            <div>
+              <h2 id="notification-settings-title">{t('surface:settings.notifications')}</h2>
+              <p>{t('surface:settings.notificationsDescription')}</p>
+            </div>
+          </header>
+          {([
+            ['enabled', 'surface:settings.notificationsAll', false],
+            ['iosEnabled', 'surface:settings.notificationsIos', !notificationPreferences.enabled],
+            ['macosEnabled', 'surface:settings.notificationsMacos', !notificationPreferences.enabled],
+          ] as const).map(([key, label, parentDisabled]) => (
+            <div className="reality-setting-row" key={key}>
+              <div><strong>{t(label)}</strong></div>
+              <button
+                type="button"
+                className="settings-toggle"
+                role="switch"
+                aria-checked={notificationPreferences[key]}
+                data-active={String(notificationPreferences[key])}
+                disabled={notificationBusy || parentDisabled}
+                onClick={() => updateNotificationPreference({ [key]: !notificationPreferences[key] })}
+              >
+                <span aria-hidden="true" />
+                {t(notificationPreferences[key] ? 'surface:settings.notificationsOn' : 'surface:settings.notificationsOff')}
+              </button>
+            </div>
+          ))}
+        </section>
+      ) : null}
+
       <section id="settings-editor" className="reality-settings-section settings-anchor-section" aria-labelledby="document-editing-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
@@ -865,6 +932,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
       <div id="settings-models" className="settings-anchor-section settings-models-group">
         <LocalModelSettingsSection />
+
+        <LocalAgentSettingsSection />
 
         <McpSettingsSection />
       </div>

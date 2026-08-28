@@ -1,4 +1,6 @@
+import * as Dialog from '@radix-ui/react-dialog'
 import {
+  AlertCircle,
   ArrowLeft,
   ArrowUpRight,
   Bookmark,
@@ -6,184 +8,163 @@ import {
   ChevronDown,
   ExternalLink,
   Heart,
+  LoaderCircle,
   MoreHorizontal,
+  RefreshCw,
   Search,
   Share2,
   Sparkles,
+  Trash2,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import type { BrowserExtensionClipperCapture } from '../../../../shared/browser-extension'
+import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListResult } from '../../../../shared/browser-extension'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
+import { RichClipMarkdown } from './RichClipMarkdown'
 import './InspirationPage.css'
 
-type InspirationCategory = '全部'
 type InspirationSortOrder = 'newest' | 'oldest'
+type InspirationFilter = 'all' | 'favorite' | 'processing'
+type LoadState = 'loading' | 'ready' | 'error'
+type DeleteState = 'idle' | 'deleting'
+type PipelineState = BrowserExtensionClipperCapture['understanding'][keyof BrowserExtensionClipperCapture['understanding']]
 
-interface InspirationItem {
-  id: string
-  category: InspirationCategory
-  title: string
-  excerpt: string
-  source: string
-  host: string
-  sourceUrl: string
-  date: string
-  readTime: string
-  image: string
-  imageAlt: string
-  palette: string
-  note: string
-  body: string[]
-  quote: string
+function hostFromUrl(value: string, fallback: string): string {
+  try { return new URL(value).hostname.replace(/^www\./, '') } catch { return fallback }
 }
 
-const inspirationItems: InspirationItem[] = [
-  {
-    id: 'quiet-interface', category: '全部', title: '安静的界面，也可以很有力量',
-    excerpt: '留白不是空缺，而是给内容一口呼吸。好的产品让人更快抵达想去的地方。',
-    source: 'The Gentlewoman', host: 'thegentlewoman.co.uk', sourceUrl: 'https://thegentlewoman.co.uk/', date: '2024.08.24', readTime: '6 min',
-    image: 'https://images.unsplash.com/photo-1497366811353-6870744d04b2?auto=format&fit=crop&w=1200&q=85', imageAlt: '安静明亮的工作空间', palette: '#d7cfc4',
-    note: '收录时想起：界面不必时时发出声音。', quote: 'A calm interface is an invitation to stay.',
-    body: ['我们常常把“有设计”误解成更多的元素、更多的动效、更多的选择。但真正成熟的界面，往往先为人删去噪音。', '它用清晰的层级和恰到好处的留白，让阅读变成一种没有阻力的移动。用户不需要学习它，只需要在其中继续自己的思考。'],
-  },
-  {
-    id: 'material-and-memory', category: '全部', title: '物件如何替我们保存记忆',
-    excerpt: '从一张旧车票到一只磨损的杯子，物质比文字更早替我们记住当时的光线。',
-    source: 'Apartamento', host: 'apartamentomagazine.com', sourceUrl: 'https://www.apartamentomagazine.com/', date: '2024.08.21', readTime: '8 min',
-    image: 'https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&w=1200&q=85', imageAlt: '桌上的书与眼镜', palette: '#bfaa95',
-    note: '一个适合周末下午慢慢读完的片段。', quote: 'Things remember what we have forgotten.',
-    body: ['我们把重要的东西收进抽屉，以为这样就完成了保存。其实真正留下来的，是物件和时间摩擦之后的手感。', '网页剪藏让文字回到生活里：它不再只是一个链接，而是我在某个下午被打动过的证据。'],
-  },
-  {
-    id: 'small-rituals', category: '全部', title: '把复杂的工作还给工具',
-    excerpt: '一个产品的价值，不在于它有多少功能，而在于它能否替用户守住专注。',
-    source: 'Dense Discovery', host: 'densediscovery.com', sourceUrl: 'https://www.densediscovery.com/', date: '2024.08.17', readTime: '4 min',
-    image: 'https://images.unsplash.com/photo-1523726491678-bf852e717f6a?auto=format&fit=crop&w=1200&q=85', imageAlt: '设计师在工作', palette: '#9baec4',
-    note: '值得带回产品评审的一句话。', quote: 'Good tools make room for better thinking.',
-    body: ['工具应该承接重复、琐碎和容易忘记的部分，把注意力还给真正重要的判断。', '这也是我想在 EverRoom 里保留“灵感”这一页的原因：捕捉是一瞬间，回看才是长期的工作。'],
-  },
-  {
-    id: 'light-through-window', category: '全部', title: '光线是空间里最柔软的导航',
-    excerpt: '在数字空间里，我们也需要一些像窗边光线一样的提示：轻、慢，但准确。',
-    source: 'Kinfolk', host: 'kinfolk.com', sourceUrl: 'https://www.kinfolk.com/', date: '2024.08.12', readTime: '5 min',
-    image: 'https://images.unsplash.com/photo-1494438639946-1ebd1d20bf85?auto=format&fit=crop&w=1200&q=85', imageAlt: '窗边的自然光', palette: '#d7d2c3',
-    note: '颜色、节奏、动效，都可以成为一种不打扰的引导。', quote: 'Let the light do some of the guiding.',
-    body: ['有些提示不需要被读出来。它们可以像窗边的光，随着时间改变，却始终让人知道方向。', '当视觉层级变得清楚，用户就可以把精力放在内容本身。'],
-  },
-  {
-    id: 'slow-web', category: '全部', title: '慢一点，互联网仍然在这里',
-    excerpt: '收藏不是囤积。它是和未来的自己约定，某个念头值得被再次打开。',
-    source: 'The Creative Independent', host: 'thecreativeindependent.com', sourceUrl: 'https://thecreativeindependent.com/', date: '2024.08.05', readTime: '7 min',
-    image: 'https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&w=1200&q=85', imageAlt: '纸张与手写文字', palette: '#d2bfa7',
-    note: '“再次打开”是收藏最好的理由。', quote: 'The internet can still be a place to return to.',
-    body: ['我们在网上快速地经过很多东西，却很少真正回到它们。剪藏的意义，是给值得的内容留下一个更慢的入口。', '每一张卡片都是一个小小的路标，标记我曾经在哪里停下来。'],
-  },
-  {
-    id: 'editorial-patience', category: '全部', title: '耐心是一种产品能力',
-    excerpt: '不急着把所有答案放在首屏，给探索保留一点余地，体验反而更完整。',
-    source: 'Muzli', host: 'muz.li', sourceUrl: 'https://muz.li/', date: '2024.07.29', readTime: '3 min',
-    image: 'https://images.unsplash.com/photo-1522542550221-31fd19575a2d?auto=format&fit=crop&w=1200&q=85', imageAlt: '产品设计草图', palette: '#b4c9c5',
-    note: '关于“渐进式披露”的一个温柔版本。', quote: 'Not everything needs to arrive at once.',
-    body: ['成熟的产品知道什么时候出现，也知道什么时候退后。信息被分层之后，用户拥有了自己的节奏。', '这种耐心不是隐藏功能，而是相信用户可以一步一步走进产品。'],
-  },
-]
-
-function plainTextFromMarkdown(markdown: string): string {
-  return markdown
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/[`*_>#-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+function dateLabel(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value.slice(0, 10).replaceAll('-', '.') : date.toISOString().slice(0, 10).replaceAll('-', '.')
 }
 
-function paragraphsFromMarkdown(markdown: string): string[] {
-  return markdown
-    .split(/\n\s*\n/)
-    .map((paragraph) => plainTextFromMarkdown(paragraph))
-    .filter((paragraph) => paragraph.length > 20)
-    .slice(0, 8)
+function readTime(capture: BrowserExtensionClipperCapture): string {
+  const length = capture.artifact?.displayMarkdown?.length ?? capture.artifact?.excerpt.length ?? 0
+  return `${Math.max(1, Math.round(length / 900))} min`
 }
 
-function hostFromUrl(value: string): string {
-  try { return new URL(value).hostname.replace(/^www\./, '') } catch { return '网页剪藏' }
+function isWorking(capture: BrowserExtensionClipperCapture): boolean {
+  return Object.values(capture.understanding).some((state) => state === 'pending' || state === 'processing')
 }
 
-function mapCapture(capture: BrowserExtensionClipperCapture, markdown: string): InspirationItem {
-  const date = new Date(capture.capturedAt)
-  const dateLabel = Number.isNaN(date.getTime())
-    ? capture.capturedAt.slice(0, 10).replaceAll('-', '.')
-    : date.toISOString().slice(0, 10).replaceAll('-', '.')
-  const paragraphs = paragraphsFromMarkdown(markdown)
-  const excerpt = plainTextFromMarkdown(markdown).slice(0, 140) || '这条网页剪藏还没有可展示的摘要。'
-  const asset = capture.assets.find((item) => item.status === 'stored') ?? capture.assets[0]
-  const host = hostFromUrl(capture.sourceUrl)
-  return {
-    id: capture.id,
-    category: '全部',
-    title: capture.title,
-    excerpt,
-    source: capture.author || host,
-    host,
-    sourceUrl: capture.sourceUrl,
-    date: dateLabel,
-    readTime: `${Math.max(1, Math.round(Math.max(markdown.length, 300) / 900))} min`,
-    image: asset?.localUrl || asset?.originalUrl || 'https://images.unsplash.com/photo-1497366811353-6870744d04b2?auto=format&fit=crop&w=1200&q=85',
-    imageAlt: asset?.altText || capture.title,
-    palette: '#d7d2c3',
-    note: capture.status === 'ready' ? '已保存到本地对象库。' : `剪藏状态：${capture.status}`,
-    quote: capture.author ? `Saved from ${capture.author}.` : 'A small thing worth returning to.',
-    body: paragraphs.length > 0 ? paragraphs : [excerpt],
-  }
+function cardStatus(capture: BrowserExtensionClipperCapture): 'processing' | 'failed' | 'complete' {
+  if (capture.status === 'failed' || Object.values(capture.understanding).some((state) => state === 'failed')) return 'failed'
+  return isWorking(capture) ? 'processing' : 'complete'
+}
+
+function UnderstandingStatus({ capture }: { capture: BrowserExtensionClipperCapture }) {
+  const { t } = useLocale()
+  const stages: Array<[string, PipelineState]> = [
+    [t('surface:inspiration.visualUnderstanding'), capture.understanding.visual],
+    [t('surface:inspiration.contentParsing'), capture.understanding.parse],
+    [t('surface:inspiration.memory'), capture.understanding.memory],
+    [t('surface:inspiration.entities'), capture.understanding.entities],
+  ]
+  return (
+    <div className="inspiration-pipeline" aria-label={t('surface:inspiration.understandingProgress')}>
+      {stages.map(([label, state]) => (
+        <span key={label} className={`is-${state}`} title={`${label}: ${t(`surface:inspiration.state.${state}`)}`}>
+          {state === 'pending' || state === 'processing' ? <LoaderCircle aria-hidden="true" />
+            : state === 'ready' ? <Check aria-hidden="true" /> : <AlertCircle aria-hidden="true" />}
+          {label}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 function masonryColumnCount(): number {
   if (typeof window === 'undefined') return 3
-  return window.innerWidth <= 640 ? 1 : window.innerWidth <= 980 ? 2 : 3
+  return window.innerWidth <= 840 ? 1 : window.innerWidth <= 1200 ? 2 : 3
 }
 
 export function InspirationPage() {
-  const { locale } = useLocale()
+  const { t } = useLocale()
   const filesApi = window.nxcore?.files
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<InspirationItem | null>(null)
-  const [items, setItems] = useState<InspirationItem[]>(() => filesApi?.listClipCaptures ? [] : inspirationItems)
-  const [loading, setLoading] = useState(Boolean(filesApi?.listClipCaptures))
+  const [items, setItems] = useState<BrowserExtensionClipperCapture[]>([])
+  const [loadState, setLoadState] = useState<LoadState>('loading')
+  const [loadError, setLoadError] = useState('')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selected, setSelected] = useState<BrowserExtensionClipperCapture | null>(null)
+  const [detailState, setDetailState] = useState<LoadState>('loading')
+  const [detailError, setDetailError] = useState('')
   const [sortOrder, setSortOrder] = useState<InspirationSortOrder>('newest')
+  const [filter, setFilter] = useState<InspirationFilter>('all')
+  const [page, setPage] = useState(0)
+  const [listMeta, setListMeta] = useState<Pick<BrowserExtensionClipperListResult, 'total' | 'counts'>>({ total: 0, counts: { all: 0, favorite: 0, processing: 0 } })
   const [moreOpen, setMoreOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteState, setDeleteState] = useState<DeleteState>('idle')
   const [columnCount, setColumnCount] = useState(masonryColumnCount)
-  const [saved, setSaved] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('everroom:inspiration:saved') ?? '[]') as string[]) } catch { return new Set() }
-  })
 
-  useEffect(() => {
-    let disposed = false
-    const loadCaptures = async () => {
-      if (!filesApi?.listClipCaptures) {
-        setLoading(false)
-        return
-      }
-      try {
-        const result = await filesApi.listClipCaptures(200, 0)
-        const mapped = await Promise.all(result.items.map(async (capture) => {
-          let markdown = ''
-          if (capture.fileEntryId) {
-            try { markdown = (await filesApi.readMarkdown(capture.fileEntryId, { waitMs: 5_000, pollMs: 250 })).markdown } catch { /* capture metadata is still useful without parsed text */ }
-          }
-          return mapCapture(capture, markdown)
-        }))
-        if (!disposed) setItems(mapped)
-      } catch {
-        // Keep the page usable when the local gateway is unavailable.
-      } finally {
-        if (!disposed) setLoading(false)
+  const loadCaptures = useCallback(async (background = false) => {
+    if (!filesApi?.listClipCaptures) {
+      setLoadError(t('surface:inspiration.serviceUnavailable'))
+      setLoadState('error')
+      return
+    }
+    if (!background) setLoadState('loading')
+    try {
+      const result = await filesApi.listClipCaptures({ query, filter, sort: sortOrder, limit: 30, offset: page * 30 })
+      setItems(result.items)
+      setListMeta({ total: result.total, counts: result.counts })
+      setLoadError('')
+      setLoadState('ready')
+    } catch (error) {
+      if (!background) {
+        setLoadError(error instanceof Error ? error.message : t('surface:inspiration.readFailed'))
+        setLoadState('error')
       }
     }
-    void loadCaptures()
-    return () => { disposed = true }
-  }, [filesApi])
+  }, [filesApi, filter, page, query, sortOrder, t])
+
+  const loadDetail = useCallback(async (captureId: string, background = false) => {
+    if (!filesApi?.getClipCaptureDetail) {
+      setDetailError(t('surface:inspiration.detailUnavailable'))
+      setDetailState('error')
+      return
+    }
+    if (!background) setDetailState('loading')
+    try {
+      const capture = await filesApi.getClipCaptureDetail(captureId)
+      setSelected(capture)
+      setDetailError('')
+      setDetailState('ready')
+      setItems((current) => current.map((item) => {
+        if (item.id !== capture.id) return item
+        if (!capture.artifact) return { ...capture, artifact: null }
+        const { displayMarkdown: _displayMarkdown, ...artifact } = capture.artifact
+        return { ...capture, artifact }
+      }))
+    } catch (error) {
+      if (!background) {
+        setDetailError(error instanceof Error ? error.message : t('surface:inspiration.detailReadFailed'))
+        setDetailState('error')
+      }
+    }
+  }, [filesApi, t])
+
+  useEffect(() => { setPage(0) }, [filter, query, sortOrder])
+  useEffect(() => { void loadCaptures() }, [loadCaptures])
+
+  useEffect(() => {
+    if (loadState !== 'ready' || !items.some(isWorking)) return
+    const timer = window.setInterval(() => void loadCaptures(true), 3_000)
+    return () => window.clearInterval(timer)
+  }, [items, loadCaptures, loadState])
+
+  useEffect(() => {
+    if (!selectedId) { setSelected(null); return }
+    void loadDetail(selectedId)
+  }, [loadDetail, selectedId])
+
+  useEffect(() => {
+    if (!selectedId || !selected || !isWorking(selected)) return
+    const timer = window.setInterval(() => void loadDetail(selectedId, true), 2_500)
+    return () => window.clearInterval(timer)
+  }, [loadDetail, selected, selectedId])
 
   useEffect(() => {
     const handleResize = () => setColumnCount(masonryColumnCount())
@@ -191,140 +172,170 @@ export function InspirationPage() {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  const filteredItems = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase(locale)
-    return items
-      .filter((item) => !normalized || `${item.title} ${item.excerpt} ${item.source}`.toLocaleLowerCase(locale).includes(normalized))
-      .sort((left, right) => {
-        const leftTime = Date.parse(left.date.replaceAll('.', '-'))
-        const rightTime = Date.parse(right.date.replaceAll('.', '-'))
-        return sortOrder === 'newest' ? rightTime - leftTime : leftTime - rightTime
-      })
-  }, [items, locale, query, sortOrder])
+  const filteredItems = items
 
   const masonryColumns = useMemo(() => {
-    const columns = Array.from({ length: columnCount }, () => [] as InspirationItem[])
+    const columns = Array.from({ length: columnCount }, () => [] as BrowserExtensionClipperCapture[])
     filteredItems.forEach((item, index) => columns[index % columnCount]!.push(item))
     return columns
   }, [columnCount, filteredItems])
 
-  const toggleSaved = (id: string) => {
-    setSaved((current) => {
-      const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      try { localStorage.setItem('everroom:inspiration:saved', JSON.stringify([...next])) } catch { /* persistence is optional */ }
-      return next
-    })
+  const toggleSaved = async (capture: BrowserExtensionClipperCapture) => {
+    if (!filesApi?.setClipCaptureFavorite) return
+    const favorite = !capture.favoritedAt
+    try {
+      const updated = await filesApi.setClipCaptureFavorite(capture.id, favorite)
+      setItems((current) => current.map((item) => item.id === updated.id ? { ...item, favoritedAt: updated.favoritedAt } : item))
+      setSelected((current) => current?.id === updated.id ? { ...current, favoritedAt: updated.favoritedAt } : current)
+      void loadCaptures(true)
+    } catch (error) {
+      showToast({ title: t('surface:inspiration.favoriteFailed'), message: error instanceof Error ? error.message : t('surface:inspiration.tryAgainLater') })
+    }
   }
 
   const copySelectedLink = async () => {
     if (!selected) return
     try {
-      if (window.nxcore?.clipboard) await window.nxcore.clipboard.writeText(`${selected.title}\n${selected.sourceUrl}`)
-      else await navigator.clipboard.writeText(`${selected.title}\n${selected.sourceUrl}`)
-      showToast({ title: '链接已复制', message: selected.host })
+      const text = `${selected.title}\n${selected.sourceUrl}`
+      if (window.nxcore?.clipboard) await window.nxcore.clipboard.writeText(text)
+      else await navigator.clipboard.writeText(text)
+      showToast({ title: t('surface:inspiration.linkCopied'), message: hostFromUrl(selected.sourceUrl, t('surface:inspiration.webClip')) })
       setMoreOpen(false)
     } catch {
-      showToast({ title: '复制失败', message: '当前环境无法访问剪贴板。' })
+      showToast({ title: t('surface:inspiration.copyFailed'), message: t('surface:inspiration.clipboardUnavailable') })
     }
   }
 
   const shareSelected = async () => {
     if (!selected) return
-    const nativeShareAvailable = typeof navigator.share === 'function'
+    setMoreOpen(false)
     try {
-      if (nativeShareAvailable) await navigator.share({ title: selected.title, text: selected.excerpt, url: selected.sourceUrl })
-      else await copySelectedLink()
-      if (nativeShareAvailable) showToast({ title: '分享内容已准备好', message: selected.title })
+      if (typeof navigator.share === 'function') {
+        await navigator.share({ title: selected.title, text: selected.artifact?.excerpt, url: selected.sourceUrl })
+      } else await copySelectedLink()
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return
-      showToast({ title: '分享失败', message: '请稍后重试，或使用“更多”复制链接。' })
+      showToast({ title: t('surface:inspiration.shareFailed'), message: t('surface:inspiration.tryAgainLater') })
     }
   }
 
-  if (selected) {
+  const deleteSelected = async () => {
+    if (!selected?.fileEntryId || !filesApi?.delete) {
+      showToast({ title: t('surface:inspiration.cannotDelete'), message: t('surface:inspiration.noLocalRecord') })
+      return
+    }
+    setDeleteState('deleting')
+    try {
+      const fileEntryId = selected.fileEntryId
+      await filesApi.delete(fileEntryId)
+      setItems((current) => current.filter((item) => item.fileEntryId !== fileEntryId))
+      setDeleteOpen(false)
+      setSelectedId(null)
+      setSelected(null)
+      showToast({ title: t('surface:inspiration.deleted'), message: t('surface:inspiration.deletedDescription') })
+    } catch (error) {
+      showToast({ title: t('surface:inspiration.deleteFailed'), message: error instanceof Error ? error.message : t('surface:inspiration.tryAgainLater') })
+    } finally {
+      setDeleteState('idle')
+    }
+  }
+
+  if (selectedId) {
     return (
       <main className="page inspiration-page inspiration-detail-page">
         <div className="inspiration-detail-toolbar">
-          <button type="button" className="inspiration-back-button" onClick={() => setSelected(null)}>
-            <ArrowLeft aria-hidden="true" /> <span>返回灵感</span>
+          <button type="button" className="inspiration-back-button" onClick={() => { setSelectedId(null); setMoreOpen(false) }}>
+            <ArrowLeft aria-hidden="true" /> <span>{t('surface:inspiration.back')}</span>
           </button>
-          <div className="inspiration-detail-actions">
-            <button type="button" className="inspiration-icon-button" aria-label="分享" title="分享" onClick={() => void shareSelected()}><Share2 aria-hidden="true" /></button>
-            <button type="button" className={`inspiration-icon-button ${saved.has(selected.id) ? 'is-saved' : ''}`} aria-label="收藏" title="收藏" onClick={() => toggleSaved(selected.id)}>
-              <Bookmark aria-hidden="true" fill={saved.has(selected.id) ? 'currentColor' : 'none'} />
-            </button>
-            <button type="button" className="inspiration-icon-button" aria-label="更多操作" title="更多操作" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal aria-hidden="true" /></button>
+          {selected ? <div className="inspiration-detail-actions">
+            <button type="button" className={`inspiration-icon-button ${selected.favoritedAt ? 'is-saved' : ''}`} aria-label={t(`surface:inspiration.${selected.favoritedAt ? 'unsave' : 'save'}`)} title={t(`surface:inspiration.${selected.favoritedAt ? 'unsave' : 'save'}`)} onClick={() => void toggleSaved(selected)}><Bookmark aria-hidden="true" fill={selected.favoritedAt ? 'currentColor' : 'none'} /></button>
+            <button type="button" className="inspiration-icon-button" aria-label={t('surface:inspiration.moreActions')} title={t('surface:inspiration.moreActions')} aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal aria-hidden="true" /></button>
             {moreOpen ? <div className="inspiration-more-menu" role="menu">
-              <button type="button" role="menuitem" onClick={() => void copySelectedLink()}>复制标题和链接</button>
-              <a href={selected.sourceUrl} target="_blank" rel="noreferrer" role="menuitem" onClick={() => setMoreOpen(false)}>打开原网页 <ExternalLink aria-hidden="true" /></a>
+              <button type="button" role="menuitem" onClick={() => void shareSelected()}>{t('surface:inspiration.share')} <Share2 aria-hidden="true" /></button>
+              <button type="button" className="is-danger" role="menuitem" onClick={() => { setMoreOpen(false); setDeleteOpen(true) }}>{t('surface:inspiration.delete')} <Trash2 aria-hidden="true" /></button>
             </div> : null}
-          </div>
+          </div> : null}
         </div>
-        <article className="inspiration-entry">
-          <aside className="inspiration-entry-rail">
-            <span className="inspiration-entry-day">{selected.date.slice(-2)}</span>
-            <span className="inspiration-entry-month">{selected.date.slice(0, 7).replace('.', ' / ')}</span>
-            <span className="inspiration-entry-line" />
-            <span className="inspiration-entry-label">网页剪藏</span>
-          </aside>
-          <div className="inspiration-entry-main">
-            <div className="inspiration-entry-kicker"><span>{selected.category}</span><i />{selected.source}</div>
-            <h1>{selected.title}</h1>
-            <p className="inspiration-entry-intro">{selected.excerpt}</p>
-            <figure className="inspiration-entry-figure">
-              <img src={selected.image} alt={selected.imageAlt} />
-              <figcaption><span>{selected.host}</span><span>{selected.readTime} 阅读</span></figcaption>
-            </figure>
-            <div className="inspiration-entry-copy">
-              {selected.body.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-              <blockquote>{selected.quote}</blockquote>
-              <p className="inspiration-entry-note"><Sparkles aria-hidden="true" /> {selected.note}</p>
-            </div>
-            <footer className="inspiration-entry-footer">
-              <span><Check aria-hidden="true" /> 已收录到灵感</span>
-              <a href={selected.sourceUrl} target="_blank" rel="noreferrer">打开原网页 <ExternalLink aria-hidden="true" /></a>
-            </footer>
-          </div>
-        </article>
+        {detailState === 'loading' ? <div className="inspiration-empty"><LoaderCircle className="is-spinning" aria-hidden="true" /><h2>{t('surface:inspiration.loadingDetail')}</h2></div>
+          : detailState === 'error' || !selected ? <div className="inspiration-empty"><AlertCircle aria-hidden="true" /><h2>{t('surface:inspiration.openFailed')}</h2><p>{detailError}</p><button type="button" className="inspiration-retry" onClick={() => void loadDetail(selectedId)}><RefreshCw aria-hidden="true" />{t('surface:inspiration.retry')}</button></div>
+            : <article className="inspiration-entry">
+              <div className="inspiration-entry-main">
+                <div className="inspiration-entry-kicker"><span>{hostFromUrl(selected.sourceUrl, t('surface:inspiration.webClip'))}</span><i />{selected.author || t('surface:inspiration.webClip')}</div>
+                <h1>{selected.title}</h1>
+                {selected.artifact?.excerpt ? <p className="inspiration-entry-intro">{selected.artifact.excerpt}</p> : null}
+                <UnderstandingStatus capture={selected} />
+                {selected.entities.length > 0 ? <div className="inspiration-entities" aria-label={t('surface:inspiration.extractedEntities')}>{selected.entities.map((entity) => <span key={entity.id} title={entity.evidence ?? entity.kind}>{entity.name}<small>{entity.kind}</small></span>)}</div> : null}
+                <div className="inspiration-entry-copy">
+                  {selected.artifact?.displayMarkdown ? <RichClipMarkdown markdown={selected.artifact.displayMarkdown} />
+                    : <div className="inspiration-content-empty">{t('surface:inspiration.noRenderableContent')}</div>}
+                </div>
+                {selected.assets.some((asset) => asset.visualStatus === 'ready' && asset.visualContentRole !== 'noise' && asset.visualKind !== 'logo' && asset.visualKind !== 'decoration') ? <section className="inspiration-visual-notes" aria-label={t('surface:obsidian.visualResults')}>
+                  <h2>{t('surface:inspiration.visualUnderstanding')}</h2>
+                  {selected.assets.filter((asset) => asset.visualStatus === 'ready' && asset.visualContentRole !== 'noise' && asset.visualKind !== 'logo' && asset.visualKind !== 'decoration').map((asset) => <article key={asset.id}>
+                    <img src={asset.localUrl} alt={asset.altText ?? ''} loading="lazy" />
+                    <div><strong>{asset.visualKind || t('surface:inspiration.image')}</strong><p>{asset.visualSummary}</p>{asset.visualKeyPoints.length > 0 ? <ul>{asset.visualKeyPoints.map((point) => <li key={point}>{point}</li>)}</ul> : null}</div>
+                  </article>)}
+                </section> : null}
+                <footer className="inspiration-entry-footer">
+                  <span>{isWorking(selected) ? <><LoaderCircle className="is-spinning" aria-hidden="true" /> {t('surface:inspiration.enteringPipeline')}</> : <><Check aria-hidden="true" /> {t('surface:inspiration.localProcessingComplete')}</>}</span>
+                  <a href={selected.sourceUrl} target="_blank" rel="noreferrer">{t('surface:inspiration.openOriginal')} <ExternalLink aria-hidden="true" /></a>
+                </footer>
+              </div>
+            </article>}
+        <Dialog.Root open={deleteOpen} onOpenChange={(open) => { if (deleteState !== 'deleting') setDeleteOpen(open) }}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="inspiration-dialog-overlay" />
+            <Dialog.Content className="inspiration-delete-dialog" aria-describedby="inspiration-delete-description">
+              <span className="inspiration-dialog-mark" aria-hidden="true"><Trash2 /></span>
+              <Dialog.Title>{t('surface:inspiration.deleteTitle')}</Dialog.Title>
+              <Dialog.Description id="inspiration-delete-description">{t('surface:inspiration.deleteDescription')}</Dialog.Description>
+              <div className="inspiration-dialog-actions">
+                <Dialog.Close disabled={deleteState === 'deleting'}>{t('surface:inspiration.cancel')}</Dialog.Close>
+                <button type="button" className="is-danger" disabled={deleteState === 'deleting'} onClick={() => void deleteSelected()}>
+                  {deleteState === 'deleting' ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                  {t(`surface:inspiration.${deleteState === 'deleting' ? 'deleting' : 'delete'}`)}
+                </button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
       </main>
     )
   }
 
   return (
     <main className="page inspiration-page">
-      <header className="inspiration-header">
-        <div className="inspiration-heading">
-          <div className="inspiration-eyebrow"><span className="inspiration-eyebrow-mark"><Sparkles aria-hidden="true" /></span> WEB CLIPPINGS · 2024</div>
-          <h1>灵感</h1>
-          <p>把在网页上遇见的好东西，留给未来的自己。</p>
-        </div>
-        <div className="inspiration-header-note"><span>本地已收录</span><strong>{String(items.length).padStart(2, '0')}</strong><small>片段</small></div>
-      </header>
+      <header className="inspiration-header"><div className="inspiration-heading"><h1>{t('surface:inspiration.title')}</h1><p>{t('surface:inspiration.description')}</p></div><div className="inspiration-header-note"><span>{t('surface:inspiration.currentResults')}</span><strong>{listMeta.total}</strong><small>{t('surface:inspiration.itemUnit')}</small></div></header>
       <div className="inspiration-toolbar">
-        <div className="inspiration-scope" aria-label="当前灵感范围"><span className="inspiration-scope-dot" aria-hidden="true" />全部 <small>实体分类将在进入记忆后启用</small></div>
-        <label className="inspiration-search"><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索剪藏" aria-label="搜索剪藏" />{query ? <button type="button" aria-label="清除搜索" onClick={() => setQuery('')}>×</button> : null}</label>
-        <button type="button" className="inspiration-sort" title="切换收录顺序" onClick={() => setSortOrder((order) => order === 'newest' ? 'oldest' : 'newest')}><span>{sortOrder === 'newest' ? '最近收录' : '最早收录'}</span><ChevronDown aria-hidden="true" /></button>
+        <div className="inspiration-segmented" role="tablist" aria-label={t('surface:inspiration.filterLabel')}>{(['all', 'favorite', 'processing'] as const).map((value) => <button key={value} type="button" className={filter === value ? 'is-active' : ''} onClick={() => setFilter(value)}>{t(`surface:inspiration.${value}`)}<small>{listMeta.counts[value]}</small></button>)}</div>
+        <label className="inspiration-search"><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('surface:inspiration.searchPlaceholder')} aria-label={t('surface:inspiration.searchPlaceholder')} />{query ? <button type="button" aria-label={t('surface:inspiration.clearSearch')} onClick={() => setQuery('')}>×</button> : null}</label>
+        <button type="button" className="inspiration-sort" onClick={() => setSortOrder((order) => order === 'newest' ? 'oldest' : 'newest')}><span>{t(`surface:inspiration.${sortOrder}`)}</span><ChevronDown aria-hidden="true" /></button>
       </div>
       <div className="inspiration-rule" />
-      {loading ? <div className="inspiration-empty"><Sparkles aria-hidden="true" /><h2>正在读取本地剪藏</h2><p>正在从本地对象库加载网页内容。</p></div> : filteredItems.length > 0 ? (
-        <section className="inspiration-masonry" aria-label="灵感瀑布流">
-          {masonryColumns.map((column, columnIndex) => (
-            <div key={`masonry-column-${columnIndex}`} className="inspiration-masonry-column">
-              {column.map((item) => (
-                <article key={item.id} className="inspiration-card" style={{ '--card-palette': item.palette } as CSSProperties}>
-                  <button type="button" className="inspiration-card-hit" onClick={() => { setSelected(item); setMoreOpen(false) }} aria-label={`打开：${item.title}`}>
-                    <div className="inspiration-card-media"><img src={item.image} alt={item.imageAlt} /><span className="inspiration-card-source">{item.source}</span><span className="inspiration-card-arrow"><ArrowUpRight aria-hidden="true" /></span></div>
-                    <div className="inspiration-card-content"><div className="inspiration-card-meta"><span>{item.category}</span><span>{item.date}</span></div><h2>{item.title}</h2><p>{item.excerpt}</p><div className="inspiration-card-footer"><span>{item.readTime} 阅读</span><span className="inspiration-card-host">{item.host}</span></div></div>
+      {loadState === 'loading' ? <div className="inspiration-empty"><LoaderCircle className="is-spinning" aria-hidden="true" /><h2>{t('surface:inspiration.loading')}</h2><p>{t('surface:inspiration.loadingDescription')}</p></div>
+        : loadState === 'error' ? <div className="inspiration-empty"><AlertCircle aria-hidden="true" /><h2>{t('surface:inspiration.loadFailed')}</h2><p>{loadError}</p><button type="button" className="inspiration-retry" onClick={() => void loadCaptures()}><RefreshCw aria-hidden="true" />{t('surface:inspiration.retry')}</button></div>
+          : filteredItems.length > 0 ? <section className="inspiration-masonry" aria-label={t('surface:inspiration.libraryLabel')}>
+            {masonryColumns.map((column, columnIndex) => <div key={`masonry-column-${columnIndex}`} className="inspiration-masonry-column">
+              {column.map((item) => {
+                const cover = item.artifact?.coverUrl
+                return <article key={item.id} data-status={cardStatus(item)} className={`inspiration-card ${cover ? 'has-cover' : 'without-cover'}`}>
+                  <button type="button" className="inspiration-card-hit" onClick={() => { setSelectedId(item.id); setMoreOpen(false) }} aria-label={t('surface:inspiration.openItem', { title: item.title })}>
+                    {cover ? <div className="inspiration-card-media"><img src={cover} alt={item.assets.find((asset) => asset.id === item.artifact?.coverAssetId)?.altText ?? item.title} loading="lazy" /><span className="inspiration-card-source">{item.author || hostFromUrl(item.sourceUrl, t('surface:inspiration.webClip'))}</span><span className="inspiration-card-arrow"><ArrowUpRight aria-hidden="true" /></span></div> : null}
+                    <div className="inspiration-card-content">
+                      <div className="inspiration-card-meta"><span>{hostFromUrl(item.sourceUrl, t('surface:inspiration.webClip'))}</span><span>{dateLabel(item.capturedAt)}</span></div>
+                      <h2>{item.title}</h2>
+                      {item.artifact?.excerpt ? <p>{item.artifact.excerpt}</p> : null}
+                      {isWorking(item) ? <div className="inspiration-card-processing"><LoaderCircle className="is-spinning" aria-hidden="true" />{t('surface:inspiration.understanding')}</div> : null}
+                      <div className="inspiration-card-footer"><span>{readTime(item)} {t('surface:inspiration.reading')}</span><span className="inspiration-card-host">{item.entities.slice(0, 2).map((entity) => entity.name).join(' · ') || hostFromUrl(item.sourceUrl, t('surface:inspiration.webClip'))}</span></div>
+                    </div>
                   </button>
-                  <button type="button" className={`inspiration-save-button ${saved.has(item.id) ? 'is-saved' : ''}`} aria-label={saved.has(item.id) ? '取消收藏' : '收藏'} title={saved.has(item.id) ? '取消收藏' : '收藏'} onClick={() => toggleSaved(item.id)}><Heart aria-hidden="true" fill={saved.has(item.id) ? 'currentColor' : 'none'} /></button>
+                  <button type="button" className={`inspiration-save-button ${item.favoritedAt ? 'is-saved' : ''}`} aria-label={t(`surface:inspiration.${item.favoritedAt ? 'unsave' : 'save'}`)} title={t(`surface:inspiration.${item.favoritedAt ? 'unsave' : 'save'}`)} onClick={() => void toggleSaved(item)}><Heart aria-hidden="true" fill={item.favoritedAt ? 'currentColor' : 'none'} /></button>
                 </article>
-              ))}
-            </div>
-          ))}
-        </section>
-      ) : <div className="inspiration-empty"><Search aria-hidden="true" /><h2>{items.length === 0 ? '还没有网页剪藏' : '没有找到匹配的灵感'}</h2><p>{items.length === 0 ? '在浏览器插件中保存网页后，它们会出现在这里。' : '换一个关键词，或试试查看全部分类。'}</p></div>}
+              })}
+            </div>)}
+          </section>
+            : <div className="inspiration-empty">{listMeta.total === 0 ? <Sparkles aria-hidden="true" /> : <Search aria-hidden="true" />}<h2>{t(`surface:inspiration.${listMeta.total === 0 ? 'empty' : 'noMatches'}`)}</h2><p>{t(`surface:inspiration.${listMeta.total === 0 ? 'emptyDescription' : 'noMatchesDescription'}`)}</p></div>}
+      {listMeta.total > 30 ? <nav className="inspiration-pagination" aria-label={t('surface:inspiration.filterLabel')}><button type="button" disabled={page === 0} onClick={() => setPage((value) => value - 1)}>{t('surface:inspiration.previousPage')}</button><span>{page + 1} / {Math.ceil(listMeta.total / 30)}</span><button type="button" disabled={(page + 1) * 30 >= listMeta.total} onClick={() => setPage((value) => value + 1)}>{t('surface:inspiration.nextPage')}</button></nav> : null}
     </main>
   )
 }

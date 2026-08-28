@@ -54,6 +54,9 @@
 .connector-table-row strong { display: block; overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; text-transform: capitalize; }
 .connector-table-row small { display: block; margin-top: 3px; overflow: hidden; color: var(--subtle); font-size: 9px; text-overflow: ellipsis; }
 .connector-primary-cell { width: 100%; border: 0; background: transparent; text-align: left; }
+.connector-provider-identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.connector-provider-identity > .source-icon { width: 22px; height: 22px; flex: 0 0 22px; }
+.connector-provider-identity > span { min-width: 0; }
 .connector-wiki-source { border-bottom: 1px solid var(--border); }
 .connector-wiki-source:last-child { border-bottom: 0; }
 .connector-wiki-source > .connector-table-row { border-bottom: 0; }

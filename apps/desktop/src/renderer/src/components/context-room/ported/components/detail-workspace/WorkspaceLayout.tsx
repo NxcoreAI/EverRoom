@@ -1,6 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
-import { X } from 'lucide-react';
+import { FolderInput, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
@@ -72,6 +72,7 @@ export function WorkspaceLayout({
   onOpenRoom,
   onToggleTask,
   onUpdateRoom,
+  onImportObsidian,
 }: {
   room: ContextRoomRecord;
   rooms: ContextRoomRecord[];
@@ -131,6 +132,7 @@ export function WorkspaceLayout({
   onOpenRoom: (roomId: string) => void;
   onToggleTask: (taskId: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
+  onImportObsidian: () => void;
 }) {
   const { t } = useLocale();
   const overview = panels.length === 1 && panels[0] === 'overview';
@@ -231,6 +233,9 @@ export function WorkspaceLayout({
               ) : null}
             </ContextMenu.Root>
           ))}
+          <button type="button" className="context-room-workspace-tabs-footer" aria-label={t('surface:obsidian.importIntoRoom', { room: room.title })} title={t('surface:obsidian.importIntoRoom', { room: room.title })} onClick={onImportObsidian}>
+            <FolderInput aria-hidden="true" />
+          </button>
         </nav>
 
         {overview ? (

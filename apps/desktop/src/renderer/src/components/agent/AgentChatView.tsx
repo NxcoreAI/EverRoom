@@ -175,6 +175,25 @@ function AssistantMessageContent({ content }: { content: string }) {
   )
 }
 
+const fallbackAgentNames: Record<string, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  openclaw: 'OpenClaw',
+  opencode: 'OpenCode',
+}
+
+function displayAgentName(agentId: string | null | undefined, names: Record<string, string>): string | null {
+  if (!agentId || agentId === 'main') return null
+  const provider = agentId.split(':', 1)[0] ?? ''
+  return names[agentId] ?? fallbackAgentNames[provider] ?? (provider || agentId)
+}
+
+function AgentResponseByline({ agentId, names }: { agentId?: string | null; names: Record<string, string> }) {
+  const name = displayAgentName(agentId, names)
+  if (!name) return null
+  return <div className="agent-response-byline"><span>{name}</span></div>
+}
+
 const navigationPageLabels: Record<string, string> = {
   home: 'surface:navigation.home',
   office: 'surface:navigation.office',
@@ -237,7 +256,7 @@ function RunNavigation({
   )
 }
 
-function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
+function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<string, string>; state: LinkedAgentRunState }) {
   const { t } = useLocale()
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
@@ -272,9 +291,12 @@ function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
         {state.error ? <div className="agent-error" role="alert">{state.error}</div> : null}
       </section>
       {finalContent ? (
-        <article className="agent-message" data-role="assistant">
-          <AssistantMessageContent content={finalContent} />
-        </article>
+        <div className="agent-assistant-response">
+          <AgentResponseByline agentId={assistantMessage?.authorAgentId} names={agentNamesById} />
+          <article className="agent-message" data-role="assistant">
+            <AssistantMessageContent content={finalContent} />
+          </article>
+        </div>
       ) : null}
     </>
   )
@@ -283,6 +305,8 @@ function LinkedRunProgress({ state }: { state: LinkedAgentRunState }) {
 export function AgentChatView({
   activeDocument,
   activeRunId,
+  agentIdByRun,
+  agentNamesById,
   activityByRun,
   availableRooms,
   composer,
@@ -291,6 +315,8 @@ export function AgentChatView({
   error,
   loading,
   messages,
+  notificationRunTarget,
+  onNotificationRunLocated,
   pendingApprovals = [],
   onRetryPrompt,
   onResolveApproval = () => undefined,
@@ -310,6 +336,8 @@ export function AgentChatView({
 }: {
   activeDocument: ActiveDocumentDescriptor | null
   activeRunId: string | null
+  agentIdByRun: Record<string, string>
+  agentNamesById: Record<string, string>
   activityByRun: Record<string, AgentRunActivity>
   availableRooms: AgentRoomReference[]
   composer: ReactNode
@@ -318,6 +346,8 @@ export function AgentChatView({
   error: string | null
   loading: boolean
   messages: DisplayAgentMessage[]
+  notificationRunTarget?: { key: string; runId: string } | null
+  onNotificationRunLocated?: (key: string) => void
   pendingApprovals?: PendingShellApproval[]
   onRetryPrompt: (prompt: string, runId: string) => void
   onResolveApproval?: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied') => void
@@ -352,6 +382,10 @@ export function AgentChatView({
     intent: PendingAgentIntent
     toolId: string | null
   } | null>(null)
+  const [highlightedNotificationTarget, setHighlightedNotificationTarget] = useState<{
+    key: string
+    messageId: string
+  } | null>(null)
   const handledDocumentSelectionsRef = useRef(new Set<string>())
   const { documentsByRoom } = useRoomDocumentsState()
   const conversationRef = useRef<HTMLDivElement>(null)
@@ -370,6 +404,15 @@ export function AgentChatView({
     [currentSessionId, sessionLinks],
   )
   const linkedRun = useLinkedAgentRun(incomingLink ?? null)
+  const notificationTargetMessageId = useMemo(() => {
+    if (!notificationRunTarget) return null
+    const runMessages = messages.filter((message) => (
+      message.runId === notificationRunTarget.runId && message.role !== 'system'
+    ))
+    return runMessages.find((message) => message.role === 'assistant')?.id
+      ?? runMessages[0]?.id
+      ?? null
+  }, [messages, notificationRunTarget])
 
   const latestStreamingMessage = useMemo(
     () => [...messages].reverse().find((message) => (
@@ -487,9 +530,9 @@ export function AgentChatView({
 
   useEffect(() => {
     const element = conversationRef.current
-    if (!element) return
+    if (!element || notificationTargetMessageId) return
     element.scrollTop = element.scrollHeight
-  }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, pendingApprovals, toolCallsByRun])
+  }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, pendingApprovals, toolCallsByRun])
 
   useLayoutEffect(() => {
     if (scopeReady) setEmptyLayout(confirmedEmpty)
@@ -541,6 +584,35 @@ export function AgentChatView({
     return () => window.clearTimeout(timer)
   }, [confirmedEmpty, currentSessionId, loading, scopeReady])
 
+  useLayoutEffect(() => {
+    if (!contentReady || !notificationRunTarget || !notificationTargetMessageId) return
+    const conversation = conversationRef.current
+    if (!conversation) return
+    const target = Array.from(conversation.querySelectorAll<HTMLElement>('[data-agent-message-id]'))
+      .find((element) => element.dataset.agentMessageId === notificationTargetMessageId)
+    if (!target) return
+
+    target.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'center',
+    })
+    setHighlightedNotificationTarget({
+      key: notificationRunTarget.key,
+      messageId: notificationTargetMessageId,
+    })
+    onNotificationRunLocated?.(notificationRunTarget.key)
+  }, [contentReady, notificationRunTarget, notificationTargetMessageId, onNotificationRunLocated])
+
+  useEffect(() => {
+    if (!highlightedNotificationTarget) return
+    const timer = window.setTimeout(() => {
+      setHighlightedNotificationTarget((current) => (
+        current?.key === highlightedNotificationTarget.key ? null : current
+      ))
+    }, 2_400)
+    return () => window.clearTimeout(timer)
+  }, [highlightedNotificationTarget])
+
   const copyMessage = async (messageId: string, content: string) => {
     try {
       await writeTextToClipboard(content)
@@ -570,7 +642,7 @@ export function AgentChatView({
           {incomingLink ? (
             <>
               <SessionReference link={incomingLink} onOpen={() => onOpenSessionLink(incomingLink)} />
-              <LinkedRunProgress state={linkedRun} />
+              <LinkedRunProgress agentNamesById={agentNamesById} state={linkedRun} />
             </>
           ) : null}
           {messages.map((message, index) => {
@@ -600,18 +672,29 @@ export function AgentChatView({
             const runHasUserMessage = messages.some((item) => (
               item.role === 'user' && item.runId === message.runId
             ))
+            const authorAgentId = message.authorAgentId ?? agentIdByRun[message.runId]
 
             if (message.role === 'user') {
               return (
                 <Fragment key={message.id}>
-                  <article className="agent-message" data-role="user"><p>{message.content}</p></article>
+                  <article
+                    className="agent-message"
+                    data-agent-message-id={message.id}
+                    data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
+                    data-role="user"
+                  ><p>{message.content}</p></article>
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 </Fragment>
               )
             }
 
             return (
-              <div key={message.id} className="agent-assistant-turn">
+              <div
+                key={message.id}
+                className="agent-assistant-turn"
+                data-agent-message-id={message.id}
+                data-notification-target={String(highlightedNotificationTarget?.messageId === message.id)}
+              >
                 {!runHasUserMessage ? (
                   <RunNavigation link={link} pending={link ? undefined : pending} onOpen={onOpenSessionLink} />
                 ) : null}
@@ -629,7 +712,10 @@ export function AgentChatView({
                   <div className="agent-linked-status" role="status">{t('surface:agentChat.theRunEndedUnexpectedlyHereIsThePartial')}</div>
                 ) : null}
                 {finalContent ? (
-                  <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
+                  <div className="agent-assistant-response">
+                    <AgentResponseByline agentId={authorAgentId} names={agentNamesById} />
+                    <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
+                  </div>
                 ) : null}
                 {showActions ? (
                   <div className="agent-message-actions">
@@ -659,6 +745,7 @@ export function AgentChatView({
                   onOpen={onOpenSessionLink}
                 />
               ) : null}
+              <AgentResponseByline agentId={agentIdByRun[activeRunId]} names={agentNamesById} />
               <ThinkingStatus label={getThinkingLabel(undefined, latestTools, t)} />
               {latestActivity?.hasTools ? (
                 <AgentExecutionTimeline

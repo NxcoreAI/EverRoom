@@ -23,6 +23,9 @@ export const messages = {
     actionSaved: '已保存到 EverRoom',
     actionSavedPartial: '已保存，部分图片缺失',
     actionSaveFailed: 'EverRoom 网页裁剪失败',
+    connectedShort: '已连接', offlineShort: '离线', notConnectedShort: '未连接', currentPage: '当前网页',
+    readyToSave: '已准备好保存当前网页。', savingContent: '正在保存正文...', uploadingImages: '正在上传图片 {current}/{total}...', finalizing: '正在完成保存...',
+    stageExtract: '提取', stageSave: '保存', stageImages: '图片', stageDone: '完成',
   },
   'en-US': {
     checking: 'Checking local connection...',
@@ -48,6 +51,9 @@ export const messages = {
     actionSaved: 'Saved to EverRoom',
     actionSavedPartial: 'Saved with some images missing',
     actionSaveFailed: 'EverRoom page capture failed',
+    connectedShort: 'Connected', offlineShort: 'Offline', notConnectedShort: 'Not connected', currentPage: 'Current page',
+    readyToSave: 'Ready to save this page.', savingContent: 'Saving content...', uploadingImages: 'Uploading images {current}/{total}...', finalizing: 'Finishing capture...',
+    stageExtract: 'Extract', stageSave: 'Save', stageImages: 'Images', stageDone: 'Done',
   },
 };
 

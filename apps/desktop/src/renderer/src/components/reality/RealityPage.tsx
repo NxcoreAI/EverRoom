@@ -1,5 +1,7 @@
 import {
   AlertCircle,
+  AudioLines,
+  BarChart3,
   Bookmark,
   CalendarDays,
   Camera,
@@ -10,11 +12,15 @@ import {
   FolderOpen,
   Image as ImageIcon,
   LoaderCircle,
+  Layers3,
   Monitor,
+  MoreHorizontal,
   Pause,
+  Pencil,
   Play,
   RefreshCw,
   Search,
+  Save,
   Smartphone,
   Sparkles,
   Tag,
@@ -102,16 +108,25 @@ const PROCESSING_HINTS: Record<RealityEvent['processingState'], string> = {
 }
 
 const EVENT_TYPE_LABELS: Record<RealityEventType, string> = {
-  MEETING: 'MEETING',
-  MEAL: 'MEAL',
-  WORK: 'WORK',
-  SOCIAL: 'SOCIAL',
-  LEARNING: 'LEARNING',
-  CHITCHAT: 'CHITCHAT',
-  REST: 'REST',
-  EXERCISE: 'EXERCISE',
-  OTHER: 'OTHER',
+  MEETING: 'diaryReality:reality.eventType.meeting',
+  MEAL: 'diaryReality:reality.eventType.meal',
+  WORK: 'diaryReality:reality.eventType.work',
+  SOCIAL: 'diaryReality:reality.eventType.social',
+  LEARNING: 'diaryReality:reality.eventType.learning',
+  CHITCHAT: 'diaryReality:reality.eventType.chitchat',
+  REST: 'diaryReality:reality.eventType.rest',
+  EXERCISE: 'diaryReality:reality.eventType.exercise',
+  OTHER: 'diaryReality:reality.eventType.other',
 }
+
+const PERCEPTION_TYPE_OPTIONS = [
+  { value: 'all', label: 'diaryReality:reality.allPerceptionTypes', icon: Layers3 },
+  { value: 'audio', label: 'diaryReality:reality.audioPerception', icon: AudioLines },
+  { value: 'screenshot', label: 'diaryReality:reality.screenshotPerception', icon: Camera },
+  { value: 'photo', label: 'diaryReality:reality.photoPerception', icon: ImageIcon },
+  { value: 'document', label: 'diaryReality:reality.documentPerception', icon: FileText },
+  { value: 'file', label: 'diaryReality:reality.filePerception', icon: FolderOpen },
+] as const
 
 const RANGE_WEEKS: Record<ActivityRange, number> = { '1w': 1, '1m': 5, '3m': 13, '6m': 26, '1y': 53 }
 const ACTIVITY_RANGES: readonly [ActivityRange, string][] = [
@@ -215,12 +230,11 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [visualDetail, setVisualDetail] = useState<PerceptionNodeDetail | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<StatusFilter>('all')
-  // Audio is the primary reality-perception stream; visual and document
-  // captures remain available through the filter when explicitly selected.
-  const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('audio')
+  const [typeFilter, setTypeFilter] = useState<PerceptionTypeFilter>('all')
   const [search, setSearch] = useState('')
   const [activityRange, setActivityRange] = useState<ActivityRange>('3m')
   const [rangeTouched, setRangeTouched] = useState(false)
+  const [showActivity, setShowActivity] = useState(false)
   const [loading, setLoading] = useState(true)
   const [visualLoading, setVisualLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -233,10 +247,14 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [isPlaying, setIsPlaying] = useState(false)
   const [reprocessingId, setReprocessingId] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [actionMenuId, setActionMenuId] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [savingTags, setSavingTags] = useState(false)
   const [exportingTranscript, setExportingTranscript] = useState(false)
   const [retryingVisualId, setRetryingVisualId] = useState<string | null>(null)
+  const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null)
+  const [transcriptDraft, setTranscriptDraft] = useState('')
+  const [savingTranscript, setSavingTranscript] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const activeSegmentRef = useRef<HTMLButtonElement | null>(null)
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
@@ -405,6 +423,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   useEffect(() => {
     setDetailTab('insights')
     setDeleteConfirmId(null)
+    setActionMenuId(null)
+    setEditingTranscriptId(null)
+    setTranscriptDraft('')
   }, [selected?.id])
 
   const removeTag = async (event: RealityEvent, tag: RealityTag) => {
@@ -523,6 +544,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       setEvents((current) => current.filter((item) => item.id !== event.id))
       setExpandedId((current) => current === event.id ? null : current)
       setDeleteConfirmId(null)
+      setActionMenuId(null)
       showToast({ title: t('diaryReality:reality.eventDeleted') })
     } catch (caught) {
       showToast({ title: t('diaryReality:reality.failedToDeleteTheEvent'), message: caught instanceof Error ? caught.message : undefined })
@@ -599,6 +621,25 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     }
   }
 
+  const saveTranscript = async (event: RealityEvent) => {
+    const transcript = transcriptDraft.trim()
+    if (!window.nxcore || !transcript || savingTranscript) return
+    setSavingTranscript(true)
+    try {
+      const updated = await window.nxcore.reality.updateTranscript(event.id, {
+        transcript,
+        expectedVersion: event.version,
+      })
+      replaceEvent(updated)
+      setEditingTranscriptId(null)
+      showToast({ title: t('diaryReality:reality.transcriptSaved'), message: t('diaryReality:reality.summaryRefreshedAfterTranscriptEdit') })
+    } catch (caught) {
+      showToast({ title: t('diaryReality:reality.transcriptSaveFailed'), message: caught instanceof Error ? caught.message : undefined })
+    } finally {
+      setSavingTranscript(false)
+    }
+  }
+
   const seekTo = (milliseconds: number, playAfterSeek = true) => {
     if (!audioRef.current) return
     audioRef.current.currentTime = milliseconds / 1000
@@ -623,8 +664,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   return (
     <div className="reality-page">
       <header className="reality-header">
-        <div>
+        <div className="reality-header-copy">
           <h1>{t('diaryReality:reality.realityPerception')}</h1>
+          <p>{t('diaryReality:reality.pageSubtitle')}</p>
         </div>
         <RecordingPage
           embedded
@@ -634,64 +676,18 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
             setEvents((current) => mergeRealityEvent(current, event))
             setExpandedId(event.id)
           }}
+          onEventRemoved={(eventId) => {
+            setEvents((current) => current.filter((event) => event.id !== eventId))
+            setExpandedId((current) => current === eventId ? null : current)
+          }}
         />
       </header>
 
-      <section className="reality-activity" aria-labelledby="activity-title">
-        <header>
+      <section className="reality-discovery" aria-labelledby="reality-timeline-title">
+        <header className="reality-toolbar-heading">
           <div>
-            <h2 id="activity-title">{t('diaryReality:reality.perceptionActivity')}</h2>
-            <span>{t('diaryReality:reality.countEventsDaysDayStreak', { count: activity.total, days: activity.streak })}</span>
-          </div>
-          <div className="reality-range" aria-label={t('diaryReality:reality.activityTimeRange')}>
-            {ACTIVITY_RANGES.map(([value, label]) => (
-              <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => { setRangeTouched(true); setActivityRange(value) }}>{t(label)}</button>
-            ))}
-          </div>
-        </header>
-        <div className="activity-chart" style={{ '--activity-weeks': activity.weeks.length } as CSSProperties}>
-          <div className="activity-months">{activity.monthLabels.map((item) => (
-            <span key={item.column} style={{ gridColumn: item.column }}>{item.label}</span>
-          ))}</div>
-          <div className="activity-weekdays"><span>{t('diaryReality:reality.mon')}</span><span>{t('diaryReality:reality.wed')}</span><span>{t('diaryReality:reality.fri')}</span></div>
-          <div className="activity-cells">
-            {activity.weeks.flatMap((week, weekIndex) => week.map((cell, dayIndex) => {
-              const key = dayKey(cell.date)
-              const isFuture = cell.count < 0
-              const level = isFuture ? -1 : cell.count === 0 ? 0 : Math.max(1, Math.ceil(cell.count / activity.max * 4))
-              const isToday = key === dayKey(new Date())
-              return (
-                <button
-                  type="button"
-                  key={`${weekIndex}-${dayIndex}`}
-                  className="activity-cell"
-                  data-level={level}
-                  data-today={String(isToday)}
-                  data-selected={String(selectedDay === key)}
-                  disabled={isFuture}
-                  aria-pressed={selectedDay === key}
-                  aria-label={isFuture ? undefined : t('diaryReality:reality.dateCountEvents', { date: key, count: cell.count })}
-                  title={isFuture ? undefined : t('diaryReality:reality.dateCountEvents', { date: key, count: cell.count })}
-                  style={{ animationDelay: `${Math.min((weekIndex * 7 + dayIndex) * 2, 600)}ms` }}
-                  onClick={() => setSelectedDay(selectedDay === key ? null : key)}
-                />
-              )
-            }))}
-          </div>
-        </div>
-        <div className="activity-footer">
-          <div className="activity-legend" aria-hidden="true">
-            <span>{t('diaryReality:reality.less')}</span>
-            {[0, 1, 2, 3, 4].map((level) => <i key={level} data-level={level} />)}
-            <span>{t('diaryReality:reality.more')}</span>
-          </div>
-        </div>
-      </section>
-
-      <div className="reality-toolbar">
-        <div>
           <CalendarDays aria-hidden="true" />
-          <strong>{t('diaryReality:reality.timeline')}</strong>
+          <strong id="reality-timeline-title">{t('diaryReality:reality.timeline')}</strong>
           {selectedDay ? (
             <button type="button" className="reality-day-chip" onClick={() => setSelectedDay(null)}>
               {dayChipLabel(selectedDay, locale)}
@@ -700,24 +696,80 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
           ) : (
             <span>{t('diaryReality:reality.visibleTotalEvents', { visible: visibleEvents.length, total: timelineItems.length })}</span>
           )}
+          </div>
+          <button type="button" className="activity-toggle" aria-expanded={showActivity} aria-controls="reality-activity-panel" onClick={() => setShowActivity((value) => !value)}>
+            <BarChart3 aria-hidden="true" />{t(showActivity ? 'diaryReality:reality.hideActivity' : 'diaryReality:reality.showActivity')}
+          </button>
+        </header>
+        <div className="reality-toolbar">
+          <label className="reality-search"><Search aria-hidden="true" /><input value={search} placeholder={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')} onChange={(event) => setSearch(event.target.value)} /></label>
+          <div className="reality-type-filter" role="group" aria-label={t('diaryReality:reality.filterByPerceptionType')}>
+            {PERCEPTION_TYPE_OPTIONS.map(({ value, label, icon: Icon }) => (
+              <button type="button" key={value} aria-pressed={typeFilter === value} onClick={() => setTypeFilter(value)}><Icon aria-hidden="true" /><span>{t(label)}</span></button>
+            ))}
+          </div>
+          <select value={filter} aria-label={t('diaryReality:reality.filterByEventStatus')} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
+            <option value="all">{t('diaryReality:reality.allStatuses')}</option>
+            <option value="ongoing">{t('diaryReality:reality.inProgress')}</option>
+            <option value="completed">{t('diaryReality:reality.completed')}</option>
+            <option value="failed">{t('diaryReality:reality.failed')}</option>
+            <option value="pending_sync">{t('diaryReality:reality.pendingSync')}</option>
+          </select>
         </div>
-        <label className="reality-search"><Search aria-hidden="true" /><input value={search} placeholder={t('diaryReality:reality.searchTopicsTranscriptsOrVisualSummaries')} onChange={(event) => setSearch(event.target.value)} /></label>
-        <select value={typeFilter} aria-label={t('diaryReality:reality.filterByPerceptionType')} onChange={(event) => setTypeFilter(event.target.value as PerceptionTypeFilter)}>
-          <option value="all">{t('diaryReality:reality.allPerceptionTypes')}</option>
-          <option value="audio">{t('diaryReality:reality.audioPerception')}</option>
-          <option value="screenshot">{t('diaryReality:reality.screenshotPerception')}</option>
-          <option value="photo">{t('diaryReality:reality.photoPerception')}</option>
-          <option value="document">{t('diaryReality:reality.documentPerception')}</option>
-          <option value="file">{t('diaryReality:reality.filePerception')}</option>
-        </select>
-        <select value={filter} aria-label={t('diaryReality:reality.filterByEventStatus')} onChange={(event) => setFilter(event.target.value as StatusFilter)}>
-          <option value="all">{t('diaryReality:reality.allStatuses')}</option>
-          <option value="ongoing">{t('diaryReality:reality.inProgress')}</option>
-          <option value="completed">{t('diaryReality:reality.completed')}</option>
-          <option value="failed">{t('diaryReality:reality.failed')}</option>
-          <option value="pending_sync">{t('diaryReality:reality.pendingSync')}</option>
-        </select>
-      </div>
+      </section>
+
+      {showActivity ? (
+        <section id="reality-activity-panel" className="reality-activity" aria-labelledby="activity-title">
+          <header>
+            <div>
+              <h2 id="activity-title">{t('diaryReality:reality.perceptionActivity')}</h2>
+              <span>{t('diaryReality:reality.countEventsDaysDayStreak', { count: activity.total, days: activity.streak })}</span>
+            </div>
+            <div className="reality-range" aria-label={t('diaryReality:reality.activityTimeRange')}>
+              {ACTIVITY_RANGES.map(([value, label]) => (
+                <button type="button" key={value} aria-pressed={activityRange === value} onClick={() => { setRangeTouched(true); setActivityRange(value) }}>{t(label)}</button>
+              ))}
+            </div>
+          </header>
+          <div className="activity-chart" style={{ '--activity-weeks': activity.weeks.length } as CSSProperties}>
+            <div className="activity-months">{activity.monthLabels.map((item) => (
+              <span key={item.column} style={{ gridColumn: item.column }}>{item.label}</span>
+            ))}</div>
+            <div className="activity-weekdays"><span>{t('diaryReality:reality.mon')}</span><span>{t('diaryReality:reality.wed')}</span><span>{t('diaryReality:reality.fri')}</span></div>
+            <div className="activity-cells">
+              {activity.weeks.flatMap((week, weekIndex) => week.map((cell, dayIndex) => {
+                const key = dayKey(cell.date)
+                const isFuture = cell.count < 0
+                const level = isFuture ? -1 : cell.count === 0 ? 0 : Math.max(1, Math.ceil(cell.count / activity.max * 4))
+                const isToday = key === dayKey(new Date())
+                return (
+                  <button
+                    type="button"
+                    key={`${weekIndex}-${dayIndex}`}
+                    className="activity-cell"
+                    data-level={level}
+                    data-today={String(isToday)}
+                    data-selected={String(selectedDay === key)}
+                    disabled={isFuture}
+                    aria-pressed={selectedDay === key}
+                    aria-label={isFuture ? undefined : t('diaryReality:reality.dateCountEvents', { date: key, count: cell.count })}
+                    title={isFuture ? undefined : t('diaryReality:reality.dateCountEvents', { date: key, count: cell.count })}
+                    style={{ animationDelay: `${Math.min((weekIndex * 7 + dayIndex) * 2, 600)}ms` }}
+                    onClick={() => setSelectedDay(selectedDay === key ? null : key)}
+                  />
+                )
+              }))}
+            </div>
+          </div>
+          <div className="activity-footer">
+            <div className="activity-legend" aria-hidden="true">
+              <span>{t('diaryReality:reality.less')}</span>
+              {[0, 1, 2, 3, 4].map((level) => <i key={level} data-level={level} />)}
+              <span>{t('diaryReality:reality.more')}</span>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {error ? (
         <div className="reality-error" role="alert">
@@ -809,20 +861,25 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                   <article className="schedule-event" key={event.id} data-expanded={String(expanded)} data-type={type.toLowerCase()}>
                     <div className="schedule-time"><time>{timeLabel(event.startedAt, locale)}</time><span /><small>{event.endedAt ? timeLabel(event.endedAt, locale) : t('diaryReality:reality.now')}</small></div>
                     <div className="schedule-block">
-                      <button type="button" className="schedule-trigger" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : event.id)}>
-                        <span className="event-type">{EVENT_TYPE_LABELS[type]}</span>
-                        <span className="event-status" data-status={event.status}>{t(STATUS_LABELS[event.status])}</span>
-                        <DeviceIcon event={event} />
-                        <strong>{event.currentTopic || event.insights.currentTopic || event.title}</strong>
-                        <p>{event.insights.summary || (event.transcript ? event.transcript.slice(0, 120) : t(PROCESSING_LABELS[event.processingState]))}</p>
-                        {(event.insights.representativeTags?.length ?? 0) > 0 ? <span className="schedule-tags">{event.insights.representativeTags!.slice(0, 5).map((tag) => <span key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind}>{tag.label}{(tag.occurrenceCount ?? 0) > 1 ? <small>{tag.occurrenceCount}</small> : null}</span>)}</span> : null}
-                        <small>{event.captureDevice.name} · <LiveDuration durationMs={event.durationMs} startedAt={event.startedAt} ongoing={event.status === 'ongoing'} /> · {t(PROCESSING_LABELS[event.processingState])}</small>
-                        <span className="trigger-actions" onClick={(click) => click.stopPropagation()}>
-                          <button type="button" className="icon-button" title={t(event.important ? 'diaryReality:reality.unmarkImportant' : 'diaryReality:reality.markImportant')} aria-label={t(event.important ? 'diaryReality:reality.unmarkImportantLabel' : 'diaryReality:reality.markImportant')} aria-pressed={event.important} onClick={() => void toggleImportant(event)}><Bookmark fill={event.important ? 'currentColor' : 'none'} /></button>
-                          <button type="button" className={deleteConfirmId === event.id ? 'danger-button' : 'icon-button'} title={t(deleteConfirmId === event.id ? 'diaryReality:reality.selectAgainToConfirmDeletion' : 'diaryReality:reality.deleteEvent')} aria-label={t(deleteConfirmId === event.id ? 'diaryReality:reality.confirmEventDeletion' : 'diaryReality:reality.deleteEvent')} onClick={() => void discardEvent(event)}><Trash2 />{deleteConfirmId === event.id ? t('diaryReality:reality.confirmDelete') : null}</button>
-                        </span>
-                        <ChevronDown aria-hidden="true" />
-                      </button>
+                      <div className="schedule-trigger-row">
+                        <button type="button" className="schedule-trigger schedule-trigger-main" aria-expanded={expanded} onClick={() => { setActionMenuId(null); setExpandedId(expanded ? null : event.id) }}>
+                          <span className="event-type">{t(EVENT_TYPE_LABELS[type])}</span>
+                          <span className="event-status" data-status={event.status}>{t(STATUS_LABELS[event.status])}</span>
+                          <DeviceIcon event={event} />
+                          <strong>{event.currentTopic || event.insights.currentTopic || event.title}</strong>
+                          <p>{event.insights.summary || (event.transcript ? event.transcript.slice(0, 120) : t(PROCESSING_LABELS[event.processingState]))}</p>
+                          {(event.insights.representativeTags?.length ?? 0) > 0 ? <span className="schedule-tags">{event.insights.representativeTags!.slice(0, 5).map((tag) => <span key={tag.id ?? `${tag.kind}:${tag.label}`} data-kind={tag.kind}>{tag.label}{(tag.occurrenceCount ?? 0) > 1 ? <small>{tag.occurrenceCount}</small> : null}</span>)}</span> : null}
+                          <small>{event.captureDevice.name} · <LiveDuration durationMs={event.durationMs} startedAt={event.startedAt} ongoing={event.status === 'ongoing'} /> · {t(PROCESSING_LABELS[event.processingState])}</small>
+                          <ChevronDown aria-hidden="true" />
+                        </button>
+                        <button type="button" className="event-menu-trigger" title={t('diaryReality:reality.moreActions')} aria-label={t('diaryReality:reality.moreActions')} aria-expanded={actionMenuId === event.id} onClick={() => { setDeleteConfirmId(null); setActionMenuId((current) => current === event.id ? null : event.id) }}><MoreHorizontal aria-hidden="true" /></button>
+                        {actionMenuId === event.id ? (
+                          <div className="event-action-menu">
+                            <button type="button" aria-pressed={event.important} onClick={() => { void toggleImportant(event); setActionMenuId(null) }}><Bookmark fill={event.important ? 'currentColor' : 'none'} />{t(event.important ? 'diaryReality:reality.unmarkImportant' : 'diaryReality:reality.markImportant')}</button>
+                            <button type="button" className={deleteConfirmId === event.id ? 'danger' : undefined} onClick={() => void discardEvent(event)}><Trash2 />{t(deleteConfirmId === event.id ? 'diaryReality:reality.confirmDelete' : 'diaryReality:reality.deleteEvent')}</button>
+                          </div>
+                        ) : null}
+                      </div>
 
                       {expanded ? (
                         <div className="schedule-detail">
@@ -866,6 +923,15 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                             </div>
                           ) : (
                             <div className="reality-transcript-editor">
+                              <div className="reality-editor-heading">
+                                <div>
+                                  <h3>{t('diaryReality:reality.transcript')}</h3>
+                                  <span className="reality-editor-meta">{event.transcriptEditedAt ? t('diaryReality:reality.manuallyCorrected') : t('diaryReality:reality.countSegments', { count: event.transcriptSegments.length })}</span>
+                                </div>
+                                {event.transcript ? (
+                                  <button type="button" className="secondary-button" disabled={savingTranscript} onClick={() => { setEditingTranscriptId(event.id); setTranscriptDraft(event.transcript) }}><Pencil aria-hidden="true" />{t('diaryReality:reality.editTranscript')}</button>
+                                ) : null}
+                              </div>
                               {event.audioFileName || cloudAudioAssetIds.length ? (
                                 <div className="reality-player" data-ready={String(Boolean(audioUrl))}>
                                   <audio
@@ -898,7 +964,17 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                   <time>{formatDuration(playbackDurationMs)}</time>
                                 </div>
                               ) : null}
-                              {event.transcriptSegments.length === 0 && event.processingState !== 'ready' ? (
+                              {editingTranscriptId === event.id ? (
+                                <div className="reality-transcript-compose">
+                                  <textarea value={transcriptDraft} aria-label={t('diaryReality:reality.editTranscript')} onChange={(change) => setTranscriptDraft(change.target.value)} />
+                                  <div>
+                                    <button type="button" className="secondary-button" disabled={savingTranscript} onClick={() => { setEditingTranscriptId(null); setTranscriptDraft('') }}><X aria-hidden="true" />{t('diaryReality:reality.cancel')}</button>
+                                    <button type="button" className="primary-button" disabled={savingTranscript || !transcriptDraft.trim() || transcriptDraft.trim() === event.transcript.trim()} onClick={() => void saveTranscript(event)}>{savingTranscript ? <LoaderCircle className="spin" aria-hidden="true" /> : <Save aria-hidden="true" />}{t('diaryReality:reality.saveTranscript')}</button>
+                                  </div>
+                                </div>
+                              ) : event.transcriptEditedAt ? (
+                                <div className="reality-transcript-text">{event.transcript}</div>
+                              ) : event.transcriptSegments.length === 0 && event.processingState !== 'ready' ? (
                                 <>
                                   <ProcessingStatus event={event} />
                                   <DetailSkeleton lines={6} />
@@ -907,10 +983,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                                 <p className="reality-tags-empty" style={{ padding: '14px 0' }}>{event.transcript ? event.transcript : t('diaryReality:reality.noTranscriptYet')}</p>
                               ) : (
                                 <>
-                                  <div className="reality-editor-heading">
-                                    <h3>{t('diaryReality:reality.transcript')}</h3>
-                                    <span className="reality-editor-meta">{t('diaryReality:reality.countSegments', { count: event.transcriptSegments.length })}</span>
-                                  </div>
                                   <div ref={transcriptScrollRef} className="reality-segments" aria-label={t('diaryReality:reality.transcriptSegments')}>{event.transcriptSegments.map((segment) => {
                                     const active = segment.id === activeSegmentId
                                     return <button ref={active ? activeSegmentRef : undefined} type="button" key={segment.id} data-active={String(active)} aria-current={active ? 'true' : undefined} onClick={() => seekTo(segment.beginTime)}><time>{formatDuration(segment.beginTime)}</time><strong>{segment.speakerId === null ? t('diaryReality:reality.speaker') : t('diaryReality:reality.speakerNumber', { number: segment.speakerId + 1 })}</strong><span>{segment.text}</span></button>

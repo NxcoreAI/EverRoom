@@ -269,6 +269,52 @@ export function agentRoutes(
           body: Type.Object({
             prompt: Type.String({ maxLength: 20_000 }),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
+            targetAgentId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+            invocationMode: Type.Optional(Type.Union([
+              Type.Literal("explicit_switch"),
+              Type.Literal("delegated_subagent"),
+            ])),
+            workspaceBindingToken: Type.Optional(Type.String({ minLength: 8, maxLength: 200 })),
+            localAgent: Type.Optional(Type.Object({
+              id: Type.String({ minLength: 1, maxLength: 500 }),
+              provider: Type.Union([
+                Type.Literal("codex"),
+                Type.Literal("claude"),
+                Type.Literal("openclaw"),
+                Type.Literal("opencode"),
+                Type.Literal("custom"),
+              ]),
+              displayName: Type.String({ minLength: 1, maxLength: 120 }),
+              executablePath: Type.String({ minLength: 1, maxLength: 2_000 }),
+              workingDirectory: Type.String({ minLength: 1, maxLength: 2_000 }),
+              permissionProfile: Type.Union([
+                Type.Literal("inspect"),
+                Type.Literal("workspace_write"),
+                Type.Literal("full_access"),
+              ]),
+              card: Type.Object({
+                name: Type.String({ minLength: 1, maxLength: 200 }),
+                description: Type.String({ maxLength: 1_000 }),
+                version: Type.String({ minLength: 1, maxLength: 200 }),
+                supportedInterfaces: Type.Array(Type.Object({
+                  url: Type.String({ maxLength: 2_000 }),
+                  protocolBinding: Type.String({ maxLength: 100 }),
+                  protocolVersion: Type.String({ maxLength: 50 }),
+                }), { maxItems: 8 }),
+                capabilities: Type.Object({
+                  streaming: Type.Optional(Type.Boolean()),
+                  pushNotifications: Type.Optional(Type.Boolean()),
+                }),
+                defaultInputModes: Type.Array(Type.String({ maxLength: 120 }), { maxItems: 20 }),
+                defaultOutputModes: Type.Array(Type.String({ maxLength: 120 }), { maxItems: 20 }),
+                skills: Type.Array(Type.Object({
+                  id: Type.String({ minLength: 1, maxLength: 200 }),
+                  name: Type.String({ minLength: 1, maxLength: 200 }),
+                  description: Type.String({ maxLength: 1_000 }),
+                  tags: Type.Array(Type.String({ maxLength: 100 }), { maxItems: 20 }),
+                }), { maxItems: 50 }),
+              }),
+            }, { additionalProperties: false })),
             attachments: Type.Optional(Type.Array(Type.Object({
               fileId: Type.String({ minLength: 1, maxLength: 200 }),
               filename: Type.String({ minLength: 1, maxLength: 255 }),
@@ -316,6 +362,7 @@ export function agentRoutes(
                 ])),
                 contentHash: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
               }, { additionalProperties: false }), { maxItems: 5 })),
+              externalConversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
             })),
           }),
         },
@@ -449,7 +496,7 @@ export function agentRoutes(
           body: Type.Object({
             agentSessionId: Type.String({ minLength: 1, maxLength: 128 }),
             runId: Type.String({ minLength: 1, maxLength: 128 }),
-            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           }),
         },
       },

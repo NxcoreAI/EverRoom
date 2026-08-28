@@ -18,6 +18,13 @@ import type {
 } from '../../shared/sources'
 import type { RealityTag } from '@nxcore/reality-contract'
 import type { AgentSession, AgentSessionSnapshot } from '@nxcore/agent-contract'
+import type {
+  AgentNotificationRequest,
+  AgentNotificationResult,
+  CloudAgentMessagePage,
+  CloudAgentSessionSummary,
+  NotificationPreferences,
+} from '../../shared/notifications'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
 import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
@@ -50,6 +57,7 @@ interface LoginResult {
   refreshToken: string
   user: { id: string; tenantId: string; email?: string | null; phone?: string | null; name?: string }
   device: { id: string; name?: string; platform?: string }
+  registration?: { accountCreated: boolean; invitationApplied: boolean }
 }
 
 interface CloudJob {
@@ -238,6 +246,7 @@ interface PendingOidcLogin {
   nonce: string
   codeVerifier: string
   redirectUri: string
+  invitationCode?: string
   resolve: (status: CloudAccountStatus) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
@@ -445,6 +454,44 @@ export class SaasClient {
     return true
   }
 
+  async notificationPreferences(): Promise<NotificationPreferences> {
+    await this.initialize()
+    return this.request('/app/notifications/preferences')
+  }
+
+  async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
+    await this.initialize()
+    return this.request('/app/notifications/preferences', { method: 'PUT', data: input })
+  }
+
+  async registerPushToken(provider: 'expo' | 'apns', token: string): Promise<void> {
+    await this.initialize()
+    await this.request('/app/notifications/device', { method: 'PUT', data: { provider, token } })
+  }
+
+  async removePushToken(provider: 'expo' | 'apns'): Promise<void> {
+    await this.initialize()
+    if (!this.account || !this.accessToken) return
+    await this.request('/app/notifications/device', { method: 'DELETE', data: { provider } })
+  }
+
+  async createAgentNotification(input: AgentNotificationRequest): Promise<AgentNotificationResult> {
+    await this.initialize()
+    return this.request('/app/notifications/agent', { method: 'PUT', data: input })
+  }
+
+  async listCloudAgentSessions(deviceId: string): Promise<CloudAgentSessionSummary[]> {
+    await this.initialize()
+    return this.request(`/app/agent/devices/${encodeURIComponent(deviceId)}/sessions?limit=200&offset=0`)
+  }
+
+  async listCloudAgentSessionMessages(deviceId: string, sessionId: string, before?: string): Promise<CloudAgentMessagePage> {
+    await this.initialize()
+    const query = new URLSearchParams({ limit: '500' })
+    if (before) query.set('before', before)
+    return this.request(`/app/agent/devices/${encodeURIComponent(deviceId)}/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`)
+  }
+
   async agentStreamCredentials(): Promise<AgentStreamCredentials | null> {
     await this.initialize()
     if (!this.account || !this.accessToken) return null
@@ -470,7 +517,12 @@ export class SaasClient {
     return this.currentStatus()
   }
 
-  async loginWithOidc(provider: CloudOidcProvider): Promise<CloudAccountStatus> {
+  async validateInvitationCode(invitationCode: string): Promise<{ valid: true }> {
+    await this.initialize()
+    return this.publicRequest('/app/auth/invitation-code/validate', { method: 'POST', data: { invitationCode } })
+  }
+
+  async loginWithOidc(provider: CloudOidcProvider, invitationCode?: string): Promise<CloudAccountStatus> {
     await this.initialize()
     this.cancelOidcLogin('新的登录请求已开始。')
 
@@ -488,6 +540,7 @@ export class SaasClient {
     authorizationUrl.searchParams.set('code_challenge_method', 'S256')
     authorizationUrl.searchParams.set('state', state)
     authorizationUrl.searchParams.set('nonce', nonce)
+    authorizationUrl.searchParams.set('prompt', 'login')
     authorizationUrl.searchParams.set('direct_sign_in', `social:${this.connectorIds[provider]}`)
 
     const result = new Promise<CloudAccountStatus>((resolveLogin, rejectLogin) => {
@@ -502,6 +555,7 @@ export class SaasClient {
         nonce,
         codeVerifier,
         redirectUri,
+        ...(invitationCode ? { invitationCode } : {}),
         resolve: resolveLogin,
         reject: rejectLogin,
         timeout,
@@ -936,7 +990,7 @@ export class SaasClient {
       const data = await this.publicRequest<LoginResult>('/app/auth/oidc/logto', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token.id_token}` },
-        data: await this.deviceDetails(),
+        data: { ...(await this.deviceDetails()), ...(pending.invitationCode ? { invitationCode: pending.invitationCode } : {}) },
       })
       if (this.pendingOidcLogin !== pending) return
       if (claims.email_verified === true && typeof claims.email === 'string') {
@@ -989,6 +1043,7 @@ export class SaasClient {
       apiBaseUrl: this.baseUrl,
       ...(this.account ? { user: this.account.user, device: this.account.device } : {}),
       ...(this.subscription ? { subscription: this.subscription } : {}),
+      ...(this.account?.registration ? { registration: this.account.registration } : {}),
     }
   }
 

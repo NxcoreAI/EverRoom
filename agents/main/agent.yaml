@@ -17,6 +17,7 @@ capabilities:
   - web.search
   - subagent.catalog
   - subagent.dispatch
+  - notification.send
 
 tools:
   - memory_search
@@ -52,4 +53,8 @@ tools:
   - agent_catalog
   - agent_dispatch
   - content_analysis
+  - send_notification
   - room_analysis
+
+skills:
+  - ./skills/selection-rewrite

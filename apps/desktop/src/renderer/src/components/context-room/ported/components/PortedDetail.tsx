@@ -16,6 +16,7 @@ import type { DetailObject } from './ObjectDetailView'
 import type { DetailPane } from './RoomIconSidebar'
 import type { WorkspaceObjectPreview } from './detail-panels'
 import { WorkspaceLayout } from './detail-workspace/WorkspaceLayout'
+import { ObsidianImportDialog } from '../../../pages/sources/ObsidianImportDialog'
 
 export function PortedDetail({
   room,
@@ -65,6 +66,7 @@ export function PortedDetail({
   /** WikiPane 打开过的 wiki 页资源（静态 library 不含它们，编辑栏解析时并入）。 */
   const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
+  const [obsidianImportOpen, setObsidianImportOpen] = useState(false)
   const handledDocumentFocusKey = useRef<string | null>(null)
   const [standaloneObject, setStandaloneObject] = useState<DetailObject | null>(() => {
     if (!initialObject) return null
@@ -229,7 +231,11 @@ export function PortedDetail({
           onOpenRoom={onOpenRoom}
           onToggleTask={toggleTask}
           onUpdateRoom={onUpdateRoom}
+          onImportObsidian={() => setObsidianImportOpen(true)}
         />
+        {obsidianImportOpen ? <ObsidianImportDialog target={{ kind: 'room', roomId: room.id }} roomName={room.title} onClose={() => setObsidianImportOpen(false)} onImported={() => {
+          void window.nxcore?.knowledge.getRoomContext(room.id).catch(() => undefined)
+        }} /> : null}
         <button
           type="button"
           className="context-room-visually-hidden"

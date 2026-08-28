@@ -46,4 +46,8 @@ export interface Connector<TConfig = unknown> {
     connection: ConnectorConnection<TConfig>,
     itemPath: string,
   ): string
+  isExcludedPath?(
+    connection: ConnectorConnection<TConfig>,
+    itemPath: string,
+  ): boolean
 }

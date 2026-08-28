@@ -66,7 +66,7 @@ function pendingIntent(targetCapability: 'document.edit' | 'document.continue'):
   }
 }
 
-describe('Agent pending document intent UI', () => {
+describe('AgentChatView', () => {
   beforeEach(() => {
     vi.stubGlobal('window', {
       addEventListener: vi.fn(),
@@ -94,6 +94,8 @@ describe('Agent pending document intent UI', () => {
         renderer = TestRenderer.create(<AgentChatView
           activeDocument={null}
           activeRunId={null}
+          agentIdByRun={{}}
+          agentNamesById={{}}
           activityByRun={{}}
           availableRooms={[{ id: 'room-1', title: '产品 Room' }]}
           composer={null}
@@ -147,4 +149,137 @@ describe('Agent pending document intent UI', () => {
       )
     },
   )
+
+  it('scrolls to and highlights a notification run after its messages load', async () => {
+    const scrollIntoView = vi.fn()
+    const onNotificationRunLocated = vi.fn()
+    const targetNode = {
+      dataset: { agentMessageId: 'assistant-2' },
+      scrollIntoView,
+    }
+    const conversationNode = {
+      querySelectorAll: () => [targetNode],
+      scrollHeight: 800,
+      scrollTop: 0,
+    }
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        notificationRunTarget={{ key: 'notification-1', runId: 'run-2' }}
+        onNotificationRunLocated={onNotificationRunLocated}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{ 'run-2': '2026-08-20T00:00:01.000Z' }}
+        runStartedAtByRun={{ 'run-2': '2026-08-20T00:00:00.000Z' }}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    await act(async () => {
+      renderer.update(renderView([{
+        id: 'assistant-2',
+        sessionId: 'session-1',
+        runId: 'run-2',
+        role: 'assistant',
+        content: '目标运行结果',
+        createdAt: '2026-08-20T00:00:01.000Z',
+      }]))
+    })
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' })
+    expect(onNotificationRunLocated).toHaveBeenCalledWith('notification-1')
+    expect(renderer.root.findByProps({ 'data-agent-message-id': 'assistant-2' }).props['data-notification-target'])
+      .toBe('true')
+    act(() => renderer.unmount())
+  })
+
+  it('shows an unframed byline only for non-main Agent responses', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{ 'run-openclaw': 'openclaw:/usr/local/bin/openclaw', 'run-main': 'main' }}
+        agentNamesById={{ 'openclaw:/usr/local/bin/openclaw': 'OpenClaw', main: 'Main Agent' }}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[
+          {
+            id: 'assistant-openclaw',
+            sessionId: 'session-1',
+            runId: 'run-openclaw',
+            role: 'assistant',
+            authorAgentId: 'openclaw:/usr/local/bin/openclaw',
+            content: 'OpenClaw reply',
+            createdAt: '2026-08-20T00:00:01.000Z',
+          },
+          {
+            id: 'assistant-main',
+            sessionId: 'session-1',
+            runId: 'run-main',
+            role: 'assistant',
+            authorAgentId: 'main',
+            content: 'Main reply',
+            createdAt: '2026-08-20T00:00:02.000Z',
+          },
+        ]}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{
+          'run-openclaw': '2026-08-20T00:00:01.000Z',
+          'run-main': '2026-08-20T00:00:02.000Z',
+        }}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />)
+    })
+
+    const bylines = renderer.root.findAllByProps({ className: 'agent-response-byline' })
+    expect(bylines).toHaveLength(1)
+    expect(bylines[0]!.findByType('span').children).toEqual(['OpenClaw'])
+    expect(renderer.root.findAll((node) => node.children.includes('Main Agent'))).toHaveLength(0)
+    act(() => renderer.unmount())
+  })
 })

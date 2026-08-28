@@ -14,6 +14,9 @@ import {
   shouldDeleteRoomFromKnowledge,
   shouldSyncRoomToKnowledge,
 } from './knowledgeRoomSync'
+import type { ObsidianVaultBinding } from '../../../../../shared/obsidian'
+import { createEmptyContextRoom } from './contextRoomFactory'
+import { ObsidianVaultRoom } from '../obsidian/ObsidianVaultRoom'
 
 const AllRoomsView = lazy(() =>
   import('./components/AllRoomsView').then((module) => ({ default: module.AllRoomsView })),
@@ -47,6 +50,7 @@ export function PortedContextRoom({
   const handledHomeRequest = useRef(homeRequest)
   const detailPaneByRoomIdRef = useRef<Record<string, DetailPane>>({})
   const [homeView, setHomeView] = useState<'home' | 'all'>('home')
+  const [vaults, setVaults] = useState<ObsidianVaultBinding[]>([])
   const [initialObject, setInitialObject] = useState<{
     kind: 'file' | 'mail' | 'meeting'
     id: string
@@ -56,6 +60,40 @@ export function PortedContextRoom({
   const roomDocuments = useRoomDocumentsState()
   const reportedRoomsRef = useRef(new Map<string, string>())
   const deletedKnowledgeRoomsRef = useRef(new Set<string>())
+
+  const refreshVaults = useCallback(async () => {
+    const api = window.nxcore?.obsidian
+    if (!api) return
+    const bindings = await api.list()
+    setVaults(bindings)
+    setState((current) => {
+      const dedicatedBindings = bindings.filter((vault) => vault.mountMode === 'dedicated')
+      const byRoomId = new Map(dedicatedBindings.map((vault) => [vault.roomId, vault]))
+      const existingIds = new Set(current.rooms.map((room) => room.id))
+      const rooms = current.rooms.map((room) => {
+        const binding = byRoomId.get(room.id)
+        return binding && (room.origin !== 'source' || room.title !== binding.name)
+          ? { ...room, title: binding.name, kind: '项目' as const, origin: 'source' as const, recentSource: { type: 'Obsidian Vault', name: binding.name } }
+          : room
+      })
+      for (const binding of dedicatedBindings) {
+        if (existingIds.has(binding.roomId)) continue
+        rooms.unshift(createEmptyContextRoom({
+          id: binding.roomId, title: binding.name, kind: '项目', origin: 'source',
+          background: '持续挂载的 Obsidian Vault，源文件始终保留在原目录。',
+          goal: '在 EverRoom 中浏览、编辑并让 Agent 理解 Vault 内容。',
+          briefStatus: binding.status === 'connected' ? '来源已连接' : '来源离线',
+        }))
+        rooms[0] = { ...rooms[0]!, recentSource: { type: 'Obsidian Vault', name: binding.name } }
+      }
+      return { ...current, rooms }
+    })
+  }, [setState])
+
+  useEffect(() => {
+    void refreshVaults()
+    return window.nxcore?.obsidian?.onChanged(() => void refreshVaults())
+  }, [refreshVaults])
 
   const syncKnowledgeRooms = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge
@@ -209,6 +247,13 @@ export function PortedContextRoom({
   })
 
   if (activeRoom) {
+    const vault = vaults.find((item) => item.roomId === activeRoom.id && item.mountMode === 'dedicated')
+    if (vault) return <ObsidianVaultRoom room={activeRoom} vault={vault} onBack={onShowHome} onDisconnect={async (vaultId) => {
+      await window.nxcore?.obsidian.disconnect(vaultId)
+      setState((current) => ({ ...current, rooms: current.rooms.filter((room) => room.id !== activeRoom.id) }))
+      await refreshVaults()
+      onShowHome()
+    }} />
     return (
       <PortedDetail
         key={activeRoom.id}
@@ -271,6 +316,12 @@ export function PortedContextRoom({
         const room = refreshed?.rooms.find((item) => item.id === result.room.id)
         if (!room) throw new Error(t('contextRoom:roomDialogs.createFailed'))
         onOpenRoomTab({ id: room.id, title: room.title })
+      }}
+      onMountObsidian={async () => {
+        const binding = await window.nxcore?.obsidian.pickAndMount()
+        if (!binding) return
+        await refreshVaults()
+        onOpenRoomTab({ id: binding.roomId, title: binding.name })
       }}
       onRenameRoom={renameRoom}
       onDeleteRoom={deleteRoom}

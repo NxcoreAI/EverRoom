@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent } from '@nxcore/agent-contract'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, ExternalConversationSummary } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
@@ -15,7 +15,9 @@ import {
   type AgentSessionRouteRequest,
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
+import { localAgentForImportedConversation } from '@/components/agent/localAgentConversation'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
+import type { LocalAgentInstallation } from '../../../shared/local-agents'
 import {
   buildRoomOverviewCitationContext,
   buildRoomOverviewCitationPrompt,
@@ -38,6 +40,30 @@ import {
 
 import './agent/AgentPanel.css'
 import './agent/AgentChat.css'
+
+const MAIN_AGENT: LocalAgentInstallation = {
+  id: 'main',
+  provider: 'custom',
+  displayName: 'Main Agent',
+  executablePath: null,
+  version: null,
+  status: 'verified',
+  callable: true,
+  invocationSupported: true,
+  historyAvailable: false,
+  historyPaths: [],
+  card: {
+    name: 'EverRoom Main Agent',
+    description: 'EverRoom primary Agent',
+    version: 'builtin',
+    supportedInterfaces: [],
+    capabilities: { streaming: true },
+    defaultInputModes: ['text/plain'],
+    defaultOutputModes: ['text/plain'],
+    skills: [],
+  },
+  lastSeenAt: '',
+}
 
 export function AgentPanel({
   pageId,
@@ -82,6 +108,10 @@ export function AgentPanel({
   const [submitting, setSubmitting] = useState(false)
   const [pendingNavigationByRun, setPendingNavigationByRun] = useState<Record<string, AgentNavigationTarget>>({})
   const [composerResetKey, setComposerResetKey] = useState(0)
+  const [localAgents, setLocalAgents] = useState<LocalAgentInstallation[]>([])
+  const [selectedLocalAgent, setSelectedLocalAgent] = useState<LocalAgentInstallation | null>(null)
+  const [selectedExternalConversation, setSelectedExternalConversation] = useState<ExternalConversationSummary | null>(null)
+  const [notificationRunTarget, setNotificationRunTarget] = useState<{ key: string; runId: string } | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const previousSessionIdRef = useRef<string | null>(null)
   const handledNavigationKeysRef = useRef(new Set<string>())
@@ -112,6 +142,13 @@ export function AgentPanel({
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
+  const agentNamesById = useMemo(() => Object.fromEntries(
+    localAgents.map((agent) => [agent.id, agent.displayName]),
+  ), [localAgents])
+
+  const handleNotificationRunLocated = useCallback((key: string) => {
+    setNotificationRunTarget((current) => current?.key === key ? null : current)
+  }, [])
 
   const focusComposer = (attention = false) => {
     window.requestAnimationFrame(() => {
@@ -136,6 +173,17 @@ export function AgentPanel({
   }, [focusRequest])
 
   useEffect(() => {
+    const discovery = window.nxcore?.agent.discoverLocalAgents?.()
+    if (!discovery) {
+      setLocalAgents([MAIN_AGENT])
+      return
+    }
+    void discovery
+      .then((agents) => setLocalAgents([MAIN_AGENT, ...agents]))
+      .catch(() => setLocalAgents([MAIN_AGENT]))
+  }, [])
+
+  useEffect(() => {
     setComposerResetKey((current) => current + 1)
   }, [pageLabel])
 
@@ -149,6 +197,19 @@ export function AgentPanel({
     previousSessionIdRef.current = session.sessionId
     setPendingNavigationByRun({})
   }, [onClearRoomCitations, roomCitations.length, session.sessionId])
+
+  useEffect(() => {
+    const activeAgentId = session.currentSession?.activeAgentId ?? 'main'
+    setSelectedLocalAgent(localAgents.find((agent) => agent.id === activeAgentId) ?? MAIN_AGENT)
+  }, [localAgents, session.currentSession?.activeAgentId])
+
+  const selectExternalConversation = useCallback((conversation: ExternalConversationSummary | null) => {
+    setSelectedExternalConversation(conversation)
+    if (!conversation || (conversation.provider !== 'codex' && conversation.provider !== 'claude' && conversation.provider !== 'openclaw')) return
+    const matchingAgent = localAgentForImportedConversation(localAgents, conversation)
+    if (matchingAgent) setSelectedLocalAgent(matchingAgent)
+  }, [localAgents])
+
 
   useEffect(() => {
     if (!session.sessionId || navigationRequest) return
@@ -286,9 +347,15 @@ export function AgentPanel({
     if (!session.sessions.some((item) => item.id === sessionRouteRequest.sessionId)) return
     if (handledSessionRouteKeysRef.current.has(sessionRouteRequest.key)) return
     handledSessionRouteKeysRef.current.add(sessionRouteRequest.key)
+    setNotificationRunTarget(sessionRouteRequest.runId
+      ? { key: sessionRouteRequest.key, runId: sessionRouteRequest.runId }
+      : null)
     void session.selectSessionById(sessionRouteRequest.sessionId)
       .then(() => onSessionRouteConsumed(sessionRouteRequest.key))
-      .catch(() => handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key))
+      .catch(() => {
+        handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key)
+        setNotificationRunTarget((current) => current?.key === sessionRouteRequest.key ? null : current)
+      })
   }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
 
   const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = []) => {
@@ -300,6 +367,9 @@ export function AgentPanel({
     setDraft('')
     setSubmitting(true)
     try {
+      const externalConversation = selectedExternalConversation
+      const externalSession = externalConversation ? await session.createSession() : null
+      if (externalSession && externalConversation) await session.renameSession(externalSession.id, externalConversation.title)
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
       let attachments = undefined
       if (files.length > 0) {
@@ -317,7 +387,29 @@ export function AgentPanel({
           status: 'processing' as const,
         }))
       }
-      await session.sendPrompt(submittedPrompt || '请分析我上传的文件。', submittedContext, roomId ?? undefined, activeDocumentContext, replaceRunId, attachments)
+      const targetAgentId = selectedLocalAgent?.id !== 'main' ? selectedLocalAgent?.id : undefined
+      if (targetAgentId || externalConversation) {
+        await session.sendPrompt(
+          submittedPrompt || '请分析我上传的文件。',
+          submittedContext,
+          roomId ?? undefined,
+          activeDocumentContext,
+          replaceRunId,
+          attachments,
+          targetAgentId,
+          externalConversation?.id,
+        )
+      } else {
+        await session.sendPrompt(
+          submittedPrompt || '请分析我上传的文件。',
+          submittedContext,
+          roomId ?? undefined,
+          activeDocumentContext,
+          replaceRunId,
+          attachments,
+        )
+      }
+      if (externalConversation) setSelectedExternalConversation(null)
       if (roomCitations.length) onClearRoomCitations()
       setComposerResetKey((current) => current + 1)
     } catch {
@@ -388,11 +480,16 @@ export function AgentPanel({
       hasSelectedText={roomCitations.length > 0}
       hasSubmittableContext={Boolean(citationPrompt)}
       resetKey={composerResetKey}
+      localAgents={localAgents}
+      selectedAgent={selectedLocalAgent}
+      selectedExternalConversation={selectedExternalConversation}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
       available={agentAvailable}
       onChange={setDraft}
+      onSelectAgent={(agent) => setSelectedLocalAgent(agent ?? MAIN_AGENT)}
+      onSelectExternalConversation={selectExternalConversation}
       onClearContext={onClearRoomCitations}
       onRemoveContext={onRemoveRoomCitation}
       onStop={() => void session.stop()}
@@ -410,6 +507,7 @@ export function AgentPanel({
           sessionId={session.sessionId}
           sessions={session.sessions}
           onCreate={async () => {
+            setNotificationRunTarget(null)
             setDraft('')
             if (roomCitations.length) onClearRoomCitations()
             setComposerResetKey((current) => current + 1)
@@ -418,6 +516,7 @@ export function AgentPanel({
           onDelete={session.deleteSession}
           onRename={session.renameSession}
           onSelect={async (selectedSession) => {
+            setNotificationRunTarget(null)
             setDraft('')
             if (roomCitations.length) onClearRoomCitations()
             setComposerResetKey((current) => current + 1)
@@ -429,6 +528,8 @@ export function AgentPanel({
       <AgentChatView
         activeDocument={activeDocument}
         activeRunId={session.activeRunId}
+        agentIdByRun={session.agentIdByRun}
+        agentNamesById={agentNamesById}
         activityByRun={session.activityByRun}
         availableRooms={rooms}
         composer={composer}
@@ -438,6 +539,8 @@ export function AgentPanel({
         error={session.error}
         loading={session.loading}
         messages={session.messages}
+        notificationRunTarget={notificationRunTarget}
+        onNotificationRunLocated={handleNotificationRunLocated}
         pendingApprovals={session.pendingApprovals}
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}

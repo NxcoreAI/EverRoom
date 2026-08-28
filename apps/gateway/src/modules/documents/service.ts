@@ -462,6 +462,34 @@ export class DocumentService {
     });
   }
 
+  syncExternalMarkdown(input: {
+    documentId: string;
+    roomId: string;
+    title: string;
+    markdown: string;
+  }): Promise<RoomDocument> {
+    const title = input.title.trim().slice(0, 120);
+    if (!title) throw new DocumentServiceError("INVALID_TITLE", "Document title cannot be empty");
+    const contentJson = normalizePersistedDocumentBody(this.parseMarkdown(input.markdown), title).content;
+    const existing = this.get(input.documentId);
+    if (!existing) {
+      return this.import({
+        id: input.documentId,
+        roomId: input.roomId,
+        title,
+        contentJson,
+      });
+    }
+    if (existing.roomId !== input.roomId) {
+      throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
+    }
+    return this.save(input.documentId, {
+      baseVersion: existing.version,
+      title,
+      contentJson,
+    });
+  }
+
   save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument> {
     assertContentJson(input.contentJson);
     return this.queue.enqueue(() => {

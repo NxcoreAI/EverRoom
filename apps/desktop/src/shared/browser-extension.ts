@@ -74,6 +74,29 @@ export interface BrowserExtensionClipperCapture {
   errorMessage: string | null
   createdAt: string
   updatedAt: string
+  favoritedAt: string | null
+  artifact: {
+    schemaVersion: number
+    excerpt: string
+    coverAssetId: string | null
+    coverUrl: string | null
+    displayMarkdown?: string
+  } | null
+  understanding: {
+    parse: 'pending' | 'processing' | 'ready' | 'partial' | 'failed' | 'unavailable'
+    visual: 'pending' | 'processing' | 'ready' | 'partial' | 'skipped' | 'failed' | 'unavailable'
+    memory: 'pending' | 'processing' | 'ready' | 'partial' | 'failed' | 'unavailable'
+    entities: 'pending' | 'processing' | 'ready' | 'partial' | 'failed' | 'unavailable'
+  }
+  entities: Array<{
+    id: string
+    name: string
+    kind: string
+    status: string
+    role: 'primary' | 'mention' | 'manual'
+    salience: number
+    evidence: string | null
+  }>
   assets: Array<{
     id: string
     referenceKey: string
@@ -86,7 +109,32 @@ export interface BrowserExtensionClipperCapture {
     height: number | null
     status: 'pending' | 'stored' | 'failed'
     errorCode: string | null
+    visualStatus: 'pending' | 'processing' | 'ready' | 'skipped' | 'failed'
+    visualKind: string | null
+    visualSummary: string | null
+    visualOcrText: string | null
+    visualKeyPoints: string[]
+    visualEntities: Array<{ name: string; kind: string; evidence: string }>
+    visualRelevance: number | null
+    visualQuality: number | null
+    visualContentRole: 'primary' | 'supporting' | 'noise' | null
+    visualNoiseReason: string | null
+    coverScore: number | null
   }>
+}
+
+export interface BrowserExtensionClipperListInput {
+  query?: string
+  filter?: 'all' | 'favorite' | 'processing'
+  sort?: 'newest' | 'oldest'
+  limit?: number
+  offset?: number
+}
+
+export interface BrowserExtensionClipperListResult {
+  items: BrowserExtensionClipperCapture[]
+  total: number
+  counts: { all: number; favorite: number; processing: number }
 }
 
 export interface BrowserExtensionStatus {

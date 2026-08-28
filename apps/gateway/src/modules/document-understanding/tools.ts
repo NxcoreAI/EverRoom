@@ -2,6 +2,73 @@ import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { DocumentUnderstandingService } from "./service.js";
 
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export function createDocumentAnalysisResultValidator(service: DocumentUnderstandingService) {
+  return (invocationInput: unknown, resultValue: Record<string, unknown>): void => {
+    const input = recordOf(invocationInput);
+    const fileVersionId = typeof resultValue.fileVersionId === "string"
+      ? resultValue.fileVersionId
+      : "";
+    if (typeof input?.fileVersionId === "string" && input.fileVersionId !== fileVersionId) {
+      throw new Error("subagent_result_file_version_mismatch");
+    }
+    const parsed = service.get(fileVersionId);
+    if (!parsed) throw new Error("subagent_result_artifact_not_found");
+    if (resultValue.artifactId !== parsed.id) {
+      throw new Error("subagent_result_artifact_mismatch");
+    }
+    if (resultValue.format !== parsed.artifact.document.format
+      || resultValue.pageCount !== parsed.artifact.pages.length
+      || resultValue.blockCount !== parsed.artifact.blocks.length
+      || resultValue.tableCount !== parsed.artifact.tables.length
+      || resultValue.requiresReview !== parsed.artifact.quality.requiresReview) {
+      throw new Error("subagent_result_artifact_metadata_mismatch");
+    }
+    const submittedWarnings = Array.isArray(resultValue.warnings) ? resultValue.warnings : [];
+    if (JSON.stringify(submittedWarnings) !== JSON.stringify(parsed.artifact.warnings)) {
+      throw new Error("subagent_result_warnings_mismatch");
+    }
+    if ((parsed.artifact.quality.status === "partial" || parsed.artifact.warnings.length > 0)
+      && resultValue.status !== "partial") {
+      throw new Error("subagent_result_status_mismatch");
+    }
+
+    const evidenceIds = new Set([
+      ...parsed.artifact.blocks.map((block) => block.id),
+      ...parsed.artifact.tables.map((table) => table.id),
+    ]);
+    const facts = Array.isArray(resultValue.facts) ? resultValue.facts : [];
+    const missingFields = new Set(Array.isArray(resultValue.missingFields)
+      ? resultValue.missingFields.filter((field): field is string => typeof field === "string")
+      : []);
+    const missingFactKeys = new Set<string>();
+    for (const factValue of facts) {
+      const fact = recordOf(factValue);
+      if (!fact || typeof fact.key !== "string" || !Array.isArray(fact.evidenceRefs)) {
+        throw new Error("subagent_result_fact_invalid");
+      }
+      if (fact.value === null) missingFactKeys.add(fact.key);
+      if (typeof fact.value === "string" && fact.evidenceRefs.length === 0) {
+        throw new Error(`subagent_result_evidence_required:${fact.key}`);
+      }
+      for (const reference of fact.evidenceRefs) {
+        if (typeof reference !== "string" || !evidenceIds.has(reference)) {
+          throw new Error(`subagent_result_evidence_not_found:${String(reference)}`);
+        }
+      }
+    }
+    if ([...missingFields].some((field) => !missingFactKeys.has(field))
+      || [...missingFactKeys].some((field) => !missingFields.has(field))) {
+      throw new Error("subagent_result_missing_fields_mismatch");
+    }
+  };
+}
+
 function toolResult(value: unknown, details: Record<string, unknown> = {}) {
   return { content: JSON.stringify(value), details };
 }
