@@ -1,13 +1,20 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const storageState = vi.hoisted(() => ({ available: false, backend: 'gnome' }))
+const storageState = vi.hoisted(() => ({ available: false, backend: 'gnome', availabilityChecks: 0, decryptions: 0 }))
 vi.mock('electron', () => ({
   safeStorage: {
-    isEncryptionAvailable: () => storageState.available,
+    isEncryptionAvailable: () => {
+      storageState.availabilityChecks += 1
+      return storageState.available
+    },
     getSelectedStorageBackend: () => storageState.backend,
+    decryptString: () => {
+      storageState.decryptions += 1
+      return Buffer.alloc(32).toString('base64url')
+    },
   },
 }))
 
@@ -20,6 +27,8 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
   storageState.available = false
   storageState.backend = 'gnome'
+  storageState.availabilityChecks = 0
+  storageState.decryptions = 0
 })
 
 describe('gateway secret key', () => {
@@ -40,5 +49,21 @@ describe('gateway secret key', () => {
     directories.push(root)
 
     await expect(loadOrCreateGatewaySecretKey(join(root, 'gateway-master-key.json'))).resolves.toBeNull()
+  })
+
+  it('does not access macOS Keychain during startup', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    const root = await mkdtemp(join(tmpdir(), 'everroom-gateway-key-test-'))
+    directories.push(root)
+    const path = join(root, 'gateway-master-key.json')
+    await writeFile(path, JSON.stringify({ version: 1, encrypted: 'encrypted' }))
+
+    await expect(loadOrCreateGatewaySecretKey(path)).resolves.toBeNull()
+    expect(storageState.availabilityChecks).toBe(0)
+    expect(storageState.decryptions).toBe(0)
+
+    await expect(loadOrCreateGatewaySecretKey(path, true)).resolves.toBe(Buffer.alloc(32).toString('base64url'))
+    expect(storageState.availabilityChecks).toBe(0)
+    expect(storageState.decryptions).toBe(1)
   })
 })

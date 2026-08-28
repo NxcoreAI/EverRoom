@@ -7,8 +7,11 @@ function isBasicTextStorage(): boolean {
   return process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text'
 }
 
-export async function loadOrCreateGatewaySecretKey(filePath: string): Promise<string | null> {
-  if (!safeStorage.isEncryptionAvailable() || isBasicTextStorage()) {
+export async function loadOrCreateGatewaySecretKey(
+  filePath: string,
+  allowKeychainAccess = process.platform !== 'darwin',
+): Promise<string | null> {
+  if (!allowKeychainAccess || (process.platform !== 'darwin' && !safeStorage.isEncryptionAvailable()) || isBasicTextStorage()) {
     return null
   }
   try {
