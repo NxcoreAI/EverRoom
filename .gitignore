@@ -10,6 +10,10 @@ screenshots/
 !agents/
 !agents/**
 
+# 本地下载的 agent 技能包（工具产物，不入库）。
+.agents/
+
+
 apps/desktop/build/oo/
 apps/desktop/build/open-connector/
 apps/desktop/build/nango-runtime/
@@ -25,3 +29,5 @@ apps/desktop/build/packaged-env.json
 # 本地独立部署的 MemoryCore 克隆(仅本机联调用);EverRoom 通过 pnpm git 依赖
 # 引用 NxcoreAI/memory-tencentdb-core,不直接依赖此目录。
 TencentDB-Agent-Memory/
+
+
