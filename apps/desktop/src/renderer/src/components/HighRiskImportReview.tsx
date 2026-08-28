@@ -69,11 +69,11 @@ export function HighRiskImportReview() {
           ? <small>{t('surface:highRiskImportReview.morePending', { count: reviews.length - 1 })}</small>
           : null}
         <div className="high-risk-import-review-actions">
-          <button type="button" disabled={Boolean(resolvingId)} onClick={() => void resolve(true)}>
-            <Check aria-hidden="true" />{t('surface:highRiskImportReview.accept')}
-          </button>
-          <button type="button" disabled={Boolean(resolvingId)} onClick={() => void resolve(false)}>
+          <button className="high-risk-import-review-skip" type="button" disabled={Boolean(resolvingId)} onClick={() => void resolve(false)}>
             <X aria-hidden="true" />{t('surface:highRiskImportReview.skip')}
+          </button>
+          <button className="high-risk-import-review-accept" type="button" disabled={Boolean(resolvingId)} onClick={() => void resolve(true)}>
+            <Check aria-hidden="true" />{t('surface:highRiskImportReview.accept')}
           </button>
         </div>
       </div>
