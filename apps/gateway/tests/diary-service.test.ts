@@ -477,6 +477,107 @@ describe("DiaryService", () => {
     expect(service.getDay("2026-08-20").day?.status).toBe("ready");
   });
 
+  it("reuses the current version for non-manual runs when sources are unchanged", async () => {
+    const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => ({
+      headline: "一天", summary: "摘要", reflection: "", range: input.range,
+      events: input.sources.map((source) => ({
+        time: source.occurredAt, title: source.evidenceSummary, summary: source.evidenceSummary, sourceRefs: [source.sourceId],
+      })), closing: "",
+    }));
+    const { database, service } = await setup({ model: "test", generate });
+    database.db.insert(uploadedFiles).values({
+      id: "file-unchanged", contentHash: "hash-a", storagePath: "files/a", originalName: "a.md",
+      bytes: 1, capturedAt: new Date("2026-08-20T10:00:00.000Z"), createdAt: NOW, updatedAt: NOW,
+    }).run();
+
+    service.createRun("2026-08-20");
+    await service.drain();
+    expect(generate).toHaveBeenCalledOnce();
+    const version = service.listVersions("2026-08-20")[0]!;
+
+    // 同一天的定时刷新槽位（非手动触发）：来源没有变化，不得再烧一次生成。
+    const runId = service.createRun("2026-08-20", "scheduled");
+    await service.drain();
+
+    expect(generate).toHaveBeenCalledOnce();
+    expect(service.listVersions("2026-08-20")).toHaveLength(1);
+    expect(service.getRun(runId)).toMatchObject({ status: "completed", versionId: version.id });
+    expect(service.getDay("2026-08-20").day?.status).toBe("ready");
+  });
+
+  it("does not auto-refresh a changed day within the cooldown window", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nxcore-diary-test-"));
+    temporaryDirectories.push(dir);
+    const database = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database);
+    let currentNow = new Date(NOW);
+    const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => ({
+      headline: "一天", summary: "摘要", reflection: "", range: input.range,
+      events: input.sources.map((source) => ({
+        time: source.occurredAt, title: source.evidenceSummary, summary: source.evidenceSummary, sourceRefs: [source.sourceId],
+      })), closing: "",
+    }));
+    const service = new DiaryService(database.db, {
+      generator: { model: "test", generate },
+      now: () => new Date(currentNow),
+    });
+    service.updateSettings({ timezone: "Asia/Shanghai", enabled: true, localTime: "23:30" });
+    database.db.insert(uploadedFiles).values({
+      id: "file-cooldown", contentHash: "hash-a", storagePath: "files/a", originalName: "a.md",
+      bytes: 1, capturedAt: new Date("2026-08-20T10:00:00.000Z"), createdAt: NOW, updatedAt: NOW,
+    }).run();
+    service.createRun("2026-08-20");
+    await service.drain();
+
+    // 推进 6 分钟：巡检节流（5 分钟）已过、自动刷新冷却（30 分钟）未过。
+    currentNow = new Date(NOW.getTime() + 6 * 60_000);
+    database.db.update(uploadedFiles).set({ contentHash: "hash-b" }).where(eq(uploadedFiles.id, "file-cooldown")).run();
+    await service.drain();
+
+    // 来源已变化 → 标记 stale，但刚生成完处于冷却期，不得重排。
+    expect(service.getDay("2026-08-20").day?.status).toBe("stale");
+    expect(service.listVersions("2026-08-20")).toHaveLength(1);
+    expect(database.sqlite.prepare("SELECT count(*) AS count FROM diary_runs").get()).toEqual({ count: 1 });
+  });
+
+  it("re-queues a refresh run for a stale day once the cooldown elapses", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nxcore-diary-test-"));
+    temporaryDirectories.push(dir);
+    const database = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
+    databases.push(database);
+    let currentNow = new Date(NOW);
+    const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => ({
+      headline: "一天", summary: "摘要", reflection: "", range: input.range,
+      events: input.sources.map((source) => ({
+        time: source.occurredAt, title: source.evidenceSummary, summary: source.evidenceSummary, sourceRefs: [source.sourceId],
+      })), closing: "",
+    }));
+    const service = new DiaryService(database.db, {
+      generator: { model: "test", generate },
+      now: () => new Date(currentNow),
+      autoRefreshCooldownMs: 30 * 60_000,
+    });
+    service.updateSettings({ timezone: "Asia/Shanghai", enabled: true, localTime: "23:30" });
+    database.db.insert(uploadedFiles).values({
+      id: "file-refresh", contentHash: "hash-a", storagePath: "files/a", originalName: "a.md",
+      bytes: 1, capturedAt: new Date("2026-08-20T10:00:00.000Z"), createdAt: NOW, updatedAt: NOW,
+    }).run();
+
+    service.createRun("2026-08-20");
+    await service.drain();
+    expect(generate).toHaveBeenCalledOnce();
+
+    currentNow = new Date(NOW.getTime() + 31 * 60_000);
+    database.db.update(uploadedFiles).set({ contentHash: "hash-c" }).where(eq(uploadedFiles.id, "file-refresh")).run();
+    await service.drain();
+
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(service.listVersions("2026-08-20")).toHaveLength(2);
+    expect(service.getDay("2026-08-20").day?.status).toBe("ready");
+    expect(database.sqlite.prepare("SELECT trigger FROM diary_runs ORDER BY created_at").all())
+      .toEqual([{ trigger: "manual" }, { trigger: "refresh" }]);
+  });
+
   it("collects connector email, document, and calendar evidence for the diary Agent", async () => {
     const generate = vi.fn<DiaryGenerator["generate"]>(async (input) => {
       expect(input.sources.map((source) => source.kind)).toEqual([

@@ -77,7 +77,7 @@ export function AgentPanel({
   onRemoveRoomCitation: (citationId: string) => void
   onClearRoomCitations: () => void
 }) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const [draft, setDraft] = useState('')
   const { refreshFromBackend } = useContextRoomState()
   const [submitting, setSubmitting] = useState(false)
@@ -106,13 +106,13 @@ export function AgentPanel({
     return {
       id: citation.id,
       label: `${citationSectionLabel(citation)} · “${summary}”`,
-      detail: citation.comment ? `${summary}\n${t('surface:agentComposer.referenceComment')}：${citation.comment}` : summary,
+      detail: citation.comment ? `${summary}\n${t('surface:agentComposer.referenceComment')}${locale === 'zh-CN' ? '：' : ': '}${citation.comment}` : summary,
     }
   })
   const contextSummary = roomCitations.length
     ? `${roomCitations[0]?.roomTitle ?? pageLabel} · ${t('surface:agentComposer.countReferences', { count: roomCitations.length })}`
     : `${pageLabel} · ${t('surface:agent.noTextSelected')}`
-  const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations)
+  const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations, locale)
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
@@ -334,11 +334,11 @@ export function AgentPanel({
       let attachments = undefined
       if (files.length > 0) {
         const filesApi = window.nxcore?.files
-        if (!filesApi) throw new Error('文件服务不可用，请稍后重试。')
+        if (!filesApi) throw new Error(t('surface:agentComposer.filesServiceUnavailable'))
         const outcomes = await filesApi.importDropped(files, { pipelines: { room: false, wiki: false, memory: false }, ...(roomId ? { roomId } : {}) })
         const imported = outcomes?.filter((item) => item.fileId && item.fileVersionId && !item.error) ?? []
         if (imported.length !== files.length) {
-          throw new Error('部分文件上传或解析失败，请检查文件格式后重试。')
+          throw new Error(t('surface:agentComposer.someFilesFailedToImport'))
         }
         attachments = imported.map((item) => ({
           fileId: item.fileId!,
@@ -349,7 +349,7 @@ export function AgentPanel({
       }
       if (externalConversation) {
         await session.sendPrompt(
-          submittedPrompt || '请分析我上传的文件。',
+          submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
           submittedContext,
           roomId ?? undefined,
           activeDocumentContext,
@@ -360,7 +360,7 @@ export function AgentPanel({
         )
       } else {
         await session.sendPrompt(
-          submittedPrompt || '请分析我上传的文件。',
+          submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
           submittedContext,
           roomId ?? undefined,
           activeDocumentContext,

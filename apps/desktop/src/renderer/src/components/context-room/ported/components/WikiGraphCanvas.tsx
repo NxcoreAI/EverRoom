@@ -79,11 +79,13 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
         centerOnMount
         className="context-room-graph-canvas"
         edges={edges}
+        maskUntilStable
         nodes={nodes}
         positions={layout.positions ?? fallbackPositions}
         revision={layout.revision}
         selectedId={selectedId}
         onResize={layout.resize}
+        onUserGesture={layout.cancelAutoFit}
         onDragNode={layout.drag}
         onReleaseNode={layout.release}
         onSelectNode={(nodeId) => {

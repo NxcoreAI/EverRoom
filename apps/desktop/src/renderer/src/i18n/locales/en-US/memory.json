@@ -52,7 +52,6 @@
   "coreProfile.savingReplacesTheFullProfileEditTheCurrent": "Saving replaces the full profile. Edit the current content instead of pasting a fragment over it.",
   "coreProfile.theL3ProfileIsALongTermUser": "The L3 profile is a long-term user profile built by MemoryCore across scenarios. It is generated as conversations accumulate and injected into AI context.",
   "coreProfile.updatedTime": "Updated {time}",
-  "memory.exploreLongTermMemoryCapturedByMemorycoreConversations": "Explore long-term memory captured by MemoryCore: conversations (L0), atomic memories (L1), scenarios (L2), and profile (L3).",
   "memory.loading": "Loading…",
   "memory.memory": "Memory",
   "memory.memoryLevels": "Memory levels",

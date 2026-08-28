@@ -5432,7 +5432,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'无标题文档'"
+          "default": "'\u65e0\u6807\u9898\u6587\u6863'"
         },
         "content_json": {
           "name": "content_json",
@@ -5889,7 +5889,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'主题'"
+          "default": "'\u4e3b\u9898'"
         },
         "summary": {
           "name": "summary",
@@ -9046,7 +9046,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'属性'"
+          "default": "'\u5c5e\u6027'"
         },
         "entity_ids": {
           "name": "entity_ids",
@@ -10133,7 +10133,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'议题'"
+          "default": "'\u8bae\u9898'"
         },
         "origin": {
           "name": "origin",

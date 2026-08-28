@@ -101,7 +101,6 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
       <header className="mem-header">
         <div>
           <h1>{t('memory:memory.memory')}</h1>
-          <p>{t('memory:memory.exploreLongTermMemoryCapturedByMemorycoreConversations')}</p>
         </div>
         <div className="mem-header-tools">
           <div className="mem-searchbox">

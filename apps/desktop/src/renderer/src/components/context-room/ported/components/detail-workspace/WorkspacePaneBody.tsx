@@ -1,4 +1,4 @@
-import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
+import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import type { DetailPane } from '../RoomIconSidebar';
@@ -29,6 +29,7 @@ export function WorkspacePaneBody({
   onEmptyTrash,
   onOpenMemory,
   onOpenObject,
+  onOpenSource,
   rooms,
   onOpenRoom,
   onToggleTask,
@@ -51,6 +52,7 @@ export function WorkspacePaneBody({
   onEmptyTrash: (roomId: string) => Promise<void>;
   onOpenMemory: (id: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
+  onOpenSource: (source: RoomAppliedEntitySource) => void;
   rooms: ContextRoomRecord[];
   onOpenRoom: (roomId: string) => void;
   onToggleTask: (taskId: string) => void;
@@ -85,7 +87,10 @@ export function WorkspacePaneBody({
       <RelationsPane
         room={room}
         rooms={rooms}
+        backendDocuments={backendDocuments}
+        knowledgeFiles={knowledgeFiles}
         onOpenRoom={onOpenRoom}
+        onSelectResource={onSelectResource}
       />
     );
   }
@@ -96,6 +101,7 @@ export function WorkspacePaneBody({
         onOpenMemory={onOpenMemory}
         onUpdateRoom={onUpdateRoom}
         onOpenRoom={onOpenRoom}
+        onOpenSource={onOpenSource}
       />
     );
   }

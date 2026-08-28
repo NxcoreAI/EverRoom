@@ -295,7 +295,9 @@ const CONTEXT_ROOM_CHANNELS = {
   refreshBrief: 'context-rooms:refresh-brief',
   overview: 'context-rooms:overview',
   refreshOverview: 'context-rooms:refresh-overview',
+  listMails: 'context-rooms:list-mails',
   roomEntities: 'context-rooms:room-entities',
+  completeLocalAction: 'context-rooms:complete-local-action',
 } as const
 
 const AGENT_CHANNELS = {
@@ -476,6 +478,8 @@ const KNOWLEDGE_CHANNELS = {
   listUnmatched: 'knowledge:unmatched:list',
   attachDoc: 'knowledge:docs:attach',
   listRecentDecisions: 'knowledge:decisions:list',
+  routeStatus: 'knowledge:route:status',
+  proposeRooms: 'knowledge:rooms:propose',
   revertDecision: 'knowledge:route:revert',
   listRoomFiles: 'knowledge:files:list',
   readFileMarkdown: 'knowledge:files:markdown',
@@ -498,6 +502,7 @@ const FILES_CHANNELS = {
   reveal: 'files:reveal',
   openOriginal: 'files:open-original',
   pickAndImport: 'files:pick-and-import',
+  pickPaths: 'files:pick-paths',
   importPathsOnce: 'files:import-paths-once',
   importAgentAttachments: 'files:import-agent-attachments',
   importProgress: 'files:import-progress',
@@ -1574,7 +1579,10 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
   handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.listMails, (_event, roomId) => bridge.listMails(roomId))
   handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.completeLocalAction, (_event, roomId: string, actionId: string, completed?: boolean) =>
+    bridge.completeLocalAction(roomId, actionId, completed !== false))
 }
 
 function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
@@ -1898,6 +1906,10 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
     bridge.attachDoc(sourceKind, sourceId, input))
   handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
     bridge.listRecentDecisions(limit))
+  handle(KNOWLEDGE_CHANNELS.routeStatus, (_event, sourceIds: string[]) =>
+    bridge.routeStatus(sourceIds))
+  handle(KNOWLEDGE_CHANNELS.proposeRooms, (_event, input: { description: string; fileEntryIds: string[] }) =>
+    bridge.proposeRooms(input))
   handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
   handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
   handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
@@ -1942,6 +1954,7 @@ function registerFilesHandlers(
     FILES_CHANNELS.pickAndImport,
     (_event, options?: { pipelines?: IngestPipelines; roomId?: string }) => bridge.pickAndImport(options),
   )
+  handle(FILES_CHANNELS.pickPaths, () => bridge.pickImportPaths())
   handle(
     FILES_CHANNELS.importPathsOnce,
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>

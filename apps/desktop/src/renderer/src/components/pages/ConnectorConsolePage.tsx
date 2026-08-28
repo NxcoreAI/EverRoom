@@ -195,7 +195,6 @@ export function ConnectorConsolePage({ embedded = false }: { embedded?: boolean 
     <div className={embedded ? 'connector-console-page connector-console-embedded' : 'page connector-console-page'}>
       {!embedded ? <PageHeader
         title={t('surface:connectorConsole.connectorConsole')}
-        description={t('surface:connectorConsole.securelyConnectAgentToTheOpenconnectorGatewayThrough')}
         extraAction={(
           <button type="button" className="secondary-button" onClick={() => void refreshStatus()}>
             <RefreshCw aria-hidden="true" />{t('surface:connectorConsole.refreshStatus')}

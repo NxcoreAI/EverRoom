@@ -34,7 +34,6 @@
 }
 
 .workspace-home-heading h1,
-.workspace-home-heading p,
 .workspace-home-section-heading h2 {
   margin: 0;
 }
@@ -45,13 +44,6 @@
   font-weight: 650;
   letter-spacing: -.025em;
   line-height: 32px;
-}
-
-.workspace-home-heading p {
-  margin-top: 7px;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 20px;
 }
 
 .workspace-home-link {

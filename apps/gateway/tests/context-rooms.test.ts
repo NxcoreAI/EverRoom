@@ -9,6 +9,7 @@ import { bundledAgentDefinitionsDir } from '../src/config.js'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   connectorCalendarEvents,
+  connectorEmails,
   connectorTodos,
   contextRooms,
   documents as documentsTable,
@@ -628,6 +629,98 @@ describe('RoomOverviewService', () => {
     expect(projection.timeline[3]).toMatchObject({ occurredAt: null })
   })
 
+  it('parses the provider from connector refs on the snapshot fallback path', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-ref', title: 'Ref Room', data: { id: 'room-ref', title: 'Ref Room' } }],
+      deletedRooms: [],
+    })
+    // 域表未回填时日程走路由快照回退：membership sourceId 是 connector ref
+    // （connector:google-calendar:…），provider 从 ref 解析供桌面打品牌图标。
+    db.insert(roomSourceMemberships).values({
+      id: 'cal-ref', roomId: 'room-ref', sourceKind: 'calendar-event',
+      sourceId: 'connector:google-calendar:04361d8a:calendar:evt-1',
+      sourceVersion: 1, evidenceGroupKey: 'ref', role: 'primary', sourceTitle: '开学典礼',
+    }).run()
+    db.insert(routeDecisions).values({
+      id: 'decision-ref', sourceKind: 'calendar-event',
+      sourceId: 'connector:google-calendar:04361d8a:calendar:evt-1', sourceVersion: 1,
+      sourceTitle: '开学典礼', sourceMarkdown: '# 开学典礼\n\n时间：2026-09-01T02:00:00.000Z → 2026-09-01T03:00:00.000Z',
+      confidence: 0.9, status: 'confirmed',
+    }).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-ref')
+    expect(projection.timeline[0]).toMatchObject({
+      text: '开学典礼',
+      data: { kind: 'timeline', eventType: 'meeting', provider: 'google-calendar' },
+    })
+  })
+
+  it('keeps junk calendar titles and low-importance facts out of the timeline', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-curate', title: 'Curate Room', data: { id: 'room-curate', title: 'Curate Room' } }],
+      deletedRooms: [],
+    })
+    // 占位/纯数字标题的流水日程没有信息量，不进时间轴；正常标题保留。
+    db.insert(roomSourceMemberships).values([
+      { id: 'cal-ok', roomId: 'room-curate', sourceKind: 'calendar-event', sourceId: 'cal-ok', sourceVersion: 1, evidenceGroupKey: 'cal-ok', role: 'primary', sourceTitle: '季度评审' },
+      { id: 'cal-num', roomId: 'room-curate', sourceKind: 'calendar-event', sourceId: 'cal-num', sourceVersion: 1, evidenceGroupKey: 'cal-num', role: 'primary', sourceTitle: '111' },
+      { id: 'cal-blank', roomId: 'room-curate', sourceKind: 'calendar-event', sourceId: 'cal-blank', sourceVersion: 1, evidenceGroupKey: 'cal-blank', role: 'primary', sourceTitle: '(无标题)' },
+    ]).run()
+    db.insert(routeDecisions).values([
+      { id: 'decision-cal-ok', sourceKind: 'calendar-event', sourceId: 'cal-ok', sourceVersion: 1, sourceTitle: '季度评审', sourceMarkdown: '# 季度评审\n\n时间：2026-08-12T02:00:00.000Z → 2026-08-12T03:00:00.000Z', confidence: 0.9, status: 'confirmed' },
+      { id: 'decision-cal-num', sourceKind: 'calendar-event', sourceId: 'cal-num', sourceVersion: 1, sourceTitle: '111', sourceMarkdown: '# 111\n\n时间：2026-08-13T02:00:00.000Z → 2026-08-13T03:00:00.000Z', confidence: 0.9, status: 'confirmed' },
+      { id: 'decision-cal-blank', sourceKind: 'calendar-event', sourceId: 'cal-blank', sourceVersion: 1, sourceTitle: '(无标题)', sourceMarkdown: '# (无标题)\n\n时间：2026-08-14T02:00:00.000Z → 2026-08-14T03:00:00.000Z', confidence: 0.9, status: 'confirmed' },
+    ]).run()
+    // 7 条事实：跨来源交叉确认 1 条 + 单来源 6 条。时间轴只留重要度前 5——
+    // 交叉确认（sourceCount 2）+ 涉及实体显著度（0.9）最高，最旧的两条单来源事实被挤掉。
+    db.insert(roomSourceMemberships).values([
+      { id: 'src-doc-9', roomId: 'room-curate', sourceKind: 'everroom-doc', sourceId: 'doc-9', sourceVersion: 1, evidenceGroupKey: 'src-doc-9', role: 'primary', sourceTitle: 'V1 项目结论' },
+      { id: 'src-mail-9', roomId: 'room-curate', sourceKind: 'mail', sourceId: 'mail-9', sourceVersion: 1, evidenceGroupKey: 'src-mail-9', role: 'mention', sourceTitle: '设计周报' },
+      { id: 'src-mail-10', roomId: 'room-curate', sourceKind: 'mail', sourceId: 'mail-10', sourceVersion: 1, evidenceGroupKey: 'src-mail-10', role: 'mention', sourceTitle: '杂项邮件' },
+    ]).run()
+    db.insert(entitiesTable).values({
+      id: 'entity-lin', name: '林薇', kind: '人物', status: 'ready', summary: 'V1 负责人',
+    }).run()
+    const mentioned = (day: number) => new Date(`2026-08-${String(day).padStart(2, '0')}T10:00:00.000Z`)
+    db.insert(roomEntityMentions).values({
+      id: 'mention-lin', roomId: 'room-curate', entityId: 'entity-lin', sourceKind: 'mail',
+      sourceId: 'mail-9', sourceVersion: 1, evidenceGroupKey: 'src-mail-9', salience: 0.9,
+      evidence: '林薇负责 V1', createdAt: mentioned(10), updatedAt: mentioned(10),
+    }).run()
+    const factRow = (id: string, factId: string, content: string, entityIds: string[], sourceId: string, day: number) => ({
+      id, roomId: 'room-curate', factId, content, type: '属性' as const, entityIds,
+      sourceKind: 'mail' as const, sourceId, sourceVersion: 1, evidenceGroupKey: `src-${sourceId}`,
+      createdAt: mentioned(day), updatedAt: mentioned(day),
+    })
+    db.insert(roomEntityFacts).values([
+      { id: 'fx-1', roomId: 'room-curate', factId: 'fact-cross', content: '林薇负责 V1 视觉设计', type: '属性', entityIds: ['entity-lin'], sourceKind: 'everroom-doc', sourceId: 'doc-9', sourceVersion: 1, evidenceGroupKey: 'src-doc-9', createdAt: mentioned(10), updatedAt: mentioned(10) },
+      { id: 'fx-2', roomId: 'room-curate', factId: 'fact-cross', content: '林薇负责 V1 视觉设计', type: '属性', entityIds: ['entity-lin'], sourceKind: 'mail', sourceId: 'mail-9', sourceVersion: 1, evidenceGroupKey: 'src-mail-9', createdAt: mentioned(10), updatedAt: mentioned(10) },
+      factRow('fn-1', 'fact-n1', '新事实一', [], 'mail-10', 9),
+      factRow('fn-2', 'fact-n2', '新事实二', ['entity-lin'], 'mail-10', 8),
+      factRow('fn-3', 'fact-n3', '新事实三', [], 'mail-10', 7),
+      factRow('fn-4', 'fact-n4', '新事实四', [], 'mail-10', 6),
+      factRow('fo-2', 'fact-old2', '四月旧事实二', [], 'mail-10', 2),
+      factRow('fo-1', 'fact-old1', '四月旧事实一', [], 'mail-10', 1),
+    ]).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-curate')
+    const texts = projection.timeline.map((item) => item.text)
+    expect(texts).toContain('季度评审')
+    expect(texts).not.toContain('111')
+    expect(texts).not.toContain('(无标题)')
+    const factTexts = projection.timeline
+      .map((item) => item.data?.kind === 'timeline' && item.data.eventType === 'fact' ? item.text : null)
+      .filter(Boolean)
+    expect(factTexts).toHaveLength(5)
+    // 交叉确认 + 高显著度实体的事实排最前；最旧的两条单来源事实被挤掉。
+    expect(factTexts[0]).toBe('林薇负责 V1 视觉设计')
+    expect(factTexts).toContain('新事实二')
+    expect(factTexts).not.toContain('四月旧事实一')
+    expect(factTexts).not.toContain('四月旧事实二')
+  })
+
   it('projects connector calendar rows and todos deterministically into nextSteps and timeline', async () => {
     const { service, db } = await createHarness()
     service.saveSnapshot({
@@ -691,7 +784,7 @@ describe('RoomOverviewService', () => {
     expect(schedules.map((item) => item.text)).toEqual(['旧周会', '发射协调会'])
     expect(schedules[1]).toMatchObject({
       evidence: [{ sourceKind: 'calendar-event', sourceId: 'cal-conn-1', sourceTitle: '发射协调会' }],
-      data: { kind: 'next_step', itemType: 'schedule', dueAt: '2026-12-01T02:00:00.000Z', status: 'scheduled' },
+      data: { kind: 'next_step', itemType: 'schedule', dueAt: '2026-12-01T02:00:00.000Z', status: 'scheduled', provider: 'google_calendar' },
     })
     expect(projection.nextSteps.filter((item) => item.text === '发射协调会')).toHaveLength(1)
     // 确定性 task claim：未完成待办进入 nextSteps；已完成的不进。
@@ -711,7 +804,8 @@ describe('RoomOverviewService', () => {
     expect(timelineByTitle.get('已完成待办')).toMatchObject({ occurredAt: '2026-08-02T01:00:00.000Z' })
     expect(timelineByTitle.get('发射协调会')).toMatchObject({
       occurredAt: '2026-12-01T02:00:00.000Z',
-      data: { kind: 'timeline', eventType: 'meeting' },
+      // 域表 service 透传为 claim data.provider——桌面据此打服务商品牌图标。
+      data: { kind: 'timeline', eventType: 'meeting', provider: 'google_calendar' },
     })
     // freshness 水位用连接器源的路由进房时间（membership.updatedAt）：
     // 事件 startedAt/dueAt 不参与——历史回填也能推进水位，未来日程不会把水位顶到未来。
@@ -734,14 +828,16 @@ describe('RoomOverviewService', () => {
       endAt: null, allDay: true, status: 'confirmed', location: null,
     }))
     const upcoming = ([
+      // 今天本地 00:30 已开始：仍要进日程 claim（桌面「今日日程」显示当天已开始的日程）
+      { daysAhead: 0, title: '今天已开始的晨会', startAt: new Date(new Date().setHours(0, 30, 0, 0)) },
       { daysAhead: 3, title: '即将到来的开学典礼' },
       { daysAhead: 10, title: '较远的家长会' },
-    ] as Array<{ daysAhead: number; title: string }>).map((event, index): typeof connectorCalendarEvents.$inferInsert => ({
+    ] as Array<{ daysAhead: number; title: string; startAt?: Date }>).map((event, index): typeof connectorCalendarEvents.$inferInsert => ({
       id: `cal-future-${index}`, ownerId: 'local-user', service: 'google_calendar', connectionName: 'default',
       sourceRecordId: `future-${index}`, sourceUpdatedAt: syncedAt, syncedAt, schemaVersion: 1, promptVersion: 1,
       contentHash: `hash-future-${index}`, extensionPayload: null,
       eventId: `future-${index}`, title: event.title, description: '',
-      organizer: null, attendees: [], startAt: new Date(Date.now() + event.daysAhead * 86_400_000),
+      organizer: null, attendees: [], startAt: event.startAt ?? new Date(Date.now() + event.daysAhead * 86_400_000),
       endAt: null, allDay: false, status: 'confirmed', location: null,
     }))
     db.insert(connectorCalendarEvents).values([...pastEvents, ...upcoming]).run()
@@ -751,12 +847,14 @@ describe('RoomOverviewService', () => {
     }))).run()
 
     const projection = new RoomOverviewService(db, service).refresh('room-many')
-    // 日程 claim 先过滤未来再截断：26 条里 24 条历史不会挤掉 2 条未来日程，按时间升序。
+    // 日程 claim 先过滤「今天日界起」再截断：27 条里 24 条历史不会挤掉未来日程，按时间升序；
+    // 今天已开始（00:30）的日程保留——桌面「今日日程」靠它显示当天已过开始时间的日程。
     const schedules = projection.nextSteps.filter((item) => item.data?.kind === 'next_step' && item.data.itemType === 'schedule')
-    expect(schedules.map((item) => item.text)).toEqual(['即将到来的开学典礼', '较远的家长会'])
+    expect(schedules.map((item) => item.text)).toEqual(['今天已开始的晨会', '即将到来的开学典礼', '较远的家长会'])
     // 时间轴取最新 20 条：最老的历史事件被挤出，未来事件保留。
     const timelineTitles = projection.timeline.map((item) => item.text)
     expect(timelineTitles).not.toContain('历史事件0')
+    expect(timelineTitles).toContain('今天已开始的晨会')
     expect(timelineTitles).toContain('即将到来的开学典礼')
     expect(timelineTitles).toContain('较远的家长会')
   })
@@ -1078,5 +1176,115 @@ describe('RoomOverviewService', () => {
       const accepted = validate({ task: input.task, ...input.taskInput })
       expect(accepted, JSON.stringify(validate.errors)).toBe(true)
     }
+  })
+
+  it('lists routed mails from connector_emails domain rows, newest first', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-mail', title: 'Mail Room', data: { id: 'room-mail', title: 'Mail Room' } }],
+      deletedRooms: [],
+    })
+    const syncedAt = new Date('2026-08-20T08:00:00.000Z')
+    const mailRow = (id: string, subject: string, sentAt: Date, mailService = 'gmail'): typeof connectorEmails.$inferInsert => ({
+      id, ownerId: 'local-user', service: mailService, connectionName: 'default',
+      sourceRecordId: `rec-${id}`, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: `hash-${id}`, extensionPayload: null,
+      messageId: `msg-${id}`, threadId: null, senderName: '张三', senderAddress: 'zhang@example.com',
+      recipients: [{ address: 'me@example.com' }], subject, sentAt,
+      bodyText: '第一行正文\n\n第二段', labels: [], hasAttachments: id === 'mail-1',
+    })
+    db.insert(connectorEmails).values([
+      mailRow('mail-1', '发布评审通知', new Date('2026-08-21T02:00:00.000Z')),
+      mailRow('mail-2', '周报', new Date('2026-08-22T02:00:00.000Z'), 'outlook'),
+    ]).run()
+    db.insert(roomSourceMemberships).values([
+      { id: 'mail-m-1', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'm1', role: 'primary', sourceTitle: '发布评审通知' },
+      { id: 'mail-m-2', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-2', sourceVersion: 1, evidenceGroupKey: 'm2', role: 'primary', sourceTitle: '周报' },
+    ]).run()
+
+    const mails = new RoomOverviewService(db, service).listRoomMails('room-mail')
+    expect(mails.map((mail) => mail.subject)).toEqual(['周报', '发布评审通知'])
+    // provider 透传 service 列（outlook 行点亮 Outlook 图标）
+    expect(mails[0]?.provider).toBe('outlook')
+    expect(mails[1]).toMatchObject({
+      sourceId: 'mail-1',
+      senderName: '张三',
+      senderAddress: 'zhang@example.com',
+      sentAt: '2026-08-21T02:00:00.000Z',
+      snippet: '第一行正文 第二段',
+      hasAttachments: true,
+      provider: 'gmail',
+    })
+  })
+
+  it('falls back to route snapshots for connector-ref mails, parsing sender and time from markdown', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-mail', title: 'Mail Room', data: { id: 'room-mail', title: 'Mail Room' } }],
+      deletedRooms: [],
+    })
+    const refSourceId = 'connector:gmail:abc:mail:msg-9'
+    db.insert(roomSourceMemberships).values([
+      { id: 'mail-ref', roomId: 'room-mail', sourceKind: 'mail', sourceId: refSourceId, sourceVersion: 2, evidenceGroupKey: 'm9', role: 'primary', sourceTitle: '发射窗口确认' },
+    ]).run()
+    db.insert(routeDecisions).values([
+      {
+        id: 'decision-mail-old', sourceKind: 'mail', sourceId: refSourceId, sourceVersion: 1,
+        sourceTitle: '旧主题', sourceMarkdown: '# 旧主题\n\n发件人：旧 <old@example.com>\n\n时间：2026-08-01T01:00:00.000Z\n\n旧正文',
+        confidence: 0.8, status: 'confirmed',
+      },
+      {
+        id: 'decision-mail-new', sourceKind: 'mail', sourceId: refSourceId, sourceVersion: 2,
+        sourceTitle: '发射窗口确认', sourceMarkdown: '# 发射窗口确认\n\n发件人：李四 <li@example.com>\n\n时间：2026-08-23T09:30:00.000Z\n\n请确认 9 月 5 日的发射窗口。',
+        confidence: 0.9, status: 'confirmed',
+      },
+    ]).run()
+
+    const mails = new RoomOverviewService(db, service).listRoomMails('room-mail')
+    expect(mails).toHaveLength(1)
+    expect(mails[0]).toMatchObject({
+      sourceId: refSourceId,
+      subject: '发射窗口确认',
+      senderName: '李四 <li@example.com>',
+      sentAt: '2026-08-23T09:30:00.000Z',
+      snippet: '请确认 9 月 5 日的发射窗口。',
+      provider: 'gmail',
+    })
+  })
+
+  it('skips soft-deleted domain rows and never leaks mails routed to another room', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [
+        { id: 'room-mail', title: 'Mail Room', data: { id: 'room-mail', title: 'Mail Room' } },
+        { id: 'room-other', title: 'Other Room', data: { id: 'room-other', title: 'Other Room' } },
+      ],
+      deletedRooms: [],
+    })
+    const syncedAt = new Date('2026-08-20T08:00:00.000Z')
+    const mailRow = (id: string): typeof connectorEmails.$inferInsert => ({
+      id, ownerId: 'local-user', service: 'gmail', connectionName: 'default',
+      sourceRecordId: `rec-${id}`, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: `hash-${id}`, extensionPayload: null,
+      messageId: `msg-${id}`, threadId: null, senderName: null, senderAddress: 'noreply@example.com',
+      recipients: [], subject: `邮件${id}`, sentAt: new Date('2026-08-22T02:00:00.000Z'),
+      bodyText: '正文', labels: [], hasAttachments: false,
+    })
+    db.insert(connectorEmails).values([
+      { ...mailRow('mail-live'), id: 'mail-live' },
+      // 软删除行：域表不可见,且无路由快照可回退 → 整条不进清单
+      { ...mailRow('mail-del'), id: 'mail-del', deletedAt: syncedAt },
+    ]).run()
+    db.insert(roomSourceMemberships).values([
+      { id: 'mail-live-m', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-live', sourceVersion: 1, evidenceGroupKey: 'lv', role: 'primary', sourceTitle: '邮件mail-live' },
+      { id: 'mail-del-m', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-del', sourceVersion: 1, evidenceGroupKey: 'dl', role: 'primary', sourceTitle: '邮件mail-del' },
+      { id: 'mail-other-m', roomId: 'room-other', sourceKind: 'mail', sourceId: 'mail-live', sourceVersion: 1, evidenceGroupKey: 'ot', role: 'mention', sourceTitle: '邮件mail-live' },
+    ]).run()
+
+    const overviews = new RoomOverviewService(db, service)
+    expect(overviews.listRoomMails('room-mail').map((mail) => mail.sourceId)).toEqual(['mail-live'])
+    expect(overviews.listRoomMails('room-other').map((mail) => mail.sourceId)).toEqual(['mail-live'])
+    // 未知 Room 报 404 级错误，与其他概览读取一致
+    expect(() => overviews.listRoomMails('room-mail-not-exist')).toThrowError('context_room_not_found')
   })
 })

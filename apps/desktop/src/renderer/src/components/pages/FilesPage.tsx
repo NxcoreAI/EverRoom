@@ -14,7 +14,6 @@ import type { BrowserExtensionClipperCapture } from '../../../../shared/browser-
 import { PageHeader } from './PageHeader'
 import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition } from './fileCategories'
 import { formatBytes, formatDate } from './sources/sourceFormatters'
-import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 type FilesView = 'files' | 'events'
@@ -451,7 +450,6 @@ export function FilesPage() {
       ) : null}
       <PageHeader
         title={t('surface:files.documentRecognition')}
-        description={t('surface:files.documentRecognitionDescription', { product: PRODUCT_NAME })}
         action={t('surface:files.importFiles')}
         actionDisabled={!filesApi || importing}
         onAction={() => void importFiles()}
@@ -580,7 +578,8 @@ export function FilesPage() {
                       <span className="file-document-icon"><FileTypeIcon file={file} /></span>
                       <span className="file-document-copy"><strong title={file.originalName}>{file.sharedTitle}</strong></span>
                     </button>
-                    <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.unparsed') : file.processingState === 'missing' ? '原件不可用' : '处理中'}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
+                    <div className="file-document-preview" aria-hidden="true"><span /><span /><span /></div>
+                    <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? t('surface:files.originalMissing') : t('surface:files.processing')}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
                     <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t('surface:files.revealName', { name: file.originalName })} title={t('surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => revealOriginal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
                   </article>
                 }}

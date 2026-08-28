@@ -7,6 +7,7 @@ import {
   addRoomOverviewCitation,
   isRoomOverviewCitationSection,
   ROOM_OVERVIEW_CITATION_CLEAR_EVENT,
+  updateRoomOverviewCitation,
   type RoomOverviewCitation,
   type RoomOverviewCitationSection,
 } from './roomOverviewCitation'
@@ -37,6 +38,12 @@ type CitationBadge = {
   point: ViewportPoint
 }
 
+type EditingCitation = {
+  citation: RoomOverviewCitation
+  draftComment: string
+  editorPoint: ViewportPoint
+}
+
 function elementOf(node: Node | null): Element | null {
   return node instanceof Element ? node : node?.parentElement ?? null
 }
@@ -58,6 +65,13 @@ function commentEditorPoint(
   return {
     top: Math.max(8, Math.min(window.innerHeight - 104, rect.bottom + 8)),
     left: horizontalPoint(rect, COMMENT_EDITOR_WIDTH),
+  }
+}
+
+function citationEditorPoint(point: ViewportPoint): ViewportPoint {
+  return {
+    top: Math.max(8, Math.min(window.innerHeight - 132, point.top + 26)),
+    left: Math.max(8, Math.min(window.innerWidth - COMMENT_EDITOR_WIDTH - 8, point.left - COMMENT_EDITOR_WIDTH / 2)),
   }
 }
 
@@ -129,8 +143,11 @@ export function RoomOverviewCitationControls({
   const citedRangesRef = useRef(new Map<string, Range>())
   const previousRoomIdRef = useRef(roomId)
   const commentInputRef = useRef<HTMLInputElement>(null)
+  const editInputRef = useRef<HTMLInputElement>(null)
+  const editorRef = useRef<HTMLFormElement>(null)
   const [selectionOverlay, setSelectionOverlay] = useState<RoomOverviewTextSelection | null>(null)
   const [pendingCitation, setPendingCitation] = useState<PendingCitation | null>(null)
+  const [editingCitation, setEditingCitation] = useState<EditingCitation | null>(null)
   const [citations, setCitations] = useState<RoomOverviewCitation[]>([])
   const [citationBadges, setCitationBadges] = useState<CitationBadge[]>([])
 
@@ -152,6 +169,12 @@ export function RoomOverviewCitationControls({
       if (!current) return null
       const rect = current.range.getBoundingClientRect()
       return { ...current, editorPoint: commentEditorPoint(rect) }
+    })
+    setEditingCitation((current) => {
+      if (!current) return null
+      const rect = citedRangesRef.current.get(current.citation.id)?.getBoundingClientRect()
+      const point = rect ? roomOverviewCitationBadgePoint(rect) : null
+      return point ? { ...current, editorPoint: citationEditorPoint(point) } : current
     })
   }, [citations])
 
@@ -201,12 +224,30 @@ export function RoomOverviewCitationControls({
   }, [pendingCitation])
 
   useEffect(() => {
+    if (editingCitation) editInputRef.current?.focus()
+  }, [editingCitation])
+
+  useEffect(() => {
+    if (!editingCitation) return undefined
+    const closeOnOutsidePointerDown = (event: Event) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (editorRef.current?.contains(target)) return
+      if (target instanceof Element && target.closest('.context-room-citation-badge')) return
+      setEditingCitation(null)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointerDown)
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointerDown)
+  }, [editingCitation])
+
+  useEffect(() => {
     if (previousRoomIdRef.current === roomId) return
     previousRoomIdRef.current = roomId
     citedRangesRef.current.clear()
     setCitations([])
     setCitationBadges([])
     setSelectionOverlay(null)
+    setEditingCitation(null)
     cancelPendingCitation()
     highlightRegistry()?.delete(CITATION_HIGHLIGHT_NAME)
   }, [cancelPendingCitation, roomId])
@@ -219,6 +260,7 @@ export function RoomOverviewCitationControls({
   const openCommentEditor = useCallback(() => {
     if (!selectionOverlay) return
     cancelPendingCitation()
+    setEditingCitation(null)
     const rect = selectionOverlay.range.getBoundingClientRect()
     const highlight = createHighlight([selectionOverlay.range])
     if (highlight) highlightRegistry()?.set(PENDING_HIGHLIGHT_NAME, highlight)
@@ -251,6 +293,42 @@ export function RoomOverviewCitationControls({
     setCitations((current) => [...current, citation])
     addRoomOverviewCitation(citation)
   }, [pendingCitation, roomId, roomTitle])
+
+  const openCitationEditor = useCallback((citation: RoomOverviewCitation) => {
+    cancelPendingCitation()
+    setSelectionOverlay(null)
+    document.getSelection()?.removeAllRanges()
+    if (editingCitation?.citation.id === citation.id) {
+      setEditingCitation(null)
+      return
+    }
+    const badge = citationBadges.find((item) => item.citation.id === citation.id)
+    setEditingCitation({
+      citation,
+      draftComment: citation.comment ?? '',
+      editorPoint: badge ? citationEditorPoint(badge.point) : { top: 8, left: 8 },
+    })
+  }, [cancelPendingCitation, citationBadges, editingCitation])
+
+  const saveCitationComment = useCallback((event?: FormEvent) => {
+    event?.preventDefault()
+    if (!editingCitation) return
+    const comment = editingCitation.draftComment.trim().slice(0, MAX_COMMENT_LENGTH)
+    const { comment: _previousComment, ...rest } = editingCitation.citation
+    const updated: RoomOverviewCitation = { ...rest, ...(comment ? { comment } : {}) }
+    setEditingCitation(null)
+    if (comment === (editingCitation.citation.comment ?? '')) return
+    setCitations((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+    updateRoomOverviewCitation(updated)
+  }, [editingCitation])
+
+  const revokeCitationComment = useCallback(() => {
+    if (!editingCitation) return
+    const { comment: _previousComment, ...updated } = editingCitation.citation
+    setEditingCitation(null)
+    setCitations((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+    updateRoomOverviewCitation(updated)
+  }, [editingCitation])
 
   return (
     <>
@@ -297,13 +375,50 @@ export function RoomOverviewCitationControls({
           </button>
         </form>
       ) : null}
+      {editingCitation ? (
+        <form
+          ref={editorRef}
+          className="context-room-citation-comment context-room-citation-edit"
+          style={{ top: editingCitation.editorPoint.top, left: editingCitation.editorPoint.left }}
+          onSubmit={saveCitationComment}
+        >
+          <span title={editingCitation.citation.text}><Quote aria-hidden="true" />{editingCitation.citation.text}</span>
+          <input
+            ref={editInputRef}
+            value={editingCitation.draftComment}
+            maxLength={MAX_COMMENT_LENGTH}
+            aria-label={t('contextRoom:overviewDashboard.optionalCitationComment')}
+            placeholder={t('contextRoom:overviewDashboard.optionalCitationComment')}
+            onChange={(event) => setEditingCitation((current) => current ? { ...current, draftComment: event.target.value } : current)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setEditingCitation(null)
+            }}
+          />
+          {editingCitation.citation.comment ? (
+            <button
+              type="button"
+              className="context-room-citation-edit-revoke"
+              onClick={revokeCitationComment}
+            >
+              {t('contextRoom:overviewDashboard.revokeCitationComment')}
+            </button>
+          ) : null}
+          <button type="submit" className="context-room-citation-comment-add">
+            <Check aria-hidden="true" />
+            {t('contextRoom:overviewDashboard.saveCitationComment')}
+          </button>
+        </form>
+      ) : null}
       {citationBadges.map(({ citation, point }) => (
-        <span
+        <button
+          type="button"
           key={citation.id}
           className="context-room-citation-badge"
           title={citation.comment || t('contextRoom:overviewDashboard.referencedByAgent')}
+          aria-label={t('contextRoom:overviewDashboard.editCitationComment')}
           style={point}
-        ><Quote aria-hidden="true" /></span>
+          onClick={() => openCitationEditor(citation)}
+        ><Quote aria-hidden="true" /></button>
       ))}
     </>
   )

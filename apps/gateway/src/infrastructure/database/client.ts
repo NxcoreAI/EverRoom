@@ -352,6 +352,13 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     ensureLatestMainMigrations();
     record("0039_multi_agent_conversations");
   }
+  if (hasTable("room_local_actions")
+    && hasColumn("room_local_actions", "created_via_run_id")
+    && hasColumn("room_local_actions", "completed_at")) {
+    // Renumbered from 0042 to 0043 (new when) after the electron migration
+    // branch claimed 0042; adopt installs that applied it under the old tag.
+    record("0043_stale_vargas");
+  }
 }
 
 /** Reconcile databases created by feat/contextroom before its migration chain

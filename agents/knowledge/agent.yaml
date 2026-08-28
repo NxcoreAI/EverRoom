@@ -11,6 +11,7 @@ capabilities:
   - knowledge.entity-extract
   - knowledge.entity-identity
   - knowledge.entity-register
+  - knowledge.room-proposals
 
 tools: []
 
@@ -19,3 +20,4 @@ skills:
   - ./skills/entity-extraction
   - ./skills/entity-identity
   - ./skills/entity-registration
+  - ./skills/room-proposals

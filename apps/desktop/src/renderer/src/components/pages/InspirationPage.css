@@ -6,7 +6,6 @@
 }
 .inspiration-header { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:24px 0 20px; border-bottom:1px solid var(--inspiration-border); }
 .inspiration-heading h1 { margin:0; font-size:24px; line-height:1.25; font-weight:650; letter-spacing:0; }
-.inspiration-heading p { margin:6px 0 0; color:var(--inspiration-muted); font-size:13px; }
 .inspiration-header-note { display:flex; align-items:baseline; gap:6px; color:var(--inspiration-muted); font-size:12px; }
 .inspiration-header-note strong { color:var(--inspiration-text); font-size:20px; font-weight:650; }
 .inspiration-toolbar { display:grid; grid-template-columns:auto minmax(220px,1fr) auto; align-items:center; gap:12px; padding:16px 0; }

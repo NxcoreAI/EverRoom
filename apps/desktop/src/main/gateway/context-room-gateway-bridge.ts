@@ -11,6 +11,7 @@ import type {
   RoomOverviewProjection,
   RoomMergeOperation,
   RoomMergePreview,
+  RoomMail,
   SaveContextRoomSnapshotInput,
   SubagentInvocation,
 } from '@nxcore/agent-contract'
@@ -108,8 +109,24 @@ export class ContextRoomGatewayBridge {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/overview`)
   }
 
+  /** Room 邮箱面板的连接器邮件清单（sentAt 倒序，截 500）。 */
+  listMails(roomId: string): Promise<{ items: RoomMail[] }> {
+    return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/mails`)
+  }
+
   refreshOverview(roomId: string): Promise<RoomOverviewProjection> {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/overview/refresh`, { method: 'POST' })
+  }
+
+  /** 勾选完成/恢复 Room 本地待办：返回新行与重建后的总览投影。 */
+  completeLocalAction(roomId: string, actionId: string, completed = true): Promise<{
+    action: { id: string; kind: 'task' | 'schedule'; title: string; completedAt: string | null };
+    overview: RoomOverviewProjection;
+  }> {
+    return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/actions/${encodeURIComponent(actionId)}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ completed }),
+    })
   }
 
   /** Room 关联的应用实体（room_entity_mentions + entities 实时状态）。 */

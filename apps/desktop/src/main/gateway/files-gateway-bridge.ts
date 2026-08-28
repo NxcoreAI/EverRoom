@@ -333,6 +333,24 @@ export class FilesGatewayBridge {
   }
 
   /**
+   * 仅选择：系统选择框返回文件/文件夹路径，不立即导入。创建 Room 弹窗
+   * 先暂存选择，用户提交后才由 importPathsOnce 开始导入。
+   */
+  async pickImportPaths(): Promise<string[]> {
+    const picked = await dialog.showOpenDialog({
+      title: desktopText('dialog.importFiles.title'),
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+      filters: [
+        {
+          name: desktopText('dialog.importFiles.documents'),
+          extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+      ],
+    })
+    return picked.canceled ? [] : picked.filePaths
+  }
+
+  /**
    * 一次性手动采集：展开本次明确选择的文件/目录并导入。不会注册本地
    * 数据源或 watcher，后续文件变化也不会触发自动重扫。
    */
@@ -348,8 +366,14 @@ export class FilesGatewayBridge {
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
       manualExtensions,
     )
-    let candidates = importPlan.candidates
-    if (importPlan.highRiskFileCount > HIGH_RISK_FILE_BATCH_THRESHOLD && this.highRiskImports) {
+    // 本会话已明确跳过的文件直接排除：重试/再导入同一目录不再重复进入高风险审查。
+    const highRiskImports = this.highRiskImports
+    let candidates = highRiskImports
+      ? importPlan.candidates.filter((candidate) => !highRiskImports.isSkippedManualPath(candidate.filePath))
+      : importPlan.candidates
+    const highRiskFileCount = candidates
+      .filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath))).length
+    if (highRiskFileCount > HIGH_RISK_FILE_BATCH_THRESHOLD && this.highRiskImports) {
       const lowRiskCandidates = candidates.filter((candidate) => isLowRiskFileExtension(extname(candidate.filePath)))
       const highRiskCandidates = candidates.filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath)))
       await this.highRiskImports.enqueueManual({
@@ -442,7 +466,9 @@ export class FilesGatewayBridge {
           sourceKind: 'manual-upload',
           sourceKey: options?.source
             ? `obsidian:${options.source.id}:${options.source.resourceIdsByRelativePath?.[filename] ?? filename}`
-            : `manual:${randomUUID()}`,
+            // 确定性 key（同路径重导入命中同一 entry）：版本级去重才生效，
+            // 否则每次重导入都铸新 entry + 重复排队路由，决策也挂到新 id 上。
+            : `manual:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
           originalName: basename(filePath),
           relativePath: filename,
           ...(options?.source ? { provider: options.source.label, connectionId: options.source.id } : {}),

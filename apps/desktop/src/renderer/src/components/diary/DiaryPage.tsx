@@ -100,14 +100,16 @@ interface ActiveDiaryRun {
   attempt: number
 }
 
-const REFERENCE_TODAY = new Date()
-REFERENCE_TODAY.setHours(0, 0, 0, 0)
-const STRIP_START = new Date(
-  REFERENCE_TODAY.getFullYear(),
-  REFERENCE_TODAY.getMonth(),
-  REFERENCE_TODAY.getDate() - 28,
-)
 const STRIP_DAY_COUNT = 29
+
+// “今天”必须跟随真实日期滚动：桌面应用常年不重启，模块级常量会在跨午夜后
+// 把昨天当今天（日期条、日历禁用范围、回到今天全部失真）。组件内用 state
+// 持有，定时器探测到日期翻转时更新。
+function getToday(): Date {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  return date
+}
 
 // 网关重启/失联时 generate 会抛这类连接错误（dev 下 tsx watch 会随源码保存重启网关）。
 // 原样展示对用户没有可操作性，改提示“稍后重试”。
@@ -276,9 +278,9 @@ async function loadDiaryMedia(details: DiaryDayDetails, locale: AppLocale, t: Tr
   return toDiaryDay(details, locale, t, new Map(loaded.filter((entry): entry is readonly [string, string] => entry !== null)))
 }
 
-function formatDayHeading(date: Date, locale: AppLocale, t: Translate): string {
+function formatDayHeading(date: Date, today: Date, locale: AppLocale, t: Translate): string {
   const weekday = new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(date)
-  if (sameDay(date, REFERENCE_TODAY)) return t('diaryReality:diary.todayWeekday', { weekday })
+  if (sameDay(date, today)) return t('diaryReality:diary.todayWeekday', { weekday })
   const formattedDate = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric' }).format(date)
   return t('diaryReality:diary.dateWeekday', { date: formattedDate, weekday })
 }
@@ -297,11 +299,13 @@ function createCalendarDays(year: number, month: number, locale: AppLocale): Dat
 
 function CalendarDialog({
   selectedDate,
+  today,
   intensityByDate,
   onSelect,
   onClose,
 }: {
   selectedDate: Date
+  today: Date
   intensityByDate: Record<string, number>
   onSelect: (date: Date) => void
   onClose: () => void
@@ -410,7 +414,7 @@ function CalendarDialog({
                 value={viewDate.getFullYear()}
                 onChange={(event) => setViewDate(new Date(Number(event.target.value), viewDate.getMonth(), 1))}
               >
-                {[REFERENCE_TODAY.getFullYear() - 1, REFERENCE_TODAY.getFullYear(), REFERENCE_TODAY.getFullYear() + 1]
+                {[today.getFullYear() - 1, today.getFullYear(), today.getFullYear() + 1]
                   .map((year) => <option key={year} value={year}>{new Intl.DateTimeFormat(locale, { year: 'numeric' }).format(new Date(year, 0, 1))}</option>)}
               </select>
             </label>
@@ -440,7 +444,7 @@ function CalendarDialog({
           {calendarDays.map((date) => {
             const key = toDateKey(date)
             const isOutside = date.getMonth() !== viewDate.getMonth()
-            const isFuture = date > REFERENCE_TODAY
+            const isFuture = date > today
             return (
               <button
                 key={key}
@@ -449,8 +453,8 @@ function CalendarDialog({
                 data-level={intensityByDate[key] ?? 0}
                 data-outside={String(isOutside)}
                 data-selected={String(sameDay(date, selectedDate))}
-                data-today={String(sameDay(date, REFERENCE_TODAY))}
-                data-today-label={sameDay(date, REFERENCE_TODAY) ? t('diaryReality:diary.todayShort') : undefined}
+                data-today={String(sameDay(date, today))}
+                data-today-label={sameDay(date, today) ? t('diaryReality:diary.todayShort') : undefined}
                 disabled={isFuture}
                 aria-pressed={sameDay(date, selectedDate)}
                 aria-label={new Intl.DateTimeFormat(locale, { dateStyle: 'full' }).format(date)}
@@ -473,7 +477,7 @@ function CalendarDialog({
           </span>
           <span>{t('diaryReality:diary.moreActivity')}</span>
           <button type="button" onClick={() => {
-            onSelect(REFERENCE_TODAY)
+            onSelect(today)
             closeDialog()
           }}>{t('diaryReality:diary.backToToday')}</button>
         </footer>
@@ -780,15 +784,26 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
   const contentRef = useRef<HTMLElement>(null)
   const transitionDirectionRef = useRef(1)
   const isFirstRenderRef = useRef(true)
-  const [selectedDate, setSelectedDate] = useState(REFERENCE_TODAY)
+  const [today, setToday] = useState(getToday)
+  const [selectedDate, setSelectedDate] = useState(() => getToday())
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [activeRun, setActiveRun] = useState<ActiveDiaryRun | null>(null)
   const [generatedDays, setGeneratedDays] = useState<Record<string, DiaryDay>>({})
   const [intensityByDate, setIntensityByDate] = useState<Record<string, number>>({})
-  const [loadingDate, setLoadingDate] = useState<string | null>(() => toDateKey(REFERENCE_TODAY))
+  const [loadingDate, setLoadingDate] = useState<string | null>(() => toDateKey(getToday()))
   const [hasCompletedInitialLoad, setHasCompletedInitialLoad] = useState(false)
   const [runElapsedSeconds, setRunElapsedSeconds] = useState(0)
-  const stripDays = useMemo(() => buildDateRange(STRIP_START, STRIP_DAY_COUNT), [])
+  // 跨午夜后刷新“今天”：日期条窗口、日历的将来日禁用、回到今天按钮全部依赖它。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setToday((current) => {
+        const next = getToday()
+        return sameDay(next, current) ? current : next
+      })
+    }, 30_000)
+    return () => clearInterval(timer)
+  }, [])
+  const stripDays = useMemo(() => buildDateRange(shiftDate(today, -(STRIP_DAY_COUNT - 1)), STRIP_DAY_COUNT), [today])
   const selectedKey = toDateKey(selectedDate)
   const diary = generatedDays[selectedKey]
   const diaryLoading = loadingDate === selectedKey
@@ -823,7 +838,7 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
   useEffect(() => {
     if (!window.nxcore) return
     let cancelled = false
-    void window.nxcore.diary.days(toDateKey(STRIP_START), toDateKey(REFERENCE_TODAY)).then((days) => {
+    void window.nxcore.diary.days(toDateKey(shiftDate(today, -(STRIP_DAY_COUNT - 1))), toDateKey(today)).then((days) => {
       if (cancelled) return
       setIntensityByDate(Object.fromEntries(days.map((day) => [
         day.date,
@@ -831,7 +846,7 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
       ])))
     }).catch(() => undefined)
     return () => { cancelled = true }
-  }, [])
+  }, [today])
 
   useEffect(() => {
     if (!window.nxcore) {
@@ -877,7 +892,7 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
       setActiveRun({ id: runId, date: selectedKey, startedAt: new Date().toISOString(), attempt: 0 })
       showToast({
         title: t('diaryReality:diary.diaryGenerationStarted'),
-        message: t('diaryReality:diary.dateIsBeingOrganizedInTheBackground', { date: formatDayHeading(selectedDate, locale, t) }),
+        message: t('diaryReality:diary.dateIsBeingOrganizedInTheBackground', { date: formatDayHeading(selectedDate, today, locale, t) }),
       })
     } catch (error) {
       setActiveRun(null)
@@ -889,7 +904,7 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
           : detail || t('diaryReality:diary.theBackgroundTaskCouldNotBeCompleted'),
       })
     }
-  }, [activeRun, locale, selectedDate, selectedKey, t])
+  }, [activeRun, locale, selectedDate, selectedKey, t, today])
 
   useEffect(() => {
     if (!activeRun || !window.nxcore) return
@@ -1073,6 +1088,7 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
 
   return (
     <div ref={pageRef} className="page diary-page">
+      <div className="diary-body">
       <header className="diary-date-strip">
         <div className="diary-date-strip-inner">
           <div className="diary-date-meta">
@@ -1082,7 +1098,7 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
           <div className="diary-strip-days">
             {stripDays.map((date) => {
               const key = toDateKey(date)
-              const isFuture = date > REFERENCE_TODAY
+              const isFuture = date > today
               return (
                 <button
                   key={key}
@@ -1102,8 +1118,8 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
             })}
           </div>
           <span className="diary-strip-actions">
-            {!sameDay(selectedDate, REFERENCE_TODAY) ? (
-              <button type="button" className="diary-today-button" onClick={() => selectDate(REFERENCE_TODAY)}>
+            {!sameDay(selectedDate, today) ? (
+              <button type="button" className="diary-today-button" onClick={() => selectDate(today)}>
                 <RotateCcw aria-hidden="true" />{t('diaryReality:diary.backToToday')}
               </button>
             ) : null}
@@ -1131,7 +1147,7 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
           </span>
         </div>
         <div className="diary-strip-selection">
-          {sameDay(selectedDate, REFERENCE_TODAY) ? t('diaryReality:diary.today') : new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(selectedDate)}
+          {sameDay(selectedDate, today) ? t('diaryReality:diary.today') : new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(selectedDate)}
           <strong>{new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(selectedDate)}</strong>
         </div>
       </header>
@@ -1161,12 +1177,12 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
               className="diary-day-arrow diary-day-arrow-next"
               title={t('diaryReality:diary.nextDay')}
               aria-label={t('diaryReality:diary.viewNextDay')}
-              disabled={selectedDate >= REFERENCE_TODAY}
+              disabled={selectedDate >= today}
               onClick={() => selectDate(shiftDate(selectedDate, 1))}
             ><ChevronRight aria-hidden="true" /></button>
 
             <section className="diary-day-intro">
-              <span>{formatDayHeading(selectedDate, locale, t)}</span>
+              <span>{formatDayHeading(selectedDate, today, locale, t)}</span>
               <h1>{diary?.headline ?? t('diaryReality:diary.noDiaryEntryForThisDayYet')}</h1>
               <p>{diary?.summary ?? t('diaryReality:diary.thereAreNoRecordsToOrganizeButThis')}</p>
               {diary ? <small><Sparkles aria-hidden="true" />{t('diaryReality:diary.contentOrganized')} <i /> {diary.processingNote}</small> : null}
@@ -1190,10 +1206,12 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
           </>
         )}
       </main>
+      </div>
 
       {calendarOpen ? (
         <CalendarDialog
           selectedDate={selectedDate}
+          today={today}
           intensityByDate={intensityByDate}
           onSelect={selectDate}
           onClose={() => setCalendarOpen(false)}

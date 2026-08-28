@@ -440,6 +440,8 @@ export type RoomOverviewClaimData =
       dueAt: string | null;
       status: string | null;
       priority: "high" | "medium" | "low" | null;
+      /** itemType=schedule 时的日历服务商 slug（连接器事件）；本地日程与其他 itemType 为 null——桌面打品牌图标。 */
+      provider?: string | null;
     }
   | {
       kind: "timeline";
@@ -447,6 +449,8 @@ export type RoomOverviewClaimData =
       title: string;
       description: string | null;
       certainty: "fact" | "inference";
+      /** 日历/待办时间轴事件的服务商 slug（域表 service 列，如 google_calendar）；本地日程与其他事件源为 null——桌面据此打品牌图标。 */
+      provider?: string | null;
     }
   | {
       kind: "entity";
@@ -493,6 +497,21 @@ export interface RoomOverviewProjection {
   timeline: RoomOverviewClaim[];
   entities: RoomOverviewClaim[];
   appliedCorrectionIds: string[];
+}
+
+/** Room 邮箱面板的连接器邮件条目（GET /v1/context-rooms/:roomId/mails，sentAt 倒序）。 */
+export interface RoomMail {
+  sourceId: string;
+  subject: string;
+  senderName: string | null;
+  senderAddress: string | null;
+  /** ISO 时间；路由快照回退解析不到时为 null。 */
+  sentAt: string | null;
+  /** 正文首 200 字摘要。 */
+  snippet: string | null;
+  hasAttachments: boolean;
+  /** 邮箱服务商 slug（gmail/outlook…；域行取 service 列，快照回退从 sourceId 解析；解析不到为 null，前端回退通用邮件图标）。 */
+  provider?: string | null;
 }
 
 export interface RoomContextCorrection {

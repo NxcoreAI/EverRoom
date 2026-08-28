@@ -124,6 +124,74 @@ describe('日程面板：确定性日历事件投影合并', () => {
     expect(items[0].props['data-connector-source']).toBe('calendar-event')
   })
 
+  it('local-schedule 时间轴 claim 并入日程面板：带 local-schedule 来源标记与「助手日程」徽标', async () => {
+    const base = projectionFixture()
+    const projection: RoomOverviewProjection = {
+      ...base,
+      timeline: [
+        ...base.timeline,
+        {
+          id: 'tl-local-1',
+          section: 'timeline',
+          text: '新生报到',
+          origin: 'fact',
+          confidence: 1,
+          evidence: [{ sourceKind: 'local-schedule', sourceId: 'act-2', sourceTitle: '新生报到' }],
+          corrected: false,
+          occurredAt: todayAtLocal(15),
+          data: { kind: 'timeline', eventType: 'meeting', title: '新生报到', description: null, certainty: 'fact' },
+        },
+      ],
+    }
+    const { renderer } = await renderSchedulePane(createContextRoomFixture('room-connector', '连接器 Room'), projection)
+    const items = scheduleItemButtons(renderer)
+    expect(items.map((node) => node.findByType('b').children[0])).toEqual(['学校开学', '新生报到'])
+    expect(items[1].props['data-connector-source']).toBe('local-schedule')
+    // 徽标文案走 memory.sourceKind.local-schedule
+    expect(JSON.stringify(items[1].findByType('small').children)).toContain('助手日程')
+  })
+
+  it('连接器日程按 provider 打服务商品牌图标，本地日程与 LLM 快照回退通用图标', async () => {
+    const room = createContextRoomFixture('room-connector', '连接器 Room')
+    room.materials = [{
+      id: 'meeting-llm', type: '会议', title: '本地记录的会议', time: `${localDateString()} 14:00`,
+      summary: '', attendees: [], attachments: [],
+    }]
+    const base = projectionFixture()
+    const googleClaim = base.timeline[0]
+    const projection: RoomOverviewProjection = {
+      ...base,
+      timeline: [
+        // 域表 service（google_calendar，下划线写法）也要能点亮品牌标
+        { ...googleClaim, data: { ...googleClaim.data!, provider: 'google_calendar' } },
+        ...base.timeline.slice(1),
+        {
+          id: 'tl-local-1',
+          section: 'timeline',
+          text: '新生报到',
+          origin: 'fact',
+          confidence: 1,
+          evidence: [{ sourceKind: 'local-schedule', sourceId: 'act-2', sourceTitle: '新生报到' }],
+          corrected: false,
+          occurredAt: todayAtLocal(15),
+          data: { kind: 'timeline', eventType: 'meeting', title: '新生报到', description: null, certainty: 'fact' },
+        },
+      ],
+    }
+    const { renderer } = await renderSchedulePane(room, projection)
+    const items = scheduleItemButtons(renderer)
+    // 快照在前、连接器与本地投影在后
+    expect(items.map((node) => node.findByType('b').children[0])).toEqual(['本地记录的会议', '学校开学', '新生报到'])
+    const iconSpan = (node: TestRenderer.ReactTestInstance) => node
+      .findAll((child) => child.props?.className === 'context-room-schedule-item-icon')[0]
+    // 连接器行渲染品牌 img（vite 内联 svg data URI，google-calendar.svg 的 Google 蓝 #1a73e8）
+    const brandImg = iconSpan(items[1]).findAllByType('img')[0]
+    expect(String(brandImg.props.src)).toContain('%231a73e8')
+    // LLM 快照（Mic）与助手日程（通用日历）不渲染品牌 img
+    expect(iconSpan(items[0]).findAllByType('img')).toHaveLength(0)
+    expect(iconSpan(items[2]).findAllByType('img')).toHaveLength(0)
+  })
+
   it('投影不可用时回落本地快照（不渲染连接器条目）', async () => {
     const room = createContextRoomFixture('room-connector', '连接器 Room')
     room.materials = [{

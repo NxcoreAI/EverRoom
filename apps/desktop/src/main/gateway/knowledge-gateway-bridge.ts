@@ -11,6 +11,8 @@ import type {
   KnowledgeRoomContextDto,
   KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
+  KnowledgeRoomProposalDto,
+  KnowledgeRouteStatusDto,
   KnowledgeRoomRelationDto,
   KnowledgeRoomRelationVisibility,
   CreateKnowledgeRoomRelationInput,
@@ -172,6 +174,16 @@ export class KnowledgeGatewayBridge {
 
   listRecentDecisions(limit = 20): Promise<{ items: KnowledgeDecisionDto[] }> {
     return this.request(`/v1/knowledge/decisions?${new URLSearchParams({ limit: String(limit) })}`)
+  }
+
+  /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询解析进度用。 */
+  routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }> {
+    return this.request(`/v1/knowledge/route-status?${new URLSearchParams({ sourceIds: sourceIds.join(',') })}`)
+  }
+
+  /** on-demand Room 推荐（创建入口「智能推荐」页签）：描述 + 已导入文件 → 推荐卡。 */
+  proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }> {
+    return this.request('/v1/knowledge/room-proposals', { method: 'POST', body: JSON.stringify(input) })
   }
 
   revertDecision(decisionId: string): Promise<{ ok: boolean }> {

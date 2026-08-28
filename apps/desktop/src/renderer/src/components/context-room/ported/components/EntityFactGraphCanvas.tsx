@@ -122,11 +122,13 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
         centerOnMount
         className="context-room-entity-fact-graph-canvas"
         edges={edges}
+        maskUntilStable
         nodes={nodes}
         positions={layout.positions ?? positions}
         revision={layout.revision}
         selectedId={selectedId}
         onResize={layout.resize}
+        onUserGesture={layout.cancelAutoFit}
         onDragNode={layout.drag}
         onReleaseNode={layout.release}
         onSelectNode={onSelect}

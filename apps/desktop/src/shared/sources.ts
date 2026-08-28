@@ -35,6 +35,7 @@ import type {
   RoomOverviewProjection,
   RoomMergeOperation,
   RoomMergePreview,
+  RoomMail,
   SubagentInvocation,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
@@ -100,8 +101,10 @@ import type {
   KnowledgeRoomContextDto,
   KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
+  KnowledgeRoomProposalDto,
   KnowledgeRoomRelationDto,
   KnowledgeRoomRelationVisibility,
+  KnowledgeRouteStatusDto,
   CreateKnowledgeRoomRelationInput,
   UpdateKnowledgeRoomRelationInput,
   KnowledgeUnmatchedItemDto,
@@ -543,7 +546,7 @@ export type DiaryRunStatus = 'pending' | 'running' | 'completed' | 'failed'
 export interface DiaryRun {
   id: string
   date: string
-  trigger: 'scheduled' | 'catch_up' | 'manual'
+  trigger: 'scheduled' | 'catch_up' | 'manual' | 'refresh'
   status: DiaryRunStatus
   attempt: number
   error: string | null
@@ -651,6 +654,32 @@ export interface RoomAgentSelectionRewriteInput {
   contextAfter?: string
   blockType?: string
   responseLanguage?: string
+}
+
+/** Room 本地日程/待办（agent/用户创建，非第三方数据）的对外形状。 */
+export interface RoomLocalAction {
+  id: string
+  roomId: string
+  kind: 'task' | 'schedule'
+  title: string
+  notes: string | null
+  status: string | null
+  priority: string | null
+  dueAt: string | null
+  startedAt: string | null
+  endAt: string | null
+  allDay: boolean
+  location: string | null
+  completedAt: string | null
+  createdBy: 'agent' | 'user'
+  createdAt: string
+  updatedAt: string
+}
+
+/** 本地日程/待办写操作的返回：新行 + 重建后的总览投影（面板据此刷新）。 */
+export interface RoomLocalActionResult {
+  action: RoomLocalAction
+  overview: RoomOverviewProjection
 }
 
 export interface NxcoreDesktopApi {
@@ -800,7 +829,9 @@ export interface NxcoreDesktopApi {
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
     overview(roomId: string): Promise<RoomOverviewProjection>
     refreshOverview(roomId: string): Promise<RoomOverviewProjection>
+    listMails(roomId: string): Promise<{ items: RoomMail[] }>
     roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
+    completeLocalAction(roomId: string, actionId: string, completed?: boolean): Promise<RoomLocalActionResult>
   }
   account: {
     status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>
@@ -1025,6 +1056,10 @@ export interface NxcoreDesktopApi {
     /** 未识别资料手动挂实体（role=manual）。 */
     attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<{ entityId: string }>
     listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
+    /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询解析进度（驱动阶段推进）。 */
+    routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }>
+    /** on-demand Room 推荐（创建入口「智能推荐」页签）：描述 + 已导入文件 → 推荐卡。 */
+    proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }>
     revertDecision(decisionId: string): Promise<{ ok: boolean }>
   }
   files: {
@@ -1052,6 +1087,10 @@ export interface NxcoreDesktopApi {
     openOriginal(fileId: string): Promise<void>
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
+    /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */
+    pickPaths(): Promise<string[]>
+    /** 提交后的一次性导入：把暂存路径交给统一导入链路。 */
+    importPaths(paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>

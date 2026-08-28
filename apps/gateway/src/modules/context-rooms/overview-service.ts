@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
+  ContextRoomSnapshot,
+  ContextRoomSnapshotItem,
   ProposeRoomContextCorrectionInput,
   RoomContextCorrection,
   RoomOverviewClaim,
@@ -12,11 +14,13 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   connectorCalendarEvents,
+  connectorEmails,
   connectorTodos,
   contextRooms,
   documents,
   roomContextCorrections,
   roomDocumentLinks,
+  roomLocalActions,
   roomOverviews,
   roomSourceMemberships,
   routeDecisions,
@@ -57,6 +61,24 @@ function isoTime(value: unknown): string | null {
   return new Date(normalized).toISOString();
 }
 
+interface RoomTodoOrdering {
+  sourceId: string;
+  dueAt: string | null;
+  completedAt: string | null;
+}
+
+/**
+ * 待办清单排序：dueAt 升序（无截止排最后）；同 dueAt 时未完成在前——投影按标题
+ * 去重只保留首条，同名“已完成 + 重新创建未完成”并存时必须让未完成那条胜出，
+ * 否则排序退化到 sourceId（UUID）就是随机的。末位 sourceId 仅作确定性兜底。
+ */
+function compareRoomTodos() {
+  return (left: RoomTodoOrdering, right: RoomTodoOrdering): number =>
+    (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999")
+    || Number(Boolean(left.completedAt)) - Number(Boolean(right.completedAt))
+    || left.sourceId.localeCompare(right.sourceId);
+}
+
 /** 从日历快照的“时间：开始 → 结束”行解析开始时间；解析不到（如“明天 10:00”）返回 null。 */
 function calendarStartAt(markdown: string): string | null {
   const match = markdown.match(/^时间：[ \t]*([^→\n]+?)[ \t]*(?:→|$)/m);
@@ -65,10 +87,89 @@ function calendarStartAt(markdown: string): string | null {
   return new Date(raw).toISOString();
 }
 
+/** 从邮件快照的“发件人：”行解析发件人；解析不到返回 null。 */
+function mailSenderOf(markdown: string): string | null {
+  return markdown.match(/^发件人：[ \t]*(.+)$/m)?.[1]?.trim() ?? null;
+}
+
+/** 从邮件快照的“时间：”行解析发送时间；解析不到返回 null。 */
+function mailSentAtOf(markdown: string): string | null {
+  const raw = markdown.match(/^时间：[ \t]*([^→\n]+?)[ \t]*(?:→|$)/m)?.[1]?.trim();
+  if (!raw || !Number.isFinite(Date.parse(raw))) return null;
+  return new Date(raw).toISOString();
+}
+
+/** 邮件正文摘要：去掉标题与元信息行后取首 200 字（域行 bodyText 无元信息行，同样适用）。 */
+function mailSnippet(body: string): string | null {
+  const stripped = body
+    .replace(/^# .+$/m, "")
+    .replace(/^(?:发件人|收件人|抄送|时间)：.*$/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripped ? stripped.slice(0, 200) : null;
+}
+
+/** 从 connector ref 形式的 sourceId（connector:{provider}:{connectionId}:…）解析服务商 slug（gmail / google-calendar 等）；不匹配返回 null。 */
+function connectorProviderOf(sourceId: string): string | null {
+  return sourceId.match(/^connector:([a-z0-9][a-z0-9_-]*):/i)?.[1]?.toLowerCase() ?? null;
+}
+
+/** 邮件按发送时间倒序（缺时间沉底）：邮箱面板“最新在前”的展示约定。 */
+function sortByMailSentAt<T extends { sentAt: string | null; sourceId: string }>(mails: T[]): T[] {
+  return mails.sort((left, right) =>
+    (right.sentAt ?? "").localeCompare(left.sentAt ?? "") || left.sourceId.localeCompare(right.sourceId));
+}
+
 /** 日历事件按开始时间升序（缺时间沉底，同时间按 sourceId 定序）：投影的截断策略依赖此顺序。 */
 function sortByCalendarStart<T extends { startedAt: string | null; sourceId: string }>(events: T[]): T[] {
   return events.sort((left, right) =>
     (left.startedAt ?? "9999").localeCompare(right.startedAt ?? "9999") || left.sourceId.localeCompare(right.sourceId));
+}
+
+function parseDate(value: unknown): Date | null {
+  const iso = isoTime(value);
+  return iso ? new Date(iso) : null;
+}
+
+/** room_local_actions 行的对外形状（REST/工具 details/IPC 透传桌面）。 */
+export interface RoomLocalActionDto {
+  id: string;
+  roomId: string;
+  kind: "task" | "schedule";
+  title: string;
+  notes: string | null;
+  status: string | null;
+  priority: string | null;
+  dueAt: string | null;
+  startedAt: string | null;
+  endAt: string | null;
+  allDay: boolean;
+  location: string | null;
+  completedAt: string | null;
+  createdBy: "agent" | "user";
+  createdAt: string;
+  updatedAt: string;
+}
+
+function localActionDto(row: typeof roomLocalActions.$inferSelect): RoomLocalActionDto {
+  return {
+    id: row.id,
+    roomId: row.roomId,
+    kind: row.kind,
+    title: row.title,
+    notes: row.notes,
+    status: row.status,
+    priority: row.priority,
+    dueAt: row.dueAt?.toISOString() ?? null,
+    startedAt: row.startedAt?.toISOString() ?? null,
+    endAt: row.endAt?.toISOString() ?? null,
+    allDay: row.allDay ?? false,
+    location: row.location,
+    completedAt: row.completedAt?.toISOString() ?? null,
+    createdBy: row.createdBy,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 function correctionRow(row: typeof roomContextCorrections.$inferSelect): RoomContextCorrection {
@@ -106,6 +207,39 @@ function hasSource(item: RoomOverviewClaim, source: RoomOverviewEvidence): boole
     candidate.sourceKind === source.sourceKind && candidate.sourceId === source.sourceId);
 }
 
+/**
+ * 把投影生成时间合并进房间快照的“更新时间”：日程/待办等数据变化只推进投影
+ * （room_overviews.generatedAt），不回写 rooms 表——读模型出口取二者较大值，
+ * 桌面首页卡片的“昨天更新”才能跟随数据刷新。
+ */
+export function applyOverviewFreshnessToSnapshot(
+  snapshot: ContextRoomSnapshot,
+  generatedAts: Map<string, Date>,
+): ContextRoomSnapshot {
+  if (generatedAts.size === 0) return snapshot;
+  const times: Date[] = [];
+  const mergeItem = (room: ContextRoomSnapshotItem): ContextRoomSnapshotItem => {
+    const currentMs = typeof room.data.updatedAt === "string" ? Date.parse(room.data.updatedAt) : Number.NaN;
+    const current = Number.isFinite(currentMs) ? new Date(currentMs) : null;
+    if (current) times.push(current);
+    const generatedAt = generatedAts.get(room.id);
+    if (!generatedAt) return room;
+    if (!current || generatedAt > current) times.push(generatedAt);
+    if (current && current >= generatedAt) return room;
+    const effective = !current || generatedAt > current ? generatedAt : current;
+    return { ...room, data: { ...room.data, updatedAt: effective.toISOString() } };
+  };
+  const rooms = snapshot.rooms.map(mergeItem);
+  const deletedRooms = snapshot.deletedRooms.map(mergeItem);
+  const latest = times.reduce<Date | null>((acc, time) => (!acc || time > acc ? time : acc), null);
+  return {
+    ...snapshot,
+    rooms,
+    deletedRooms,
+    updatedAt: latest ? latest.toISOString() : snapshot.updatedAt,
+  };
+}
+
 export class RoomOverviewService {
   private roomAgent: RoomAgentDispatcher | null = null;
 
@@ -116,6 +250,24 @@ export class RoomOverviewService {
 
   setRoomAgentDispatcher(dispatcher: RoomAgentDispatcher | null): void {
     this.roomAgent = dispatcher;
+  }
+
+  /**
+   * 各房间投影的最后变化时间（房间列表读模型合并新鲜度用）。
+   * 取 max(generatedAt, 行 updatedAt)：regenerate/增量刷新推进 generatedAt，
+   * 纠正应用/撤销走 reproject 不推进 generatedAt，但行 updatedAt 每次落库都推进——
+   * 卡片“最近更新”要跟随的是投影内容变化，而不是上次重新生成。
+   */
+  latestProjectionTimes(): Map<string, Date> {
+    const rows = this.db.select({
+      roomId: roomOverviews.roomId,
+      generatedAt: roomOverviews.generatedAt,
+      updatedAt: roomOverviews.updatedAt,
+    }).from(roomOverviews).all();
+    return new Map(rows.map((row) => [
+      row.roomId,
+      row.generatedAt > row.updatedAt ? row.generatedAt : row.updatedAt,
+    ]));
   }
 
   get(roomId: string): RoomOverviewProjection {
@@ -163,6 +315,101 @@ export class RoomOverviewService {
     const content = invocation.status === "completed" ? invocationText(invocation) : null;
     if (!content) throw new Error("context_room_overview_generation_failed");
     return this.persistBase(this.buildBase(resolved, parseRoomOverviewSynthesis(content)));
+  }
+
+  //
+  // 本地日程/待办（agent 或用户创建；不回写第三方账号，投影确定性并入）
+  //
+
+  /** 创建本地日程/待办。幂等：同房同 kind 同名的未删（task 且未完成）行已存在时
+   *  返回既有行（agent 概览再生重复落地、用户反复请求都不会翻倍）。 */
+  createLocalAction(roomId: string, input: {
+    kind: "task" | "schedule";
+    title: string;
+    notes?: string | null;
+    priority?: string | null;
+    dueAt?: string | null;
+    startedAt?: string | null;
+    endAt?: string | null;
+    allDay?: boolean;
+    location?: string | null;
+  }, context: { createdBy?: "agent" | "user"; runId?: string | null } = {}): {
+    action: RoomLocalActionDto;
+    overview: RoomOverviewProjection;
+    duplicate: boolean;
+  } {
+    const resolved = this.requireRoom(roomId);
+    const title = text(input.title, 500);
+    if (!title) throw new Error("local_action_title_required");
+    const startedAt = isoTime(input.startedAt);
+    if (input.kind === "schedule" && !startedAt) throw new Error("local_schedule_start_required");
+    const now = new Date();
+    const duplicate = this.db.select().from(roomLocalActions)
+      .where(and(
+        eq(roomLocalActions.roomId, resolved),
+        eq(roomLocalActions.kind, input.kind),
+        isNull(roomLocalActions.deletedAt),
+        ...(input.kind === "task" ? [isNull(roomLocalActions.completedAt)] : []),
+      ))
+      .all()
+      .find((row) => comparableText(row.title).toLocaleLowerCase() === comparableText(title).toLocaleLowerCase());
+    const row = duplicate ?? this.db.insert(roomLocalActions).values({
+      id: `act-${randomUUID()}`,
+      roomId: resolved,
+      kind: input.kind,
+      title,
+      notes: text(input.notes) || null,
+      status: input.kind === "task" ? "needsAction" : null,
+      priority: text(input.priority, 40) || null,
+      dueAt: input.kind === "task" ? parseDate(input.dueAt) : null,
+      startedAt: input.kind === "schedule" ? parseDate(startedAt) : null,
+      endAt: input.kind === "schedule" ? parseDate(input.endAt) : null,
+      allDay: input.kind === "schedule" && input.allDay === true,
+      location: input.kind === "schedule" ? (text(input.location, 200) || null) : null,
+      createdBy: context.createdBy ?? "agent",
+      ...(context.runId ? { createdViaRunId: context.runId } : {}),
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get()!;
+    return { action: localActionDto(row), overview: this.refresh(resolved), duplicate: Boolean(duplicate) };
+  }
+
+  /** 勾选完成/取消完成本地待办（schedule 无完成语义）。 */
+  completeLocalAction(roomId: string, actionId: string, completed = true): {
+    action: RoomLocalActionDto;
+    overview: RoomOverviewProjection;
+  } {
+    const resolved = this.requireRoom(roomId);
+    const row = this.requireLocalAction(resolved, actionId);
+    if (row.kind !== "task") throw new Error("local_action_not_task");
+    const now = new Date();
+    const updated = this.db.update(roomLocalActions).set({
+      completedAt: completed ? now : null,
+      status: completed ? "completed" : "needsAction",
+      updatedAt: now,
+    }).where(eq(roomLocalActions.id, row.id)).returning().get()!;
+    return { action: localActionDto(updated), overview: this.refresh(resolved) };
+  }
+
+  /** 软删本地日程/待办（agent 建错 / 用户清理）。 */
+  deleteLocalAction(roomId: string, actionId: string): {
+    action: RoomLocalActionDto;
+    overview: RoomOverviewProjection;
+  } {
+    const resolved = this.requireRoom(roomId);
+    const row = this.requireLocalAction(resolved, actionId);
+    const now = new Date();
+    const updated = this.db.update(roomLocalActions).set({ deletedAt: now, updatedAt: now })
+      .where(eq(roomLocalActions.id, row.id)).returning().get()!;
+    return { action: localActionDto(updated), overview: this.refresh(resolved) };
+  }
+
+  private requireLocalAction(roomId: string, actionId: string): typeof roomLocalActions.$inferSelect {
+    const row = this.db.select().from(roomLocalActions)
+      .where(and(eq(roomLocalActions.id, actionId), eq(roomLocalActions.roomId, roomId), isNull(roomLocalActions.deletedAt)))
+      .get();
+    if (!row) throw new Error("local_action_not_found");
+    return row;
   }
 
   private buildBase(
@@ -214,7 +461,30 @@ export class RoomOverviewService {
   private roomCalendarEvents(roomId: string): Array<{
     sourceId: string; title: string; startedAt: string | null;
     endAt: string | null; allDay: boolean; location: string | null;
+    origin: "connector" | "local";
+    provider: string | null;
   }> {
+    // 本地日程（agent/用户创建，直挂 roomId）与连接器行同形并入，origin 供投影
+    // 切换 evidence sourceKind 与 identity 前缀（local-schedule）。
+    const local = this.db.select()
+      .from(roomLocalActions)
+      .where(and(
+        eq(roomLocalActions.roomId, roomId),
+        eq(roomLocalActions.kind, "schedule"),
+        isNull(roomLocalActions.deletedAt),
+      ))
+      .all()
+      .map((row) => ({
+        sourceId: row.id,
+        title: row.title.trim(),
+        startedAt: row.startedAt?.toISOString() ?? null,
+        endAt: row.endAt?.toISOString() ?? null,
+        allDay: row.allDay ?? false,
+        location: row.location,
+        origin: "local" as const,
+        provider: null,
+      }))
+      .filter((event) => event.title);
     const memberships = this.db.select({
       sourceId: roomSourceMemberships.sourceId,
     })
@@ -224,7 +494,7 @@ export class RoomOverviewService {
         eq(roomSourceMemberships.sourceKind, "calendar-event"),
       ))
       .all();
-    if (memberships.length === 0) return [];
+    if (memberships.length === 0) return sortByCalendarStart(local);
     const sourceIds = memberships.map((item) => item.sourceId);
     const domainRows = new Map(this.db.select()
       .from(connectorCalendarEvents)
@@ -244,6 +514,8 @@ export class RoomOverviewService {
           endAt: row.endAt?.toISOString() ?? null,
           allDay: row.allDay,
           location: row.location,
+          origin: "connector" as const,
+          provider: row.service,
         }];
       }
       return [];
@@ -279,18 +551,42 @@ export class RoomOverviewService {
         endAt: null,
         allDay: false,
         location: null,
+        origin: "connector" as const,
+        // 快照路径没有域表 service 列，但 membership sourceId 本身是 connector ref
+        // （connector:google-calendar:…），从 ref 解析服务商供桌面打品牌图标。
+        provider: connectorProviderOf(snapshot.sourceId),
       }];
     });
     // 按开始时间升序（缺时间排尾）：投影的「未来日程取最近 N 条」与「时间轴取
     // 最新 N 条」都依赖此顺序；与 roomTodos 的 dueAt 升序同一约定。
-    return sortByCalendarStart([...resolved, ...fallback]);
+    return sortByCalendarStart([...resolved, ...fallback, ...local]);
   }
 
-  /** 已路由进 Room 的待办（kind "todo"）：按 dueAt 升序（无截止沉底）截 20。 */
+  /** 已路由进 Room 的待办（kind "todo"）+ 本地待办：按 dueAt 升序（无截止沉底）截 20。 */
   private roomTodos(roomId: string): Array<{
     sourceId: string; title: string; status: string | null;
     dueAt: string | null; completedAt: string | null; priority: string | null;
+    origin: "connector" | "local";
   }> {
+    // 本地待办（agent/用户创建）：evidence sourceKind local-task 由投影按 origin 切换。
+    const local = this.db.select()
+      .from(roomLocalActions)
+      .where(and(
+        eq(roomLocalActions.roomId, roomId),
+        eq(roomLocalActions.kind, "task"),
+        isNull(roomLocalActions.deletedAt),
+      ))
+      .all()
+      .map((row) => ({
+        sourceId: row.id,
+        title: row.title.trim(),
+        status: row.status,
+        dueAt: row.dueAt?.toISOString() ?? null,
+        completedAt: row.completedAt?.toISOString() ?? null,
+        priority: row.priority,
+        origin: "local" as const,
+      }))
+      .filter((todo) => todo.title);
     const memberships = this.db.select({
       sourceId: roomSourceMemberships.sourceId,
     })
@@ -300,7 +596,9 @@ export class RoomOverviewService {
         eq(roomSourceMemberships.sourceKind, "todo"),
       ))
       .all();
-    if (memberships.length === 0) return [];
+    if (memberships.length === 0) return local
+      .sort(compareRoomTodos())
+      .slice(0, 20);
     const rows = this.db.select()
       .from(connectorTodos)
       .where(and(
@@ -308,18 +606,108 @@ export class RoomOverviewService {
         isNull(connectorTodos.deletedAt),
       ))
       .all();
-    return rows
-      .map((row) => ({
+    return [
+      ...rows.map((row) => ({
         sourceId: row.id,
         title: row.title.trim(),
         status: row.status,
         dueAt: row.dueAt?.toISOString() ?? null,
         completedAt: row.completedAt?.toISOString() ?? null,
         priority: row.priority,
-      }))
+        origin: "connector" as const,
+      })),
+      ...local,
+    ]
       .filter((todo) => todo.title)
-      .sort((left, right) => (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") || left.sourceId.localeCompare(right.sourceId))
+      .sort(compareRoomTodos())
       .slice(0, 20);
+  }
+
+  /**
+   * 邮箱面板的连接器邮件清单（全量，sentAt 倒序截 500）：
+   * memberships sourceId 直连 connector_emails 域行（REST 推送路径）；
+   * 域行缺失（nango 拉取路径，connector ref 作 sourceId）回退路由快照解析——
+   * 与 roomCalendarEvents 同一双轨约定。
+   */
+  listRoomMails(roomId: string): Array<{
+    sourceId: string;
+    subject: string;
+    senderName: string | null;
+    senderAddress: string | null;
+    sentAt: string | null;
+    snippet: string | null;
+    hasAttachments: boolean;
+    provider: string | null;
+  }> {
+    const resolved = this.requireRoom(roomId);
+    const memberships = this.db.select({
+      sourceId: roomSourceMemberships.sourceId,
+    })
+      .from(roomSourceMemberships)
+      .where(and(
+        eq(roomSourceMemberships.roomId, resolved),
+        eq(roomSourceMemberships.sourceKind, "mail"),
+      ))
+      .all();
+    if (memberships.length === 0) return [];
+    const sourceIds = [...new Set(memberships.map((item) => item.sourceId))];
+    const domainRows = new Map(this.db.select()
+      .from(connectorEmails)
+      .where(and(
+        inArray(connectorEmails.id, sourceIds),
+        isNull(connectorEmails.deletedAt),
+      ))
+      .all()
+      .map((row) => [row.id, row]));
+    const resolvedMails = sourceIds.flatMap((sourceId) => {
+      const row = domainRows.get(sourceId);
+      if (!row) return [];
+      return [{
+        sourceId,
+        subject: row.subject.trim(),
+        senderName: row.senderName,
+        senderAddress: row.senderAddress,
+        sentAt: row.sentAt?.toISOString() ?? null,
+        snippet: mailSnippet(row.bodyText),
+        hasAttachments: row.hasAttachments,
+        provider: row.service,
+      }];
+    }).filter((mail) => mail.subject);
+    const missing = sourceIds.filter((id) => !domainRows.has(id));
+    if (missing.length === 0) return sortByMailSentAt(resolvedMails).slice(0, 500);
+    const snapshots = this.db.select({
+      sourceId: routeDecisions.sourceId,
+      sourceTitle: routeDecisions.sourceTitle,
+      sourceMarkdown: routeDecisions.sourceMarkdown,
+    })
+      .from(routeDecisions)
+      .where(and(
+        eq(routeDecisions.sourceKind, "mail"),
+        inArray(routeDecisions.sourceId, missing),
+        isNotNull(routeDecisions.sourceMarkdown),
+      ))
+      .orderBy(desc(routeDecisions.sourceVersion))
+      .all();
+    const latest = new Map<string, (typeof snapshots)[number]>();
+    for (const snapshot of snapshots) {
+      if (!latest.has(snapshot.sourceId)) latest.set(snapshot.sourceId, snapshot);
+    }
+    const fallback = [...latest.values()].flatMap((snapshot) => {
+      const subject = snapshot.sourceTitle?.trim();
+      if (!subject) return [];
+      const markdown = snapshot.sourceMarkdown ?? "";
+      return [{
+        sourceId: snapshot.sourceId,
+        subject,
+        senderName: mailSenderOf(markdown),
+        senderAddress: null,
+        sentAt: mailSentAtOf(markdown),
+        snippet: mailSnippet(markdown),
+        hasAttachments: false,
+        provider: connectorProviderOf(snapshot.sourceId),
+      }];
+    });
+    return sortByMailSentAt([...resolvedMails, ...fallback]).slice(0, 500);
   }
 
   private latestSourceUpdate(
@@ -343,6 +731,12 @@ export class RoomOverviewService {
       // 文档更新/日历路由/待办路由也应把投影标记为待刷新。
       ...this.roomDocuments(roomId).map((document) => document.updatedAt),
       ...connectorRoutedAt,
+      // 本地日程/待办的落地/勾选/软删同样推进水位（get() 自动增量重建）。
+      ...this.db.select({ updatedAt: roomLocalActions.updatedAt })
+        .from(roomLocalActions)
+        .where(and(eq(roomLocalActions.roomId, roomId), isNull(roomLocalActions.deletedAt)))
+        .all()
+        .map((action) => action.updatedAt.toISOString()),
     ].filter((value): value is string => Boolean(value));
     return candidates.sort((left, right) => right.localeCompare(left))[0] ?? null;
   }

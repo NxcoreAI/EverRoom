@@ -315,3 +315,25 @@ export interface KnowledgeDecisionDto {
   status: string
   createdAt: string
 }
+
+/** 按 sourceId 查到的最新路由决策（任意状态）：推荐会话进度轮询用。 */
+export interface KnowledgeRouteStatusDto {
+  sourceId: string
+  status: string
+  title: string | null
+  updatedAt: string
+}
+
+/** on-demand Room 推荐卡（创建入口「智能推荐」页签）。entityId 非空可走晋升链路。 */
+export interface KnowledgeRoomProposalDto {
+  entityId: string | null
+  anchorName: string
+  name: string
+  kind: string
+  description: string
+  reason: string
+  sourceNames: string[]
+  fileCount: number
+  evidenceScore: number | null
+  sourceCount: number | null
+}

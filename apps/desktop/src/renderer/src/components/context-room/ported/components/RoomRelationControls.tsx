@@ -1,12 +1,13 @@
-import { ArrowLeftRight, ArrowRight, Eye, EyeOff, Link2, Pin, PinOff, Trash2 } from 'lucide-react'
+import { ArrowLeftRight, ArrowRight, ArrowUpRight, Eye, EyeOff, Link2, Pin, PinOff, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type {
   KnowledgeRoomRelationDto,
   KnowledgeRoomRelationManualType,
+  KnowledgeRoomRelationReasonDto,
 } from '../../../../../../shared/knowledge'
 import { useLocale } from '../../../../i18n/LocaleContext'
-import type { ContextRoomRecord } from '../types'
+import type { ContextRoomRecord, ContextRoomResource } from '../types'
 import { RoomGraphInspectorShell } from './RoomGraphInspector'
 import { ReferenceDialog } from './shared'
 
@@ -27,14 +28,34 @@ export function relationTypeLabel(
   return t(`contextRoom:relations.type.${type}`)
 }
 
+/** 证据行 → 可跳转资源：云文档/上传文件可打开；连接器来源与共享实体无本地对象，仅标签展示。 */
+export function relationEvidenceResource(
+  reason: KnowledgeRoomRelationReasonDto,
+  resources: ContextRoomResource[],
+): ContextRoomResource | null {
+  if (!reason.sourceKind) return null
+  if (reason.sourceKind === 'everroom-doc') {
+    return resources.find((item) => item.kind === 'cloud-doc' && item.binding.docId === reason.sourceId) ?? null
+  }
+  if (reason.sourceKind === 'file') {
+    return resources.find((item) => item.kind === 'knowledge-file' && item.fileId === reason.sourceId) ?? null
+  }
+  return null
+}
+
 export function RoomRelationInspector({
   relation,
   rooms,
+  resources = [],
+  onSelectResource,
   onClose,
   onChanged,
 }: {
   relation: KnowledgeRoomRelationDto
   rooms: ContextRoomRecord[]
+  /** 当前 Room 的可跳转资源（云文档/上传文件）：证据行命中时可点开来源资料。 */
+  resources?: ContextRoomResource[]
+  onSelectResource?: (resource: ContextRoomResource) => void
   onClose: () => void
   onChanged: () => Promise<void> | void
 }) {
@@ -134,14 +155,30 @@ export function RoomRelationInspector({
 
       <section className="context-room-relation-evidence">
         <h4>{t('contextRoom:relations.evidence')}</h4>
-        {relation.topReasons.length ? relation.topReasons.map((reason) => (
-          <div key={`${reason.kind}:${reason.key}`}>
-            <span>{t(`contextRoom:relations.evidenceKind.${reason.kind}`)}</span>
-            <b>{reason.label}</b>
-            <small>+{reason.contribution.toFixed(2)}</small>
-            {reason.evidence ? <p>{reason.evidence}</p> : null}
-          </div>
-        )) : <p>{t('contextRoom:relations.manualRelationNoAutomaticEvidence')}</p>}
+        {relation.topReasons.length ? relation.topReasons.map((reason) => {
+          const resource = onSelectResource ? relationEvidenceResource(reason, resources) : null
+          return resource && onSelectResource ? (
+            <button
+              type="button"
+              key={`${reason.kind}:${reason.key}`}
+              title={t('contextRoom:relations.openEvidenceSource', { title: reason.label })}
+              onClick={() => onSelectResource(resource)}
+            >
+              <span>{t(`contextRoom:relations.evidenceKind.${reason.kind}`)}</span>
+              <b>{reason.label}</b>
+              <small>+{reason.contribution.toFixed(2)}</small>
+              {reason.evidence ? <p>{reason.evidence}</p> : null}
+              <ArrowUpRight aria-hidden="true" />
+            </button>
+          ) : (
+            <div key={`${reason.kind}:${reason.key}`}>
+              <span>{t(`contextRoom:relations.evidenceKind.${reason.kind}`)}</span>
+              <b>{reason.label}</b>
+              <small>+{reason.contribution.toFixed(2)}</small>
+              {reason.evidence ? <p>{reason.evidence}</p> : null}
+            </div>
+          )
+        }) : <p>{t('contextRoom:relations.manualRelationNoAutomaticEvidence')}</p>}
       </section>
 
       <form

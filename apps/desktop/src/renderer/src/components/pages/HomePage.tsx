@@ -162,7 +162,6 @@ export function HomePage({
         <header className="workspace-home-heading">
           <div>
             <h1>{t(greetingKey)}</h1>
-            <p>{t('surface:home.continueWhereYouLeftOffOrStartSomething')}</p>
           </div>
         </header>
 

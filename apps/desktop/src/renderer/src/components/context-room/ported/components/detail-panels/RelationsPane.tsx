@@ -1,8 +1,11 @@
 import { Link2, Maximize2, Network } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
+import type { RoomDocument } from '@nxcore/agent-contract'
 
-import type { ContextRoomRecord } from '../../types'
+import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge'
+import type { ContextRoomRecord, ContextRoomResource } from '../../types'
+import { createContextRoomResourceLibrary } from '../../resources'
 import { useRoomRelationGraph } from '../../hooks/useRoomRelationGraph'
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from '../RoomGraphCanvas'
 import { RoomNodeInspector } from '../RoomGraphInspector'
@@ -12,13 +15,19 @@ import { PanelEmptyState } from './PanelEmptyState'
 export function RelationsPane({
   room,
   rooms,
+  backendDocuments,
+  knowledgeFiles,
   onOpenRoom,
+  onSelectResource,
 }: {
   room: ContextRoomRecord
   rooms: ContextRoomRecord[]
+  backendDocuments: RoomDocument[]
+  knowledgeFiles: KnowledgeFileDto[]
   onOpenRoom: (roomId: string) => void
+  onSelectResource: (resource: ContextRoomResource) => void
 }) {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   const [visibility, setVisibility] = useState<'active' | 'hidden'>('active')
   const { error, graph, loading, reload } = useRoomRelationGraph(room.id, visibility)
   const graphRef = useRef<RoomGraphCanvasHandle>(null)
@@ -35,6 +44,11 @@ export function RelationsPane({
 
   const nodeIds = useMemo(() => new Set(graph?.nodes.map((node) => node.id) ?? [room.id]), [graph?.nodes, room.id])
   const graphRooms = useMemo(() => rooms.filter((candidate) => nodeIds.has(candidate.id)), [nodeIds, rooms])
+  // 证据行跳转用的资源库：关系两端的共享来源属于本 Room，云文档/上传文件可点开。
+  const library = useMemo(
+    () => createContextRoomResourceLibrary(room, backendDocuments, [], knowledgeFiles, locale),
+    [backendDocuments, knowledgeFiles, locale, room],
+  )
   const selectedRoom = graphRooms.find((candidate) => candidate.id === selectedGraphRoomId) ?? room
   const selectedRelation = graph?.edges.find((edge) => edge.id === selectedRelationId) ?? null
   const relationToSelected = selectedRoom.id === room.id ? null : graph?.edges.find((edge) => (
@@ -85,7 +99,14 @@ export function RelationsPane({
       </section>
 
       {selectedRelation ? (
-        <RoomRelationInspector relation={selectedRelation} rooms={rooms} onClose={() => setSelectedRelationId(null)} onChanged={reload} />
+        <RoomRelationInspector
+          relation={selectedRelation}
+          rooms={rooms}
+          resources={library.resources}
+          onSelectResource={onSelectResource}
+          onClose={() => setSelectedRelationId(null)}
+          onChanged={reload}
+        />
       ) : inspectorOpen ? (
         <RoomNodeInspector
           room={selectedRoom}

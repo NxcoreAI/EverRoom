@@ -305,7 +305,7 @@ export function InspirationPage() {
 
   return (
     <main className="page inspiration-page">
-      <header className="inspiration-header"><div className="inspiration-heading"><h1>{t('surface:inspiration.title')}</h1><p>{t('surface:inspiration.description')}</p></div><div className="inspiration-header-note"><span>{t('surface:inspiration.currentResults')}</span><strong>{listMeta.total}</strong><small>{t('surface:inspiration.itemUnit')}</small></div></header>
+      <header className="inspiration-header"><div className="inspiration-heading"><h1>{t('surface:inspiration.title')}</h1></div><div className="inspiration-header-note"><span>{t('surface:inspiration.currentResults')}</span><strong>{listMeta.total}</strong><small>{t('surface:inspiration.itemUnit')}</small></div></header>
       <div className="inspiration-toolbar">
         <div className="inspiration-segmented" role="tablist" aria-label={t('surface:inspiration.filterLabel')}>{(['all', 'favorite', 'processing'] as const).map((value) => <button key={value} type="button" className={filter === value ? 'is-active' : ''} onClick={() => setFilter(value)}>{t(`surface:inspiration.${value}`)}<small>{listMeta.counts[value]}</small></button>)}</div>
         <label className="inspiration-search"><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('surface:inspiration.searchPlaceholder')} aria-label={t('surface:inspiration.searchPlaceholder')} />{query ? <button type="button" aria-label={t('surface:inspiration.clearSearch')} onClick={() => setQuery('')}>×</button> : null}</label>

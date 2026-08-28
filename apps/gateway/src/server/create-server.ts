@@ -552,7 +552,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // registerAgentTools 必须发生在任何 acquire 之前（首次 dispatch 前）。
   subagentRuntimeManager.registerAgentTools(
     "context-room",
-    () => createContextRoomAgentTools({ db, memory: memoryService }),
+    () => createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
   );
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({

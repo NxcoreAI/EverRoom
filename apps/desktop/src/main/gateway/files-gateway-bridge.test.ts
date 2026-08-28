@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { collectImportCandidates, collectImportPlan, FilesGatewayBridge } from './files-gateway-bridge'
 import type { GatewaySupervisor } from './gateway-supervisor'
+import {
+  HighRiskImportCoordinator,
+} from '../high-risk-import-coordinator'
 import type {
   HighRiskImportQueue,
   PendingManualImportBatch,
@@ -146,6 +149,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       setManualResolver: vi.fn(),
       setAutoResolver: vi.fn(),
       discardAutoSource: vi.fn(),
+      isSkippedManualPath: () => false,
     } satisfies HighRiskImportQueue
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       if (String(input).endsWith('/v1/files/capabilities')) {
@@ -232,6 +236,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       setManualResolver: (resolver) => { manualResolver = resolver },
       setAutoResolver: vi.fn(),
       discardAutoSource: vi.fn(),
+      isSkippedManualPath: () => false,
     } satisfies HighRiskImportQueue
     const importedNames: string[] = []
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -263,6 +268,52 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       expect.any(String),
     )
     expect(manualResolver).not.toBeNull()
+  })
+
+  it('does not re-review skipped files when the same folder is retried', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-skip-retry-'))
+    temporaryDirectories.push(directory)
+    const stateDirectory = await mkdtemp(join(tmpdir(), 'everroom-import-skip-state-'))
+    temporaryDirectories.push(stateDirectory)
+    await writeFile(join(directory, 'proposal.pdf'), 'pdf')
+    await Promise.all(Array.from({ length: 101 }, (_, index) =>
+      writeFile(join(directory, `note-${index}.md`), '# note')))
+
+    // 真实协调器：resolve(id, false) 应记住跳过的文件，重试同目录不再复审。
+    const coordinator = new HighRiskImportCoordinator(join(stateDirectory, 'high-risk-imports.json'))
+    await coordinator.initialize()
+    const uploadedNames: string[] = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/v1/files/capabilities')) {
+        return new Response(JSON.stringify({ items: [
+          { extension: '.md', manualImport: true },
+          { extension: '.pdf', manualImport: true },
+        ] }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      const metadata = JSON.parse(String((init?.body as FormData).get('metadata'))) as { originalName: string }
+      uploadedNames.push(metadata.originalName)
+      return new Response(JSON.stringify({
+        fileEntryId: `file-${uploadedNames.length}`, fileVersionId: `version-${uploadedNames.length}`,
+        versionDeduped: false, blobDeduped: false, contentHash: 'a'.repeat(64), jobId: `job-${uploadedNames.length}`,
+      }), { headers: { 'Content-Type': 'application/json' } })
+    })
+    const supervisor = {
+      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
+    } as unknown as GatewaySupervisor
+    const bridge = new FilesGatewayBridge(supervisor, coordinator)
+
+    // 首次导入：高风险批次进审查，低风险 pdf 立即导入。
+    await expect(bridge.importPathsOnce([directory])).resolves.toHaveLength(1)
+    const review = coordinator.list()[0]!
+    expect(review.fileCount).toBe(101)
+    // 用户点「跳过」。
+    await expect(coordinator.resolve(review.id, false)).resolves.toEqual({ accepted: false, imported: 0, failed: 0 })
+
+    // 重试同一目录：101 个 md 不再进入审查（否则又会弹一次跳过确认）。
+    await expect(bridge.importPathsOnce([directory])).resolves.toHaveLength(1)
+    expect(coordinator.list()).toEqual([])
+    expect(uploadedNames).toEqual(['proposal.pdf', 'proposal.pdf'])
   })
 })
 
