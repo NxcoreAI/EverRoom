@@ -10,6 +10,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import type { RoomAppliedEntitySource } from '@nxcore/agent-contract';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { formatRoomUpdatedTime } from '../../roomUpdatedTime';
@@ -26,12 +27,15 @@ export function MemoryPane({
   onOpenMemory,
   onUpdateRoom,
   onOpenRoom,
+  onOpenSource,
 }: {
   room: ContextRoomRecord;
   onOpenMemory: (id: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
   /** 实体已建 Room 时从内联详情卡跳转（详情只在本面板内展示）。 */
   onOpenRoom: (roomId: string) => void;
+  /** 来源资料行点击跳转：文档类在右区打开、邮件进邮箱面板详情（独立渲染时不传则只读）。 */
+  onOpenSource?: (source: RoomAppliedEntitySource) => void;
 }) {
   const { t, locale } = useLocale();
   const appliedMemory = useRoomAppliedEntities(room.id, room.updatedAt);
@@ -209,9 +213,11 @@ export function MemoryPane({
                     ? selectedAppliedFact.sources.map((source) => {
                         const kindLabel = t(`contextRoom:memory.sourceKind.${source.sourceKind}`);
                         return (
-                          <div
+                          <button
+                            type="button"
                             className="context-room-memory-source-row"
                             key={`${source.sourceKind}-${source.sourceId}`}
+                            onClick={() => onOpenSource?.(source)}
                           >
                             <span className="context-room-memory-detail-row-icon">
                               <Link2 aria-hidden="true" />
@@ -224,7 +230,7 @@ export function MemoryPane({
                                 {formatRoomUpdatedTime(source.mentionedAt, source.mentionedAt, locale, t)}
                               </small>
                             </span>
-                          </div>
+                          </button>
                         );
                       })
                     : linkedFacts.map((fact) => (
@@ -256,9 +262,11 @@ export function MemoryPane({
                   {selectedNode.sources.map((source) => {
                     const kindLabel = t(`contextRoom:memory.sourceKind.${source.sourceKind}`);
                     return (
-                      <div
+                      <button
+                        type="button"
                         className="context-room-memory-source-row"
                         key={`${source.sourceKind}-${source.sourceId}`}
+                        onClick={() => onOpenSource?.(source)}
                       >
                         <span className="context-room-memory-detail-row-icon">
                           <Link2 aria-hidden="true" />
@@ -271,7 +279,7 @@ export function MemoryPane({
                             {formatRoomUpdatedTime(source.mentionedAt, source.mentionedAt, locale, t)}
                           </small>
                         </span>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>

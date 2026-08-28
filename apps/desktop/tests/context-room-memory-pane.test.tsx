@@ -145,6 +145,38 @@ describe('MemoryPane applied entities', () => {
     expect(textNodes(renderer!, 'V1 项目结论 · EverRoom 文档')).toHaveLength(1)
   })
 
+  it('fires onOpenSource when a source-material row is clicked', async () => {
+    const source = {
+      sourceKind: 'everroom-doc',
+      sourceId: 'doc-1',
+      sourceTitle: 'V1 项目结论',
+      evidence: '林薇负责 V1 视觉设计',
+      mentionedAt: '2026-08-25T08:00:00.000Z',
+    }
+    appliedResult = { entities: [appliedEntity({ entityId: 'e-1', name: '林薇', sources: [source] })], facts: [] }
+    const onOpenSource = vi.fn()
+    let renderer: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <MemoryPane
+          room={roomWithPeople()}
+          onOpenMemory={() => undefined}
+          onUpdateRoom={() => undefined}
+          onOpenRoom={() => undefined}
+          onOpenSource={onOpenSource}
+        />,
+      )
+    })
+
+    await clickNode(renderer!, '林薇')
+    const row = renderer!.root.findAllByProps({ className: 'context-room-memory-source-row' })[0]
+    expect(row).toBeTruthy()
+    await act(async () => {
+      row!.props.onClick()
+    })
+    expect(onOpenSource).toHaveBeenCalledWith(source)
+  })
+
   it('renders the graph from live entities even when static room content is empty', async () => {
     // 自动创建的 Room 静态快照字段全空，数据只存在于结构化实体表：
     // 图谱门槛必须认实时实体，否则永远显示空态。

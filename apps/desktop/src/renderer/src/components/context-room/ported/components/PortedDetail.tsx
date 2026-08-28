@@ -1,4 +1,4 @@
-import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
@@ -169,6 +169,39 @@ export function PortedDetail({
     if (!layout.panels.includes(pane)) layout.switchPane(pane)
   }, [layout])
 
+  // 记忆图谱来源行跳转：文档类只在右区打开（不切走中栏的面板，图谱保持在场），
+  // 邮件来源进邮箱面板详情；解析不到对应对象（已删除/外部记录）时静默不跳。
+  const openSource = useCallback((source: RoomAppliedEntitySource) => {
+    const openInContentArea = (resource: ContextRoomResource) => {
+      setSelectedObject(null)
+      setSelectedResourceId(resource.id)
+      layout.setMobileContent(true)
+    }
+    const notTrashed = (resource: ContextRoomResource) => !('trashed' in resource) || !resource.trashed
+    if (source.sourceKind === 'everroom-doc' || source.sourceKind === 'cloud-doc') {
+      const resource = library.resources.find((candidate) =>
+        candidate.kind === 'cloud-doc' && candidate.binding.docId === source.sourceId && notTrashed(candidate))
+      if (resource) {
+        openInContentArea(resource)
+        return
+      }
+    }
+    if (source.sourceKind === 'file') {
+      const resource = library.resources.find((candidate) =>
+        candidate.kind === 'knowledge-file' && candidate.fileId === source.sourceId && notTrashed(candidate))
+        ?? library.resources.find((candidate) =>
+          candidate.kind === 'office-file' && candidate.id === `${room.id}:file:${source.sourceId}`)
+      if (resource) {
+        openInContentArea(resource)
+        return
+      }
+    }
+    if (source.sourceKind === 'mail') {
+      const mail = room.materials.find((item) => item.type === '邮件' && item.id === source.sourceId)
+      if (mail) openObject({ kind: 'mail', id: mail.id })
+    }
+  }, [layout, library.resources, openObject, room.id, room.materials])
+
   const toggleTask = (taskId: string) => onUpdateRoom((current) => ({
     ...current,
     actionItems: current.actionItems.map((item) => item.id === taskId
@@ -224,6 +257,7 @@ export function PortedDetail({
           onOpenWikiPage={openWikiPage}
           onOpenMemory={setSelectedMemoryId}
           onOpenObject={openObject}
+          onOpenSource={openSource}
           onCloseObject={() => {
             setSelectedObject(null)
             layout.setMobileContent(false)
