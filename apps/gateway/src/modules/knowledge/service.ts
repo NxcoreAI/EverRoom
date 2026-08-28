@@ -2754,7 +2754,7 @@ export class KnowledgeService {
   }
 
   createRule(input: {
-    matcher: { sourceTag?: string; filenamePrefix?: string; threadId?: string; titleKeyword?: string; creatorId?: string };
+    matcher: { sourceTag?: string; filenamePrefix?: string; threadId?: string; titleKeyword?: string; creatorId?: string; calendarId?: string };
     targetRoomId: string;
   }): { ok: true; id: string } | { ok: false; error: string } {
     const keys = Object.keys(input.matcher).filter((key) => {
@@ -2821,13 +2821,22 @@ export class KnowledgeService {
       if (decision.primaryRoomId) continue;
       const sourceTag = connectorSourceTagOf(decision.sourceId);
       if (matcher.sourceTag !== undefined && sourceTag !== matcher.sourceTag) continue;
+      // 日历级 calendarId：历史决策无 entrySignals 快照，从 markdown 组织者行近似推导
+      const calendarId = matcher.calendarId !== undefined
+        ? calendarOrganizerOf(decision.sourceMarkdown ?? "")
+        : undefined;
+      if (matcher.calendarId !== undefined && calendarId !== matcher.calendarId) continue;
       if (matcher.titleKeyword !== undefined && !(decision.sourceTitle ?? "").includes(matcher.titleKeyword)) continue;
       matched += 1;
+      const entrySignals = {
+        ...(sourceTag ? { sourceTag } : {}),
+        ...(calendarId ? { calendarId } : {}),
+      };
       const result = this.router.routeByRule({
         ref: { kind: decision.sourceKind, id: decision.sourceId, version: decision.sourceVersion },
         title: decision.sourceTitle ?? decision.sourceId,
         markdown: decision.sourceMarkdown ?? "",
-        ...(sourceTag ? { entrySignals: { sourceTag } } : {}),
+        ...(Object.keys(entrySignals).length > 0 ? { entrySignals } : {}),
       });
       if (!result) continue;
       replayed += 1;
@@ -3232,4 +3241,17 @@ export function connectorSourceTagOf(sourceId: string): string | null {
   if (!sourceId.startsWith("connector:")) return null;
   const [provider, connectionId] = sourceId.slice("connector:".length).split(":");
   return provider && connectionId ? `connector:${provider}:${connectionId}` : null;
+}
+
+/**
+ * 决策快照 markdown 的「组织者：」行 → 日历地址。回填用：历史决策没有
+ * entrySignals 快照，日历级 calendarId 只能从组织者行近似（自己日历上的
+ * 事件组织者即日历 id；新建决策走 ingest entrySignals 的精确 scope id）。
+ */
+export function calendarOrganizerOf(markdown: string): string | null {
+  const line = markdown.split("\n").find((candidate) => candidate.startsWith("组织者："));
+  if (!line) return null;
+  const bracket = line.match(/<([^>]+)>/);
+  const address = (bracket?.[1] ?? line.slice("组织者：".length)).trim();
+  return address.includes("@") ? address : null;
 }

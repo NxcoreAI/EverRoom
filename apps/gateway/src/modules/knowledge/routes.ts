@@ -392,6 +392,8 @@ const RuleMatcherSchema = Type.Object({
   threadId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   titleKeyword: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   creatorId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+  /** 日历级粒度：匹配同步 scope 的 providerScopeId（日历 id），配合 sourceTag 圈定连接内某个日历。 */
+  calendarId: Type.Optional(Type.String({ minLength: 1, maxLength: 400 })),
 });
 
 const RuleDto = Type.Object({

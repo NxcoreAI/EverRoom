@@ -182,4 +182,45 @@ describe("replayRoutingRule（规则层存量回填）", () => {
     service.dispose();
     sqlite.close();
   });
+
+  it("calendarId 匹配器从决策快照组织者行做日历级回填：同连接只归因目标日历", async () => {
+    const { service, db, sqlite } = await serviceForTest();
+    const rule = service.createRule({
+      matcher: { sourceTag: "connector:google-calendar:conn-1", calendarId: "danielfbaby@yahoo.com" },
+      targetRoomId: "room-school",
+    });
+    const ruleId = rule.ok ? rule.id : "";
+    const at = new Date();
+    // 个人日历事件（组织者 = 日历 id）：命中。
+    seedDecision(db, {
+      id: "rd-personal",
+      sourceId: schoolEvent("ev-personal"),
+      title: "学校开学",
+      markdown: "# 学校开学\n\n组织者：Daniel <danielfbaby@yahoo.com>\n\n地点：教学楼",
+      at,
+    });
+    // 同一条连接上 Google 自动订阅的假日日历（组织者 = 假日日历地址）：不命中。
+    seedDecision(db, {
+      id: "rd-holiday",
+      sourceId: schoolEvent("ev-holiday"),
+      title: "New Year's Day",
+      markdown: "# New Year's Day\n\n组织者：美国节假日 <zh-cn.usa.official#holiday@group.v.calendar.google.com>",
+      at,
+    });
+    // 无组织者行的旧快照：日历未知，保守不命中。
+    seedDecision(db, { id: "rd-bare", sourceId: schoolEvent("ev-bare"), title: "旧事件", at });
+
+    const result = service.replayRoutingRule(ruleId);
+    expect(result).toEqual({ ok: true, matched: 1, replayed: 1 });
+
+    expect(db.select().from(routeDecisions)
+      .where(eq(routeDecisions.sourceId, schoolEvent("ev-personal"))).all()).toHaveLength(2);
+    expect(db.select().from(routeDecisions)
+      .where(eq(routeDecisions.sourceId, schoolEvent("ev-holiday"))).all()).toHaveLength(1);
+    expect(db.select().from(routeDecisions)
+      .where(eq(routeDecisions.sourceId, schoolEvent("ev-bare"))).all()).toHaveLength(1);
+
+    service.dispose();
+    sqlite.close();
+  });
 });
