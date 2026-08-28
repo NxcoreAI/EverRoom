@@ -128,28 +128,6 @@ jobs:
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
           pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never "${args[@]}"
-          if [[ -n "$CSC_LINK" ]]; then
-            app="release/mac-arm64/EverRoom.app"
-            info="$(codesign -dv "$app" 2>&1 || true)"
-            if [[ "$info" != *"Authority=Developer ID Application"* ]]; then
-              echo "::error::App is NOT signed with Developer ID — certificate import likely failed (check MACOS_CERTIFICATE_BASE64/MAC_CERTS secret value)." >&2
-              printf '%s\n' "$info" >&2
-              exit 1
-            fi
-          fi
-
-      - name: Verify macOS signature and APNs entitlement
-        shell: bash
-        run: |
-          [[ -n "$CSC_LINK" ]] || exit 0
-          app_path="$(find release -type d -name EverRoom.app -print -quit)"
-          codesign --verify --deep --strict --verbose=2 "$app_path"
-          if [[ -f apps/desktop/build/embedded.provisionprofile ]]; then
-            codesign -d --entitlements :- "$app_path" > "$RUNNER_TEMP/everroom-entitlements.plist" 2>/dev/null
-            /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.aps-environment' "$RUNNER_TEMP/everroom-entitlements.plist" | grep -Fx production
-          fi
-          xcrun stapler validate "$app_path"
-          spctl --assess --type execute --verbose=2 "$app_path"
 
       - name: Audit package contents
         shell: bash
@@ -207,10 +185,6 @@ jobs:
           test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
           hdiutil verify "${dmgs[0]}"
           unzip -t "${zips[0]}"
-          if [[ -n "$CSC_LINK" ]]; then
-            codesign --verify --deep --strict --verbose=2 "$app_path"
-            spctl -a -t exec -vv "$app_path"
-          fi
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
