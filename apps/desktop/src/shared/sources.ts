@@ -651,6 +651,19 @@ export interface OfficeWorkspaceBounds {
   height: number
 }
 
+/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides 运行时）。 */
+export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides'
+
+/** dev 测试页使用的固定预览实例 id（office-test 页 ↔ 主进程懒创建的 fixture 实例）。 */
+export const OFFICE_TEST_INSTANCE_ID = 'office-test'
+
+/** 顶栏 Office 预览标签（对齐 ContextRoomWorkspaceTab 的标签形状）。 */
+export interface OfficePreviewTab {
+  id: string
+  title: string
+  kind: OfficePreviewKind
+}
+
 /** Context Room 子 Agent（划词改写）dispatch 入参，见 gateway /v1/context-rooms/selection-rewrite。 */
 export interface RoomAgentSelectionRewriteInput {
   roomId?: string
@@ -697,8 +710,10 @@ export interface NxcoreDesktopApi {
   }
   office: {
     testAvailable: boolean
-    setTestActive(active: boolean): Promise<void>
-    setActive(active: boolean): Promise<void>
+    /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。 */
+    setActiveInstance(id: string | null): Promise<void>
+    /** 关闭并销毁一个预览实例（标签关闭时调用）。 */
+    closeInstance(id: string): Promise<void>
     setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void
   }
   locale: {
@@ -1096,12 +1111,15 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
-    /** DOCX 使用内置 Office 打开；其他格式使用操作系统默认查看器。 */
+    /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。 */
     openOriginal(
       fileId: string,
       originalName: string,
       contentHash: string,
-    ): Promise<{ openedWith: 'office' | 'external' }>
+    ): Promise<
+      | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind }
+      | { openedWith: 'external' }
+    >
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */

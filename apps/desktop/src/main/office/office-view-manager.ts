@@ -4,11 +4,8 @@ import { basename, extname, join, resolve } from 'node:path'
 import { app, ipcMain } from 'electron'
 import type { BrowserWindow, Rectangle, WebContentsView } from 'electron'
 
-import {
-  loadPreparedGenOfficeRuntime,
-  preparedGenOfficeFixture,
-  type GenOfficeDocsRuntime,
-} from './office-runtime'
+import type { GenOfficeDocsRuntime } from './office-runtime'
+import { convertLegacyOfficeFile } from './legacy-convert'
 
 export const OFFICE_WORKSPACE_BOUNDS_CHANNEL = 'office:workspace-bounds'
 
@@ -43,16 +40,17 @@ function validateDocxPath(input: string): string {
   return filePath
 }
 
-export function prepareOfficeDocument(
+export async function prepareOfficeDocument(
   fileId: string,
   contentHash: string,
   originalName: string,
   storagePath: string,
-): string {
+): Promise<string> {
   if (!/^file-[a-z0-9-]+$/i.test(fileId) || !/^[a-f0-9]{64}$/i.test(contentHash)) {
     throw new Error('Office document identity is invalid.')
   }
-  if (extname(originalName).toLowerCase() !== '.docx') {
+  const extension = extname(originalName).toLowerCase()
+  if (extension !== '.docx' && extension !== '.doc') {
     throw new Error(`Unsupported internal Office document: ${originalName}`)
   }
   const source = resolve(storagePath)
@@ -62,11 +60,19 @@ export function prepareOfficeDocument(
 
   // Object-store blobs are extensionless and content-addressed. GenOffice
   // requires a .docx path and must never write into the immutable CAS blob, so
-  // open a stable per-version working copy instead.
+  // open a stable per-version working copy instead. Legacy .doc files get a
+  // LibreOffice conversion cached next to that working copy.
   const directory = join(app.getPath('userData'), 'office-documents', fileId, contentHash)
-  const target = join(directory, basename(originalName))
+  const legacyTarget = extension === '.doc' ? 'docx' : null
+  const target = join(
+    directory,
+    legacyTarget ? `${basename(originalName, extname(originalName))}.${legacyTarget}` : basename(originalName),
+  )
   mkdirSync(directory, { recursive: true })
-  if (!existsSync(target)) copyFileSync(source, target)
+  if (!existsSync(target)) {
+    if (legacyTarget) await convertLegacyOfficeFile(source, originalName, directory, legacyTarget)
+    else copyFileSync(source, target)
+  }
   return target
 }
 
@@ -86,21 +92,7 @@ export class OfficeViewManager {
     this.view = view
   }
 
-  static create(window: BrowserWindow, docxPath: string): OfficeViewManager {
-    const runtime = loadPreparedGenOfficeRuntime()
-    return OfficeViewManager.createWithRuntime(window, runtime.docs, docxPath)
-  }
-
-  static createTest(window: BrowserWindow): OfficeViewManager {
-    const runtime = loadPreparedGenOfficeRuntime()
-    return OfficeViewManager.createWithRuntime(
-      window,
-      runtime.docs,
-      preparedGenOfficeFixture(runtime.root),
-    )
-  }
-
-  private static createWithRuntime(
+  static createWithRuntime(
     window: BrowserWindow,
     docs: GenOfficeDocsRuntime,
     docxPath: string,
@@ -108,21 +100,24 @@ export class OfficeViewManager {
     const filePath = validateDocxPath(docxPath)
     docs.registerDocsIpc()
     docs.setDocsShellWindow(window)
-    const view = docs.createDocsView(filePath, { hostMode: 'everroom' })
+    const view = docs.createDocsView(filePath, { hostMode: 'everroom', readonly: true })
     docs.setActiveDocsResolver(() => view.webContents.isDestroyed() ? null : view.webContents)
     view.setVisible(false)
     window.contentView.addChildView(view)
 
     const manager = new OfficeViewManager(window, docs, view)
     ipcMain.on(OFFICE_WORKSPACE_BOUNDS_CHANNEL, manager.handleBounds)
-    window.once('closed', manager.dispose)
     return manager
   }
 
   setActive(active: boolean): void {
     if (this.disposed) return
     this.active = active
-    if (active && this.bounds) this.view.setBounds(this.bounds)
+    if (active) {
+      // 多实例并存时全局激活指针只有一个：每次激活都要重新指向本视图。
+      this.docs.setActiveDocsResolver(() => this.view.webContents.isDestroyed() ? null : this.view.webContents)
+      if (this.bounds) this.view.setBounds(this.bounds)
+    }
     this.view.setVisible(active && Boolean(this.bounds?.width && this.bounds.height))
   }
 
@@ -139,8 +134,6 @@ export class OfficeViewManager {
     if (this.disposed) return
     this.disposed = true
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
-    this.docs.setActiveDocsResolver(null)
-    this.docs.setDocsShellWindow(null)
     if (!this.view.webContents.isDestroyed()) {
       this.docs.teardownDocsRenderer(this.view.webContents)
       this.view.webContents.close({ waitForBeforeUnload: false })

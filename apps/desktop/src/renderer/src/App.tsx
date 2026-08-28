@@ -2,6 +2,7 @@ import { ArrowRight, BrainCircuit, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentSessionLink } from '@nxcore/agent-contract'
 import type { MemoryAtomicItemDto } from '../../shared/memory'
+import { OFFICE_TEST_INSTANCE_ID, type OfficePreviewTab } from '../../shared/sources'
 
 import { AgentPanel } from '@/components/AgentPanel'
 import {
@@ -82,6 +83,8 @@ export function App() {
   const [activePage, setActivePage] = useState<PageId>(readInitialPage)
   const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
   const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
+  const [officeTabs, setOfficeTabs] = useState<OfficePreviewTab[]>([])
+  const [activeOfficeInstanceId, setActiveOfficeInstanceId] = useState<string | null>(null)
   const [agentOpen, setAgentOpen] = useState(true)
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
   const [agentRoomCitations, setAgentRoomCitations] = useState<RoomOverviewCitation[]>([])
@@ -120,19 +123,24 @@ export function App() {
 
   const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
   const activeWorkspaceRoomId = activePage === 'rooms' ? activeContextRoomId : null
+  const activeWorkspaceOfficeId = activePage === 'office-document' ? activeOfficeInstanceId : null
   const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
   const availableContextRooms = useMemo(() => (
     contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
   ), [contextRoomState.rooms])
+
+  // 顶栏 Office 预览标签：同一时刻只激活一个实例，离开预览页时全部隐藏（标签保留）。
+  const focusedOfficeInstanceId = activePage === 'office-test'
+    ? OFFICE_TEST_INSTANCE_ID
+    : activePage === 'office-document' ? activeOfficeInstanceId : null
 
   useEffect(() => {
     const workspace = workspaceMainRef.current
     const office = window.nxcore?.office
     if (!workspace || !office) return
 
-    const active = activePage === 'office-document' || activePage === 'office-test'
-    if (!active) {
-      void office.setActive(false).catch((error) => {
+    if (!focusedOfficeInstanceId) {
+      void office.setActiveInstance(null).catch((error) => {
         console.error('Failed to hide the Office view.', error)
       })
       return
@@ -151,8 +159,7 @@ export function App() {
     observer.observe(workspace)
     window.addEventListener('resize', reportBounds)
     let disposed = false
-    const activate = activePage === 'office-test' ? office.setTestActive(true) : office.setActive(true)
-    void activate.then(() => {
+    void office.setActiveInstance(focusedOfficeInstanceId).then(() => {
       if (!disposed) reportBounds()
     }).catch((error) => {
       console.error('Failed to open the Office view.', error)
@@ -162,7 +169,7 @@ export function App() {
       observer.disconnect()
       window.removeEventListener('resize', reportBounds)
     }
-  }, [activePage, agentOpen, effectiveNavCollapsed])
+  }, [focusedOfficeInstanceId, agentOpen, effectiveNavCollapsed])
 
   useEffect(() => {
     logOnboarding('state', {
@@ -472,6 +479,40 @@ export function App() {
     }
   }, [activeContextRoomId, contextRoomTabs])
 
+  // 文件页打开 Office 预览 → 顶栏新标签（同文件复用标签），焦点切到该预览。
+  const openOfficeTab = useCallback((tab: OfficePreviewTab) => {
+    setOfficeTabs((current) => (
+      current.some((item) => item.id === tab.id)
+        ? current.map((item) => item.id === tab.id ? tab : item)
+        : [...current, tab]
+    ))
+    setActiveOfficeInstanceId(tab.id)
+    setActivePage('office-document')
+  }, [])
+
+  const activateOfficeTab = useCallback((instanceId: string) => {
+    setActiveOfficeInstanceId(instanceId)
+    setActivePage('office-document')
+  }, [])
+
+  const closeOfficeTab = useCallback((instanceId: string) => {
+    void window.nxcore?.office.closeInstance(instanceId).catch((error) => {
+      console.error('Failed to close the Office preview.', error)
+    })
+    const closingIndex = officeTabs.findIndex((tab) => tab.id === instanceId)
+    if (closingIndex < 0) return
+    const nextTabs = officeTabs.filter((tab) => tab.id !== instanceId)
+    setOfficeTabs(nextTabs)
+    if (activeOfficeInstanceId !== instanceId) return
+    const neighbor = nextTabs[closingIndex] ?? nextTabs[closingIndex - 1] ?? null
+    if (neighbor) {
+      setActiveOfficeInstanceId(neighbor.id)
+      return
+    }
+    setActiveOfficeInstanceId(null)
+    setActivePage('files')
+  }, [activeOfficeInstanceId, officeTabs])
+
   const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
     const roomById = new Map(rooms.map((room) => [room.id, room]))
     setContextRoomTabs((current) => current.flatMap((tab) => {
@@ -700,13 +741,19 @@ export function App() {
       <TopBar
         contextRoomTabs={contextRoomTabs}
         activeContextRoomId={activeWorkspaceRoomId}
+        officeTabs={officeTabs}
+        activeOfficeId={activeWorkspaceOfficeId}
         agentOpen={agentOpen}
         navCollapsed={effectiveNavCollapsed}
         onActivateWorkbench={() => {
           if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
+          // 预览无「主页」可回：点工作区标签时退回文件页（预览入口），标签保留。
+          if (activePage === 'office-document' || activePage === 'office-test') setActivePage('files')
         }}
         onActivateContextRoom={activateContextRoomTab}
         onCloseContextRoom={closeContextRoomTab}
+        onActivateOfficeTab={activateOfficeTab}
+        onCloseOfficeTab={closeOfficeTab}
         onToggleAgent={() => setAgentOpen((open) => {
           const next = !open
           if (next && window.matchMedia('(max-width: 900px)').matches) setNavCollapsed(true)
@@ -739,6 +786,7 @@ export function App() {
           onNavigate={navigate}
           onFocusAgent={focusAgent}
           onOpenDocument={openDocumentTarget}
+          onOpenOfficePreview={openOfficeTab}
           onStartFullOnboarding={() => {
             logOnboarding('manual-full-onboarding-start', { destination: 'folder' })
             if (agentNavigationTimerRef.current !== null) {

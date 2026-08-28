@@ -992,6 +992,7 @@
   "topBar.collapseNavigation": "收起导航",
   "topBar.expandAgent": "展开 Agent",
   "topBar.expandNavigation": "展开导航",
+  "topBar.officeReadOnly": "[只读] {title}",
   "topBar.openPages": "打开的页面",
   "topBar.workspace": "工作台",
   "useAgentSession.runFailed": "Agent 运行失败。",

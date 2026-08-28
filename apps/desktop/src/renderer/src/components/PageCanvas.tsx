@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react'
 
+import type { OfficePreviewTab } from '../../../shared/sources'
 import type { PageId } from '@/data/navigation'
 import type { ContextRoomWorkspaceTab } from './context-room/contextRoomTabs'
 import { ContextRoomHomeSkeleton } from './context-room/ContextRoomHomeSkeleton'
@@ -39,6 +40,7 @@ export function PageCanvas({
   onNavigate,
   onFocusAgent,
   onOpenDocument,
+  onOpenOfficePreview,
   memoryFocusId,
   onStartFullOnboarding,
 }: {
@@ -58,6 +60,7 @@ export function PageCanvas({
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
+  onOpenOfficePreview: (tab: OfficePreviewTab) => void
   memoryFocusId?: string | null
   onStartFullOnboarding?: () => void
 }) {
@@ -99,7 +102,7 @@ export function PageCanvas({
   }
   if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
-  if (page === 'files') content = <FilesPage onNavigate={onNavigate} />
+  if (page === 'files') content = <FilesPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} />
   if (page === 'inspiration') content = <InspirationPage />
   if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
   if (page === 'wiki') content = <WikiPage />

@@ -11,8 +11,10 @@ import type {
   IngestPipelines,
 } from '../../../../shared/ingest'
 import type { BrowserExtensionClipperCapture } from '../../../../shared/browser-extension'
+import type { OfficePreviewTab } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition } from './fileCategories'
+import type { PageId } from '@/data/navigation'
 import { formatBytes, formatDate } from './sources/sourceFormatters'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
@@ -129,7 +131,13 @@ function groupCatalogFiles(files: FileCatalogDto[]): Map<string, ClassifiedFile[
   return groups
 }
 
-export function FilesPage({ onNavigate }: { onNavigate: (page: PageId) => void }) {
+export function FilesPage({
+  onNavigate,
+  onOpenOfficePreview,
+}: {
+  onNavigate: (page: PageId) => void
+  onOpenOfficePreview: (tab: OfficePreviewTab) => void
+}) {
   const { locale, t } = useLocale()
   const filesApi = window.nxcore?.files
   const ingestApi = window.nxcore?.ingest
@@ -406,7 +414,10 @@ export function FilesPage({ onNavigate }: { onNavigate: (page: PageId) => void }
     void runFileAction(file.id, async () => {
       try {
         const result = await filesApi.openOriginal(file.id, file.originalName, file.contentHash)
-        if (result.openedWith === 'office') onNavigate('office-document')
+        if (result.openedWith === 'office') {
+          // 顶栏预览标签（可多开）：不切页，由 App 聚焦到新建/复用的标签。
+          onOpenOfficePreview({ id: result.instanceId, title: file.originalName, kind: result.kind })
+        }
       } catch (error) {
         setMessage(error instanceof Error ? error.message : t('surface:files.unableToOpenOriginal'))
       }

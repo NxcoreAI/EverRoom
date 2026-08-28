@@ -992,6 +992,7 @@
   "topBar.collapseNavigation": "Collapse navigation",
   "topBar.expandAgent": "Expand Agent",
   "topBar.expandNavigation": "Expand navigation",
+  "topBar.officeReadOnly": "[Read-only] {title}",
   "topBar.openPages": "Open pages",
   "topBar.workspace": "Workspace",
   "useAgentSession.runFailed": "Agent run failed.",

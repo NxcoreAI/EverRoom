@@ -11,7 +11,10 @@ export interface GenOfficeDocsRuntime {
     rendererFile: string
     rendererUrl?: string
   }): void
-  createDocsView(openPath?: string, options?: { hostMode?: 'tab' | 'everroom' }): WebContentsView
+  createDocsView(
+    openPath?: string,
+    options?: { hostMode?: 'tab' | 'everroom'; readonly?: boolean },
+  ): WebContentsView
   registerDocsIpc(): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsShellWindow(window: BrowserWindow | null): void
@@ -19,7 +22,7 @@ export interface GenOfficeDocsRuntime {
 }
 export interface GenOfficeSheetsRuntime {
   configureSheetsRuntime(config: { preloadPath: string; rendererFile: string; sidecarPath: string }): void
-  createSheetsView(options?: { includeAiHandlers?: boolean }): WebContentsView
+  createSheetsView(options?: { includeAiHandlers?: boolean; readonly?: boolean }): WebContentsView
   queueWorkbookForView(contents: WebContents, path: string): void
   registerSheetsIpc(): void
   setActiveSheetsWebContents(contents: WebContents | null): void
@@ -29,7 +32,7 @@ export interface GenOfficeSheetsRuntime {
 
 export interface GenOfficeSlidesRuntime {
   configureSlidesRuntime(config: { preloadPath: string; rendererFilePath?: string }): void
-  createSlidesView(openPath?: string | null): WebContentsView
+  createSlidesView(openPath?: string | null, options?: { readonly?: boolean }): WebContentsView
   registerSlidesIpc(): void
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSlidesWebContents(contents: WebContents | null): void
