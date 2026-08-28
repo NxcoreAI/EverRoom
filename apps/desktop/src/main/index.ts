@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs'
-import { rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, extname, join, parse, resolve } from 'node:path'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { loadEnvFile } from 'node:process'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, protocol, shell, systemPreferences } from 'electron'
@@ -1616,6 +1616,15 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   const workspaceBindingStore = new LocalAgentWorkspaceBindingStore(
     join(app.getPath('userData'), 'local-agent-workspaces.json'),
   )
+  const unboundSessionRoot = (sessionId: string) => join(
+    app.getPath('userData'),
+    'local-agent-sandboxes',
+    createHash('sha256').update(sessionId).digest('hex'),
+  )
+  const unboundWorkspaceRoot = (agentId: string, sessionId: string) => {
+    const agentKey = createHash('sha256').update(agentId).digest('hex')
+    return join(unboundSessionRoot(sessionId), agentKey)
+  }
   const scanLocalAgents = async () => {
     localAgents = await localAgentDiscovery.scan()
     return localAgents
@@ -1683,6 +1692,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.deleteSession, async (_event, sessionId) => {
     await bridge.deleteSession(sessionId)
     await workspaceBindingStore.removeSession(sessionId)
+    await rm(unboundSessionRoot(sessionId), { recursive: true, force: true })
     for (const [token, binding] of workspaceBindings) {
       if (binding.sessionId === sessionId) workspaceBindings.delete(token)
     }
@@ -1713,10 +1723,17 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     const binding = request.workspaceBindingToken
       ? workspaceBindings.get(request.workspaceBindingToken)
       : null
-    if (!binding || binding.agentId !== installation.id || binding.sessionId !== sessionId) {
-      throw new Error('请先为该 Agent 选择并授权工作区。')
+    if (request.workspaceBindingToken
+      && (!binding || binding.agentId !== installation.id || binding.sessionId !== sessionId)) {
+      throw new Error('Agent 工作区授权已失效，请重新选择。')
     }
-    const validatedBinding = await workspaceBindingStore.validate(binding)
+    const storedBinding = binding ?? await workspaceBindingStore.find(installation.id, sessionId)
+    const validatedBinding = storedBinding
+      ? await workspaceBindingStore.validate(storedBinding)
+      : null
+    const workingDirectory = validatedBinding?.rootPath
+      ?? unboundWorkspaceRoot(installation.id, sessionId)
+    await mkdir(workingDirectory, { recursive: true })
     return bridge.startRun(sessionId, {
       ...request,
       localAgent: {
@@ -1724,8 +1741,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
         provider: installation.provider,
         displayName: installation.displayName,
         executablePath: installation.executablePath,
-        workingDirectory: validatedBinding.rootPath,
-        permissionProfile: validatedBinding.permissionProfile,
+        workingDirectory,
+        permissionProfile: validatedBinding?.permissionProfile ?? 'inspect',
         card: installation.card,
       },
     })
