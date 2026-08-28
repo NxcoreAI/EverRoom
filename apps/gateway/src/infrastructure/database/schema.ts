@@ -2237,7 +2237,7 @@ export const diaryRuns = sqliteTable(
   {
     id: text("id").primaryKey(),
     date: text("date").notNull().references(() => diaryDays.date, { onDelete: "cascade" }),
-    trigger: text("trigger", { enum: ["scheduled", "catch_up", "manual"] }).notNull(),
+    trigger: text("trigger", { enum: ["scheduled", "catch_up", "manual", "refresh"] }).notNull(),
     status: text("status", { enum: ["pending", "running", "completed", "failed"] }).notNull().default("pending"),
     windowStart: integer("window_start", { mode: "timestamp_ms" }).notNull(),
     windowEnd: integer("window_end", { mode: "timestamp_ms" }).notNull(),

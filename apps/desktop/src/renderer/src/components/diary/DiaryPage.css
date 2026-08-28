@@ -3,9 +3,17 @@
   --diary-accent-strong: var(--accent-strong);
   --diary-line: color-mix(in srgb, var(--border) 82%, transparent);
   overflow-y: auto;
+  overflow-x: clip;
   padding: 0 0 96px;
   background: var(--bg);
   color: var(--text);
+}
+
+/* 响应式断点跟随日记页自身宽度（main 列 = 视口 − 侧边栏 − Agent 面板），
+   不能用视口媒体查询：面板打开时页面实际宽度比视口小数百像素，
+   宽屏样式会在中等窗口里溢出。日历/灯箱浮层是 fixed 定位，留在容器外。 */
+.diary-body {
+  container: diary-page-body / inline-size;
 }
 
 .diary-page .sr-only {
@@ -61,7 +69,7 @@
 .diary-strip-days {
   display: grid;
   width: calc(100% - 220px);
-  grid-template-columns: repeat(29, minmax(18px, 1fr));
+  grid-template-columns: repeat(29, minmax(14px, 1fr));
   align-items: center;
   margin-left: 24px;
   overflow: hidden;
@@ -69,7 +77,7 @@
 
 .diary-strip-days button {
   display: grid;
-  min-width: 18px;
+  min-width: 14px;
   height: 46px;
   grid-template-rows: 11px 12px 13px;
   place-items: center;
@@ -108,7 +116,7 @@
 }
 
 .diary-strip-days i {
-  width: 16px;
+  width: min(16px, 100%);
   height: 9px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--border) 58%, transparent);
@@ -251,9 +259,10 @@
   font-weight: 700;
 }
 
+/* 两侧至少留 56px：上一日/下一日箭头悬在 ±48px，边距不足会横向溢出。 */
 .diary-content {
   position: relative;
-  width: min(760px, calc(100% - 64px));
+  width: min(760px, calc(100% - 112px));
   margin: 0 auto;
   padding-top: 48px;
 }
@@ -311,7 +320,7 @@
   margin: 0;
   color: var(--text);
   font-family: "Songti SC", "STSong", "SimSun", serif;
-  font-size: clamp(24px, 2vw, 31px);
+  font-size: clamp(24px, 2.6cqw, 31px);
   font-weight: 700;
   line-height: 1.35;
 }
@@ -1126,20 +1135,7 @@
   font-size: 10px;
 }
 
-@media (max-width: 1180px) {
-  .diary-date-strip-inner {
-    width: calc(100% - 32px);
-  }
-
-  .diary-content {
-    width: min(720px, calc(100% - 112px));
-  }
-
-  .diary-day-arrow-previous { left: -48px; }
-  .diary-day-arrow-next { right: -48px; }
-}
-
-@media (max-width: 760px) {
+@container diary-page-body (max-width: 760px) {
   .diary-date-strip {
     min-height: 108px;
   }
@@ -1157,20 +1153,9 @@
     display: none;
   }
 
-  .diary-strip-days {
-    width: calc(100% - 44px);
-    grid-template-columns: repeat(29, 24px);
-    margin-left: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
   .diary-strip-actions {
     top: 7px;
   }
-
-  .diary-strip-days::-webkit-scrollbar { display: none; }
-  .diary-today-button { display: none; }
 
   .diary-content {
     width: calc(100% - 40px);
@@ -1256,23 +1241,24 @@
     margin-top: 30px;
     padding-top: 58px;
   }
-
-  .diary-calendar-dialog {
-    padding: 18px;
-  }
-
-  .diary-calendar-controls select {
-    min-width: 66px;
-  }
-
-  .diary-calendar-day {
-    height: 43px;
-    padding-right: 5px;
-    padding-left: 5px;
-  }
 }
 
-@media (max-width: 430px) {
+/* 静态日期条（29 列 × 14px 下限 + 右侧预留）需要约 674px 才放得下，
+   更窄时切换为内部横向滚动，而不是静默裁剪。 */
+@container diary-page-body (max-width: 680px) {
+  .diary-strip-days {
+    width: calc(100% - 44px);
+    grid-template-columns: repeat(29, 24px);
+    margin-left: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .diary-strip-days::-webkit-scrollbar { display: none; }
+  .diary-today-button { display: none; }
+}
+
+@container diary-page-body (max-width: 430px) {
   .diary-content {
     width: calc(100% - 28px);
   }
@@ -1309,7 +1295,27 @@
   .diary-closing blockquote {
     font-size: 16px;
   }
+}
 
+/* 日历弹窗和图片灯箱是覆盖整个视口的 fixed 浮层，不在 .diary-body
+   容器内，继续按视口宽度适配。 */
+@media (max-width: 760px) {
+  .diary-calendar-dialog {
+    padding: 18px;
+  }
+
+  .diary-calendar-controls select {
+    min-width: 66px;
+  }
+
+  .diary-calendar-day {
+    height: 43px;
+    padding-right: 5px;
+    padding-left: 5px;
+  }
+}
+
+@media (max-width: 430px) {
   .diary-image-lightbox {
     padding: 52px 14px 18px;
   }

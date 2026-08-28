@@ -4,6 +4,7 @@
   overflow: hidden auto;
   padding: 0 0 96px;
   background: var(--bg);
+  container: diary-page-skeleton / inline-size;
 }
 
 .diary-skeleton-status {
@@ -57,7 +58,7 @@
 .diary-skeleton-days {
   display: grid;
   width: calc(100% - 58px);
-  grid-template-columns: repeat(29, minmax(18px, 1fr));
+  grid-template-columns: repeat(29, minmax(14px, 1fr));
   align-items: center;
   margin-left: 24px;
   overflow: hidden;
@@ -65,7 +66,7 @@
 
 .diary-skeleton-days span {
   display: grid;
-  min-width: 18px;
+  min-width: 14px;
   height: 46px;
   grid-template-rows: 11px 12px 13px;
   place-items: center;
@@ -93,8 +94,9 @@
   background: var(--diary-skeleton-soft);
 }
 
+/* 与 .diary-content 保持一致（切换日期加载时两者会同时挂载）。 */
 .diary-skeleton-content {
-  width: min(760px, calc(100% - 64px));
+  width: min(760px, calc(100% - 112px));
   margin: 0 auto;
   padding-top: 48px;
 }
@@ -175,17 +177,11 @@
   to { opacity: 0.92; }
 }
 
-@media (max-width: 1180px) {
-  .diary-skeleton-strip-inner { width: calc(100% - 32px); }
-  .diary-skeleton-content { width: min(720px, calc(100% - 112px)); }
-}
-
-@media (max-width: 760px) {
+@container diary-page-skeleton (max-width: 760px) {
   .diary-skeleton-strip { min-height: 108px; }
   .diary-skeleton-strip-inner { min-height: 76px; padding-top: 31px; }
   .diary-skeleton-meta { top: 15px; }
   .diary-skeleton-meta i:last-child { display: none; }
-  .diary-skeleton-days { width: calc(100% - 44px); grid-template-columns: repeat(29, 24px); margin-left: 0; }
   .diary-skeleton-calendar { top: 7px; }
   .diary-skeleton-content { width: calc(100% - 40px); padding-top: 34px; }
   .diary-skeleton-title { width: 96%; height: 21px; }
@@ -196,7 +192,11 @@
   .diary-skeleton-node { left: -43px; }
 }
 
-@media (max-width: 430px) {
+@container diary-page-skeleton (max-width: 680px) {
+  .diary-skeleton-days { width: calc(100% - 44px); grid-template-columns: repeat(29, 24px); margin-left: 0; }
+}
+
+@container diary-page-skeleton (max-width: 430px) {
   .diary-skeleton-content { width: calc(100% - 28px); }
   .diary-skeleton-event { padding-left: 40px; }
   .diary-skeleton-node { left: -39px; }

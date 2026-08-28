@@ -2,7 +2,6 @@
 .schedules-page-header, .schedule-form-header, .schedules-actions, .schedule-card, .schedule-card-title, .schedule-card-actions, .schedule-form-actions { display: flex; align-items: center; }
 .schedules-page-header { justify-content: space-between; gap: 24px; margin-bottom: 28px; }
 .schedules-page-header h1 { margin: 7px 0 5px; font-size: 26px; letter-spacing: 0; }
-.schedules-page-header p { margin: 0; color: var(--muted); font-size: 12px; }
 .eyebrow { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); font-size: 11px; font-weight: 650; }
 .eyebrow svg { width: 15px; }
 .schedules-actions { gap: 8px; }
