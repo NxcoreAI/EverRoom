@@ -47,6 +47,10 @@ function text(value: unknown, maxLength = 4_000): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+function comparableText(value: unknown): string {
+  return text(value).replace(/\s+/gu, " ");
+}
+
 function isoTime(value: unknown): string | null {
   const normalized = text(value, 120);
   if (!normalized || !Number.isFinite(Date.parse(normalized))) return null;
@@ -59,6 +63,12 @@ function calendarStartAt(markdown: string): string | null {
   const raw = match?.[1]?.trim();
   if (!raw || !Number.isFinite(Date.parse(raw))) return null;
   return new Date(raw).toISOString();
+}
+
+/** 日历事件按开始时间升序（缺时间沉底，同时间按 sourceId 定序）：投影的截断策略依赖此顺序。 */
+function sortByCalendarStart<T extends { startedAt: string | null; sourceId: string }>(events: T[]): T[] {
+  return events.sort((left, right) =>
+    (left.startedAt ?? "9999").localeCompare(right.startedAt ?? "9999") || left.sourceId.localeCompare(right.sourceId));
 }
 
 function correctionRow(row: typeof roomContextCorrections.$inferSelect): RoomContextCorrection {
@@ -240,7 +250,7 @@ export class RoomOverviewService {
     }).filter((event) => event.title);
     // 域表全缺（历史库）或部分命中：缺失的走路由快照回退解析。
     const missing = sourceIds.filter((id) => !domainRows.has(id));
-    if (missing.length === 0) return resolved;
+    if (missing.length === 0) return sortByCalendarStart(resolved);
     const snapshots = this.db.select({
       sourceId: routeDecisions.sourceId,
       sourceVersion: routeDecisions.sourceVersion,
@@ -271,7 +281,9 @@ export class RoomOverviewService {
         location: null,
       }];
     });
-    return [...resolved, ...fallback];
+    // 按开始时间升序（缺时间排尾）：投影的「未来日程取最近 N 条」与「时间轴取
+    // 最新 N 条」都依赖此顺序；与 roomTodos 的 dueAt 升序同一约定。
+    return sortByCalendarStart([...resolved, ...fallback]);
   }
 
   /** 已路由进 Room 的待办（kind "todo"）：按 dueAt 升序（无截止沉底）截 20。 */
@@ -315,6 +327,14 @@ export class RoomOverviewService {
     applied = this.rooms.roomAppliedEntities(roomId),
   ): string | null {
     const row = this.db.select().from(contextRooms).where(eq(contextRooms.id, roomId)).get();
+    // 连接器源的水位用「路由进房时间」（membership.updatedAt），不用事件的
+    // startedAt/dueAt：回填的历史日程不会推进水位（概览不刷新），未来的
+    // 日程（如 2031 假日）反而会把水位顶到未来、Room 永久显示过期。
+    const connectorRoutedAt = this.db.select({ updatedAt: roomSourceMemberships.updatedAt })
+      .from(roomSourceMemberships)
+      .where(eq(roomSourceMemberships.roomId, roomId))
+      .all()
+      .map((membership) => membership.updatedAt.toISOString());
     const candidates = [
       row?.updatedAt.toISOString(),
       isoTime(record(row?.data).updatedAt),
@@ -322,8 +342,7 @@ export class RoomOverviewService {
       ...applied.entities.map((entity) => entity.lastMentionAt),
       // 文档更新/日历路由/待办路由也应把投影标记为待刷新。
       ...this.roomDocuments(roomId).map((document) => document.updatedAt),
-      ...this.roomCalendarEvents(roomId).map((event) => event.startedAt),
-      ...this.roomTodos(roomId).map((todo) => todo.dueAt),
+      ...connectorRoutedAt,
     ].filter((value): value is string => Boolean(value));
     return candidates.sort((left, right) => right.localeCompare(left))[0] ?? null;
   }
@@ -413,10 +432,88 @@ export class RoomOverviewService {
   ): RoomContextCorrection {
     const resolved = this.requireRoom(roomId);
     this.validateProposal(resolved, input);
+    return this.insertCorrection(resolved, input, "proposed", agentContext);
+  }
+
+  applyCitation(
+    roomId: string,
+    input: ProposeRoomContextCorrectionInput,
+    agentContext: { sessionId: string; runId: string },
+  ): { correction: RoomContextCorrection; overview: RoomOverviewProjection } {
+    const result = this.applyCitations(roomId, [input], agentContext);
+    return { correction: result.corrections[0]!, overview: result.overview };
+  }
+
+  applyCitations(
+    roomId: string,
+    inputs: ProposeRoomContextCorrectionInput[],
+    agentContext: { sessionId: string; runId: string },
+  ): { corrections: RoomContextCorrection[]; overview: RoomOverviewProjection } {
+    const resolved = this.requireRoom(roomId);
+    if (inputs.length === 0 || inputs.length > 20) throw new Error("room_correction_citation_batch_invalid");
+    const projection = this.get(resolved);
+    const normalized = inputs.map((input) => this.resolveCitationCorrection(resolved, projection, input));
+    const targets = normalized.map((input) => `${input.section}:${input.targetClaimId}`);
+    if (new Set(targets).size !== targets.length) throw new Error("room_correction_citation_duplicate_target");
+
+    const rows = this.db.transaction((tx) => normalized.map((input) => tx.insert(roomContextCorrections)
+      .values(this.correctionValues(resolved, input, "applied", agentContext))
+      .returning().get()));
+    return { corrections: rows.map(correctionRow), overview: this.reproject(resolved) };
+  }
+
+  private resolveCitationCorrection(
+    roomId: string,
+    projection: RoomOverviewProjection,
+    input: ProposeRoomContextCorrectionInput,
+  ): ProposeRoomContextCorrectionInput {
+    this.validateProposal(roomId, input);
+    const citedText = comparableText(input.originalText);
+    if (!citedText) throw new Error("room_correction_citation_required");
+    const key = input.section === "next_steps" ? "nextSteps" : input.section;
+    const claims = projection[key];
+    const candidates = input.targetClaimId
+      ? claims.filter((claim) => claim.id === input.targetClaimId)
+      : claims.filter((claim) => comparableText(claim.text).includes(citedText));
+    if (candidates.length === 0) throw new Error("room_correction_citation_not_found");
+    if (candidates.length > 1) throw new Error("room_correction_citation_ambiguous");
+    const target = candidates[0]!;
+    if (!comparableText(target.text).includes(citedText)) {
+      throw new Error("room_correction_citation_mismatch");
+    }
+    if (input.targetSource && !hasSource(target, input.targetSource)) {
+      throw new Error("room_correction_source_mismatch");
+    }
+
+    return {
+      ...input,
+      targetClaimId: target.id,
+      entryPoint: "agent",
+    };
+  }
+
+  private insertCorrection(
+    roomId: string,
+    input: ProposeRoomContextCorrectionInput,
+    status: "proposed" | "applied",
+    agentContext?: { sessionId: string; runId: string },
+  ): RoomContextCorrection {
+    const row = this.db.insert(roomContextCorrections).values(
+      this.correctionValues(roomId, input, status, agentContext),
+    ).returning().get();
+    return correctionRow(row);
+  }
+
+  private correctionValues(
+    roomId: string,
+    input: ProposeRoomContextCorrectionInput,
+    status: "proposed" | "applied",
+    agentContext?: { sessionId: string; runId: string },
+  ): typeof roomContextCorrections.$inferInsert {
     const now = new Date();
-    const row = this.db.insert(roomContextCorrections).values({
+    return {
       id: randomUUID(),
-      roomId: resolved,
+      roomId,
       operation: input.operation,
       section: input.section,
       targetClaimId: text(input.targetClaimId, 200) || null,
@@ -425,14 +522,14 @@ export class RoomOverviewService {
       originalText: text(input.originalText) || null,
       replacementText: text(input.replacementText) || null,
       rationale: text(input.rationale, 2_000),
-      status: "proposed",
+      status,
       entryPoint: input.entryPoint,
       sessionId: agentContext?.sessionId ?? (text(input.sessionId, 200) || null),
       proposedByRunId: agentContext?.runId ?? null,
+      appliedAt: status === "applied" ? now : null,
       createdAt: now,
       updatedAt: now,
-    }).returning().get();
-    return correctionRow(row);
+    };
   }
 
   apply(

@@ -206,6 +206,15 @@ export class KnowledgeGatewayBridge {
     shell.showItemInFolder(storagePath)
   }
 
+  /** 使用操作系统为该文件类型配置的默认查看器打开文件本体。 */
+  async openFile(fileId: string): Promise<void> {
+    const { storagePath } = await this.request<{ storagePath: string }>(
+      `/v1/knowledge/files/${encodeURIComponent(fileId)}/storage`,
+    )
+    const error = await shell.openPath(storagePath)
+    if (error) throw new Error(error)
+  }
+
   /**
    * 系统文件选择框 → 读文件 → 上传路由（用户主路径的入口）。
    * 首期仅接受 .md / .markdown；每份文件独立上传，失败互不影响。

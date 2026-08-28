@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: context-room
 name: Context Room Agent
-description: 承接 Context Room 的创建整理、简报再生成、划词改写与资料分析
+description: 承接 Context Room 的创建整理、动态总览、简报再生成、划词改写与资料分析
 mode: dispatch_only
 enabled: true
 

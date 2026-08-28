@@ -53,7 +53,7 @@ import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
-import { loadOrCreateGatewaySecretKey } from './security/gateway-secret-key'
+import { loadOrCreateGatewaySecretKey, shouldUnlockGatewaySecrets } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
@@ -480,6 +480,7 @@ const KNOWLEDGE_CHANNELS = {
   listRoomFiles: 'knowledge:files:list',
   readFileMarkdown: 'knowledge:files:markdown',
   revealFile: 'knowledge:files:reveal',
+  openFile: 'knowledge:files:open',
 } as const
 
 const FILES_CHANNELS = {
@@ -1901,6 +1902,7 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
   handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
   handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
+  handle(KNOWLEDGE_CHANNELS.openFile, (_event, fileId: string) => bridge.openFile(fileId))
 }
 
 function registerFilesHandlers(
@@ -2146,9 +2148,14 @@ function registerAccountHandlers(
   client: SaasClient,
   onAccountChanged?: (account: CloudAccountStatus) => void,
   beforeLogout?: () => Promise<void>,
+  afterAuthenticated?: () => Promise<void>,
 ): void {
   handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(async () => {
-    const account = await syncAccountMonitoring(client.status(refreshSubscription === true))
+    const userInitiated = refreshSubscription === true
+    const account = await syncAccountMonitoring(client.status(userInitiated))
+    if (shouldUnlockGatewaySecrets(account.authenticated, userInitiated)) {
+      void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
+    }
     onAccountChanged?.(account)
     return account
   }))
@@ -2163,6 +2170,7 @@ function registerAccountHandlers(
     const password = value.password
     return rateLimitAware(async () => {
       const account = await syncAccountMonitoring(client.login(identifier, password))
+      if (account.authenticated) void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
       onAccountChanged?.(account)
       return account
     })
@@ -2179,6 +2187,7 @@ function registerAccountHandlers(
     const invitationCode=typeof value.invitationCode==='string'?value.invitationCode:undefined
     return rateLimitAware(async () => {
       const account = await syncAccountMonitoring(client.loginWithOidc(provider,invitationCode))
+      if (account.authenticated) void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
       onAccountChanged?.(account)
       return account
     })
@@ -2491,9 +2500,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
-  const gatewaySecretStoreKey = await loadOrCreateGatewaySecretKey(
-    join(dataDirectory, 'security', 'gateway-master-key.json'),
-  )
+  const gatewaySecretStoreKeyPath = join(dataDirectory, 'security', 'gateway-master-key.json')
+  let gatewaySecretStoreKey = await loadOrCreateGatewaySecretKey(gatewaySecretStoreKeyPath)
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error) => {
@@ -2615,7 +2623,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
-      {
+      () => ({
         // packaged app 无 .env，gateway 默认 agentRuntime=fake（假流式响应）；
         // 显式注入 pi——AI 四要素由 runtime config 兜底（降级启动到配置完成）。
         NXCORE_AGENT_RUNTIME: 'pi',
@@ -2652,7 +2660,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: 'true',
           }
           : {}),
-      },
+      }),
     )
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
@@ -2839,7 +2847,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         transcriptionProcessingCoordinator?.wake()
         void macosPushNotifications?.registerAuthenticatedDevice()
       }
-    }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve())
+    }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve(), async () => {
+      if (gatewaySecretStoreKey || process.platform !== 'darwin') return
+      gatewaySecretStoreKey = await loadOrCreateGatewaySecretKey(gatewaySecretStoreKeyPath, true)
+      if (!gatewaySecretStoreKey || !gatewaySupervisor) return
+      await gatewaySupervisor.shutdown()
+      await gatewaySupervisor.start()
+    })
     registerRuntimeConfigHandlers(saasClient)
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))

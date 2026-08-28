@@ -31,6 +31,7 @@ describe('Room overview change events', () => {
   it('recognizes every tool that returns a live overview projection', () => {
     expect(isRoomOverviewProjectionToolName('context_room_overview_regenerate')).toBe(true)
     expect(isRoomOverviewProjectionToolName('context_room_correction_apply')).toBe(true)
+    expect(isRoomOverviewProjectionToolName('context_room_correction_apply_citation')).toBe(true)
     expect(isRoomOverviewProjectionToolName('context_room_correction_revoke')).toBe(true)
     expect(isRoomOverviewProjectionToolName('context_room_correction_propose')).toBe(false)
   })

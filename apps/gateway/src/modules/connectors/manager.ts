@@ -15,11 +15,11 @@ export class ConnectorManager {
   private timer: NodeJS.Timeout | null = null;
   /** 同步数据入库记忆的扇出（create-server 注入 MemoryService）；失败不阻塞同步本身。 */
   private memorySink:
-    | ((input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string }) => Promise<void>)
+    | ((input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string }) => Promise<void>)
     | null = null;
 
   setMemorySink(
-    sink: (input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string }) => Promise<void>,
+    sink: (input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string }) => Promise<void>,
   ) {
     this.memorySink = sink;
   }
@@ -144,6 +144,8 @@ export class ConnectorManager {
             documentId: change.event.providerEventId,
             title: change.event.title.trim() || "（无标题）",
             markdown: calendarEventToMarkdown(change.event),
+            // scope 按"每个日历"建立：providerScopeId 即日历 id，进规则信号做日历级归因
+            calendarId: scope.providerScopeId,
           }).catch(() => {});
         }
         for (const document of page.documents ?? []) {

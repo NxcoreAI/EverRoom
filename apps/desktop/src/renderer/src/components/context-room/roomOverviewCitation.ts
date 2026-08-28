@@ -20,6 +20,7 @@ export interface RoomOverviewCitation {
   roomTitle: string;
   section: RoomOverviewCitationSection;
   text: string;
+  claimRefs?: Array<{ claimId: string; text: string }>;
   comment?: string;
 }
 
@@ -39,6 +40,22 @@ export function buildRoomOverviewCitationContext(citations: readonly RoomOvervie
     `引用 ${index + 1}`,
     `区块：${citation.section}`,
     `引用文本：${citation.text}`,
+    ...(citation.claimRefs?.length ? [
+      "命中 Claims：",
+      ...citation.claimRefs.map((claim) => `- ${claim.claimId}：${claim.text}`),
+    ] : []),
     ...(citation.comment ? [`用户评论：${citation.comment}`] : []),
   ].join('\n')).join('\n\n');
+}
+
+export function buildRoomOverviewCitationPrompt(citations: readonly RoomOverviewCitation[]): string {
+  const comments = citations
+    .map((citation) => citation.comment?.trim() ?? '')
+    .filter(Boolean);
+  if (comments.length === 0) return '';
+  if (comments.length === 1) return comments[0]!;
+  return [
+    '请分别处理以下引用评论：',
+    ...comments.map((comment, index) => `${index + 1}. ${comment}`),
+  ].join('\n');
 }

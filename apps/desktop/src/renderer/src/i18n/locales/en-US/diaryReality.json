@@ -18,6 +18,8 @@
   "diary.diaryGenerationFailed": "Diary generation failed",
   "diary.diaryGenerationStarted": "Diary generation started",
   "diary.documentActivity": "Document activity",
+  "diary.gatewayUnavailableRetryLater": "The local service is restarting or temporarily unavailable. Wait a moment and generate again.",
+  "diary.generationRunLost": "The generation task record is missing (local data may have been reset). Please generate again.",
   "diary.viewSource": "View source",
   "diary.openDocumentSource": "Open source document",
   "diary.openRecordingSource": "Open source recording",

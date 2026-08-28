@@ -33,6 +33,8 @@ export function WorkspacePaneBody({
   onOpenRoom,
   onToggleTask,
   onUpdateRoom,
+  selectedObject,
+  onCloseObject,
 }: {
   pane: DetailPane;
   room: ContextRoomRecord;
@@ -53,7 +55,14 @@ export function WorkspacePaneBody({
   onOpenRoom: (roomId: string) => void;
   onToggleTask: (taskId: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
+  /** 面板内详情子视图的受控态：仅归属面板消费（任务/会议/邮件）。 */
+  selectedObject: WorkspaceObjectPreview | null;
+  onCloseObject: () => void;
 }) {
+  // 详情归属面板与 PortedDetail.openObject 的映射保持一致。
+  const objectOwnerPane = (target: WorkspaceObjectPreview): DetailPane =>
+    target.kind === 'meeting' ? 'schedule' : target.kind === 'task' ? 'tasks' : 'mails';
+  const ownedDetail = selectedObject && objectOwnerPane(selectedObject) === pane ? selectedObject : null;
   if (pane === 'documents') {
     return (
       <ResourceTree
@@ -86,7 +95,7 @@ export function WorkspacePaneBody({
         room={room}
         onOpenMemory={onOpenMemory}
         onUpdateRoom={onUpdateRoom}
-        onOpenObject={onOpenObject}
+        onOpenRoom={onOpenRoom}
       />
     );
   }
@@ -99,15 +108,36 @@ export function WorkspacePaneBody({
       />
     );
   }
-  if (pane === 'schedule') return <SchedulePane room={room} onOpen={onOpenObject} />;
+  if (pane === 'schedule') {
+    return (
+      <SchedulePane
+        room={room}
+        onOpen={onOpenObject}
+        detail={ownedDetail}
+        onCloseDetail={onCloseObject}
+        onUpdateRoom={onUpdateRoom}
+      />
+    );
+  }
   if (pane === 'tasks') {
     return (
       <TasksPane
         room={room}
         onSelect={(id) => onOpenObject({ kind: 'task', id })}
         onToggle={onToggleTask}
+        detail={ownedDetail}
+        onCloseDetail={onCloseObject}
+        onUpdateRoom={onUpdateRoom}
       />
     );
   }
-  return <MailsPane room={room} onSelect={(id) => onOpenObject({ kind: 'mail', id })} />;
+  return (
+    <MailsPane
+      room={room}
+      onSelect={(id) => onOpenObject({ kind: 'mail', id })}
+      detail={ownedDetail}
+      onCloseDetail={onCloseObject}
+      onUpdateRoom={onUpdateRoom}
+    />
+  );
 }

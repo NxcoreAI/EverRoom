@@ -137,6 +137,45 @@ describe("文件读取面与归属清单（资料模型修订）", () => {
     test.sqlite.close();
   });
 
+  it("统一导入管线的目录文件（file_entries）进清单并读 markdown/本体", async () => {
+    const test = await serviceForTest();
+    const imported = await test.files.importFile({
+      sourceKind: "manual-upload",
+      sourceKey: "manual:catalog-1",
+      originalName: "编程学习文档.docx",
+      buffer: Buffer.from("docx 字节", "utf8"),
+    });
+    // 目录文件只在 file_entries 落账，uploaded_files 无记录
+    expect(test.count("SELECT * FROM uploaded_files WHERE id = ?", imported.fileEntryId)).toBe(0);
+
+    // 人工落归属决策 → listRoomFiles 应能从目录表补齐元信息
+    test.sqlite.prepare(
+      "INSERT INTO route_decisions (id, source_kind, source_id, source_version, source_title, primary_room_id, confidence, decided_by, status, created_at, updated_at) VALUES (?, 'file', ?, 1, ?, 'room-cat', 1, 'resolution', 'confirmed', 1, 1)",
+    ).run("d-cat", imported.fileEntryId, "编程学习文档");
+    const files = test.service.listRoomFiles("room-cat");
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({
+      id: imported.fileEntryId,
+      originalName: "编程学习文档.docx",
+      bytes: Buffer.byteLength("docx 字节"),
+    });
+
+    // 模拟解析完成：parsed 产物挂上版本后 markdown 与本体路径走 catalog 分支
+    const parsedId = test.files.ensureParsed(imported.contentHash, "# 编程学习文档");
+    test.sqlite.prepare("UPDATE file_versions SET parsed_id = ?, status = 'parsed' WHERE id = ?")
+      .run(parsedId, imported.fileVersionId);
+    test.sqlite.prepare("UPDATE file_entries SET state = 'ready' WHERE id = ?")
+      .run(imported.fileEntryId);
+    expect(test.service.readFileMarkdown(imported.fileEntryId)).toBe("# 编程学习文档");
+    await expect(readFile(test.service.fileStoragePath(imported.fileEntryId)!, "utf8"))
+      .resolves.toBe("docx 字节");
+
+    // 软删除的目录文件不再进清单
+    test.sqlite.prepare("UPDATE file_entries SET deleted_at = 1 WHERE id = ?").run(imported.fileEntryId);
+    expect(test.service.listRoomFiles("room-cat")).toHaveLength(0);
+    test.sqlite.close();
+  });
+
   it("存量回填：旧随机 sourceId 决策迁移到确定性身份并落对象库", async () => {
     const test = await serviceForTest();
     test.sqlite.prepare(

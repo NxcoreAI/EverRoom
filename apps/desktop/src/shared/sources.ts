@@ -770,7 +770,7 @@ export interface NxcoreDesktopApi {
     settings(): Promise<DiarySettings>
     updateSettings(input: Partial<Pick<DiarySettings, 'enabled' | 'localTime' | 'timezone'>> & { configVersion: number }): Promise<DiarySettings>
     generate(date: string): Promise<{ runId: string }>
-    run(id: string): Promise<DiaryRun>
+    run(id: string): Promise<DiaryRun | null>
     activeRun(): Promise<DiaryRun | null>
     days(start: string, end: string): Promise<DiaryDayDetails['day'][]>
     day(date: string): Promise<DiaryDayDetails | null>
@@ -1008,6 +1008,8 @@ export interface NxcoreDesktopApi {
     readFileMarkdown(fileId: string): Promise<{ markdown: string }>
     /** 在系统文件管理器中定位文件本体。 */
     revealFile(fileId: string): Promise<void>
+    /** 使用操作系统默认查看器打开文件本体。 */
+    openFile(fileId: string): Promise<void>
     /** 候选实体列表（ready = 首页推荐池；挂载下拉用 weak）。 */
     listEntities(status: KnowledgeEntityStatus): Promise<{ items: KnowledgeEntityDto[] }>
     getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>

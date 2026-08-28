@@ -12,6 +12,20 @@ const Operation = Type.Union([
   Type.Literal("fact_correct"), Type.Literal("fact_add"), Type.Literal("source_remove"),
   Type.Literal("source_reassign"),
 ]);
+const CitationEdit = Type.Object({
+  operation: Operation,
+  section: Section,
+  targetClaimId: Type.String({ minLength: 1, maxLength: 200 }),
+  targetSource: Type.Optional(Type.Object({
+    sourceKind: Type.String({ minLength: 1, maxLength: 100 }),
+    sourceId: Type.String({ minLength: 1, maxLength: 256 }),
+    sourceTitle: Type.Union([Type.String({ maxLength: 500 }), Type.Null()]),
+  }, { additionalProperties: false })),
+  targetRoomId: Type.Optional(Type.String({ maxLength: 128 })),
+  originalText: Type.String({ minLength: 1, maxLength: 4_000 }),
+  replacementText: Type.Optional(Type.String({ maxLength: 4_000 })),
+  rationale: Type.String({ minLength: 1, maxLength: 2_000 }),
+}, { additionalProperties: false });
 
 export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAgentRuntimeTool[] {
   const resolveRoomId = (input: { roomId?: string | null }, params: Record<string, unknown>): string => {
@@ -102,6 +116,35 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
       return { content: "纠正已应用，总览与后续 Agent 上下文已经更新。", details: result };
     },
   };
+  const applyCitation: PiAgentRuntimeTool = {
+    name: "context_room_correction_apply_citation",
+    label: "直接应用引用的 Room 纠正",
+    description: "仅用于用户从当前 Room 总览五个支持区块选中文本并附带评论的请求。先读取 Room 上下文，然后为引用上下文列出的每个 claim 在 edits 中提交一条独立编辑；跨 claim 的合并应替换保留的 claim 并 suppress 其余 claim。所有编辑会先统一校验，再以一个事务保存并应用；任一目标失效则整批不写入。无需再次向用户确认，不得用于没有选区引用的模糊纠正。",
+    parameters: Type.Object({
+      roomId: Type.Optional(Type.String({ maxLength: 128 })),
+      edits: Type.Array(CitationEdit, { minItems: 1, maxItems: 20 }),
+    }, { additionalProperties: false }),
+    execute: async (input, params) => {
+      const roomId = resolveRoomId(input, params);
+      const correctionInputs = (params.edits as Array<Record<string, unknown>>).map((edit) => ({
+        ...edit,
+        operation: edit.operation,
+        section: edit.section,
+        targetClaimId: String(edit.targetClaimId),
+        originalText: String(edit.originalText),
+        rationale: String(edit.rationale),
+        entryPoint: "agent",
+      })) as ProposeRoomContextCorrectionInput[];
+      const result = service.applyCitations(roomId, correctionInputs, {
+        sessionId: input.sessionId,
+        runId: input.runId,
+      });
+      return {
+        content: `已原子应用 ${result.corrections.length} 条引用纠正，总览与后续 Agent 上下文已经更新，无需再次确认。`,
+        details: result,
+      };
+    },
+  };
   const revoke: PiAgentRuntimeTool = {
     name: "context_room_correction_revoke",
     label: "撤销 Room 纠正",
@@ -116,5 +159,5 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
       return { content: "纠正已撤销，总览已经重新生成。", details: result };
     },
   };
-  return [contextGet, regenerate, propose, apply, revoke];
+  return [contextGet, regenerate, propose, apply, applyCitation, revoke];
 }

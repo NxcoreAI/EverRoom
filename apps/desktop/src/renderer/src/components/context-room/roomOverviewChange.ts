@@ -6,6 +6,7 @@ export const ROOM_OVERVIEW_CHANGED_EVENT = 'nxcore:room-overview-changed'
 export const ROOM_OVERVIEW_PROJECTION_TOOL_NAMES = [
   'context_room_overview_regenerate',
   'context_room_correction_apply',
+  'context_room_correction_apply_citation',
   'context_room_correction_revoke',
 ] as const
 

@@ -71,8 +71,9 @@ describe('Context Room overview Agent tools', () => {
     const bundle = loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), BUILTIN_AGENT_IDS.primary)
 
     expect(bundle.tools).toContain('context_room_overview_regenerate')
-    expect(bundle.systemPrompt).toContain('context_room_context_get 的 pendingCorrections')
-    expect(bundle.systemPrompt).toContain('禁止仅在聊天正文中展示一个并不存在的“提案”')
+    expect(bundle.tools).toContain('context_room_correction_apply_citation')
+    expect(bundle.systemPrompt).toContain('从 pendingCorrections 取得当前会话的精确 proposal id')
+    expect(bundle.systemPrompt).toContain('不得要求二次确认')
   })
 
   it('returns applied corrections and only the current session pending proposals', async () => {
@@ -120,5 +121,41 @@ describe('Context Room overview Agent tools', () => {
       runId: 'run-confirm',
     })
     expect(result.details).toEqual(applied)
+  })
+
+  it('directly applies a citation-backed correction in the current run', async () => {
+    const applied = {
+      corrections: [correction('citation-correction', 'applied', 'session-1')],
+      overview: projection(6),
+    }
+    const applyCitations = vi.fn(() => applied)
+
+    const result = await tools({ applyCitations }).context_room_correction_apply_citation!.execute(run({
+      prompt: '写短一点',
+    }), {
+      edits: [{
+        operation: 'content_replace',
+        section: 'overview',
+        targetClaimId: 'overview:summary',
+        originalText: 'Old overview',
+        replacementText: 'Short overview',
+        rationale: '用户认为原文太长',
+      }],
+    })
+
+    expect(applyCitations).toHaveBeenCalledWith('room-1', [expect.objectContaining({
+      operation: 'content_replace',
+      section: 'overview',
+      targetClaimId: 'overview:summary',
+      originalText: 'Old overview',
+      replacementText: 'Short overview',
+      entryPoint: 'agent',
+    })], {
+      sessionId: 'session-1',
+      runId: 'run-confirm',
+    })
+    expect(result.details).toEqual(applied)
+    expect(result.content).toContain('原子应用 1 条')
+    expect(result.content).toContain('无需再次确认')
   })
 })
