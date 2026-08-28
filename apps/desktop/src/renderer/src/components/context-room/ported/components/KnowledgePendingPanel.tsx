@@ -82,6 +82,8 @@ const IMPORT_RETRY_ATTEMPTS = 3;
 const IMPORT_RETRY_DELAY_MS = 2_000;
 /** 会话清单的本地持久化键：应用重启后据此恢复进度（真实状态在网关）。 */
 const RUN_STORAGE_KEY = 'everroom:room-recommendation-run';
+/** 完成态停留时长：进度条打满 100% 让用户看到收尾，再撤蒙层。 */
+const RUN_DONE_LINGER_MS = 900;
 
 /** 创建弹窗提交后的推荐生成会话：导入 → 路由 → 证据累积，整卡蒙层展示进度。 */
 interface RecommendationRun {
@@ -91,7 +93,7 @@ interface RecommendationRun {
   startedAt: number;
   /** 会话开始前已在推荐池的实体：之后新出现的 ready 实体即本次产出。 */
   readySnapshot: ReadonlySet<string>;
-  phase: 'importing' | 'routing' | 'accumulating' | 'timeout' | 'failed';
+  phase: 'importing' | 'routing' | 'accumulating' | 'done' | 'timeout' | 'failed';
   imported: { completed: number; total: number };
   files: UploadedFile[];
   /** 导入阶段无法解析的文件数（如扫描版 PDF）：蒙层显性展示，不再静默丢弃。 */
@@ -101,8 +103,9 @@ interface RecommendationRun {
   error: string | null;
 }
 
-/** 蒙层进度条刻度：导入 5-30%，解析 30-70%，累积 85%。 */
+/** 蒙层进度条刻度：导入 5-30%，解析 30-70%，累积 85%，完成打满 100%。 */
 function runPercentOf(run: RecommendationRun): number {
+  if (run.phase === 'done') return 100;
   if (run.phase === 'importing') {
     return run.imported.total > 0
       ? 5 + 25 * Math.min(1, run.imported.completed / run.imported.total)
@@ -413,14 +416,6 @@ export function KnowledgePendingPanel({
     let idleTicks = 0;
     let cancelled = false;
     let timer: number | null = null;
-    const finish = () => {
-      showToast({
-        title: translateRef.current('contextRoom:creation.runDone'),
-        message: translateRef.current('contextRoom:creation.runDoneBody'),
-      });
-      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
-      setRun((current) => current && current.id === session.id ? null : current);
-    };
     const stall = () => {
       setRun((current) => current && current.id === session.id
         ? { ...current, phase: 'timeout' }
@@ -453,14 +448,16 @@ export function KnowledgePendingPanel({
         const nextPhase = hasNewReady ? 'done' as const
           : routed >= session.files.length ? 'accumulating' as const
           : 'routing' as const;
-        setRun((current) => current && current.id === session.id
-          ? { ...current, routed, candidates, phase: nextPhase === 'done' ? 'accumulating' : nextPhase }
-          : current);
         if (nextPhase === 'done') {
-          // 新推荐落池：撤蒙层放行确认操作，toast 指路。
-          finish();
+          // 新推荐落池：转入完成态（进度条打满、第三步打勾），停留后由 done 效果撤蒙层。
+          setRun((current) => current && current.id === session.id
+            ? { ...current, routed, candidates, phase: 'done' }
+            : current);
           return;
         }
+        setRun((current) => current && current.id === session.id
+          ? { ...current, routed, candidates, phase: nextPhase }
+          : current);
         if (routed > lastRouted || candidates > lastCandidates) {
           idleTicks = 0;
         } else {
@@ -484,6 +481,20 @@ export function KnowledgePendingPanel({
       if (timer !== null) window.clearInterval(timer);
     };
   }, [run?.id, runPolling]);
+
+  // 完成态收尾：进度条先打满停留 RUN_DONE_LINGER_MS，再撤蒙层放行确认操作。
+  useEffect(() => {
+    if (run?.phase !== 'done') return;
+    const timer = window.setTimeout(() => {
+      showToast({
+        title: translateRef.current('contextRoom:creation.runDone'),
+        message: translateRef.current('contextRoom:creation.runDoneBody'),
+      });
+      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
+      setRun((current) => current && current.id === run.id ? null : current);
+    }, RUN_DONE_LINGER_MS);
+    return () => window.clearTimeout(timer);
+  }, [run?.id, run?.phase]);
 
   useEffect(() => () => {
     for (const controller of promotionControllers.current.values()) controller.abort();
@@ -658,7 +669,9 @@ export function KnowledgePendingPanel({
                 ? <AlertCircle aria-hidden="true" />
                 : run.phase === 'timeout'
                   ? <Clock3 aria-hidden="true" />
-                  : <LoaderCircle className="spin" aria-hidden="true" />}
+                  : run.phase === 'done'
+                    ? <Check aria-hidden="true" />
+                    : <LoaderCircle className="spin" aria-hidden="true" />}
               <strong>{run.intent
                 ? t('contextRoom:creation.runIntentTitle', { intent: run.intent })
                 : t('contextRoom:creation.runTitle')}</strong>
@@ -705,21 +718,25 @@ export function KnowledgePendingPanel({
                     : t('contextRoom:creation.routeProgress', { current: run.routed, total: run.files.length })}</small>
                 </span>
               </li>
-              <li data-state={run.phase === 'accumulating' || run.phase === 'timeout' ? 'active' : undefined}>
+              <li data-state={run.phase === 'accumulating' || run.phase === 'timeout' ? 'active' : run.phase === 'done' ? 'done' : undefined}>
                 <span className="context-room-creation-step-icon">
                   {run.phase === 'timeout'
                     ? <Clock3 aria-hidden="true" />
-                    : run.phase === 'accumulating'
-                      ? <LoaderCircle className="spin" aria-hidden="true" />
-                      : <span aria-hidden="true" />}
+                    : run.phase === 'done'
+                      ? <Check aria-hidden="true" />
+                      : run.phase === 'accumulating'
+                        ? <LoaderCircle className="spin" aria-hidden="true" />
+                        : <span aria-hidden="true" />}
                 </span>
                 <span className="context-room-creation-step-body">
                   <b>{t('contextRoom:creation.stepAccumulate')}</b>
                   <small>{run.phase === 'timeout'
                     ? t('contextRoom:creation.runTimeoutHint')
-                    : run.phase === 'accumulating'
-                      ? t('contextRoom:creation.runCandidates', { count: run.candidates })
-                      : t('contextRoom:creation.stepWaiting')}</small>
+                    : run.phase === 'done'
+                      ? t('contextRoom:creation.runDone')
+                      : run.phase === 'accumulating'
+                        ? t('contextRoom:creation.runCandidates', { count: run.candidates })
+                        : t('contextRoom:creation.stepWaiting')}</small>
                 </span>
               </li>
             </ol>

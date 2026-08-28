@@ -130,6 +130,7 @@ function installBridge(importOutcomes: OutcomeFixture[], failImports = 0) {
     setInterval: vi.fn((fn: () => void) => { tickers.push(fn); return tickers.length }),
     clearInterval: vi.fn(),
     setTimeout: (fn: () => void) => { fn(); return 0 },
+    clearTimeout: () => {},
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => { storage.set(key, value) },
