@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="EverRoom installation and user guide">
+    <title>Install and use | EverRoom</title>
+    <link rel="icon" href="../assets/everroom-icon.png">
+    <link rel="stylesheet" href="../assets/site.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#overview"><img class="brand-logo" src="../assets/everroom-logo.png" alt="EverRoom"><span class="alpha">Alpha</span></a>
+        <nav class="topnav" aria-label="Main navigation">
+          <a href="#overview" aria-current="page">Guide</a>
+          <a href="https://github.com/NxcoreAI/EverRoom" target="_blank" rel="noreferrer">GitHub</a>
+          <div class="language"><a data-language="zh-CN" href="../zh-CN/">中文</a><span>·</span><a data-language="en" aria-current="true" href="./">EN</a></div>
+          <button class="icon-button theme-button" type="button" data-theme-toggle aria-label="Toggle theme"></button>
+          <button class="icon-button menu-button" type="button" data-menu-toggle aria-label="Open navigation" aria-expanded="false"></button>
+        </nav>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" aria-label="Documentation navigation">
+        <div class="sidebar-group"><p class="sidebar-title">Get started</p><a data-page-link="overview" href="#overview">Overview</a><a data-page-link="install" href="#install">Download and install</a><a data-page-link="first-run" href="#first-run">First launch</a></div>
+        <div class="sidebar-group"><p class="sidebar-title">User guide</p><a data-page-link="sources" href="#sources">Connect sources</a><a data-page-link="rooms" href="#rooms">Context Room</a><a data-page-link="documents" href="#documents">Documents and Agent</a><a data-page-link="memory" href="#memory">Memory</a><a data-page-link="recording" href="#recording">Reality perception</a><a data-page-link="tasks" href="#tasks">Tasks and diary</a></div>
+        <div class="sidebar-group"><p class="sidebar-title">Develop and manage</p><a data-page-link="source" href="#source">Run from source</a><a data-page-link="settings" href="#settings">Settings and data</a><a data-page-link="troubleshooting" href="#troubleshooting">Troubleshooting</a></div>
+      </aside>
+
+      <main class="content">
+        <article data-page="overview">
+          <p class="eyebrow">EverRoom guide</p><h1>Get started with EverRoom</h1><p class="lead">Keep project sources, documents, and Agent sessions together in one Room.</p>
+          <h2 id="workflow">Your first session</h2>
+          <ol class="steps"><li><h3>Install and finish setup</h3><p>Configure a model, add your work context, and create your first Room.</p></li><li><h3>Connect one source</h3><p>Add a project folder under Sources and wait for the sync to finish.</p></li><li><h3>Open the Room</h3><p>Check its goal, attached sources, and overview.</p></li><li><h3>Complete a small task</h3><p>For example: “List this week's action items from this Room and cite each source.”</p></li></ol>
+          <h2 id="platforms">Platforms</h2><p>macOS for Apple Silicon is the primary build. Mobile test builds are available through iOS TestFlight and Android.</p>
+        </article>
+
+        <article data-page="install" hidden>
+          <p class="eyebrow">Get started</p><h1>Download and install for macOS</h1><p class="lead">The desktop app supports Apple Silicon (M-series chips). <a href="https://github.com/NxcoreAI/EverRoom/releases" target="_blank" rel="noreferrer">Download it from GitHub Releases</a>.</p>
+          <h2 id="mac-install">Install</h2>
+          <ol class="steps"><li><h3 id="download-dmg">Download the installer</h3><p>Choose the latest prerelease and download the file containing <code>arm64.dmg</code>.</p></li><li><h3 id="move-app">Install the app</h3><p>Open the DMG and drag EverRoom to Applications.</p></li><li><h3 id="open-app">Open EverRoom</h3><p>Launch it from Applications and grant file, microphone, or system-audio access when needed.</p></li></ol>
+          <h2 id="mobile-downloads">Mobile test builds</h2><p>Test the <a href="https://testflight.apple.com/join/ErKUeGCw" target="_blank" rel="noreferrer">iOS build with TestFlight</a>, or download the <a href="http://beta.vyitec.com/lq86x4ds" target="_blank" rel="noreferrer">Android test build</a>.</p>
+        </article>
+
+        <article data-page="first-run" hidden>
+          <p class="eyebrow">Get started</p><h1>First launch</h1><p class="lead">Finish setup once, then connect a source and start working.</p>
+          <h2 id="model">1. Configure a model</h2><p>Sign in for hosted configuration, or enter the base URL, model name, and key for a compatible model. Continue after the connection test passes.</p>
+          <h2 id="onboarding">2. Complete onboarding</h2><ol class="steps"><li><h3 id="profile">Add your work context</h3><p>Describe your role, current goal, and preferred Agent behavior. You can update this later under Settings → Memory setup.</p></li><li><h3 id="create-room">Create your first Room</h3><p>Choose Project or Topic, then use a clear name and goal, such as “Website redesign — finish pre-launch review.”</p></li><li><h3 id="folder-scope">Choose the scope</h3><p>Grant access only to the current project folder, not your entire home directory.</p></li></ol>
+          <h2 id="check-ready">3. Check that EverRoom is ready</h2><p>Continue when Gateway no longer shows a startup or connection error and Sources and Context Room open from the sidebar.</p>
+          <h2 id="language">Change language</h2><p>Open Settings and choose English or Simplified Chinese.</p>
+        </article>
+
+        <article data-page="sources" hidden>
+          <p class="eyebrow">User guide</p><h1>Connect your first source</h1><p class="lead">Start with a small project folder and verify the sync.</p>
+          <h2 id="local-folder">Add a local folder</h2><ol class="steps"><li><h3>Open the source menu</h3><p>Open Sources from the sidebar and select Connect source.</p></li><li><h3>Choose a type</h3><p>Select File recognition folder, choose the project directory, and allow access.</p></li><li><h3>Wait for the scan</h3><p>When the folder appears in the source list, wait for scanning to finish. Expand it to view recognized files.</p></li></ol>
+          <h2 id="online-source">Connect other sources</h2><table><tbody><tr><th>GitHub</th><td>Enter the repository and branch. Private repositories also need a token.</td></tr><tr><th>Obsidian</th><td>Select a vault to mount it continuously as a project Room.</td></tr><tr><th>Online services</th><td>Choose a connector, complete authorization in the browser, then return to EverRoom.</td></tr></tbody></table>
+          <h2 id="check-source">Confirm the connection</h2><ul><li>The source list shows no failure.</li><li>Expanding the source shows the expected files.</li><li>Opening a file shows its content, source, and version.</li></ul>
+          <div class="callout"><strong>Your originals are not changed</strong>Disconnecting removes EverRoom's copies and indexes, not the local or cloud originals.</div>
+        </article>
+
+        <article data-page="rooms" hidden>
+          <p class="eyebrow">User guide</p><h1>Create a Context Room</h1><p class="lead">Use one Room for one clear project, topic, person, or long-term goal.</p>
+          <h2 id="new-room">Create a Room</h2><ol><li>Open Context Room and select “+” beside My Rooms.</li><li>Choose a type, then enter the name, goal, and essential background.</li><li>Select Create Room. If EverRoom finds a similar Room, check it before creating a duplicate.</li></ol>
+          <h2 id="attach">Add working material</h2><p>Open the Room and add relevant sources or import Markdown from the Resources area. Keep unrelated material in its original source.</p>
+          <h2 id="review">Check the Room</h2><ul><li>The Overview goal matches the current work.</li><li>Material opens and links back to its original source.</li><li>People, projects, and timeline items are not incorrectly attached.</li></ul>
+          <h2 id="room-agent">Run the first task</h2><p>Open the Agent in this Room and give it a specific task and format. For example:</p><pre><code>Read this Room and list confirmed decisions, open questions, and next actions. Cite every item.</code></pre>
+        </article>
+
+        <article data-page="documents" hidden>
+          <p class="eyebrow">User guide</p><h1>Create a document and use the Agent</h1><p class="lead">Documents live inside Rooms. Use Documents to find and reopen them.</p>
+          <h2 id="new-doc">Create a document</h2><ol><li>Open the target Room and select New document in Resources.</li><li>Use a title that states its purpose, such as “August 28 product review decisions.”</li><li>Add the goal, known facts, or an outline for the Agent to continue.</li></ol>
+          <h2 id="edit-doc">Edit and review history</h2><p>Edit the body directly. Use the document actions menu to review earlier versions when you need to check a change.</p>
+          <h2 id="use-agent">Ask the Agent to edit</h2><p>State the goal, scope, and output. Ask for citations when sources are involved, and review proposed changes before accepting them.</p><pre><code>Turn this document into concise meeting notes. Keep decisions, owners, and due dates. Do not add unsupported facts.</code></pre>
+          <h2 id="export">Export</h2><p>Choose Markdown, PDF, or DOCX from the document actions. Open the exported file and check headings, tables, and images.</p>
+        </article>
+
+        <article data-page="memory" hidden>
+          <p class="eyebrow">User guide</p><h1>Review and manage memory</h1><p class="lead">Memory carries context across sessions. It does not replace the original source.</p>
+          <h2 id="memory-types">Find a memory</h2><ol><li>Open Memory and search for a person, project, or decision.</li><li>Open the result under Atomic memory, Conversations, Documents, or Scenarios.</li><li>Follow its source back to the original before using it for important work.</li></ol>
+          <h2 id="memory-review">Keep memory accurate</h2><p>Review long-term context under Profile. Use Filter rules to say what should be kept or ignored. Correct or delete stale information.</p>
+          <h2 id="memory-ledger">A source did not enter memory</h2><p>Open Ingest records and check the filter verdict and processing status. Reinstate an item if it was blocked by mistake.</p>
+          <h2 id="memory-unavailable">Service unavailable</h2><p>Skip memory setup when the service is unavailable. Local documents and the basic workspace remain usable.</p>
+        </article>
+
+        <article data-page="recording" hidden>
+          <p class="eyebrow">User guide</p><h1>Record and transcribe audio</h1><p class="lead">Capture microphone or Mac system audio, then review the transcript and summary.</p>
+          <h2 id="permission">Grant access once</h2><p>Allow Microphone access for microphone capture. For computer audio, allow Screen &amp; System Audio Recording under macOS Privacy &amp; Security, then quit and reopen EverRoom.</p>
+          <h2 id="start-recording">Make a recording</h2><ol><li>Open recording and choose Microphone or Computer audio.</li><li>Select the language and start. Record for more than 10 seconds.</li><li>Stop and wait for the status to change from Processing to Completed.</li></ol>
+          <h2 id="review-transcript">Check the result</h2><p>Open the event under Reality perception, play the audio, correct names, numbers, and terms, then select Save transcript. The summary updates from the corrected text.</p>
+        </article>
+
+        <article data-page="tasks" hidden>
+          <p class="eyebrow">User guide</p><h1>Review tasks and diary</h1><p class="lead">Track Agent runs, manage recurring work, and review daily activity.</p>
+          <h2 id="office">Review Agent tasks</h2><p>Open Office to see running, completed, and failed tasks. Open a task for its activity and result. Read the error before retrying a failed run.</p>
+          <h2 id="schedules">Create a scheduled task</h2><ol><li>Open Schedules, create a task, and state exactly what it should do.</li><li>Choose the run time and repeat interval.</li><li>Run it manually once. Enable the schedule only after its Room, sources, and output are correct.</li></ol>
+          <h2 id="diary">Review a day</h2><p>Open Diary and choose a date. Select Generate diary if it is empty, then use View source to check the documents, recordings, or activities behind each entry.</p>
+        </article>
+
+        <article data-page="source" hidden>
+          <p class="eyebrow">Development</p><h1>Run from source</h1><p class="lead">Requires Node.js 22+ and pnpm 11.</p>
+          <h2 id="run">Start the project</h2><pre><code>git clone https://github.com/NxcoreAI/EverRoom.git
+cd EverRoom
+corepack enable
+pnpm install
+pnpm dev</code></pre>
+          <h2 id="runtime">Configure the Agent runtime</h2><p>Copy <code>.env.example</code> to <code>.env</code>. The default <code>fake</code> runtime makes no model calls. Set the <code>NXCORE_AI_*</code> values for a real Agent.</p>
+          <h2 id="commands">Commands</h2><table><tbody><tr><th><code>pnpm dev</code></th><td>Start the desktop app</td></tr><tr><th><code>pnpm typecheck</code></th><td>Type-check</td></tr><tr><th><code>pnpm test</code></th><td>Run tests</td></tr><tr><th><code>pnpm build</code></th><td>Build the project</td></tr></tbody></table>
+        </article>
+
+        <article data-page="settings" hidden>
+          <p class="eyebrow">Manage</p><h1>Settings and data</h1><p class="lead">Manage your account, model, language, permissions, and local data.</p>
+          <h2 id="account">Account and model</h2><p>Sign in for hosted configuration, or configure a compatible model endpoint manually.</p>
+          <h2 id="data-path">Local data</h2><p>The default macOS data directory is <code>~/Library/Application Support/NxCore/</code>.</p>
+          <h2 id="clear-data">Clear data</h2><p>Clear all user data removes EverRoom's local databases, memory, recordings, and settings. It does not delete original folders or cloud data.</p>
+        </article>
+
+        <article data-page="troubleshooting" hidden>
+          <p class="eyebrow">Manage</p><h1>Troubleshooting</h1><p class="lead">Check the build, permissions, and network first.</p>
+          <h2 id="cannot-open">The app will not open</h2><p>Confirm that the installer came from official Releases and its name contains <code>arm64.dmg</code>. Check macOS Privacy &amp; Security for the block reason.</p>
+          <h2 id="gateway">Gateway not ready</h2><p>Quit EverRoom completely and relaunch. In development, inspect the terminal and <code>~/Library/Application Support/NxCore/logs/</code>.</p>
+          <h2 id="model-error">Model connection failed</h2><p>Check the base URL, model name, API type, and key.</p>
+          <h2 id="missing-file">A file is missing</h2><p>Check folder permission, file format, and source status.</p>
+          <h2 id="no-audio">No audio was recorded</h2><p>Check microphone or system-audio permission and restart the app after changing it.</p>
+        </article>
+      </main>
+
+    </div>
+    <script src="../assets/site.js"></script>
+  </body>
+</html>
