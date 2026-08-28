@@ -152,6 +152,16 @@ jobs:
           args=()
           if [[ -n "$CSC_LINK" ]]; then
             args+=(--config.mac.notarize=true --config.mac.hardenedRuntime=true)
+            profile="apps/desktop/build/embedded.provisionprofile"
+            if [[ -f "$profile" ]]; then
+              # Absolute path: osx-sign passes it verbatim to `security cms`,
+              # which resolves relative paths against its own cwd.
+              args+=("--config.mac.provisioningProfile=$(pwd)/$profile")
+            else
+              # Without a profile, aps-environment is an unauthorized restricted
+              # entitlement and AMFI kills the app at launch. Ship without push.
+              /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.aps-environment' apps/desktop/build/entitlements.mac.plist
+            fi
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
