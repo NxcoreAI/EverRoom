@@ -10,9 +10,12 @@ import {
   roomOverviewCitationBadgePoint,
 } from '../src/renderer/src/components/context-room/RoomOverviewCitationControls'
 import {
+  buildRoomOverviewCitationContext,
+  buildRoomOverviewCitationPrompt,
   clearRoomOverviewCitation,
   ROOM_OVERVIEW_CITATION_ADD_EVENT,
   ROOM_OVERVIEW_CITATION_SECTIONS,
+  ROOM_OVERVIEW_CITATION_UPDATE_EVENT,
   type RoomOverviewCitation,
 } from '../src/renderer/src/components/context-room/roomOverviewCitation'
 
@@ -218,5 +221,147 @@ describe('Room overview selected-text citation UI', () => {
     await act(async () => clearRoomOverviewCitation(citations[0].id))
     expect(container.querySelectorAll('.context-room-citation-badge')).toHaveLength(0)
     window.removeEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, receiveCitation)
+  })
+
+  it('edits and revokes a citation comment from its badge', async () => {
+    const added: RoomOverviewCitation[] = []
+    const updates: RoomOverviewCitation[] = []
+    const receiveAdd = (event: Event) => added.push((event as CustomEvent<RoomOverviewCitation>).detail)
+    const receiveUpdate = (event: Event) => updates.push((event as CustomEvent<RoomOverviewCitation>).detail)
+    window.addEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, receiveAdd)
+    window.addEventListener(ROOM_OVERVIEW_CITATION_UPDATE_EVENT, receiveUpdate)
+    const citationRoot = container.querySelector<HTMLElement>('[data-testid="citation-root"]')!
+    const overview = container.querySelector<HTMLElement>('[data-room-citation-section="overview"]')!
+    currentSelection = fakeSelection(overview, '需要纠正的引用')
+
+    await act(async () => citationRoot.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () => container.querySelector<HTMLButtonElement>('.context-room-selection-to-agent')?.click())
+    const pendingInput = container.querySelector<HTMLInputElement>('.context-room-citation-comment input')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(pendingInput, '原始评论')
+      pendingInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('.context-room-citation-comment-add')?.click())
+    expect(added).toHaveLength(1)
+    expect(updates).toHaveLength(0)
+
+    const badge = () => container.querySelector<HTMLButtonElement>('.context-room-citation-badge')!
+    expect(badge().title).toBe('原始评论')
+    await act(async () => badge().click())
+    const editor = container.querySelector<HTMLFormElement>('.context-room-citation-edit')!
+    const editInput = editor.querySelector<HTMLInputElement>('input')!
+    expect(editInput.value).toBe('原始评论')
+    expect(editor.querySelector('.context-room-citation-edit-revoke')?.textContent).toContain('撤销')
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(editInput, '  修改后的评论  ')
+      editInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => editor.querySelector<HTMLButtonElement>('.context-room-citation-comment-add')?.click())
+
+    expect(updates).toHaveLength(1)
+    expect(updates[0]).toMatchObject({ id: added[0]?.id, text: '需要纠正的引用', comment: '修改后的评论' })
+    expect(added).toHaveLength(1)
+    expect(container.querySelector('.context-room-citation-edit')).toBeNull()
+    expect(badge().title).toBe('修改后的评论')
+
+    await act(async () => badge().click())
+    const revokeEditor = container.querySelector<HTMLFormElement>('.context-room-citation-edit')!
+    await act(async () => revokeEditor.querySelector<HTMLButtonElement>('.context-room-citation-edit-revoke')?.click())
+
+    expect(updates).toHaveLength(2)
+    expect('comment' in (updates[1] as RoomOverviewCitation)).toBe(false)
+    expect(badge().title).toBe('这段内容已被智能区引用')
+    expect(container.querySelectorAll('.context-room-citation-badge')).toHaveLength(1)
+    window.removeEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, receiveAdd)
+    window.removeEventListener(ROOM_OVERVIEW_CITATION_UPDATE_EVENT, receiveUpdate)
+  })
+
+  it('keeps the comment when the badge editor is closed by clicking blank space', async () => {
+    const updates: RoomOverviewCitation[] = []
+    const receiveUpdate = (event: Event) => updates.push((event as CustomEvent<RoomOverviewCitation>).detail)
+    window.addEventListener(ROOM_OVERVIEW_CITATION_UPDATE_EVENT, receiveUpdate)
+    const citationRoot = container.querySelector<HTMLElement>('[data-testid="citation-root"]')!
+    const overview = container.querySelector<HTMLElement>('[data-room-citation-section="overview"]')!
+    currentSelection = fakeSelection(overview, '保持不变的引用')
+
+    await act(async () => citationRoot.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () => container.querySelector<HTMLButtonElement>('.context-room-selection-to-agent')?.click())
+    const pendingInput = container.querySelector<HTMLInputElement>('.context-room-citation-comment input')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(pendingInput, '不要动我')
+      pendingInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('.context-room-citation-comment-add')?.click())
+
+    await act(async () => container.querySelector<HTMLButtonElement>('.context-room-citation-badge')?.click())
+    const editor = container.querySelector<HTMLFormElement>('.context-room-citation-edit')!
+    const editInput = editor.querySelector<HTMLInputElement>('input')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(editInput, '误输入的内容')
+      editInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })))
+
+    expect(updates).toHaveLength(0)
+    expect(container.querySelector('.context-room-citation-edit')).toBeNull()
+    expect(container.querySelector<HTMLButtonElement>('.context-room-citation-badge')?.title).toBe('不要动我')
+    window.removeEventListener(ROOM_OVERVIEW_CITATION_UPDATE_EVENT, receiveUpdate)
+  })
+})
+
+describe('引用纠正发送提示词', () => {
+  function citationFixture(overrides: Partial<RoomOverviewCitation>): RoomOverviewCitation {
+    return {
+      id: overrides.id ?? 'cit-1',
+      roomId: 'room-1',
+      roomTitle: 'College Life',
+      section: 'timeline',
+      text: '学校开学 9 月 1 日报到',
+      ...overrides,
+    }
+  }
+
+  it('单条评论带房间与区块上下文，编号对齐引用上下文', () => {
+    const citations = [citationFixture({ comment: ' 时间写错了，是 9 月 21 日 ' })]
+    const prompt = buildRoomOverviewCitationPrompt(citations)
+
+    expect(prompt).toContain('「College Life」')
+    expect(prompt).toContain('引用 1（Room 时间轴「学校开学 9 月 1 日报到」）：时间写错了，是 9 月 21 日')
+    expect(prompt).toContain('纠正或澄清')
+    // 引用上下文行格式与 gateway ROOM_OVERVIEW_CITATION_CONTEXT 正则耦合，锁死不漂移。
+    expect(buildRoomOverviewCitationContext(citations)).toBe([
+      '引用 1',
+      '区块：timeline',
+      '引用文本：学校开学 9 月 1 日报到',
+      '用户评论：时间写错了，是 9 月 21 日',
+    ].join('\n'))
+  })
+
+  it('多条评论逐条对位，未附评论的引用占位防止错配', () => {
+    const prompt = buildRoomOverviewCitationPrompt([
+      citationFixture({ id: 'cit-1', section: 'overview', text: '总览第一段内容', comment: '补充：这是大一学年' }),
+      citationFixture({ id: 'cit-2' }),
+      citationFixture({ id: 'cit-3', section: 'status', text: '状态行', comment: '这条已过时' }),
+    ])
+
+    const lines = prompt.split('\n')
+    expect(lines[0]).toContain('3 条评论')
+    expect(lines[1]).toBe('引用 1（Room 简介「总览第一段内容」）：补充：这是大一学年')
+    expect(lines[2]).toBe('引用 2（Room 时间轴「学校开学 9 月 1 日报到」）：未附评论，仅作参考背景')
+    expect(lines[3]).toBe('引用 3（当前状态「状态行」）：这条已过时')
+  })
+
+  it('全部没有评论时返回空串，长引用文本截断到 32 字', () => {
+    expect(buildRoomOverviewCitationPrompt([citationFixture({})])).toBe('')
+    const longText = '长'.repeat(40)
+    const prompt = buildRoomOverviewCitationPrompt([citationFixture({ text: longText, comment: '评论' })])
+    expect(prompt).toContain(`「${'长'.repeat(32)}…」`)
+  })
+
+  it('en-US 输出英文提示词', () => {
+    const prompt = buildRoomOverviewCitationPrompt([citationFixture({ comment: 'wrong date' })], 'en-US')
+    expect(prompt).toContain('"College Life"')
+    expect(prompt).toContain('Citation 1 (Room timeline "学校开学 9 月 1 日报到"): wrong date')
   })
 })

@@ -24,11 +24,35 @@ const CitationEdit = Type.Object({
   targetRoomId: Type.Optional(Type.String({ maxLength: 128 })),
   originalText: Type.String({ minLength: 1, maxLength: 4_000 }),
   replacementText: Type.Optional(Type.String({ maxLength: 4_000 })),
-  rationale: Type.String({ minLength: 1, maxLength: 2_000 }),
+  rationale: Type.Optional(Type.String({ maxLength: 2_000 })),
 }, { additionalProperties: false });
 
-export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAgentRuntimeTool[] {
-  const resolveRoomId = (input: { roomId?: string | null }, params: Record<string, unknown>): string => {
+function nonEmptyText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+/**
+ * Fold the two argument shapes models produce for citation corrections back into
+ * the canonical edits array: fields flattened onto the tool root for a single
+ * edit, and a missing per-edit rationale (required by the service).
+ */
+function normalizeCitationEdits(params: Record<string, unknown>): Array<Record<string, unknown>> {
+  const edits = [...params.edits as Array<Record<string, unknown>>];
+  if (edits.length === 1) {
+    const first = { ...edits[0]! };
+    for (const key of ["originalText", "replacementText", "rationale"] as const) {
+      const rootValue = nonEmptyText(params[key]);
+      if (rootValue && !nonEmptyText(first[key])) first[key] = rootValue;
+    }
+    edits[0] = first;
+  }
+  return edits.map((edit) => ({
+    ...edit,
+    rationale: nonEmptyText(edit.rationale) ?? `引用纠正（${edit.section}/${edit.operation}）`,
+  }));
+}
+
+export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAgentRuntimeTool[] {  const resolveRoomId = (input: { roomId?: string | null }, params: Record<string, unknown>): string => {
     const requested = typeof params.roomId === "string" ? params.roomId.trim() : "";
     const value = input.roomId ?? requested;
     if (!value) throw new Error("ROOM_SELECTION_REQUIRED: Open or select a Context Room first");
@@ -123,10 +147,14 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
     parameters: Type.Object({
       roomId: Type.Optional(Type.String({ maxLength: 128 })),
       edits: Type.Array(CitationEdit, { minItems: 1, maxItems: 20 }),
+      // 容错声明：模型偶尔把单条 edit 的字段摊平到根参数上，声明后在 execute 归一回 edits[0]。
+      originalText: Type.Optional(Type.String({ maxLength: 4_000 })),
+      replacementText: Type.Optional(Type.String({ maxLength: 4_000 })),
+      rationale: Type.Optional(Type.String({ maxLength: 2_000 })),
     }, { additionalProperties: false }),
     execute: async (input, params) => {
       const roomId = resolveRoomId(input, params);
-      const correctionInputs = (params.edits as Array<Record<string, unknown>>).map((edit) => ({
+      const correctionInputs = normalizeCitationEdits(params).map((edit) => ({
         ...edit,
         operation: edit.operation,
         section: edit.section,
