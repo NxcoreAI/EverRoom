@@ -7,6 +7,9 @@ import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   documents,
   entities as entitiesTable,
+  fileBlobs,
+  fileEntries,
+  fileVersions,
   gatewayMetadata,
   ingestEvents,
   jobs,
@@ -549,6 +552,15 @@ export class KnowledgeService {
         "knowledge evidence rescored with V2 rules",
       );
     }
+    // 户口实体补种：图谱重建/数据重置会让 auto Room 丢失 entity_id（direct_mention
+    // 通路随之瘫痪）。每次启动幂等补种；认领优先，让既有 mentions 直接种到 Room 头上。
+    const homeEntitiesBackfilled = this.entityRegistry.backfillRoomHomeEntities();
+    if (homeEntitiesBackfilled > 0) {
+      this.logger.info(
+        { event: "knowledge.room_entities.backfilled", rooms: homeEntitiesBackfilled },
+        "room home entities re-seeded after graph rebuild",
+      );
+    }
     const relationBackfill = this.relationRegistry.rebuildFromFacts();
     const pendingRelationDocuments = this.relationRegistry.pendingDocumentIndexes();
     if (pendingRelationDocuments.length > 0) {
@@ -810,23 +822,47 @@ export class KnowledgeService {
 
     const wanted = [...latestBySource.values()];
     if (wanted.length === 0) return [];
-    const fileRows = this.db.select().from(uploadedFiles)
-      .where(inArray(uploadedFiles.id, wanted.map((decision) => decision.sourceId)))
-      .all();
-    const filesById = new Map(fileRows.map((row) => [row.id, row]));
+    // 元信息双轨：统一导入管线（/v1/file-imports）只写 file_entries 目录，
+    // uploaded_files 仅为遗留字节通道；先旧表后目录表补齐，两边都缺才算不存在
+    const fileMetaById = new Map<string, { originalName: string; bytes: number; uploadedAt: Date }>();
+    const sourceIds = wanted.map((decision) => decision.sourceId);
+    for (const row of this.db.select().from(uploadedFiles)
+      .where(inArray(uploadedFiles.id, sourceIds)).all()) {
+      fileMetaById.set(row.id, { originalName: row.originalName, bytes: row.bytes, uploadedAt: row.createdAt });
+    }
+    const missingIds = sourceIds.filter((id) => !fileMetaById.has(id));
+    if (missingIds.length > 0) {
+      const catalogRows = this.db.select({
+        id: fileEntries.id,
+        originalName: fileEntries.originalName,
+        bytes: fileBlobs.byteSize,
+        createdAt: fileEntries.createdAt,
+      }).from(fileEntries)
+        .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+        .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+        .where(and(inArray(fileEntries.id, missingIds), isNull(fileEntries.deletedAt)))
+        .all();
+      for (const row of catalogRows) {
+        fileMetaById.set(row.id, {
+          originalName: row.originalName,
+          bytes: row.bytes ?? 0,
+          uploadedAt: row.createdAt,
+        });
+      }
+    }
     return wanted
       .map((decision) => {
-        const file = filesById.get(decision.sourceId);
+        const file = fileMetaById.get(decision.sourceId);
         if (!file) return null;
         return {
-          id: file.id,
+          id: decision.sourceId,
           originalName: file.originalName,
           bytes: file.bytes,
           title: decision.sourceTitle,
           status: decision.status,
           decidedBy: decision.decidedBy,
           confidence: decision.confidence ?? null,
-          uploadedAt: file.createdAt,
+          uploadedAt: file.uploadedAt,
         };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -834,11 +870,14 @@ export class KnowledgeService {
 
   /** 文件当前解析产物的 markdown（预览用）；无文件或未解析返回 null。 */
   readFileMarkdown(fileId: string): string | null {
+    // 双轨：目录文件（统一导入管线）走 catalog 解析产物
+    if (this.files.isCatalogEntry(fileId)) return this.files.catalogMarkdownOf(fileId);
     return this.files.markdownOf(fileId);
   }
 
-  /** 文件本体的绝对路径（主进程 reveal 用）；无文件返回 null。 */
+  /** 文件本体的绝对路径（主进程 reveal/open 用）；无文件返回 null。 */
   fileStoragePath(fileId: string): string | null {
+    if (this.files.isCatalogEntry(fileId)) return this.files.catalogStoragePathOf(fileId);
     return this.files.storagePathOf(fileId);
   }
 
@@ -2280,8 +2319,12 @@ export class KnowledgeService {
         .where(eq(documents.id, link.sourceId)).get()?.title ?? null;
     }
     if (link.sourceKind === "file") {
-      return this.db.select({ name: uploadedFiles.originalName }).from(uploadedFiles)
-        .where(eq(uploadedFiles.id, link.sourceId)).get()?.name ?? null;
+      const legacy = this.db.select({ name: uploadedFiles.originalName }).from(uploadedFiles)
+        .where(eq(uploadedFiles.id, link.sourceId)).get()?.name;
+      if (legacy) return legacy;
+      // 目录文件（统一导入管线）取登记行原名
+      return this.db.select({ name: fileEntries.originalName }).from(fileEntries)
+        .where(eq(fileEntries.id, link.sourceId)).get()?.name ?? null;
     }
     return this.db.select({ title: routeDecisions.sourceTitle }).from(routeDecisions)
       .where(and(

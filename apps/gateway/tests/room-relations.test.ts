@@ -20,6 +20,7 @@ import {
   RoomRelationRegistry,
   factFingerprint,
 } from '../src/modules/knowledge/room-relations.js'
+import { EntityRegistry } from '../src/modules/knowledge/entity-registry.js'
 
 const directories: string[] = []
 
@@ -160,6 +161,39 @@ describe('RoomRelationRegistry', () => {
       directMentionCount: 1,
       type: 'shared_entity',
     })
+    sqlite.close()
+  })
+
+  it('backfills room home entities after a graph rebuild and revives direct mentions', async () => {
+    const { db, registry, sqlite } = await harness()
+    const entityRegistry = new EntityRegistry(db)
+    // 图谱重建后的现场：auto Room 丢失 entity_id，弱实体仍在别的 Room 的资料里被提及。
+    db.insert(rooms).values({ id: 'room-auto', title: 'Nango', kind: '项目' }).run()
+    db.insert(rooms).values({ id: 'room-other', title: 'Other', kind: '项目' }).run()
+    db.insert(entities).values({ id: 'entity-nango', name: 'nango', kind: '项目', status: 'weak', sourceCount: 3 }).run()
+    // 已绑定本 Room 的认领残留：应直接作为户口，不再认领或新建。
+    db.insert(entities).values({ id: 'entity-bound', name: 'Other', kind: '项目', status: 'room', roomId: 'room-other', sourceCount: 1 }).run()
+
+    addIngest(db, { id: 'doc-x', sourceKind: 'file' })
+    registry.replaceSource({ sourceKind: 'file', sourceId: 'doc-x', sourceVersion: 1, sourceTitle: 'Nango notes', roomIds: ['room-other'], mentions: [{ entityId: 'entity-nango', salience: 0.8, evidence: 'Nango proxy setup' }] })
+    // 户口未恢复：direct_mention 不生效，图上无边。
+    expect(registry.graph().edges).toEqual([])
+
+    expect(entityRegistry.backfillRoomHomeEntities()).toBe(2)
+    expect(db.select({ entityId: rooms.entityId }).from(rooms).where(eq(rooms.id, 'room-auto')).get()?.entityId).toBe('entity-nango')
+    expect(db.select().from(entities).where(eq(entities.id, 'entity-nango')).get()).toMatchObject({ status: 'room', roomId: 'room-auto' })
+    expect(db.select({ entityId: rooms.entityId }).from(rooms).where(eq(rooms.id, 'room-other')).get()?.entityId).toBe('entity-bound')
+
+    // 认领让既有 mention 立即成为 direct_mention 依据（+1.25 过可见阈值）。
+    registry.recomputeAll()
+    expect(registry.graph().edges[0]).toMatchObject({
+      sourceRoomId: 'room-auto',
+      targetRoomId: 'room-other',
+      score: 1.25,
+      directMentionCount: 1,
+    })
+    // 幂等：户口已就位的 Room 不再重复补种。
+    expect(entityRegistry.backfillRoomHomeEntities()).toBe(0)
     sqlite.close()
   })
 
