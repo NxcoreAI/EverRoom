@@ -132,6 +132,7 @@ describe('Agent Room overview citation submission', () => {
       roomTitle: '产品发布',
       section: 'next_steps',
       text: '本周五前完成发布清单',
+      claimRefs: [{ claimId: 'next_steps:release', text: '本周五前完成发布清单' }],
       comment: '负责人需要更新',
     }, {
       id: 'citation-2',
@@ -158,7 +159,7 @@ describe('Agent Room overview citation submission', () => {
 
     expect(sendPrompt).toHaveBeenCalledWith(
       '负责人应改为王敏',
-      '引用 1\n区块：next_steps\n引用文本：本周五前完成发布清单\n用户评论：负责人需要更新\n\n引用 2\n区块：status\n引用文本：当前仍在等待设计确认',
+      '引用 1\n区块：next_steps\n引用文本：本周五前完成发布清单\n命中 Claims：\n- next_steps:release：本周五前完成发布清单\n用户评论：负责人需要更新\n\n引用 2\n区块：status\n引用文本：当前仍在等待设计确认',
       'room-1',
       undefined,
       undefined,
@@ -184,6 +185,54 @@ describe('Agent Room overview citation submission', () => {
       undefined,
       undefined,
     )
+  })
+
+  it('uses citation comments as the prompt when the composer is empty', async () => {
+    const onClearRoomCitations = vi.fn()
+    const citations: RoomOverviewCitation[] = [{
+      id: 'citation-comment',
+      roomId: 'room-1',
+      roomTitle: '产品发布',
+      section: 'overview',
+      text: '这是一段过长的总览内容',
+      comment: '写短一点',
+    }]
+    await act(async () => root.render(panel(citations, () => undefined, onClearRoomCitations)))
+
+    expect(composerProps.hasSubmittableContext).toBe(true)
+    await act(async () => {
+      (composerProps.onSubmit as (files: File[]) => void)([])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendPrompt).toHaveBeenCalledWith(
+      '我对「产品发布」Room 总览选区的评论如下，请据此纠正或澄清总览中的对应内容：\n引用 1（Room 简介「这是一段过长的总览内容」）：写短一点',
+      '引用 1\n区块：overview\n引用文本：这是一段过长的总览内容\n用户评论：写短一点',
+      'room-1',
+      undefined,
+      undefined,
+      undefined,
+    )
+    expect(onClearRoomCitations).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not submit a comment-free citation without a composer request', async () => {
+    const citations: RoomOverviewCitation[] = [{
+      id: 'citation-only',
+      roomId: 'room-1',
+      roomTitle: '产品发布',
+      section: 'status',
+      text: '当前状态',
+    }]
+    await act(async () => root.render(panel(citations, () => undefined, () => undefined)))
+
+    expect(composerProps.hasSubmittableContext).toBe(false)
+    await act(async () => {
+      (composerProps.onSubmit as (files: File[]) => void)([])
+      await Promise.resolve()
+    })
+    expect(sendPrompt).not.toHaveBeenCalled()
   })
 
   it('publishes the applied projection for an immediate Room overview update', async () => {

@@ -35,6 +35,7 @@ export interface CloudAgentSessionSummary {
   roomId: string | null
   pageLabel: string
   runtimeId: string
+  activeAgentId?: string
   title: string | null
   status: 'idle' | 'running' | 'interrupted' | 'closed'
   createdAt: string
@@ -46,6 +47,7 @@ export interface CloudAgentMessage {
   sessionId?: string
   runId: string
   role: 'user' | 'assistant' | 'system'
+  authorAgentId?: string | null
   content: string
   createdAt: string
 }

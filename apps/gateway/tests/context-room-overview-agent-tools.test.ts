@@ -71,8 +71,9 @@ describe('Context Room overview Agent tools', () => {
     const bundle = loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), BUILTIN_AGENT_IDS.primary)
 
     expect(bundle.tools).toContain('context_room_overview_regenerate')
-    expect(bundle.systemPrompt).toContain('context_room_context_get 的 pendingCorrections')
-    expect(bundle.systemPrompt).toContain('禁止仅在聊天正文中展示一个并不存在的“提案”')
+    expect(bundle.tools).toContain('context_room_correction_apply_citation')
+    expect(bundle.systemPrompt).toContain('从 pendingCorrections 取得当前会话的精确 proposal id')
+    expect(bundle.systemPrompt).toContain('不得要求二次确认')
   })
 
   it('returns applied corrections and only the current session pending proposals', async () => {
@@ -120,5 +121,96 @@ describe('Context Room overview Agent tools', () => {
       runId: 'run-confirm',
     })
     expect(result.details).toEqual(applied)
+  })
+
+  it('directly applies a citation-backed correction in the current run', async () => {
+    const applied = {
+      corrections: [correction('citation-correction', 'applied', 'session-1')],
+      overview: projection(6),
+    }
+    const applyCitations = vi.fn(() => applied)
+
+    const result = await tools({ applyCitations }).context_room_correction_apply_citation!.execute(run({
+      prompt: '写短一点',
+    }), {
+      edits: [{
+        operation: 'content_replace',
+        section: 'overview',
+        targetClaimId: 'overview:summary',
+        originalText: 'Old overview',
+        replacementText: 'Short overview',
+        rationale: '用户认为原文太长',
+      }],
+    })
+
+    expect(applyCitations).toHaveBeenCalledWith('room-1', [expect.objectContaining({
+      operation: 'content_replace',
+      section: 'overview',
+      targetClaimId: 'overview:summary',
+      originalText: 'Old overview',
+      replacementText: 'Short overview',
+      entryPoint: 'agent',
+    })], {
+      sessionId: 'session-1',
+      runId: 'run-confirm',
+    })
+    expect(result.details).toEqual(applied)
+    expect(result.content).toContain('原子应用 1 条')
+    expect(result.content).toContain('无需再次确认')
+  })
+
+  it('folds root-flattened fields into the single edit and defaults the rationale', async () => {
+    // 复现 2026-08-28 线上失败：模型把 replacementText 放到工具根参数、且漏掉必填 rationale，
+    // 原实现连续 6 次被 schema 校验拒绝导致 run 被取消。
+    const applied = {
+      corrections: [correction('citation-correction', 'applied', 'session-1')],
+      overview: projection(7),
+    }
+    const applyCitations = vi.fn(() => applied)
+
+    await tools({ applyCitations }).context_room_correction_apply_citation!.execute(run(), {
+      roomId: 'room-1',
+      edits: [{
+        operation: 'content_replace',
+        section: 'overview',
+        targetClaimId: 'overview:summary',
+        originalText: 'Old overview',
+      }],
+      replacementText: 'New overview',
+    })
+
+    expect(applyCitations).toHaveBeenCalledWith('room-1', [expect.objectContaining({
+      operation: 'content_replace',
+      section: 'overview',
+      targetClaimId: 'overview:summary',
+      originalText: 'Old overview',
+      replacementText: 'New overview',
+      rationale: '引用纠正（overview/content_replace）',
+      entryPoint: 'agent',
+    })], expect.anything())
+  })
+
+  it('keeps an explicit per-edit rationale and ignores root duplicates', async () => {
+    const applyCitations = vi.fn(() => ({
+      corrections: [correction('citation-correction', 'applied', 'session-1')],
+      overview: projection(8),
+    }))
+
+    await tools({ applyCitations }).context_room_correction_apply_citation!.execute(run(), {
+      edits: [{
+        operation: 'content_replace',
+        section: 'overview',
+        targetClaimId: 'overview:summary',
+        originalText: 'Old overview',
+        replacementText: 'New overview',
+        rationale: '用户要求改写',
+      }],
+      replacementText: 'Root value must not override the edit',
+    })
+
+    expect(applyCitations).toHaveBeenCalledWith('room-1', [expect.objectContaining({
+      replacementText: 'New overview',
+      rationale: '用户要求改写',
+    })], expect.anything())
   })
 })

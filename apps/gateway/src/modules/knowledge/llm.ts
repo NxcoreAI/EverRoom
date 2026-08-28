@@ -87,6 +87,23 @@ export interface RegisterResult {
   aliases: string[];
 }
 
+/** on-demand Room 推荐输入：用户描述 + 已导入资料 + 路由阶段抽好的实体锚点。 */
+export interface RoomProposalInput {
+  description: string;
+  documents: Array<{ title: string; markdown: string }>;
+  anchors: Array<{ name: string; kind: string; evidenceScore: number; sourceCount: number }>;
+}
+
+/** 推荐卡：anchorName 命中实体才能走晋升链路（资料自动成为 Room 数据）。 */
+export interface RoomProposal {
+  anchorName: string;
+  name: string;
+  kind: EntityKind;
+  description: string;
+  reason: string;
+  sourceNames: string[];
+}
+
 export class KnowledgeLlm {
   constructor(private readonly agentResolver: AgentResolver) {}
 
@@ -162,6 +179,34 @@ export class KnowledgeLlm {
    */
   async chatForFilter(prompt: string): Promise<string> {
     return this.chat("ingest-filter", prompt);
+  }
+
+  /**
+   * on-demand Room 推荐（创建入口「智能推荐」页签）：用户描述 + 资料 +
+   * 实体锚点 → 最多 3 条推荐。锚点来自路由阶段的真实抽取结果，
+   * 推荐必须优先围绕锚点实体组织，避免凭空造 Room。
+   */
+  async proposeRooms(input: RoomProposalInput): Promise<RoomProposal[]> {
+    const prompt = [
+      input.description.trim()
+        ? `用户想创建的 Room（描述）：${input.description.trim().slice(0, 2_000)}`
+        : "用户未描述目标 Room，请从资料判断最值得建 Room 的主题。",
+      "",
+      ...(input.anchors.length > 0 ? [
+        "已从资料抽取的候选实体（推荐必须围绕其中之一组织，anchorName 填实体名原文）：",
+        ...input.anchors.slice(0, 12).map((anchor, index) =>
+          `${index + 1}. ${anchor.name}（类型：${anchor.kind}，证据分 ${anchor.evidenceScore.toFixed(1)}，关联资料 ${anchor.sourceCount} 份）`),
+        "",
+      ] : ["（资料尚未抽出实体，anchorName 可留空）", ""]),
+      ...input.documents.slice(0, 8).flatMap((document, index) => [
+        `--- 资料 ${index + 1}：《${document.title}》 ---`,
+        document.markdown.slice(0, 6_000),
+        "",
+      ]),
+      "请给出 Room 推荐 JSON。",
+    ].join("\n").slice(0, 36_000);
+    const proposals = await this.chatJson("room-proposals", prompt, parseProposalsResponse);
+    return proposals.slice(0, 3);
   }
 
   /** 两次尝试（第二次带解析错误反馈），失败抛 KnowledgeLlmError。 */
@@ -347,4 +392,40 @@ export function parseRegisterResponse(content: string): RegisterResult {
         .filter((alias) => alias.length > 0 && alias !== name)
     : [];
   return { name, summary, aliases: [...new Set(aliases)].slice(0, 10) };
+}
+
+/**
+ * 严格解析 Room 推荐输出（导出供单测）：proposals[].{anchorName,name,kind,
+ * description,reason,sourceNames} 逐字段校验 + 越界修正；name 缺失即跳过，
+ * 全部缺失抛错交 chatJson 带反馈重试。
+ */
+export function parseProposalsResponse(content: string): RoomProposal[] {
+  const raw = parseJsonObject(content);
+  const proposalsRaw = Array.isArray(raw.proposals) ? raw.proposals : [];
+  const byName = new Map<string, RoomProposal>();
+  for (const item of proposalsRaw) {
+    if (typeof item !== "object" || item === null) continue;
+    const proposal = item as Record<string, unknown>;
+    const optional = (value: unknown, max: number) =>
+      typeof value === "string" && value.trim() ? value.trim().slice(0, max) : "";
+    const name = optional(proposal.name, 120);
+    if (!name) continue;
+    const anchorName = optional(proposal.anchorName, 120) || name;
+    const kindRaw = optional(proposal.kind, 24);
+    const kind = (ENTITY_KINDS as readonly string[]).includes(kindRaw) ? kindRaw as EntityKind : "主题";
+    const sourceNames = (Array.isArray(proposal.sourceNames) ? proposal.sourceNames : [])
+      .flatMap((source) => (typeof source === "string" ? [source.trim().slice(0, 200)] : []))
+      .filter((source) => source.length > 0);
+    const candidate: RoomProposal = {
+      anchorName,
+      name,
+      kind,
+      description: optional(proposal.description, 500),
+      reason: optional(proposal.reason, 300),
+      sourceNames: [...new Set(sourceNames)].slice(0, 8),
+    };
+    byName.set(name, candidate);
+  }
+  if (byName.size === 0) throw new KnowledgeLlmError("proposals result requires at least one proposal");
+  return [...byName.values()];
 }

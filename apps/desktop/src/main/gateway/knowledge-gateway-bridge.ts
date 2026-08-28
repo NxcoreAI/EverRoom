@@ -11,6 +11,8 @@ import type {
   KnowledgeRoomContextDto,
   KnowledgeRoomGraphDto,
   KnowledgeRoomDto,
+  KnowledgeRoomProposalDto,
+  KnowledgeRouteStatusDto,
   KnowledgeRoomRelationDto,
   KnowledgeRoomRelationVisibility,
   CreateKnowledgeRoomRelationInput,
@@ -174,6 +176,16 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/decisions?${new URLSearchParams({ limit: String(limit) })}`)
   }
 
+  /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询解析进度用。 */
+  routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }> {
+    return this.request(`/v1/knowledge/route-status?${new URLSearchParams({ sourceIds: sourceIds.join(',') })}`)
+  }
+
+  /** on-demand Room 推荐（创建入口「智能推荐」页签）：描述 + 已导入文件 → 推荐卡。 */
+  proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }> {
+    return this.request('/v1/knowledge/room-proposals', { method: 'POST', body: JSON.stringify(input) })
+  }
+
   revertDecision(decisionId: string): Promise<{ ok: boolean }> {
     return this.request(`/v1/knowledge/route/${encodeURIComponent(decisionId)}/revert`, { method: 'POST' })
   }
@@ -204,6 +216,15 @@ export class KnowledgeGatewayBridge {
       `/v1/knowledge/files/${encodeURIComponent(fileId)}/storage`,
     )
     shell.showItemInFolder(storagePath)
+  }
+
+  /** 使用操作系统为该文件类型配置的默认查看器打开文件本体。 */
+  async openFile(fileId: string): Promise<void> {
+    const { storagePath } = await this.request<{ storagePath: string }>(
+      `/v1/knowledge/files/${encodeURIComponent(fileId)}/storage`,
+    )
+    const error = await shell.openPath(storagePath)
+    if (error) throw new Error(error)
   }
 
   /**

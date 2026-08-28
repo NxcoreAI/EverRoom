@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Bot, FileText, History, LoaderCircle, Mic, Plus, Quote, Search, Square, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Bot, FileText, History, LoaderCircle, Plus, Quote, Search, Square, X } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -14,7 +14,6 @@ import type { ExternalConversationSummary } from '@nxcore/agent-contract'
 
 import { showToast } from '@/state/toast'
 import { useLocale } from '@/i18n/LocaleContext'
-import type { LocalAgentInstallation } from '../../../../shared/local-agents'
 
 const ACCEPTED_ATTACHMENTS = '.txt,.md,.csv,.json,.pdf,.docx,.xlsx,.pptx'
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
@@ -59,16 +58,15 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary: string
   contextItems: Array<{ id: string; label: string; detail: string }>
   hasSelectedText: boolean
+  /** 有可提交的上下文（引用/选区）时空输入也允许发送；缺省视为无。 */
+  hasSubmittableContext?: boolean
   resetKey: number
   value: string
   active: boolean
   available: boolean
   loading: boolean
-  localAgents: LocalAgentInstallation[]
-  selectedAgent: LocalAgentInstallation | null
   selectedExternalConversation: ExternalConversationSummary | null
   onChange: (value: string) => void
-  onSelectAgent: (agent: LocalAgentInstallation | null) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
   onClearContext: () => void
   onRemoveContext: (id: string) => void
@@ -80,10 +78,9 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary,
   contextItems,
   hasSelectedText,
+  hasSubmittableContext = false,
   loading,
-  localAgents,
   resetKey,
-  selectedAgent,
   selectedExternalConversation,
   value,
   onChange,
@@ -91,7 +88,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onRemoveContext,
   onStop,
   onSubmit,
-  onSelectAgent,
   onSelectExternalConversation,
 }, ref) {
   const { t, formatDate } = useLocale()
@@ -103,7 +99,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const mountedRef = useRef(true)
   const composingRef = useRef(false)
   const externalRequestRef = useRef(0)
-  const [agentPickerDismissed, setAgentPickerDismissed] = useState(false)
   const [slashPickerDismissed, setSlashPickerDismissed] = useState(false)
   const [externalPickerOpen, setExternalPickerOpen] = useState(false)
   const [externalQuery, setExternalQuery] = useState('')
@@ -169,7 +164,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   useEffect(() => {
     setAttachments([])
-    setAgentPickerDismissed(false)
     setSlashPickerDismissed(false)
     setExternalPickerOpen(false)
     externalRequestRef.current += 1
@@ -200,16 +194,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       event.preventDefault(); openExternalPicker(); return
     }
     if (event.key === 'Escape' && slashPickerOpen) { event.preventDefault(); setSlashPickerDismissed(true); return }
-    if (event.key === 'Escape' && pickerOpen) {
-      event.preventDefault()
-      setAgentPickerDismissed(true)
-      return
-    }
-    if (event.key === 'Enter' && !event.shiftKey && pickerOpen && matchingAgents[0]) {
-      event.preventDefault()
-      selectAgent(matchingAgents[0])
-      return
-    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       if (available) onSubmit(attachments.map(({ file }) => file))
@@ -250,16 +234,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     })
   }
 
-  const mentionMatch = /^@([^\s]*)$/u.exec(value.trim())
+  const mentionMatch = /^@([^\s\n]*)$/u.exec(value.trim())
   const mentionQuery = mentionMatch?.[1]?.toLocaleLowerCase() ?? ''
-  const matchingAgents = mentionMatch
-    ? localAgents.filter((agent) => (
-        agent.callable
-        && agent.invocationSupported
-        && (`${agent.displayName} ${agent.provider}`).toLocaleLowerCase().includes(mentionQuery)
-      ))
-    : []
-  const pickerOpen = Boolean(mentionMatch && !agentPickerDismissed && matchingAgents.length > 0)
   const firstLineEnd = value.indexOf('\n') < 0 ? value.length : value.indexOf('\n')
   const slashMatch = /^\/([^\s\n]*)/u.exec(value)
   const slashQuery = slashMatch?.[1]?.toLocaleLowerCase() ?? ''
@@ -286,10 +262,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       setExternalStatus('error')
     }
   }
-  const openExternalPicker = () => {
+  const openExternalPicker = (source: 'command' | 'mention' = 'command') => {
     setExternalPickerOpen(true)
     setSlashPickerDismissed(true)
-    setExternalQuery('')
+    setExternalQuery(source === 'mention' ? mentionQuery : '')
     setExternalItems([])
     setExternalCursor(null)
     setExternalIndex(0)
@@ -306,19 +282,20 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
   const chooseExternal = (item: ExternalConversationSummary) => {
-    const remaining = value.slice(firstLineEnd + (value[firstLineEnd] === '\n' ? 1 : 0))
+    const remaining = mentionMatch
+      ? ''
+      : value.slice(firstLineEnd + (value[firstLineEnd] === '\n' ? 1 : 0))
     externalRequestRef.current += 1
     onChange(remaining)
     onSelectExternalConversation(item)
     setExternalPickerOpen(false)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
-  const selectAgent = (agent: LocalAgentInstallation) => {
-    onSelectAgent(agent)
-    onChange('')
-    setAgentPickerDismissed(false)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
-  }
+  useEffect(() => {
+    if (!mentionMatch || externalPickerOpen) return
+    openExternalPicker('mention')
+  }, [mentionMatch?.[0]])
+
   useEffect(() => {
     if (!externalPickerOpen) return undefined
     const timer = window.setTimeout(() => {
@@ -334,7 +311,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       ?.scrollIntoView({ block: 'nearest' })
   }, [externalIndex, externalItems[externalIndex]?.id, externalPickerOpen])
 
-  const menuOpen = slashPickerOpen || externalPickerOpen || pickerOpen
+  const menuOpen = slashPickerOpen || externalPickerOpen
   // 会话快照加载时保留本地附件。
   const controlsDisabled = active || !available
 
@@ -355,7 +332,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     >
       {slashPickerOpen ? (
         <div className="agent-composer-popover agent-command-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.commands')}>
-          <button type="button" role="option" aria-selected="true" onMouseDown={(event) => event.preventDefault()} onClick={openExternalPicker}>
+          <button type="button" role="option" aria-selected="true" onMouseDown={(event) => event.preventDefault()} onClick={() => openExternalPicker('command')}>
             <span className="agent-mention-icon"><History aria-hidden="true" /></span>
             <span><strong>{t('surface:agentComposer.continueExternalConversation')}</strong><small>{t('surface:agentComposer.externalConversationHint')}</small></span>
             <kbd>/continue</kbd>
@@ -365,9 +342,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       {externalPickerOpen ? (
         <section className="agent-composer-popover agent-external-picker" id="agent-composer-menu" role="dialog" aria-modal="false" aria-label={t('surface:agentComposer.continueExternalConversation')}>
           <header className="agent-external-header">
-            <button type="button" className="agent-picker-icon-button" title={t('surface:agentComposer.backToCommands')} aria-label={t('surface:agentComposer.backToCommands')} onClick={backToCommands}>
-              <ArrowLeft aria-hidden="true" />
-            </button>
+            {mentionMatch ? <span className="agent-picker-header-icon"><History aria-hidden="true" /></span> : (
+              <button type="button" className="agent-picker-icon-button" title={t('surface:agentComposer.backToCommands')} aria-label={t('surface:agentComposer.backToCommands')} onClick={backToCommands}>
+                <ArrowLeft aria-hidden="true" />
+              </button>
+            )}
             <div><strong>{t('surface:agentComposer.continueExternalConversation')}</strong><small>{t('surface:agentComposer.chooseConversation')}</small></div>
             <button type="button" className="agent-picker-icon-button" title={t('surface:agentComposer.close')} aria-label={t('surface:agentComposer.close')} onClick={closeExternalPicker}>
               <X aria-hidden="true" />
@@ -440,28 +419,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           </div>
         </section>
       ) : null}
-      {pickerOpen ? (
-        <div className="agent-composer-popover agent-mention-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.chooseLocalAgent')}>
-          {matchingAgents.map((agent) => (
-            <button key={agent.id} type="button" role="option" aria-selected="false" onMouseDown={(event) => event.preventDefault()} onClick={() => selectAgent(agent)}>
-              <span className="agent-mention-icon"><Bot aria-hidden="true" /></span>
-              <span><strong>{agent.displayName}</strong><small>{agent.version ?? agent.provider}</small></span>
-            </button>
-          ))}
-        </div>
-      ) : null}
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
-        {selectedAgent ? (
-          <div className="agent-current-agent">
-            <span><Bot aria-hidden="true" /><span>@{selectedAgent.displayName}</span></span>
-            {selectedAgent.id !== 'main' ? (
-              <button type="button" aria-label={t('surface:agentComposer.removeLocalAgent')} title={t('surface:agentComposer.removeLocalAgent')} onClick={() => onSelectAgent(null)}>
-                <X aria-hidden="true" />
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        {selectedExternalConversation ? <div className="agent-external-selection"><span><History />{selectedExternalConversation.provider} · {selectedExternalConversation.title}</span><button type="button" title={t('surface:agentComposer.removeExternalConversation')} aria-label={t('surface:agentComposer.removeExternalConversation')} onClick={() => onSelectExternalConversation(null)}><X /></button></div> : null}
+        {selectedExternalConversation ? <div className="agent-external-selection"><span><History />{t('surface:agentComposer.referencedConversation')} · {selectedExternalConversation.title}</span><button type="button" title={t('surface:agentComposer.removeExternalConversation')} aria-label={t('surface:agentComposer.removeExternalConversation')} onClick={() => onSelectExternalConversation(null)}><X /></button></div> : null}
         {contextItems.length > 0 ? (
           <div className="agent-context-citations" aria-label={t('surface:agentComposer.referencedRoomContent')}>
             {contextItems.map((item) => (
@@ -494,7 +453,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           aria-expanded={menuOpen}
           disabled={!available || active}
           onChange={(event) => {
-            setAgentPickerDismissed(false)
             setSlashPickerDismissed(false)
             setCaret(event.target.selectionStart)
             onChange(event.target.value)
@@ -556,7 +514,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0) || loading}>
+            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
               <ArrowUp aria-hidden="true" />
             </button>
           )}

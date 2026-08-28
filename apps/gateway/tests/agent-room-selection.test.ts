@@ -287,6 +287,7 @@ describe('Agent Room selection', () => {
     const external = new RecordingRuntime('codex-runtime')
     const resolver: AgentExternalConversationResolver = {
       bindAndBuildContext: async () => 'duplicated imported history',
+      buildReferenceContext: async () => 'referenced imported history',
       resolveNativeContinuation: (threadId, targetAgentId) => (
         threadId === 'imported-thread' && targetAgentId.startsWith('codex:') ? 'native-codex-session' : null
       ),
@@ -316,6 +317,34 @@ describe('Agent Room selection', () => {
 
     expect(external.starts[0]?.runtimeSessionRef).toBe('native-codex-session')
     expect(external.starts[0]?.prompt).not.toContain('duplicated imported history')
+    await service.dispose()
+    sqlite.close()
+  })
+
+  it('keeps a referenced Agent chat on Main without resuming the referenced Agent', async () => {
+    const primary = new RecordingRuntime('main-runtime')
+    const external = new RecordingRuntime('claude-runtime')
+    const resolver: AgentExternalConversationResolver = {
+      bindAndBuildContext: async () => null,
+      buildReferenceContext: async (threadId) => threadId === 'login-v1' ? 'referenced login context' : null,
+      resolveNativeContinuation: () => 'must-not-resume',
+    }
+    const { service, sqlite } = await createHarness({ runtime: primary, targetRuntime: external, externalConversationResolver: resolver })
+    const session = service.createSession({ pageLabel: 'Home', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '基于这版改',
+      idempotencyKey: 'reference-login-v1',
+      targetAgentId: 'main',
+      context: { referencedConversationId: 'login-v1' },
+    })
+
+    expect(primary.starts).toHaveLength(1)
+    expect(primary.starts[0]?.prompt).toContain('Call agent_conversation_query')
+    expect(primary.starts[0]?.referencedConversationId).toBe('login-v1')
+    expect(primary.starts[0]?.runtimeSessionRef).toBeNull()
+    expect(external.starts).toHaveLength(0)
+    expect(service.getSnapshot(session.id)?.session.activeAgentId).toBe('main')
     await service.dispose()
     sqlite.close()
   })
@@ -455,6 +484,29 @@ describe('Agent Room selection', () => {
     expect(runtime.starts[0]?.prompt).toContain('必须调用 context_room_overview_regenerate')
     expect(runtime.starts[0]?.prompt).toContain('禁止只在聊天正文中拟写')
     expect(runtime.starts[1]?.prompt).toBe('把 overview 改成用户指定的新内容')
+    sqlite.close()
+  })
+
+  it('routes a Room overview citation comment to direct application without confirmation', async () => {
+    const { rooms, runtime, service, sqlite } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [{ id: 'room-current', title: '当前 Room', data: { id: 'room-current', title: '当前 Room' } }],
+      deletedRooms: [],
+    })
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '太长了',
+      idempotencyKey: 'room-overview-citation-routing',
+      context: {
+        selectedRoomId: 'room-current',
+        selectedText: '引用 1\n区块：overview\n引用文本：这是一段过长的概览\n用户评论：太长了',
+      },
+    })
+
+    expect(runtime.starts[0]?.prompt).toContain('context_room_correction_apply_citation')
+    expect(runtime.starts[0]?.prompt).toContain('禁止创建待确认 proposal')
+    expect(runtime.starts[0]?.prompt).toContain('禁止要求用户再次确认')
     sqlite.close()
   })
 

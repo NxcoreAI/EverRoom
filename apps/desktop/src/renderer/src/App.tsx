@@ -32,6 +32,7 @@ import { useContextRoomState } from '@/components/context-room/ContextRoomStateP
 import { pageLabels, type PageId } from '@/data/navigation'
 import {
   ROOM_OVERVIEW_CITATION_ADD_EVENT,
+  ROOM_OVERVIEW_CITATION_UPDATE_EVENT,
   clearRoomOverviewCitation,
   type RoomOverviewCitation,
 } from '@/components/context-room/roomOverviewCitation'
@@ -191,6 +192,16 @@ export function App() {
     window.addEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, addCitation as EventListener)
     return () => window.removeEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, addCitation as EventListener)
   }, [activeContextRoomId, activePage])
+
+  useEffect(() => {
+    const updateCitation = (event: Event) => {
+      const citation = (event as CustomEvent<RoomOverviewCitation>).detail
+      if (!citation?.id) return
+      setAgentRoomCitations((current) => current.map((item) => (item.id === citation.id ? citation : item)))
+    }
+    window.addEventListener(ROOM_OVERVIEW_CITATION_UPDATE_EVENT, updateCitation as EventListener)
+    return () => window.removeEventListener(ROOM_OVERVIEW_CITATION_UPDATE_EVENT, updateCitation as EventListener)
+  }, [])
 
   useEffect(() => {
     if (!agentRoomCitations.length || (activePage === 'rooms'

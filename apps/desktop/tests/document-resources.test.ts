@@ -174,6 +174,44 @@ describe('Context Room knowledge file merge into cloud document folder', () => {
   })
 })
 
+describe('Context Room knowledge file foldering by file type', () => {
+  it('routes office-type uploads (docx/xlsx/pptx/pdf/csv) to the Office folder, not cloud documents', () => {
+    const files = [
+      knowledgeFile('file-docx', '编程学习文档.docx'),
+      knowledgeFile('file-xlsx', '预算表.xlsx'),
+      knowledgeFile('file-pptx', '季度汇报.pptx'),
+      knowledgeFile('file-pdf', '编程语言学习文档.pdf'),
+      knowledgeFile('file-csv', '数据.csv'),
+    ]
+    const library = createContextRoomResourceLibrary(room, [], [], files)
+    const officeFolder = library.folders.find((folder) => folder.name === 'Office 文件')!
+    const documentsFolder = library.folders.find((folder) => folder.name === '云文档')!
+
+    const officeNames = library.resources
+      .filter((resource) => resource.folderId === officeFolder.id)
+      .map((resource) => resource.name)
+    expect(officeNames).toEqual(['编程学习文档.docx', '预算表.xlsx', '季度汇报.pptx', '编程语言学习文档.pdf', '数据.csv'])
+    expect(library.resources.some((resource) => resource.folderId === documentsFolder.id)).toBe(false)
+  })
+
+  it('keeps md in cloud documents and routes images to design attachments', () => {
+    const files = [
+      knowledgeFile('file-md', '笔记.md'),
+      knowledgeFile('file-md-upper', 'NOTES.MARKDOWN'),
+      knowledgeFile('file-png', '设计稿.png'),
+    ]
+    const library = createContextRoomResourceLibrary(room, [], [], files)
+    const folderIdOf = (name: string) =>
+      library.folders.find((folder) => folder.name === name)!.id
+    const folderOf = (fileId: string) =>
+      library.resources.find((resource) => resource.id === `${room.id}:kfile:${fileId}`)!.folderId
+
+    expect(folderOf('file-md')).toBe(folderIdOf('云文档'))
+    expect(folderOf('file-md-upper')).toBe(folderIdOf('云文档'))
+    expect(folderOf('file-png')).toBe(folderIdOf('设计与附件'))
+  })
+})
+
 describe('Context Room document focus requests', () => {
   it('does not override a manual document switch with an already handled Agent focus', () => {
     const firstFocus = consumeDocumentFocusRequest(null, 'room-a', 'document-a', true)

@@ -18,9 +18,14 @@ import type {
 const DEFAULT_PORT = 47831
 const PAIRING_TTL_MS = 5 * 60 * 1000
 const MAX_BODY_BYTES = 30 * 1024 * 1024
-const STORE_URL = process.env.NXCORE_BROWSER_EXTENSION_STORE_URL?.trim()
-  || 'https://chromewebstore.google.com/'
-const EXPECTED_EXTENSION_ID = process.env.NXCORE_BROWSER_EXTENSION_ID?.trim() || null
+function storeUrl(): string {
+  return process.env.NXCORE_BROWSER_EXTENSION_STORE_URL?.trim()
+    || 'https://chromewebstore.google.com/'
+}
+
+function expectedExtensionId(): string | null {
+  return process.env.NXCORE_BROWSER_EXTENSION_ID?.trim() || null
+}
 
 interface PersistedState {
   appInstanceId: string
@@ -188,7 +193,7 @@ export class BrowserExtensionService {
       mode: this.extensionDirectory ? 'development' : 'production',
       state,
       bridgeUrl: this.server ? `http://127.0.0.1:${this.port}` : null,
-      storeUrl: STORE_URL,
+      storeUrl: storeUrl(),
       extensionDirectory: this.extensionDirectory,
       pairing: pairing ? {
         id: pairing.id,
@@ -211,7 +216,7 @@ export class BrowserExtensionService {
       if (!launched) await this.openDevelopmentExtension()
       return this.getStatus()
     }
-    await shell.openExternal(STORE_URL)
+    await shell.openExternal(storeUrl())
     return this.getStatus()
   }
 
@@ -266,7 +271,7 @@ export class BrowserExtensionService {
   async openBrowserExtensionsPage(): Promise<void> {
     const target = this.extensionDirectory
       ? 'chrome://extensions'
-      : STORE_URL
+      : storeUrl()
     await shell.openExternal(target)
   }
 
@@ -411,7 +416,7 @@ export class BrowserExtensionService {
           jsonResponse(response, 409, { code: 'pairing_expired' })
           return
         }
-        if (EXPECTED_EXTENSION_ID && extensionId !== EXPECTED_EXTENSION_ID) {
+        if (expectedExtensionId() && extensionId !== expectedExtensionId()) {
           jsonResponse(response, 403, { code: 'extension_not_allowed' })
           return
         }

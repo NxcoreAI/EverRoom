@@ -49,7 +49,7 @@ function projectionFixture(): RoomOverviewProjection {
         corrected: false,
         data: {
           kind: 'next_step', itemType: 'schedule', actionId: 'cal-1', owner: null,
-          dueAt: todayAtLocal(10), status: 'scheduled', priority: null,
+          dueAt: todayAtLocal(10), status: 'scheduled', priority: null, provider: 'google-calendar',
         },
       },
       {
@@ -101,6 +101,7 @@ async function renderWithProjection(
   projection: RoomOverviewProjection = projectionFixture(),
 ) {
   const overview = vi.fn().mockResolvedValue(projection)
+  const onOpenPane = vi.fn()
   vi.stubGlobal('window', {
     ...globalThis,
     nxcore: { contextRooms: { overview } },
@@ -116,11 +117,12 @@ async function renderWithProjection(
         knowledgeFiles={[]}
         onSelectResource={() => {}}
         onOpenObject={() => {}}
+        onOpenPane={onOpenPane}
         onToggleTask={() => {} }
       />,
     )
   })
-  return { renderer: renderer!, overview }
+  return { renderer: renderer!, overview, onOpenPane }
 }
 
 /** 「今日日程」/「待办任务」面板内的条目文本（按 data-connector-source 过滤投影叠加项）。 */
@@ -137,10 +139,16 @@ describe('概览面板：连接器日程/待办投影叠加', () => {
 
   it('今日日程叠加当日确定性 schedule claim（非当日不进面板）', async () => {
     const room = createContextRoomFixture('room-connector', '连接器 Room')
-    const { renderer } = await renderWithProjection(room)
+    const { renderer, onOpenPane } = await renderWithProjection(room)
     const schedules = panelButtons(renderer, 'calendar-event')
     expect(schedules.map((node) => node.findByType('b').children[0])).toEqual(['发射协调会'])
     expect(schedules[0].findByType('time').children[0]).toMatch(/^\d{1,2}:\d{2}$/)
+    // 数据源品牌图标：provider=google-calendar 渲染品牌 img（vite 内联 svg data URI 含 Google 蓝）
+    const brandImg = schedules[0].findAllByType('img')[0]
+    expect(String(brandImg.props.src)).toContain('%231a73e8')
+    // 点击日程行 → 跳转日程面板
+    await act(async () => { schedules[0].props.onClick() })
+    expect(onOpenPane).toHaveBeenCalledWith('schedule')
   })
 
   it('待办任务叠加确定性 task claim，与本地任务同名的投影项去重', async () => {
@@ -149,9 +157,12 @@ describe('概览面板：连接器日程/待办投影叠加', () => {
       id: 'task-local', title: '本地验收任务', status: '进行中', owner: '林薇',
       deadline: '2026-09-01 09:00', completed: false,
     }]
-    const { renderer } = await renderWithProjection(room)
+    const { renderer, onOpenPane } = await renderWithProjection(room)
     const connectorTasks = panelButtons(renderer, 'todo')
     expect(connectorTasks.map((node) => node.findByType('b').children[0])).toEqual(['补充天线参数'])
+    // 点击投影待办行 → 跳转待办面板
+    await act(async () => { connectorTasks[0].props.onClick() })
+    expect(onOpenPane).toHaveBeenCalledWith('tasks')
     // 本地任务仍以可勾选行渲染，不因投影叠加消失
     const localTasks = renderer.root.findAll((node) =>
       typeof node.props?.className === 'string'

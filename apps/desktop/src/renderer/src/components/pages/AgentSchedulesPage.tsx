@@ -53,7 +53,7 @@ export function AgentSchedulesPage() {
 
   return <div className="page schedules-page">
     <header className="schedules-page-header">
-      <div><span className="eyebrow"><CalendarClock aria-hidden="true" /> {t('surface:navigation.execution')}</span><h1>{t('surface:schedules.title')}</h1><p>{t('surface:schedules.description')}</p></div>
+      <div><span className="eyebrow"><CalendarClock aria-hidden="true" /> {t('surface:navigation.execution')}</span><h1>{t('surface:schedules.title')}</h1></div>
       <div className="schedules-actions"><button className="icon-button" title={t('surface:schedules.refresh')} aria-label={t('surface:schedules.refresh')} onClick={() => void load()} disabled={loading}><RefreshCw aria-hidden="true" /></button><button className="primary-button" onClick={() => setCreating(true)}><Plus aria-hidden="true" />{t('surface:schedules.newTask')}</button></div>
     </header>
     {error ? <div className="schedules-error">{error}</div> : null}

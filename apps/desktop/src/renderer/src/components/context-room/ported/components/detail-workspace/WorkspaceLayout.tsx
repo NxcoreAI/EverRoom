@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
+import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import { FolderInput, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
@@ -68,6 +68,7 @@ export function WorkspaceLayout({
   onOpenWikiPage,
   onOpenMemory,
   onOpenObject,
+  onOpenSource,
   onCloseObject,
   onOpenRoom,
   onToggleTask,
@@ -128,6 +129,8 @@ export function WorkspaceLayout({
   onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
   onOpenMemory: (memoryId: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
+  /** 记忆图谱来源行跳转（文档右区打开 / 邮件进面板详情）。 */
+  onOpenSource: (source: RoomAppliedEntitySource) => void;
   onCloseObject: () => void;
   onOpenRoom: (roomId: string) => void;
   onToggleTask: (taskId: string) => void;
@@ -245,6 +248,7 @@ export function WorkspaceLayout({
             knowledgeFiles={knowledgeFiles}
             onSelectResource={onSelectResource}
             onOpenObject={onOpenObject}
+            onOpenPane={(pane) => switchPane(pane)}
             onToggleTask={onToggleTask}
           />
         ) : (
@@ -321,6 +325,9 @@ export function WorkspaceLayout({
                         onToggleTask={onToggleTask}
                         onUpdateRoom={onUpdateRoom}
                         onOpenObject={onOpenObject}
+                        onOpenSource={onOpenSource}
+                        selectedObject={selectedObject}
+                        onCloseObject={onCloseObject}
                       />
                     </div>
                     {index < panels.length - 1 ? (
@@ -352,9 +359,6 @@ export function WorkspaceLayout({
             />
             <WorkspaceContent
               room={room}
-              rooms={rooms}
-              panels={panels}
-              selectedObject={selectedObject}
               selectedResource={selectedResource}
               backendDocuments={backendDocuments}
               knowledgeFiles={knowledgeFiles}
@@ -363,9 +367,7 @@ export function WorkspaceLayout({
               documentFocusRequestId={documentFocusRequestId}
               onBackendDocumentChange={onBackendDocumentChange}
               onDeleteDocument={onDeleteDocument}
-              onOpenRoom={onOpenRoom}
               onMobileBack={() => setMobileContent(false)}
-              onCloseObject={onCloseObject}
               onUpdateRoom={onUpdateRoom}
             />
           </>

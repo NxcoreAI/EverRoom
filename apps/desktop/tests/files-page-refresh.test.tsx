@@ -98,6 +98,47 @@ describe('FilesPage catalog refresh', () => {
     expect(list.mock.calls.filter(([, offset]) => offset === 200)).toHaveLength(1)
   })
 
+  it('shows a single card title and reveals the original file from the card action', async () => {
+    const file = { ...catalogFile(301), originalName: '访达测试.md', sharedTitle: '访达测试.md' }
+    const reveal = vi.fn().mockResolvedValue(undefined)
+    const list = vi.fn().mockResolvedValue({ items: [file], total: 1 })
+    vi.stubGlobal('window', {
+      nxcore: {
+        files: { list, reveal },
+        ingest: { listEvents: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
+      },
+      setInterval: vi.fn(() => 1),
+      clearInterval: vi.fn(),
+    })
+    vi.stubGlobal('document', {
+      hidden: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+
+    await act(async () => {
+      renderer = TestRenderer.create(<FilesPage />)
+    })
+
+    const categoryCard = renderer!.root.findByProps({ className: 'file-category-card file-category-slate' })
+    act(() => categoryCard.props.onClick())
+
+    expect(renderer!.root.findAllByProps({ className: 'file-document-preview' })).toHaveLength(0)
+    const title = renderer!.root.findByProps({ className: 'file-document-copy' })
+    expect(title.findAllByType('strong')).toHaveLength(1)
+    expect(title.findAllByType('small')).toHaveLength(0)
+
+    const toolbar = renderer!.root.findByProps({ className: 'file-recognition-toolbar' })
+    expect(toolbar.findByType('h2').children.join('')).toBe('文档')
+    expect(toolbar.findAll((node) => node.children.join('') === '1 份文件')).toHaveLength(1)
+
+    const revealButton = renderer!.root.findByProps({ 'aria-label': '在访达中显示 访达测试.md' })
+    await act(async () => {
+      revealButton.props.onClick()
+    })
+    expect(reveal).toHaveBeenCalledWith(file.id)
+  })
+
   it('restores drag import when a desktop directory is exposed through dataTransfer.items', async () => {
     const importedFile = { name: 'notes.md' } as File
     const importDropped = vi.fn().mockResolvedValue([{

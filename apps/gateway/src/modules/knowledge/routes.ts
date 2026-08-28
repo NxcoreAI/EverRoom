@@ -392,6 +392,10 @@ const RuleMatcherSchema = Type.Object({
   threadId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   titleKeyword: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   creatorId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+  /** 日历级粒度：匹配同步 scope 的 providerScopeId（日历 id），配合 sourceTag 圈定连接内某个日历。 */
+  calendarId: Type.Optional(Type.String({ minLength: 1, maxLength: 400 })),
+  /** 清单级粒度（待办域）：匹配 provider 的任务清单 id。 */
+  listId: Type.Optional(Type.String({ minLength: 1, maxLength: 400 })),
 });
 
 const RuleDto = Type.Object({
@@ -936,6 +940,45 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
       },
     );
 
+    app.post(
+      "/v1/knowledge/room-proposals",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: Type.Object({
+            description: Type.String({ minLength: 0, maxLength: 2_000 }),
+            fileEntryIds: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { maxItems: 30 }),
+          }),
+          response: {
+            200: Type.Object({
+              items: Type.Array(Type.Object({
+                entityId: Type.Union([Type.String(), Type.Null()]),
+                anchorName: Type.String(),
+                name: Type.String(),
+                kind: Type.String(),
+                description: Type.String(),
+                reason: Type.String(),
+                sourceNames: Type.Array(Type.String()),
+                fileCount: Type.Integer(),
+                evidenceScore: Type.Union([Type.Number(), Type.Null()]),
+                sourceCount: Type.Union([Type.Integer(), Type.Null()]),
+              })),
+            }),
+            400: Type.Object({ error: Type.String() }),
+            503: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = await service.proposeRooms(request.body);
+        if (!result.ok) {
+          const status = result.error === "llm_not_configured" ? 503 : 400;
+          return reply.code(status).send(errorOf(result.error));
+        }
+        return { items: result.items };
+      },
+    );
+
     app.post("/v1/knowledge/entities/:id/suppress", { schema: { tags: ["knowledge"], params: EntityIdParams } }, async (request, reply) => {
       const result = service.suppressEntity(request.params.id);
       if (!result.ok) return reply.code(result.error === "entity_not_found" ? 404 : 400).send(errorOf(result.error));
@@ -1049,6 +1092,35 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
           ...item,
           createdAt: iso(item.createdAt),
         })),
+      }),
+    );
+
+    app.get(
+      "/v1/knowledge/route-status",
+      {
+        schema: {
+          tags: ["knowledge"],
+          querystring: Type.Object({
+            sourceIds: Type.String({ minLength: 1, maxLength: 4_000 }),
+          }),
+          response: {
+            200: Type.Object({
+              items: Type.Array(Type.Object({
+                sourceId: Type.String(),
+                status: Type.String(),
+                title: Type.Union([Type.String(), Type.Null()]),
+                updatedAt: Type.String(),
+              })),
+            }),
+          },
+        },
+      },
+      async (request) => ({
+        // 逗号分隔 sourceId 直查（任意状态），供推荐会话轮询「已解析 x/y」；
+        // 去重后截断，防止误用打爆查询。
+        items: service.routeStatusOf(
+          [...new Set(request.query.sourceIds.split(",").map((id) => id.trim()).filter(Boolean))].slice(0, 50),
+        ).map((item) => ({ ...item, updatedAt: iso(item.updatedAt) })),
       }),
     );
 

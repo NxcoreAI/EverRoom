@@ -83,6 +83,7 @@ export interface AgentDocumentRegistry {
 
 export interface AgentExternalConversationResolver {
   bindAndBuildContext(sessionId: string, threadId: string, query: string): Promise<string | null>;
+  buildReferenceContext(threadId: string, query: string): Promise<string | null>;
   resolveNativeContinuation?(threadId: string, targetAgentId: string): string | null;
 }
 
@@ -250,6 +251,7 @@ function navigationTargetKey(target: AgentNavigationTarget): string {
 const EXTERNAL_CONNECTOR_REQUEST = /(?:Gmail|GitHub|Google Drive|Slack|Notion|Dropbox|日历|邮件|邮箱|云盘|连接器|第三方服务|OAuth|API)/iu;
 const ROOM_OVERVIEW_REGENERATION_REQUEST = /(?:(?:更新|刷新|重新生成|重生成|重算|重新整理).{0,32}(?:(?:当前|这个)\s*)?(?:Room\s*)?(?:overview|总览|概览)|\b(?:refresh|regenerate|rebuild|update)\b.{0,48}\b(?:room\s+)?(?:overview|summary)\b)/iu;
 const ROOM_OVERVIEW_EXPLICIT_REPLACEMENT = /(?:改成|改为|替换为|纠正|更正|澄清|\breplace\b.{0,24}\bwith\b|\bchange\b.{0,24}\bto\b)/iu;
+const ROOM_OVERVIEW_CITATION_CONTEXT = /(?:^|\n)引用\s+\d+\n区块：(overview|status|next_steps|entities|timeline)\n引用文本：/u;
 const AGENT_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/u;
 const LOCAL_AGENT_HISTORY_MESSAGE_LIMIT = 12;
 const LOCAL_AGENT_HISTORY_CONTENT_LIMIT = 8_000;
@@ -368,6 +370,11 @@ function runtimePrompt(
     && !ROOM_OVERVIEW_EXPLICIT_REPLACEMENT.test(input.prompt)
       ? "本轮是基于当前 Room 已收录资料更新总览的明确请求。必须调用 context_room_overview_regenerate 完成并保存更新；禁止只在聊天正文中拟写或展示一个未保存的新 overview。"
       : null;
+  const roomCitationRouting = hasSelectedRoom
+    && selectedText
+    && ROOM_OVERVIEW_CITATION_CONTEXT.test(selectedText)
+      ? "本轮包含由 Room 总览选区交互生成的引用纠正。先调用 context_room_context_get 核对引用上下文中的 claim ID 和当前全文，为每个命中 claim 生成一条独立 edit，再调用 context_room_correction_apply_citation 在当前回合原子保存并应用。每条 edit 必须自带 targetClaimId、section、operation、originalText、replacementText 和非空 rationale，不要把这些字段摊到工具根参数上；originalText 逐字取自引用上下文的引用文本或命中 claim 文本，不要转述。跨 claim 合并时替换保留的 claim 并 suppress 其余 claim；禁止把多条 claim 拼成一个 originalText，禁止创建待确认 proposal，禁止要求用户再次确认。"
+      : null;
   const connectorRouting = EXTERNAL_CONNECTOR_REQUEST.test(input.prompt)
     ? connectorMode === "local"
       ? "外部服务数据规则：普通 Agent 只能查询 EverRoom 已同步到本地的连接器数据。使用 connector_data_search 获取数据，并用 connector_sync_status 解释最后同步时间、新鲜度或缺失原因。禁止声称进行了实时第三方调用；本地没有数据或数据已过期时，明确告知用户需要授权、同步或使用专用 CLI Agent。"
@@ -402,6 +409,7 @@ function runtimePrompt(
     "</selected_text>",
     "",
     "用户请求：",
+    roomCitationRouting ?? '',
     connectorRouting ?? '',
     attachmentContext ?? '',
     input.prompt,
@@ -1158,6 +1166,12 @@ export class AgentService {
 
     const selectedAgentId = input.targetAgentId ?? session.activeAgentId ?? MAIN_AGENT_ID;
     const invocationMode = input.invocationMode ?? "explicit_switch";
+    if (input.context?.referencedConversationId && selectedAgentId !== MAIN_AGENT_ID) {
+      throw new Error("referenced_conversation_requires_main_agent");
+    }
+    if (input.context?.referencedConversationId && input.context.externalConversationId) {
+      throw new Error("agent_conversation_context_conflict");
+    }
     if (selectedAgentId === MAIN_AGENT_ID && input.localAgent) throw new Error("local_agent_target_invalid");
     if (selectedAgentId !== MAIN_AGENT_ID && input.localAgent?.id !== selectedAgentId) {
       throw new Error("local_agent_target_invalid");
@@ -1320,13 +1334,20 @@ export class AgentService {
     let runtimeRun;
     try {
       const externalConversationId = input.context?.externalConversationId;
+      const referencedConversationId = input.context?.referencedConversationId;
       const importedContext = externalConversationId
-        ? await this.externalConversationResolver?.bindAndBuildContext(sessionId, externalConversationId, input.prompt) ?? null
-        : null;
+          ? await this.externalConversationResolver?.bindAndBuildContext(sessionId, externalConversationId, input.prompt) ?? null
+          : null;
       const nativeContinuationRef = externalConversationId && selectedAgentId !== MAIN_AGENT_ID
         ? this.externalConversationResolver?.resolveNativeContinuation?.(externalConversationId, selectedAgentId) ?? null
         : null;
-      const externalContext = nativeContinuationRef ? null : importedContext;
+      const referencedConversationContext = referencedConversationId
+        ? [
+            "The user referenced a prior Agent conversation for this turn.",
+            "It is a read-only context subagent and does not speak to the user. Call agent_conversation_query when the request depends on that history, then answer the user yourself as Main Agent.",
+          ].join("\n")
+        : null;
+      const externalContext = nativeContinuationRef ? null : importedContext ?? referencedConversationContext;
       const responseLanguage = normalizeAgentLocale(input.responseLanguage);
       const attachments = await this.resolveAttachments(input.attachments);
       const delegationContext = targetRuntime ? localAgentDelegationContext({
@@ -1358,6 +1379,7 @@ export class AgentService {
         captureMemory: input.captureMemory !== false,
         recallMemory: input.recallMemory !== false,
         toolsEnabled: input.toolsEnabled !== false,
+        ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(activeDocument ? { activeDocument } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });

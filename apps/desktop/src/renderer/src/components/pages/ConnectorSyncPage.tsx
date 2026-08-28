@@ -269,7 +269,6 @@ export function ConnectorSyncPage() {
     <div className="page connector-sync-page">
       <PageHeader
         title={t('surface:connectorSync.connectors')}
-        description={t('surface:connectorSync.manageConnectedAccountsAgentSyncJobsLocalData')}
         extraAction={<button type="button" className="secondary-button" onClick={() => void reload()}><RefreshCw />{t('surface:connectorSync.refresh')}</button>}
       />
 

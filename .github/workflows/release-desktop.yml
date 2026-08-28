@@ -41,6 +41,8 @@ jobs:
       NXCORE_NANGO_OUTLOOK_CLIENT_ID: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_ID }}
       NXCORE_NANGO_OUTLOOK_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET }}
       NXCORE_NANGO_OUTLOOK_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_OUTLOOK_CONFIG_KEY }}
+      NXCORE_BROWSER_EXTENSION_STORE_URL: ${{ vars.NXCORE_BROWSER_EXTENSION_STORE_URL }}
+      NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
 
     steps:
       - name: Check out tagged commit
@@ -128,10 +130,12 @@ jobs:
           pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never "${args[@]}"
           if [[ -n "$CSC_LINK" ]]; then
             app="release/mac-arm64/EverRoom.app"
-            codesign -dv "$app" 2>&1 | grep -q "Authority=Developer ID Application" || {
-              echo "::error::App is NOT signed with Developer ID — certificate import failed (check MACOS_CERTIFICATE_BASE64/MAC_CERTS secret value). electron-builder silently skipped signing." >&2
+            info="$(codesign -dv "$app" 2>&1 || true)"
+            if [[ "$info" != *"Authority=Developer ID Application"* ]]; then
+              echo "::error::App is NOT signed with Developer ID — certificate import likely failed (check MACOS_CERTIFICATE_BASE64/MAC_CERTS secret value)." >&2
+              printf '%s\n' "$info" >&2
               exit 1
-            }
+            fi
           fi
 
       - name: Verify macOS signature and APNs entitlement

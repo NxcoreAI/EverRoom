@@ -178,12 +178,14 @@ function RoomGraphCanvasComponent(
         centerOnMount
         className="context-room-graph-canvas"
         edges={edges}
+        maskUntilStable
         nodes={nodes}
         positions={layout.positions ?? fallbackPositions}
         revision={layout.revision}
         selectedId={selectedId}
         selectedEdgeId={selectedRelationId}
         onResize={resizeLayout}
+        onUserGesture={layout.cancelAutoFit}
         onDragNode={layout.drag}
         onReleaseNode={layout.release}
         onOpenNode={onOpenRoom}

@@ -83,7 +83,7 @@ describe('Context Room recommendations', () => {
     const api = installKnowledgeApi([])
 
     await act(async () => {
-      renderer = TestRenderer.create(<KnowledgePendingPanel />)
+      renderer = TestRenderer.create(<KnowledgePendingPanel onOpenCreateRoom={() => {}} />)
     })
 
     expect(api.listEntities.mock.calls.map(([status]) => status)).toEqual([
@@ -104,7 +104,7 @@ describe('Context Room recommendations', () => {
     installKnowledgeApi([lowerStrongRecommendation, higherStandardRecommendation])
 
     await act(async () => {
-      renderer = TestRenderer.create(<KnowledgePendingPanel />)
+      renderer = TestRenderer.create(<KnowledgePendingPanel onOpenCreateRoom={() => {}} />)
     })
 
     const cards = renderer!.root.findAllByProps({ 'data-state': 'recommended' })
@@ -123,7 +123,7 @@ describe('Context Room recommendations', () => {
     ])
 
     await act(async () => {
-      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={() => {}} />)
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={() => {}} onOpenCreateRoom={() => {}} />)
     })
 
     const cards = renderer!.root.findAllByProps({ 'data-state': 'recommended' })
@@ -148,7 +148,7 @@ describe('Context Room recommendations', () => {
     const api = installKnowledgeApi([matched])
 
     await act(async () => {
-      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={() => {}} />)
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={() => {}} onOpenCreateRoom={() => {}} />)
     })
 
     expect(JSON.stringify(renderer!.toJSON())).toContain('加入已有 Room')

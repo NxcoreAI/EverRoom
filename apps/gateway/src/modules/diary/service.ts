@@ -69,13 +69,15 @@ function emptyPayload(date: string, start: Date, end: Date): DiaryPayload {
 }
 
 export class DiaryService {
-  private readonly options: Required<Pick<DiaryServiceOptions, "ownerId" | "workerId" | "pollIntervalMs" | "leaseMs" | "maxAttempts">>;
+  private readonly options: Required<Pick<DiaryServiceOptions, "ownerId" | "workerId" | "pollIntervalMs" | "leaseMs" | "maxAttempts" | "collectTimeoutMs" | "maxRunMs" | "autoRefreshCooldownMs" | "staleCheckIntervalMs">>;
   private readonly scheduleManagedExternally: boolean;
   private readonly generator: DiaryGenerator;
   private readonly sourceCollector: DiarySourceCollector;
   private timer: NodeJS.Timeout | null = null;
   private drainPromise: Promise<void> | null = null;
   private readonly refreshTimers = new Map<string, NodeJS.Timeout>();
+  private readonly staleCheckAt = new Map<string, number>();
+  private readonly backfilledDates = new Set<string>();
 
   constructor(private readonly db: GatewayDatabase, options: DiaryServiceOptions = {}) {
     this.options = {
@@ -84,6 +86,10 @@ export class DiaryService {
       pollIntervalMs: options.pollIntervalMs ?? 30_000,
       leaseMs: options.leaseMs ?? 30_000,
       maxAttempts: options.maxAttempts ?? 5,
+      collectTimeoutMs: options.collectTimeoutMs ?? 120_000,
+      maxRunMs: options.maxRunMs ?? 15 * 60_000,
+      autoRefreshCooldownMs: options.autoRefreshCooldownMs ?? 30 * 60_000,
+      staleCheckIntervalMs: options.staleCheckIntervalMs ?? 5 * 60_000,
     };
     this.scheduleManagedExternally = options.scheduleManagedExternally ?? false;
     this.generator = options.generator ?? defaultGenerator();
@@ -116,7 +122,24 @@ export class DiaryService {
     this.timer = null;
     for (const timer of this.refreshTimers.values()) clearTimeout(timer);
     this.refreshTimers.clear();
+    this.staleCheckAt.clear();
+    this.backfilledDates.clear();
     await this.drainPromise;
+  }
+
+  /** 给可能悬挂的 await 加期限：来源采集（MemoryCore）和生成（Agent 会话）
+   *  卡死时，租约心跳会一直续期，运行会永久停在 running 且无自愈。 */
+  private async withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+    if (ms <= 0) return work;
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label}超时（${Math.round(ms / 1000)}s）`)), ms);
+    });
+    try {
+      return await Promise.race([work, deadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   getSettings(): typeof diarySchedules.$inferSelect {
@@ -237,7 +260,7 @@ export class DiaryService {
     return this.db.select().from(diaryDays).where(eq(diaryDays.date, date)).get()!;
   }
 
-  createRun(date: string, trigger: "scheduled" | "catch_up" | "manual" = "manual"): string {
+  createRun(date: string, trigger: "scheduled" | "catch_up" | "manual" | "refresh" = "manual"): string {
     if (!ISO_DATE.test(date) || dateOnly(new Date(`${date}T00:00:00Z`)) !== date) throw new Error("invalid_date");
     const active = this.db.select().from(diaryRuns).where(and(
       eq(diaryRuns.date, date),
@@ -251,11 +274,16 @@ export class DiaryService {
     const start = zonedTimeToUtc(date, "00:00", settings.timezone);
     const now = this.now();
     const end = dateInTimezone(now, settings.timezone) === date ? now : zonedTimeToUtc(date, "24:00", settings.timezone);
-    const existing = this.db.select().from(diaryRuns).where(eq(diaryRuns.date, date)).all()
-      .find((run) => run.trigger !== "manual");
-    if (existing && trigger !== "manual") {
-      this.logger?.debug({ event: "diary.run.reused", runId: existing.id, date, trigger, status: existing.status }, "diary run reused");
-      return existing.id;
+    // catch_up 只做幂等回填：已有非手动运行（含 refresh）且未失败的日子直接复用，
+    // 不重建。失败的日子允许重建重试（每进程一次，见 backfillMissedDays）。
+    // scheduled 每天的定时槽位必须建新运行，否则被当天早前的运行堵死、永不刷新。
+    if (trigger === "catch_up") {
+      const existing = this.db.select().from(diaryRuns).where(eq(diaryRuns.date, date)).all()
+        .find((run) => run.trigger !== "manual" && run.status !== "failed");
+      if (existing) {
+        this.logger?.debug({ event: "diary.run.reused", runId: existing.id, date, trigger, status: existing.status }, "diary run reused");
+        return existing.id;
+      }
     }
     const runId = randomUUID();
     this.db.insert(diaryDays).values({ date, status: "pending", createdAt: now, updatedAt: now }).onConflictDoNothing().run();
@@ -330,11 +358,23 @@ export class DiaryService {
     if (this.refreshTimers.has(date)) return;
     const timer = setTimeout(() => {
       this.refreshTimers.delete(date);
-      this.createRun(date, "manual");
-      void this.drain();
+      this.queueAutoRefresh(date);
     }, 1_000);
     timer.unref();
     this.refreshTimers.set(date, timer);
+  }
+
+  /** 自动刷新入口（感知完成/来源变化触发）：带每日期冷却。没有冷却时，
+   *  活跃白天每个 30s 巡检周期都会重新生成一次当日日记，版本无限膨胀。 */
+  private queueAutoRefresh(date: string): void {
+    const settings = this.getSettings();
+    if (!settings.enabled) return;
+    const latest = this.db.select().from(diaryRuns).where(eq(diaryRuns.date, date)).orderBy(desc(diaryRuns.createdAt)).get();
+    if (latest && (latest.status === "pending" || latest.status === "running")) return;
+    const lastFinishedAt = latest?.finishedAt ?? latest?.createdAt;
+    if (lastFinishedAt && this.now().getTime() - lastFinishedAt.getTime() < this.options.autoRefreshCooldownMs) return;
+    this.createRun(date, "refresh");
+    void this.drain();
   }
 
   async drain(): Promise<void> {
@@ -375,13 +415,27 @@ export class DiaryService {
     const now = this.now();
     const today = dateInTimezone(now, settings.timezone);
     const enabledFrom = settings.enabledFrom && ISO_DATE.test(settings.enabledFrom) ? settings.enabledFrom : today;
-    const start = new Date(`${enabledFrom}T00:00:00Z`);
-    const cursor = new Date(start);
-    const todayStart = zonedTimeToUtc(today, "00:00", settings.timezone);
-    while (cursor < todayStart) { this.createRun(dateOnly(cursor), "catch_up"); cursor.setUTCDate(cursor.getUTCDate() + 1); }
+    this.backfillMissedDays(now);
     if (today >= enabledFrom && settings.nextRunAt && settings.nextRunAt <= now) {
       this.createRun(today, "scheduled");
       this.db.update(diarySchedules).set({ nextRunAt: this.nextSchedule(now, settings.localTime, settings.timezone), updatedAt: now }).where(eq(diarySchedules.ownerId, this.options.ownerId)).run();
+    }
+  }
+
+  /** 补齐 enabledFrom→昨天 的漏跑日（外部调度器的回填入口，内部调度同样复用）。
+   *  幂等：已完成/进行中的日子由 createRun 复用；失败的日子每个进程生命周期
+   *  只重排一次，避免定时循环对失败日无限重试。 */
+  backfillMissedDays(now = this.now()): void {
+    const settings = this.getSettings();
+    if (!settings.enabled || !settings.enabledFrom || !ISO_DATE.test(settings.enabledFrom)) return;
+    const todayStart = zonedTimeToUtc(dateInTimezone(now, settings.timezone), "00:00", settings.timezone);
+    const cursor = new Date(`${settings.enabledFrom}T00:00:00Z`);
+    while (cursor < todayStart) {
+      const date = dateOnly(cursor);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+      if (this.backfilledDates.has(date)) continue;
+      this.backfilledDates.add(date);
+      this.createRun(date, "catch_up");
     }
   }
 
@@ -426,7 +480,11 @@ export class DiaryService {
         this.finishRun(run, completedVersion);
         return;
       }
-      const sources = await this.sourceCollector.collect(new Date(run.windowStart), new Date(run.windowEnd));
+      const sources = await this.withTimeout(
+        this.sourceCollector.collect(new Date(run.windowStart), new Date(run.windowEnd)),
+        this.options.collectTimeoutMs,
+        "日记来源采集",
+      );
       const sourceKinds = sources.reduce<Record<string, number>>((counts, source) => {
         counts[source.kind] = (counts[source.kind] ?? 0) + 1;
         return counts;
@@ -438,11 +496,25 @@ export class DiaryService {
         sourceKinds,
         usesAgent: sources.length > 0,
       }, "diary sources collected");
+      const sourceFingerprint = hash(sources.map((s) => [s.sourceId, s.fingerprint]));
+      // 非用户触发的运行（调度/回填/自动刷新）：来源与当前版本一致时直接复用，
+      // 不再烧一次 Agent 产出内容相同的新版本。手动“重新生成”不受此影响。
+      if (run.trigger !== "manual") {
+        const dayRow = this.db.select().from(diaryDays).where(eq(diaryDays.date, run.date)).get();
+        const currentVersion = dayRow?.currentVersionId
+          ? this.db.select().from(diaryVersions).where(eq(diaryVersions.id, dayRow.currentVersionId)).get()
+          : null;
+        if (currentVersion?.sourceFingerprint === sourceFingerprint) {
+          this.logger?.info({ event: "diary.run.sources_unchanged", runId: id, date: run.date, versionId: currentVersion.id }, "diary sources unchanged; current version reused");
+          this.finishRun(run, currentVersion);
+          return;
+        }
+      }
       const manifest = new Map(sources.map((source) => [source.sourceId, source]));
       const generationStartedAt = Date.now();
       const payload = sources.length === 0
         ? emptyPayload(run.date, run.windowStart, run.windowEnd)
-        : await this.generator.generate({
+        : await this.withTimeout(this.generator.generate({
           date: run.date,
           range: { start: iso(run.windowStart), end: iso(run.windowEnd) },
           timezone: settings.timezone,
@@ -452,7 +524,7 @@ export class DiaryService {
             const source = manifest.get(ref);
             return source ? source.content ?? source.evidenceSummary : null;
           },
-        });
+        }), this.options.maxRunMs, "日记生成");
       this.logger?.info({
         event: "diary.payload.generated",
         runId: id,
@@ -468,7 +540,6 @@ export class DiaryService {
         this.logger?.info({ event: "diary.payload.times_aligned", runId: id, correctedEventCount: correctedTimes }, "diary event times aligned to evidence");
       }
       validateDiaryPayload(payload, range, manifest);
-      const sourceFingerprint = hash(sources.map((s) => [s.sourceId, s.fingerprint]));
       const versionId = randomUUID();
       this.db.transaction((tx) => {
         tx.insert(diaryVersions).values({ id: versionId, date: run.date, version: (this.listVersions(run.date)[0]?.version ?? 0) + 1, content: payload, windowStart: run.windowStart, windowEnd: run.windowEnd, sourceFingerprint, agentModel: this.generator.model ?? null, runId: run.id }).run();
@@ -526,20 +597,23 @@ export class DiaryService {
     const today = dateInTimezone(now, settings.timezone);
     for (const day of ready) {
       if (!day.currentVersionId || !day.sourceFingerprint) continue;
+      // 稳态下 ready 日子的指纹不变，但每次巡检都要全量采集（含 yjs materialize
+      //  和 connector 全表扫描）。每个日子限频复查，把 30s 一轮的 CPU 烧掉的部分
+      //  摊薄；新源到达的即时标记由 markStaleAt 负责，不受此间隔影响。
+      if (now.getTime() - (this.staleCheckAt.get(day.date) ?? 0) < this.options.staleCheckIntervalMs) continue;
       const version = this.db.select().from(diaryVersions).where(eq(diaryVersions.id, day.currentVersionId)).get();
       if (!version) continue;
       const collectionState = { memoryFailed: false };
       const collectionEnd = day.date === today && now > version.windowEnd ? now : version.windowEnd;
       const current = await this.sourceCollector.collect(version.windowStart, collectionEnd, collectionState);
       if (collectionState.memoryFailed) continue;
+      this.staleCheckAt.set(day.date, now.getTime());
       const fingerprint = hash(current.map((source) => [source.sourceId, source.fingerprint]));
       if (fingerprint !== day.sourceFingerprint) {
         const result = this.db.update(diaryDays).set({ status: "stale", updatedAt: this.now() }).where(and(eq(diaryDays.date, day.date), eq(diaryDays.status, "ready"))).run();
         if (result.changes > 0) {
           this.logger?.info({ event: "diary.day.marked_stale", date: day.date, reason: "source_fingerprint", sourceCount: current.length }, "diary day marked stale");
-          // A changed ready day must immediately get a new run. Using the
-          // manual trigger bypasses the completed scheduled-run reuse rule.
-          if (settings.enabled) this.createRun(day.date, "manual");
+          this.queueAutoRefresh(day.date);
         }
       }
     }

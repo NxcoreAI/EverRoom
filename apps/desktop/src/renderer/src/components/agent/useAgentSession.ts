@@ -661,7 +661,7 @@ export function useAgentSession(
     replaceRunId?: string,
     attachments?: AgentFileAttachment[],
     targetAgentId?: string,
-    externalConversationId?: string,
+    referencedConversationId?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
     if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
@@ -723,13 +723,7 @@ export function useAgentSession(
     setError(null)
     try {
       const currentSessionId = await ensureSession([optimisticMessage])
-      const selectedAgentId = targetAgentId ?? currentSession?.activeAgentId ?? 'main'
-      const workspaceBinding = selectedAgentId === 'main'
-        ? null
-        : await api!.bindLocalAgentWorkspace(selectedAgentId, currentSessionId)
-      if (selectedAgentId !== 'main' && !workspaceBinding) {
-        throw new Error(t('surface:useAgentSession.workspaceRequired'))
-      }
+      const selectedAgentId = targetAgentId ?? 'main'
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, sessionId: currentSessionId }
         : item))
@@ -738,10 +732,9 @@ export function useAgentSession(
         idempotencyKey: crypto.randomUUID(),
         targetAgentId: selectedAgentId,
         invocationMode: 'explicit_switch',
-        ...(workspaceBinding ? { workspaceBindingToken: workspaceBinding.token } : {}),
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, externalConversationId),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, referencedConversationId),
       })
       setAgentIdByRun((current) => current[run.id] === selectedAgentId
         ? current

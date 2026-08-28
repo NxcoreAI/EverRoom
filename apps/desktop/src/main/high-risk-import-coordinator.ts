@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 import type { HighRiskImportResolution, HighRiskImportReview, IngestPipelines } from '../shared/ingest'
 
@@ -43,10 +43,14 @@ export interface HighRiskImportQueue {
   setManualResolver(resolver: ManualResolver): void
   setAutoResolver(resolver: AutoResolver): void
   discardAutoSource(sourceId: string): Promise<void>
+  /** 本次会话内用户明确跳过的手动导入文件：重试同批导入时不再复审。 */
+  isSkippedManualPath(filePath: string): boolean
 }
 
 export class HighRiskImportCoordinator implements HighRiskImportQueue {
   private batches: StoredBatch[] = []
+  /** 用户「跳过」决定只对本次应用会话生效；重启后重新给一次确认机会。 */
+  private readonly skippedManualPaths = new Set<string>()
   private readonly listeners = new Set<() => void>()
   private readonly resolving = new Set<string>()
   private persistChain: Promise<void> = Promise.resolve()
@@ -113,6 +117,10 @@ export class HighRiskImportCoordinator implements HighRiskImportQueue {
       if (batch.origin === 'manual-import') {
         if (!this.manualResolver) throw new Error('文件导入服务尚未就绪。')
         result = await this.manualResolver(batch.payload, accepted)
+        if (!accepted) {
+          // 记住跳过的文件：同会话内重试/再导入这批路径时直接排除，不再重复弹审查。
+          for (const file of batch.payload.files) this.skippedManualPaths.add(resolve(file.filePath))
+        }
       } else {
         if (!this.autoResolver) throw new Error('文件导入服务尚未就绪。')
         result = await this.autoResolver(batch.payload, accepted)
@@ -124,6 +132,10 @@ export class HighRiskImportCoordinator implements HighRiskImportQueue {
     } finally {
       this.resolving.delete(id)
     }
+  }
+
+  isSkippedManualPath(filePath: string): boolean {
+    return this.skippedManualPaths.has(resolve(filePath))
   }
 
   async discardAutoSource(sourceId: string): Promise<void> {

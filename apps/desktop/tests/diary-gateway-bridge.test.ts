@@ -80,6 +80,19 @@ describe('DiaryGatewayBridge requests', () => {
     expect(recoverConnection).not.toHaveBeenCalled()
   })
 
+  it('运行记录 404（数据被重置）时返回 null 而不是抛错', async () => {
+    const server = createServer((_request, response) => json(response, 404, { message: 'run not found' }))
+    const currentConnection = connection(await listen(server), 'current')
+    const recoverConnection = vi.fn()
+    const supervisor = {
+      ensureConnection: async () => currentConnection,
+      recoverConnection,
+    } as unknown as GatewaySupervisor
+
+    await expect(new DiaryGatewayBridge(supervisor).run('run-x')).resolves.toBeNull()
+    expect(recoverConnection).not.toHaveBeenCalled()
+  })
+
   it('恢复后的连接仍不可用时不再重复恢复', async () => {
     const unavailableServer = createServer()
     const unavailableConnection = connection(await listen(unavailableServer), 'unavailable')

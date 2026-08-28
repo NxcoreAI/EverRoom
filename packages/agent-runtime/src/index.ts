@@ -33,6 +33,8 @@ export interface StartRuntimeRunInput {
   recallMemory?: boolean;
   toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
+  /** Prior Agent chat made available to Main as an on-demand, read-only context source. */
+  referencedConversationId?: string;
   /** Structured handoff for an explicitly selected external/local Agent. */
   delegationContext?: LocalAgentDelegationContext;
 }

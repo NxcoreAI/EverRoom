@@ -22,7 +22,7 @@ export interface ForceGraphSettleFitOptions {
    * 布局收敛期间相机逐帧跟随内容（每帧 fitView）。首帧坐标只是初始站位，
    * 节点群随后会收拢/迁移，视野固定不动就会出现「首帧 vs 稳定后」的跳变；
    * 跟随让相机随内容平滑移动，布局稳定（约 200ms 无坐标更新）、超时 3 秒
-   * 或用户拖动节点后停止。
+   * 或用户接管画布（拖节点 / 平移 / 缩放，见 cancelAutoFit）后停止。
    */
   follow?: boolean
 }
@@ -57,6 +57,11 @@ export interface UseForceGraphLayoutResult {
   readonly revision: (() => number) | undefined
   /** 调整布局世界尺寸；以自然世界（初始 options 的 width/height）为下限，不会随面板缩小。 */
   resize(width: number, height: number): void
+  /**
+   * 用户以任意手势接管画布（平移/缩放）后调用：停掉相机跟随并清掉待触发
+   * 的延时对准，视野交给用户。拖节点路径自动触发，无需重复调用。
+   */
+  cancelAutoFit(): void
   drag(id: string, x: number, y: number): void
   release(id: string): void
 }
@@ -175,15 +180,20 @@ export function useForceGraphLayout({
     worldRef.current = { height: worldHeight, width: worldWidth }
     scheduleSettleFit()
   }, [controller, naturalWorldHeight, naturalWorldWidth, scheduleSettleFit])
-  const drag = useCallback((id: string, x: number, y: number) => {
-    // 用户接管节点（拖拽）后相机停止跟随，避免视野与手势对抗。
+  // 用户以任意手势接管画布（拖节点/平移/缩放）后停掉相机自动化：
+  // 取消跟随循环、清掉待触发的延时对准，视野完全交给用户。
+  const cancelAutoFit = useCallback(() => {
     if (followRafRef.current !== null) {
       cancelAnimationFrame(followRafRef.current)
       followRafRef.current = null
     }
+    clearSettleTimers()
+  }, [clearSettleTimers])
+  const drag = useCallback((id: string, x: number, y: number) => {
+    cancelAutoFit()
     controller?.drag(id, x, y)
-  }, [controller])
+  }, [cancelAutoFit, controller])
   const release = useCallback((id: string) => controller?.release(id), [controller])
 
-  return { controller, positions, revision, resize, drag, release }
+  return { controller, positions, revision, resize, cancelAutoFit, drag, release }
 }

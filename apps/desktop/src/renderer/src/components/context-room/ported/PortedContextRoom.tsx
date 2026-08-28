@@ -316,6 +316,7 @@ export function PortedContextRoom({
         const room = refreshed?.rooms.find((item) => item.id === result.room.id)
         if (!room) throw new Error(t('contextRoom:roomDialogs.createFailed'))
         onOpenRoomTab({ id: room.id, title: room.title })
+        return room.id
       }}
       onMountObsidian={async () => {
         const binding = await window.nxcore?.obsidian.pickAndMount()

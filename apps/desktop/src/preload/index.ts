@@ -316,7 +316,10 @@ const api: NxcoreDesktopApi = {
     refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
     overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
     refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
+    listMails: (roomId: string) => invokeQuietly('context-rooms:list-mails', roomId),
     roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
+    completeLocalAction: (roomId: string, actionId: string, completed?: boolean) =>
+      invokeQuietly('context-rooms:complete-local-action', roomId, actionId, completed),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
@@ -612,10 +615,14 @@ const api: NxcoreDesktopApi = {
     attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
       invoke('knowledge:docs:attach', sourceKind, sourceId, input),
     listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
+    routeStatus: (sourceIds) => invoke('knowledge:route:status', sourceIds),
+    proposeRooms: (input: { description: string; fileEntryIds: string[] }) =>
+      invoke('knowledge:rooms:propose', input),
     revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
     listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
     readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
     revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
+    openFile: (fileId: string) => invoke('knowledge:files:open', fileId),
   },
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
@@ -636,6 +643,11 @@ const api: NxcoreDesktopApi = {
       invoke('files:open-original', fileId, originalName, contentHash),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),
+    /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */
+    pickPaths: () => invoke<string[]>('files:pick-paths'),
+    /** 提交后的一次性导入：把暂存路径交给统一导入链路。 */
+    importPaths: (paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
+      invoke('files:import-paths-once', paths, options),
     importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)

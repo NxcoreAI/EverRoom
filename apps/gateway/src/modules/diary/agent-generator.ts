@@ -75,7 +75,7 @@ export class DiaryAgentGenerator implements DiaryGenerator {
   private runtime: AgentRuntime | null = null;
   private readonly active = new Map<string, DiaryGenerationInput>();
 
-  constructor(model: string, private readonly logger?: Logger) {
+  constructor(model: string, private readonly logger?: Logger, private readonly timeoutMs = 10 * 60_000) {
     this.model = model;
   }
 
@@ -139,16 +139,36 @@ export class DiaryAgentGenerator implements DiaryGenerator {
         toolsEnabled: true,
       });
       runtimeSessionRef = run.runtimeSessionRef;
+      // 会话级超时：事件流卡住时 generate 永不返回，服务侧租约心跳会一直续期，
+      // 运行永久停在 running 且无自愈。超时后取消 runtime 里的运行再抛错重试。
+      let timedOut = false;
+      let timeoutTimer: NodeJS.Timeout | undefined;
       let content = "";
-      for await (const event of run.events) {
-        if (event.type === "message.completed") {
-          const value = (event.payload as { content?: unknown }).content;
-          if (typeof value === "string") content = value;
-        }
-        if (event.type === "run.failed" || event.type === "run.cancelled" || event.type === "run.interrupted") {
-          const message = (event.payload as { message?: unknown }).message;
-          throw new Error(typeof message === "string" ? message : "Diary Agent run failed");
-        }
+      try {
+        const deadline = new Promise<never>((_, reject) => {
+          timeoutTimer = setTimeout(() => {
+            timedOut = true;
+            reject(new Error(`Diary Agent 运行超时（${Math.round(this.timeoutMs / 60_000)} 分钟）`));
+          }, this.timeoutMs);
+        });
+        const consumeEvents = async (): Promise<string> => {
+          let collected = "";
+          for await (const event of run.events) {
+            if (event.type === "message.completed") {
+              const value = (event.payload as { content?: unknown }).content;
+              if (typeof value === "string") collected = value;
+            }
+            if (event.type === "run.failed" || event.type === "run.cancelled" || event.type === "run.interrupted") {
+              const message = (event.payload as { message?: unknown }).message;
+              throw new Error(typeof message === "string" ? message : "Diary Agent run failed");
+            }
+          }
+          return collected;
+        };
+        content = await Promise.race([consumeEvents(), deadline]);
+      } finally {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (timedOut) await this.runtime?.cancel(input.runId).catch(() => undefined);
       }
       if (!content.trim()) throw new Error("Diary Agent returned empty output");
       const normalized = jsonText(content);

@@ -1,0 +1,252 @@
+import TestRenderer, { act } from 'react-test-renderer'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/i18n/LocaleContext')>()
+  return {
+    ...actual,
+    useLocale: () => ({
+      locale: 'zh-CN',
+      t: (message: string, values?: Record<string, string | number>) => actual.translate('zh-CN', message, values),
+    }),
+  }
+})
+
+import type { RoomOverviewProjection } from '@nxcore/agent-contract'
+
+import { createContextRoomFixture } from './context-room-fixture'
+import { TasksPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ActivityPanes'
+
+function projectionFixture(): RoomOverviewProjection {
+  return {
+    roomId: 'room-connector',
+    revision: 1,
+    generatedAt: '2026-08-26T08:00:00.000Z',
+    stale: false,
+    overview: [],
+    status: [],
+    entities: [],
+    appliedCorrectionIds: [],
+    timeline: [],
+    nextSteps: [
+      {
+        id: 'ns-task-connector',
+        section: 'next_steps',
+        text: '补充天线参数',
+        origin: 'fact',
+        confidence: 1,
+        evidence: [{ sourceKind: 'todo', sourceId: 'todo-1', sourceTitle: '补充天线参数' }],
+        corrected: false,
+        data: {
+          kind: 'next_step', itemType: 'task', actionId: 'todo-1', owner: null,
+          dueAt: '2026-09-05T01:00:00.000Z', status: 'needsAction', priority: 'high',
+        },
+      },
+      {
+        // 与本地未完成任务同名：投影叠加按标题去重，不重复渲染
+        id: 'ns-task-duplicate',
+        section: 'next_steps',
+        text: '本地验收任务',
+        origin: 'fact',
+        confidence: 1,
+        evidence: [{ sourceKind: 'todo', sourceId: 'todo-2', sourceTitle: '本地验收任务' }],
+        corrected: false,
+        data: {
+          kind: 'next_step', itemType: 'task', actionId: 'todo-2', owner: null,
+          dueAt: null, status: 'needsAction', priority: null,
+        },
+      },
+      {
+        // 日程 claim 不进待办面板
+        id: 'ns-schedule',
+        section: 'next_steps',
+        text: '发射协调会',
+        origin: 'fact',
+        confidence: 1,
+        evidence: [{ sourceKind: 'calendar-event', sourceId: 'cal-1', sourceTitle: '发射协调会' }],
+        corrected: false,
+        data: {
+          kind: 'next_step', itemType: 'schedule', actionId: 'cal-1', owner: null,
+          dueAt: '2026-09-01T02:00:00.000Z', status: 'scheduled', priority: null,
+        },
+      },
+    ],
+  }
+}
+
+/** 本地待办（local-task）claim 变体：可勾选行。 */
+function localActionProjectionFixture(): RoomOverviewProjection {
+  const base = projectionFixture()
+  return {
+    ...base,
+    nextSteps: [
+      ...base.nextSteps,
+      {
+        id: 'ns-task-local',
+        section: 'next_steps',
+        text: '开学前买教材',
+        origin: 'fact',
+        confidence: 1,
+        evidence: [{ sourceKind: 'local-task', sourceId: 'act-1', sourceTitle: '开学前买教材' }],
+        corrected: false,
+        data: {
+          kind: 'next_step', itemType: 'task', actionId: 'act-1', owner: null,
+          dueAt: '2026-09-01T01:00:00.000Z', status: 'needsAction', priority: null,
+        },
+      },
+    ],
+  }
+}
+
+/** 已完成的本地待办 claim（status=completed）：进「已完成」分组、可反勾恢复。 */
+function completedLocalActionProjectionFixture(): RoomOverviewProjection {
+  return {
+    ...projectionFixture(),
+    nextSteps: [{
+      id: 'ns-task-local-done',
+      section: 'next_steps',
+      text: '开学前买教材',
+      origin: 'fact',
+      confidence: 1,
+      evidence: [{ sourceKind: 'local-task', sourceId: 'act-2', sourceTitle: '开学前买教材' }],
+      corrected: false,
+      data: {
+        kind: 'next_step', itemType: 'task', actionId: 'act-2', owner: null,
+        dueAt: '2026-09-01T01:00:00.000Z', status: 'completed', priority: null,
+      },
+    }],
+  }
+}
+
+async function renderTasksPane(
+  projection: RoomOverviewProjection = projectionFixture(),
+  withLocalTasks = true,
+  completeLocalAction?: ReturnType<typeof vi.fn>,
+) {
+  const overview = vi.fn().mockResolvedValue(projection)
+  vi.stubGlobal('window', {
+    ...globalThis,
+    nxcore: { contextRooms: { overview, ...(completeLocalAction ? { completeLocalAction } : {}) } },
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })
+  const room = createContextRoomFixture('room-connector', '连接器 Room')
+  room.actionItems = withLocalTasks ? [
+    { id: 'task-pending', title: '本地验收任务', status: '进行中', owner: '林薇', deadline: '2026-09-01 09:00', completed: false },
+    { id: 'task-done', title: '已完成的本地任务', status: '已完成', owner: '林薇', deadline: '2026-08-01 09:00', completed: true },
+  ] : []
+  let renderer: TestRenderer.ReactTestRenderer | null = null
+  await act(async () => {
+    renderer = TestRenderer.create(
+      <TasksPane room={room} onSelect={() => {}} onToggle={() => {}} onUpdateRoom={() => {}} />,
+    )
+  })
+  return { renderer: renderer!, overview }
+}
+
+/** 待办面板里的任务行（data-connector-source="todo" 的为投影叠加项）。 */
+function taskRows(renderer: TestRenderer.ReactTestRenderer, connectorOnly?: string) {
+  return renderer.root.findAll((node) =>
+    typeof node.props?.className === 'string'
+    && node.props.className.split(' ').includes('context-room-task-row')
+    && (connectorOnly === undefined || node.props['data-connector-source'] === connectorOnly))
+}
+
+describe('待办面板：确定性待办投影合并', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('未完成区叠加连接器 task claim，与本地任务同名去重，日程 claim 不混入', async () => {
+    const { renderer } = await renderTasksPane()
+    const connectorRows = taskRows(renderer, 'todo')
+    expect(connectorRows.map((node) => node.findByType('b').children[0])).toEqual(['补充天线参数'])
+    // 本地未完成任务仍以可勾选行渲染
+    const allRows = taskRows(renderer)
+    expect(allRows.map((node) => node.findByType('b').children[0])).toEqual(['本地验收任务', '补充天线参数'])
+    // 未完成计数 = 本地 1 + 投影 1
+    const incompleteHeader = renderer.root.findAll((node) => node.type === 'h3')[0]
+    expect(incompleteHeader.findByType('span').children[0]).toBe('2')
+  })
+
+  it('连接器待办为只读行：无勾选按钮、无跳转按钮', async () => {
+    const { renderer } = await renderTasksPane()
+    const row = taskRows(renderer, 'todo')[0]
+    expect(row.findAllByType('button')).toHaveLength(0)
+    expect(row.findAll((node) => node.props?.className === 'context-room-task-check')).toHaveLength(1)
+  })
+
+  it('本地与投影均为空时仍显示空态', async () => {
+    const empty = { ...projectionFixture(), nextSteps: [] }
+    const { renderer } = await renderTasksPane(empty, false)
+    expect(taskRows(renderer)).toHaveLength(0)
+    expect(renderer.root.findAll((node) =>
+      typeof node.props?.title === 'string' && node.props.title === '还没有任务')).toHaveLength(1)
+  })
+
+  it('local-task claim 渲染可勾选行并计入未完成数，顺序在连接器行之前', async () => {
+    const { renderer } = await renderTasksPane(localActionProjectionFixture())
+    const localRows = renderer.root.findAll((node) =>
+      typeof node.props?.className === 'string'
+      && node.props.className.split(' ').includes('context-room-task-row')
+      && node.props['data-action-source'] === 'local-task')
+    expect(localRows.map((node) => node.findByType('b').children[0])).toEqual(['开学前买教材'])
+    // 主区非跳转按钮（div），唯一按钮是勾选
+    expect(localRows[0].findAllByType('button')).toHaveLength(1)
+    expect(localRows[0].findAllByType('button')[0].props.className).toBe('context-room-task-check')
+    // 未完成计数 = 本地 1 + local-task 1 + 连接器 1
+    const incompleteHeader = renderer.root.findAll((node) => node.type === 'h3')[0]
+    expect(incompleteHeader.findByType('span').children[0]).toBe('3')
+    // 全部行顺序：本地任务 → local-task → 连接器
+    expect(taskRows(renderer).map((node) => node.findByType('b').children[0]))
+      .toEqual(['本地验收任务', '开学前买教材', '补充天线参数'])
+  })
+
+  it('勾选 local-task 调 completeLocalAction 并用返回投影广播 ROOM_OVERVIEW_CHANGED', async () => {
+    const nextProjection = { ...localActionProjectionFixture(), revision: 2 }
+    const completeLocalAction = vi.fn().mockResolvedValue({
+      action: { id: 'act-1', kind: 'task', title: '开学前买教材', completedAt: '2026-08-28T00:00:00.000Z' },
+      overview: nextProjection,
+    })
+    const { renderer } = await renderTasksPane(localActionProjectionFixture(), true, completeLocalAction)
+    const check = renderer.root.findAll((node) =>
+      node.props?.['data-action-source'] === 'local-task')[0].findByProps({ className: 'context-room-task-check' })
+    await act(async () => {
+      check.props.onClick()
+    })
+    expect(completeLocalAction).toHaveBeenCalledWith('room-connector', 'act-1', true)
+    const dispatched = (window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
+    expect(dispatched.type).toBe('nxcore:room-overview-changed')
+    expect(dispatched.detail.projection).toBe(nextProjection)
+  })
+
+  it('完成的 local-task 进「已完成」分组：可反勾恢复，仅剩已完成时不显示空态', async () => {
+    const completeLocalAction = vi.fn().mockResolvedValue({
+      action: { id: 'act-2', kind: 'task', title: '开学前买教材', completedAt: null },
+      overview: { ...completedLocalActionProjectionFixture(), revision: 3 },
+    })
+    // 本地快照任务为空：面板里只有这一条已完成的助手待办。
+    const { renderer } = await renderTasksPane(completedLocalActionProjectionFixture(), false, completeLocalAction)
+    // 展开已完成分组
+    await act(async () => {
+      renderer.root.findByProps({ className: 'context-room-task-section-toggle' }).props.onClick()
+    })
+    const doneRows = renderer.root.findAll((node) =>
+      typeof node.props?.className === 'string'
+      && node.props.className.split(' ').includes('context-room-task-row')
+      && node.props['data-action-source'] === 'local-task')
+    expect(doneRows.map((node) => node.findByType('b').children[0])).toEqual(['开学前买教材'])
+    // 已完成计数含助手待办
+    expect(renderer.root.findByProps({ className: 'context-room-task-section-toggle' })
+      .findByType('span').children[0]).toBe('1')
+    // 反勾 → completeLocalAction(roomId, actionId, false)
+    await act(async () => {
+      doneRows[0].findByProps({ className: 'context-room-task-check' }).props.onClick()
+    })
+    expect(completeLocalAction).toHaveBeenCalledWith('room-connector', 'act-2', false)
+    // 不出现「还没有任务」空态
+    expect(renderer.root.findAll((node) =>
+      typeof node.props?.title === 'string' && node.props.title === '还没有任务')).toHaveLength(0)
+  })
+})

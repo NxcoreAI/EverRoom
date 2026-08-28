@@ -7,6 +7,9 @@ import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   documents,
   entities as entitiesTable,
+  fileBlobs,
+  fileEntries,
+  fileVersions,
   gatewayMetadata,
   ingestEvents,
   jobs,
@@ -549,6 +552,15 @@ export class KnowledgeService {
         "knowledge evidence rescored with V2 rules",
       );
     }
+    // 户口实体补种：图谱重建/数据重置会让 auto Room 丢失 entity_id（direct_mention
+    // 通路随之瘫痪）。每次启动幂等补种；认领优先，让既有 mentions 直接种到 Room 头上。
+    const homeEntitiesBackfilled = this.entityRegistry.backfillRoomHomeEntities();
+    if (homeEntitiesBackfilled > 0) {
+      this.logger.info(
+        { event: "knowledge.room_entities.backfilled", rooms: homeEntitiesBackfilled },
+        "room home entities re-seeded after graph rebuild",
+      );
+    }
     const relationBackfill = this.relationRegistry.rebuildFromFacts();
     const pendingRelationDocuments = this.relationRegistry.pendingDocumentIndexes();
     if (pendingRelationDocuments.length > 0) {
@@ -810,23 +822,47 @@ export class KnowledgeService {
 
     const wanted = [...latestBySource.values()];
     if (wanted.length === 0) return [];
-    const fileRows = this.db.select().from(uploadedFiles)
-      .where(inArray(uploadedFiles.id, wanted.map((decision) => decision.sourceId)))
-      .all();
-    const filesById = new Map(fileRows.map((row) => [row.id, row]));
+    // 元信息双轨：统一导入管线（/v1/file-imports）只写 file_entries 目录，
+    // uploaded_files 仅为遗留字节通道；先旧表后目录表补齐，两边都缺才算不存在
+    const fileMetaById = new Map<string, { originalName: string; bytes: number; uploadedAt: Date }>();
+    const sourceIds = wanted.map((decision) => decision.sourceId);
+    for (const row of this.db.select().from(uploadedFiles)
+      .where(inArray(uploadedFiles.id, sourceIds)).all()) {
+      fileMetaById.set(row.id, { originalName: row.originalName, bytes: row.bytes, uploadedAt: row.createdAt });
+    }
+    const missingIds = sourceIds.filter((id) => !fileMetaById.has(id));
+    if (missingIds.length > 0) {
+      const catalogRows = this.db.select({
+        id: fileEntries.id,
+        originalName: fileEntries.originalName,
+        bytes: fileBlobs.byteSize,
+        createdAt: fileEntries.createdAt,
+      }).from(fileEntries)
+        .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+        .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+        .where(and(inArray(fileEntries.id, missingIds), isNull(fileEntries.deletedAt)))
+        .all();
+      for (const row of catalogRows) {
+        fileMetaById.set(row.id, {
+          originalName: row.originalName,
+          bytes: row.bytes ?? 0,
+          uploadedAt: row.createdAt,
+        });
+      }
+    }
     return wanted
       .map((decision) => {
-        const file = filesById.get(decision.sourceId);
+        const file = fileMetaById.get(decision.sourceId);
         if (!file) return null;
         return {
-          id: file.id,
+          id: decision.sourceId,
           originalName: file.originalName,
           bytes: file.bytes,
           title: decision.sourceTitle,
           status: decision.status,
           decidedBy: decision.decidedBy,
           confidence: decision.confidence ?? null,
-          uploadedAt: file.createdAt,
+          uploadedAt: file.uploadedAt,
         };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -834,11 +870,14 @@ export class KnowledgeService {
 
   /** 文件当前解析产物的 markdown（预览用）；无文件或未解析返回 null。 */
   readFileMarkdown(fileId: string): string | null {
+    // 双轨：目录文件（统一导入管线）走 catalog 解析产物
+    if (this.files.isCatalogEntry(fileId)) return this.files.catalogMarkdownOf(fileId);
     return this.files.markdownOf(fileId);
   }
 
-  /** 文件本体的绝对路径（主进程 reveal 用）；无文件返回 null。 */
+  /** 文件本体的绝对路径（主进程 reveal/open 用）；无文件返回 null。 */
   fileStoragePath(fileId: string): string | null {
+    if (this.files.isCatalogEntry(fileId)) return this.files.catalogStoragePathOf(fileId);
     return this.files.storagePathOf(fileId);
   }
 
@@ -2237,6 +2276,98 @@ export class KnowledgeService {
       });
   }
 
+  /**
+   * on-demand Room 推荐（创建入口「智能推荐」页签）：用户描述 + 已导入文件 →
+   * 先取这些文件在路由阶段抽出的实体锚点（weak/ready 才值得建 Room），
+   * 再让 LLM 围绕锚点组织推荐卡。anchorName 命中实体才带 entityId——
+   * 创建时可走晋升链路，文件证据自动成为 Room 数据。
+   */
+  async proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<
+    | {
+      ok: true;
+      items: Array<{
+        entityId: string | null;
+        anchorName: string;
+        name: string;
+        kind: string;
+        description: string;
+        reason: string;
+        sourceNames: string[];
+        fileCount: number;
+        evidenceScore: number | null;
+        sourceCount: number | null;
+      }>;
+    }
+    | { ok: false; error: string }
+  > {
+    if (!this.llm) return { ok: false, error: "llm_not_configured" };
+    const fileIds = [...new Set(input.fileEntryIds)].slice(0, 20);
+    if (fileIds.length === 0 && !input.description.trim()) {
+      return { ok: false, error: "proposal_input_empty" };
+    }
+
+    const documents: Array<{ title: string; markdown: string }> = [];
+    for (const fileId of fileIds) {
+      const entry = this.db.select({ name: uploadedFiles.originalName }).from(uploadedFiles)
+        .where(eq(uploadedFiles.id, fileId)).get();
+      const markdown = this.readFileMarkdown(fileId);
+      if (markdown) documents.push({ title: entry?.name ?? fileId, markdown });
+    }
+
+    const anchorIds = new Set<string>();
+    for (const fileId of fileIds) {
+      for (const link of this.entityRegistry.linksOfSource("file", fileId)) anchorIds.add(link.entityId);
+    }
+    const anchors = [...anchorIds]
+      .map((id) => this.entityRegistry.getEntity(id))
+      .filter((entity): entity is EntityRow => Boolean(entity))
+      .filter((entity) => entity.status === "weak" || entity.status === "ready")
+      .sort((left, right) => right.evidenceScore - left.evidenceScore)
+      .slice(0, 12);
+    const nameIndex = new Map<string, EntityRow>();
+    for (const entity of anchors) {
+      for (const name of [entity.name, ...entity.aliases]) {
+        const key = name.trim().toLocaleLowerCase();
+        if (key && !nameIndex.has(key)) nameIndex.set(key, entity);
+      }
+    }
+
+    let proposals;
+    try {
+      proposals = await this.llm.proposeRooms({
+        description: input.description,
+        documents,
+        anchors: anchors.map((entity) => ({
+          name: entity.name,
+          kind: entity.kind,
+          evidenceScore: entity.evidenceScore,
+          sourceCount: entity.sourceCount,
+        })),
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+
+    return {
+      ok: true,
+      items: proposals.map((proposal) => {
+        const entity = nameIndex.get(proposal.anchorName.trim().toLocaleLowerCase()) ?? null;
+        return {
+          entityId: entity?.id ?? null,
+          anchorName: proposal.anchorName,
+          name: entity?.name ?? proposal.name,
+          kind: proposal.kind,
+          description: proposal.description,
+          reason: proposal.reason,
+          sourceNames: proposal.sourceNames,
+          fileCount: fileIds.length,
+          evidenceScore: entity?.evidenceScore ?? null,
+          sourceCount: entity?.sourceCount ?? null,
+        };
+      }),
+    };
+  }
+
   suppressEntity(entityId: string): { ok: true } | { ok: false; error: string } {
     const entity = this.entityRegistry.getEntity(entityId);
     if (!entity) return { ok: false, error: "entity_not_found" };
@@ -2280,8 +2411,12 @@ export class KnowledgeService {
         .where(eq(documents.id, link.sourceId)).get()?.title ?? null;
     }
     if (link.sourceKind === "file") {
-      return this.db.select({ name: uploadedFiles.originalName }).from(uploadedFiles)
-        .where(eq(uploadedFiles.id, link.sourceId)).get()?.name ?? null;
+      const legacy = this.db.select({ name: uploadedFiles.originalName }).from(uploadedFiles)
+        .where(eq(uploadedFiles.id, link.sourceId)).get()?.name;
+      if (legacy) return legacy;
+      // 目录文件（统一导入管线）取登记行原名
+      return this.db.select({ name: fileEntries.originalName }).from(fileEntries)
+        .where(eq(fileEntries.id, link.sourceId)).get()?.name ?? null;
     }
     return this.db.select({ title: routeDecisions.sourceTitle }).from(routeDecisions)
       .where(and(
@@ -2688,6 +2823,37 @@ export class KnowledgeService {
   }
 
   /**
+   * 路由状态查询（推荐会话进度轮询用）：按 sourceId 取最新决策，不做
+   * confirmed 过滤——新落库的 awaiting_review/auto 就是「已解析」本身，
+   * 而 listRecentDecisions 只面向最近归类（confirmed 历史）。
+   */
+  routeStatusOf(sourceIds: string[]): Array<{
+    sourceId: string;
+    status: string;
+    title: string | null;
+    updatedAt: Date;
+  }> {
+    if (sourceIds.length === 0) return [];
+    const rows = this.db.select({
+      sourceId: routeDecisions.sourceId,
+      status: routeDecisions.status,
+      title: routeDecisions.sourceTitle,
+      updatedAt: routeDecisions.updatedAt,
+    }).from(routeDecisions)
+      .where(and(
+        eq(routeDecisions.sourceKind, "file"),
+        inArray(routeDecisions.sourceId, sourceIds),
+      ))
+      .orderBy(desc(routeDecisions.updatedAt))
+      .all();
+    const latest = new Map<string, { sourceId: string; status: string; title: string | null; updatedAt: Date }>();
+    for (const row of rows) {
+      if (!latest.has(row.sourceId)) latest.set(row.sourceId, row);
+    }
+    return [...latest.values()];
+  }
+
+  /**
    * 撤销已确认路由（plan §5.4）：按落盘账本逐房清源 → 重路由
    * （skipEntry，从 ② 起步）。
    */
@@ -2754,7 +2920,7 @@ export class KnowledgeService {
   }
 
   createRule(input: {
-    matcher: { sourceTag?: string; filenamePrefix?: string; threadId?: string; titleKeyword?: string; creatorId?: string };
+    matcher: { sourceTag?: string; filenamePrefix?: string; threadId?: string; titleKeyword?: string; creatorId?: string; calendarId?: string; listId?: string };
     targetRoomId: string;
   }): { ok: true; id: string } | { ok: false; error: string } {
     const keys = Object.keys(input.matcher).filter((key) => {
@@ -2821,13 +2987,28 @@ export class KnowledgeService {
       if (decision.primaryRoomId) continue;
       const sourceTag = connectorSourceTagOf(decision.sourceId);
       if (matcher.sourceTag !== undefined && sourceTag !== matcher.sourceTag) continue;
+      // 日历级 calendarId：历史决策无 entrySignals 快照，从 markdown 组织者行近似推导
+      const calendarId = matcher.calendarId !== undefined
+        ? calendarOrganizerOf(decision.sourceMarkdown ?? "")
+        : undefined;
+      if (matcher.calendarId !== undefined && calendarId !== matcher.calendarId) continue;
+      // 清单级 listId：从 markdown frontmatter 的 list_id 确定性还原
+      const listId = matcher.listId !== undefined
+        ? todoListIdOf(decision.sourceMarkdown ?? "")
+        : undefined;
+      if (matcher.listId !== undefined && listId !== matcher.listId) continue;
       if (matcher.titleKeyword !== undefined && !(decision.sourceTitle ?? "").includes(matcher.titleKeyword)) continue;
       matched += 1;
+      const entrySignals = {
+        ...(sourceTag ? { sourceTag } : {}),
+        ...(calendarId ? { calendarId } : {}),
+        ...(listId ? { listId } : {}),
+      };
       const result = this.router.routeByRule({
         ref: { kind: decision.sourceKind, id: decision.sourceId, version: decision.sourceVersion },
         title: decision.sourceTitle ?? decision.sourceId,
         markdown: decision.sourceMarkdown ?? "",
-        ...(sourceTag ? { entrySignals: { sourceTag } } : {}),
+        ...(Object.keys(entrySignals).length > 0 ? { entrySignals } : {}),
       });
       if (!result) continue;
       replayed += 1;
@@ -3232,4 +3413,32 @@ export function connectorSourceTagOf(sourceId: string): string | null {
   if (!sourceId.startsWith("connector:")) return null;
   const [provider, connectionId] = sourceId.slice("connector:".length).split(":");
   return provider && connectionId ? `connector:${provider}:${connectionId}` : null;
+}
+
+/**
+ * 决策快照 markdown 的「组织者：」行 → 日历地址。回填用：历史决策没有
+ * entrySignals 快照，日历级 calendarId 只能从组织者行近似（自己日历上的
+ * 事件组织者即日历 id；新建决策走 ingest entrySignals 的精确 scope id）。
+ */
+export function calendarOrganizerOf(markdown: string): string | null {
+  const line = markdown.split("\n").find((candidate) => candidate.startsWith("组织者："));
+  if (!line) return null;
+  const bracket = line.match(/<([^>]+)>/);
+  const address = (bracket?.[1] ?? line.slice("组织者：".length)).trim();
+  return address.includes("@") ? address : null;
+}
+
+/**
+ * 决策快照 markdown frontmatter 的 `list_id:` → 待办清单 id。回填用：
+ * 历史决策没有 entrySignals 快照，清单级 listId 从渲染器写进 markdown 的
+ * frontmatter 确定性还原（connectorTodoToMarkdown 恒写 list_id 键）。
+ */
+export function todoListIdOf(markdown: string): string | null {
+  if (!markdown.startsWith("---")) return null;
+  const end = markdown.indexOf("\n---", 3);
+  if (end < 0) return null;
+  const line = markdown.slice(0, end).split("\n").find((candidate) => candidate.startsWith("list_id:"));
+  if (!line) return null;
+  const value = line.slice("list_id:".length).trim().replace(/^["']|["']$/g, "");
+  return value && value !== "null" ? value : null;
 }

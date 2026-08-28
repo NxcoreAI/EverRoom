@@ -40,7 +40,12 @@ tools:
   - context_room_overview_regenerate
   - context_room_correction_propose
   - context_room_correction_apply
+  - context_room_correction_apply_citation
   - context_room_correction_revoke
+  - context_room_task_create
+  - context_room_schedule_create
+  - context_room_task_complete
+  - context_room_action_delete
   - connector_data_search
   - connector_record_get
   - connector_sync_status
@@ -51,6 +56,7 @@ tools:
   - web_search
   - agent_catalog
   - agent_dispatch
+  - agent_conversation_query
   - content_analysis
   - send_notification
   - room_analysis

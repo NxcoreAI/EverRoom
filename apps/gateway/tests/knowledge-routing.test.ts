@@ -26,6 +26,7 @@ import {
 import {
   parseExtractionResponse,
   parseJudgeResponse,
+  parseProposalsResponse,
   parseRegisterResponse,
 } from "../src/modules/knowledge/llm.js";
 import { dedupeExtraction, fallbackSummary, pickPromotedTargets } from "../src/modules/knowledge/router.js";
@@ -174,6 +175,40 @@ describe("③′⑤ LLM 输出解析", () => {
     expect(registered.name).toBe("卫星项目");
     expect(registered.aliases).toEqual(["卫星计划"]);
     expect(() => parseRegisterResponse('{"summary":"没有名字"}')).toThrow();
+  });
+
+  it("Room 推荐输出：anchorName 缺省回落 name、同名去重保后者", () => {
+    const proposals = parseProposalsResponse(JSON.stringify({
+      proposals: [
+        { name: "卫星项目", kind: "项目", description: "低轨星座排期", reason: "资料集中", sourceNames: ["周报.md"] },
+        { anchorName: "卫星项目", name: "卫星项目", kind: "项目", reason: "后到的胜出" },
+      ],
+    }));
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({ anchorName: "卫星项目", name: "卫星项目", reason: "后到的胜出" });
+  });
+
+  it("Room 推荐输出：围栏剥离、kind 非法落主题、sourceNames 去重截断", () => {
+    const sources = Array.from({ length: 10 }, (_, index) => `资料${index}.md`);
+    const proposals = parseProposalsResponse([
+      "```json",
+      JSON.stringify({
+        proposals: [{
+          anchorName: "汇编语言",
+          name: "汇编语言",
+          kind: "随便",
+          sourceNames: [...sources, "资料0.md", "", 42],
+        }],
+      }),
+      "```",
+    ].join("\n"));
+    expect(proposals[0]).toMatchObject({ anchorName: "汇编语言", kind: "主题" });
+    expect(proposals[0]!.sourceNames).toHaveLength(8);
+  });
+
+  it("Room 推荐输出：缺 name 的条目跳过，全空抛错；非 JSON 抛错", () => {
+    expect(() => parseProposalsResponse('{"proposals":[{"anchorName":"有锚没名"},{"description":"也没名"}]}')).toThrow();
+    expect(() => parseProposalsResponse("我觉得没有推荐")).toThrow();
   });
 });
 

@@ -352,6 +352,13 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     ensureLatestMainMigrations();
     record("0039_multi_agent_conversations");
   }
+  if (hasTable("room_local_actions")
+    && hasColumn("room_local_actions", "created_via_run_id")
+    && hasColumn("room_local_actions", "completed_at")) {
+    // Renumbered from 0042 to 0043 (new when) after the electron migration
+    // branch claimed 0042; adopt installs that applied it under the old tag.
+    record("0043_stale_vargas");
+  }
 }
 
 /** Reconcile databases created by feat/contextroom before its migration chain
@@ -500,6 +507,21 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
   adoptPreMergeContextRoomMigrations(sqlite, migrationsDir);
   repairContextRoomSchema(sqlite);
+  // Compatibility repairs may create file_entries from the current schema,
+  // including source_path, before the canonical additive migration runs.
+  // Apply/record it idempotently so Drizzle never repeats ADD COLUMN.
+  const localReferenceEntry = readMigrationJournal(migrationsDir)
+    .find((item) => item.tag === "0042_friendly_lake");
+  const hasMigrationTable = Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations' LIMIT 1",
+  ).get());
+  const hasFileEntries = Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_entries' LIMIT 1",
+  ).get());
+  if (localReferenceEntry && hasMigrationTable && hasFileEntries) {
+    runAdditiveMigrationIdempotently(sqlite, migrationsDir, localReferenceEntry.tag!);
+    recordMigration(sqlite, migrationsDir, localReferenceEntry);
+  }
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");

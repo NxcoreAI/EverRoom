@@ -14,6 +14,7 @@ import type { SaveContextRoomSnapshotInput } from '@nxcore/agent-contract'
 
 import i18n from '@/i18n/i18next'
 import { showToast } from '@/state/toast'
+import { ROOM_OVERVIEW_CHANGED_EVENT } from './roomOverviewChange'
 import { removeDemoContextRoomLocalArtifacts } from './ported/demoContextRooms'
 import {
   createContextRoomSnapshotInput,
@@ -171,6 +172,25 @@ export function ContextRoomStateProvider({ children }: { children: ReactNode }) 
     setBackendReady(false)
     flushRef.current()
   }, [api, state])
+
+  // 投影变化（纠正应用/重新生成/本地日程待办）后重拉快照：房间卡片“最近更新”取的是
+  // 服务端出口合并的投影变化时间，本地不重拉就会一直停在旧值。防抖合并一轮多个工具完成。
+  useEffect(() => {
+    if (!api) return undefined
+    let timer: number | null = null
+    const refresh = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        void refreshFromBackend().catch(() => undefined)
+      }, 500)
+    }
+    window.addEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener)
+    return () => {
+      window.removeEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener)
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [api, refreshFromBackend])
 
   const value = useMemo(
     () => ({ state, setState: updateState, backendReady, refreshFromBackend }),

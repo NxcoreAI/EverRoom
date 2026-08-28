@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="EverRoom 中文安装与使用指南">
+    <title>安装与使用 | EverRoom</title>
+    <link rel="icon" href="../assets/everroom-icon.png">
+    <link rel="stylesheet" href="../assets/site.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#overview"><img class="brand-logo" src="../assets/everroom-logo.png" alt="EverRoom"><span class="alpha">Alpha</span></a>
+        <nav class="topnav" aria-label="主导航">
+          <a href="#overview" aria-current="page">指南</a>
+          <a href="https://github.com/NxcoreAI/EverRoom" target="_blank" rel="noreferrer">GitHub</a>
+          <div class="language"><a data-language="zh-CN" aria-current="true" href="./">中文</a><span>·</span><a data-language="en" href="../en/">EN</a></div>
+          <button class="icon-button theme-button" type="button" data-theme-toggle aria-label="切换主题"></button>
+          <button class="icon-button menu-button" type="button" data-menu-toggle aria-label="打开导航" aria-expanded="false"></button>
+        </nav>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" aria-label="文档导航">
+        <div class="sidebar-group"><p class="sidebar-title">开始使用</p><a data-page-link="overview" href="#overview">概览</a><a data-page-link="install" href="#install">下载安装</a><a data-page-link="first-run" href="#first-run">首次启动</a></div>
+        <div class="sidebar-group"><p class="sidebar-title">使用指南</p><a data-page-link="sources" href="#sources">连接数据源</a><a data-page-link="rooms" href="#rooms">Context Room</a><a data-page-link="documents" href="#documents">文档与 Agent</a><a data-page-link="memory" href="#memory">记忆</a><a data-page-link="recording" href="#recording">现实感知</a><a data-page-link="tasks" href="#tasks">任务与日记</a></div>
+        <div class="sidebar-group"><p class="sidebar-title">开发与管理</p><a data-page-link="source" href="#source">从源码运行</a><a data-page-link="settings" href="#settings">设置与数据</a><a data-page-link="troubleshooting" href="#troubleshooting">故障排查</a></div>
+      </aside>
+
+      <main class="content">
+        <article data-page="overview">
+          <p class="eyebrow">EverRoom 指南</p><h1>开始使用 EverRoom</h1><p class="lead">用一个 Room 集中管理项目资料、文档和 Agent 会话。</p>
+          <h2 id="workflow">第一次使用</h2>
+          <ol class="steps"><li><h3>安装并完成引导</h3><p>配置模型，填写工作背景，并创建第一个 Room。</p></li><li><h3>连接一份资料</h3><p>在“数据源”中添加项目文件夹，等待同步完成。</p></li><li><h3>打开 Room</h3><p>确认目标、关联资料和概览是否正确。</p></li><li><h3>完成一个小任务</h3><p>例如：“根据当前 Room 的资料列出本周待办，并标注来源。”</p></li></ol>
+          <h2 id="platforms">支持平台</h2><p>macOS（Apple Silicon）为主要版本；移动端提供 iOS TestFlight 和 Android 测试版。</p>
+        </article>
+
+        <article data-page="install" hidden>
+          <p class="eyebrow">开始使用</p><h1>下载并安装 macOS 版</h1><p class="lead">桌面端支持 Apple Silicon（M 系列芯片），前往 <a href="https://github.com/NxcoreAI/EverRoom/releases" target="_blank" rel="noreferrer">GitHub Releases 下载</a>。</p>
+          <h2 id="mac-install">安装步骤</h2>
+          <ol class="steps"><li><h3 id="download-dmg">下载安装包</h3><p>在 Releases 选择最新的 Pre-release，下载文件名包含 <code>arm64.dmg</code> 的文件。</p></li><li><h3 id="move-app">安装应用</h3><p>打开 DMG，将 EverRoom 拖入“应用程序”。</p></li><li><h3 id="open-app">打开应用</h3><p>从“应用程序”启动 EverRoom，按需授予文件、麦克风或系统音频权限。</p></li></ol>
+          <h2 id="mobile-downloads">移动端测试版</h2><p>通过 <a href="https://testflight.apple.com/join/ErKUeGCw" target="_blank" rel="noreferrer">TestFlight 测试 iOS 版</a>，或下载 <a href="http://beta.vyitec.com/lq86x4ds" target="_blank" rel="noreferrer">Android 测试版</a>。</p>
+        </article>
+
+        <article data-page="first-run" hidden>
+          <p class="eyebrow">开始使用</p><h1>首次启动</h1><p class="lead">完成一次设置后，就可以连接资料并开始工作。</p>
+          <h2 id="model">1. 配置模型</h2><p>登录 EverRoom 账号使用托管配置，或填写兼容模型的 Base URL、模型名和密钥。通过连接测试后继续。</p>
+          <h2 id="onboarding">2. 完成引导</h2><ol class="steps"><li><h3 id="profile">填写工作背景</h3><p>说明你的角色、近期目标和希望 Agent 采用的协作方式。稍后可在“设置 → 记忆引导”中修改。</p></li><li><h3 id="create-room">创建第一个 Room</h3><p>选择“项目”或“主题”，填写清楚的名称和目标，例如“官网改版 — 完成上线前验收”。</p></li><li><h3 id="folder-scope">选择识别范围</h3><p>只授权当前项目目录，不要直接选择整个主目录。</p></li></ol>
+          <h2 id="check-ready">3. 确认已就绪</h2><p>进入首页后，Gateway 不再显示启动或连接异常，且侧栏可以打开“数据源”和“Context Room”，即可继续。</p>
+          <h2 id="language">切换语言</h2><p>打开“设置”，将界面语言切换为简体中文或 English。</p>
+        </article>
+
+        <article data-page="sources" hidden>
+          <p class="eyebrow">使用指南</p><h1>连接第一份资料</h1><p class="lead">先添加一个小型项目文件夹，确认同步结果正确。</p>
+          <h2 id="local-folder">添加本地文件夹</h2><ol class="steps"><li><h3>打开入口</h3><p>在侧栏打开“数据源”，点击“连接数据源”。</p></li><li><h3>选择类型</h3><p>选择“文件识别文件夹”，再选择项目目录并允许访问。</p></li><li><h3>等待同步</h3><p>目录出现在数据源列表后，等待扫描完成。点击目录可查看已识别文件。</p></li></ol>
+          <h2 id="online-source">连接其他来源</h2><table><tbody><tr><th>GitHub</th><td>填写仓库地址和分支；私有仓库还需 Token。</td></tr><tr><th>Obsidian</th><td>选择 Vault，可作为项目 Room 持续挂载。</td></tr><tr><th>在线服务</th><td>选择连接器，在浏览器完成授权后返回 EverRoom。</td></tr></tbody></table>
+          <h2 id="check-source">确认连接成功</h2><ul><li>数据源列表中没有失败提示。</li><li>展开来源可以看到预期文件。</li><li>打开文件可查看正文、来源和版本。</li></ul>
+          <div class="callout"><strong>原文件不会被修改</strong>断开来源只会删除 EverRoom 保存的副本和索引，不会删除本地或云端原文件。</div>
+        </article>
+
+        <article data-page="rooms" hidden>
+          <p class="eyebrow">使用指南</p><h1>建立 Context Room</h1><p class="lead">一个 Room 对应一个明确的项目、主题、人物或长期目标。</p>
+          <h2 id="new-room">创建 Room</h2><ol><li>打开“Context Room”，在“我的 Room”右侧点击“+”。</li><li>选择类型，填写名称、目标和必要背景。</li><li>点击“创建 Room”；如出现相似 Room，先检查已有内容，避免重复。</li></ol>
+          <h2 id="attach">加入工作资料</h2><p>打开 Room 后，在资源区域添加相关来源或导入 Markdown。只放与当前目标有关的资料。</p>
+          <h2 id="review">检查 Room</h2><ul><li>“概览”中的目标与当前工作一致。</li><li>资料可以打开，并能回到原始来源。</li><li>人物、项目和时间线没有明显误关联；有误时取消关联。</li></ul>
+          <h2 id="room-agent">开始第一个任务</h2><p>在当前 Room 打开 Agent，输入具体任务和输出格式。例如：</p><pre><code>阅读当前 Room 的资料，整理已确认的决定、未解决的问题和下一步行动。每项附上来源。</code></pre>
+        </article>
+
+        <article data-page="documents" hidden>
+          <p class="eyebrow">使用指南</p><h1>创建文档并使用 Agent</h1><p class="lead">文档保存在 Room 中；“文档”页用于集中查找和打开。</p>
+          <h2 id="new-doc">新建文档</h2><ol><li>打开目标 Room，在资源区域点击“新建文档”。</li><li>使用能说明用途的标题，例如“8 月 28 日产品评审结论”。</li><li>写下目标、已知信息或希望 Agent 继续处理的提纲。</li></ol>
+          <h2 id="edit-doc">编辑与历史</h2><p>直接编辑正文。需要核对改动时，打开文档操作菜单查看历史版本。</p>
+          <h2 id="use-agent">让 Agent 修改文档</h2><p>在右侧 Agent 面板说明目标、范围和输出要求。涉及资料时要求引用来源；涉及改写时先检查变更，再接受结果。</p><pre><code>把当前文档改成简短的会议纪要。保留决定、负责人和截止日期，不补充资料中没有的信息。</code></pre>
+          <h2 id="export">导出</h2><p>在文档操作中选择 Markdown、PDF 或 DOCX。导出后打开文件检查标题、表格和图片。</p>
+        </article>
+
+        <article data-page="memory" hidden>
+          <p class="eyebrow">使用指南</p><h1>检查和管理记忆</h1><p class="lead">记忆用于跨会话保留背景，不应代替原始资料。</p>
+          <h2 id="memory-types">查找一条记忆</h2><ol><li>打开“记忆”，在顶部搜索人物、项目或决定。</li><li>在“原子记忆”“对话”“文档”或“场景”中打开结果。</li><li>通过来源信息回看原文，再用于重要任务。</li></ol>
+          <h2 id="memory-review">保持内容准确</h2><p>在“画像”检查长期背景，在“过滤规则”说明哪些资料应保留或忽略。发现过期或错误内容时及时修正或删除。</p>
+          <h2 id="memory-ledger">资料没有进入记忆</h2><p>打开“导入记录”，查看过滤判定和处理状态。被误过滤的条目可选择“恢复”。</p>
+          <h2 id="memory-unavailable">服务未就绪</h2><p>记忆服务不可用时可以先跳过；本地文档和基础工作区仍可使用。</p>
+        </article>
+
+        <article data-page="recording" hidden>
+          <p class="eyebrow">使用指南</p><h1>录音与转写</h1><p class="lead">录制麦克风或 Mac 系统音频，再检查转写和总结。</p>
+          <h2 id="permission">首次授权</h2><p>录制麦克风时允许“麦克风”权限；录制电脑音频时，在 macOS“隐私与安全性”中允许“屏幕与系统音频录制”，然后完全退出并重启 EverRoom。</p>
+          <h2 id="start-recording">完成一次录音</h2><ol><li>打开录音入口，选择“麦克风”或“电脑音频”。</li><li>选择语言并开始录制；录音需超过 10 秒。</li><li>停止录音，等待状态从“处理中”变为“已完成”。</li></ol>
+          <h2 id="review-transcript">检查结果</h2><p>在“现实感知”打开该事件，播放录音并校正姓名、数字和专有名词，点击“保存逐字稿”。总结会根据修改后的内容更新。</p>
+        </article>
+
+        <article data-page="tasks" hidden>
+          <p class="eyebrow">使用指南</p><h1>查看任务与日记</h1><p class="lead">跟踪 Agent 运行，处理重复任务，并回看每日活动。</p>
+          <h2 id="office">查看 Agent 任务</h2><p>打开“办公室”查看运行中、已完成或失败的任务。打开任务可查看过程和结果；失败时先读错误信息，再决定重试。</p>
+          <h2 id="schedules">创建计划任务</h2><ol><li>打开“计划任务”，新建任务并写清执行内容。</li><li>选择运行时间和重复周期。</li><li>先手动运行一次，确认使用的 Room、资料和输出正确，再启用计划。</li></ol>
+          <h2 id="diary">回看一天</h2><p>打开“日记”并选择日期。没有内容时点击“生成日记”；生成后通过“查看来源”核对对应文档、录音或活动记录。</p>
+        </article>
+
+        <article data-page="source" hidden>
+          <p class="eyebrow">开发</p><h1>从源码运行</h1><p class="lead">需要 Node.js 22+ 和 pnpm 11。</p>
+          <h2 id="run">启动项目</h2><pre><code>git clone https://github.com/NxcoreAI/EverRoom.git
+cd EverRoom
+corepack enable
+pnpm install
+pnpm dev</code></pre>
+          <h2 id="runtime">配置 Agent Runtime</h2><p>复制 <code>.env.example</code> 为 <code>.env</code>。默认 <code>fake</code> Runtime 不请求模型；使用真实 Agent 时填写 <code>NXCORE_AI_*</code> 配置。</p>
+          <h2 id="commands">常用命令</h2><table><tbody><tr><th><code>pnpm dev</code></th><td>启动桌面端</td></tr><tr><th><code>pnpm typecheck</code></th><td>类型检查</td></tr><tr><th><code>pnpm test</code></th><td>运行测试</td></tr><tr><th><code>pnpm build</code></th><td>构建项目</td></tr></tbody></table>
+        </article>
+
+        <article data-page="settings" hidden>
+          <p class="eyebrow">管理</p><h1>设置与数据</h1><p class="lead">管理账号、模型、语言、权限和本地数据。</p>
+          <h2 id="account">账号与模型</h2><p>登录可使用托管配置；也可以手动配置兼容模型端点。</p>
+          <h2 id="data-path">本地数据</h2><p>macOS 默认数据目录：<code>~/Library/Application Support/NxCore/</code>。</p>
+          <h2 id="clear-data">清除数据</h2><p>“清除全部用户数据”会删除 EverRoom 的本地数据库、记忆、录音和设置，但不会删除原始文件夹或云端数据。</p>
+        </article>
+
+        <article data-page="troubleshooting" hidden>
+          <p class="eyebrow">管理</p><h1>故障排查</h1><p class="lead">先检查版本、权限和网络。</p>
+          <h2 id="cannot-open">应用无法打开</h2><p>确认安装包来自官方 Releases，且文件名包含 <code>arm64.dmg</code>。在 macOS“隐私与安全性”中查看拦截原因。</p>
+          <h2 id="gateway">Gateway 未就绪</h2><p>完全退出并重启 EverRoom。开发模式可查看终端和 <code>~/Library/Application Support/NxCore/logs/</code>。</p>
+          <h2 id="model-error">模型连接失败</h2><p>检查 Base URL、模型名、API 类型和密钥。</p>
+          <h2 id="missing-file">文件未出现</h2><p>检查文件夹权限、文件格式和数据源状态。</p>
+          <h2 id="no-audio">没有录到声音</h2><p>检查麦克风或系统音频权限，修改后重启应用。</p>
+        </article>
+      </main>
+
+    </div>
+    <script src="../assets/site.js"></script>
+  </body>
+</html>

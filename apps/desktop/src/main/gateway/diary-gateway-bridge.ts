@@ -33,8 +33,10 @@ export class DiaryGatewayBridge {
     return this.request(`/v1/diary/days/${encodeURIComponent(date)}/generate`, { method: 'POST' })
   }
 
-  run(id: string): Promise<DiaryRun> {
-    return this.request(`/v1/diary/runs/${encodeURIComponent(id)}`)
+  // 运行记录可能随网关数据重置而消失；返回 null 让前端停止轮询并恢复按钮，
+  // 否则会每 2 秒重试 404，把 activeRun 永久卡在“生成中”。
+  run(id: string): Promise<DiaryRun | null> {
+    return this.requestMaybe<DiaryRun>(`/v1/diary/runs/${encodeURIComponent(id)}`, undefined, true)
   }
 
   activeRun(): Promise<DiaryRun | null> {

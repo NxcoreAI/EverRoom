@@ -323,6 +323,9 @@ export class IngestService {
               "path_unreadable",
             );
           }
+          if (contentHashOf(buffer) !== context.version.contentHash) {
+            throw new IngestError("本地文件在解析前发生变化，请等待重新扫描", "path_unreadable");
+          }
           return this.processBytes(input, {
             sourceKind: "file",
             sourceId,
@@ -478,7 +481,11 @@ export class IngestService {
         const markdown = connectorTodoToMarkdown(row);
         return this.processNormalized({
           ...input,
-          entrySignals: input.entrySignals ?? { sourceTag: `connector:${row.service}` },
+          // 清单级 listId 进规则信号（与日历的 calendarId 对等）：规则可只匹配某个清单的待办。
+          entrySignals: input.entrySignals ?? {
+            sourceTag: `connector:${row.service}`,
+            ...(row.listId ? { listId: row.listId } : {}),
+          },
         }, {
           sourceKind: "todo",
           sourceId,

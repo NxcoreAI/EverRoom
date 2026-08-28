@@ -503,7 +503,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
   return (
     <div className="page settings-page">
-      <PageHeader title={t('surface:settings.settings')} description={t('surface:settings.manageTheLocalWorkspaceCloudAccountAndData')} />
+      <PageHeader title={t('surface:settings.settings')} />
 
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>

@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { readFile, rm, stat } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -55,6 +56,7 @@ export interface FileImportInput {
   connectionId?: string | undefined;
   localSourceId?: string | undefined;
   localItemId?: string | undefined;
+  sourcePath?: string | undefined;
   relativePath?: string | undefined;
   sourceUri?: string | undefined;
   sourceModifiedAt?: Date | undefined;
@@ -65,6 +67,14 @@ export interface FileImportInput {
 }
 
 export type FileImportStreamInput = Omit<FileImportInput, "buffer"> & { stream: Readable };
+export type LocalFileReferenceInput = Omit<FileImportInput, "buffer" | "sourceKind" | "localSourceId" | "localItemId"> & {
+  sourceKind: "local-folder";
+  sourcePath: string;
+  contentHash: string;
+  byteSize: number;
+  localSourceId: string;
+  localItemId: string;
+};
 
 export interface FileImportResult {
   fileEntryId: string;
@@ -209,6 +219,7 @@ export class FilesService {
   }
 
   async importFile(input: FileImportInput): Promise<FileImportResult> {
+    if (input.sourceKind === "local-folder") throw new Error("本地文件必须使用路径引用入口");
     const capability = this.validateImport(input);
     const stored = await storeFileBlobStream(
       this.dataDir,
@@ -219,9 +230,47 @@ export class FilesService {
   }
 
   async importFileStream(input: FileImportStreamInput): Promise<FileImportResult> {
+    if (input.sourceKind === "local-folder") throw new Error("本地文件必须使用路径引用入口");
     const capability = this.validateImport(input);
     const stored = await storeFileBlobStream(this.dataDir, input.stream, capability.maxBytes);
     return this.registerImportedFile(input, stored.contentHash, stored.bytes);
+  }
+
+  async importLocalFileReference(input: LocalFileReferenceInput): Promise<FileImportResult> {
+    this.validateImport(input);
+    if (!isAbsolute(input.sourcePath)) throw new Error("本地文件路径必须是绝对路径");
+    if (!/^[a-f0-9]{64}$/.test(input.contentHash)) throw new Error("本地文件内容指纹无效");
+    const info = await stat(input.sourcePath);
+    if (!info.isFile()) throw new Error("本地文件路径不是普通文件");
+    if (info.size !== input.byteSize) throw new Error("本地文件在导入过程中发生变化，请稍后重试");
+    const currentHash = createHash("sha256").update(await readFile(input.sourcePath)).digest("hex");
+    if (currentHash !== input.contentHash) throw new Error("本地文件在导入过程中发生变化，请稍后重试");
+
+    // sourceKey used to contain an inode-based remote id. Preserve the same
+    // catalog identity while moving to the stable desktop source-item id.
+    const existingLocalEntry = this.db.select().from(fileEntries).where(and(
+      eq(fileEntries.sourceKind, "local-folder"),
+      eq(fileEntries.localSourceId, input.localSourceId),
+      eq(fileEntries.localItemId, input.localItemId),
+    )).get();
+    if (existingLocalEntry && existingLocalEntry.sourceKey !== input.sourceKey) {
+      this.db.update(fileEntries).set({ sourceKey: input.sourceKey }).where(eq(fileEntries.id, existingLocalEntry.id)).run();
+    }
+
+    // Keep only hash/size metadata for referential integrity. No bytes are
+    // copied into files/sha256 for a local-folder source.
+    this.db.insert(fileBlobs).values({
+      contentHash: input.contentHash,
+      storagePath: storageRelPath(input.contentHash),
+      byteSize: input.byteSize,
+      mime: input.mime ?? "application/octet-stream",
+    }).onConflictDoNothing().run();
+    const result = await this.registerImportedFile(input, input.contentHash, input.byteSize);
+    const localHashes = this.db.select({ contentHash: fileVersions.contentHash }).from(fileVersions)
+      .where(eq(fileVersions.fileEntryId, result.fileEntryId)).all();
+    await Promise.all([...new Set(localHashes.map((row) => row.contentHash))]
+      .map((hash) => this.collectLocalMirror(hash)));
+    return { ...result, blobDeduped: false };
   }
 
   async dispose(): Promise<void> {
@@ -242,7 +291,7 @@ export class FilesService {
   }
 
   private async registerImportedFile(
-    input: Omit<FileImportInput, "buffer">,
+    input: Omit<FileImportInput, "buffer"> | LocalFileReferenceInput,
     contentHash: string,
     bytes: number,
   ): Promise<FileImportResult> {
@@ -293,6 +342,7 @@ export class FilesService {
       this.db.update(fileEntries).set({
         originalName: input.originalName,
         relativePath: input.relativePath,
+        sourcePath: input.sourcePath,
         sourceUri: input.sourceUri,
         lastSeenAt: now,
         updatedAt: now,
@@ -338,6 +388,7 @@ export class FilesService {
           connectionId: input.connectionId,
           localSourceId: input.localSourceId,
           localItemId: input.localItemId,
+          sourcePath: input.sourcePath,
           relativePath: input.relativePath,
           sourceUri: input.sourceUri,
           currentVersionId: fileVersionId,
@@ -352,6 +403,7 @@ export class FilesService {
           connectionId: input.connectionId,
           localSourceId: input.localSourceId,
           localItemId: input.localItemId,
+          sourcePath: input.sourcePath,
           relativePath: input.relativePath,
           sourceUri: input.sourceUri,
           currentVersionId: fileVersionId,
@@ -404,7 +456,14 @@ export class FilesService {
     if (!entry || !version) return null;
     const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, version.contentHash)).get();
     if (!blob) return null;
-    return { entry, version, blob, storagePath: join(this.dataDir, blob.storagePath) };
+    return {
+      entry,
+      version,
+      blob,
+      storagePath: entry.sourceKind === "local-folder" && entry.sourcePath
+        ? entry.sourcePath
+        : join(this.dataDir, blob.storagePath),
+    };
   }
 
   touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string, ingestEventId: string): void {
@@ -481,10 +540,19 @@ export class FilesService {
   }
 
   catalogStoragePathOf(fileEntryId: string): string | null {
-    const row = this.db.select({ storagePath: fileBlobs.storagePath }).from(fileEntries)
-      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry) return null;
+    if (entry.sourceKind === "local-folder") {
+      if (!entry.sourcePath || !existsSync(entry.sourcePath)) {
+        this.db.update(fileEntries).set({ state: "missing", updatedAt: new Date() })
+          .where(eq(fileEntries.id, fileEntryId)).run();
+        return null;
+      }
+      return entry.sourcePath;
+    }
+    const row = this.db.select({ storagePath: fileBlobs.storagePath }).from(fileVersions)
       .innerJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
-      .where(eq(fileEntries.id, fileEntryId)).get();
+      .where(eq(fileVersions.id, entry.currentVersionId!)).get();
     return row ? join(this.dataDir, row.storagePath) : null;
   }
 
@@ -494,7 +562,30 @@ export class FilesService {
       .innerJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
       .where(eq(fileEntries.id, fileEntryId)).get();
     if (!row) return null;
-    return { buffer: await readFile(join(this.dataDir, row.blob.storagePath)), mime: row.blob.mime, filename: row.entry.originalName };
+    const path = row.entry.sourceKind === "local-folder" ? row.entry.sourcePath : join(this.dataDir, row.blob.storagePath);
+    if (!path || !existsSync(path)) {
+      if (row.entry.sourceKind === "local-folder") {
+        this.db.update(fileEntries).set({ state: "missing", updatedAt: new Date() })
+          .where(eq(fileEntries.id, fileEntryId)).run();
+      }
+      return null;
+    }
+    return { buffer: await readFile(path), mime: row.blob.mime, filename: row.entry.originalName };
+  }
+
+  async markLocalFileMissing(localSourceId: string, localItemId: string): Promise<boolean> {
+    const entry = this.db.select().from(fileEntries).where(and(
+      eq(fileEntries.sourceKind, "local-folder"),
+      eq(fileEntries.localSourceId, localSourceId),
+      eq(fileEntries.localItemId, localItemId),
+    )).get();
+    if (!entry) return false;
+    this.db.update(fileEntries).set({ state: "missing", updatedAt: new Date() })
+      .where(eq(fileEntries.id, entry.id)).run();
+    const hashes = this.db.select({ contentHash: fileVersions.contentHash }).from(fileVersions)
+      .where(eq(fileVersions.fileEntryId, entry.id)).all();
+    await Promise.all([...new Set(hashes.map((row) => row.contentHash))].map((hash) => this.collectLocalMirror(hash)));
+    return true;
   }
 
   renameCatalogEntry(fileEntryId: string, displayName: string): CatalogFileDto | null {
@@ -567,6 +658,11 @@ export class FilesService {
         this.db.delete(fileBlobs).where(eq(fileBlobs.contentHash, contentHash)).run();
         if (blob) await rm(join(this.dataDir, blob.storagePath), { force: true }).catch(() => undefined);
         blobCollected = true;
+      }
+    }
+    if (entry.sourceKind === "local-folder") {
+      for (const version of versions) {
+        await this.collectLocalMirror(version.contentHash);
       }
     }
     return { fileId: fileEntryId, knowledgeCleanup, deletedMemoryDocuments, blobCollected };
@@ -896,8 +992,10 @@ export class FilesService {
    */
   async collectGarbage(): Promise<{ removedParsed: number; removedBlobs: number; errors: number }> {
     const referenced = new Set(
-      this.db.select({ contentHash: uploadedFiles.contentHash }).from(uploadedFiles).all()
-        .map((row) => row.contentHash),
+      [
+        ...this.db.select({ contentHash: uploadedFiles.contentHash }).from(uploadedFiles).all(),
+        ...this.db.select({ contentHash: fileVersions.contentHash }).from(fileVersions).all(),
+      ].map((row) => row.contentHash),
     );
     const orphans = this.db.select().from(parsedContents).all()
       .filter((row) => !referenced.has(row.contentHash));
@@ -918,5 +1016,16 @@ export class FilesService {
       }
     }
     return { removedParsed: orphans.length, removedBlobs, errors };
+  }
+
+  private async collectLocalMirror(contentHash: string): Promise<void> {
+    const nonLocalCatalogReference = this.db.select({ id: fileVersions.id }).from(fileVersions)
+      .innerJoin(fileEntries, eq(fileVersions.fileEntryId, fileEntries.id))
+      .where(and(eq(fileVersions.contentHash, contentHash), ne(fileEntries.sourceKind, "local-folder")))
+      .limit(1).get();
+    const legacyReference = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+      .where(eq(uploadedFiles.contentHash, contentHash)).limit(1).get();
+    if (nonLocalCatalogReference || legacyReference) return;
+    await rm(join(this.dataDir, storageRelPath(contentHash)), { force: true }).catch(() => undefined);
   }
 }

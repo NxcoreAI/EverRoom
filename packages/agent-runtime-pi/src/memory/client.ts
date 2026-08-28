@@ -92,6 +92,7 @@ export class MemoryCoreClient {
         role: message.role,
         content: message.content,
         timestamp: message.timestamp,
+        ...(message.recordedAt ? { recorded_at: message.recordedAt } : {}),
       })),
     });
   }

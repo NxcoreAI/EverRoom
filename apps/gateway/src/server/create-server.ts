@@ -115,6 +115,7 @@ import { createSubagentPiTools } from "../modules/subagents/tools.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
+import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import type { RuntimeConfig } from "../runtime-config.js";
@@ -551,7 +552,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // registerAgentTools 必须发生在任何 acquire 之前（首次 dispatch 前）。
   subagentRuntimeManager.registerAgentTools(
     "context-room",
-    () => createContextRoomAgentTools({ db, memory: memoryService }),
+    () => createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
   );
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
@@ -576,6 +577,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   roomOverviewService.setRoomAgentDispatcher(contextRoomAgentDispatcher);
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
+  let resolveAgentConversation: ((threadId: string, query: string) => Promise<string | null>) | undefined;
   const recoveredSubagentInvocations = subagentOrchestrator.initialize();
   if (recoveredSubagentInvocations > 0) {
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
@@ -590,6 +592,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
+      ...createReferencedAgentConversationTools(async (threadId, query) => (
+        resolveAgentConversation?.(threadId, query) ?? null
+      )),
     ],
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
@@ -744,6 +749,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   filesService.initializeCatalog();
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
+  resolveAgentConversation = (threadId, query) => dataMigrationService.buildReferenceContext(threadId, query);
   agentService.setExternalConversationResolver(dataMigrationService);
   agentService.setFilesService(filesService);
   const clipperService = new ClipperService(db, filesService, config.dataDir, createVlmProvider(config));
@@ -1081,7 +1087,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       title: input.title,
       markdown: input.markdown,
       // 连接级 sourceTag 进 ②b 规则信号：规则可把整个连接（如学校日历）确定性归到 Room。
-      entrySignals: { sourceTag: `connector:${input.provider}:${input.connectionId}` },
+      // 日历同步额外带 calendarId（scope 的 providerScopeId）：同一条连接里可只归因某个日历。
+      entrySignals: {
+        sourceTag: `connector:${input.provider}:${input.connectionId}`,
+        ...(input.calendarId ? { calendarId: input.calendarId } : {}),
+      },
       ...(config.knowledge?.routerEnabled ? {} : { pipelines: { room: false, wiki: false, memory: true } }),
     }).then(() => undefined));
   documentOutboxWorker = new DocumentOutboxWorker(

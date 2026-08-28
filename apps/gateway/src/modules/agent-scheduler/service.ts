@@ -66,6 +66,8 @@ export class AgentSchedulerService {
     private readonly db: GatewayDatabase,
     private readonly diary: DiaryService,
     private readonly agent?: AgentService,
+    /** 可注入时钟：tick 的到点判定与 due 查询走它，测试里可固定推进。 */
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   initialize(): void {
@@ -169,13 +171,16 @@ export class AgentSchedulerService {
     this.tickPromise = (async () => {
       const task = this.list()[0]!;
       const currentDayRunId = task.enabled ? this.diary.ensureCurrentDayRun() : null;
+      // 外部调度接管了 DiaryService 的内部调度（scheduleManagedExternally），
+      // 但此前只覆盖“今天”：enabledFrom 之后的漏跑日永远不会自动补生成。
+      this.diary.backfillMissedDays();
       if (currentDayRunId) await this.diary.drain();
-      if (task.enabled && task.nextRunAt && new Date(task.nextRunAt) <= new Date()) {
+      if (task.enabled && task.nextRunAt && new Date(task.nextRunAt) <= this.now()) {
         this.diary.createRun(this.diary.currentDate(), "scheduled");
         this.diary.advanceSchedule();
         await this.diary.drain();
       }
-      const due = this.db.select().from(agentSchedules).where(and(eq(agentSchedules.enabled, true), lte(agentSchedules.nextRunAt, new Date()))).all();
+      const due = this.db.select().from(agentSchedules).where(and(eq(agentSchedules.enabled, true), lte(agentSchedules.nextRunAt, this.now()))).all();
       for (const row of due) await this.runNow(row.id);
     })().finally(() => { this.tickPromise = null; });
     return this.tickPromise;
