@@ -1,5 +1,5 @@
 import { Check, Cloud, HardDrive, LoaderCircle, LogIn, Mic, MonitorSpeaker, Settings2, Square } from 'lucide-react'
-import { memo, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { PRODUCT_NAME } from '@/components/ui/brand'
 import { useAccount } from '@/state/AccountContext'
@@ -80,37 +80,6 @@ async function waitForStop(recorder: MediaRecorder, t: Translate): Promise<void>
     recorder.stop()
   })
 }
-
-const CassetteListeningControl = memo(function CassetteListeningControl({
-  listening,
-  busy,
-}: {
-  listening: boolean
-  busy: boolean
-}) {
-  return (
-    <div
-      className="cassette-switch"
-      aria-hidden="true"
-      data-active={String(listening)}
-      data-busy={String(busy)}
-    >
-      <span className="cassette-topline" aria-hidden="true">
-        <span>ER-01</span>
-        <span className="cassette-state"><i />{listening ? 'REC' : busy ? 'WAIT' : 'READY'}</span>
-      </span>
-      <span className="cassette-window" aria-hidden="true">
-        <span className="cassette-reel cassette-reel-left"><i /></span>
-        <span className="cassette-tape"><i /></span>
-        <span className="cassette-reel cassette-reel-right"><i /></span>
-      </span>
-      <span className="cassette-footer" aria-hidden="true">
-        <span className="cassette-levels"><i /><i /><i /><i /></span>
-        <span className="cassette-key"><i /></span>
-      </span>
-    </div>
-  )
-})
 
 export function RecordingPage({
   onOpenSettings,
@@ -372,7 +341,6 @@ export function RecordingPage({
     const SourceIcon = audioSource === 'system' ? MonitorSpeaker : Mic
     return (
       <div className="capture-console" data-state={state}>
-        <CassetteListeningControl listening={listening} busy={busy} />
         <div className="capture-console-copy" aria-live="polite">
           <span>{t('diaryReality:recording.listeningControl')}</span>
           <strong>{statusLabel}</strong>

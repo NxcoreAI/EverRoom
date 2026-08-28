@@ -85,7 +85,6 @@
 .recording-source-control button { display: inline-flex; min-width: 96px; align-items: center; justify-content: center; gap: 6px; }
 .recording-source-control svg { width: 13px; height: 13px; }
 
-
 .transcript-output { margin-top: 28px; border-top: 1px solid var(--border-strong); }
 .transcript-output > header { display: flex; align-items: center; justify-content: space-between; padding: 18px 0 12px; }
 .transcript-output h2 { margin: 0; font-size: 14px; }
@@ -99,42 +98,6 @@
 
 @keyframes recording-spin { to { transform: rotate(360deg); } }
 
-.cassette-switch { position: relative; display: grid; width: 112px; height: 64px; flex: 0 0 112px; grid-template-rows: 12px 31px 13px; gap: 1px; padding: 4px 7px; overflow: hidden; border: 1px solid #202528; border-radius: 6px; background: #343a3d; color: #e9e1cf; box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), inset 0 -2px 0 rgb(0 0 0 / 20%), 0 2px 5px rgb(20 24 27 / 18%); contain: layout style paint; }
-.cassette-switch::before,.cassette-switch::after { position: absolute; top: 5px; width: 3px; height: 3px; border-radius: 50%; background: #181c1e; box-shadow: 0 0 0 1px rgb(255 255 255 / 8%); content: ''; }
-.cassette-switch::before { left: 4px; }.cassette-switch::after { right: 4px; }
-.cassette-switch[data-busy='true'] { opacity: .72; }
-.cassette-topline { display: flex; align-items: center; justify-content: space-between; color: #bcb5a7; font-size: 6px; font-weight: 750; letter-spacing: .08em; line-height: 1; }
-.cassette-state { display: inline-flex; min-width: 35px; align-items: center; justify-content: flex-end; gap: 3px; }
-.cassette-state > i { width: 5px; height: 5px; border-radius: 50%; background: #77776e; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 30%); }
-.cassette-window { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 0 13px; overflow: hidden; border: 1px solid #777467; border-radius: 4px; background: #ded5c2; box-shadow: inset 0 1px 2px rgb(42 37 29 / 22%); }
-.cassette-window::after { position: absolute; right: 17px; bottom: 3px; left: 17px; height: 4px; border-radius: 2px; background: #8c765d; content: ''; opacity: .7; }
-.cassette-reel { position: relative; z-index: 2; display: grid; width: 19px; height: 19px; flex: 0 0 19px; place-items: center; border: 2px solid #8f8878; border-radius: 50%; background: repeating-conic-gradient(from 8deg, #f5eedf 0deg 27deg, #777163 28deg 55deg); box-shadow: 0 0 0 2px #c6bdab; }
-.cassette-reel > i { width: 5px; height: 5px; border-radius: 50%; background: #383c3d; box-shadow: 0 0 0 1px #aaa18f; }
-.cassette-tape { position: relative; z-index: 3; width: 24px; height: 8px; overflow: hidden; border-top: 1px solid #9d907c; border-bottom: 1px solid #9d907c; }
-.cassette-tape > i { position: absolute; inset: 1px -14px; background: repeating-linear-gradient(90deg, #6f5943 0 5px, #a48c6f 5px 8px); opacity: .75; }
-.cassette-footer { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
-.cassette-levels { display: flex; height: 8px; align-items: flex-end; gap: 2px; color: #a6ad9e; }
-.cassette-levels > i { width: 2px; height: 4px; border-radius: 1px; background: currentColor; transform-origin: bottom; }
-.cassette-levels > i:nth-child(2) { height: 6px; }.cassette-levels > i:nth-child(3) { height: 8px; }.cassette-levels > i:nth-child(4) { height: 5px; }
-.cassette-key { display: grid; width: 18px; height: 10px; place-items: center; border: 1px solid #171b1d; border-radius: 2px; background: #252a2c; box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%); }
-.cassette-key > i { width: 0; height: 0; margin-left: 1px; border-top: 3px solid transparent; border-bottom: 3px solid transparent; border-left: 5px solid #d9d2c4; transition: transform 180ms cubic-bezier(.34,1.56,.64,1); }
-.cassette-switch[data-active='true'] { border-color: #592d2c; }
-.cassette-switch[data-active='true'] .cassette-state { color: #f0c8c2; }
-.cassette-switch[data-active='true'] .cassette-state > i { background: #d65449; box-shadow: 0 0 0 1px #79342f, 0 0 5px rgb(214 84 73 / 65%); animation: cassette-rec-light 1.4s ease-in-out infinite; }
-.cassette-switch[data-active='true'] .cassette-reel-left { animation: cassette-reel 1.2s linear infinite; }
-.cassette-switch[data-active='true'] .cassette-reel-right { animation: cassette-reel 950ms linear infinite; }
-.cassette-switch[data-active='true'] .cassette-tape > i { animation: cassette-tape 650ms linear infinite; }
-.cassette-switch[data-active='true'] .cassette-levels { color: #bfcf9e; }
-.cassette-switch[data-active='true'] .cassette-levels > i { animation: cassette-level 520ms ease-in-out infinite alternate; }
-.cassette-switch[data-active='true'] .cassette-levels > i:nth-child(2) { animation-delay: -380ms; }.cassette-switch[data-active='true'] .cassette-levels > i:nth-child(3) { animation-delay: -170ms; }.cassette-switch[data-active='true'] .cassette-levels > i:nth-child(4) { animation-delay: -460ms; }
-.cassette-switch[data-active='true'] .cassette-key > i { border: 0; width: 5px; height: 5px; margin: 0; background: #d9d2c4; transform: rotate(90deg); }
-.cassette-switch[data-busy='true'] .cassette-reel { animation: cassette-reel 2.4s linear infinite; }
-
-@keyframes cassette-reel { to { transform: rotate(1turn); } }
-@keyframes cassette-tape { to { transform: translateX(8px); } }
-@keyframes cassette-level { from { transform: scaleY(.45); } to { transform: scaleY(1); } }
-@keyframes cassette-rec-light { 0%,100% { opacity: .58; } 50% { opacity: 1; } }
-
 .recording-page-embedded { max-width: none; }
 .recording-page-embedded .recording-header { margin-bottom: 12px; }
 .recording-page-embedded .recording-controls { min-height: 132px; }
@@ -146,32 +109,10 @@
   .transcript-segment p { grid-column: 2; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .cassette-switch,.cassette-key > i,.cassette-switch[data-active='true'] .cassette-state > i,.cassette-switch[data-active='true'] .cassette-reel,.cassette-switch[data-active='true'] .cassette-tape > i,.cassette-switch[data-active='true'] .cassette-levels > i,.cassette-switch[data-busy='true'] .cassette-reel { animation: none; transition: none; }
-}
-
-/* 录制时长计数器:叠在磁带窗口下沿,录音中实时走秒。 */
-.cassette-timer {
-  position: absolute;
-  z-index: 4;
-  bottom: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: #4c3f2e;
-  font: 650 7px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
-  letter-spacing: 0.06em;
-  opacity: 0.45;
-}
-
-.cassette-switch[data-active='true'] .cassette-timer {
-  color: #3a2e20;
-  opacity: 0.92;
-}
-
 .capture-console {
   display: grid;
-  width: min(570px, 100%);
-  grid-template-columns: 112px minmax(150px, 1fr) auto;
+  width: min(360px, 100%);
+  grid-template-columns: minmax(150px, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: 12px;
@@ -206,7 +147,6 @@
 
 @media (max-width: 520px) {
   .capture-console { grid-template-columns: 1fr; }
-  .cassette-switch { display: none; }
   .capture-console-actions { grid-column: 1; justify-content: stretch; }
   .capture-primary-button { flex: 1; }
 }

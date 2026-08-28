@@ -879,13 +879,6 @@ summary:focus-visible {
   line-height: 1.25;
 }
 
-.page-header p {
-  margin: 7px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 .primary-button {
   display: inline-flex;
   min-height: 34px;

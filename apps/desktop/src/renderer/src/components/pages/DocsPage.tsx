@@ -99,7 +99,6 @@ export function DocsPage({
     <div className="page doc-page">
       <PageHeader
         title={t('surface:docs.documents')}
-        description={t('surface:docs.writeWithRoomsSourcesAndAgentInOne')}
         action={t('surface:docs.newDocument')}
         onAction={() => onNavigate('rooms')}
       />

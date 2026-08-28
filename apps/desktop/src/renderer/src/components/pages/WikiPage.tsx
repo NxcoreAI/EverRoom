@@ -155,7 +155,6 @@ export function WikiPage() {
       <header className="page-header">
         <div>
           <h1>Wiki</h1>
-          <p>{t('surface:wiki.browseKnowledgeCapturedInEachRoomAsA')}</p>
         </div>
         <span className="page-header-actions">
           <button

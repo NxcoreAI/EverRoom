@@ -3,14 +3,12 @@ import type { ReactNode } from 'react'
 
 export function PageHeader({
   title,
-  description,
   action,
   actionDisabled = false,
   onAction,
   extraAction,
 }: {
   title: string
-  description: string
   action?: string
   actionDisabled?: boolean
   onAction?: () => void
@@ -18,7 +16,7 @@ export function PageHeader({
 }) {
   return (
     <header className="page-header">
-      <div><h1>{title}</h1><p>{description}</p></div>
+      <div><h1>{title}</h1></div>
       <span className="page-header-actions">
         {extraAction}
         {action ? (

@@ -9,8 +9,6 @@ import {
   CircleDot,
   Download,
   FileText,
-  FolderOpen,
-  Image as ImageIcon,
   LoaderCircle,
   Layers3,
   Monitor,
@@ -51,12 +49,12 @@ import './RealityPage.css'
 
 type DetailTab = 'insights' | 'transcript'
 type StatusFilter = 'all' | RealityEventStatus
-type PerceptionTypeFilter = 'all' | PerceptionNode['kind']
+/** 采集能力当前只有音频与窗口截图；照片/文档/文件节点不进时间线。 */
+type PerceptionTypeFilter = 'all' | 'audio' | 'screenshot'
 type ActivityRange = '1w' | '1m' | '3m' | '6m' | '1y'
 type TimelineItem =
   | { kind: 'audio'; id: string; startedAt: string; event: RealityEvent }
   | { kind: 'visual'; id: string; startedAt: string; node: PerceptionNode }
-  | { kind: 'source'; id: string; startedAt: string; node: PerceptionNode }
 
 const STATUS_LABELS: Record<RealityEventStatus, string> = {
   ongoing: 'diaryReality:reality.inProgress',
@@ -123,9 +121,6 @@ const PERCEPTION_TYPE_OPTIONS = [
   { value: 'all', label: 'diaryReality:reality.allPerceptionTypes', icon: Layers3 },
   { value: 'audio', label: 'diaryReality:reality.audioPerception', icon: AudioLines },
   { value: 'screenshot', label: 'diaryReality:reality.screenshotPerception', icon: Camera },
-  { value: 'photo', label: 'diaryReality:reality.photoPerception', icon: ImageIcon },
-  { value: 'document', label: 'diaryReality:reality.documentPerception', icon: FileText },
-  { value: 'file', label: 'diaryReality:reality.filePerception', icon: FolderOpen },
 ] as const
 
 const RANGE_WEEKS: Record<ActivityRange, number> = { '1w': 1, '1m': 5, '3m': 13, '6m': 26, '1y': 53 }
@@ -226,7 +221,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const { account } = useAccount()
   const [events, setEvents] = useState<RealityEvent[]>([])
   const [visualNodes, setVisualNodes] = useState<PerceptionNode[]>([])
-  const [sourceNodes, setSourceNodes] = useState<PerceptionNode[]>([])
   const [visualDetail, setVisualDetail] = useState<PerceptionNodeDetail | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<StatusFilter>('all')
@@ -234,7 +228,8 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [search, setSearch] = useState('')
   const [activityRange, setActivityRange] = useState<ActivityRange>('3m')
   const [rangeTouched, setRangeTouched] = useState(false)
-  const [showActivity, setShowActivity] = useState(false)
+  // 趋势（感知活动）默认展开。
+  const [showActivity, setShowActivity] = useState(true)
   const [loading, setLoading] = useState(true)
   const [visualLoading, setVisualLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -285,8 +280,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
     }
     try {
       const result = await window.nxcore.screenCapture.listPerceptionNodes()
-      setVisualNodes(result.items.filter((node) => node.kind === 'screenshot' || node.kind === 'photo'))
-      setSourceNodes(result.items.filter((node) => node.kind === 'document' || node.kind === 'file'))
+      setVisualNodes(result.items.filter((node) => node.kind === 'screenshot'))
       if (!quiet) setError(null)
     } catch (caught) {
       if (!quiet) setError(caught instanceof Error ? caught.message : t('diaryReality:reality.unableToLoadVisualPerception'))
@@ -355,8 +349,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
   const timelineItems = useMemo<TimelineItem[]>(() => [
     ...events.map((event): TimelineItem => ({ kind: 'audio', id: event.id, startedAt: event.startedAt, event })),
     ...visualNodes.map((node): TimelineItem => ({ kind: 'visual', id: node.id, startedAt: node.startAt, node })),
-    ...sourceNodes.map((node): TimelineItem => ({ kind: 'source', id: node.id, startedAt: node.startAt, node })),
-  ].sort((left, right) => right.startedAt.localeCompare(left.startedAt)), [events, sourceNodes, visualNodes])
+  ].sort((left, right) => right.startedAt.localeCompare(left.startedAt)), [events, visualNodes])
   const visibleEvents = useMemo(() => timelineItems.filter((item) => {
     const itemType = item.kind === 'audio' ? 'audio' : item.node.kind
     if (typeFilter !== 'all' && itemType !== typeFilter) return false
@@ -666,7 +659,6 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
       <header className="reality-header">
         <div className="reality-header-copy">
           <h1>{t('diaryReality:reality.realityPerception')}</h1>
-          <p>{t('diaryReality:reality.pageSubtitle')}</p>
         </div>
         <RecordingPage
           embedded
@@ -789,32 +781,9 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
             <header><h2>{label}</h2><span>{t('diaryReality:reality.countBlocks', { count: items.length })}</span></header>
             <div className="reality-schedule">
               {items.map((item) => {
-                if (item.kind === 'source') {
-                  const node = item.node
-                  const SourceIcon = node.kind === 'document' ? FileText : FolderOpen
-                  return (
-                    <article className="schedule-event source-schedule-event" key={node.id} data-type={node.kind} data-status={node.status}>
-                      <div className="schedule-time">
-                        <time>{timeLabel(node.startAt, locale)}</time>
-                        <span />
-                        <small>{t('diaryReality:reality.collected')}</small>
-                      </div>
-                      <div className="schedule-block">
-                        <div className="schedule-trigger source-trigger">
-                          <span className="event-type"><SourceIcon aria-hidden="true" />{t(node.kind === 'document' ? 'diaryReality:reality.documentPerception' : 'diaryReality:reality.filePerception')}</span>
-                          <span className="event-status" data-status={node.status}>{t('diaryReality:reality.collected')}</span>
-                          <strong>{node.title}</strong>
-                          <p>{node.summary || t('diaryReality:reality.dataCollected')}</p>
-                          <small>{node.status === 'ready' ? t('diaryReality:reality.processed') : t('diaryReality:reality.processing')}</small>
-                        </div>
-                      </div>
-                    </article>
-                  )
-                }
                 if (item.kind === 'visual') {
                   const node = item.node
                   const expanded = node.id === expandedId
-                  const KindIcon = node.kind === 'photo' ? ImageIcon : Camera
                   const statusLabel = VISUAL_STATUS_LABELS[node.status] ?? node.status
                   return (
                     <article className="schedule-event visual-schedule-event" key={node.id} data-expanded={String(expanded)} data-type={node.kind} data-status={node.status}>
@@ -825,12 +794,12 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
                       </div>
                       <div className="schedule-block">
                         <button type="button" className="schedule-trigger" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : node.id)}>
-                          <span className="event-type"><KindIcon aria-hidden="true" />{t(node.kind === 'photo' ? 'diaryReality:reality.photo' : 'diaryReality:reality.screen')}</span>
+                          <span className="event-type"><Camera aria-hidden="true" />{t('diaryReality:reality.screen')}</span>
                           <span className="event-status" data-status={node.status}>{t(statusLabel)}</span>
                           <strong>{perceptionDisplayText(node.title, perceptionT)}</strong>
                           <p>{perceptionDisplayText(node.summary, perceptionT)}</p>
                           {node.tags.length > 0 ? <span className="schedule-tags">{node.tags.slice(0, 6).map((tag) => <span key={tag}>{tag}</span>)}</span> : null}
-                          <small>{t(node.kind === 'photo' ? 'diaryReality:reality.localPhoto' : 'diaryReality:reality.everroomWindow')}{node.sampleCount > 1 ? ` · ${t('diaryReality:reality.countFrames', { count: node.sampleCount })}` : ''}{node.confidence === null ? '' : t('diaryReality:reality.confidenceConfidence', { confidence: Math.round(node.confidence * 100) })}</small>
+                          <small>{t('diaryReality:reality.everroomWindow')}{node.sampleCount > 1 ? ` · ${t('diaryReality:reality.countFrames', { count: node.sampleCount })}` : ''}{node.confidence === null ? '' : t('diaryReality:reality.confidenceConfidence', { confidence: Math.round(node.confidence * 100) })}</small>
                           <ChevronDown aria-hidden="true" />
                         </button>
                         {expanded ? (

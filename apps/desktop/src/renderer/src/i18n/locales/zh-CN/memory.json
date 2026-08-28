@@ -52,7 +52,6 @@
   "coreProfile.savingReplacesTheFullProfileEditTheCurrent": "保存为全量覆盖：请基于当前内容修改，避免直接粘贴片段覆盖整篇画像。",
   "coreProfile.theL3ProfileIsALongTermUser": "L3 画像是 MemoryCore 跨场景沉淀的长期用户画像，会随着对话积累自动生成并注入 AI 上下文。",
   "coreProfile.updatedTime": "更新于 {time}",
-  "memory.exploreLongTermMemoryCapturedByMemorycoreConversations": "查看 AI 通过 MemoryCore 沉淀的长期记忆：对话（L0）、原子记忆（L1）、场景（L2）与画像（L3）。",
   "memory.loading": "加载中…",
   "memory.memory": "记忆",
   "memory.memoryLevels": "记忆层级",
