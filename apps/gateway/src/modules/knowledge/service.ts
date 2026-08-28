@@ -2754,7 +2754,7 @@ export class KnowledgeService {
   }
 
   createRule(input: {
-    matcher: { sourceTag?: string; filenamePrefix?: string; threadId?: string; titleKeyword?: string; creatorId?: string; calendarId?: string };
+    matcher: { sourceTag?: string; filenamePrefix?: string; threadId?: string; titleKeyword?: string; creatorId?: string; calendarId?: string; listId?: string };
     targetRoomId: string;
   }): { ok: true; id: string } | { ok: false; error: string } {
     const keys = Object.keys(input.matcher).filter((key) => {
@@ -2826,11 +2826,17 @@ export class KnowledgeService {
         ? calendarOrganizerOf(decision.sourceMarkdown ?? "")
         : undefined;
       if (matcher.calendarId !== undefined && calendarId !== matcher.calendarId) continue;
+      // 清单级 listId：从 markdown frontmatter 的 list_id 确定性还原
+      const listId = matcher.listId !== undefined
+        ? todoListIdOf(decision.sourceMarkdown ?? "")
+        : undefined;
+      if (matcher.listId !== undefined && listId !== matcher.listId) continue;
       if (matcher.titleKeyword !== undefined && !(decision.sourceTitle ?? "").includes(matcher.titleKeyword)) continue;
       matched += 1;
       const entrySignals = {
         ...(sourceTag ? { sourceTag } : {}),
         ...(calendarId ? { calendarId } : {}),
+        ...(listId ? { listId } : {}),
       };
       const result = this.router.routeByRule({
         ref: { kind: decision.sourceKind, id: decision.sourceId, version: decision.sourceVersion },
@@ -3254,4 +3260,19 @@ export function calendarOrganizerOf(markdown: string): string | null {
   const bracket = line.match(/<([^>]+)>/);
   const address = (bracket?.[1] ?? line.slice("组织者：".length)).trim();
   return address.includes("@") ? address : null;
+}
+
+/**
+ * 决策快照 markdown frontmatter 的 `list_id:` → 待办清单 id。回填用：
+ * 历史决策没有 entrySignals 快照，清单级 listId 从渲染器写进 markdown 的
+ * frontmatter 确定性还原（connectorTodoToMarkdown 恒写 list_id 键）。
+ */
+export function todoListIdOf(markdown: string): string | null {
+  if (!markdown.startsWith("---")) return null;
+  const end = markdown.indexOf("\n---", 3);
+  if (end < 0) return null;
+  const line = markdown.slice(0, end).split("\n").find((candidate) => candidate.startsWith("list_id:"));
+  if (!line) return null;
+  const value = line.slice("list_id:".length).trim().replace(/^["']|["']$/g, "");
+  return value && value !== "null" ? value : null;
 }

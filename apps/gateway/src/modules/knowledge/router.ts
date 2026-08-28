@@ -76,12 +76,13 @@ interface RuleMatcher {
   titleKeyword?: string;
   creatorId?: string;
   calendarId?: string;
+  listId?: string;
 }
 
-/** ②b 规则具体度：线程/文件前缀 > 日历 > 来源标签/创建者 > 标题关键词。 */
+/** ②b 规则具体度：线程/文件前缀 > 日历/清单 > 来源标签/创建者 > 标题关键词。 */
 function matcherSpecificity(matcher: RuleMatcher): number {
   if (matcher.threadId || matcher.filenamePrefix) return 3;
-  if (matcher.calendarId) return 2;
+  if (matcher.calendarId || matcher.listId) return 2;
   if (matcher.sourceTag || matcher.creatorId) return 1;
   return 0;
 }
@@ -89,6 +90,7 @@ function matcherSpecificity(matcher: RuleMatcher): number {
 function matchesRule(matcher: RuleMatcher, envelope: DocEnvelope): boolean {
   if (matcher.sourceTag !== undefined && envelope.entrySignals?.sourceTag !== matcher.sourceTag) return false;
   if (matcher.calendarId !== undefined && envelope.entrySignals?.calendarId !== matcher.calendarId) return false;
+  if (matcher.listId !== undefined && envelope.entrySignals?.listId !== matcher.listId) return false;
   if (matcher.threadId !== undefined && envelope.entrySignals?.threadId !== matcher.threadId) return false;
   if (matcher.filenamePrefix !== undefined) {
     const prefix = envelope.entrySignals?.filenamePrefix ?? "";

@@ -27,6 +27,8 @@ export interface DocEnvelope {
     creatorId?: string;
     /** 日历级粒度：同步 scope 的 providerScopeId（如 xxx@gmail.com 或假日日历地址）——规则可只匹配连接里的某个日历。 */
     calendarId?: string;
+    /** 清单级粒度（待办域）：provider 的任务清单 id——规则可只匹配某个清单的待办。 */
+    listId?: string;
   };
 }
 

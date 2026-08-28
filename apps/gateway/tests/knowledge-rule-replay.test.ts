@@ -27,12 +27,13 @@ function seedDecision(
     title: string;
     markdown?: string;
     primaryRoomId?: string | null;
+    sourceKind?: "calendar-event" | "todo";
     at: Date;
   },
 ) {
   db.insert(routeDecisions).values({
     id: input.id,
-    sourceKind: "calendar-event",
+    sourceKind: input.sourceKind ?? "calendar-event",
     sourceId: input.sourceId,
     sourceVersion: 1,
     sourceTitle: input.title,
@@ -219,6 +220,42 @@ describe("replayRoutingRule（规则层存量回填）", () => {
       .where(eq(routeDecisions.sourceId, schoolEvent("ev-holiday"))).all()).toHaveLength(1);
     expect(db.select().from(routeDecisions)
       .where(eq(routeDecisions.sourceId, schoolEvent("ev-bare"))).all()).toHaveLength(1);
+
+    service.dispose();
+    sqlite.close();
+  });
+
+  it("listId 匹配器从决策快照 frontmatter 做清单级回填：只归因目标清单的待办", async () => {
+    const { service, db, sqlite } = await serviceForTest();
+    const rule = service.createRule({
+      matcher: { listId: "list-school" },
+      targetRoomId: "room-school",
+    });
+    const ruleId = rule.ok ? rule.id : "";
+    const at = new Date();
+    // connectorTodoToMarkdown 的 frontmatter 形态（list_id 恒写，JSON 引号包裹）
+    const todoMarkdown = (listId: string | null) =>
+      `---\nsource_kind: "todo"\nconnector: "google_tasks"\nlist_id: ${JSON.stringify(listId)}\n---\n\n# 待办\n\n## 待办信息\n\n- 清单：学校清单\n`;
+    seedDecision(db, {
+      id: "rd-todo-hit", sourceId: "todo-row-1", sourceKind: "todo",
+      title: "交学费", markdown: todoMarkdown("list-school"), at,
+    });
+    seedDecision(db, {
+      id: "rd-todo-miss", sourceId: "todo-row-2", sourceKind: "todo",
+      title: "买日用品", markdown: todoMarkdown("list-life"), at,
+    });
+    // 无 frontmatter 的快照（清单未知）：保守不命中
+    seedDecision(db, {
+      id: "rd-todo-bare", sourceId: "todo-row-3", sourceKind: "todo",
+      title: "旧待办", markdown: "# 旧待办\n", at,
+    });
+
+    const result = service.replayRoutingRule(ruleId);
+    expect(result).toEqual({ ok: true, matched: 1, replayed: 1 });
+
+    expect(db.select().from(routeDecisions).where(eq(routeDecisions.sourceId, "todo-row-1")).all()).toHaveLength(2);
+    expect(db.select().from(routeDecisions).where(eq(routeDecisions.sourceId, "todo-row-2")).all()).toHaveLength(1);
+    expect(db.select().from(routeDecisions).where(eq(routeDecisions.sourceId, "todo-row-3")).all()).toHaveLength(1);
 
     service.dispose();
     sqlite.close();
