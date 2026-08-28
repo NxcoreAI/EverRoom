@@ -651,8 +651,8 @@ export interface OfficeWorkspaceBounds {
   height: number
 }
 
-/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides 运行时）。 */
-export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides'
+/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf 运行时）。 */
+export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf'
 
 /** dev 测试页使用的固定预览实例 id（office-test 页 ↔ 主进程懒创建的 fixture 实例）。 */
 export const OFFICE_TEST_INSTANCE_ID = 'office-test'
@@ -671,6 +671,7 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   if (extension === '.docx' || extension === '.doc') return 'docx'
   if (extension === '.pptx' || extension === '.ppt') return 'slides'
   if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
+  if (extension === '.pdf') return 'pdf'
   return null
 }
 
