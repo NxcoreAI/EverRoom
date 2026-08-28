@@ -223,6 +223,14 @@ describe("secret redaction", () => {
     expect(logs).not.toContain(encodeURIComponent(canary));
   });
 
+  it("keeps Date instances intact so API timestamps serialize as ISO strings", () => {
+    const createdAt = new Date("2026-08-27T13:00:00.000Z");
+    const payload = redactSecrets({ run: { id: "r1", createdAt, startedAt: null }, list: [createdAt] });
+    expect(payload.run.createdAt).toBeInstanceOf(Date);
+    expect(payload.list[0]).toBe(createdAt);
+    expect(JSON.stringify(payload)).toContain("2026-08-27T13:00:00.000Z");
+  });
+
   it("redacts prompts, tool args/results, split output, DB messages/events, WebSocket frames, chat, and timeline snapshots", async () => {
     const root = await directory();
     const canary = "canary-agent-output-51";
