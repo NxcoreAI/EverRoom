@@ -47,10 +47,18 @@
   cursor: pointer;
 }
 
-.high-risk-import-review-actions button:first-child {
+.high-risk-import-review-actions .high-risk-import-review-skip {
   border-color: color-mix(in srgb, var(--accent-strong) 55%, var(--border-strong));
   background: var(--accent-strong);
-  color: var(--on-accent, #fff);
+  color: var(--accent-contrast, #fff);
+  font-weight: 650;
+}
+
+.high-risk-import-review-actions .high-risk-import-review-accept {
+  border-color: color-mix(in srgb, var(--danger) 52%, var(--border-strong));
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  color: var(--danger);
+  font-weight: 650;
 }
 
 .high-risk-import-review-actions button:hover:not(:disabled) { filter: brightness(.97); }

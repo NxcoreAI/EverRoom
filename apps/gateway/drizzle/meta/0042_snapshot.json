@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "5ccdcc70-87a2-4b95-bee7-8b70af9aebe9",
+  "id": "3fb8b6eb-9525-4881-a40d-ffe6c96f14d4",
   "prevId": "d6258c47-2e4d-4276-8b40-33cb469785cd",
   "tables": {
     "agent_events": {
@@ -5432,7 +5432,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'无标题文档'"
+          "default": "'\u65e0\u6807\u9898\u6587\u6863'"
         },
         "content_json": {
           "name": "content_json",
@@ -5889,7 +5889,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'主题'"
+          "default": "'\u4e3b\u9898'"
         },
         "summary": {
           "name": "summary",
@@ -7526,6 +7526,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "source_path": {
+          "name": "source_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "relative_path": {
           "name": "relative_path",
           "type": "text",
@@ -9039,7 +9046,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'属性'"
+          "default": "'\u5c5e\u6027'"
         },
         "entity_ids": {
           "name": "entity_ids",
@@ -9272,176 +9279,6 @@
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "room_local_actions": {
-      "name": "room_local_actions",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "room_id": {
-          "name": "room_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "notes": {
-          "name": "notes",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "priority": {
-          "name": "priority",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "due_at": {
-          "name": "due_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "end_at": {
-          "name": "end_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "all_day": {
-          "name": "all_day",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "location": {
-          "name": "location",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_via_run_id": {
-          "name": "created_via_run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "room_local_actions_room_idx": {
-          "name": "room_local_actions_room_idx",
-          "columns": [
-            "room_id",
-            "kind",
-            "deleted_at"
-          ],
-          "isUnique": false
-        },
-        "room_local_actions_room_due_idx": {
-          "name": "room_local_actions_room_due_idx",
-          "columns": [
-            "room_id",
-            "kind",
-            "due_at",
-            "started_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "room_local_actions_room_id_context_rooms_id_fk": {
-          "name": "room_local_actions_room_id_context_rooms_id_fk",
-          "tableFrom": "room_local_actions",
-          "tableTo": "context_rooms",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -10296,7 +10133,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'议题'"
+          "default": "'\u8bae\u9898'"
         },
         "origin": {
           "name": "origin",

@@ -2738,8 +2738,7 @@ summary:focus-visible {
 }
 
 .file-category-card-head,
-.file-category-title-wrap,
-.file-category-detail-title {
+.file-category-title-wrap {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -2773,8 +2772,7 @@ summary:focus-visible {
   white-space: nowrap;
 }
 
-.file-category-title-wrap small,
-.file-category-detail-title span:last-child span {
+.file-category-title-wrap small {
   color: var(--muted);
   font-size: 10px;
 }
@@ -2875,21 +2873,6 @@ summary:focus-visible {
 .clipper-missing-assets { display: grid; gap: 7px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
 .clipper-missing-assets a { color: var(--muted); font-size: 12px; }
 
-.file-category-detail-title {
-  gap: 10px;
-}
-
-.file-category-detail-title > div {
-  display: grid;
-  gap: 4px;
-}
-
-.file-category-detail-title h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 650;
-}
-
 /* Files archive: a calm, column-based masonry that keeps categories discoverable. */
 .files-page-drop-target {
   --files-ink: #1d252b;
@@ -2898,7 +2881,7 @@ summary:focus-visible {
 }
 
 .files-page-drop-target .page-header h1,
-.file-category-detail-title h2,
+.file-category-heading-copy h2,
 .file-recognition-toolbar h2 {
   font-family: "Avenir Next", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
   letter-spacing: -0.01em;
@@ -2909,8 +2892,41 @@ summary:focus-visible {
 }
 
 .file-recognition-toolbar {
+  min-height: 46px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--files-line);
+}
+
+.file-category-detail-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-category-heading-divider {
+  width: 1px;
+  height: 24px;
+  flex: 0 0 1px;
+  background: var(--files-line);
+}
+
+.file-category-heading-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.file-category-heading-copy h2 {
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-category-heading-copy > span {
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .file-masonry {
@@ -3030,16 +3046,6 @@ summary:focus-visible {
   gap: 18px;
 }
 
-.file-category-detail-title {
-  align-items: flex-start;
-}
-
-.file-category-detail-title h2 {
-  font-family: "Avenir Next", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
-  font-size: 24px;
-  font-weight: 650;
-}
-
 .file-file-masonry {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -3107,37 +3113,6 @@ summary:focus-visible {
   text-overflow: ellipsis;
 }
 
-.file-document-copy small {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-document-preview {
-  display: grid;
-  gap: 6px;
-  padding: 13px 14px;
-  border: 1px solid color-mix(in srgb, var(--files-line) 72%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 62%, transparent);
-}
-
-.file-document-preview span {
-  display: block;
-  height: 5px;
-  border-radius: 99px;
-  background: color-mix(in srgb, var(--muted) 18%, transparent);
-}
-
-.file-document-preview span:nth-child(1) { width: 82%; }
-.file-document-preview span:nth-child(2) { width: 94%; }
-.file-document-preview span:nth-child(3) { width: 58%; }
-
-.file-document-card:nth-child(3n + 1) .file-document-preview { padding-block: 16px; }
-.file-document-card:nth-child(3n + 2) .file-document-preview { padding-block: 24px; }
-
 .file-document-meta,
 .file-document-actions {
   display: flex;
@@ -3195,6 +3170,8 @@ summary:focus-visible {
   .file-file-masonry { grid-template-columns: 1fr; }
   .file-category-card,
   .file-document-card { margin-bottom: 0; }
+  .file-category-heading-divider,
+  .file-category-detail-heading .file-category-icon { display: none; }
 }
 
 @media (max-width: 1360px) {

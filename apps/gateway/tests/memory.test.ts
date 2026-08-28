@@ -82,6 +82,44 @@ describe("document memory capture", () => {
     expect(requests[1]).toMatchObject({ session_id: "local:codex:thread-1", messages });
   });
 
+  it("normalizes historical conversations to the MemoryCore import contract", async () => {
+    const { service, requests, urls } = serviceWithCapture();
+    const timestamp = "2026-08-26T01:00:00.000Z";
+    const messages = Array.from({ length: 100 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" as const : "assistant" as const,
+      content: `message-${index}`,
+      timestamp,
+    }));
+    messages.push({ role: "user", content: `${"x".repeat(8_191)}😀tail`, timestamp });
+
+    await expect(service.replaceConversationBatches({
+      sessionId: "external:openclaw:thread-1",
+      messages,
+      batchSize: 200,
+    })).resolves.toEqual({ sessionId: "external:openclaw:thread-1", messagesImported: 102 });
+
+    expect(urls).toEqual([
+      "http://127.0.0.1:8420/v3/conversation/delete",
+      "http://127.0.0.1:8420/v3/conversation/add",
+      "http://127.0.0.1:8420/v3/conversation/add",
+    ]);
+    const imported = requests.slice(1).flatMap((request) => request.messages as Array<{
+      content: string;
+      timestamp: string;
+      recorded_at: string;
+    }>);
+    expect((requests[1]!.messages as unknown[])).toHaveLength(100);
+    expect((requests[2]!.messages as unknown[])).toHaveLength(2);
+    expect(imported.every((message) => message.content.length <= 8_192)).toBe(true);
+    expect(imported.map((message) => message.content).join("")).toBe(
+      `${messages.slice(0, 100).map((message) => message.content).join("")}${messages[100]!.content}`,
+    );
+    expect(imported.every((message) => message.timestamp === timestamp)).toBe(true);
+    expect(imported.map((message) => Date.parse(message.recorded_at))).toEqual(
+      Array.from({ length: 102 }, (_, index) => Date.parse(timestamp) + index),
+    );
+  });
+
   it("stores the Agent document creation fact without duplicating the full Markdown", async () => {
     const { service, requests } = serviceWithCapture();
 

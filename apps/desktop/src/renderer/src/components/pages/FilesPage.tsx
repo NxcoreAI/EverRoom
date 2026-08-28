@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, HardDrive, Search, Trash2, Upload, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Search, Trash2, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -412,6 +412,17 @@ export function FilesPage() {
     })
   }
 
+  const revealOriginal = (file: FileCatalogDto) => {
+    if (!filesApi) return
+    void runFileAction(file.id, async () => {
+      try {
+        await filesApi.reveal(file.id)
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : t('surface:files.unableToRevealOriginal'))
+      }
+    })
+  }
+
   const openFile = (file: FileCatalogDto) => {
     if (!filesApi || file.sourceKind !== 'web-clipper') return openOriginal(file)
     void runFileAction(file.id, async () => {
@@ -475,12 +486,18 @@ export function FilesPage() {
       {view === 'files' && filesApi ? (
         <section className="file-recognition" aria-labelledby="file-recognition-heading">
           <div className="file-recognition-toolbar">
-            {selectedCategory ? (
+            {selectedCategory ? <div className="file-category-detail-heading">
               <button type="button" className="file-back-button" onClick={() => setSelectedCategoryKey(null)}>
                 <ArrowLeft aria-hidden="true" strokeWidth={1.8} />
                 <span>{t('surface:files.files')}</span>
               </button>
-            ) : (
+              <span className="file-category-heading-divider" aria-hidden="true" />
+              <span className={`file-category-icon file-category-${selectedCategory.tone}`}>{SelectedCategoryIcon ? <SelectedCategoryIcon aria-hidden="true" strokeWidth={1.8} /> : null}</span>
+              <span className="file-category-heading-copy">
+                <h2 id="file-recognition-heading">{t(selectedCategory.label)}</h2>
+                <span>{t('surface:files.countFiles', { count: selectedCategory.files.length })}</span>
+              </span>
+            </div> : (
               <h2 id="file-recognition-heading">{t('surface:files.documentRecognitionCount', { count: categoryCards.length })}</h2>
             )}
             <div className="file-recognition-tools">
@@ -551,10 +568,6 @@ export function FilesPage() {
 
           {!loading && selectedCategory ? (
             <div className="file-category-detail">
-              <div className="file-category-detail-title">
-                <span className={`file-category-icon file-category-${selectedCategory.tone}`}>{SelectedCategoryIcon ? <SelectedCategoryIcon aria-hidden="true" strokeWidth={1.8} /> : null}</span>
-                <div><h2>{t(selectedCategory.label)}</h2><span>{t('surface:files.countFiles', { count: selectedCategory.files.length })}</span></div>
-              </div>
               <MasonryColumns
                 className="file-file-masonry"
                 items={selectedCategory.files.map(({ file }) => file.id)}
@@ -563,11 +576,11 @@ export function FilesPage() {
                   return <article key={file.id} className={`file-document-card file-document-${selectedCategory.tone}`}>
                     <button type="button" className="file-document-main" title={file.sourceKind === 'web-clipper' ? t('surface:files.openClipperPreview') : t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openFile(file)}>
                       <span className="file-document-icon"><FileTypeIcon file={file} /></span>
-                      <span className="file-document-copy"><strong title={file.contentHash}>{file.sharedTitle}</strong><small>{file.originalName}</small></span>
+                      <span className="file-document-copy"><strong title={file.originalName}>{file.sharedTitle}</strong></span>
                     </button>
                     <div className="file-document-preview" aria-hidden="true"><span /><span /><span /></div>
                     <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? t('surface:files.originalMissing') : t('surface:files.processing')}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
-                    <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t('surface:files.openOriginalName', { name: file.originalName })} title={t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openOriginal(file)}><ExternalLink aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
+                    <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t('surface:files.revealName', { name: file.originalName })} title={t('surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => revealOriginal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
                   </article>
                 }}
               />

@@ -287,6 +287,7 @@ describe('Agent Room selection', () => {
     const external = new RecordingRuntime('codex-runtime')
     const resolver: AgentExternalConversationResolver = {
       bindAndBuildContext: async () => 'duplicated imported history',
+      buildReferenceContext: async () => 'referenced imported history',
       resolveNativeContinuation: (threadId, targetAgentId) => (
         threadId === 'imported-thread' && targetAgentId.startsWith('codex:') ? 'native-codex-session' : null
       ),
@@ -316,6 +317,34 @@ describe('Agent Room selection', () => {
 
     expect(external.starts[0]?.runtimeSessionRef).toBe('native-codex-session')
     expect(external.starts[0]?.prompt).not.toContain('duplicated imported history')
+    await service.dispose()
+    sqlite.close()
+  })
+
+  it('keeps a referenced Agent chat on Main without resuming the referenced Agent', async () => {
+    const primary = new RecordingRuntime('main-runtime')
+    const external = new RecordingRuntime('claude-runtime')
+    const resolver: AgentExternalConversationResolver = {
+      bindAndBuildContext: async () => null,
+      buildReferenceContext: async (threadId) => threadId === 'login-v1' ? 'referenced login context' : null,
+      resolveNativeContinuation: () => 'must-not-resume',
+    }
+    const { service, sqlite } = await createHarness({ runtime: primary, targetRuntime: external, externalConversationResolver: resolver })
+    const session = service.createSession({ pageLabel: 'Home', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '基于这版改',
+      idempotencyKey: 'reference-login-v1',
+      targetAgentId: 'main',
+      context: { referencedConversationId: 'login-v1' },
+    })
+
+    expect(primary.starts).toHaveLength(1)
+    expect(primary.starts[0]?.prompt).toContain('Call agent_conversation_query')
+    expect(primary.starts[0]?.referencedConversationId).toBe('login-v1')
+    expect(primary.starts[0]?.runtimeSessionRef).toBeNull()
+    expect(external.starts).toHaveLength(0)
+    expect(service.getSnapshot(session.id)?.session.activeAgentId).toBe('main')
     await service.dispose()
     sqlite.close()
   })

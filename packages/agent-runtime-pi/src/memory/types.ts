@@ -129,6 +129,8 @@ export interface MemoryCaptureMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  /** 历史导入时的原始入库时间；普通实时捕获不传。 */
+  recordedAt?: string;
 }
 
 /** 文档登记行（/v3/document/* 响应中的 documents/document 项，snake_case 原样）。 */
@@ -222,4 +224,3 @@ export interface MemoryAtomicProvenance {
   anchor_message_ids: string[];
   anchors: MemoryProvenanceAnchor[];
 }
-

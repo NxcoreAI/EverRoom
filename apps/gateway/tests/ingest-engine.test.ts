@@ -1021,12 +1021,13 @@ describe("连接器接入：归一化直传共用台账与扇出", () => {
 describe("U2 格式扩展：确定性转换器", () => {
   it("为 Word、Excel、PowerPoint 全部常用变体和 PDF 注册转换器", () => {
     const extensions = [
-      "doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt",
+      "doc", "docx", "docm", "dot", "dotx", "dotm", "rtf",
       "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "xltm", "xla", "xlam", "ods",
       "ppt", "pptx", "pptm", "pot", "potx", "potm", "pps", "ppsx", "ppsm", "sldx", "sldm", "odp",
       "pdf",
     ];
     for (const extension of extensions) expect(converterOfExtension(extension), extension).not.toBeNull();
+    expect(converterOfExtension("odt")).toBeNull();
   });
 
   it("pdf → 按页保留边界的 md", async () => {

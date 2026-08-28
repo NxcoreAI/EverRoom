@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Local EverRoom browser extension",
+  "scripts": {
+    "package": "node scripts/package.mjs"
+  },
   "dependencies": {
     "@mozilla/readability": "^0.6.0"
   }

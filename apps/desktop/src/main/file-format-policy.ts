@@ -16,7 +16,6 @@ export const OFFICE_FILE_EXTENSIONS = new Set([
   '.dotx',
   '.dotm',
   '.rtf',
-  '.odt',
   '.xls',
   '.xlsx',
   '.xlsm',

@@ -39,7 +39,7 @@ export interface ImportCandidate {
 
 const DEFAULT_IMPORT_EXTENSIONS = new Set([
   '.csv', '.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm', '.html', '.htm', '.md', '.markdown',
-  '.mdx', '.odt', '.ods', '.odp', '.pdf', '.pot', '.potx', '.potm', '.pps', '.ppsx', '.ppsm', '.ppt',
+  '.mdx', '.ods', '.odp', '.pdf', '.pot', '.potx', '.potm', '.pps', '.ppsx', '.ppsm', '.ppt',
   '.pptx', '.pptm', '.rtf', '.sldx', '.sldm', '.text', '.txt', '.xls', '.xla', '.xlam', '.xlsb',
   '.xlsx', '.xlsm', '.xlt', '.xltx', '.xltm',
 ])
@@ -509,6 +509,8 @@ export class FilesGatewayBridge {
 
   async importLocalFile(input: {
     filePath: string
+    contentHash: string
+    byteSize: number
     sourceKey: string
     originalName: string
     localSourceId: string
@@ -517,7 +519,27 @@ export class FilesGatewayBridge {
     sourceModifiedAt: string
     roomId?: string
   }): Promise<FileImportAcceptedDto> {
-    return this.importPath({ ...input, sourceKind: 'local-folder' })
+    return this.request('/v1/local-file-references', {
+      method: 'POST',
+      body: JSON.stringify({
+        sourceKey: input.sourceKey,
+        originalName: input.originalName,
+        sourcePath: input.filePath,
+        contentHash: input.contentHash,
+        byteSize: input.byteSize,
+        localSourceId: input.localSourceId,
+        localItemId: input.localItemId,
+        relativePath: input.relativePath,
+        sourceModifiedAt: input.sourceModifiedAt,
+      }),
+    })
+  }
+
+  markLocalFileMissing(input: { localSourceId: string; localItemId: string }): Promise<{ updated: boolean }> {
+    return this.request('/v1/local-file-references/status', {
+      method: 'PATCH',
+      body: JSON.stringify({ ...input, status: 'missing' }),
+    })
   }
 
   async projectVaultNote(input: {
@@ -528,6 +550,7 @@ export class FilesGatewayBridge {
     sourceModifiedAt: string
     roomId: string
   }): Promise<FileImportAcceptedDto> {
+    const buffer = await readFile(input.filePath)
     return this.importLocalFile({
       filePath: input.filePath,
       sourceKey: `obsidian:${input.vaultId}:${input.resourceId}`,
@@ -536,6 +559,8 @@ export class FilesGatewayBridge {
       localItemId: input.resourceId,
       relativePath: input.relativePath,
       sourceModifiedAt: input.sourceModifiedAt,
+      contentHash: createHash('sha256').update(buffer).digest('hex'),
+      byteSize: buffer.byteLength,
       roomId: input.roomId,
     })
   }

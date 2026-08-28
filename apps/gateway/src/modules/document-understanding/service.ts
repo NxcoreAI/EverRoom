@@ -22,7 +22,7 @@ import {
 
 const SUPPORTED_EXTENSIONS = new Set([
   "pdf",
-  "doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt",
+  "doc", "docx", "docm", "dot", "dotx", "dotm", "rtf",
   "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "xltm", "xla", "xlam", "ods",
   "ppt", "pptx", "pptm", "pot", "potx", "potm", "pps", "ppsx", "ppsm", "sldx", "sldm", "odp",
 ]);

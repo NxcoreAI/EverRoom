@@ -1756,6 +1756,8 @@ export const fileEntries = sqliteTable(
     connectionId: text("connection_id"),
     localSourceId: text("local_source_id"),
     localItemId: text("local_item_id"),
+    /** 本地文件只引用用户磁盘上的原路径，不在 EverRoom 对象库保留原始字节镜像。 */
+    sourcePath: text("source_path"),
     relativePath: text("relative_path"),
     sourceUri: text("source_uri"),
     currentVersionId: text("current_version_id"),
