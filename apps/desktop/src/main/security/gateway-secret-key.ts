@@ -7,6 +7,10 @@ function isBasicTextStorage(): boolean {
   return process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text'
 }
 
+export function shouldUnlockGatewaySecrets(authenticated: boolean, userInitiated: boolean): boolean {
+  return authenticated && userInitiated
+}
+
 export async function loadOrCreateGatewaySecretKey(
   filePath: string,
   allowKeychainAccess = process.platform !== 'darwin',

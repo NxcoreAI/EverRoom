@@ -53,7 +53,7 @@ import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
-import { loadOrCreateGatewaySecretKey } from './security/gateway-secret-key'
+import { loadOrCreateGatewaySecretKey, shouldUnlockGatewaySecrets } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
@@ -2131,10 +2131,14 @@ function registerAccountHandlers(
   client: SaasClient,
   onAccountChanged?: (account: CloudAccountStatus) => void,
   beforeLogout?: () => Promise<void>,
-  afterLogin?: () => Promise<void>,
+  afterAuthenticated?: () => Promise<void>,
 ): void {
   handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(async () => {
-    const account = await syncAccountMonitoring(client.status(refreshSubscription === true))
+    const userInitiated = refreshSubscription === true
+    const account = await syncAccountMonitoring(client.status(userInitiated))
+    if (shouldUnlockGatewaySecrets(account.authenticated, userInitiated)) {
+      void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
+    }
     onAccountChanged?.(account)
     return account
   }))
@@ -2149,7 +2153,7 @@ function registerAccountHandlers(
     const password = value.password
     return rateLimitAware(async () => {
       const account = await syncAccountMonitoring(client.login(identifier, password))
-      if (account.authenticated) void afterLogin?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
+      if (account.authenticated) void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
       onAccountChanged?.(account)
       return account
     })
@@ -2166,7 +2170,7 @@ function registerAccountHandlers(
     const invitationCode=typeof value.invitationCode==='string'?value.invitationCode:undefined
     return rateLimitAware(async () => {
       const account = await syncAccountMonitoring(client.loginWithOidc(provider,invitationCode))
-      if (account.authenticated) void afterLogin?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
+      if (account.authenticated) void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
       onAccountChanged?.(account)
       return account
     })

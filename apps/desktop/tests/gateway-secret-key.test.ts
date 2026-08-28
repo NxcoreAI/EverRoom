@@ -18,7 +18,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { loadOrCreateGatewaySecretKey } from '../src/main/security/gateway-secret-key'
+import { loadOrCreateGatewaySecretKey, shouldUnlockGatewaySecrets } from '../src/main/security/gateway-secret-key'
 
 const directories: string[] = []
 
@@ -32,6 +32,12 @@ afterEach(async () => {
 })
 
 describe('gateway secret key', () => {
+  it('unlocks restored sessions only after an explicit account refresh', () => {
+    expect(shouldUnlockGatewaySecrets(true, false)).toBe(false)
+    expect(shouldUnlockGatewaySecrets(true, true)).toBe(true)
+    expect(shouldUnlockGatewaySecrets(false, true)).toBe(false)
+  })
+
   it('allows startup without creating a plaintext fallback when secure storage is unavailable', async () => {
     const root = await mkdtemp(join(tmpdir(), 'everroom-gateway-key-test-'))
     directories.push(root)
