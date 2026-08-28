@@ -609,7 +609,7 @@ export interface StartAgentRunInput {
   targetAgentId?: string;
   /** Explicit switches are sticky; delegated calls return to the current speaker. */
   invocationMode?: AgentInvocationMode;
-  /** Desktop-issued workspace binding selected through a native directory picker. */
+  /** Optional desktop-issued workspace binding selected through a native directory picker. */
   workspaceBindingToken?: string;
   /** Desktop Main-resolved target. Renderer input is discarded and replaced before Gateway dispatch. */
   localAgent?: LocalAgentInvocationTarget;
@@ -637,6 +637,8 @@ export interface StartAgentRunInput {
     attachments?: AgentFileAttachment[];
     /** Read-only imported conversation to use once when this native session starts. */
     externalConversationId?: string;
+    /** One-turn history reference for Main. It never resumes or routes to the referenced Agent. */
+    referencedConversationId?: string;
   };
 }
 

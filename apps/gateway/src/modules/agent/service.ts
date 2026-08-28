@@ -83,6 +83,7 @@ export interface AgentDocumentRegistry {
 
 export interface AgentExternalConversationResolver {
   bindAndBuildContext(sessionId: string, threadId: string, query: string): Promise<string | null>;
+  buildReferenceContext(threadId: string, query: string): Promise<string | null>;
   resolveNativeContinuation?(threadId: string, targetAgentId: string): string | null;
 }
 
@@ -1158,6 +1159,12 @@ export class AgentService {
 
     const selectedAgentId = input.targetAgentId ?? session.activeAgentId ?? MAIN_AGENT_ID;
     const invocationMode = input.invocationMode ?? "explicit_switch";
+    if (input.context?.referencedConversationId && selectedAgentId !== MAIN_AGENT_ID) {
+      throw new Error("referenced_conversation_requires_main_agent");
+    }
+    if (input.context?.referencedConversationId && input.context.externalConversationId) {
+      throw new Error("agent_conversation_context_conflict");
+    }
     if (selectedAgentId === MAIN_AGENT_ID && input.localAgent) throw new Error("local_agent_target_invalid");
     if (selectedAgentId !== MAIN_AGENT_ID && input.localAgent?.id !== selectedAgentId) {
       throw new Error("local_agent_target_invalid");
@@ -1320,13 +1327,20 @@ export class AgentService {
     let runtimeRun;
     try {
       const externalConversationId = input.context?.externalConversationId;
+      const referencedConversationId = input.context?.referencedConversationId;
       const importedContext = externalConversationId
-        ? await this.externalConversationResolver?.bindAndBuildContext(sessionId, externalConversationId, input.prompt) ?? null
-        : null;
+          ? await this.externalConversationResolver?.bindAndBuildContext(sessionId, externalConversationId, input.prompt) ?? null
+          : null;
       const nativeContinuationRef = externalConversationId && selectedAgentId !== MAIN_AGENT_ID
         ? this.externalConversationResolver?.resolveNativeContinuation?.(externalConversationId, selectedAgentId) ?? null
         : null;
-      const externalContext = nativeContinuationRef ? null : importedContext;
+      const referencedConversationContext = referencedConversationId
+        ? [
+            "The user referenced a prior Agent conversation for this turn.",
+            "It is a read-only context subagent and does not speak to the user. Call agent_conversation_query when the request depends on that history, then answer the user yourself as Main Agent.",
+          ].join("\n")
+        : null;
+      const externalContext = nativeContinuationRef ? null : importedContext ?? referencedConversationContext;
       const responseLanguage = normalizeAgentLocale(input.responseLanguage);
       const attachments = await this.resolveAttachments(input.attachments);
       const delegationContext = targetRuntime ? localAgentDelegationContext({
@@ -1358,6 +1372,7 @@ export class AgentService {
         captureMemory: input.captureMemory !== false,
         recallMemory: input.recallMemory !== false,
         toolsEnabled: input.toolsEnabled !== false,
+        ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(activeDocument ? { activeDocument } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });

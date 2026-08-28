@@ -32,4 +32,9 @@ describe('buildAgentRunContext', () => {
       }],
     })
   })
+
+  it('passes a previous Agent chat as a one-turn reference', () => {
+    expect(buildAgentRunContext([], undefined, undefined, undefined, undefined, undefined, 'thread-1'))
+      .toMatchObject({ referencedConversationId: 'thread-1' })
+  })
 })

@@ -363,6 +363,7 @@ export function agentRoutes(
                 contentHash: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
               }, { additionalProperties: false }), { maxItems: 5 })),
               externalConversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+              referencedConversationId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
             })),
           }),
         },

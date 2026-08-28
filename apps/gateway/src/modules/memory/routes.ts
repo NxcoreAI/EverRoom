@@ -376,7 +376,8 @@ export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox 
             messages: Type.Array(Type.Object({
               role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
               content: Type.String({ minLength: 1, maxLength: 20_000 }),
-              timestamp: Type.String({ minLength: 10, maxLength: 40 }),
+              timestamp: Type.String({ minLength: 10, maxLength: 40, format: "date-time" }),
+              recordedAt: Type.Optional(Type.String({ minLength: 10, maxLength: 40, format: "date-time" })),
             }), { minItems: 1, maxItems: 200 }),
           }),
         },

@@ -104,7 +104,7 @@ export class MemoryGatewayBridge {
 
   importConversation(input: {
     sessionId: string
-    messages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>
+    messages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: string; recordedAt?: string }>
   }): Promise<{ sessionId: string; messagesImported: number }> {
     return this.request('/v1/memory/conversation/import', {
       method: 'POST',

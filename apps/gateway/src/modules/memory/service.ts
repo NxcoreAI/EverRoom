@@ -16,6 +16,55 @@ import { MemoryGatewayError } from "./errors.js";
 /** UI 浏览场景的超时：比 agent 注入流程（3s）宽松，但仍在交互可接受范围。 */
 const BROWSE_TIMEOUT_MS = 10_000;
 
+/** MemoryCore `/v3/conversation/add` 的真实请求约束。 */
+const CONVERSATION_IMPORT_MAX_MESSAGES = 100;
+const CONVERSATION_IMPORT_MAX_CONTENT_LENGTH = 8_192;
+
+interface HistoricalConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+  recordedAt?: string;
+}
+
+function splitConversationContent(content: string): string[] {
+  const chunks: string[] = [];
+  for (let offset = 0; offset < content.length;) {
+    let end = Math.min(offset + CONVERSATION_IMPORT_MAX_CONTENT_LENGTH, content.length);
+    // 不在 UTF-16 surrogate pair 中间切断；同时仍满足 MemoryCore 的 string.length 上限。
+    if (end < content.length && end > offset && /[\uD800-\uDBFF]/u.test(content[end - 1]!)) end -= 1;
+    chunks.push(content.slice(offset, end));
+    offset = end;
+  }
+  return chunks;
+}
+
+/**
+ * 历史会话导入规范化：限制单条长度，并为每个分块生成严格单调的 recorded_at。
+ * timestamp 保留消息实际发生时间；recorded_at 只负责稳定恢复历史顺序。
+ */
+function normalizeHistoricalConversationMessages(
+  messages: HistoricalConversationMessage[],
+): HistoricalConversationMessage[] {
+  const normalized: HistoricalConversationMessage[] = [];
+  let previousRecordedAtMs = -1;
+  for (const message of messages) {
+    const candidateMs = Date.parse(message.recordedAt ?? message.timestamp);
+    if (!Number.isFinite(candidateMs)) throw new Error("invalid_conversation_message_timestamp");
+    for (const content of splitConversationContent(message.content)) {
+      const recordedAtMs = Math.max(candidateMs, previousRecordedAtMs + 1);
+      previousRecordedAtMs = recordedAtMs;
+      normalized.push({
+        role: message.role,
+        content,
+        timestamp: message.timestamp,
+        recordedAt: new Date(recordedAtMs).toISOString(),
+      });
+    }
+  }
+  return normalized;
+}
+
 /** 渲染层 DTO：L1 原子记忆。 */
 export interface MemoryAtomicDto {
   id: string;
@@ -510,26 +559,27 @@ export class MemoryService {
 
   async importConversation(input: {
     sessionId: string;
-    messages: Array<{ role: "user" | "assistant"; content: string; timestamp: string }>;
+    messages: HistoricalConversationMessage[];
   }): Promise<{ sessionId: string; messagesImported: number }> {
-    const client = this.require();
-    await this.call(() => client.deleteConversation({ sessionIds: [input.sessionId] }));
-    await this.call(() => client.addConversation(input.sessionId, input.messages));
-    return { sessionId: input.sessionId, messagesImported: input.messages.length };
+    return this.replaceConversationBatches(input);
   }
 
   async replaceConversationBatches(input: {
     sessionId: string;
-    messages: Array<{ role: "user" | "assistant"; content: string; timestamp: string }>;
+    messages: HistoricalConversationMessage[];
     batchSize?: number;
   }): Promise<{ sessionId: string; messagesImported: number }> {
     const client = this.require();
-    const batchSize = Math.min(Math.max(input.batchSize ?? 200, 1), 200);
+    const messages = normalizeHistoricalConversationMessages(input.messages);
+    const batchSize = Math.min(
+      Math.max(input.batchSize ?? CONVERSATION_IMPORT_MAX_MESSAGES, 1),
+      CONVERSATION_IMPORT_MAX_MESSAGES,
+    );
     await this.call(() => client.deleteConversation({ sessionIds: [input.sessionId] }));
-    for (let offset = 0; offset < input.messages.length; offset += batchSize) {
-      await this.call(() => client.addConversation(input.sessionId, input.messages.slice(offset, offset + batchSize)));
+    for (let offset = 0; offset < messages.length; offset += batchSize) {
+      await this.call(() => client.addConversation(input.sessionId, messages.slice(offset, offset + batchSize)));
     }
-    return { sessionId: input.sessionId, messagesImported: input.messages.length };
+    return { sessionId: input.sessionId, messagesImported: messages.length };
   }
 
   async searchConversations(

@@ -48,10 +48,19 @@ describe("MemoryCoreClient", () => {
     });
     const client = new MemoryCoreClient(config);
     await client.addConversation("sess-1", [
-      { role: "user", content: "你好", timestamp: "2026-08-15T00:00:00.000Z" },
+      {
+        role: "user",
+        content: "你好",
+        timestamp: "2026-08-15T00:00:00.000Z",
+        recordedAt: "2026-08-15T00:00:00.001Z",
+      },
     ]);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://127.0.0.1:8420/v3/conversation/add");
+    expect(JSON.parse(String(init.body)).messages[0]).toMatchObject({
+      timestamp: "2026-08-15T00:00:00.000Z",
+      recorded_at: "2026-08-15T00:00:00.001Z",
+    });
     const headers = init.headers as Record<string, string>;
     expect(headers["x-tdai-service-id"]).toBe("everroom");
     expect(headers.authorization).toBe("Bearer test-key");

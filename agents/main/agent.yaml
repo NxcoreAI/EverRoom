@@ -51,6 +51,7 @@ tools:
   - web_search
   - agent_catalog
   - agent_dispatch
+  - agent_conversation_query
   - content_analysis
   - send_notification
   - room_analysis

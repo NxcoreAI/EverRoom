@@ -15,7 +15,6 @@ import {
   type AgentSessionRouteRequest,
 } from '@/components/agent/agentNavigation'
 import { useAgentSession } from '@/components/agent/useAgentSession'
-import { localAgentForImportedConversation } from '@/components/agent/localAgentConversation'
 import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { LocalAgentInstallation } from '../../../shared/local-agents'
 import {
@@ -39,30 +38,6 @@ import {
 
 import './agent/AgentPanel.css'
 import './agent/AgentChat.css'
-
-const MAIN_AGENT: LocalAgentInstallation = {
-  id: 'main',
-  provider: 'custom',
-  displayName: 'Main Agent',
-  executablePath: null,
-  version: null,
-  status: 'verified',
-  callable: true,
-  invocationSupported: true,
-  historyAvailable: false,
-  historyPaths: [],
-  card: {
-    name: 'EverRoom Main Agent',
-    description: 'EverRoom primary Agent',
-    version: 'builtin',
-    supportedInterfaces: [],
-    capabilities: { streaming: true },
-    defaultInputModes: ['text/plain'],
-    defaultOutputModes: ['text/plain'],
-    skills: [],
-  },
-  lastSeenAt: '',
-}
 
 export function AgentPanel({
   pageId,
@@ -108,7 +83,6 @@ export function AgentPanel({
   const [pendingNavigationByRun, setPendingNavigationByRun] = useState<Record<string, AgentNavigationTarget>>({})
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [localAgents, setLocalAgents] = useState<LocalAgentInstallation[]>([])
-  const [selectedLocalAgent, setSelectedLocalAgent] = useState<LocalAgentInstallation | null>(null)
   const [selectedExternalConversation, setSelectedExternalConversation] = useState<ExternalConversationSummary | null>(null)
   const [notificationRunTarget, setNotificationRunTarget] = useState<{ key: string; runId: string } | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -171,14 +145,9 @@ export function AgentPanel({
   }, [focusRequest])
 
   useEffect(() => {
-    const discovery = window.nxcore?.agent.discoverLocalAgents?.()
-    if (!discovery) {
-      setLocalAgents([MAIN_AGENT])
-      return
-    }
-    void discovery
-      .then((agents) => setLocalAgents([MAIN_AGENT, ...agents]))
-      .catch(() => setLocalAgents([MAIN_AGENT]))
+    void window.nxcore?.agent.discoverLocalAgents?.()
+      .then(setLocalAgents)
+      .catch(() => setLocalAgents([]))
   }, [])
 
   useEffect(() => {
@@ -193,20 +162,13 @@ export function AgentPanel({
       setComposerResetKey((current) => current + 1)
     }
     previousSessionIdRef.current = session.sessionId
+    setSelectedExternalConversation(null)
     setPendingNavigationByRun({})
   }, [onClearRoomCitations, roomCitations.length, session.sessionId])
 
-  useEffect(() => {
-    const activeAgentId = session.currentSession?.activeAgentId ?? 'main'
-    setSelectedLocalAgent(localAgents.find((agent) => agent.id === activeAgentId) ?? MAIN_AGENT)
-  }, [localAgents, session.currentSession?.activeAgentId])
-
   const selectExternalConversation = useCallback((conversation: ExternalConversationSummary | null) => {
     setSelectedExternalConversation(conversation)
-    if (!conversation || (conversation.provider !== 'codex' && conversation.provider !== 'claude' && conversation.provider !== 'openclaw')) return
-    const matchingAgent = localAgentForImportedConversation(localAgents, conversation)
-    if (matchingAgent) setSelectedLocalAgent(matchingAgent)
-  }, [localAgents])
+  }, [])
 
 
   useEffect(() => {
@@ -366,8 +328,6 @@ export function AgentPanel({
     setSubmitting(true)
     try {
       const externalConversation = selectedExternalConversation
-      const externalSession = externalConversation ? await session.createSession() : null
-      if (externalSession && externalConversation) await session.renameSession(externalSession.id, externalConversation.title)
       const activeDocumentContext = await prepareActiveDocumentRun(submittedPrompt)
       let attachments = undefined
       if (files.length > 0) {
@@ -385,8 +345,7 @@ export function AgentPanel({
           status: 'processing' as const,
         }))
       }
-      const targetAgentId = selectedLocalAgent?.id !== 'main' ? selectedLocalAgent?.id : undefined
-      if (targetAgentId || externalConversation) {
+      if (externalConversation) {
         await session.sendPrompt(
           submittedPrompt || '请分析我上传的文件。',
           submittedContext,
@@ -394,7 +353,7 @@ export function AgentPanel({
           activeDocumentContext,
           replaceRunId,
           attachments,
-          targetAgentId,
+          undefined,
           externalConversation?.id,
         )
       } else {
@@ -477,15 +436,12 @@ export function AgentPanel({
       contextItems={citationItems}
       hasSelectedText={roomCitations.length > 0}
       resetKey={composerResetKey}
-      localAgents={localAgents}
-      selectedAgent={selectedLocalAgent}
       selectedExternalConversation={selectedExternalConversation}
       value={draft}
       active={Boolean(session.activeRunId)}
       loading={session.loading || submitting}
       available={agentAvailable}
       onChange={setDraft}
-      onSelectAgent={(agent) => setSelectedLocalAgent(agent ?? MAIN_AGENT)}
       onSelectExternalConversation={selectExternalConversation}
       onClearContext={onClearRoomCitations}
       onRemoveContext={onRemoveRoomCitation}

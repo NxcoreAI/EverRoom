@@ -1267,6 +1267,8 @@
 .agent-picker-icon-button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #69717d; cursor: pointer; }
 .agent-picker-icon-button:hover, .agent-picker-icon-button:focus-visible { outline: 0; background: #f0f2f4; color: #242a32; }
 .agent-picker-icon-button svg { width: 15px; height: 15px; }
+.agent-picker-header-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; background: #eef4ff; color: #4d6faf; }
+.agent-picker-header-icon svg { width: 14px; height: 14px; }
 .agent-external-search { display: flex; align-items: center; min-height: 38px; gap: 7px; margin: 7px 8px 6px; padding: 0 9px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fafbfc; }
 .agent-external-search:focus-within { border-color: #bcc3cc; background: #fff; box-shadow: 0 0 0 2px rgba(71, 84, 103, .08); }
 .agent-external-search svg { width: 14px; height: 14px; flex: 0 0 auto; color: #818995; }
@@ -1336,27 +1338,6 @@
 }
 
 .agent-mention-icon svg { width: 14px; height: 14px; }
-
-.agent-current-agent {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: fit-content;
-  max-width: 100%;
-  min-height: 20px;
-  gap: 5px;
-  color: #657080;
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 20px;
-}
-
-.agent-current-agent > span { display: inline-flex; min-width: 0; align-items: center; gap: 5px; }
-.agent-current-agent > span > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-current-agent > span > svg { width: 12px; height: 12px; flex: 0 0 12px; color: #7b8daf; }
-.agent-current-agent button { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; background: transparent; color: #929aa6; cursor: pointer; }
-.agent-current-agent button:hover { color: #3f4b5d; }
-.agent-current-agent button svg { width: 12px; height: 12px; }
 
 .agent-prompt:focus-within {
   border-color: #e1e5eb;
