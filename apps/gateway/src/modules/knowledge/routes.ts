@@ -940,6 +940,45 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
       },
     );
 
+    app.post(
+      "/v1/knowledge/room-proposals",
+      {
+        schema: {
+          tags: ["knowledge"],
+          body: Type.Object({
+            description: Type.String({ minLength: 0, maxLength: 2_000 }),
+            fileEntryIds: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { maxItems: 30 }),
+          }),
+          response: {
+            200: Type.Object({
+              items: Type.Array(Type.Object({
+                entityId: Type.Union([Type.String(), Type.Null()]),
+                anchorName: Type.String(),
+                name: Type.String(),
+                kind: Type.String(),
+                description: Type.String(),
+                reason: Type.String(),
+                sourceNames: Type.Array(Type.String()),
+                fileCount: Type.Integer(),
+                evidenceScore: Type.Union([Type.Number(), Type.Null()]),
+                sourceCount: Type.Union([Type.Integer(), Type.Null()]),
+              })),
+            }),
+            400: Type.Object({ error: Type.String() }),
+            503: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = await service.proposeRooms(request.body);
+        if (!result.ok) {
+          const status = result.error === "llm_not_configured" ? 503 : 400;
+          return reply.code(status).send(errorOf(result.error));
+        }
+        return { items: result.items };
+      },
+    );
+
     app.post("/v1/knowledge/entities/:id/suppress", { schema: { tags: ["knowledge"], params: EntityIdParams } }, async (request, reply) => {
       const result = service.suppressEntity(request.params.id);
       if (!result.ok) return reply.code(result.error === "entity_not_found" ? 404 : 400).send(errorOf(result.error));
