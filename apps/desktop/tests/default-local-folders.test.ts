@@ -227,7 +227,7 @@ describe('default local folders', () => {
     }
   })
 
-  it('removes an existing ordinary-file projection when its directory becomes a special app workspace', async () => {
+  it('marks an existing ordinary-file projection missing when its directory becomes a special app workspace', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'everroom-special-folder-cleanup-'))
     temporaryDirectories.push(fixtureRoot)
     const documents = join(fixtureRoot, 'Documents')
@@ -235,7 +235,7 @@ describe('default local folders', () => {
     await mkdir(vault, { recursive: true })
     await writeFile(join(vault, 'brief.md'), '# Brief')
     const excluded = new Set<string>()
-    const deleteFile = vi.fn(async () => ({ deleted: true }))
+    const markLocalFileMissing = vi.fn(async () => ({ updated: true }))
     const importLocalFile = vi.fn(async () => ({
       fileEntryId: 'file-vault-brief', fileVersionId: 'version-vault-brief', jobId: 'job-1',
       contentHash: 'a'.repeat(64), blobDeduped: false, versionDeduped: false,
@@ -244,7 +244,7 @@ describe('default local folders', () => {
     const service = new LocalDataService(
       join(fixtureRoot, 'data'),
       new ConnectorRegistry().register(new LocalFolderConnector(extensions, (path) => excluded.has(vault) && (path === vault || path.startsWith(`${vault}/`)))),
-      { capabilities: async () => ({ items: [] }), importLocalFile, importConnectorFile: vi.fn(), delete: deleteFile },
+      { capabilities: async () => ({ items: [] }), importLocalFile, importConnectorFile: vi.fn(), markLocalFileMissing },
       extensions,
     )
     await service.initialize()
@@ -259,7 +259,9 @@ describe('default local folders', () => {
       await service.rescanLocalFolders()
 
       expect(service.listFiles(service.listSources()[0]!.id)[0]).toMatchObject({ relativePath: 'Product Vault/brief.md', exists: false })
-      expect(deleteFile).toHaveBeenCalledWith('file-vault-brief')
+      expect(markLocalFileMissing).toHaveBeenCalledWith(expect.objectContaining({
+        localSourceId: service.listSources()[0]!.id,
+      }))
     } finally {
       await service.shutdown()
     }

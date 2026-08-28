@@ -40,6 +40,8 @@ export interface LocalFileExportTarget {
   capabilities(): Promise<{ items: FileFormatCapabilityDto[] }>
   importLocalFile(input: {
     filePath: string
+    contentHash: string
+    byteSize: number
     sourceKey: string
     originalName: string
     localSourceId: string
@@ -47,6 +49,7 @@ export interface LocalFileExportTarget {
     relativePath: string
     sourceModifiedAt: string
   }): Promise<FileImportAcceptedDto>
+  markLocalFileMissing?(input: { localSourceId: string; localItemId: string }): Promise<unknown>
   importConnectorFile(input: {
     filePath: string
     sourceKey: string
@@ -385,6 +388,19 @@ export class LocalDataService {
       UPDATE source_exports SET status = 'pending', updated_at = ? WHERE status = 'exporting'
     `).run(recoveredAt)
     if (this.fileExports) {
+      // Refresh all existing local projections so older installs replace
+      // object-store mirrors with direct paths after upgrading.
+      this.database.prepare(`
+        UPDATE source_exports SET status = 'pending', updated_at = ?
+        WHERE source_version_id IN (
+          SELECT source_versions.id
+          FROM source_versions
+          JOIN source_items ON source_items.id = source_versions.source_item_id
+          JOIN data_sources ON data_sources.id = source_items.data_source_id
+          WHERE data_sources.kind = 'local-folder' AND source_items.state = 'present'
+            AND source_versions.import_policy IN ('normal', 'approved')
+        )
+      `).run(recoveredAt)
       this.database.prepare(`
         INSERT OR IGNORE INTO source_exports (source_version_id, status, updated_at)
         SELECT source_versions.id, 'pending', ?
@@ -411,6 +427,16 @@ export class LocalDataService {
             (version.kind === 'github' && !version.remote_id.startsWith('repo:issue:')))
         if (eligible) backfill.run(version.id, recoveredAt)
       }
+      const missingLocalItems = this.database.prepare(`
+        SELECT source_items.data_source_id, source_items.id
+        FROM source_items
+        JOIN data_sources ON data_sources.id = source_items.data_source_id
+        WHERE data_sources.kind = 'local-folder' AND source_items.state = 'missing'
+      `).all() as unknown as Array<{ data_source_id: string; id: string }>
+      await Promise.allSettled(missingLocalItems.map((item) => this.fileExports!.markLocalFileMissing?.({
+        localSourceId: item.data_source_id,
+        localItemId: item.id,
+      })))
     }
 
     const connectedSources = this.database.prepare(`
@@ -1052,6 +1078,7 @@ export class LocalDataService {
             if (moved) {
               const status = basename(existingItem.relative_path) === basename(item.path) ? 'moved' : 'renamed'
               this.recordItemChange(existingItem, runId, item, existingItem.content_hash, status)
+              this.requeueLatestExport(existingItem.id)
               counts.moved += 1
             } else {
               this.markItemSeen(existingItem.id, item, existingItem.content_hash)
@@ -1123,7 +1150,10 @@ export class LocalDataService {
           WHERE id = ?
         `)
         const changedAt = new Date().toISOString()
-        for (const item of missingItems) markMissing.run(runId, changedAt, item.id)
+        for (const item of missingItems) {
+          markMissing.run(runId, changedAt, item.id)
+          await this.fileExports?.markLocalFileMissing?.({ localSourceId: id, localItemId: item.id }).catch(() => undefined)
+        }
         counts.removed = missingItems.length
       }
       if (source.kind === 'local-folder' && connector.isExcludedPath) {
@@ -1258,7 +1288,7 @@ export class LocalDataService {
   }
 
   private async cleanupExcludedExports(itemIds: string[]): Promise<void> {
-    if (!this.fileExports?.delete || itemIds.length === 0) return
+    if (!this.fileExports?.markLocalFileMissing || itemIds.length === 0) return
     const findExports = this.database.prepare(`
       SELECT DISTINCT source_exports.file_entry_id AS file_entry_id
       FROM source_exports
@@ -1275,7 +1305,14 @@ export class LocalDataService {
     }
     for (const fileId of fileIds) {
       try {
-        await this.fileExports.delete(fileId)
+        const item = this.database.prepare(`
+          SELECT source_items.data_source_id, source_items.id
+          FROM source_exports
+          JOIN source_versions ON source_versions.id = source_exports.source_version_id
+          JOIN source_items ON source_items.id = source_versions.source_item_id
+          WHERE source_exports.file_entry_id = ? LIMIT 1
+        `).get(fileId) as unknown as { data_source_id: string; id: string } | undefined
+        if (item) await this.fileExports.markLocalFileMissing?.({ localSourceId: item.data_source_id, localItemId: item.id })
         clearExport.run(new Date().toISOString(), fileId)
       } catch {
         // Keep the binding so a later exclusion rescan can retry cleanup.
@@ -1305,6 +1342,16 @@ export class LocalDataService {
     } finally {
       await unlink(temporaryPath).catch(() => undefined)
     }
+  }
+
+  private requeueLatestExport(itemId: string): void {
+    this.database.prepare(`
+      UPDATE source_exports SET status = 'pending', updated_at = ?
+      WHERE source_version_id = (
+        SELECT id FROM source_versions WHERE source_item_id = ?
+        ORDER BY captured_at DESC, rowid DESC LIMIT 1
+      )
+    `).run(new Date().toISOString(), itemId)
   }
 
   private hashStoredObject(path: string): Promise<string> {
@@ -1640,7 +1687,11 @@ export class LocalDataService {
       const result = row.kind === 'local-folder'
         ? await this.fileExports!.importLocalFile({
             filePath: connector.resolveLocalPath!(this.toConnection(row), row.relative_path),
-            sourceKey: `local:${row.id}:${row.remote_id}`,
+            contentHash: row.object_hash,
+            byteSize: Number((this.database.prepare(
+              'SELECT size FROM source_versions WHERE id = ?',
+            ).get(row.source_version_id) as unknown as { size: number }).size),
+            sourceKey: `local:${row.id}:${row.local_item_id}`,
             originalName: basename(row.relative_path),
             localSourceId: row.id,
             localItemId: row.local_item_id,

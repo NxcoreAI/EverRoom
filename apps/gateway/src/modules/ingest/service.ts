@@ -323,6 +323,9 @@ export class IngestService {
               "path_unreadable",
             );
           }
+          if (contentHashOf(buffer) !== context.version.contentHash) {
+            throw new IngestError("本地文件在解析前发生变化，请等待重新扫描", "path_unreadable");
+          }
           return this.processBytes(input, {
             sourceKind: "file",
             sourceId,

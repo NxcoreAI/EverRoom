@@ -1,4 +1,4 @@
-import type { ExternalConversationSummary, LocalAgentInstallation } from '@nxcore/agent-contract'
+import type { ExternalConversationSummary } from '@nxcore/agent-contract'
 import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -32,30 +32,6 @@ const conversation: ExternalConversationSummary = {
   available: true,
 }
 
-const localAgent = {
-  id: 'claude',
-  provider: 'claude',
-  displayName: 'Claude Code',
-  executablePath: '/usr/local/bin/claude',
-  version: '1.0.0',
-  status: 'verified',
-  callable: true,
-  invocationSupported: true,
-  historyAvailable: true,
-  historyPaths: [],
-  card: {
-    name: 'Claude Code',
-    description: 'Local agent',
-    version: '1.0.0',
-    supportedInterfaces: [],
-    capabilities: {},
-    defaultInputModes: ['text'],
-    defaultOutputModes: ['text'],
-    skills: [],
-  },
-  lastSeenAt: '2026-08-20T00:00:00.000Z',
-} satisfies LocalAgentInstallation
-
 function renderComposer(overrides: Partial<React.ComponentProps<typeof AgentComposer>> = {}) {
   const props: React.ComponentProps<typeof AgentComposer> = {
     active: false,
@@ -64,15 +40,12 @@ function renderComposer(overrides: Partial<React.ComponentProps<typeof AgentComp
     contextItems: [],
     hasSelectedText: false,
     loading: false,
-    localAgents: [],
     resetKey: 0,
-    selectedAgent: null,
     selectedExternalConversation: null,
     value: '',
     onChange: vi.fn(),
     onClearContext: vi.fn(),
     onRemoveContext: vi.fn(),
-    onSelectAgent: vi.fn(),
     onSelectExternalConversation: vi.fn(),
     onStop: vi.fn(),
     onSubmit: vi.fn(),
@@ -123,7 +96,7 @@ describe('AgentComposer external conversation command', () => {
     expect(onChange).not.toHaveBeenCalled()
 
     act(() => {
-      renderer.root.findByProps({ placeholder: '搜索外部会话' }).props.onKeyDown({
+      renderer.root.findByProps({ placeholder: '搜索之前的 Agent 会话' }).props.onKeyDown({
         key: 'Escape',
         preventDefault: vi.fn(),
         nativeEvent: {},
@@ -166,28 +139,29 @@ describe('AgentComposer external conversation command', () => {
     expect(conversations).not.toHaveBeenCalled()
   })
 
-  it('keeps the existing at-mention picker independent from slash commands', () => {
-    const onSelectAgent = vi.fn()
-    const { renderer } = renderComposer({ value: '@cla', localAgents: [localAgent], onSelectAgent })
+  it('opens previous Agent chats from @ and keeps the reference as context', async () => {
+    const onChange = vi.fn()
+    const onSelectExternalConversation = vi.fn()
+    const { renderer } = renderComposer({ value: '@claude', onChange, onSelectExternalConversation })
 
-    expect(renderer.root.findAllByProps({ className: 'agent-command-picker' })).toHaveLength(0)
-    expect(renderer.root.findByProps({ 'aria-label': '选择本机 Agent' })).toBeTruthy()
+    await act(async () => {
+      vi.runOnlyPendingTimers()
+      await Promise.resolve()
+    })
+    expect(conversations).toHaveBeenCalledWith({ query: 'claude', cursor: undefined, limit: 20 })
+    expect(renderer.root.findByProps({ 'aria-label': '引用 Agent 会话' })).toBeTruthy()
 
-    const textarea = renderer.root.findByProps({ 'aria-label': '桌面 AI 工作台输入框' })
-    act(() => textarea.props.onKeyDown({
-      key: 'Enter',
-      shiftKey: false,
-      preventDefault: vi.fn(),
-      nativeEvent: { isComposing: false, keyCode: 13 },
-    }))
-    expect(onSelectAgent).toHaveBeenCalledWith(localAgent)
+    act(() => renderer.root.findByProps({ 'data-active': 'true' }).props.onClick())
+    expect(onChange).toHaveBeenCalledWith('')
+    expect(onSelectExternalConversation).toHaveBeenCalledWith(conversation)
   })
 
-  it('renders the current Agent as an unframed identity line', () => {
-    const { renderer } = renderComposer({ selectedAgent: localAgent })
+  it('labels a selected chat as a reference instead of an active Agent', () => {
+    const { renderer } = renderComposer({ selectedExternalConversation: conversation })
 
-    expect(renderer.root.findAllByProps({ className: 'agent-current-agent' })).toHaveLength(1)
-    expect(renderer.root.findAllByProps({ className: 'agent-mention-selection' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ className: 'agent-current-agent' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ className: 'agent-external-selection' }).findAllByType('span')[0]?.children)
+      .toContain('已引用会话')
   })
 
   it('renders command surfaces above the prompt without changing the prompt layout', () => {
@@ -222,7 +196,7 @@ describe('AgentComposer external conversation command', () => {
       vi.runOnlyPendingTimers()
       await Promise.resolve()
     })
-    const search = renderer.root.findByProps({ placeholder: '搜索外部会话' })
+    const search = renderer.root.findByProps({ placeholder: '搜索之前的 Agent 会话' })
     act(() => search.props.onChange({ target: { value: '新' } }))
     await act(async () => {
       vi.advanceTimersByTime(180)

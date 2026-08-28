@@ -288,6 +288,13 @@
       "when": 1787835500000,
       "tag": "0041_data_migrations",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1787921039216,
+      "tag": "0042_friendly_lake",
+      "breakpoints": true
     }
   ]
 }

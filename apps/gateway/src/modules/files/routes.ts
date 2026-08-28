@@ -187,6 +187,70 @@ export function filesRoutes(
     );
 
     app.post(
+      "/v1/local-file-references",
+      {
+        schema: {
+          tags: ["files"],
+          body: Type.Object({
+            sourceKey: Type.String({ minLength: 1 }),
+            originalName: Type.String({ minLength: 1 }),
+            sourcePath: Type.String({ minLength: 1 }),
+            contentHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+            byteSize: Type.Integer({ minimum: 1 }),
+            localSourceId: Type.String({ minLength: 1 }),
+            localItemId: Type.String({ minLength: 1 }),
+            relativePath: Type.String({ minLength: 1 }),
+            sourceModifiedAt: Type.String(),
+          }),
+          response: {
+            202: Type.Object({
+              fileEntryId: Type.String(), fileVersionId: Type.String(), jobId: Type.String(),
+              contentHash: Type.String(), blobDeduped: Type.Boolean(), versionDeduped: Type.Boolean(),
+            }),
+            400: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        try {
+          const result = await service.importLocalFileReference({
+            sourceKind: "local-folder",
+            sourceKey: request.body.sourceKey,
+            originalName: request.body.originalName,
+            sourcePath: request.body.sourcePath,
+            contentHash: request.body.contentHash,
+            byteSize: request.body.byteSize,
+            localSourceId: request.body.localSourceId,
+            localItemId: request.body.localItemId,
+            relativePath: request.body.relativePath,
+            sourceModifiedAt: new Date(request.body.sourceModifiedAt),
+          });
+          return reply.code(202).send(result);
+        } catch (error) {
+          return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    );
+
+    app.patch(
+      "/v1/local-file-references/status",
+      {
+        schema: {
+          tags: ["files"],
+          body: Type.Object({
+            localSourceId: Type.String({ minLength: 1 }),
+            localItemId: Type.String({ minLength: 1 }),
+            status: Type.Literal("missing"),
+          }),
+          response: { 200: Type.Object({ updated: Type.Boolean() }) },
+        },
+      },
+      async (request) => ({
+        updated: await service.markLocalFileMissing(request.body.localSourceId, request.body.localItemId),
+      }),
+    );
+
+    app.post(
       "/v1/file-imports",
       {
         bodyLimit: 32 * 1024 * 1024,
@@ -220,7 +284,7 @@ export function filesRoutes(
         } catch {
           return reply.code(400).send(errorOf("metadata_invalid"));
         }
-        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "local-folder" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "migration" && metadata.sourceKind !== "web-clipper") {
+        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "migration" && metadata.sourceKind !== "web-clipper") {
           return reply.code(400).send(errorOf("source_kind_invalid"));
         }
         if (typeof metadata.sourceKey !== "string" || !metadata.sourceKey.trim()) {

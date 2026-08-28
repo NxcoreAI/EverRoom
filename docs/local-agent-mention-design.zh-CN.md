@@ -1,4 +1,4 @@
-# EverRoom 本机 Agent 发现、`@agent` 调度与上下文注入简案
+# EverRoom 本机 Agent 发现、`@` 历史会话引用与上下文查询简案
 
 > 状态：Proposal
 > 日期：2026-08-25
@@ -6,8 +6,8 @@
 
 ## 1. 结论
 
-1. Codex、Claude Code、OpenCode 不应作为新的聊天后端直接接管 EverRoom 会话，而应作为 `external_local` 类型的子 Agent 接入现有 `SubagentOrchestrator`。
-2. `@codex 帮我检查这个仓库` 是用户显式指定目标 Agent 的快捷调度语法。Renderer 把 mention 转成结构化 `targetAgentId`，Gateway 校验后创建一次 `SubagentInvocation`；不依赖主模型理解 `@codex`。
+1. Codex、Claude Code、OpenCode 不应作为新的聊天后端直接接管 EverRoom 会话。用户始终与 Main Agent 对话；本机 Agent 的历史会话作为只读上下文子 Agent 被 Main 查询。
+2. Composer 行首输入 `@` 用于搜索并引用一段已导入的 Agent 历史会话。Renderer 提交结构化 `referencedConversationId`；它不修改 `targetAgentId`、不切换 `activeAgentId`，也不 resume 被引用 Agent 的原生线程。
 3. 上下文按“最小必要、结构化快照、显式授权”注入。默认只给任务正文、当前工作区、最近对话摘要和用户当前选中的文档/附件，不复制全部主会话，也不自动注入其他已导入聊天。
 4. 本机聊天记录可以自动发现和建立只读索引，但“导入用于浏览”和“授权给某次调用”是两件事。只有当前映射会话或用户明确选择的历史才进入上下文。
 
@@ -70,47 +70,35 @@ interface LocalAgentAdapter {
 
 不要在首版支持用户填写任意“命令模板 + 正则解析输出”。这种方式无法可靠处理转义、流式事件、取消、审批和历史版本差异。
 
-## 4. `@agent` 的调用语义
+## 4. `@` 的历史引用语义
 
 ### 4.1 路由规则
 
-- Composer 输入开头的 `@` 触发 Agent Picker；选中后生成不可伪造的 mention chip，并保存稳定 `agentId`。
-- 请求协议新增 `targetAgentId?: string`；显示文本仍可保留 `@codex`，但服务端只信结构化字段。
-- 首版一条消息只允许一个目标 Agent。正文中的普通 `@名字` 不参与路由。
-- 没有 `targetAgentId` 时仍走 `main`；有目标时不先调用主模型，而是直接由 Gateway 调度目标子 Agent。
+- Composer 输入开头的 `@` 触发历史会话 Picker；选中后生成“已引用会话”上下文条，并保存稳定 `referencedConversationId`。
+- 每条消息最多引用一段历史会话；正文中的普通 `@名字` 不参与路由。
+- 无论是否存在引用，请求都发送给 `main`。Gateway 仅把引用 ID 放入当前 Main run 的受控上下文，不直接注入整段历史。
+- Main 在需要理解“这版”“之前的实现”等指代时调用 `agent_conversation_query`。该工具只能查询本轮引用的会话，不能自行选择其他 thread；查询结果返回 Main，由 Main 直接回复用户。
 
 ```text
-用户 -> @codex + 任务
-     -> Gateway 创建父 Run
-     -> SubagentOrchestrator.dispatch(source=user_mention)
-     -> LocalAgentRuntime
-     -> Codex
-     -> 标准 RuntimeEvent
-     -> EverRoom 消息（带 Codex 标识）
+用户 -> @历史会话 + 任务
+     -> Gateway 创建 Main Run（referencedConversationId）
+     -> Main 判断是否需要补齐上下文
+     -> agent_conversation_query（只读历史子 Agent）
+     -> 历史片段返回 Main
+     -> Main 回复用户
 ```
 
-因此，`@codex` **是 subagent 调用**，但主 Agent 不需要充当中转模型；Gateway 是确定性的父调度器。这样可以避免主模型改写任务、选错 Agent 或重复消耗一次模型调用。
+因此，被 `@` 的对象是供 Main 调用的上下文子 Agent，而不是新的对话对象。界面不显示“当前 Agent”切换状态，历史会话也不会直接产生面向用户的回答。
 
-如果主 Agent 在普通对话中主动委派，则继续使用现有 `agent_catalog` / `agent_dispatch`，两种入口最终汇合到同一个 Orchestrator。建议把 Invocation source 扩展为：
-
-```ts
-type SubagentInvocationSource =
-  | "primary_agent"
-  | "user_mention"
-  | "scheduler"
-  | "internal_workflow"
-```
+如果主 Agent 在普通对话中主动委派独立任务，仍使用现有 `agent_catalog` / `agent_dispatch`。`@` 历史查询是另一条只读上下文路径，不创建外部本机 Agent run。
 
 ### 4.2 会话连续性
 
-每次 `@agent` 都创建新的 EverRoom Invocation，但可以复用外部 Agent 线程：
+每次引用只作用于当前 Main run：
 
-- 当前 EverRoom 会话第一次 `@codex`：默认创建新的 Codex thread。
-- 同一 EverRoom 会话再次 `@codex`：默认 resume 已映射的 thread。
-- 用户可选择“新线程”，强制清除映射。
-- 导入的外部历史只有在用户执行“在 EverRoom 中继续”后才建立映射。
-
-映射键为 `(everroomSessionId, localAgentInstallationId, profileId)`，值为 `externalThreadId`。Invocation 仍然保留独立的输入、输出和审计记录，不能只依赖 provider 的线程文件。
+- `referencedConversationId` 不写入会话的 `activeAgentId`，不改变标题，也不建立原生 thread 映射。
+- 同一个 EverRoom 会话可在不同轮次引用不同历史；每轮工具只能访问该轮显式选择的 thread。
+- 引用条在消息发送或切换 EverRoom 会话后清除，避免后续消息意外继承。
 
 ## 5. 上下文如何自动注入
 
@@ -181,44 +169,41 @@ external_agent_messages
 5. 初次扫描只导入元数据和摘要，用户打开时再分页读取正文，避免启动时读取大量私密内容。
 6. 设置中提供按 Provider 的导入开关、目录说明、最近同步时间和“清除本地索引”。
 
-导入的历史可以用于浏览、搜索和显式继续，但不会自动混入每一次 `@agent` 的 Prompt。
+导入的历史可以用于浏览、搜索和显式引用，但不会自动混入每一次 Main Agent 的 Prompt。
 
 ## 7. 对现有实现的最小改造
 
 当前已有 `SubagentRegistry`、`SubagentOrchestrator`、`SubagentRuntimeManager` 和 `agent_dispatch`，可以沿用。最小增量为：
 
-1. `agent-contract`：增加 `user_mention`、Local Agent DTO、`ContextBundle` 和外部线程 DTO。
-2. Gateway：增加 `LocalAgentRuntime`，让现有 Orchestrator 可调度内部 Pi Revision 或外部本机安装。
-3. Orchestrator：持久化 `contextSnapshot/contextDigest`、`externalThreadRef` 和 `profileId`。
-4. Desktop Main / Agent Host：增加 discovery、process supervisor、provider adapters 和 history importers。
-5. Renderer：增加 mention picker/chip、Agent 状态、权限 Profile、外部历史列表和“继续此会话”。
-
-现状需要特别补齐的一点：已有设计文档定义了 `ContextGrant`，但当前 `DispatchSubagentInput` 和数据库 `subagent_invocations` 尚未真正持久化它。接入外部本机 Agent 前应先补这一层，否则 Prompt 中的上下文约定无法形成可执行的权限边界。
+1. `agent-contract`：为 run context 增加 `referencedConversationId`。
+2. Gateway：增加 `agent_conversation_query`，并把引用 ID 限定在当前 Main runtime run。
+3. Data Migration：提供不绑定、不改标题的只读历史检索入口。
+4. Renderer：把 `@` Picker 改为历史会话搜索，并用“已引用会话”上下文条替代“当前 Agent”身份条。
+5. 保留 `/continue` 作为兼容入口，但其结果也按一次性引用处理。
 
 ## 8. MVP 范围与验收
 
 建议分两步：
 
-**MVP 1：可发现、可 `@`、可审计**
+**MVP 1：可发现、可 `@` 引用、可审计**
 
-- 先实现 Codex Adapter，并预留 Claude Code/OpenCode Adapter 接口。
-- 自动发现安装，用户确认后启用。
-- 支持 `@codex` 新建/续接 thread、流式输出、取消、超时和只读 Profile。
-- 注入任务、最近对话、active document 和 workspace。
-- Invocation 中可查看实际注入了哪些上下文。
+- 自动发现并导入 Codex、Claude Code、OpenCode 的历史会话。
+- 支持 `@` 搜索历史、一次性引用和引用移除。
+- Main 可按当前任务通过 `agent_conversation_query` 查询被引用会话。
+- 被引用 Agent 不直接输出消息，也不改变当前 Main 会话身份。
 
 **MVP 2：历史与自定义**
 
 - 增加三类 Provider 的增量历史索引。
-- 增加“导入后继续”和 thread 映射。
+- 增加历史增量同步和更细粒度的消息区间引用。
 - 发布 `everroom-local-agent/1` Bridge 协议与示例 Adapter。
 - 增加写入审批、崩溃恢复和 Agent Host 隔离。
 
 验收标准：
 
-- 安装/卸载 Agent 后重新扫描结果正确，未启用的安装不能被调用。
-- `@codex` 必定路由到选中的稳定 ID，正文中的 `@` 不误触发。
-- 同一 EverRoom 会话可续接同一外部 thread，“新线程”不会串历史。
-- Invocation 可复现任务、上下文摘要、权限、Provider 版本和最终结果。
+- `@` 选择后请求仍必定路由到 Main，`activeAgentId` 保持 `main`。
+- Main 的查询工具只能读取本轮显式选择的稳定 thread ID。
+- 同一 EverRoom 会话可逐轮更换引用，历史不会永久绑定或串线。
+- Run 可复现任务、引用 ID、查询和最终结果。
 - 未获授权的 Room、文档、目录及其他外部历史不会进入 Prompt 或可读范围。
 - 导入和清除索引不会修改或删除 Provider 原始聊天记录。

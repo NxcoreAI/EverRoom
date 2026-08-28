@@ -1,0 +1,1 @@
+ALTER TABLE `file_entries` ADD `source_path` text;

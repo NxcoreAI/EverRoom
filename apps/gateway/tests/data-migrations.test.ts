@@ -39,6 +39,20 @@ describe("data migrations", () => {
     await service.finish(first.run.id);
     expect(service.searchConversations("launch", undefined, 20).items[0]).toMatchObject({ title: "Launch notes", messageCount: 2 });
     expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(2);
+    expect(memory.replaceConversationBatches).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [
+        expect.objectContaining({
+          content: "Plan the launch",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          recordedAt: "2026-01-01T00:00:00.000Z",
+        }),
+        expect.objectContaining({
+          content: "Here is the plan",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          recordedAt: "2026-01-01T00:00:01.000Z",
+        }),
+      ],
+    }));
 
     const second = service.begin({ provider: "openclaw", transport: "local-jsonl", stableSourceKey: "fixture", displayName: "OpenClaw" });
     service.appendThreads(second.run.id, [{ stableKey: "agent-a:s1", agentId: "agent-a", externalSessionId: "s1", title: "Launch notes", messages: [
@@ -61,10 +75,32 @@ describe("data migrations", () => {
     await service.finish(started.run.id);
     const thread = service.searchConversations("historic", undefined, 10).items[0]!;
     const context = await service.bindAndBuildContext("native", thread.id, "secret");
-    expect(context).toContain("untrusted reference history");
+    expect(context).toContain("untrusted history");
     expect(context).toContain("historic secret");
     expect(await service.bindAndBuildContext("native", thread.id, "secret")).toBeNull();
     expect(database.sqlite.prepare("SELECT count(*) count FROM agent_messages").get()).toEqual({ count: 0 });
+    database.sqlite.close();
+  });
+
+  it("builds replaceable one-turn Agent chat references without binding or renaming the native session", async () => {
+    const { database, service } = await setup();
+    database.sqlite.prepare("INSERT INTO agent_sessions(id,room_id,page_label,runtime_id,active_agent_id,status,title,created_at,updated_at) VALUES('native',NULL,'Agent','fake','main','idle','Main chat',1,1)").run();
+    const started = service.begin({ provider: "claude", transport: "local-jsonl", stableSourceKey: "claude-home", displayName: "Claude Code" });
+    service.appendThreads(started.run.id, [
+      { stableKey: "first", externalSessionId: "first", title: "Login v1", messages: [
+        { stableKey: "m1", role: "assistant", content: "Built the first login page", occurredAt: "2026-01-01T00:00:00.000Z" },
+      ] },
+      { stableKey: "second", externalSessionId: "second", title: "Login v2", messages: [
+        { stableKey: "m2", role: "assistant", content: "Adjusted the login direction", occurredAt: "2026-01-02T00:00:00.000Z" },
+      ] },
+    ]);
+    await service.finish(started.run.id);
+    const references = service.searchConversations("Login", undefined, 10).items;
+
+    expect(await service.buildReferenceContext(references[1]!.id, "基于这版改")).toContain("referenced_agent_conversation");
+    expect(await service.buildReferenceContext(references[0]!.id, "基于这版改")).toContain("Adjusted the login direction");
+    expect(database.sqlite.prepare("SELECT title FROM agent_sessions WHERE id='native'").get()).toEqual({ title: "Main chat" });
+    expect(database.sqlite.prepare("SELECT count(*) count FROM agent_session_external_threads WHERE session_id='native'").get()).toEqual({ count: 0 });
     database.sqlite.close();
   });
 

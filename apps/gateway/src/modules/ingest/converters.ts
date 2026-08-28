@@ -337,8 +337,7 @@ export function converterOfExtension(
     case "dotm": return docxToMarkdown;
     case "doc":
     case "dot":
-    case "rtf":
-    case "odt": return (buffer, filename = `input.${extension.trim().toLowerCase()}`) => legacyWordToMarkdown(buffer, filename);
+    case "rtf": return (buffer, filename = `input.${extension.trim().toLowerCase()}`) => legacyWordToMarkdown(buffer, filename);
     case "xlsx":
     case "xlsm":
     case "xltx":
