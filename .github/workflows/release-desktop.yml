@@ -121,6 +121,9 @@ jobs:
       - name: Package macOS arm64
         shell: bash
         run: |
+          # osx-sign walks the whole .app with unbounded concurrency; default
+          # 256 fd limit on runners causes EMFILE on the bundled node_modules.
+          ulimit -n 10240
           args=()
           if [[ -n "$CSC_LINK" ]]; then
             args+=(--config.mac.notarize=true --config.mac.hardenedRuntime=true)
