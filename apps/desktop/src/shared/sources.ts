@@ -35,6 +35,7 @@ import type {
   RoomOverviewProjection,
   RoomMergeOperation,
   RoomMergePreview,
+  RoomMail,
   SubagentInvocation,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
@@ -800,6 +801,7 @@ export interface NxcoreDesktopApi {
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
     overview(roomId: string): Promise<RoomOverviewProjection>
     refreshOverview(roomId: string): Promise<RoomOverviewProjection>
+    listMails(roomId: string): Promise<{ items: RoomMail[] }>
     roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
   }
   account: {

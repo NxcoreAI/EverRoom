@@ -12,6 +12,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   connectorCalendarEvents,
+  connectorEmails,
   connectorTodos,
   contextRooms,
   documents,
@@ -63,6 +64,34 @@ function calendarStartAt(markdown: string): string | null {
   const raw = match?.[1]?.trim();
   if (!raw || !Number.isFinite(Date.parse(raw))) return null;
   return new Date(raw).toISOString();
+}
+
+/** 从邮件快照的“发件人：”行解析发件人；解析不到返回 null。 */
+function mailSenderOf(markdown: string): string | null {
+  return markdown.match(/^发件人：[ \t]*(.+)$/m)?.[1]?.trim() ?? null;
+}
+
+/** 从邮件快照的“时间：”行解析发送时间；解析不到返回 null。 */
+function mailSentAtOf(markdown: string): string | null {
+  const raw = markdown.match(/^时间：[ \t]*([^→\n]+?)[ \t]*(?:→|$)/m)?.[1]?.trim();
+  if (!raw || !Number.isFinite(Date.parse(raw))) return null;
+  return new Date(raw).toISOString();
+}
+
+/** 邮件正文摘要：去掉标题与元信息行后取首 200 字（域行 bodyText 无元信息行，同样适用）。 */
+function mailSnippet(body: string): string | null {
+  const stripped = body
+    .replace(/^# .+$/m, "")
+    .replace(/^(?:发件人|收件人|抄送|时间)：.*$/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripped ? stripped.slice(0, 200) : null;
+}
+
+/** 邮件按发送时间倒序（缺时间沉底）：邮箱面板“最新在前”的展示约定。 */
+function sortByMailSentAt<T extends { sentAt: string | null; sourceId: string }>(mails: T[]): T[] {
+  return mails.sort((left, right) =>
+    (right.sentAt ?? "").localeCompare(left.sentAt ?? "") || left.sourceId.localeCompare(right.sourceId));
 }
 
 /** 日历事件按开始时间升序（缺时间沉底，同时间按 sourceId 定序）：投影的截断策略依赖此顺序。 */
@@ -320,6 +349,90 @@ export class RoomOverviewService {
       .filter((todo) => todo.title)
       .sort((left, right) => (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") || left.sourceId.localeCompare(right.sourceId))
       .slice(0, 20);
+  }
+
+  /**
+   * 邮箱面板的连接器邮件清单（全量，sentAt 倒序截 500）：
+   * memberships sourceId 直连 connector_emails 域行（REST 推送路径）；
+   * 域行缺失（nango 拉取路径，connector ref 作 sourceId）回退路由快照解析——
+   * 与 roomCalendarEvents 同一双轨约定。
+   */
+  listRoomMails(roomId: string): Array<{
+    sourceId: string;
+    subject: string;
+    senderName: string | null;
+    senderAddress: string | null;
+    sentAt: string | null;
+    snippet: string | null;
+    hasAttachments: boolean;
+  }> {
+    const resolved = this.requireRoom(roomId);
+    const memberships = this.db.select({
+      sourceId: roomSourceMemberships.sourceId,
+    })
+      .from(roomSourceMemberships)
+      .where(and(
+        eq(roomSourceMemberships.roomId, resolved),
+        eq(roomSourceMemberships.sourceKind, "mail"),
+      ))
+      .all();
+    if (memberships.length === 0) return [];
+    const sourceIds = [...new Set(memberships.map((item) => item.sourceId))];
+    const domainRows = new Map(this.db.select()
+      .from(connectorEmails)
+      .where(and(
+        inArray(connectorEmails.id, sourceIds),
+        isNull(connectorEmails.deletedAt),
+      ))
+      .all()
+      .map((row) => [row.id, row]));
+    const resolvedMails = sourceIds.flatMap((sourceId) => {
+      const row = domainRows.get(sourceId);
+      if (!row) return [];
+      return [{
+        sourceId,
+        subject: row.subject.trim(),
+        senderName: row.senderName,
+        senderAddress: row.senderAddress,
+        sentAt: row.sentAt?.toISOString() ?? null,
+        snippet: mailSnippet(row.bodyText),
+        hasAttachments: row.hasAttachments,
+      }];
+    }).filter((mail) => mail.subject);
+    const missing = sourceIds.filter((id) => !domainRows.has(id));
+    if (missing.length === 0) return sortByMailSentAt(resolvedMails).slice(0, 500);
+    const snapshots = this.db.select({
+      sourceId: routeDecisions.sourceId,
+      sourceTitle: routeDecisions.sourceTitle,
+      sourceMarkdown: routeDecisions.sourceMarkdown,
+    })
+      .from(routeDecisions)
+      .where(and(
+        eq(routeDecisions.sourceKind, "mail"),
+        inArray(routeDecisions.sourceId, missing),
+        isNotNull(routeDecisions.sourceMarkdown),
+      ))
+      .orderBy(desc(routeDecisions.sourceVersion))
+      .all();
+    const latest = new Map<string, (typeof snapshots)[number]>();
+    for (const snapshot of snapshots) {
+      if (!latest.has(snapshot.sourceId)) latest.set(snapshot.sourceId, snapshot);
+    }
+    const fallback = [...latest.values()].flatMap((snapshot) => {
+      const subject = snapshot.sourceTitle?.trim();
+      if (!subject) return [];
+      const markdown = snapshot.sourceMarkdown ?? "";
+      return [{
+        sourceId: snapshot.sourceId,
+        subject,
+        senderName: mailSenderOf(markdown),
+        senderAddress: null,
+        sentAt: mailSentAtOf(markdown),
+        snippet: mailSnippet(markdown),
+        hasAttachments: false,
+      }];
+    });
+    return sortByMailSentAt([...resolvedMails, ...fallback]).slice(0, 500);
   }
 
   private latestSourceUpdate(

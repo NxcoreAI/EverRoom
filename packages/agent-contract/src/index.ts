@@ -495,6 +495,19 @@ export interface RoomOverviewProjection {
   appliedCorrectionIds: string[];
 }
 
+/** Room 邮箱面板的连接器邮件条目（GET /v1/context-rooms/:roomId/mails，sentAt 倒序）。 */
+export interface RoomMail {
+  sourceId: string;
+  subject: string;
+  senderName: string | null;
+  senderAddress: string | null;
+  /** ISO 时间；路由快照回退解析不到时为 null。 */
+  sentAt: string | null;
+  /** 正文首 200 字摘要。 */
+  snippet: string | null;
+  hasAttachments: boolean;
+}
+
 export interface RoomContextCorrection {
   id: string;
   roomId: string;

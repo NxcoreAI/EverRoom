@@ -9,6 +9,7 @@ import { bundledAgentDefinitionsDir } from '../src/config.js'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   connectorCalendarEvents,
+  connectorEmails,
   connectorTodos,
   contextRooms,
   documents as documentsTable,
@@ -1078,5 +1079,111 @@ describe('RoomOverviewService', () => {
       const accepted = validate({ task: input.task, ...input.taskInput })
       expect(accepted, JSON.stringify(validate.errors)).toBe(true)
     }
+  })
+
+  it('lists routed mails from connector_emails domain rows, newest first', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-mail', title: 'Mail Room', data: { id: 'room-mail', title: 'Mail Room' } }],
+      deletedRooms: [],
+    })
+    const syncedAt = new Date('2026-08-20T08:00:00.000Z')
+    const mailRow = (id: string, subject: string, sentAt: Date): typeof connectorEmails.$inferInsert => ({
+      id, ownerId: 'local-user', service: 'gmail', connectionName: 'default',
+      sourceRecordId: `rec-${id}`, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: `hash-${id}`, extensionPayload: null,
+      messageId: `msg-${id}`, threadId: null, senderName: '张三', senderAddress: 'zhang@example.com',
+      recipients: [{ address: 'me@example.com' }], subject, sentAt,
+      bodyText: '第一行正文\n\n第二段', labels: [], hasAttachments: id === 'mail-1',
+    })
+    db.insert(connectorEmails).values([
+      mailRow('mail-1', '发布评审通知', new Date('2026-08-21T02:00:00.000Z')),
+      mailRow('mail-2', '周报', new Date('2026-08-22T02:00:00.000Z')),
+    ]).run()
+    db.insert(roomSourceMemberships).values([
+      { id: 'mail-m-1', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-1', sourceVersion: 1, evidenceGroupKey: 'm1', role: 'primary', sourceTitle: '发布评审通知' },
+      { id: 'mail-m-2', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-2', sourceVersion: 1, evidenceGroupKey: 'm2', role: 'primary', sourceTitle: '周报' },
+    ]).run()
+
+    const mails = new RoomOverviewService(db, service).listRoomMails('room-mail')
+    expect(mails.map((mail) => mail.subject)).toEqual(['周报', '发布评审通知'])
+    expect(mails[1]).toMatchObject({
+      sourceId: 'mail-1',
+      senderName: '张三',
+      senderAddress: 'zhang@example.com',
+      sentAt: '2026-08-21T02:00:00.000Z',
+      snippet: '第一行正文 第二段',
+      hasAttachments: true,
+    })
+  })
+
+  it('falls back to route snapshots for connector-ref mails, parsing sender and time from markdown', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-mail', title: 'Mail Room', data: { id: 'room-mail', title: 'Mail Room' } }],
+      deletedRooms: [],
+    })
+    const refSourceId = 'connector:gmail:abc:mail:msg-9'
+    db.insert(roomSourceMemberships).values([
+      { id: 'mail-ref', roomId: 'room-mail', sourceKind: 'mail', sourceId: refSourceId, sourceVersion: 2, evidenceGroupKey: 'm9', role: 'primary', sourceTitle: '发射窗口确认' },
+    ]).run()
+    db.insert(routeDecisions).values([
+      {
+        id: 'decision-mail-old', sourceKind: 'mail', sourceId: refSourceId, sourceVersion: 1,
+        sourceTitle: '旧主题', sourceMarkdown: '# 旧主题\n\n发件人：旧 <old@example.com>\n\n时间：2026-08-01T01:00:00.000Z\n\n旧正文',
+        confidence: 0.8, status: 'confirmed',
+      },
+      {
+        id: 'decision-mail-new', sourceKind: 'mail', sourceId: refSourceId, sourceVersion: 2,
+        sourceTitle: '发射窗口确认', sourceMarkdown: '# 发射窗口确认\n\n发件人：李四 <li@example.com>\n\n时间：2026-08-23T09:30:00.000Z\n\n请确认 9 月 5 日的发射窗口。',
+        confidence: 0.9, status: 'confirmed',
+      },
+    ]).run()
+
+    const mails = new RoomOverviewService(db, service).listRoomMails('room-mail')
+    expect(mails).toHaveLength(1)
+    expect(mails[0]).toMatchObject({
+      sourceId: refSourceId,
+      subject: '发射窗口确认',
+      senderName: '李四 <li@example.com>',
+      sentAt: '2026-08-23T09:30:00.000Z',
+      snippet: '请确认 9 月 5 日的发射窗口。',
+    })
+  })
+
+  it('skips soft-deleted domain rows and never leaks mails routed to another room', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [
+        { id: 'room-mail', title: 'Mail Room', data: { id: 'room-mail', title: 'Mail Room' } },
+        { id: 'room-other', title: 'Other Room', data: { id: 'room-other', title: 'Other Room' } },
+      ],
+      deletedRooms: [],
+    })
+    const syncedAt = new Date('2026-08-20T08:00:00.000Z')
+    const mailRow = (id: string): typeof connectorEmails.$inferInsert => ({
+      id, ownerId: 'local-user', service: 'gmail', connectionName: 'default',
+      sourceRecordId: `rec-${id}`, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: `hash-${id}`, extensionPayload: null,
+      messageId: `msg-${id}`, threadId: null, senderName: null, senderAddress: 'noreply@example.com',
+      recipients: [], subject: `邮件${id}`, sentAt: new Date('2026-08-22T02:00:00.000Z'),
+      bodyText: '正文', labels: [], hasAttachments: false,
+    })
+    db.insert(connectorEmails).values([
+      { ...mailRow('mail-live'), id: 'mail-live' },
+      // 软删除行：域表不可见,且无路由快照可回退 → 整条不进清单
+      { ...mailRow('mail-del'), id: 'mail-del', deletedAt: syncedAt },
+    ]).run()
+    db.insert(roomSourceMemberships).values([
+      { id: 'mail-live-m', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-live', sourceVersion: 1, evidenceGroupKey: 'lv', role: 'primary', sourceTitle: '邮件mail-live' },
+      { id: 'mail-del-m', roomId: 'room-mail', sourceKind: 'mail', sourceId: 'mail-del', sourceVersion: 1, evidenceGroupKey: 'dl', role: 'primary', sourceTitle: '邮件mail-del' },
+      { id: 'mail-other-m', roomId: 'room-other', sourceKind: 'mail', sourceId: 'mail-live', sourceVersion: 1, evidenceGroupKey: 'ot', role: 'mention', sourceTitle: '邮件mail-live' },
+    ]).run()
+
+    const overviews = new RoomOverviewService(db, service)
+    expect(overviews.listRoomMails('room-mail').map((mail) => mail.sourceId)).toEqual(['mail-live'])
+    expect(overviews.listRoomMails('room-other').map((mail) => mail.sourceId)).toEqual(['mail-live'])
+    // 未知 Room 报 404 级错误，与其他概览读取一致
+    expect(() => overviews.listRoomMails('room-mail-not-exist')).toThrowError('context_room_not_found')
   })
 })

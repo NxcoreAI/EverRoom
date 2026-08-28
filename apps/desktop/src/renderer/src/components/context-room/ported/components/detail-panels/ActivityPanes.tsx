@@ -17,6 +17,7 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../../types';
 import { localizedUiText, uiText } from '../../adapters';
+import { useRoomMails } from '../../hooks/useRoomMails';
 import { ObjectDetailView, type DetailObject } from '../ObjectDetailView';
 import {
   preferRoomOverviewProjection,
@@ -359,7 +360,10 @@ export function MailsPane({
   onCloseDetail?: () => void;
   onUpdateRoom: (updater: RoomUpdater) => void;
 }) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
+  // 连接器邮件叠加：路由引擎归类的 Gmail/Outlook 邮件（专用全量端点，sentAt 倒序）。
+  // 本地 LLM 快照邮件按「主题 + 同日」去重，保留真实发件人/时间的连接器版本。
+  const { mails: connectorMails } = useRoomMails(room.id);
   const detailObject = detail ? resolvePaneDetailObject(room, detail) : null;
   if (detail && detailObject && onCloseDetail) {
     return (
@@ -372,6 +376,18 @@ export function MailsPane({
       />
     );
   }
-  const mails = room.materials.filter((material) => material.type === '邮件');
-  return <div className="context-room-mail-pane"><header><h2>{t('contextRoom:activityPanes.roomEmail')}</h2><span>{mails.length}</span></header>{mails.length ? mails.map((mail) => <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}><Mail aria-hidden="true" /><span><span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? t('contextRoom:activityPanes.to') : mail.sender ?? t('contextRoom:objectDetail.defaultSender')}</b><time>{mail.time}</time></span><strong>{mail.title}</strong><small>{localizedUiText(mail.summary, t)}</small></span></button>) : <PanelEmptyState icon={Mail} title={t('contextRoom:activityPanes.noEmailYet')} description={t('contextRoom:activityPanes.emailRelatedToThisRoomAppearsHere')} />}</div>;
+  const connectorKeys = new Set(connectorMails.flatMap((mail) => {
+    const when = mail.sentAt ? new Date(mail.sentAt) : null;
+    return when && !Number.isNaN(when.getTime())
+      ? [`${mail.subject.trim().toLocaleLowerCase()}\x00${localDateKey(when)}`]
+      : [];
+  }));
+  const mails = room.materials.filter((material) => material.type === '邮件')
+    .filter((mail) => !connectorKeys.has(`${mail.title.trim().toLocaleLowerCase()}\x00${localDateKey(parseScheduleDate(mail.time))}`));
+  const connectorRows = connectorMails.map((mail) => {
+    const when = mail.sentAt ? new Date(mail.sentAt) : null;
+    const time = when && !Number.isNaN(when.getTime()) ? when.toLocaleString(locale) : '';
+    return { mail, time, sender: mail.senderName ?? mail.senderAddress ?? t('contextRoom:objectDetail.defaultSender') };
+  });
+  return <div className="context-room-mail-pane"><header><h2>{t('contextRoom:activityPanes.roomEmail')}</h2><span>{mails.length + connectorRows.length}</span></header>{mails.length + connectorRows.length ? <>{mails.map((mail) => <button type="button" className={mail.unread ? 'is-unread' : ''} key={mail.id} onClick={() => onSelect(mail.id)}><Mail aria-hidden="true" /><span><span className="context-room-mail-meta"><b>{mail.folder === 'sent' ? mail.recipient ?? t('contextRoom:activityPanes.to') : mail.sender ?? t('contextRoom:objectDetail.defaultSender')}</b><time>{mail.time}</time></span><strong>{mail.title}</strong><small>{localizedUiText(mail.summary, t)}</small></span></button>)}{connectorRows.map(({ mail, time, sender }) => <Popover.Root key={`mail-${mail.sourceId}`}><Popover.Trigger asChild><button type="button" data-connector-source="mail"><Mail aria-hidden="true" /><span><span className="context-room-mail-meta"><b>{sender}</b><time>{time}</time></span><strong>{mail.subject}</strong><small>{mail.snippet ?? ''}</small></span></button></Popover.Trigger><Popover.Portal><Popover.Content className="context-room-schedule-popover" side="right" align="start" sideOffset={8} collisionPadding={12}><header><h3>{mail.subject}</h3><Popover.Close aria-label={t('contextRoom:activityPanes.closeScheduleDetails')}><X aria-hidden="true" /></Popover.Close></header><p><Mail aria-hidden="true" />{t('contextRoom:activityPanes.sentAt')}：{time}</p><dl><div><dt>{t('contextRoom:activityPanes.sender')}</dt><dd>{sender}{mail.senderAddress && mail.senderName ? `（${mail.senderAddress}）` : ''}</dd></div><div><dt>{t('contextRoom:activityPanes.emailSummary')}</dt><dd>{mail.snippet ?? '—'}</dd></div></dl>{mail.hasAttachments ? <p className="context-room-mail-attachments"><Paperclip aria-hidden="true" />{t('contextRoom:activityPanes.hasAttachments')}</p> : null}</Popover.Content></Popover.Portal></Popover.Root>)}</> : <PanelEmptyState icon={Mail} title={t('contextRoom:activityPanes.noEmailYet')} description={t('contextRoom:activityPanes.emailRelatedToThisRoomAppearsHere')} />}</div>;
 }

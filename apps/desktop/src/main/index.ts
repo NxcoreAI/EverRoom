@@ -295,6 +295,7 @@ const CONTEXT_ROOM_CHANNELS = {
   refreshBrief: 'context-rooms:refresh-brief',
   overview: 'context-rooms:overview',
   refreshOverview: 'context-rooms:refresh-overview',
+  listMails: 'context-rooms:list-mails',
   roomEntities: 'context-rooms:room-entities',
 } as const
 
@@ -1574,6 +1575,7 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
   handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.listMails, (_event, roomId) => bridge.listMails(roomId))
   handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
 }
 

@@ -302,6 +302,27 @@ export function contextRoomRoutes(
     );
 
     app.get(
+      "/v1/context-rooms/:roomId/mails",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return { items: overviews.listRoomMails(request.params.roomId) };
+        } catch (error) {
+          if (error instanceof Error && error.message === "context_room_not_found") {
+            return reply.code(404).send({ error: error.message });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.get(
       "/v1/context-rooms/:roomId/corrections",
       {
         schema: {

@@ -11,6 +11,7 @@ import type {
   RoomOverviewProjection,
   RoomMergeOperation,
   RoomMergePreview,
+  RoomMail,
   SaveContextRoomSnapshotInput,
   SubagentInvocation,
 } from '@nxcore/agent-contract'
@@ -106,6 +107,11 @@ export class ContextRoomGatewayBridge {
 
   overview(roomId: string): Promise<RoomOverviewProjection> {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/overview`)
+  }
+
+  /** Room 邮箱面板的连接器邮件清单（sentAt 倒序，截 500）。 */
+  listMails(roomId: string): Promise<{ items: RoomMail[] }> {
+    return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/mails`)
   }
 
   refreshOverview(roomId: string): Promise<RoomOverviewProjection> {
