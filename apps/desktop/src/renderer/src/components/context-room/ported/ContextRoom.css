@@ -2316,6 +2316,20 @@
   overflow: hidden;
 }
 
+/* 面板内详情子视图（任务/会议/邮件）：紧凑页边距 + 事实栅格单列堆叠。 */
+.context-room-workspace-panel-body .context-room-object-page {
+  padding: 16px 18px 32px;
+}
+
+.context-room-workspace-panel-body .context-room-task-facts {
+  grid-template-columns: 1fr;
+}
+
+.context-room-memory-inline-action {
+  width: 100%;
+  margin-top: 12px;
+}
+
 .context-room-panel-divider {
   position: absolute;
   z-index: 2;
@@ -3143,8 +3157,6 @@
 }
 
 
-
-
 .context-room-resource-scroll {
   min-height: 0;
   flex: 1;
@@ -3954,125 +3966,7 @@
   height: 21px;
 }
 
-.context-room-object-preview {
-  width: min(760px, calc(100% - 48px));
-  margin: 24px auto;
-  color: var(--cr-text);
-}
-
-.context-room-object-preview > header {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-object-preview > header > svg {
-  width: 34px;
-  height: 34px;
-  padding: 8px;
-  border-radius: 6px;
-  background: var(--cr-blue-soft);
-  color: var(--cr-blue);
-}
-
-.context-room-object-preview header span,
-.context-room-object-preview dt {
-  color: var(--cr-tertiary);
-  font-size: 11px;
-}
-
-.context-room-object-preview h1 {
-  margin: 3px 0 0;
-  font-size: 20px;
-  font-weight: 650;
-}
-
-.context-room-object-preview dl {
-  margin: 0;
-}
-
-.context-room-object-preview dl > div {
-  display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
-  gap: 16px;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-object-preview dd {
-  margin: 0;
-  color: var(--cr-muted);
-  font-size: 13px;
-  line-height: 1.65;
-}
-
-.context-room-object-preview-desc {
-  margin: 14px 0 0;
-  color: var(--cr-muted);
-  font-size: 12.5px;
-  line-height: 1.7;
-}
-
-.context-room-object-preview > section {
-  margin-top: 14px;
-}
-
 /* 来源资料行（只读）：与内联详情卡同款，此处作用域放宽到右侧内容区。 */
-.context-room-object-preview .context-room-memory-source-row {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  margin-bottom: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  text-align: left;
-}
-
-.context-room-object-preview .context-room-memory-source-row > span:last-child {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.context-room-object-preview .context-room-memory-source-row b {
-  overflow: hidden;
-  color: var(--cr-text);
-  font-size: 12px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-object-preview .context-room-memory-source-row small {
-  color: var(--cr-tertiary);
-  font-size: 10.5px;
-}
-
-.context-room-object-preview .context-room-memory-detail-row-icon {
-  display: inline-flex;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  color: var(--cr-tertiary);
-}
-
-.context-room-object-preview .context-room-memory-detail-row-icon svg {
-  width: 12px;
-  height: 12px;
-  color: currentColor;
-}
-
 @keyframes context-room-spin {
   to {
     transform: rotate(360deg);
@@ -6692,98 +6586,6 @@
 
 .context-room-schedule-popover > button:last-child {
   width: 100%;
-}
-
-.context-room-object-preview-action {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  gap: 6px;
-  margin-top: 18px;
-}
-
-.context-room-object-preview-action svg {
-  width: 14px;
-  height: 14px;
-}
-
-.context-room-workspace-mail-dialog {
-  width: min(660px, calc(100vw - 34px));
-  max-width: 100%;
-  background: var(--cr-surface);
-}
-
-.context-room-workspace-mail-dialog > header {
-  padding: 18px 52px 14px 22px;
-  border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-workspace-mail-dialog h2 {
-  margin: 0;
-  color: var(--cr-text);
-  font-size: 17px;
-  font-weight: 600;
-  line-height: 1.45;
-}
-
-.context-room-workspace-mail-dialog dl {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 6px 16px;
-  margin: 0;
-  padding: 14px 22px;
-  border-bottom: 1px solid var(--cr-border);
-}
-
-.context-room-workspace-mail-dialog dl > div {
-  display: contents;
-}
-
-.context-room-workspace-mail-dialog dt,
-.context-room-workspace-mail-dialog dd {
-  margin: 0;
-  font-size: 12px;
-}
-
-.context-room-workspace-mail-dialog dt {
-  color: var(--cr-tertiary);
-}
-
-.context-room-workspace-mail-dialog dd {
-  color: var(--cr-text);
-}
-
-.context-room-workspace-mail-dialog > section {
-  min-height: 150px;
-  padding: 16px 22px;
-}
-
-.context-room-workspace-mail-dialog > section span,
-.context-room-workspace-mail-dialog > footer span {
-  color: var(--cr-tertiary);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.context-room-workspace-mail-dialog > section p {
-  margin: 8px 0 0;
-  color: var(--cr-text);
-  font-size: 13px;
-  line-height: 1.75;
-}
-
-.context-room-workspace-mail-dialog > footer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 22px;
-  border-top: 1px solid var(--cr-border);
-  background: var(--cr-surface-secondary);
-}
-
-.context-room-workspace-mail-dialog > footer b {
-  font-size: 11px;
-  font-weight: 600;
 }
 
 .context-room-confirm-card {
@@ -10476,44 +10278,6 @@
   font-weight: 700;
 }
 
-.context-room-mail-attachments {
-  min-height: 0 !important;
-  padding-top: 4px !important;
-}
-
-.context-room-mail-attachments button {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 7px;
-  padding: 8px 10px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface-secondary);
-  text-align: left;
-}
-
-.context-room-mail-attachments button:hover {
-  border-color: var(--cr-border-strong);
-}
-
-.context-room-mail-attachments button b {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 11px;
-  font-weight: 550;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-mail-attachments button small {
-  flex: 0 0 auto;
-  color: var(--cr-tertiary);
-  font-size: 9px;
-}
-
 /* Memory and relations expose selection details below their graphs. */
 .context-room-memory-pane > header button {
   display: inline-flex;
@@ -10664,6 +10428,7 @@
   display: grid;
   gap: 6px;
   margin-top: 12px;
+  min-width: 0;
 }
 
 .context-room-memory-detail-section-head {
@@ -10692,11 +10457,13 @@
 .context-room-memory-detail-list {
   display: grid;
   gap: 5px;
+  min-width: 0;
 }
 
 .context-room-memory-inline-detail .context-room-memory-detail-list button {
   display: flex;
   width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 6px;
   min-height: 40px;
@@ -10741,6 +10508,7 @@
 .context-room-memory-inline-detail .context-room-memory-source-row {
   display: flex;
   width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 6px;
   min-height: 40px;
@@ -11531,6 +11299,31 @@
 .context-room-wiki-reader-body > .context-room-wiki-markdown {
   max-width: 760px;
   margin: 0 auto;
+}
+
+.context-room-external-file-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.context-room-external-file-body > p {
+  max-width: 420px;
+  color: var(--cr-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.context-room-external-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
 }
 
 .context-room-home-card-origin {

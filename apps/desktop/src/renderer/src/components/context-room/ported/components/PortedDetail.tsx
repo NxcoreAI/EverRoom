@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
+import { isMarkdownFileName } from '../../knowledgeMarkdownImport'
 import {
   createContextRoomResourceLibrary,
   getRoomResource,
@@ -14,7 +15,6 @@ import { ObjectDetailView } from './ObjectDetailView'
 import type { DetailObject } from './ObjectDetailView'
 import type { DetailPane } from './RoomIconSidebar'
 import type { WorkspaceObjectPreview } from './detail-panels'
-import { MailDetailDialog } from './detail-workspace/MailDetailDialog'
 import { WorkspaceLayout } from './detail-workspace/WorkspaceLayout'
 
 export function PortedDetail({
@@ -64,7 +64,6 @@ export function PortedDetail({
   const [selectedObject, setSelectedObject] = useState<WorkspaceObjectPreview | null>(null)
   /** WikiPane 打开过的 wiki 页资源（静态 library 不含它们，编辑栏解析时并入）。 */
   const [wikiPageResources, setWikiPageResources] = useState<ContextRoomWikiPageResource[]>([])
-  const [selectedMailId, setSelectedMailId] = useState<string | null>(null)
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null)
   const handledDocumentFocusKey = useRef<string | null>(null)
   const [standaloneObject, setStandaloneObject] = useState<DetailObject | null>(() => {
@@ -111,6 +110,10 @@ export function PortedDetail({
     setSelectedResourceId(resource.id)
     if (!layout.panels.includes('documents')) layout.switchPane('documents')
     layout.setMobileContent(true)
+    // 非 md 上传文件：选中即用系统默认应用打开原件（面板内只留状态卡片）
+    if (resource.kind === 'knowledge-file' && !isMarkdownFileName(resource.originalName)) {
+      void window.nxcore?.knowledge?.openFile(resource.fileId).catch(() => undefined)
+    }
   }, [layout, room.id])
 
   const openWikiPage = useCallback((resource: ContextRoomWikiPageResource) => {
@@ -154,21 +157,14 @@ export function PortedDetail({
   }, [library, room.id, selectedResourceId, findWikiPageResource])
 
   const openObject = useCallback((target: WorkspaceObjectPreview) => {
-    if (target.kind === 'mail') {
-      setSelectedMailId(target.id)
-      return
-    }
+    // 详情展示在归属面板内：不触碰文档选中（右区常驻打开的文档），移动端也不把右区盖上来。
     const pane: DetailPane = target.kind === 'meeting'
       ? 'schedule'
       : target.kind === 'task'
         ? 'tasks'
-        : target.kind === 'graph-node'
-          ? 'memories'
-          : 'relations'
+        : 'mails'
     setSelectedObject(target)
-    setSelectedResourceId(null)
     if (!layout.panels.includes(pane)) layout.switchPane(pane)
-    layout.setMobileContent(true)
   }, [layout])
 
   const toggleTask = (taskId: string) => onUpdateRoom((current) => ({
@@ -233,11 +229,6 @@ export function PortedDetail({
           onOpenRoom={onOpenRoom}
           onToggleTask={toggleTask}
           onUpdateRoom={onUpdateRoom}
-        />
-        <MailDetailDialog
-          room={room}
-          mailId={selectedMailId}
-          onClose={() => setSelectedMailId(null)}
         />
         <button
           type="button"

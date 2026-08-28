@@ -435,6 +435,7 @@ const KNOWLEDGE_CHANNELS = {
   listRoomFiles: 'knowledge:files:list',
   readFileMarkdown: 'knowledge:files:markdown',
   revealFile: 'knowledge:files:reveal',
+  openFile: 'knowledge:files:open',
 } as const
 
 const FILES_CHANNELS = {
@@ -1437,6 +1438,7 @@ function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
   handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
   handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
   handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
+  handle(KNOWLEDGE_CHANNELS.openFile, (_event, fileId: string) => bridge.openFile(fileId))
 }
 
 function registerFilesHandlers(

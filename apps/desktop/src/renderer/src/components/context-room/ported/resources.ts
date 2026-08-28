@@ -64,6 +64,17 @@ export function getContextRoomOfficeFormat(fileName: string): ContextRoomOfficeF
   return officeFormat(fileName.split('.').pop() ?? '');
 }
 
+/** knowledge 上传文件按扩展名归夹（md → 云文档；office 类 → Office 文件；图片 → 设计与附件）。 */
+function knowledgeFileFolderId(
+  originalName: string,
+  folders: { documents: string; office: string; design: string },
+): string {
+  const format = officeFormat(originalName.split('.').pop() ?? '');
+  if (format === 'markdown') return folders.documents;
+  if (format === 'fig' || format === 'image') return folders.design;
+  return folders.office;
+}
+
 /** knowledge 文件的归属状态文案（决策 status/decidedBy 派生）。 */
 export function knowledgeFileStatusLabel(file: {
   status: string;
@@ -235,7 +246,13 @@ export function createContextRoomResourceLibrary(
   const knowledgeFileResources: ContextRoomResource[] = knowledgeFiles.map((file) => ({
     id: `${room.id}:kfile:${file.id}`,
     roomId: room.id,
-    folderId: documentsFolderId,
+    // 按扩展名归夹：md 与云文档同列；office 类（docx/xlsx/pptx/pdf/csv 等）
+    // 进 Office 文件；图片/设计稿进设计与附件——与本地 fileItems 规则一致
+    folderId: knowledgeFileFolderId(file.originalName, {
+      documents: documentsFolderId,
+      office: officeFolderId,
+      design: designFolderId,
+    }),
     name: file.originalName,
     updatedAt: new Date(file.uploadedAt).toLocaleString(resolvedLocale),
     kind: 'knowledge-file' as const,
