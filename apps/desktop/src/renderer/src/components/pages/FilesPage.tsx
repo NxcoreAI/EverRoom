@@ -15,6 +15,7 @@ import { PageHeader } from './PageHeader'
 import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition } from './fileCategories'
 import { formatBytes, formatDate } from './sources/sourceFormatters'
 import { PRODUCT_NAME } from '@/components/ui/brand'
+import type { PageId } from '@/data/navigation'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 type FilesView = 'files' | 'events'
@@ -130,7 +131,7 @@ function groupCatalogFiles(files: FileCatalogDto[]): Map<string, ClassifiedFile[
   return groups
 }
 
-export function FilesPage() {
+export function FilesPage({ onNavigate }: { onNavigate: (page: PageId) => void }) {
   const { locale, t } = useLocale()
   const filesApi = window.nxcore?.files
   const ingestApi = window.nxcore?.ingest
@@ -406,7 +407,8 @@ export function FilesPage() {
     if (!filesApi) return
     void runFileAction(file.id, async () => {
       try {
-        await filesApi.openOriginal(file.id)
+        const result = await filesApi.openOriginal(file.id, file.originalName, file.contentHash)
+        if (result.openedWith === 'office') onNavigate('office-document')
       } catch (error) {
         setMessage(error instanceof Error ? error.message : t('surface:files.unableToOpenOriginal'))
       }

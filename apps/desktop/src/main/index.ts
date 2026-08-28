@@ -112,6 +112,10 @@ import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-bindin
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
 import { MigrationCoordinator } from './migrations/coordinator'
+import { loadPreparedGenOfficeRuntime } from './office/office-runtime'
+import { OfficeViewManager, prepareOfficeDocument } from './office/office-view-manager'
+import { SlidesViewManager } from './office/slides-view-manager'
+import { SpreadsheetViewManager } from './office/spreadsheet-view-manager'
 
 const APP_NAME = 'EverRoom'
 
@@ -685,6 +689,9 @@ let privateSyncScheduler: PrivateSyncScheduler | null = null
 let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 let clearUserDataOnQuit = false
+let officeViewManager: OfficeViewManager | null = null
+let spreadsheetViewManager: SpreadsheetViewManager | null = null
+let slidesViewManager: SlidesViewManager | null = null
 const queuedProtocolUrls: string[] = []
 let screenshotOutbox: ScreenshotOutbox | null = null
 const captureAndQueueCurrentWindow = async () => {
@@ -765,6 +772,28 @@ function logRendererDiagnostic(input: unknown): void {
 }
 
 ipcMain.on('app:diagnostic-log', (_event, input: unknown) => logRendererDiagnostic(input))
+
+ipcMain.handle('office:test:set-active', (event, active: unknown) => {
+  if (!process.env.ELECTRON_RENDERER_URL) throw new Error('Office 测试入口仅在开发模式可用。')
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  if (active === true && !officeViewManager) {
+    const manager = OfficeViewManager.createTest(window)
+    officeViewManager = manager
+    window.once('closed', () => {
+      if (officeViewManager === manager) officeViewManager = null
+    })
+  }
+  officeViewManager?.setActive(active === true)
+})
+
+ipcMain.handle('office:set-active', (event, active: unknown) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  officeViewManager?.setActive(active === true)
+  spreadsheetViewManager?.setActive(active === true)
+  slidesViewManager?.setActive(active === true)
+})
 
 function focusMainWindow(): void {
   const window = BrowserWindow.getAllWindows()[0]
@@ -1913,7 +1942,65 @@ function registerFilesHandlers(
     bridge.pinClusterTitle(clusterId, sharedTitle))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
-  handle(FILES_CHANNELS.openOriginal, (_event, fileId: string) => bridge.openOriginal(fileId))
+  handle(FILES_CHANNELS.openOriginal, async (
+    event,
+    fileId: string,
+    originalName: string,
+    contentHash: string,
+  ) => {
+    const extension = extname(originalName).toLowerCase()
+    // 首期内嵌只覆盖 OOXML 格式：.xls/.ppt（二进制旧格式）验证后再放开。
+    if (extension !== '.docx' && extension !== '.xlsx' && extension !== '.xlsm' && extension !== '.pptx') {
+      await bridge.openOriginal(fileId)
+      return { openedWith: 'external' as const }
+    }
+
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+    const storagePath = await bridge.storagePath(fileId)
+    officeViewManager?.dispose()
+    spreadsheetViewManager?.dispose()
+    slidesViewManager?.dispose()
+
+    if (extension === '.docx') {
+      const documentPath = prepareOfficeDocument(
+        fileId,
+        contentHash,
+        originalName,
+        storagePath,
+      )
+      const manager = OfficeViewManager.create(window, documentPath)
+      officeViewManager = manager
+      window.once('closed', () => {
+        if (officeViewManager === manager) officeViewManager = null
+      })
+      return { openedWith: 'office' as const }
+    }
+
+    if (extension === '.pptx') {
+      const manager = SlidesViewManager.create(
+        window,
+        loadPreparedGenOfficeRuntime().slides,
+        { id: fileId, contentHash, originalName, storagePath },
+      )
+      slidesViewManager = manager
+      window.once('closed', () => {
+        if (slidesViewManager === manager) slidesViewManager = null
+      })
+      return { openedWith: 'office' as const }
+    }
+
+    const manager = SpreadsheetViewManager.create(
+      window,
+      loadPreparedGenOfficeRuntime().sheets,
+      { id: fileId, contentHash, originalName, storagePath },
+    )
+    spreadsheetViewManager = manager
+    window.once('closed', () => {
+      if (spreadsheetViewManager === manager) spreadsheetViewManager = null
+    })
+    return { openedWith: 'office' as const }
+  })
   bridge.onImportProgress((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(FILES_CHANNELS.importProgress, event)
@@ -2934,6 +3021,9 @@ app.on('before-quit', (event) => {
   const privateSync = privateSyncScheduler
   const notificationBridge = agentNotificationBridgeServer
   const pushNotificationsService = macosPushNotifications
+  const office = officeViewManager
+  const spreadsheet = spreadsheetViewManager
+  const slides = slidesViewManager
   localDataService = null
   obsidianVaultService = null
   browserExtensionService = null
@@ -2963,9 +3053,15 @@ app.on('before-quit', (event) => {
   privateSyncScheduler = null
   agentNotificationBridgeServer = null
   macosPushNotifications = null
+  officeViewManager = null
+  spreadsheetViewManager = null
+  slidesViewManager = null
   privateSync?.stop()
   void notificationBridge?.stop()
   pushNotificationsService?.stop()
+  office?.dispose()
+  spreadsheet?.dispose()
+  slides?.dispose()
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
   agentBridge?.dispose()

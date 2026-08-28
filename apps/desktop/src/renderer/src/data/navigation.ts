@@ -14,10 +14,11 @@ import {
   Lightbulb,
   PlugZap,
   Settings,
+  FilePenLine,
 } from 'lucide-react'
 import type { DesktopPageMode } from '../../../shared/page-mode'
 
-export type PageId = 'home' | 'office' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'schedules' | 'settings'
+export type PageId = 'home' | 'office' | 'office-document' | 'office-test' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'connectors' | 'diary' | 'schedules' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -73,19 +74,44 @@ export const navigationSections: NavigationSection[] = [
   },
 ]
 
-export function navigationSectionsForMode(mode: DesktopPageMode): NavigationSection[] {
+const officeTestItem: NavigationItem = {
+  id: 'office-test',
+  label: 'surface:navigation.officeTest',
+  icon: FilePenLine,
+  tone: 'indigo',
+}
+
+const officeDocumentItem: NavigationItem = {
+  id: 'office-document',
+  label: 'surface:navigation.officeDocument',
+  icon: FilePenLine,
+  tone: 'indigo',
+}
+
+export function navigationSectionsForMode(
+  mode: DesktopPageMode,
+  includeOfficeTest = false,
+): NavigationSection[] {
   const disabledPage: PageId = mode === 'sources' ? 'connectors' : 'sources'
   return navigationSections
-    .map((section) => ({ ...section, items: section.items.filter((item) => item.id !== disabledPage) }))
+    .map((section) => ({
+      ...section,
+      items: [
+        ...section.items.filter((item) => item.id !== disabledPage),
+        ...(includeOfficeTest && section.id === 'execution' ? [officeTestItem] : []),
+      ],
+    }))
     .filter((section) => section.items.length > 0)
 }
 
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
-  navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.label]))
+  [...navigationSections.flatMap((section) => section.items), officeTestItem, officeDocumentItem]
+    .map((item) => [item.id, item.label])
 ) as Record<PageId, string>
 
 export const pageIcons: Record<PageId, LucideIcon> = Object.fromEntries(
-  navigationSections.flatMap((section) => section.items.map((item) => [item.id, item.icon]))
+  [...navigationSections.flatMap((section) => section.items), officeTestItem, officeDocumentItem]
+    .map((item) => [item.id, item.icon])
 ) as Record<PageId, LucideIcon>
 
 const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {

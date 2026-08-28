@@ -128,7 +128,7 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav" aria-label={t('surface:sidebar.mainNavigation')}>
-        {navigationSectionsForMode(pageMode).map((section) => (
+        {navigationSectionsForMode(pageMode, window.nxcore?.office.testAvailable === true).map((section) => (
           <section
             key={section.id}
             className="nav-section"

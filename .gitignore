@@ -13,6 +13,7 @@ screenshots/
 apps/desktop/build/oo/
 apps/desktop/build/open-connector/
 apps/desktop/build/nango-runtime/
+apps/desktop/build/genoffice-runtime/
 apps/desktop/build/.open-connector-*/
 apps/desktop/build/packaged-env.json
 *.log

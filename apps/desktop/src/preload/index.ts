@@ -131,6 +131,12 @@ const api: NxcoreDesktopApi = {
   app: {
     clearUserData: () => ipcRenderer.invoke('app:clear-user-data'),
   },
+  office: {
+    testAvailable: Boolean(process.env.ELECTRON_RENDERER_URL),
+    setTestActive: (active) => ipcRenderer.invoke('office:test:set-active', active),
+    setActive: (active) => ipcRenderer.invoke('office:set-active', active),
+    setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),
+  },
   locale: {
     system: ipcRenderer.sendSync('app:get-system-locale-sync') as string,
     getSystem: () => ipcRenderer.invoke('app:get-system-locale'),
@@ -626,7 +632,8 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
-    openOriginal: (fileId: string) => invoke('files:open-original', fileId),
+    openOriginal: (fileId: string, originalName: string, contentHash: string) =>
+      invoke('files:open-original', fileId, originalName, contentHash),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),
     importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }) => {

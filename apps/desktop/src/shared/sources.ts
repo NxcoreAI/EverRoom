@@ -641,6 +641,13 @@ export interface NangoRuntimeStatus {
   message: string | null
 }
 
+export interface OfficeWorkspaceBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 /** Context Room 子 Agent（划词改写）dispatch 入参，见 gateway /v1/context-rooms/selection-rewrite。 */
 export interface RoomAgentSelectionRewriteInput {
   roomId?: string
@@ -658,6 +665,12 @@ export interface NxcoreDesktopApi {
   pageMode: DesktopPageMode
   app: {
     clearUserData(): Promise<void>
+  }
+  office: {
+    testAvailable: boolean
+    setTestActive(active: boolean): Promise<void>
+    setActive(active: boolean): Promise<void>
+    setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void
   }
   locale: {
     system: string
@@ -1046,8 +1059,12 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
-    /** 使用操作系统默认查看器打开文件本体。 */
-    openOriginal(fileId: string): Promise<void>
+    /** DOCX 使用内置 Office 打开；其他格式使用操作系统默认查看器。 */
+    openOriginal(
+      fileId: string,
+      originalName: string,
+      contentHash: string,
+    ): Promise<{ openedWith: 'office' | 'external' }>
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */

@@ -5,8 +5,9 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/dev.mjs",
-    "build": "node scripts/prepare-nango-runtime.mjs && electron-vite build",
+    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
+    "build": "node scripts/prepare-nango-runtime.mjs && node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
+    "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64"
@@ -164,6 +165,17 @@
           "!**/node_modules/@datadog/*/prebuilds/win32*/**",
           "!**/node_modules/@datadog/*/prebuilds/darwin-x64/**",
           "!**/node_modules/@embedded-postgres/linux-*/**",
+          "!**/*.{map,ts,tsx,mts,cts}"
+        ]
+      },
+      {
+        "from": "build/genoffice-runtime",
+        "to": "genoffice",
+        "filter": [
+          "**/*",
+          "!**/.env*",
+          "!**/{test,tests,__tests__}/**",
+          "!**/{test,spec}.*",
           "!**/*.{map,ts,tsx,mts,cts}"
         ]
       }

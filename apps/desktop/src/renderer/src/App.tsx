@@ -125,6 +125,45 @@ export function App() {
   ), [contextRoomState.rooms])
 
   useEffect(() => {
+    const workspace = workspaceMainRef.current
+    const office = window.nxcore?.office
+    if (!workspace || !office) return
+
+    const active = activePage === 'office-document' || activePage === 'office-test'
+    if (!active) {
+      void office.setActive(false).catch((error) => {
+        console.error('Failed to hide the Office view.', error)
+      })
+      return
+    }
+
+    const reportBounds = () => {
+      const bounds = workspace.getBoundingClientRect()
+      office.setWorkspaceBounds({
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+      })
+    }
+    const observer = new ResizeObserver(reportBounds)
+    observer.observe(workspace)
+    window.addEventListener('resize', reportBounds)
+    let disposed = false
+    const activate = activePage === 'office-test' ? office.setTestActive(true) : office.setActive(true)
+    void activate.then(() => {
+      if (!disposed) reportBounds()
+    }).catch((error) => {
+      console.error('Failed to open the Office view.', error)
+    })
+    return () => {
+      disposed = true
+      observer.disconnect()
+      window.removeEventListener('resize', reportBounds)
+    }
+  }, [activePage, agentOpen, effectiveNavCollapsed])
+
+  useEffect(() => {
     logOnboarding('state', {
       stage: fullOnboardingStage,
       stageRef: fullOnboardingStageRef.current,

@@ -290,17 +290,20 @@ export class FilesGatewayBridge {
 
   /** 在系统文件管理器中定位文件本体（对象库 files/sha256/…）。 */
   async reveal(fileId: string): Promise<void> {
-    const { storagePath } = await this.request<{ storagePath: string }>(
+    const storagePath = await this.storagePath(fileId)
+    shell.showItemInFolder(storagePath)
+  }
+
+  async storagePath(fileId: string): Promise<string> {
+    const result = await this.request<{ storagePath: string }>(
       `/v1/files/${encodeURIComponent(fileId)}/storage`,
     )
-    shell.showItemInFolder(storagePath)
+    return result.storagePath
   }
 
   /** 使用操作系统为该文件类型配置的默认查看器打开文件本体。 */
   async openOriginal(fileId: string): Promise<void> {
-    const { storagePath } = await this.request<{ storagePath: string }>(
-      `/v1/files/${encodeURIComponent(fileId)}/storage`,
-    )
+    const storagePath = await this.storagePath(fileId)
     const error = await shell.openPath(storagePath)
     if (error) throw new Error(error)
   }

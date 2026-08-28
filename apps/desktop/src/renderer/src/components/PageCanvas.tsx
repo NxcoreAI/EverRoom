@@ -65,6 +65,13 @@ export function PageCanvas({
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
   if (page === 'office') content = <AgentStatusPage />
+  if (page === 'office-document' || page === 'office-test') {
+    content = (
+      <div className="page">
+        <div className="evidence-viewer-state">{page === 'office-test' ? '正在加载 DOCX 测试文档…' : '正在加载 Office 文档…'}</div>
+      </div>
+    )
+  }
   if (page === 'schedules') content = <AgentSchedulesPage />
   if (page === 'rooms') {
     content = (
@@ -92,7 +99,7 @@ export function PageCanvas({
   }
   if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} />
   if (page === 'sources') content = <SourcesPage />
-  if (page === 'files') content = <FilesPage />
+  if (page === 'files') content = <FilesPage onNavigate={onNavigate} />
   if (page === 'inspiration') content = <InspirationPage />
   if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
   if (page === 'wiki') content = <WikiPage />

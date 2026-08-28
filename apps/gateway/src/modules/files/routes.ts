@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import multipart from "@fastify/multipart";
 import { Type } from "@sinclair/typebox";
 import { isSupportedUploadFilename, type FileDeletionHooks, type FilesService, type UploadedFileRow } from "./service.js";
+import { MAX_FORMAT_FILE_BYTES } from "./format-registry.js";
 import type { FileClusteringService } from "./clustering-service.js";
 
 /** 上传原件体积上限（与 knowledge file-convert 同源，唯一字节入口统一把关）。 */
@@ -112,7 +113,11 @@ export function filesRoutes(
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     await app.register(multipart, {
-      limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+      // busboy 触达 fileSize 上限时是"静默截断"而非报错：上限必须高于任何
+      // 格式的 maxBytes，让 storeFileBlobStream / 字节检查拿到完整流后超限报
+      // 413。否则超限文件会以恰好截断的损坏前缀入库（zip 尾部丢失 → 内嵌
+      // 编辑器打开"损坏的 zip"→ 空白文档）。
+      limits: { fileSize: MAX_FORMAT_FILE_BYTES + 1024 * 1024, files: 1 },
     });
 
     app.get(
@@ -189,7 +194,7 @@ export function filesRoutes(
     app.post(
       "/v1/file-imports",
       {
-        bodyLimit: 32 * 1024 * 1024,
+        bodyLimit: MAX_FORMAT_FILE_BYTES + 32 * 1024 * 1024,
         schema: {
           tags: ["files"],
           response: {
@@ -252,7 +257,7 @@ export function filesRoutes(
           return reply.code(202).send(result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          return reply.code(message.includes("20MB") ? 413 : 400).send({ error: message });
+          return reply.code(message.includes("MB 上限") ? 413 : 400).send({ error: message });
         }
       },
     );
@@ -295,6 +300,7 @@ export function filesRoutes(
           } catch {
             return reply.code(413).send(errorOf("too_large"));
           }
+          if (file.file.truncated) return reply.code(413).send(errorOf("too_large"));
         } else {
           const body = request.body as
             | {
