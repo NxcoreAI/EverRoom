@@ -56,6 +56,12 @@ function initialize(message: ForceGraphInitializeMessage) {
     },
   })
   workerScope.postMessage({ type: 'ready', nodeCount: message.nodes.length })
+
+  // 首次可见前快进收敛：同步跑一批 tick 把 alpha=1 起步的最剧烈整理阶段
+  // 直接算完（用户看到的第一帧已是组织好的布局），再以小 alpha 平滑收尾，
+  // 避免打开图谱时节点剧烈抖动。拖拽/resize 的重热路径不受影响。
+  simulation.step(180)
+  simulation.reheat(0.02)
 }
 
 workerScope.onmessage = (event) => {

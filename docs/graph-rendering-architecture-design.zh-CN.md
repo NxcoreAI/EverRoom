@@ -107,7 +107,16 @@ L1 布局内核  graph/layout/* 职责：d3-force 计算、SAB 协议（纯计�
 > 否则按全 0 坐标居中会把视野钉在世界原点（左上角）。`settleFit.follow` 再进一步：
 > 布局收敛期间相机逐帧 `fitView` 跟随内容（首帧坐标只是初始站位，节点群随后收拢/
 > 迁移，固定视野必然产生「首帧 vs 稳定后」的跳变），revision 连续 ~200ms 无更新、
-> 超时 3 秒或用户拖动节点后停止跟随。
+> 超时 3 秒或用户接管画布后停止跟随——拖节点自动触发；平移/缩放手势经壳层
+> `onUserGesture` → `useForceGraphLayout.cancelAutoFit()` 触发，同时清掉待触发
+> 的延时对准，避免收敛期相机与用户手势互相拉扯。
+> 打开瞬间的观感（2026-08-28）另有两道保险：其一，Worker `initialize` 后先同步
+> `step(180)` 预收敛再以 alpha 0.02 平滑收尾——用户看到的第一帧已是组织好的布局，
+> 而非 alpha=1 起步的剧烈抖动；其二，壳层组件 `PixiForceGraphCanvas` 的
+> `maskUntilStable` 选项在 Worker 发布首个有效坐标（revision > 0）前盖一层
+> `.nx-graph-loading` 磨砂遮罩（连挂载初期的静态兜底坐标也不闪现），就绪后
+> 再捂 ~300ms（等相机跟随把视野收敛稳）并保底 500ms 最短时长，然后 240ms
+> 淡出；无 Worker / 卡死时 2.5s 超时兜底揭开；数据更新不重盖遮罩。
 
 ```tsx
 // 新增 hook：三个画布共同的布局生命周期

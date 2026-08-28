@@ -30,3 +30,50 @@
   max-width: 100%;
   touch-action: none;
 }
+
+/* 首帧加载遮罩：布局坐标就绪前盖住画布（canvas 由渲染器命令式插入，
+   z-index 确保遮罩盖在内容之上），就绪后淡出不拦截交互。 */
+.nx-graph-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(127, 132, 140, 0.16);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 1;
+  transition: opacity 240ms ease-out;
+  pointer-events: none;
+}
+
+.nx-graph-loading.is-revealed {
+  opacity: 0;
+}
+
+.nx-graph-loading::after {
+  content: '';
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(127, 132, 140, 0.35);
+  border-top-color: rgba(127, 132, 140, 0.9);
+  animation: nx-graph-loading-spin 900ms linear infinite;
+}
+
+@keyframes nx-graph-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-graph-loading {
+    transition: none;
+  }
+
+  .nx-graph-loading::after {
+    animation: none;
+  }
+}

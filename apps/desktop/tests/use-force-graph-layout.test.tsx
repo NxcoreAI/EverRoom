@@ -355,6 +355,62 @@ describe('useForceGraphLayout', () => {
     await act(async () => { renderer.unmount() })
   })
 
+  it('stops auto fit and camera follow once the user takes over the canvas', async () => {
+    vi.useFakeTimers()
+    try {
+      const raf = stubRequestAnimationFrame()
+      const created: FakeForceGraphWorker[] = []
+      const workerFactory = () => {
+        const worker = new FakeForceGraphWorker()
+        created.push(worker)
+        return worker
+      }
+      const fitView = vi.fn()
+      const canvasRef = { current: { fitView } }
+      const settleFit = { minScale: 1, follow: true, delayMs: 400 }
+
+      let renderer!: TestRenderer.ReactTestRenderer
+      await act(async () => {
+        renderer = TestRenderer.create(
+          <ForceGraphLayoutProbe
+            nodes={[{ id: 'a' }]}
+            edges={[]}
+            label="Test graph"
+            workerFactory={workerFactory}
+            canvasRef={canvasRef}
+            settleFit={settleFit}
+          />,
+        )
+      })
+      const initialize = created[0]!.posted[0]
+      if (initialize?.type !== 'initialize') throw new Error('worker not initialized')
+      const control = new Int32Array(initialize.controlBuffer)
+      const bumpRevision = () => { Atomics.add(control, ForceGraphControlIndex.Revision, 2) }
+
+      // 跟随相机活跃中：revision 前进 + 逐帧 fitView。
+      bumpRevision()
+      await act(async () => {
+        raf.pumpFrame()
+        raf.pumpFrame()
+      })
+      const callsBeforeTakeover = fitView.mock.calls.length
+      expect(callsBeforeTakeover).toBeGreaterThanOrEqual(1)
+
+      // 用户以平移/缩放手势接管画布 → 跟随循环与待触发的延时对准一并取消。
+      act(() => { latest?.cancelAutoFit() })
+      bumpRevision()
+      await act(async () => {
+        for (let frame = 0; frame < 5; frame += 1) raf.pumpFrame()
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(fitView.mock.calls.length).toBe(callsBeforeTakeover)
+
+      await act(async () => { renderer.unmount() })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('surfaces worker errors through ready and keeps the binding usable', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const created: FakeForceGraphWorker[] = []
