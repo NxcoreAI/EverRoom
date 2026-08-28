@@ -1289,7 +1289,7 @@ export function TiptapDocumentEditor({
               <span className="is-added"><i />{t('contextRoom:documentHistory.added')}</span>
               <span className="is-removed"><i />{t('contextRoom:documentHistory.removed')}</span>
             </div>
-            <button className="context-room-history-diff-exit" type="button" onClick={closeHistoryDiff} title="退出历史 Diff">
+            <button className="context-room-history-diff-exit" type="button" onClick={closeHistoryDiff} title={t('contextRoom:documentHistory.exitDiff')}>
               <X aria-hidden="true" />{t('contextRoom:documentHistory.exitDiff')}
             </button>
             <button className="context-room-history-diff-restore" type="button" disabled={restoringHistory} onClick={() => void restoreHistoryVersion()}>

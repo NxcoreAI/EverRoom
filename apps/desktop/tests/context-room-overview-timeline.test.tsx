@@ -21,11 +21,17 @@ import type { RoomDocument, RoomOverviewProjection } from '@nxcore/agent-contrac
 import { createContextRoomFixture } from './context-room-fixture'
 import { OverviewDashboard } from '../src/renderer/src/components/context-room/ported/components/detail-panels/OverviewDashboard'
 
-function claim(id: string, text: string, occurredAt: string | null, evidence: Array<{
-  sourceKind: string
-  sourceId: string
-  sourceTitle?: string
-}>) {
+function claim(
+  id: string,
+  text: string,
+  occurredAt: string | null,
+  evidence: Array<{
+    sourceKind: string
+    sourceId: string
+    sourceTitle?: string
+  }>,
+  eventType: 'source' | 'fact' | 'meeting' | 'task' | 'update' = 'source',
+) {
   return {
     id,
     section: 'timeline',
@@ -39,7 +45,30 @@ function claim(id: string, text: string, occurredAt: string | null, evidence: Ar
     })),
     corrected: false,
     occurredAt,
-    data: { kind: 'timeline', eventType: 'source', title: text, description: null, certainty: 'fact' },
+    data: { kind: 'timeline', eventType, title: text, description: null, certainty: 'fact' },
+  }
+}
+
+function clusterProjectionFixture(): RoomOverviewProjection {
+  return {
+    roomId: 'room-timeline',
+    revision: 1,
+    generatedAt: '2026-08-26T08:00:00.000Z',
+    stale: false,
+    overview: [],
+    status: [],
+    nextSteps: [],
+    entities: [],
+    appliedCorrectionIds: [],
+    // 同期批：02:00 会议 + 02:00 事实 + 02:08 任务（10 分钟窗口内）；
+    // 两天前的文档事件与无日期事件各自独立成组。
+    timeline: [
+      claim('c-meeting', '发布评审', '2026-08-20T02:00:00.000Z', [{ sourceKind: 'calendar-event', sourceId: 'cal-1', sourceTitle: '发布评审' }], 'meeting'),
+      claim('c-fact', '林薇负责 V1 视觉设计', '2026-08-20T02:00:00.000Z', [{ sourceKind: 'mail', sourceId: 'mail-1', sourceTitle: '设计周报' }], 'fact'),
+      claim('c-task', '补充天线参数', '2026-08-20T02:08:00.000Z', [{ sourceKind: 'todo', sourceId: 'todo-1', sourceTitle: '补充天线参数' }], 'task'),
+      claim('c-doc', '《评审纪要》已收录于 Room', '2026-08-10T08:00:00.000Z', [{ sourceKind: 'everroom-doc', sourceId: 'doc-1', sourceTitle: '评审纪要' }], 'update'),
+      claim('c-undated', '明天对齐会', null, [], 'meeting'),
+    ],
   }
 }
 
@@ -104,8 +133,8 @@ function renderDashboard() {
   )
 }
 
-async function renderWithProjection() {
-  const overview = vi.fn().mockResolvedValue(projectionFixture())
+async function renderWithProjection(fixture: RoomOverviewProjection = projectionFixture()) {
+  const overview = vi.fn().mockResolvedValue(fixture)
   // 保留 node 全局（setInterval 等），只补 nxcore 桥与事件监听
   vi.stubGlobal('window', {
     ...globalThis,
@@ -169,5 +198,56 @@ describe('概览时间轴：排序与多来源资料', () => {
     const plainEntry = renderer.root.findAllByType('li')[2]
     expect(plainEntry.findAllByType('button')
       .some((node) => 'aria-expanded' in node.props)).toBe(false)
+  })
+})
+
+describe('概览时间轴：同期事件折叠', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** 按钮文案匹配：children 可能是字符串或 [icon, 文案] 混排。 */
+  function buttonWithText(node: TestRenderer.ReactTestInstance, text: string) {
+    return node.findAllByType('button').find((button) => {
+      const children = Array.isArray(button.props.children) ? button.props.children : [button.props.children]
+      return children.some((child) => typeof child === 'string' && child.includes(text))
+    })
+  }
+
+  it('10 分钟内相邻条目折叠成一组，领头条目按事件优先级（日程 > 任务 > 事实）', async () => {
+    const { renderer } = await renderWithProjection(clusterProjectionFixture())
+    const items = renderer.root.findAllByType('li')
+    // 5 条事件 → 3 组：同期批（3 条）+ 独立文档事件 + 无日期事件
+    expect(items.map((node) => node.findByType('b').children[0])).toEqual([
+      '发布评审',
+      '《评审纪要》已收录于 Room',
+      '明天对齐会',
+    ])
+    // 折叠态没有 peer 行；领头条目是日程而非同刻的事实/更晚的任务
+    expect(renderer.root.findAll((node) => node.props?.className === 'context-room-timeline-peer')).toHaveLength(0)
+    const toggle = buttonWithText(items[0], '同期事件')
+    expect(toggle).toBeTruthy()
+    expect(toggle!.props['aria-expanded']).toBe(false)
+    expect(buttonWithText(items[0], '同期事件')!.props.children).toContain('2 条同期事件')
+
+    await act(async () => {
+      toggle!.props.onClick()
+    })
+    expect(toggle!.props['aria-expanded']).toBe(true)
+    const peers = renderer.root.findAll((node) => node.props?.className === 'context-room-timeline-peer')
+    // peer 保持时间倒序：02:08 的任务在 02:00 的事实前
+    expect(peers.map((node) => node.findByType('b').children[0])).toEqual([
+      '补充天线参数',
+      '林薇负责 V1 视觉设计',
+    ])
+  })
+
+  it('独立事件不渲染「同期事件」折叠入口', async () => {
+    const { renderer } = await renderWithProjection(clusterProjectionFixture())
+    const items = renderer.root.findAllByType('li')
+    // 第二组（文档事件）证据可展开相关资料，但没有同期折叠按钮
+    expect(buttonWithText(items[1], '同期事件')).toBeUndefined()
+    expect(items[1].findAllByType('button')
+      .some((node) => 'aria-expanded' in node.props)).toBe(true)
   })
 })

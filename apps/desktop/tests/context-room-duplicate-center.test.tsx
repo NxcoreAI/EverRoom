@@ -19,6 +19,18 @@ vi.mock('../src/renderer/src/components/context-room/ported/components/shared', 
 
 import { RoomDuplicateCenter } from '../src/renderer/src/components/context-room/ported/components/RoomDuplicateCenter'
 
+vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/i18n/LocaleContext')>()
+  return {
+    ...actual,
+    useLocale: () => ({
+      t: (message: string, values?: Record<string, string | number>) =>
+        actual.translate('zh-CN', message, values),
+      locale: 'zh-CN',
+    }),
+  }
+})
+
 function duplicateCandidate(): RoomDuplicateCandidate {
   return {
     id: 'cand-1',

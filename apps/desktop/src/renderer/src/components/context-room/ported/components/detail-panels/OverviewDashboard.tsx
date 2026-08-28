@@ -14,7 +14,7 @@ import {
   Sparkles,
   Zap,
 } from 'lucide-react';
-import type { RoomDocument, RoomOverviewEvidence, RoomOverviewProjection } from '@nxcore/agent-contract';
+import type { RoomDocument, RoomOverviewClaimData, RoomOverviewEvidence, RoomOverviewProjection } from '@nxcore/agent-contract';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale, type Translate } from '../../../../../i18n/LocaleContext';
 import { useContextRoomState } from '../../../ContextRoomStateProvider';
@@ -34,12 +34,18 @@ import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { useRoomUpdatedTime } from '../../roomUpdatedTime';
 import { formatTimelineTime, parseTimelineDate } from '../../roomTimeline';
 import { roomKindIcon, roomKindTone } from '../utils';
+import { CalendarProviderIcon } from '../CalendarProviderIcon';
 import { PanelEmptyState } from './PanelEmptyState';
 type WorkspaceObjectPreview =
   | { kind: 'meeting'; id: string }
   | { kind: 'task'; id: string };
 
 type TimelineView = 'day' | 'week' | 'month';
+
+type TimelineEventType = Extract<RoomOverviewClaimData, { kind: 'timeline' }>['eventType'];
+
+/** 同期折叠窗口：发生时间相差 10 分钟内的相邻条目视为同一批，折叠展示。 */
+const TIMELINE_CLUSTER_WINDOW_MS = 10 * 60 * 1000;
 
 /** 时间轴条目的统一视图形状：投影条目与本地快照条目共用同一渲染路径。 */
 type TimelineEntry = {
@@ -51,7 +57,37 @@ type TimelineEntry = {
   kind: 'done' | 'warn' | 'info';
   generated: boolean;
   evidence: RoomOverviewEvidence[];
+  /** 投影事件的类型（日程/任务/文档/事实），本地快照条目为 null。 */
+  eventType: TimelineEventType | null;
 };
+
+/** 折叠组领头条目的优先级：日程 > 任务 > 文档收录/版本及其余 > 事实记忆。 */
+function timelineEventPriority(entry: TimelineEntry): number {
+  if (entry.eventType === 'meeting') return 0;
+  if (entry.eventType === 'task') return 1;
+  if (entry.eventType === 'fact') return 3;
+  return 2;
+}
+
+/** 相邻条目发生时间相差 ≤ 折叠窗口的收成一组：领头条目按事件优先级挑，其余收进
+ * 「同期事件」展开区；无日期条目不参与折叠（保持沉底独立展示）。入参须已按时间倒序。 */
+export function clusterTimelineEntries(entries: TimelineEntry[], today: Date): Array<{ leading: TimelineEntry; peers: TimelineEntry[] }> {
+  const groups: Array<{ entries: TimelineEntry[]; headTime: number | null }> = [];
+  for (const entry of entries) {
+    const when = entry.time ? parseTimelineDate(entry.time, today) : null;
+    const time = when ? when.getTime() : null;
+    const current = groups[groups.length - 1];
+    if (current && time !== null && current.headTime !== null && current.headTime - time <= TIMELINE_CLUSTER_WINDOW_MS) {
+      current.entries.push(entry);
+      continue;
+    }
+    groups.push({ entries: [entry], headTime: time });
+  }
+  return groups.map(({ entries }) => {
+    const leading = entries.reduce((best, entry) => timelineEventPriority(entry) < timelineEventPriority(best) ? entry : best);
+    return { leading, peers: entries.filter((entry) => entry !== leading) };
+  });
+}
 
 /** 证据去重（同来源多版本只展示一次）并按展示预算截断。 */
 function timelineMaterials(evidence: RoomOverviewEvidence[]): RoomOverviewEvidence[] {
@@ -144,6 +180,7 @@ export function OverviewDashboard({
   knowledgeFiles,
   onSelectResource,
   onOpenObject,
+  onOpenPane,
   onToggleTask,
 }: {
   room: ContextRoomRecord;
@@ -151,6 +188,8 @@ export function OverviewDashboard({
   knowledgeFiles: KnowledgeFileDto[];
   onSelectResource: (resource: ContextRoomResource) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
+  /** 概览行点击跳转对应面板：投影日程/待办无详情对象（连接器/本地助手行），只切面板。 */
+  onOpenPane?: (pane: 'schedule' | 'tasks') => void;
   onToggleTask: (taskId: string) => void;
 }) {
   const { locale, t } = useLocale();
@@ -171,13 +210,16 @@ export function OverviewDashboard({
   });
   const [timelineView, setTimelineView] = useState<TimelineView>('month');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
-  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const Icon = roomKindIcon(room.kind);
   const dashboard = DASHBOARD_COPY[room.id] ?? {
     aiStatus: overviewProjection?.status.map((item) => item.text).join('\n')
       || room.generatedContext?.status || room.brief.status,
     nextSteps: overviewProjection?.nextSteps.length
-      ? overviewProjection.nextSteps.map((item) => ({
+      ? overviewProjection.nextSteps
+        // 已完成的本地助手待办不进「接下来」建议（面板专属「已完成」分组）。
+        .filter((item) => !(item.data?.kind === 'next_step' && item.data.itemType === 'task' && item.data.status === 'completed'))
+        .map((item) => ({
           id: item.id,
           text: item.text,
           owner: item.data?.kind === 'next_step' ? item.data.owner : null,
@@ -222,6 +264,7 @@ export function OverviewDashboard({
         kind: item.origin === 'inference' ? 'info' as const : 'done' as const,
         generated: item.origin !== 'user',
         evidence: item.evidence,
+        eventType: item.data?.kind === 'timeline' ? item.data.eventType : null,
       }))
     : room.timeline.map((item, index) => ({
         id: `local:${index}:${item.time}:${item.title}`,
@@ -233,6 +276,7 @@ export function OverviewDashboard({
         evidence: item.sourceDocumentId
           ? [{ sourceKind: 'everroom-doc', sourceId: item.sourceDocumentId, sourceTitle: null }]
           : [],
+        eventType: null,
       }));
   // 不信任后端返回顺序：本地按发生时间倒序重排，无日期事件沉底但始终可见。
   const visibleTimeline = projectedTimeline
@@ -261,6 +305,7 @@ export function OverviewDashboard({
   const openTaskTitles = new Set(openTasks.map((task) => task.title.trim().toLocaleLowerCase()));
   const projectionTasks = projectionNextSteps.filter((item) =>
     item.data?.kind === 'next_step' && item.data.itemType === 'task'
+    && item.data.status !== 'completed'
     && !openTaskTitles.has(item.text.trim().toLocaleLowerCase())).slice(0, 3);
   const overviewClaims = overviewProjection?.overview
     .filter((item) => item.data?.kind !== 'overview' || item.data.aspect !== 'goal') ?? [];
@@ -353,6 +398,32 @@ export function OverviewDashboard({
     window.addEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
     return () => window.removeEventListener(ROOM_OVERVIEW_CHANGED_EVENT, refresh as EventListener);
   }, [loadOverview, room.id]);
+
+  // 展开态按 id 记（相关资料/同期事件共用）：折叠分组后数组下标会漂移，不能用 index 作键。
+  const toggleExpanded = useCallback((key: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  // 单条时间轴内容（标题行 + 描述 + 相关资料开关）：领头条目与折叠展开后的同组条目共用。
+  const renderTimelineEntryBody = (item: TimelineEntry, toggleKey: string) => {
+    // 相关资料按证据来源解析：云文档/上传文件可跳转，连接器来源等展示来源标签
+    const materials = timelineMaterials(item.evidence);
+    return <>
+      <div><b>{localizedUiText(item.title, t)}</b>{item.time ? <time>{formatTimelineTime(item.time, locale)}</time> : null}</div>
+      {item.description ? <p>{localizedUiText(item.description, t)}</p> : null}
+      {materials.length ? <><button type="button" aria-expanded={expanded.has(toggleKey)} onClick={() => toggleExpanded(toggleKey)}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedResources')} <span>{materials.length}</span></button>{expanded.has(toggleKey) ? <div className="context-room-timeline-materials">{materials.map((source) => {
+        const resource = timelineResource(source, library.resources);
+        const label = resource ? resource.name : source.sourceTitle || t(`contextRoom:memory.sourceKind.${source.sourceKind}`);
+        return resource
+          ? <button type="button" key={`${source.sourceKind}:${source.sourceId}`} className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{label}</button>
+          : <span key={`${source.sourceKind}:${source.sourceId}`} className="context-room-timeline-material is-plain"><FileText aria-hidden="true" />{label}</span>;
+      })}</div> : null}</> : null}
+    </>;
+  };
 
   const moveTimeline = (delta: number) =>
     setTimelineCursor((current) => {
@@ -461,7 +532,8 @@ export function OverviewDashboard({
           <header data-icon-tone="calendar"><CalendarDays aria-hidden="true" />{t('contextRoom:overviewDashboard.todaySSchedule')}</header>
           {todayMeeting ? <button type="button" onClick={() => onOpenObject({ kind: 'meeting', id: todayMeeting.id })}><time>{timeLabel(todayMeeting.time)}</time><b>{todayMeeting.title}</b></button> : null}
           {projectionSchedules.map((item) => (
-            <button type="button" key={item.id} data-item-type="schedule" data-connector-source="calendar-event" title={item.data?.kind === 'next_step' && item.data.dueAt ? new Date(item.data.dueAt).toLocaleString(locale) : undefined}>
+            <button type="button" key={item.id} data-item-type="schedule" data-connector-source="calendar-event" title={item.data?.kind === 'next_step' && item.data.dueAt ? new Date(item.data.dueAt).toLocaleString(locale) : undefined} onClick={() => onOpenPane?.('schedule')}>
+              <CalendarProviderIcon provider={item.data?.kind === 'next_step' ? item.data.provider : undefined} />
               <time>{item.data?.kind === 'next_step' && item.data.dueAt
                 ? new Date(item.data.dueAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
                 : ''}</time>
@@ -474,7 +546,7 @@ export function OverviewDashboard({
           <header data-icon-tone="task"><CheckSquare2 aria-hidden="true" />{t('contextRoom:overviewDashboard.toDoTasks')}</header>
           {openTasks.map((task) => <div className="context-room-dashboard-task" key={task.id}><button type="button" aria-label={t('contextRoom:overviewDashboard.completeTitle', { title: task.title })} onClick={() => onToggleTask(task.id)}><i /></button><button type="button" onClick={() => onOpenObject({ kind: 'task', id: task.id })}><b>{task.title}</b><time>{t(localizedUiText(task.deadline, t))}</time></button></div>)}
           {projectionTasks.map((item) => (
-            <button type="button" key={item.id} data-item-type="task" data-connector-source="todo" title={item.data?.kind === 'next_step' && item.data.dueAt ? new Date(item.data.dueAt).toLocaleString(locale) : undefined}>
+            <button type="button" key={item.id} data-item-type="task" data-connector-source="todo" title={item.data?.kind === 'next_step' && item.data.dueAt ? new Date(item.data.dueAt).toLocaleString(locale) : undefined} onClick={() => onOpenPane?.('tasks')}>
               <span>{t('contextRoom:memory.sourceKind.todo')}</span>
               <b>{item.text}</b>
               <time>{item.data?.kind === 'next_step' && item.data.dueAt
@@ -497,16 +569,24 @@ export function OverviewDashboard({
             <button type="button" disabled={timelineCursor.toDateString() === today.toDateString()} onClick={() => setTimelineCursor(new Date())}>{t('contextRoom:overviewDashboard.today')}</button>
           </nav>
         </div>
-        {visibleTimeline.length ? <ol data-room-citation-section="timeline">{visibleTimeline.map((item, index) => {
-          // 相关资料按证据来源解析：云文档/上传文件可跳转，连接器来源等展示来源标签
-          const materials = timelineMaterials(item.evidence);
-          return <li key={item.id} data-room-citation-claim-id={projectedTimelineIds.has(item.id) ? item.id : undefined} data-room-citation-claim-text={projectedTimelineText.get(item.id)}><i data-kind={item.kind} /><div><div><b>{localizedUiText(item.title, t)}</b>{item.time ? <time>{formatTimelineTime(item.time, locale)}</time> : null}</div>{item.description ? <p>{localizedUiText(item.description, t)}</p> : null}{materials.length ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedResources')} <span>{materials.length}</span></button>{expanded.has(index) ? <div className="context-room-timeline-materials">{materials.map((source) => {
-            const resource = timelineResource(source, library.resources);
-            const label = resource ? resource.name : source.sourceTitle || t(`contextRoom:memory.sourceKind.${source.sourceKind}`);
-            return resource
-              ? <button type="button" key={`${source.sourceKind}:${source.sourceId}`} className="context-room-timeline-material" onClick={() => onSelectResource(resource)}><FileText aria-hidden="true" />{label}</button>
-              : <span key={`${source.sourceKind}:${source.sourceId}`} className="context-room-timeline-material is-plain"><FileText aria-hidden="true" />{label}</span>;
-          })}</div> : null}</> : null}</div></li>;
+        {visibleTimeline.length ? <ol data-room-citation-section="timeline">{clusterTimelineEntries(visibleTimeline, today).map(({ leading, peers }) => {
+          // 同期折叠：10 分钟内的相邻事件收成一组，领头条目代表全组，其余默认收起。
+          const clusterKey = `cluster:${leading.id}`;
+          return <li key={leading.id} data-room-citation-claim-id={projectedTimelineIds.has(leading.id) ? leading.id : undefined} data-room-citation-claim-text={projectedTimelineText.get(leading.id)}>
+            <i data-kind={leading.kind} />
+            <div>
+              {renderTimelineEntryBody(leading, leading.id)}
+              {peers.length ? <>
+                <button type="button" aria-expanded={expanded.has(clusterKey)} onClick={() => toggleExpanded(clusterKey)}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.samePeriodEvents', { count: peers.length })}</button>
+                {expanded.has(clusterKey) ? <div className="context-room-timeline-peers">{peers.map((peer) => (
+                  <div key={peer.id} className="context-room-timeline-peer" data-room-citation-claim-id={projectedTimelineIds.has(peer.id) ? peer.id : undefined} data-room-citation-claim-text={projectedTimelineText.get(peer.id)}>
+                    <i data-kind={peer.kind} />
+                    <div>{renderTimelineEntryBody(peer, peer.id)}</div>
+                  </div>
+                ))}</div> : null}
+              </> : null}
+            </div>
+          </li>;
         })}</ol> : <PanelEmptyState compact icon={GitBranch} title={t('contextRoom:overviewDashboard.noEventsInThisRange')} description={t('contextRoom:overviewDashboard.changeTheDateRangeToSeeOtherRoom')} />}
       </article>
     </section>

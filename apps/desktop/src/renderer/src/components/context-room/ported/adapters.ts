@@ -166,4 +166,6 @@ const CONTEXT_ROOM_DISPLAY_KEYS: Record<string, string> = {
   '资料归类时判定为新主题，自动创建的 Room。': 'contextRoom:portedContextRoom.autoCreatedBackground',
   '确认归属并补充背景。': 'contextRoom:portedContextRoom.autoCreatedGoal',
   '自动创建，等待认领。': 'contextRoom:portedContextRoom.autoCreatedBriefStatus',
+  '持续挂载的 Obsidian Vault，源文件始终保留在原目录。': 'contextRoom:portedContextRoom.obsidianVaultBackground',
+  '在 EverRoom 中浏览、编辑并让 Agent 理解 Vault 内容。': 'contextRoom:portedContextRoom.obsidianVaultGoal',
 }

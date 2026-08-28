@@ -98,6 +98,26 @@ function localActionProjectionFixture(): RoomOverviewProjection {
   }
 }
 
+/** 已完成的本地待办 claim（status=completed）：进「已完成」分组、可反勾恢复。 */
+function completedLocalActionProjectionFixture(): RoomOverviewProjection {
+  return {
+    ...projectionFixture(),
+    nextSteps: [{
+      id: 'ns-task-local-done',
+      section: 'next_steps',
+      text: '开学前买教材',
+      origin: 'fact',
+      confidence: 1,
+      evidence: [{ sourceKind: 'local-task', sourceId: 'act-2', sourceTitle: '开学前买教材' }],
+      corrected: false,
+      data: {
+        kind: 'next_step', itemType: 'task', actionId: 'act-2', owner: null,
+        dueAt: '2026-09-01T01:00:00.000Z', status: 'completed', priority: null,
+      },
+    }],
+  }
+}
+
 async function renderTasksPane(
   projection: RoomOverviewProjection = projectionFixture(),
   withLocalTasks = true,
@@ -199,5 +219,34 @@ describe('待办面板：确定性待办投影合并', () => {
     const dispatched = (window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
     expect(dispatched.type).toBe('nxcore:room-overview-changed')
     expect(dispatched.detail.projection).toBe(nextProjection)
+  })
+
+  it('完成的 local-task 进「已完成」分组：可反勾恢复，仅剩已完成时不显示空态', async () => {
+    const completeLocalAction = vi.fn().mockResolvedValue({
+      action: { id: 'act-2', kind: 'task', title: '开学前买教材', completedAt: null },
+      overview: { ...completedLocalActionProjectionFixture(), revision: 3 },
+    })
+    // 本地快照任务为空：面板里只有这一条已完成的助手待办。
+    const { renderer } = await renderTasksPane(completedLocalActionProjectionFixture(), false, completeLocalAction)
+    // 展开已完成分组
+    await act(async () => {
+      renderer.root.findByProps({ className: 'context-room-task-section-toggle' }).props.onClick()
+    })
+    const doneRows = renderer.root.findAll((node) =>
+      typeof node.props?.className === 'string'
+      && node.props.className.split(' ').includes('context-room-task-row')
+      && node.props['data-action-source'] === 'local-task')
+    expect(doneRows.map((node) => node.findByType('b').children[0])).toEqual(['开学前买教材'])
+    // 已完成计数含助手待办
+    expect(renderer.root.findByProps({ className: 'context-room-task-section-toggle' })
+      .findByType('span').children[0]).toBe('1')
+    // 反勾 → completeLocalAction(roomId, actionId, false)
+    await act(async () => {
+      doneRows[0].findByProps({ className: 'context-room-task-check' }).props.onClick()
+    })
+    expect(completeLocalAction).toHaveBeenCalledWith('room-connector', 'act-2', false)
+    // 不出现「还没有任务」空态
+    expect(renderer.root.findAll((node) =>
+      typeof node.props?.title === 'string' && node.props.title === '还没有任务')).toHaveLength(0)
   })
 })

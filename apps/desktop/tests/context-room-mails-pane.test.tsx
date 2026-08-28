@@ -88,12 +88,12 @@ describe('邮箱面板：连接器邮件叠加', () => {
   it('连接器邮件渲染进面板（主题/发件人/摘要/时间），计数含连接器条数', async () => {
     const { renderer, listMails } = await renderMailsPane(undefined, [
       mailFixture({
-        sourceId: 'mail-1', subject: '发射窗口确认',
+        sourceId: 'mail-1', subject: '发射窗口确认', provider: 'gmail',
         senderName: '李四', senderAddress: 'li@example.com',
         sentAt: todayAtLocal(9), snippet: '请确认 9 月 5 日的发射窗口。',
       }),
       mailFixture({
-        sourceId: 'mail-2', subject: '周报',
+        sourceId: 'mail-2', subject: '周报', provider: 'outlook',
         senderAddress: 'zhang@example.com', sentAt: todayAtLocal(8), snippet: '本周进展顺利。',
       }),
     ])
@@ -104,6 +104,35 @@ describe('邮箱面板：连接器邮件叠加', () => {
     expect(buttons.map((node) => node.findByType('b').children[0])).toEqual(['李四', 'zhang@example.com'])
     expect(buttons[0].findByType('small').children[0]).toBe('请确认 9 月 5 日的发射窗口。')
     expect(buttons[0].findByType('time').children[0]).toBeTruthy()
+    // 数据源品牌图标：gmail/outlook 用各自品牌标（vite 对小 svg 内联 data URI、大的保留文件 URL）
+    const iconSrc = (node: TestRenderer.ReactTestInstance) => {
+      const img = node.findAllByType('img')[0]
+      return img ? String(img.props.src) : ''
+    }
+    expect(iconSrc(buttons[0])).toContain('%234285f4')
+    expect(iconSrc(buttons[1])).toContain('outlook')
+    expect(iconSrc(buttons[1])).not.toBe(iconSrc(buttons[0]))
+  })
+
+  it('未登记 provider 与本地快照邮件回退通用邮件图标（不渲染品牌 img）', async () => {
+    const room = createContextRoomFixture('room-mail', '邮件 Room')
+    room.materials = [
+      { id: 'mail-local', type: '邮件', title: '本地快照邮件', time: `${localDateString()} 10:00`, summary: '无 provider' },
+    ]
+    const { renderer } = await renderMailsPane(room, [
+      mailFixture({
+        sourceId: 'mail-qq', subject: '未登记服务商邮件', provider: 'qq-mail',
+        senderAddress: 'noreply@qq.example', sentAt: todayAtLocal(9), snippet: '预留下来的扩展位。',
+      }),
+      mailFixture({
+        sourceId: 'mail-unknown', subject: '无服务商邮件', provider: null,
+        senderAddress: 'noreply@unknown', sentAt: todayAtLocal(8), snippet: 'provider 为 null。',
+      }),
+    ])
+    const buttons = connectorMailButtons(renderer)
+    expect(mailTitles(renderer)).toEqual(['本地快照邮件', '未登记服务商邮件', '无服务商邮件'])
+    // 连接器行均回退 lucide Mail（无 img），本地行本来就是通用图标
+    for (const button of buttons) expect(button.findAllByType('img')).toHaveLength(0)
   })
 
   it('与连接器邮件同主题同日的 LLM 快照去重（保留连接器版本），不同主题的本地邮件保留', async () => {
