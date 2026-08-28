@@ -3687,13 +3687,6 @@
   font-size: 10px;
 }
 
-.context-room-office-preview {
-  height: 100%;
-  overflow: auto;
-  padding: 28px 32px;
-  background: var(--cr-canvas);
-}
-
 .context-room-office-viewer {
   position: relative;
   display: grid;
@@ -3947,176 +3940,11 @@
   display: none;
 }
 
-.context-room-office-preview > header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.context-room-preview-icon {
-  display: inline-flex;
-  width: 44px;
-  height: 44px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--cr-border);
-  border-radius: 10px;
-  background: var(--cr-surface);
-  color: var(--cr-blue);
-}
-
-.context-room-preview-icon svg {
-  width: 21px;
-  height: 21px;
-}
-
 /* 来源资料行（只读）：与内联详情卡同款，此处作用域放宽到右侧内容区。 */
 @keyframes context-room-spin {
   to {
     transform: rotate(360deg);
   }
-}
-
-.context-room-office-preview h1,
-.context-room-office-preview h2,
-.context-room-office-preview p {
-  margin: 0;
-}
-
-.context-room-office-preview h1 {
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.context-room-office-preview > header p {
-  margin-top: 3px;
-  color: var(--cr-tertiary);
-  font-size: 11px;
-}
-
-.context-room-preview-summary {
-  margin-top: 20px;
-  padding: 14px;
-  border: 1px solid var(--cr-border);
-  border-radius: 10px;
-  background: var(--cr-surface);
-}
-
-.context-room-preview-summary span {
-  color: var(--cr-muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.context-room-preview-summary p {
-  margin-top: 6px;
-  color: var(--cr-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.context-room-sheet-preview,
-.context-room-slide-preview,
-.context-room-page-preview,
-.context-room-document-preview,
-.context-room-metadata-preview {
-  margin-top: 16px;
-}
-
-.context-room-sheet-preview {
-  overflow: auto;
-  border: 1px solid var(--cr-border);
-  border-radius: 10px;
-  background: var(--cr-surface);
-}
-
-.context-room-sheet-preview table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.context-room-sheet-preview th,
-.context-room-sheet-preview td {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--cr-border);
-  text-align: left;
-  white-space: nowrap;
-}
-
-.context-room-sheet-preview th {
-  background: var(--cr-surface-secondary);
-  color: var(--cr-muted);
-  font-weight: 600;
-}
-
-.context-room-slide-preview,
-.context-room-page-preview {
-  display: grid;
-  gap: 12px;
-}
-
-.context-room-slide-preview article,
-.context-room-page-preview article,
-.context-room-document-preview,
-.context-room-metadata-preview > div {
-  border: 1px solid var(--cr-border);
-  border-radius: 10px;
-  background: var(--cr-surface);
-}
-
-.context-room-slide-preview article {
-  display: grid;
-  grid-template-columns: 44px 1fr;
-  min-height: 140px;
-  padding: 18px;
-}
-
-.context-room-slide-preview article > span {
-  color: var(--cr-tertiary);
-  font-size: 12px;
-}
-
-.context-room-slide-preview h2,
-.context-room-page-preview h2,
-.context-room-document-preview h2 {
-  font-size: 16px;
-}
-
-.context-room-slide-preview p,
-.context-room-page-preview p,
-.context-room-document-preview p {
-  margin-top: 8px;
-  color: var(--cr-muted);
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.context-room-page-preview article,
-.context-room-document-preview {
-  padding: 22px;
-}
-
-.context-room-metadata-preview {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.context-room-metadata-preview > div {
-  display: flex;
-  flex-direction: column;
-  padding: 14px;
-}
-
-.context-room-metadata-preview span {
-  color: var(--cr-tertiary);
-  font-size: 11px;
-}
-
-.context-room-metadata-preview b {
-  margin-top: 4px;
-  font-size: 13px;
 }
 
 .context-room-compact-pane,
@@ -5122,10 +4950,6 @@
     padding-left: 94px;
   }
 
-  .context-room-office-preview {
-    padding: 50px 16px 24px;
-  }
-
   .context-room-office-viewer-header {
     height: 64px;
     gap: 8px;
@@ -5188,10 +5012,6 @@
 
   .context-room-dashboard-hero > b {
     display: none;
-  }
-
-  .context-room-metadata-preview {
-    grid-template-columns: 1fr;
   }
 }
 

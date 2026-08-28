@@ -639,7 +639,7 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
-    openOriginal: (fileId: string, originalName: string, contentHash: string) =>
+    openOriginal: (fileId: string, originalName?: string, contentHash?: string) =>
       invoke('files:open-original', fileId, originalName, contentHash),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       invoke('files:pick-and-import', options),

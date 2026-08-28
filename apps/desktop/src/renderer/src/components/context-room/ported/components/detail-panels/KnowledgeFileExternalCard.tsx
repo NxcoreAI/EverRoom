@@ -8,8 +8,9 @@ import type { ContextRoomKnowledgeFileResource } from '../../types';
 import { uiText } from '../../adapters';
 
 /**
- * 非 md 上传文件的编辑栏占位卡：资源被选中时已用系统默认应用打开原件，
- * 这里只留状态/体积与手动打开、定位原件入口（此类文件无应用内预览）。
+ * 无应用内预览上传文件（pdf/图片等非 md 非 Office）的编辑栏占位卡：
+ * 资源被选中时已用系统默认应用打开原件，这里只留状态/体积与手动打开、
+ * 定位原件入口（Office 文件走顶栏内嵌预览标签，不进此卡）。
  */
 export function KnowledgeFileExternalCard({ resource }: { resource: ContextRoomKnowledgeFileResource }) {
   const { t } = useLocale();

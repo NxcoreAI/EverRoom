@@ -22,77 +22,12 @@ import {
   createContextRoomResourceLibrary,
 } from '../../resources';
 import type {
-  ContextRoomOfficeResource,
   ContextRoomRecord,
   ContextRoomResource,
 } from '../../types';
 import { uiText } from '../../adapters';
 import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/markdownImport';
 import { PanelEmptyState } from './PanelEmptyState';
-
-export function OfficePreview({ resource }: { resource: ContextRoomOfficeResource }) {
-  const { t } = useLocale();
-  const preview = resource.preview;
-  return (
-    <div className="context-room-office-preview" data-testid="context-room-office-preview">
-      <header>
-        <span className="context-room-preview-icon">
-          {resource.format === 'xlsx' ? <FileSpreadsheet aria-hidden="true" /> : <FileText aria-hidden="true" />}
-        </span>
-        <div>
-          <h1>{preview.title}</h1>
-          <p>{resource.format.toUpperCase()} · {t('contextRoom:resource.readOnlyPreview')} · {resource.updatedAt}</p>
-        </div>
-      </header>
-      <section className="context-room-preview-summary">
-        <span>{t('contextRoom:resource.contentSummary')}</span>
-        <p>{preview.summary}</p>
-      </section>
-      {preview.columns && preview.rows ? (
-        <div className="context-room-sheet-preview">
-          <table>
-            <thead>
-              <tr>{preview.columns.map((column) => <th key={column}>{column}</th>)}</tr>
-            </thead>
-            <tbody>
-              {preview.rows.map((row, rowIndex) => (
-                <tr key={rowIndex}>
-                  {row.map((cell, cellIndex) => <td key={`${String(rowIndex)}-${String(cellIndex)}`}>{cell}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-      {preview.slides ? (
-        <div className="context-room-slide-preview">
-          {preview.slides.map((slide, index) => (
-            <article key={slide.title}>
-              <span>{index + 1}</span>
-              <div><h2>{slide.title}</h2><p>{slide.body}</p></div>
-            </article>
-          ))}
-        </div>
-      ) : null}
-      {preview.pages ? (
-        <div className="context-room-page-preview">
-          {preview.pages.map((page) => <article key={page.title}><h2>{page.title}</h2><p>{page.body}</p></article>)}
-        </div>
-      ) : null}
-      {preview.paragraphs ? (
-        <article className="context-room-document-preview">
-          <h2>{preview.title}</h2>
-          {preview.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-        </article>
-      ) : null}
-      {preview.metadata ? (
-        <div className="context-room-metadata-preview">
-          {preview.metadata.map((item) => <div key={item.label}><span>{item.label}</span><b>{item.value}</b></div>)}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 export function ResourceTree({
   room,

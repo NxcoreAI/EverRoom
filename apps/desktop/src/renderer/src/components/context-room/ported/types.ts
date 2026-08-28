@@ -176,21 +176,9 @@ export type ContextRoomOfficeFormat =
   | 'image'
   | 'fig';
 
-export interface ContextRoomOfficePreview {
-  title: string;
-  summary: string;
-  paragraphs?: string[];
-  columns?: string[];
-  rows?: string[][];
-  slides?: Array<{ title: string; body: string }>;
-  pages?: Array<{ title: string; body: string }>;
-  metadata?: Array<{ label: string; value: string }>;
-}
-
 export interface ContextRoomOfficeResource extends ContextRoomResourceBase {
   kind: 'office-file';
   format: ContextRoomOfficeFormat;
-  preview: ContextRoomOfficePreview;
   source?: {
     type: 'hostfs';
     path: string;

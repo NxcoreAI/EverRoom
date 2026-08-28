@@ -513,6 +513,27 @@ export function App() {
     setActivePage('files')
   }, [activeOfficeInstanceId, officeTabs])
 
+  // Context Room 等非文件页入口的 Office 文件打开请求：走 files:open-original，
+  // 内嵌预览 → 顶栏新标签；其余格式由主进程直接用系统默认应用打开。
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent<{ fileId: string; originalName: string }>).detail
+      const files = window.nxcore?.files
+      if (!detail?.fileId || !files) return
+      void files.openOriginal(detail.fileId, detail.originalName)
+        .then((result) => {
+          if (result?.openedWith === 'office') {
+            openOfficeTab({ id: result.instanceId, title: result.title, kind: result.kind })
+          }
+        })
+        .catch((error) => {
+          console.error('Failed to open the Office preview.', error)
+        })
+    }
+    window.addEventListener('nxcore:office:open', open as EventListener)
+    return () => window.removeEventListener('nxcore:office:open', open as EventListener)
+  }, [openOfficeTab])
+
   const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
     const roomById = new Map(rooms.map((room) => [room.id, room]))
     setContextRoomTabs((current) => current.flatMap((tab) => {

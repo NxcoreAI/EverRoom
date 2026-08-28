@@ -664,6 +664,16 @@ export interface OfficePreviewTab {
   kind: OfficePreviewKind
 }
 
+/** 内嵌 Office 预览的文件名分流（主进程白名单与渲染端入口共用；旧格式经 LibreOffice 转换后同样内嵌）。 */
+export function officePreviewKindForFileName(fileName: string): OfficePreviewKind | null {
+  const dot = fileName.lastIndexOf('.')
+  const extension = dot >= 0 ? fileName.slice(dot).toLowerCase() : ''
+  if (extension === '.docx' || extension === '.doc') return 'docx'
+  if (extension === '.pptx' || extension === '.ppt') return 'slides'
+  if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
+  return null
+}
+
 /** Context Room 子 Agent（划词改写）dispatch 入参，见 gateway /v1/context-rooms/selection-rewrite。 */
 export interface RoomAgentSelectionRewriteInput {
   roomId?: string
@@ -1111,13 +1121,14 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
-    /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。 */
+    /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
+     * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。 */
     openOriginal(
       fileId: string,
-      originalName: string,
-      contentHash: string,
+      originalName?: string,
+      contentHash?: string,
     ): Promise<
-      | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind }
+      | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
       | { openedWith: 'external' }
     >
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */

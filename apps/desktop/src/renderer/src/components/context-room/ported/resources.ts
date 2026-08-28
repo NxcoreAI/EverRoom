@@ -108,67 +108,6 @@ export function createContextRoomFileItem(file: FileItem, locale = 'zh-CN'): Con
   };
 }
 
-function previewFor(format: ContextRoomOfficeFormat, title: string, summary: string, locale: string) {
-  if (format === 'xlsx') {
-    return {
-      title,
-      summary,
-      columns: [
-        resourceText(locale, 'columnItem'),
-        resourceText(locale, 'columnOwner'),
-        resourceText(locale, 'columnStatus'),
-        resourceText(locale, 'columnUpdatedAt'),
-      ],
-      rows: [
-        [resourceText(locale, 'releaseMaterials'), resourceText(locale, 'ownerLinWei'), resourceText(locale, 'inProgress'), resourceText(locale, 'today')],
-        [resourceText(locale, 'sourceTraceability'), resourceText(locale, 'ownerZhouMing'), resourceText(locale, 'pendingConfirmation'), resourceText(locale, 'yesterday')],
-        [resourceText(locale, 'betaPackage'), resourceText(locale, 'ownerLuYuan'), resourceText(locale, 'planned'), '07-30'],
-      ],
-    };
-  }
-  if (format === 'pptx') {
-    return {
-      title,
-      summary,
-      slides: [
-        { title: resourceText(locale, 'projectGoal'), body: resourceText(locale, 'projectGoalBody') },
-        { title: resourceText(locale, 'coreProgress'), body: resourceText(locale, 'coreProgressBody') },
-        { title: resourceText(locale, 'nextSteps'), body: resourceText(locale, 'nextStepsBody') },
-      ],
-    };
-  }
-  if (format === 'pdf') {
-    return {
-      title,
-      summary,
-      pages: [
-        { title: resourceText(locale, 'summary'), body: summary },
-        { title: resourceText(locale, 'keyContent'), body: resourceText(locale, 'keyContentBody') },
-      ],
-    };
-  }
-  if (format === 'fig' || format === 'image') {
-    return {
-      title,
-      summary,
-      metadata: [
-        { label: resourceText(locale, 'format'), value: format.toUpperCase() },
-        { label: resourceText(locale, 'purpose'), value: resourceText(locale, 'designAndVisualMaterials') },
-        { label: resourceText(locale, 'indexStatus'), value: resourceText(locale, 'previewDataGenerated') },
-      ],
-    };
-  }
-  return {
-    title,
-    summary,
-    paragraphs: [
-      summary,
-      resourceText(locale, 'previewPlaceholderBody'),
-      resourceText(locale, 'roomIsolationBody'),
-    ],
-  };
-}
-
 export function createContextRoomResourceLibrary(
   room: ContextRoomRecord,
   backendDocuments: RoomDocument[] = [],
@@ -199,7 +138,6 @@ export function createContextRoomResourceLibrary(
       updatedAt: item.time,
       kind: 'office-file',
       format,
-      preview: previewFor(format, item.name, item.summary, resolvedLocale),
       source: item.hostfsPath
         ? {
             type: 'hostfs',
