@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { ContextRoomService } from "./service.js";
 import { DuplicateReviewRequiredError, type RoomDuplicateService } from "./duplicate-service.js";
 import type { RoomAgentDispatcher } from "./room-agent.js";
-import type { RoomOverviewService } from "./overview-service.js";
+import { applyOverviewFreshnessToSnapshot, type RoomOverviewService } from "./overview-service.js";
 
 const RoomData = Type.Object({}, { additionalProperties: true });
 const RoomSnapshotItem = Type.Object({
@@ -32,7 +32,11 @@ export function contextRoomRoutes(
     app.get(
       "/v1/context-rooms",
       { schema: { tags: ["context-rooms"] } },
-      async () => service.getSnapshot(),
+      // 房间列表的“更新时间”合并投影变化时间：日程/待办/纠正等变化不回写 rooms 表，
+      // 出口取 max(快照 updatedAt, 投影最后变化时间)，桌面首页卡片时间才跟随数据变化。
+      async () => overviews
+        ? applyOverviewFreshnessToSnapshot(service.getSnapshot(), overviews.latestProjectionTimes())
+        : service.getSnapshot(),
     );
 
     app.post(

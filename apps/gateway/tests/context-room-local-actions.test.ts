@@ -8,7 +8,7 @@ import { afterEach } from 'vitest'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import { roomLocalActions } from '../src/infrastructure/database/schema.js'
 import { ContextRoomService } from '../src/modules/context-rooms/service.js'
-import { RoomOverviewService } from '../src/modules/context-rooms/overview-service.js'
+import { RoomOverviewService, applyOverviewFreshnessToSnapshot } from '../src/modules/context-rooms/overview-service.js'
 import { createRoomOverviewAgentTools } from '../src/modules/context-rooms/overview-agent-tools.js'
 
 const temporaryDirectories: string[] = []
@@ -81,7 +81,7 @@ describe('room local actions (service + projection)', () => {
     })
     expect(localSchedule).toMatchObject({
       evidence: [{ sourceKind: 'local-schedule', sourceId: schedule.action.id }],
-      data: { itemType: 'schedule', actionId: schedule.action.id, dueAt: '2026-12-01T02:00:00.000Z', status: 'scheduled' },
+      data: { itemType: 'schedule', actionId: schedule.action.id, dueAt: '2026-12-01T02:00:00.000Z', status: 'scheduled', provider: null },
     })
     // 时间轴同样携带 local-* 证据（occurredAt 取 dueAt/startedAt）。
     const timelineByTitle = new Map(projection.timeline.map((item) => [item.text, item]))
@@ -93,7 +93,8 @@ describe('room local actions (service + projection)', () => {
     expect(timelineByTitle.get('新生报到')).toMatchObject({
       occurredAt: '2026-12-01T02:00:00.000Z',
       evidence: [{ sourceKind: 'local-schedule', sourceId: schedule.action.id }],
-      data: { kind: 'timeline', eventType: 'meeting' },
+      // 本地日程无服务商：provider 为 null（连接器行才带 service slug 供桌面打品牌图标）。
+      data: { kind: 'timeline', eventType: 'meeting', provider: null },
     })
   })
 
@@ -120,7 +121,12 @@ describe('room local actions (service + projection)', () => {
 
     const done = overviews.completeLocalAction('room-local', task.action.id)
     expect(done.action).toMatchObject({ completedAt: expect.any(String), status: 'completed' })
-    expect(done.overview.nextSteps.filter((item) => item.text === '买教材')).toHaveLength(0)
+    // 完成的本地待办不消失：投影保留为 status=completed 的 claim（桌面「已完成」分组）。
+    const doneClaim = done.overview.nextSteps.find((item) => item.text === '买教材')
+    expect(doneClaim).toMatchObject({
+      evidence: [{ sourceKind: 'local-task', sourceId: task.action.id }],
+      data: { itemType: 'task', status: 'completed' },
+    })
     // 时间轴保留（occurredAt 换成完成时间）。
     expect(done.overview.timeline.filter((item) => item.text === '买教材')).toHaveLength(1)
 
@@ -130,7 +136,11 @@ describe('room local actions (service + projection)', () => {
 
     const restored = overviews.completeLocalAction('room-local', recreated.action.id, false)
     expect(restored.action).toMatchObject({ completedAt: null, status: 'needsAction' })
-    expect(restored.overview.nextSteps.filter((item) => item.text === '买教材')).toHaveLength(1)
+    // 同名存在两条（旧已完成 + 新建）：按 actionId 断言新建那条恢复为未完成。
+    expect(restored.overview.nextSteps.find((item) =>
+      item.data?.kind === 'next_step' && item.data.actionId === recreated.action.id)).toMatchObject({
+      data: { itemType: 'task', status: 'needsAction' },
+    })
   })
 
   it('soft-deletes local actions out of the projection and advances the freshness watermark', async () => {
@@ -158,6 +168,59 @@ describe('room local actions (service + projection)', () => {
     expect(() => overviews.createLocalAction('room-local', { kind: 'task', title: '  ' })).toThrow('local_action_title_required')
     expect(() => overviews.createLocalAction('room-local', { kind: 'schedule', title: '无时间日程', startedAt: '下周吧' }))
       .toThrow('local_schedule_start_required')
+  })
+})
+
+describe('房间列表时间合并投影新鲜度', () => {
+  it('卡片更新时间取 max(快照 updatedAt, 投影 generatedAt)，无投影的房间不动', async () => {
+    const { rooms, overviews } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [
+        { id: 'room-local', title: 'Local Room', data: { id: 'room-local', title: 'Local Room', updatedAt: '2026-08-01T00:00:00.000Z' } },
+        { id: 'room-other', title: 'Other Room', data: { id: 'room-other', title: 'Other Room', updatedAt: '2099-01-01T00:00:00.000Z' } },
+      ],
+      deletedRooms: [],
+    })
+
+    // 无投影时原样返回（桌面拿到的还是快照时间）。
+    const before = applyOverviewFreshnessToSnapshot(rooms.getSnapshot(), overviews.latestProjectionTimes())
+    expect(before.rooms.find((room) => room.id === 'room-local')?.data.updatedAt).toBe('2026-08-01T00:00:00.000Z')
+
+    // 数据刷新（日程/待办变化等）推进投影 generatedAt，卡片时间随之更新
+    //（取 max(generatedAt, 行 updatedAt)，二者仅差落库毫秒级，用容差断言）。
+    const projection = overviews.refresh('room-local')
+    const merged = applyOverviewFreshnessToSnapshot(rooms.getSnapshot(), overviews.latestProjectionTimes())
+    const refreshedCard = new Date(String(merged.rooms.find((room) => room.id === 'room-local')!.data.updatedAt)).getTime()
+    const refreshedGenerated = new Date(projection.generatedAt).getTime()
+    expect(refreshedCard).toBeGreaterThanOrEqual(refreshedGenerated)
+    expect(refreshedCard - refreshedGenerated).toBeLessThan(5_000)
+    expect(merged.rooms.find((room) => room.id === 'room-other')?.data.updatedAt).toBe('2099-01-01T00:00:00.000Z')
+    // 顶层 updatedAt = 各房间有效时间的最大值（legacy 房间缺 data.updatedAt 时的兜底）。
+    expect(merged.updatedAt).toBe('2099-01-01T00:00:00.000Z')
+  })
+
+  it('纠正应用只 reproject 不推进 generatedAt，卡片时间仍取行 updatedAt', async () => {
+    const { rooms, overviews } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [
+        { id: 'room-local', title: 'Local Room', data: { id: 'room-local', title: 'Local Room', updatedAt: '2026-08-01T00:00:00.000Z' } },
+      ],
+      deletedRooms: [],
+    })
+    const generated = overviews.refresh('room-local')
+
+    // 复现 2026-08-28 线上问题：澄清纠正走 apply → reproject，generatedAt 停在上次
+    // regenerate，卡片“最近更新”不随纠正刷新。行 updatedAt 每次落库都推进，应取它。
+    const proposal = overviews.propose('room-local', {
+      operation: 'content_add', section: 'overview',
+      replacementText: '补充的总览内容', rationale: '用户澄清补充', entryPoint: 'agent',
+    }, { sessionId: 'session-1', runId: 'run-1' })
+    const applied = overviews.apply('room-local', proposal.id, { sessionId: 'session-1', runId: 'run-2' })
+
+    expect(new Date(applied.overview.generatedAt).getTime()).toBe(new Date(generated.generatedAt).getTime())
+    const merged = applyOverviewFreshnessToSnapshot(rooms.getSnapshot(), overviews.latestProjectionTimes())
+    const cardTime = new Date(String(merged.rooms.find((room) => room.id === 'room-local')!.data.updatedAt)).getTime()
+    expect(cardTime).toBeGreaterThan(new Date(generated.generatedAt).getTime())
   })
 })
 

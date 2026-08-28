@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
+  ContextRoomSnapshot,
+  ContextRoomSnapshotItem,
   ProposeRoomContextCorrectionInput,
   RoomContextCorrection,
   RoomOverviewClaim,
@@ -59,6 +61,24 @@ function isoTime(value: unknown): string | null {
   return new Date(normalized).toISOString();
 }
 
+interface RoomTodoOrdering {
+  sourceId: string;
+  dueAt: string | null;
+  completedAt: string | null;
+}
+
+/**
+ * 待办清单排序：dueAt 升序（无截止排最后）；同 dueAt 时未完成在前——投影按标题
+ * 去重只保留首条，同名“已完成 + 重新创建未完成”并存时必须让未完成那条胜出，
+ * 否则排序退化到 sourceId（UUID）就是随机的。末位 sourceId 仅作确定性兜底。
+ */
+function compareRoomTodos() {
+  return (left: RoomTodoOrdering, right: RoomTodoOrdering): number =>
+    (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999")
+    || Number(Boolean(left.completedAt)) - Number(Boolean(right.completedAt))
+    || left.sourceId.localeCompare(right.sourceId);
+}
+
 /** 从日历快照的“时间：开始 → 结束”行解析开始时间；解析不到（如“明天 10:00”）返回 null。 */
 function calendarStartAt(markdown: string): string | null {
   const match = markdown.match(/^时间：[ \t]*([^→\n]+?)[ \t]*(?:→|$)/m);
@@ -87,6 +107,11 @@ function mailSnippet(body: string): string | null {
     .replace(/\s+/g, " ")
     .trim();
   return stripped ? stripped.slice(0, 200) : null;
+}
+
+/** 从 connector ref 形式的 sourceId（connector:{provider}:{connectionId}:…）解析服务商 slug（gmail / google-calendar 等）；不匹配返回 null。 */
+function connectorProviderOf(sourceId: string): string | null {
+  return sourceId.match(/^connector:([a-z0-9][a-z0-9_-]*):/i)?.[1]?.toLowerCase() ?? null;
 }
 
 /** 邮件按发送时间倒序（缺时间沉底）：邮箱面板“最新在前”的展示约定。 */
@@ -182,6 +207,39 @@ function hasSource(item: RoomOverviewClaim, source: RoomOverviewEvidence): boole
     candidate.sourceKind === source.sourceKind && candidate.sourceId === source.sourceId);
 }
 
+/**
+ * 把投影生成时间合并进房间快照的“更新时间”：日程/待办等数据变化只推进投影
+ * （room_overviews.generatedAt），不回写 rooms 表——读模型出口取二者较大值，
+ * 桌面首页卡片的“昨天更新”才能跟随数据刷新。
+ */
+export function applyOverviewFreshnessToSnapshot(
+  snapshot: ContextRoomSnapshot,
+  generatedAts: Map<string, Date>,
+): ContextRoomSnapshot {
+  if (generatedAts.size === 0) return snapshot;
+  const times: Date[] = [];
+  const mergeItem = (room: ContextRoomSnapshotItem): ContextRoomSnapshotItem => {
+    const currentMs = typeof room.data.updatedAt === "string" ? Date.parse(room.data.updatedAt) : Number.NaN;
+    const current = Number.isFinite(currentMs) ? new Date(currentMs) : null;
+    if (current) times.push(current);
+    const generatedAt = generatedAts.get(room.id);
+    if (!generatedAt) return room;
+    if (!current || generatedAt > current) times.push(generatedAt);
+    if (current && current >= generatedAt) return room;
+    const effective = !current || generatedAt > current ? generatedAt : current;
+    return { ...room, data: { ...room.data, updatedAt: effective.toISOString() } };
+  };
+  const rooms = snapshot.rooms.map(mergeItem);
+  const deletedRooms = snapshot.deletedRooms.map(mergeItem);
+  const latest = times.reduce<Date | null>((acc, time) => (!acc || time > acc ? time : acc), null);
+  return {
+    ...snapshot,
+    rooms,
+    deletedRooms,
+    updatedAt: latest ? latest.toISOString() : snapshot.updatedAt,
+  };
+}
+
 export class RoomOverviewService {
   private roomAgent: RoomAgentDispatcher | null = null;
 
@@ -192,6 +250,24 @@ export class RoomOverviewService {
 
   setRoomAgentDispatcher(dispatcher: RoomAgentDispatcher | null): void {
     this.roomAgent = dispatcher;
+  }
+
+  /**
+   * 各房间投影的最后变化时间（房间列表读模型合并新鲜度用）。
+   * 取 max(generatedAt, 行 updatedAt)：regenerate/增量刷新推进 generatedAt，
+   * 纠正应用/撤销走 reproject 不推进 generatedAt，但行 updatedAt 每次落库都推进——
+   * 卡片“最近更新”要跟随的是投影内容变化，而不是上次重新生成。
+   */
+  latestProjectionTimes(): Map<string, Date> {
+    const rows = this.db.select({
+      roomId: roomOverviews.roomId,
+      generatedAt: roomOverviews.generatedAt,
+      updatedAt: roomOverviews.updatedAt,
+    }).from(roomOverviews).all();
+    return new Map(rows.map((row) => [
+      row.roomId,
+      row.generatedAt > row.updatedAt ? row.generatedAt : row.updatedAt,
+    ]));
   }
 
   get(roomId: string): RoomOverviewProjection {
@@ -386,6 +462,7 @@ export class RoomOverviewService {
     sourceId: string; title: string; startedAt: string | null;
     endAt: string | null; allDay: boolean; location: string | null;
     origin: "connector" | "local";
+    provider: string | null;
   }> {
     // 本地日程（agent/用户创建，直挂 roomId）与连接器行同形并入，origin 供投影
     // 切换 evidence sourceKind 与 identity 前缀（local-schedule）。
@@ -405,6 +482,7 @@ export class RoomOverviewService {
         allDay: row.allDay ?? false,
         location: row.location,
         origin: "local" as const,
+        provider: null,
       }))
       .filter((event) => event.title);
     const memberships = this.db.select({
@@ -437,6 +515,7 @@ export class RoomOverviewService {
           allDay: row.allDay,
           location: row.location,
           origin: "connector" as const,
+          provider: row.service,
         }];
       }
       return [];
@@ -473,6 +552,9 @@ export class RoomOverviewService {
         allDay: false,
         location: null,
         origin: "connector" as const,
+        // 快照路径没有域表 service 列，但 membership sourceId 本身是 connector ref
+        // （connector:google-calendar:…），从 ref 解析服务商供桌面打品牌图标。
+        provider: connectorProviderOf(snapshot.sourceId),
       }];
     });
     // 按开始时间升序（缺时间排尾）：投影的「未来日程取最近 N 条」与「时间轴取
@@ -515,7 +597,7 @@ export class RoomOverviewService {
       ))
       .all();
     if (memberships.length === 0) return local
-      .sort((left, right) => (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") || left.sourceId.localeCompare(right.sourceId))
+      .sort(compareRoomTodos())
       .slice(0, 20);
     const rows = this.db.select()
       .from(connectorTodos)
@@ -537,7 +619,7 @@ export class RoomOverviewService {
       ...local,
     ]
       .filter((todo) => todo.title)
-      .sort((left, right) => (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") || left.sourceId.localeCompare(right.sourceId))
+      .sort(compareRoomTodos())
       .slice(0, 20);
   }
 
@@ -555,6 +637,7 @@ export class RoomOverviewService {
     sentAt: string | null;
     snippet: string | null;
     hasAttachments: boolean;
+    provider: string | null;
   }> {
     const resolved = this.requireRoom(roomId);
     const memberships = this.db.select({
@@ -587,6 +670,7 @@ export class RoomOverviewService {
         sentAt: row.sentAt?.toISOString() ?? null,
         snippet: mailSnippet(row.bodyText),
         hasAttachments: row.hasAttachments,
+        provider: row.service,
       }];
     }).filter((mail) => mail.subject);
     const missing = sourceIds.filter((id) => !domainRows.has(id));
@@ -620,6 +704,7 @@ export class RoomOverviewService {
         sentAt: mailSentAtOf(markdown),
         snippet: mailSnippet(markdown),
         hasAttachments: false,
+        provider: connectorProviderOf(snapshot.sourceId),
       }];
     });
     return sortByMailSentAt([...resolvedMails, ...fallback]).slice(0, 500);
