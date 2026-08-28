@@ -18,6 +18,7 @@ import {
   documents,
   roomContextCorrections,
   roomDocumentLinks,
+  roomLocalActions,
   roomOverviews,
   roomSourceMemberships,
   routeDecisions,
@@ -98,6 +99,52 @@ function sortByMailSentAt<T extends { sentAt: string | null; sourceId: string }>
 function sortByCalendarStart<T extends { startedAt: string | null; sourceId: string }>(events: T[]): T[] {
   return events.sort((left, right) =>
     (left.startedAt ?? "9999").localeCompare(right.startedAt ?? "9999") || left.sourceId.localeCompare(right.sourceId));
+}
+
+function parseDate(value: unknown): Date | null {
+  const iso = isoTime(value);
+  return iso ? new Date(iso) : null;
+}
+
+/** room_local_actions 行的对外形状（REST/工具 details/IPC 透传桌面）。 */
+export interface RoomLocalActionDto {
+  id: string;
+  roomId: string;
+  kind: "task" | "schedule";
+  title: string;
+  notes: string | null;
+  status: string | null;
+  priority: string | null;
+  dueAt: string | null;
+  startedAt: string | null;
+  endAt: string | null;
+  allDay: boolean;
+  location: string | null;
+  completedAt: string | null;
+  createdBy: "agent" | "user";
+  createdAt: string;
+  updatedAt: string;
+}
+
+function localActionDto(row: typeof roomLocalActions.$inferSelect): RoomLocalActionDto {
+  return {
+    id: row.id,
+    roomId: row.roomId,
+    kind: row.kind,
+    title: row.title,
+    notes: row.notes,
+    status: row.status,
+    priority: row.priority,
+    dueAt: row.dueAt?.toISOString() ?? null,
+    startedAt: row.startedAt?.toISOString() ?? null,
+    endAt: row.endAt?.toISOString() ?? null,
+    allDay: row.allDay ?? false,
+    location: row.location,
+    completedAt: row.completedAt?.toISOString() ?? null,
+    createdBy: row.createdBy,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 function correctionRow(row: typeof roomContextCorrections.$inferSelect): RoomContextCorrection {
@@ -194,6 +241,101 @@ export class RoomOverviewService {
     return this.persistBase(this.buildBase(resolved, parseRoomOverviewSynthesis(content)));
   }
 
+  //
+  // 本地日程/待办（agent 或用户创建；不回写第三方账号，投影确定性并入）
+  //
+
+  /** 创建本地日程/待办。幂等：同房同 kind 同名的未删（task 且未完成）行已存在时
+   *  返回既有行（agent 概览再生重复落地、用户反复请求都不会翻倍）。 */
+  createLocalAction(roomId: string, input: {
+    kind: "task" | "schedule";
+    title: string;
+    notes?: string | null;
+    priority?: string | null;
+    dueAt?: string | null;
+    startedAt?: string | null;
+    endAt?: string | null;
+    allDay?: boolean;
+    location?: string | null;
+  }, context: { createdBy?: "agent" | "user"; runId?: string | null } = {}): {
+    action: RoomLocalActionDto;
+    overview: RoomOverviewProjection;
+    duplicate: boolean;
+  } {
+    const resolved = this.requireRoom(roomId);
+    const title = text(input.title, 500);
+    if (!title) throw new Error("local_action_title_required");
+    const startedAt = isoTime(input.startedAt);
+    if (input.kind === "schedule" && !startedAt) throw new Error("local_schedule_start_required");
+    const now = new Date();
+    const duplicate = this.db.select().from(roomLocalActions)
+      .where(and(
+        eq(roomLocalActions.roomId, resolved),
+        eq(roomLocalActions.kind, input.kind),
+        isNull(roomLocalActions.deletedAt),
+        ...(input.kind === "task" ? [isNull(roomLocalActions.completedAt)] : []),
+      ))
+      .all()
+      .find((row) => comparableText(row.title).toLocaleLowerCase() === comparableText(title).toLocaleLowerCase());
+    const row = duplicate ?? this.db.insert(roomLocalActions).values({
+      id: `act-${randomUUID()}`,
+      roomId: resolved,
+      kind: input.kind,
+      title,
+      notes: text(input.notes) || null,
+      status: input.kind === "task" ? "needsAction" : null,
+      priority: text(input.priority, 40) || null,
+      dueAt: input.kind === "task" ? parseDate(input.dueAt) : null,
+      startedAt: input.kind === "schedule" ? parseDate(startedAt) : null,
+      endAt: input.kind === "schedule" ? parseDate(input.endAt) : null,
+      allDay: input.kind === "schedule" && input.allDay === true,
+      location: input.kind === "schedule" ? (text(input.location, 200) || null) : null,
+      createdBy: context.createdBy ?? "agent",
+      ...(context.runId ? { createdViaRunId: context.runId } : {}),
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get()!;
+    return { action: localActionDto(row), overview: this.refresh(resolved), duplicate: Boolean(duplicate) };
+  }
+
+  /** 勾选完成/取消完成本地待办（schedule 无完成语义）。 */
+  completeLocalAction(roomId: string, actionId: string, completed = true): {
+    action: RoomLocalActionDto;
+    overview: RoomOverviewProjection;
+  } {
+    const resolved = this.requireRoom(roomId);
+    const row = this.requireLocalAction(resolved, actionId);
+    if (row.kind !== "task") throw new Error("local_action_not_task");
+    const now = new Date();
+    const updated = this.db.update(roomLocalActions).set({
+      completedAt: completed ? now : null,
+      status: completed ? "completed" : "needsAction",
+      updatedAt: now,
+    }).where(eq(roomLocalActions.id, row.id)).returning().get()!;
+    return { action: localActionDto(updated), overview: this.refresh(resolved) };
+  }
+
+  /** 软删本地日程/待办（agent 建错 / 用户清理）。 */
+  deleteLocalAction(roomId: string, actionId: string): {
+    action: RoomLocalActionDto;
+    overview: RoomOverviewProjection;
+  } {
+    const resolved = this.requireRoom(roomId);
+    const row = this.requireLocalAction(resolved, actionId);
+    const now = new Date();
+    const updated = this.db.update(roomLocalActions).set({ deletedAt: now, updatedAt: now })
+      .where(eq(roomLocalActions.id, row.id)).returning().get()!;
+    return { action: localActionDto(updated), overview: this.refresh(resolved) };
+  }
+
+  private requireLocalAction(roomId: string, actionId: string): typeof roomLocalActions.$inferSelect {
+    const row = this.db.select().from(roomLocalActions)
+      .where(and(eq(roomLocalActions.id, actionId), eq(roomLocalActions.roomId, roomId), isNull(roomLocalActions.deletedAt)))
+      .get();
+    if (!row) throw new Error("local_action_not_found");
+    return row;
+  }
+
   private buildBase(
     roomId: string,
     synthesis?: ContextRoomOverviewSynthesis,
@@ -243,7 +385,28 @@ export class RoomOverviewService {
   private roomCalendarEvents(roomId: string): Array<{
     sourceId: string; title: string; startedAt: string | null;
     endAt: string | null; allDay: boolean; location: string | null;
+    origin: "connector" | "local";
   }> {
+    // 本地日程（agent/用户创建，直挂 roomId）与连接器行同形并入，origin 供投影
+    // 切换 evidence sourceKind 与 identity 前缀（local-schedule）。
+    const local = this.db.select()
+      .from(roomLocalActions)
+      .where(and(
+        eq(roomLocalActions.roomId, roomId),
+        eq(roomLocalActions.kind, "schedule"),
+        isNull(roomLocalActions.deletedAt),
+      ))
+      .all()
+      .map((row) => ({
+        sourceId: row.id,
+        title: row.title.trim(),
+        startedAt: row.startedAt?.toISOString() ?? null,
+        endAt: row.endAt?.toISOString() ?? null,
+        allDay: row.allDay ?? false,
+        location: row.location,
+        origin: "local" as const,
+      }))
+      .filter((event) => event.title);
     const memberships = this.db.select({
       sourceId: roomSourceMemberships.sourceId,
     })
@@ -253,7 +416,7 @@ export class RoomOverviewService {
         eq(roomSourceMemberships.sourceKind, "calendar-event"),
       ))
       .all();
-    if (memberships.length === 0) return [];
+    if (memberships.length === 0) return sortByCalendarStart(local);
     const sourceIds = memberships.map((item) => item.sourceId);
     const domainRows = new Map(this.db.select()
       .from(connectorCalendarEvents)
@@ -273,6 +436,7 @@ export class RoomOverviewService {
           endAt: row.endAt?.toISOString() ?? null,
           allDay: row.allDay,
           location: row.location,
+          origin: "connector" as const,
         }];
       }
       return [];
@@ -308,18 +472,39 @@ export class RoomOverviewService {
         endAt: null,
         allDay: false,
         location: null,
+        origin: "connector" as const,
       }];
     });
     // 按开始时间升序（缺时间排尾）：投影的「未来日程取最近 N 条」与「时间轴取
     // 最新 N 条」都依赖此顺序；与 roomTodos 的 dueAt 升序同一约定。
-    return sortByCalendarStart([...resolved, ...fallback]);
+    return sortByCalendarStart([...resolved, ...fallback, ...local]);
   }
 
-  /** 已路由进 Room 的待办（kind "todo"）：按 dueAt 升序（无截止沉底）截 20。 */
+  /** 已路由进 Room 的待办（kind "todo"）+ 本地待办：按 dueAt 升序（无截止沉底）截 20。 */
   private roomTodos(roomId: string): Array<{
     sourceId: string; title: string; status: string | null;
     dueAt: string | null; completedAt: string | null; priority: string | null;
+    origin: "connector" | "local";
   }> {
+    // 本地待办（agent/用户创建）：evidence sourceKind local-task 由投影按 origin 切换。
+    const local = this.db.select()
+      .from(roomLocalActions)
+      .where(and(
+        eq(roomLocalActions.roomId, roomId),
+        eq(roomLocalActions.kind, "task"),
+        isNull(roomLocalActions.deletedAt),
+      ))
+      .all()
+      .map((row) => ({
+        sourceId: row.id,
+        title: row.title.trim(),
+        status: row.status,
+        dueAt: row.dueAt?.toISOString() ?? null,
+        completedAt: row.completedAt?.toISOString() ?? null,
+        priority: row.priority,
+        origin: "local" as const,
+      }))
+      .filter((todo) => todo.title);
     const memberships = this.db.select({
       sourceId: roomSourceMemberships.sourceId,
     })
@@ -329,7 +514,9 @@ export class RoomOverviewService {
         eq(roomSourceMemberships.sourceKind, "todo"),
       ))
       .all();
-    if (memberships.length === 0) return [];
+    if (memberships.length === 0) return local
+      .sort((left, right) => (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") || left.sourceId.localeCompare(right.sourceId))
+      .slice(0, 20);
     const rows = this.db.select()
       .from(connectorTodos)
       .where(and(
@@ -337,15 +524,18 @@ export class RoomOverviewService {
         isNull(connectorTodos.deletedAt),
       ))
       .all();
-    return rows
-      .map((row) => ({
+    return [
+      ...rows.map((row) => ({
         sourceId: row.id,
         title: row.title.trim(),
         status: row.status,
         dueAt: row.dueAt?.toISOString() ?? null,
         completedAt: row.completedAt?.toISOString() ?? null,
         priority: row.priority,
-      }))
+        origin: "connector" as const,
+      })),
+      ...local,
+    ]
       .filter((todo) => todo.title)
       .sort((left, right) => (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") || left.sourceId.localeCompare(right.sourceId))
       .slice(0, 20);
@@ -456,6 +646,12 @@ export class RoomOverviewService {
       // 文档更新/日历路由/待办路由也应把投影标记为待刷新。
       ...this.roomDocuments(roomId).map((document) => document.updatedAt),
       ...connectorRoutedAt,
+      // 本地日程/待办的落地/勾选/软删同样推进水位（get() 自动增量重建）。
+      ...this.db.select({ updatedAt: roomLocalActions.updatedAt })
+        .from(roomLocalActions)
+        .where(and(eq(roomLocalActions.roomId, roomId), isNull(roomLocalActions.deletedAt)))
+        .all()
+        .map((action) => action.updatedAt.toISOString()),
     ].filter((value): value is string => Boolean(value));
     return candidates.sort((left, right) => right.localeCompare(left))[0] ?? null;
   }

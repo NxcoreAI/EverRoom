@@ -312,6 +312,8 @@ const api: NxcoreDesktopApi = {
     refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
     listMails: (roomId: string) => invokeQuietly('context-rooms:list-mails', roomId),
     roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
+    completeLocalAction: (roomId: string, actionId: string, completed?: boolean) =>
+      invokeQuietly('context-rooms:complete-local-action', roomId, actionId, completed),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),

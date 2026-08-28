@@ -118,6 +118,17 @@ export class ContextRoomGatewayBridge {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/overview/refresh`, { method: 'POST' })
   }
 
+  /** 勾选完成/恢复 Room 本地待办：返回新行与重建后的总览投影。 */
+  completeLocalAction(roomId: string, actionId: string, completed = true): Promise<{
+    action: { id: string; kind: 'task' | 'schedule'; title: string; completedAt: string | null };
+    overview: RoomOverviewProjection;
+  }> {
+    return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/actions/${encodeURIComponent(actionId)}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ completed }),
+    })
+  }
+
   /** Room 关联的应用实体（room_entity_mentions + entities 实时状态）。 */
   roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult> {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/entities`)

@@ -305,6 +305,8 @@
   "memory.sourceKind.connector-record": "External records",
   "memory.sourceKind.everroom-doc": "EverRoom docs",
   "memory.sourceKind.file": "Uploaded files",
+  "memory.sourceKind.local-schedule": "Assistant schedule",
+  "memory.sourceKind.local-task": "Assistant to-do",
   "memory.sourceKind.mail": "Email",
   "memory.sourceKind.reality-event": "Meetings",
   "memory.sourceKind.todo": "To-dos",

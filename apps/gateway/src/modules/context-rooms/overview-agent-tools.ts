@@ -159,5 +159,103 @@ export function createRoomOverviewAgentTools(service: RoomOverviewService): PiAg
       return { content: "纠正已撤销，总览已经重新生成。", details: result };
     },
   };
-  return [contextGet, regenerate, propose, apply, applyCitation, revoke];
+  const taskCreate: PiAgentRuntimeTool = {
+    name: "context_room_task_create",
+    label: "在当前 Room 创建本地待办",
+    description: "在当前 Room 创建一条本地待办（不写入任何第三方账号）。用户明确要求记录待办、提醒，或你从 Room 资料中整理出有明确动作的待办时调用。同名未完成待办已存在则不会重复创建。完成后如实说明已记录。",
+    parameters: Type.Object({
+      roomId: Type.Optional(Type.String({ maxLength: 128 })),
+      title: Type.String({ minLength: 1, maxLength: 500 }),
+      dueAt: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
+      priority: Type.Optional(Type.Union([Type.String({ maxLength: 40 }), Type.Null()])),
+      notes: Type.Optional(Type.Union([Type.String({ maxLength: 4_000 }), Type.Null()])),
+    }, { additionalProperties: false }),
+    execute: async (input, params) => {
+      const roomId = resolveRoomId(input, params);
+      const result = service.createLocalAction(roomId, {
+        kind: "task",
+        title: String(params.title),
+        ...(params.dueAt != null ? { dueAt: String(params.dueAt) } : {}),
+        ...(params.priority != null ? { priority: String(params.priority) } : {}),
+        ...(params.notes != null ? { notes: String(params.notes) } : {}),
+      }, { createdBy: "agent", runId: input.runId });
+      return {
+        content: result.duplicate
+          ? `待办「${result.action.title}」已存在，未重复创建。`
+          : `已在 Room 创建本地待办「${result.action.title}」。`,
+        details: { roomId, action: result.action, duplicate: result.duplicate, overview: result.overview },
+      };
+    },
+  };
+  const scheduleCreate: PiAgentRuntimeTool = {
+    name: "context_room_schedule_create",
+    label: "在当前 Room 创建本地日程",
+    description: "在当前 Room 创建一条本地日程（不写入任何第三方日历账号）。用户明确要求记录日程、安排时间，或你从 Room 资料中整理出有明确时间的事项时调用；startedAt 必须是可解析的时间。同名日程已存在则不会重复创建。完成后如实说明已记录。",
+    parameters: Type.Object({
+      roomId: Type.Optional(Type.String({ maxLength: 128 })),
+      title: Type.String({ minLength: 1, maxLength: 500 }),
+      startedAt: Type.String({ minLength: 1, maxLength: 120 }),
+      endAt: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
+      allDay: Type.Optional(Type.Boolean()),
+      location: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])),
+      notes: Type.Optional(Type.Union([Type.String({ maxLength: 4_000 }), Type.Null()])),
+    }, { additionalProperties: false }),
+    execute: async (input, params) => {
+      const roomId = resolveRoomId(input, params);
+      const result = service.createLocalAction(roomId, {
+        kind: "schedule",
+        title: String(params.title),
+        startedAt: String(params.startedAt),
+        ...(params.endAt != null ? { endAt: String(params.endAt) } : {}),
+        ...(params.allDay === true ? { allDay: true } : {}),
+        ...(params.location != null ? { location: String(params.location) } : {}),
+        ...(params.notes != null ? { notes: String(params.notes) } : {}),
+      }, { createdBy: "agent", runId: input.runId });
+      return {
+        content: result.duplicate
+          ? `日程「${result.action.title}」已存在，未重复创建。`
+          : `已在 Room 创建本地日程「${result.action.title}」（${result.action.startedAt ?? ""}）。`,
+        details: { roomId, action: result.action, duplicate: result.duplicate, overview: result.overview },
+      };
+    },
+  };
+  const taskComplete: PiAgentRuntimeTool = {
+    name: "context_room_task_complete",
+    label: "完成/恢复 Room 本地待办",
+    description: "把当前 Room 的一条本地待办（待办面板可勾选的「助手待办」）标记为已完成，或把已完成改回未完成。仅在用户明确要求时调用；actionId 用 context_room_context_get 总览里 next_steps 中 itemType 为 task 且来源为 local-task 的 actionId。",
+    parameters: Type.Object({
+      roomId: Type.Optional(Type.String({ maxLength: 128 })),
+      taskId: Type.String({ minLength: 1, maxLength: 128 }),
+      completed: Type.Optional(Type.Boolean()),
+    }, { additionalProperties: false }),
+    execute: async (input, params) => {
+      const roomId = resolveRoomId(input, params);
+      const result = service.completeLocalAction(roomId, String(params.taskId), params.completed !== false);
+      return {
+        content: `本地待办「${result.action.title}」已${result.action.completedAt ? "标记完成" : "恢复未完成"}。`,
+        details: { roomId, action: result.action, overview: result.overview },
+      };
+    },
+  };
+  const actionDelete: PiAgentRuntimeTool = {
+    name: "context_room_action_delete",
+    label: "删除 Room 本地日程/待办",
+    description: "删除当前 Room 的一条本地日程或待办（仅限来源为 local-schedule / local-task 的条目，连接器数据不可删）。仅在用户明确要求移除时调用。",
+    parameters: Type.Object({
+      roomId: Type.Optional(Type.String({ maxLength: 128 })),
+      actionId: Type.String({ minLength: 1, maxLength: 128 }),
+    }, { additionalProperties: false }),
+    execute: async (input, params) => {
+      const roomId = resolveRoomId(input, params);
+      const result = service.deleteLocalAction(roomId, String(params.actionId));
+      return {
+        content: `本地条目「${result.action.title}」已删除。`,
+        details: { roomId, action: result.action, overview: result.overview },
+      };
+    },
+  };
+  return [
+    contextGet, regenerate, propose, apply, applyCitation, revoke,
+    taskCreate, scheduleCreate, taskComplete, actionDelete,
+  ];
 }

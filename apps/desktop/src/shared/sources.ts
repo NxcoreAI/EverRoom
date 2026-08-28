@@ -654,6 +654,32 @@ export interface RoomAgentSelectionRewriteInput {
   responseLanguage?: string
 }
 
+/** Room 本地日程/待办（agent/用户创建，非第三方数据）的对外形状。 */
+export interface RoomLocalAction {
+  id: string
+  roomId: string
+  kind: 'task' | 'schedule'
+  title: string
+  notes: string | null
+  status: string | null
+  priority: string | null
+  dueAt: string | null
+  startedAt: string | null
+  endAt: string | null
+  allDay: boolean
+  location: string | null
+  completedAt: string | null
+  createdBy: 'agent' | 'user'
+  createdAt: string
+  updatedAt: string
+}
+
+/** 本地日程/待办写操作的返回：新行 + 重建后的总览投影（面板据此刷新）。 */
+export interface RoomLocalActionResult {
+  action: RoomLocalAction
+  overview: RoomOverviewProjection
+}
+
 export interface NxcoreDesktopApi {
   platform: string
   pageMode: DesktopPageMode
@@ -803,6 +829,7 @@ export interface NxcoreDesktopApi {
     refreshOverview(roomId: string): Promise<RoomOverviewProjection>
     listMails(roomId: string): Promise<{ items: RoomMail[] }>
     roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
+    completeLocalAction(roomId: string, actionId: string, completed?: boolean): Promise<RoomLocalActionResult>
   }
   account: {
     status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>

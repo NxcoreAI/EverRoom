@@ -124,6 +124,33 @@ describe('日程面板：确定性日历事件投影合并', () => {
     expect(items[0].props['data-connector-source']).toBe('calendar-event')
   })
 
+  it('local-schedule 时间轴 claim 并入日程面板：带 local-schedule 来源标记与「助手日程」徽标', async () => {
+    const base = projectionFixture()
+    const projection: RoomOverviewProjection = {
+      ...base,
+      timeline: [
+        ...base.timeline,
+        {
+          id: 'tl-local-1',
+          section: 'timeline',
+          text: '新生报到',
+          origin: 'fact',
+          confidence: 1,
+          evidence: [{ sourceKind: 'local-schedule', sourceId: 'act-2', sourceTitle: '新生报到' }],
+          corrected: false,
+          occurredAt: todayAtLocal(15),
+          data: { kind: 'timeline', eventType: 'meeting', title: '新生报到', description: null, certainty: 'fact' },
+        },
+      ],
+    }
+    const { renderer } = await renderSchedulePane(createContextRoomFixture('room-connector', '连接器 Room'), projection)
+    const items = scheduleItemButtons(renderer)
+    expect(items.map((node) => node.findByType('b').children[0])).toEqual(['学校开学', '新生报到'])
+    expect(items[1].props['data-connector-source']).toBe('local-schedule')
+    // 徽标文案走 memory.sourceKind.local-schedule
+    expect(JSON.stringify(items[1].findByType('small').children)).toContain('助手日程')
+  })
+
   it('投影不可用时回落本地快照（不渲染连接器条目）', async () => {
     const room = createContextRoomFixture('room-connector', '连接器 Room')
     room.materials = [{

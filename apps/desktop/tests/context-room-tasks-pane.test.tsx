@@ -74,16 +74,42 @@ function projectionFixture(): RoomOverviewProjection {
   }
 }
 
+/** 本地待办（local-task）claim 变体：可勾选行。 */
+function localActionProjectionFixture(): RoomOverviewProjection {
+  const base = projectionFixture()
+  return {
+    ...base,
+    nextSteps: [
+      ...base.nextSteps,
+      {
+        id: 'ns-task-local',
+        section: 'next_steps',
+        text: '开学前买教材',
+        origin: 'fact',
+        confidence: 1,
+        evidence: [{ sourceKind: 'local-task', sourceId: 'act-1', sourceTitle: '开学前买教材' }],
+        corrected: false,
+        data: {
+          kind: 'next_step', itemType: 'task', actionId: 'act-1', owner: null,
+          dueAt: '2026-09-01T01:00:00.000Z', status: 'needsAction', priority: null,
+        },
+      },
+    ],
+  }
+}
+
 async function renderTasksPane(
   projection: RoomOverviewProjection = projectionFixture(),
   withLocalTasks = true,
+  completeLocalAction?: ReturnType<typeof vi.fn>,
 ) {
   const overview = vi.fn().mockResolvedValue(projection)
   vi.stubGlobal('window', {
     ...globalThis,
-    nxcore: { contextRooms: { overview } },
+    nxcore: { contextRooms: { overview, ...(completeLocalAction ? { completeLocalAction } : {}) } },
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
   })
   const room = createContextRoomFixture('room-connector', '连接器 Room')
   room.actionItems = withLocalTasks ? [
@@ -137,5 +163,41 @@ describe('待办面板：确定性待办投影合并', () => {
     expect(taskRows(renderer)).toHaveLength(0)
     expect(renderer.root.findAll((node) =>
       typeof node.props?.title === 'string' && node.props.title === '还没有任务')).toHaveLength(1)
+  })
+
+  it('local-task claim 渲染可勾选行并计入未完成数，顺序在连接器行之前', async () => {
+    const { renderer } = await renderTasksPane(localActionProjectionFixture())
+    const localRows = renderer.root.findAll((node) =>
+      typeof node.props?.className === 'string'
+      && node.props.className.split(' ').includes('context-room-task-row')
+      && node.props['data-action-source'] === 'local-task')
+    expect(localRows.map((node) => node.findByType('b').children[0])).toEqual(['开学前买教材'])
+    // 主区非跳转按钮（div），唯一按钮是勾选
+    expect(localRows[0].findAllByType('button')).toHaveLength(1)
+    expect(localRows[0].findAllByType('button')[0].props.className).toBe('context-room-task-check')
+    // 未完成计数 = 本地 1 + local-task 1 + 连接器 1
+    const incompleteHeader = renderer.root.findAll((node) => node.type === 'h3')[0]
+    expect(incompleteHeader.findByType('span').children[0]).toBe('3')
+    // 全部行顺序：本地任务 → local-task → 连接器
+    expect(taskRows(renderer).map((node) => node.findByType('b').children[0]))
+      .toEqual(['本地验收任务', '开学前买教材', '补充天线参数'])
+  })
+
+  it('勾选 local-task 调 completeLocalAction 并用返回投影广播 ROOM_OVERVIEW_CHANGED', async () => {
+    const nextProjection = { ...localActionProjectionFixture(), revision: 2 }
+    const completeLocalAction = vi.fn().mockResolvedValue({
+      action: { id: 'act-1', kind: 'task', title: '开学前买教材', completedAt: '2026-08-28T00:00:00.000Z' },
+      overview: nextProjection,
+    })
+    const { renderer } = await renderTasksPane(localActionProjectionFixture(), true, completeLocalAction)
+    const check = renderer.root.findAll((node) =>
+      node.props?.['data-action-source'] === 'local-task')[0].findByProps({ className: 'context-room-task-check' })
+    await act(async () => {
+      check.props.onClick()
+    })
+    expect(completeLocalAction).toHaveBeenCalledWith('room-connector', 'act-1', true)
+    const dispatched = (window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
+    expect(dispatched.type).toBe('nxcore:room-overview-changed')
+    expect(dispatched.detail.projection).toBe(nextProjection)
   })
 })

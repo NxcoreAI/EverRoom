@@ -8,6 +8,10 @@ export const ROOM_OVERVIEW_PROJECTION_TOOL_NAMES = [
   'context_room_correction_apply',
   'context_room_correction_apply_citation',
   'context_room_correction_revoke',
+  'context_room_task_create',
+  'context_room_schedule_create',
+  'context_room_task_complete',
+  'context_room_action_delete',
 ] as const
 
 export type RoomOverviewProjectionToolName = typeof ROOM_OVERVIEW_PROJECTION_TOOL_NAMES[number]

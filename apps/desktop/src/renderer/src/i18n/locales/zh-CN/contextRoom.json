@@ -305,6 +305,8 @@
   "memory.sourceKind.connector-record": "外部记录",
   "memory.sourceKind.everroom-doc": "EverRoom 文档",
   "memory.sourceKind.file": "上传文件",
+  "memory.sourceKind.local-schedule": "助手日程",
+  "memory.sourceKind.local-task": "助手待办",
   "memory.sourceKind.mail": "邮件",
   "memory.sourceKind.reality-event": "会议",
   "memory.sourceKind.todo": "待办",

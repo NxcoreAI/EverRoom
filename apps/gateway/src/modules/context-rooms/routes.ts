@@ -322,6 +322,87 @@ export function contextRoomRoutes(
       },
     );
 
+    app.post(
+      "/v1/context-rooms/:roomId/actions",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+          body: Type.Object({
+            kind: Type.Union([Type.Literal("task"), Type.Literal("schedule")]),
+            title: Type.String({ minLength: 1, maxLength: 500 }),
+            notes: Type.Optional(Type.Union([Type.String({ maxLength: 4_000 }), Type.Null()])),
+            priority: Type.Optional(Type.Union([Type.String({ maxLength: 40 }), Type.Null()])),
+            dueAt: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
+            startedAt: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
+            endAt: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
+            allDay: Type.Optional(Type.Boolean()),
+            location: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])),
+          }, { additionalProperties: false }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          // REST 入口视为用户手动创建（agent 走工具，createdBy "agent"）。
+          return overviews.createLocalAction(request.params.roomId, request.body, { createdBy: "user" });
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "local_action_invalid";
+          return reply.code(code === "context_room_not_found" ? 404 : 400).send({ error: code });
+        }
+      },
+    );
+
+    app.post(
+      "/v1/context-rooms/:roomId/actions/:actionId/complete",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            actionId: Type.String({ minLength: 1, maxLength: 128 }),
+          }),
+          body: Type.Optional(Type.Object({
+            completed: Type.Optional(Type.Boolean()),
+          }, { additionalProperties: false })),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        const completed = (request.body as { completed?: boolean } | undefined)?.completed !== false;
+        try {
+          return overviews.completeLocalAction(request.params.roomId, request.params.actionId, completed);
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "local_action_invalid";
+          return reply.code(code === "context_room_not_found" || code === "local_action_not_found" ? 404 : 400)
+            .send({ error: code });
+        }
+      },
+    );
+
+    app.delete(
+      "/v1/context-rooms/:roomId/actions/:actionId",
+      {
+        schema: {
+          tags: ["context-rooms"],
+          params: Type.Object({
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            actionId: Type.String({ minLength: 1, maxLength: 128 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        if (!overviews) return reply.code(503).send({ error: "room_overview_service_unavailable" });
+        try {
+          return overviews.deleteLocalAction(request.params.roomId, request.params.actionId);
+        } catch (error) {
+          const code = error instanceof Error ? error.message : "local_action_invalid";
+          return reply.code(code === "context_room_not_found" || code === "local_action_not_found" ? 404 : 400)
+            .send({ error: code });
+        }
+      },
+    );
+
     app.get(
       "/v1/context-rooms/:roomId/corrections",
       {

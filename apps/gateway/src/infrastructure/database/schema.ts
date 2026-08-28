@@ -625,6 +625,40 @@ export const roomOverviews = sqliteTable(
   (table) => [index("room_overviews_updated_idx").on(table.updatedAt)],
 );
 
+/**
+ * Room 内的本地日程/待办（agent 或用户创建）：与连接器域表平行的本地数据，
+ * 不回写第三方账号。房间归属直挂 roomId（不走路由瀑布），确定性投影按 kind
+ * 并入 next_steps 的 schedule/task claim 与时间轴。
+ */
+export const roomLocalActions = sqliteTable(
+  "room_local_actions",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull().references(() => contextRooms.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["task", "schedule"] }).notNull(),
+    title: text("title").notNull(),
+    notes: text("notes"),
+    /** task：needsAction|completed（null = 未知，投影按 completedAt 兜底判断）。 */
+    status: text("status"),
+    priority: text("priority"),
+    dueAt: integer("due_at", { mode: "timestamp_ms" }),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    endAt: integer("end_at", { mode: "timestamp_ms" }),
+    allDay: integer("all_day", { mode: "boolean" }),
+    location: text("location"),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdBy: text("created_by", { enum: ["agent", "user"] }).notNull(),
+    createdViaRunId: text("created_via_run_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("room_local_actions_room_idx").on(table.roomId, table.kind, table.deletedAt),
+    index("room_local_actions_room_due_idx").on(table.roomId, table.kind, table.dueAt, table.startedAt),
+  ],
+);
+
 export const roomContextCorrections = sqliteTable(
   "room_context_corrections",
   {

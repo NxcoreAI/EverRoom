@@ -297,6 +297,7 @@ const CONTEXT_ROOM_CHANNELS = {
   refreshOverview: 'context-rooms:refresh-overview',
   listMails: 'context-rooms:list-mails',
   roomEntities: 'context-rooms:room-entities',
+  completeLocalAction: 'context-rooms:complete-local-action',
 } as const
 
 const AGENT_CHANNELS = {
@@ -1577,6 +1578,8 @@ function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
   handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
   handle(CONTEXT_ROOM_CHANNELS.listMails, (_event, roomId) => bridge.listMails(roomId))
   handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
+  handle(CONTEXT_ROOM_CHANNELS.completeLocalAction, (_event, roomId: string, actionId: string, completed?: boolean) =>
+    bridge.completeLocalAction(roomId, actionId, completed !== false))
 }
 
 function registerMigrationHandlers(coordinator: MigrationCoordinator): void {

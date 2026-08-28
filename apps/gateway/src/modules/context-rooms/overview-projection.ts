@@ -109,15 +109,17 @@ export function buildRoomOverviewProjection(input: {
   sourceUpdatedAt: string | null;
   /** Room 关联的活跃云文档（最新在前）——时间轴的收录/版本事件源。 */
   documents: Array<{ id: string; title: string; version: number; createdAt: string; updatedAt: string }>;
-  /** 已路由进 Room 的日历事件（startedAt 为事件开始时间，解析不到为 null）。 */
+  /** 已路由进 Room 的日历事件 + 本地日程（startedAt 为事件开始时间，解析不到为 null）。 */
   calendarEvents: Array<{
     sourceId: string; title: string; startedAt: string | null;
     endAt: string | null; allDay: boolean; location: string | null;
+    origin: "connector" | "local";
   }>;
-  /** 已路由进 Room 的连接器待办（按 dueAt 升序）——task claim 与时间轴任务事件源。 */
+  /** 已路由进 Room 的连接器待办 + 本地待办（按 dueAt 升序）——task claim 与时间轴任务事件源。 */
   todos: Array<{
     sourceId: string; title: string; status: string | null;
     dueAt: string | null; completedAt: string | null; priority: string | null;
+    origin: "connector" | "local";
   }>;
   synthesis?: ContextRoomOverviewSynthesis;
 }): RoomOverviewProjection {
@@ -231,36 +233,41 @@ export function buildRoomOverviewProjection(input: {
       `meeting:${sourceId ?? index}`,
     )];
   });
-  // 确定性日程 claim：未来开始的连接器日历事件（服务层已按开始时间升序），
+  // 确定性日程 claim：未来开始的连接器日历事件 + 本地日程（服务层已按开始时间升序），
   // 取即将到来的前 8 条——先过滤再截断，历史事件再多也不挤掉未来日程。
+  // origin 决定 evidence sourceKind 与 identity 前缀：本地行走 local-schedule（桌面
+  // 徽标/勾选语义），连接器行维持 calendar-event。
   const connectorSourceIds = new Set(input.calendarEvents.map((event) => event.sourceId));
   const upcomingEvents = input.calendarEvents
     .filter((event) => event.startedAt && event.startedAt >= generatedAt.toISOString());
   const scheduleClaims = upcomingEvents.slice(0, 8).flatMap((event) => {
+    const local = event.origin === "local";
     return [createRoomOverviewClaim(
       "next_steps", event.title, "fact",
-      [{ sourceKind: "calendar-event", sourceId: event.sourceId, sourceTitle: event.title }],
+      [{ sourceKind: local ? "local-schedule" : "calendar-event", sourceId: event.sourceId, sourceTitle: event.title }],
       1, undefined,
       { kind: "next_step", itemType: "schedule", actionId: event.sourceId, owner: null, dueAt: event.startedAt, status: "scheduled", priority: null },
-      `calendar-schedule:${event.sourceId}`,
+      `${local ? "local-schedule" : "calendar-schedule"}:${event.sourceId}`,
     )];
   });
   const llmMeetingClaims = meetingClaims.filter((claim) => {
     const sourceId = claim.data?.kind === "next_step" ? claim.data.actionId : null;
     return !sourceId || !connectorSourceIds.has(sourceId);
   });
-  // 确定性待办 claim：未完成的连接器待办（status 语义由连接器 Skill 归一，completed 语义兜底判断）。
+  // 确定性待办 claim：未完成的连接器待办 + 本地待办（status 语义由连接器 Skill 归一，
+  // completed 语义兜底判断）；本地行走 local-task（桌面可勾选徽标）。
   const todoClaims = input.todos.slice(0, 20).flatMap((todo) => {
     if (todo.completedAt || isCompleted(todo.status)) return [];
+    const local = todo.origin === "local";
     return [createRoomOverviewClaim(
       "next_steps", todo.title, "fact",
-      [{ sourceKind: "todo", sourceId: todo.sourceId, sourceTitle: todo.title }],
+      [{ sourceKind: local ? "local-task" : "todo", sourceId: todo.sourceId, sourceTitle: todo.title }],
       1, undefined,
       {
         kind: "next_step", itemType: "task", actionId: todo.sourceId, owner: null,
         dueAt: todo.dueAt, status: todo.status, priority: normalizePriority(todo.priority),
       },
-      `todo:${todo.sourceId}`,
+      `${local ? "local-task" : "todo"}:${todo.sourceId}`,
     )];
   });
   const inferredNextSteps = synthesis
@@ -294,28 +301,30 @@ export function buildRoomOverviewProjection(input: {
       `doc:${document.id}:${document.version}`,
     )];
   });
-  // 确定性事件源②：连接器日历事件（occurredAt = 事件开始时间；解析不到则按无时间沉底）。
+  // 确定性事件源②：连接器日历事件 + 本地日程（occurredAt = 事件开始时间；解析不到则按无时间沉底）。
   // 时间轴取最新 20 条（列表已升序，slice(-20) 保升序输出；最终 timeline 整体倒序）。
   const calendarEvents = input.calendarEvents.slice(-20).flatMap((event) => {
     if (!event.title) return [];
+    const local = event.origin === "local";
     return [createRoomOverviewClaim(
       "timeline", event.title, "fact",
-      [{ sourceKind: "calendar-event", sourceId: event.sourceId, sourceTitle: event.title }],
+      [{ sourceKind: local ? "local-schedule" : "calendar-event", sourceId: event.sourceId, sourceTitle: event.title }],
       1, event.startedAt,
       { kind: "timeline", eventType: "meeting", title: event.title, description: null, certainty: "fact" },
-      `calendar:${event.sourceId}`,
+      `${local ? "local-schedule" : "calendar"}:${event.sourceId}`,
     )];
   });
-  // 确定性事件源③：连接器待办（occurredAt = dueAt；已完成的取完成时间；dueAt 升序 → 取最新 20）。
+  // 确定性事件源③：连接器待办 + 本地待办（occurredAt = dueAt；已完成的取完成时间；dueAt 升序 → 取最新 20）。
   const todoTimeline = input.todos.slice(-20).flatMap((todo) => {
     const occurredAt = todo.completedAt ?? todo.dueAt;
     if (!occurredAt) return [];
+    const local = todo.origin === "local";
     return [createRoomOverviewClaim(
       "timeline", todo.title, "fact",
-      [{ sourceKind: "todo", sourceId: todo.sourceId, sourceTitle: todo.title }],
+      [{ sourceKind: local ? "local-task" : "todo", sourceId: todo.sourceId, sourceTitle: todo.title }],
       1, occurredAt,
       { kind: "timeline", eventType: "task", title: todo.title, description: null, certainty: "fact" },
-      `todo-timeline:${todo.sourceId}`,
+      `${local ? "local-task" : "todo-timeline"}:${todo.sourceId}`,
     )];
   });
   // 确定性事件源④：事实记忆——occurredAt 取首次提及时间（最后提及时间会让旧事随新资料"漂移"到最新）。
