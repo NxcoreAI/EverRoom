@@ -53,7 +53,7 @@ button { font: inherit; }
 .brand { display: flex; align-items: center; gap: 12px; color: var(--text); }
 .brand:hover { text-decoration: none; }
 .brand-logo { display: block; width: 168px; height: auto; }
-:root[data-theme="dark"] .brand-logo { filter: brightness(0) invert(1); }
+:root[data-theme="dark"] .brand-logo { content: url("everroom-logo-dark.svg"); }
 .alpha { padding: 2px 9px; border-radius: 999px; color: var(--brand-strong); background: var(--brand-soft); font-size: 10px; font-weight: 700; }
 .topnav { margin-left: auto; display: flex; align-items: center; gap: 22px; }
 .topnav a { color: var(--muted); font-size: 13px; font-weight: 500; }
