@@ -174,7 +174,6 @@
   "creation.stepRoute": "Parse & extract entities",
   "creation.stepAccumulate": "Accumulate evidence into recommendations",
   "creation.stepWaiting": "Waiting for the previous step",
-  "creation.routeProgress": "Parsed {current}/{total}",
   "creation.runTitle": "The agent is analyzing your materials to recommend rooms",
   "creation.runIntentTitle": "Building room recommendations for “{intent}”",
   "creation.runDone": "Recommendations ready",

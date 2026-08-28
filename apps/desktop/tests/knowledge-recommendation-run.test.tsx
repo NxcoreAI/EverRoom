@@ -203,7 +203,7 @@ describe('KnowledgePendingPanel：推荐生成会话（整卡蒙层，真实机�
     })
     expect(JSON.stringify(renderer!.toJSON())).toContain('导入中 1/2')
 
-    // 导入完成：进入路由阶段；仅 file-1 落库 → 已解析 1/2
+    // 导入完成：进入路由阶段；不再展示「已解析 x/y」计数
     bridge.route('file-1', '讲义.md')
     await act(async () => {
       bridge.settleImport()
@@ -211,7 +211,7 @@ describe('KnowledgePendingPanel：推荐生成会话（整卡蒙层，真实机�
     })
     overlay = root.findByProps({ 'data-testid': 'context-room-recommendation-run' })
     expect(overlay.props['data-phase']).toBe('routing')
-    expect(JSON.stringify(renderer!.toJSON())).toContain('已解析 1/2')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('已解析')
 
     // 全部落库但阈值未到：累积证据 + 候选实体数
     bridge.route('file-2', '实验.md')
@@ -329,7 +329,6 @@ describe('KnowledgePendingPanel：推荐生成会话（整卡蒙层，真实机�
     })
     expect(root.findByProps({ 'data-testid': 'context-room-recommendation-run' }).props['data-phase'])
       .toBe('accumulating')
-    expect(JSON.stringify(renderer!.toJSON())).toContain('已解析 1/1')
   })
 
   it('无进度超时：路由与候选持续无增长才转超时，有推进则不误杀', async () => {
@@ -376,7 +375,7 @@ describe('KnowledgePendingPanel：推荐生成会话（整卡蒙层，真实机�
     expect(bridge.storage.has(bridge.runKey)).toBe(false)
   })
 
-  it('已解析计数走 routeStatus：awaiting_review/auto 即计入，不依赖 confirmed', async () => {
+  it('阶段推进走 routeStatus：awaiting_review/auto 即计入，不依赖 confirmed', async () => {
     const bridge = installBridge(okOutcomes)
     const root = await render()
 
@@ -389,17 +388,25 @@ describe('KnowledgePendingPanel：推荐生成会话（整卡蒙层，真实机�
       await bridge.flush()
     })
     // 网关已路由但等待用户确认（awaiting_review）——旧实现只看 confirmed 列表会永远 0
-    expect(JSON.stringify(renderer!.toJSON())).toContain('已解析 0/2')
     bridge.route('file-1', '讲义.md', 'awaiting_review')
     await act(async () => {
       bridge.tickers.forEach((tick) => tick())
       await bridge.flush()
     })
     expect(bridge.knowledge.routeStatus).toHaveBeenCalledWith(['file-1', 'file-2'])
-    expect(JSON.stringify(renderer!.toJSON())).toContain('已解析 1/2')
+    // 2 个中只落库 1 个：仍在路由阶段
+    expect(root.findByProps({ 'data-testid': 'context-room-recommendation-run' }).props['data-phase'])
+      .toBe('routing')
+    bridge.route('file-2', '实验.md', 'auto')
+    await act(async () => {
+      bridge.tickers.forEach((tick) => tick())
+      await bridge.flush()
+    })
+    expect(root.findByProps({ 'data-testid': 'context-room-recommendation-run' }).props['data-phase'])
+      .toBe('accumulating')
   })
 
-  it('旧网关无 routeStatus：回退 listRecentDecisions 匹配，计数仍推进', async () => {
+  it('旧网关无 routeStatus：回退 listRecentDecisions 匹配，阶段仍推进', async () => {
     const bridge = installBridge(okOutcomes)
     delete (bridge.knowledge as { routeStatus?: unknown }).routeStatus
     const root = await render()
@@ -418,7 +425,15 @@ describe('KnowledgePendingPanel：推荐生成会话（整卡蒙层，真实机�
       await bridge.flush()
     })
     expect(bridge.knowledge.listRecentDecisions).toHaveBeenCalled()
-    expect(JSON.stringify(renderer!.toJSON())).toContain('已解析 1/2')
+    expect(root.findByProps({ 'data-testid': 'context-room-recommendation-run' }).props['data-phase'])
+      .toBe('routing')
+    bridge.route('file-2', '实验.md')
+    await act(async () => {
+      bridge.tickers.forEach((tick) => tick())
+      await bridge.flush()
+    })
+    expect(root.findByProps({ 'data-testid': 'context-room-recommendation-run' }).props['data-phase'])
+      .toBe('accumulating')
   })
 
   it('状态持久化：应用重启后恢复会话进度并续跑到底', async () => {
@@ -447,7 +462,6 @@ describe('KnowledgePendingPanel：推荐生成会话（整卡蒙层，真实机�
     expect(bridge.files.importPaths).toHaveBeenCalledTimes(1)
     const overlay = root.findByProps({ 'data-testid': 'context-room-recommendation-run' })
     expect(overlay.props['data-phase']).toBe('routing')
-    expect(JSON.stringify(renderer!.toJSON())).toContain('已解析 1/2')
 
     // 续跑到完成：蒙层撤下 + 清单清除
     bridge.route('file-2', '实验.md')

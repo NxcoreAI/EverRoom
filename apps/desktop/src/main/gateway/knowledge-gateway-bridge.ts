@@ -176,7 +176,7 @@ export class KnowledgeGatewayBridge {
     return this.request(`/v1/knowledge/decisions?${new URLSearchParams({ limit: String(limit) })}`)
   }
 
-  /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询「已解析 x/y」用。 */
+  /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询解析进度用。 */
   routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }> {
     return this.request(`/v1/knowledge/route-status?${new URLSearchParams({ sourceIds: sourceIds.join(',') })}`)
   }

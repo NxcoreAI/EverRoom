@@ -1056,7 +1056,7 @@ export interface NxcoreDesktopApi {
     /** 未识别资料手动挂实体（role=manual）。 */
     attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<{ entityId: string }>
     listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
-    /** 按 sourceId 查最新路由决策（任意状态）：推荐会话「已解析 x/y」轮询。 */
+    /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询解析进度（驱动阶段推进）。 */
     routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }>
     /** on-demand Room 推荐（创建入口「智能推荐」页签）：描述 + 已导入文件 → 推荐卡。 */
     proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }>

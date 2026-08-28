@@ -428,8 +428,8 @@ export function KnowledgePendingPanel({
       if (!knowledge || cancelled) return;
       try {
         const [routedIds, weak, ready] = await Promise.all([
-          // 按 fileId 直查最新决策（任意状态）。新落库的 awaiting_review 就是
-          // 「已解析」；listRecentDecisions 只回 confirmed，用它计数会永远 0。
+          // 按 fileId 直查最新决策（任意状态）。新落库的 awaiting_review 就算已解析；
+          // listRecentDecisions 只回 confirmed，用它判断会永远停在路由阶段。
           knowledge.routeStatus
             ? knowledge.routeStatus(session.files.map((file) => file.fileId))
               .then((status) => new Set(status.items.map((item) => item.sourceId)))
@@ -713,9 +713,10 @@ export function KnowledgePendingPanel({
                 </span>
                 <span className="context-room-creation-step-body">
                   <b>{t('contextRoom:creation.stepRoute')}</b>
-                  <small>{run.phase === 'importing'
-                    ? t('contextRoom:creation.stepWaiting')
-                    : t('contextRoom:creation.routeProgress', { current: run.routed, total: run.files.length })}</small>
+                  {/* 不展示「已解析 x/y」计数：路由决策落库节奏与用户感知不一致，只标等待/进行。 */}
+                  {run.phase === 'importing'
+                    ? <small>{t('contextRoom:creation.stepWaiting')}</small>
+                    : null}
                 </span>
               </li>
               <li data-state={run.phase === 'accumulating' || run.phase === 'timeout' ? 'active' : run.phase === 'done' ? 'done' : undefined}>

@@ -174,7 +174,6 @@
   "creation.stepRoute": "解析与实体抽取",
   "creation.stepAccumulate": "累积证据，生成推荐",
   "creation.stepWaiting": "等待上一步完成",
-  "creation.routeProgress": "已解析 {current}/{total}",
   "creation.runTitle": "Agent 正在解析资料并生成 Room 推荐",
   "creation.runIntentTitle": "正在围绕「{intent}」生成 Room 推荐",
   "creation.runDone": "推荐已生成",
