@@ -366,8 +366,14 @@ export class FilesGatewayBridge {
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
       manualExtensions,
     )
-    let candidates = importPlan.candidates
-    if (importPlan.highRiskFileCount > HIGH_RISK_FILE_BATCH_THRESHOLD && this.highRiskImports) {
+    // 本会话已明确跳过的文件直接排除：重试/再导入同一目录不再重复进入高风险审查。
+    const highRiskImports = this.highRiskImports
+    let candidates = highRiskImports
+      ? importPlan.candidates.filter((candidate) => !highRiskImports.isSkippedManualPath(candidate.filePath))
+      : importPlan.candidates
+    const highRiskFileCount = candidates
+      .filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath))).length
+    if (highRiskFileCount > HIGH_RISK_FILE_BATCH_THRESHOLD && this.highRiskImports) {
       const lowRiskCandidates = candidates.filter((candidate) => isLowRiskFileExtension(extname(candidate.filePath)))
       const highRiskCandidates = candidates.filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath)))
       await this.highRiskImports.enqueueManual({
