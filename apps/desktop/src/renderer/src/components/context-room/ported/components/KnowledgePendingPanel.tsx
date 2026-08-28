@@ -1,15 +1,16 @@
 import {
   AlertCircle,
+  Check,
   ChevronDown,
   Clock3,
   Inbox,
   Link2,
   LoaderCircle,
   MessageCircle,
+  Plus,
   RefreshCw,
   Sparkles,
   Undo2,
-  Upload,
   EyeOff,
   RotateCcw,
 } from 'lucide-react';
@@ -25,6 +26,12 @@ import {
 } from '../../../../../../shared/knowledge';
 import { localizedUiText } from '../adapters';
 import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
+import {
+  ROOM_RECOMMENDATION_RUN_EVENT,
+  type RoomRecommendationRunPayload,
+  type StagedPath,
+  type UploadedFile,
+} from '../roomRecommendationRun';
 import { scheduleRoomMarkdownImport } from '../../knowledgeMarkdownImport';
 
 function promotionPercent(progress: KnowledgePromotionProgressDto): number {
@@ -61,19 +68,114 @@ function promotionLabel(progress: KnowledgePromotionProgressDto, t: Translate): 
 /** 仅展示证据分最高的三个待创建候选。 */
 const RECOMMEND_LIMIT = 3;
 
+/** 推荐生成会话轮询节奏：2s 一拍，路由或候选实体任一增长即视为有进度。 */
+const RUN_POLL_INTERVAL_MS = 2_000;
+/**
+ * 无进度超时：连续 60 拍（约 2 分钟）路由与候选都无增长才转超时。网关路由
+ * 是串行 LLM（实测约 15-20s/个），绝对超时会在积压时误杀仍在推进的会话。
+ */
+const RUN_IDLE_TIMEOUT_TICKS = 60;
+/** 快照到轮询的时钟漂移余量：实体 updatedAt 在此窗口内即计入本次会话。 */
+const RUN_TOUCHED_SLACK_MS = 5_000;
+/** 导入断点续传：内容寻址去重让重跑幂等；网络波动自动重试。 */
+const IMPORT_RETRY_ATTEMPTS = 3;
+const IMPORT_RETRY_DELAY_MS = 2_000;
+/** 会话清单的本地持久化键：应用重启后据此恢复进度（真实状态在网关）。 */
+const RUN_STORAGE_KEY = 'everroom:room-recommendation-run';
+
+/** 创建弹窗提交后的推荐生成会话：导入 → 路由 → 证据累积，整卡蒙层展示进度。 */
+interface RecommendationRun {
+  id: number;
+  intent: string | null;
+  paths: StagedPath[];
+  startedAt: number;
+  /** 会话开始前已在推荐池的实体：之后新出现的 ready 实体即本次产出。 */
+  readySnapshot: ReadonlySet<string>;
+  phase: 'importing' | 'routing' | 'accumulating' | 'timeout' | 'failed';
+  imported: { completed: number; total: number };
+  files: UploadedFile[];
+  /** 导入阶段无法解析的文件数（如扫描版 PDF）：蒙层显性展示，不再静默丢弃。 */
+  failedImports: number;
+  routed: number;
+  candidates: number;
+  error: string | null;
+}
+
+/** 蒙层进度条刻度：导入 5-30%，解析 30-70%，累积 85%。 */
+function runPercentOf(run: RecommendationRun): number {
+  if (run.phase === 'importing') {
+    return run.imported.total > 0
+      ? 5 + 25 * Math.min(1, run.imported.completed / run.imported.total)
+      : 5;
+  }
+  if (run.phase === 'routing') {
+    const total = Math.max(run.files.length, 1);
+    return 30 + 40 * Math.min(1, run.routed / total);
+  }
+  if (run.phase === 'failed') {
+    return run.imported.total > 0
+      ? 5 + 25 * Math.min(1, run.imported.completed / run.imported.total)
+      : 5;
+  }
+  return 85;
+}
+
+/** 从 localStorage 恢复未完会话；已完结（timeout/failed）或损坏的清单丢弃。 */
+function readPersistedRun(): RecommendationRun | null {
+  try {
+    const raw = window.localStorage?.getItem(RUN_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot?: unknown };
+    if (typeof parsed?.id !== 'number' || !Array.isArray(parsed.paths) || typeof parsed.startedAt !== 'number') {
+      return null;
+    }
+    if (parsed.phase !== 'importing' && parsed.phase !== 'routing' && parsed.phase !== 'accumulating') {
+      return null;
+    }
+    return {
+      ...parsed,
+      failedImports: typeof parsed.failedImports === 'number' ? parsed.failedImports : 0,
+      readySnapshot: new Set(Array.isArray(parsed.readySnapshot) ? parsed.readySnapshot : []),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistRun(run: RecommendationRun | null): void {
+  try {
+    const storage = window.localStorage;
+    if (!storage) return;
+    if (run && (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating')) {
+      const { readySnapshot, ...rest } = run;
+      storage.setItem(RUN_STORAGE_KEY, JSON.stringify({ ...rest, readySnapshot: [...readySnapshot] }));
+    } else {
+      storage.removeItem(RUN_STORAGE_KEY);
+    }
+  } catch {
+    // 存储不可用（隐私模式等）：仅失去重启恢复，会话本体不受影响。
+  }
+}
+
 /**
  * 推荐 Room 面板（entity-room-plan 推荐确认制）：达阈值实体进 ready
  * 推荐池，用户确认后才创建 Room；最近归类保留人工治理入口。
  * 未识别栏已移除——不做人工挂载实体，资料证据自然累积进推荐池。
  */
-export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => void }) {
+export function KnowledgePendingPanel({
+  onFocusAgent,
+  onOpenCreateRoom,
+}: {
+  onFocusAgent: () => void;
+  /** 新建 Room 统一入口（手动创建 / 智能推荐双页签）。 */
+  onOpenCreateRoom: () => void;
+}) {
   const { t } = useLocale();
   const [recommended, setRecommended] = useState<KnowledgeEntityDto[]>([]);
   const [recent, setRecent] = useState<KnowledgeDecisionDto[]>([]);
   const [suppressed, setSuppressed] = useState<KnowledgeEntityDto[]>([]);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [uploading, setUploading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const activePromotionsRef = useRef(new Map<string, string>());
   const promotionControllers = useRef(new Map<string, AbortController>());
@@ -167,6 +269,221 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
     const timer = window.setInterval(() => void refresh(), 1_000);
     return () => window.clearInterval(timer);
   }, [hasActivePromotion, refresh]);
+
+  const [run, setRun] = useState<RecommendationRun | null>(null);
+  const runIdRef = useRef(0);
+  // 蒙层展示中的会话（含导入阶段）；轮询只在路由/累积阶段进行。
+  const runActive = run !== null
+    && (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating');
+  const runPolling = run !== null && (run.phase === 'routing' || run.phase === 'accumulating');
+
+  /**
+   * 执行/重试会话导入：内容寻址去重使重跑幂等（已传文件直接复用），
+   * 网络波动自动重试；成功文件进入路由轮询。断点续传与失败重试共用。
+   */
+  const continueImport = useCallback(async (session: RecommendationRun) => {
+    const filesApi = window.nxcore?.files;
+    const patchRun = (patch: Partial<RecommendationRun>) =>
+      setRun((current) => (current && current.id === session.id ? { ...current, ...patch } : current));
+    if (!filesApi?.importPaths) {
+      patchRun({ phase: 'failed', error: 'files api unavailable' });
+      return;
+    }
+    patchRun({ phase: 'importing', imported: { completed: 0, total: 0 }, error: null });
+    const unsubscribeProgress = filesApi.onImportProgress((event) => {
+      setRun((current) => current && current.id === session.id
+        ? { ...current, imported: { completed: event.completed, total: event.total } }
+        : current);
+    });
+    let outcomes: Awaited<ReturnType<typeof filesApi.importPaths>> | null = null;
+    for (let attempt = 1; attempt <= IMPORT_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        outcomes = await filesApi.importPaths(session.paths);
+        break;
+      } catch (cause) {
+        if (attempt >= IMPORT_RETRY_ATTEMPTS) {
+          unsubscribeProgress();
+          patchRun({ phase: 'failed', error: cause instanceof Error ? cause.message : String(cause) });
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, IMPORT_RETRY_DELAY_MS));
+      }
+    }
+    unsubscribeProgress();
+    if (outcomes === null) return;
+    const failures = outcomes.filter((item) => item.error);
+    if (failures.length > 0) {
+      // 逐文件 toast 在批量导入（如整仓扫描件）时会刷屏：聚合成一条。
+      showToast({
+        title: translateRef.current('contextRoom:creation.runImportPartial', {
+          ok: outcomes.length - failures.length,
+          failed: failures.length,
+        }),
+        message: translateRef.current('contextRoom:creation.runImportPartialHint'),
+      });
+    }
+    const files = outcomes
+      .filter((item) => item.fileId && !item.error)
+      .map((item) => ({ fileId: item.fileId as string, filename: item.filename }));
+    patchRun({
+      files,
+      failedImports: failures.length,
+      phase: files.length > 0 ? 'routing' : 'failed',
+      error: files.length > 0 ? null : 'no files imported',
+    });
+    window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
+  }, []);
+
+  /**
+   * 弹窗提交后接手：先统一导入暂存路径（蒙层显示 x/y），成功文件进入
+   * 路由轮询，再由实体证据累积推进到推荐。全程只用原有机制。
+   */
+  const startRecommendationRun = useCallback(async (payload: RoomRecommendationRunPayload) => {
+    if (payload.paths.length === 0) return;
+    const startedAt = Date.now();
+    const knowledge = window.nxcore?.knowledge;
+    let readySnapshot: ReadonlySet<string> = new Set();
+    try {
+      if (knowledge) {
+        readySnapshot = new Set((await knowledge.listEntities('ready')).items.map((entity) => entity.id));
+      }
+    } catch {
+      // 快照失败按空集兜底：之后出现的 ready 实体即视为本次新推荐。
+    }
+    runIdRef.current += 1;
+    const session: RecommendationRun = {
+      id: runIdRef.current,
+      intent: payload.intent,
+      paths: payload.paths,
+      startedAt,
+      readySnapshot,
+      phase: 'importing',
+      imported: { completed: 0, total: 0 },
+      files: [],
+      failedImports: 0,
+      routed: 0,
+      candidates: 0,
+      error: null,
+    };
+    setRun(session);
+    void refresh();
+    void continueImport(session);
+  }, [continueImport, refresh]);
+
+  // 应用重启恢复：真实进度都在网关（决策 + 实体池），清单只负责重挂蒙层；
+  // 导入中被打断则重跑导入（内容去重幂等，不重复存储）。
+  // 注意：必须先于 persistRun 效果执行，否则挂载时的空状态会先清掉清单。
+  const resumedRef = useRef(false);
+  useEffect(() => {
+    if (resumedRef.current) return;
+    resumedRef.current = true;
+    const persisted = readPersistedRun();
+    if (!persisted) return;
+    runIdRef.current = Math.max(runIdRef.current, persisted.id);
+    setRun(persisted);
+    void refresh();
+    if (persisted.phase === 'importing') {
+      void continueImport(persisted);
+    }
+  }, [continueImport, refresh]);
+
+  // 会话清单持久化：进行中写入，结束（完成/超时/失败/关闭）清除。
+  useEffect(() => {
+    persistRun(run);
+  }, [run]);
+
+  useEffect(() => {
+    const onStart = (event: Event) => {
+      const detail = (event as CustomEvent<RoomRecommendationRunPayload>).detail;
+      if (!detail || !Array.isArray(detail.paths)) return;
+      void startRecommendationRun(detail);
+    };
+    window.addEventListener(ROOM_RECOMMENDATION_RUN_EVENT, onStart);
+    return () => window.removeEventListener(ROOM_RECOMMENDATION_RUN_EVENT, onStart);
+  }, [startRecommendationRun]);
+
+  // 会话推进完全由真实机制驱动：路由决策落库 → routed；实体池出现新 ready → 完成撤蒙层。
+  // 超时只看「无进度」：路由/候选连续 RUN_IDLE_TIMEOUT_TICKS 拍无增长才转超时，
+  // 绝对时长上限会在路由积压（串行 LLM）时误杀仍在推进的会话。
+  useEffect(() => {
+    if (!run || !runPolling) return;
+    const session = run;
+    let lastRouted = -1;
+    let lastCandidates = -1;
+    let idleTicks = 0;
+    let cancelled = false;
+    let timer: number | null = null;
+    const finish = () => {
+      showToast({
+        title: translateRef.current('contextRoom:creation.runDone'),
+        message: translateRef.current('contextRoom:creation.runDoneBody'),
+      });
+      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
+      setRun((current) => current && current.id === session.id ? null : current);
+    };
+    const stall = () => {
+      setRun((current) => current && current.id === session.id
+        ? { ...current, phase: 'timeout' }
+        : current);
+      cancelled = true;
+      if (timer !== null) window.clearInterval(timer);
+    };
+    const poll = async () => {
+      const knowledge = window.nxcore?.knowledge;
+      if (!knowledge || cancelled) return;
+      try {
+        const [routedIds, weak, ready] = await Promise.all([
+          // 按 fileId 直查最新决策（任意状态）。新落库的 awaiting_review 就是
+          // 「已解析」；listRecentDecisions 只回 confirmed，用它计数会永远 0。
+          knowledge.routeStatus
+            ? knowledge.routeStatus(session.files.map((file) => file.fileId))
+              .then((status) => new Set(status.items.map((item) => item.sourceId)))
+            : knowledge.listRecentDecisions(100).then((decisions) => new Set(decisions.items
+              .filter((decision) => decision.sourceKind === 'file')
+              .map((decision) => decision.sourceId))),
+          knowledge.listEntities('weak'),
+          knowledge.listEntities('ready'),
+        ]);
+        if (cancelled) return;
+        const routed = session.files.filter((file) => routedIds.has(file.fileId)).length;
+        const touchedSince = session.startedAt - RUN_TOUCHED_SLACK_MS;
+        const candidates = [...weak.items, ...ready.items]
+          .filter((entity) => Date.parse(entity.updatedAt) >= touchedSince).length;
+        const hasNewReady = ready.items.some((entity) => !session.readySnapshot.has(entity.id));
+        const nextPhase = hasNewReady ? 'done' as const
+          : routed >= session.files.length ? 'accumulating' as const
+          : 'routing' as const;
+        setRun((current) => current && current.id === session.id
+          ? { ...current, routed, candidates, phase: nextPhase === 'done' ? 'accumulating' : nextPhase }
+          : current);
+        if (nextPhase === 'done') {
+          // 新推荐落池：撤蒙层放行确认操作，toast 指路。
+          finish();
+          return;
+        }
+        if (routed > lastRouted || candidates > lastCandidates) {
+          idleTicks = 0;
+        } else {
+          idleTicks += 1;
+        }
+        lastRouted = routed;
+        lastCandidates = candidates;
+        if (idleTicks >= RUN_IDLE_TIMEOUT_TICKS) stall();
+      } catch {
+        // 网关短暂不可用：下一轮重试；连续不可用同样计入无进度，超时兜底。
+        idleTicks += 1;
+        if (idleTicks >= RUN_IDLE_TIMEOUT_TICKS) stall();
+      }
+    };
+    void poll();
+    timer = window.setInterval(() => {
+      if (!cancelled) void poll();
+    }, RUN_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearInterval(timer);
+    };
+  }, [run?.id, runPolling]);
 
   useEffect(() => () => {
     for (const controller of promotionControllers.current.values()) controller.abort();
@@ -281,30 +598,6 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
       }
     });
 
-  const uploadFiles = async () => {
-    const filesApi = window.nxcore?.files;
-    if (!filesApi) return;
-    setUploading(true);
-    try {
-      const results = await filesApi.pickAndImport();
-      if (results.length === 0) return;
-      const failed = results.filter((result) => result.error);
-      const deduped = results.filter((result) => result.deduped).length;
-      const succeeded = results.length - failed.length - deduped;
-      if (succeeded > 0) {
-        showToast({ title: t('contextRoom:knowledgePending.countFilesSubmitted', { count: succeeded }), message: t('contextRoom:knowledgePending.extractingEntitiesAndCollectingEvidenceARecommendationWill') });
-      }
-      for (const failure of failed) {
-        showToast({ title: t('contextRoom:knowledgePending.failedToUploadFilename', { filename: failure.filename }), message: failure.error ?? undefined });
-      }
-      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
-    } catch (cause) {
-      showToast({ title: t('contextRoom:knowledgePending.uploadFailed'), message: cause instanceof Error ? cause.message : undefined });
-    } finally {
-      setUploading(false);
-    }
-  };
-
   if (!loaded) return null;
 
   const promotionActive = (entity: KnowledgeEntityDto) =>
@@ -334,13 +627,12 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
         <div className="context-room-my-actions" aria-label={t('contextRoom:knowledgePending.recommendedRoomActions')}>
           <button
             type="button"
-            aria-label={t('contextRoom:knowledgePending.uploadFilesForAutomaticClassification')}
-            title={t('contextRoom:knowledgePending.uploadMarkdownFilesToExtractEntitiesAndCollect')}
+            aria-label={t('contextRoom:home.newRoom')}
+            title={t('contextRoom:knowledgePending.newRoomFromUpload')}
             className="context-room-add-room"
-            disabled={uploading}
-            onClick={() => void uploadFiles()}
+            onClick={onOpenCreateRoom}
           >
-            <Upload aria-hidden="true" />
+            <Plus aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -354,7 +646,111 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
         </div>
       </div>
 
-      {recommended.length === 0 ? (
+      {run ? (
+        <div
+          className="context-room-knowledge-overlay"
+          data-testid="context-room-recommendation-run"
+          data-phase={run.phase}
+        >
+          <div className="context-room-knowledge-overlay-card">
+            <header>
+              {run.phase === 'failed'
+                ? <AlertCircle aria-hidden="true" />
+                : run.phase === 'timeout'
+                  ? <Clock3 aria-hidden="true" />
+                  : <LoaderCircle className="spin" aria-hidden="true" />}
+              <strong>{run.intent
+                ? t('contextRoom:creation.runIntentTitle', { intent: run.intent })
+                : t('contextRoom:creation.runTitle')}</strong>
+            </header>
+            <div
+              className="context-room-knowledge-overlay-bar"
+              role="progressbar"
+              aria-label={t('contextRoom:creation.runTitle')}
+            >
+              <div style={{ width: `${Math.round(runPercentOf(run))}%` }} />
+            </div>
+            <ol className="context-room-creation-steps" data-testid="context-room-creation-steps">
+              <li data-state={run.phase === 'importing' ? 'active' : 'done'}>
+                <span className="context-room-creation-step-icon">
+                  {run.phase === 'importing'
+                    ? <LoaderCircle className="spin" aria-hidden="true" />
+                    : <Check aria-hidden="true" />}
+                </span>
+                <span className="context-room-creation-step-body">
+                  <b>{t('contextRoom:creation.stepImport')}</b>
+                  <small>{run.phase === 'importing'
+                    ? t('contextRoom:creation.importProgress', {
+                        current: run.imported.completed,
+                        total: run.imported.total,
+                      })
+                    : run.failedImports > 0
+                      ? t('contextRoom:creation.runImportPartial', {
+                          ok: run.files.length,
+                          failed: run.failedImports,
+                        })
+                      : t('contextRoom:creation.filesSelected', { count: run.files.length })}</small>
+                </span>
+              </li>
+              <li data-state={run.phase === 'routing' ? 'active' : run.phase === 'importing' ? undefined : 'done'}>
+                <span className="context-room-creation-step-icon">
+                  {run.phase === 'routing'
+                    ? <LoaderCircle className="spin" aria-hidden="true" />
+                    : run.phase === 'importing' ? <span aria-hidden="true" /> : <Check aria-hidden="true" />}
+                </span>
+                <span className="context-room-creation-step-body">
+                  <b>{t('contextRoom:creation.stepRoute')}</b>
+                  <small>{run.phase === 'importing'
+                    ? t('contextRoom:creation.stepWaiting')
+                    : t('contextRoom:creation.routeProgress', { current: run.routed, total: run.files.length })}</small>
+                </span>
+              </li>
+              <li data-state={run.phase === 'accumulating' || run.phase === 'timeout' ? 'active' : undefined}>
+                <span className="context-room-creation-step-icon">
+                  {run.phase === 'timeout'
+                    ? <Clock3 aria-hidden="true" />
+                    : run.phase === 'accumulating'
+                      ? <LoaderCircle className="spin" aria-hidden="true" />
+                      : <span aria-hidden="true" />}
+                </span>
+                <span className="context-room-creation-step-body">
+                  <b>{t('contextRoom:creation.stepAccumulate')}</b>
+                  <small>{run.phase === 'timeout'
+                    ? t('contextRoom:creation.runTimeoutHint')
+                    : run.phase === 'accumulating'
+                      ? t('contextRoom:creation.runCandidates', { count: run.candidates })
+                      : t('contextRoom:creation.stepWaiting')}</small>
+                </span>
+              </li>
+            </ol>
+            {run.phase === 'failed' ? (
+              <p className="context-room-knowledge-overlay-note">{t('contextRoom:creation.runImportFailed')}</p>
+            ) : null}
+            {run.phase === 'timeout' || run.phase === 'failed' ? (
+              <div className="context-room-knowledge-overlay-actions">
+                {run.phase === 'failed' ? (
+                  <button
+                    type="button"
+                    className="context-room-knowledge-overlay-retry"
+                    onClick={() => void continueImport(run)}
+                  >
+                    {t('contextRoom:creation.runImportRetry')}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="context-room-knowledge-overlay-dismiss"
+                  onClick={() => setRun(null)}
+                >
+                  {t('contextRoom:creation.runDismiss')}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {recommended.length === 0 && !runActive ? (
         <div className="context-room-knowledge-empty">
           <Inbox aria-hidden="true" />
           <h3>{t('contextRoom:knowledgePending.understandingResources')}</h3>

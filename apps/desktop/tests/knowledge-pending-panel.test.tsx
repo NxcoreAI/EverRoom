@@ -66,7 +66,7 @@ describe('KnowledgePendingPanel', () => {
     const onFocusAgent = vi.fn()
 
     await act(async () => {
-      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={onFocusAgent} />)
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={onFocusAgent} onOpenCreateRoom={() => {}} />)
       await Promise.resolve()
     })
 
@@ -108,7 +108,7 @@ describe('KnowledgePendingPanel', () => {
     })
 
     await act(async () => {
-      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={vi.fn()} />)
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={vi.fn()} onOpenCreateRoom={() => {}} />)
       await Promise.resolve()
     })
 
@@ -147,7 +147,7 @@ describe('KnowledgePendingPanel', () => {
     const knowledge = installKnowledge({ recommended })
 
     await act(async () => {
-      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={vi.fn()} />)
+      renderer = TestRenderer.create(<KnowledgePendingPanel onFocusAgent={vi.fn()} onOpenCreateRoom={() => {}} />)
       await Promise.resolve()
     })
     const batchButton = renderer!.root.findAllByType('button')

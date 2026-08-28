@@ -4,7 +4,6 @@ import {
   Layers3,
   Link2,
   Maximize2,
-  Plus,
   RotateCcw,
   Search,
   Trash2,
@@ -19,7 +18,8 @@ import { localizedUiText, uiText } from '../adapters';
 import { ReferenceDialog } from './shared';
 import { KnowledgePendingPanel } from './KnowledgePendingPanel';
 import { RoomCard } from './RoomCard';
-import { RoomForm, RoomLifecycleDialogs, type DraftRoom } from './RoomDialogs';
+import { RoomCreationStudio } from './RoomCreationStudio';
+import { RoomLifecycleDialogs, type DraftRoom } from './RoomDialogs';
 import { isMergeRecommendationCandidate, RoomDuplicateCenter } from './RoomDuplicateCenter';
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from './RoomGraphCanvas';
 import { RoomNodeInspector } from './RoomGraphInspector';
@@ -167,7 +167,8 @@ export function HomeView({
 }: {
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
-  onCreateRoom: (draft: DraftRoom, duplicateOverrideToken?: string) => Promise<void>;
+  /** 失败路径抛错；返回新建 Room 的 id。 */
+  onCreateRoom: (draft: DraftRoom, duplicateOverrideToken?: string) => Promise<string | null>;
   onMountObsidian: () => Promise<void>;
   onRenameRoom: (roomId: string, name: string) => void;
   onDeleteRoom: (roomId: string) => void;
@@ -225,16 +226,15 @@ export function HomeView({
     return () => { active = false; clearTimeout(trailingRefresh); };
   }, [rooms]);
 
-  const submitRoom = async (draft: DraftRoom) => {
+  const submitRoom = async (draft: DraftRoom): Promise<void> => {
     const api = window.nxcore?.contextRooms;
     if (!api) throw new Error(t('contextRoom:roomDialogs.serviceUnavailable'));
     const review = await api.checkDuplicates({ title: draft.name, description: draft.description });
     if (review.candidates.length && review.overrideToken) {
       setCreationReview({ draft, candidates: review.candidates, overrideToken: review.overrideToken });
-      return false;
+      return;
     }
     await onCreateRoom(draft);
-    return true;
   };
 
   return (
@@ -251,22 +251,13 @@ export function HomeView({
                   <h2>{t('contextRoom:home.myRooms')}</h2>
                 </div>
                 <div className="context-room-my-actions" aria-label={t('contextRoom:home.roomActions')}>
-                  <button
-                    type="button"
-                    aria-label={t('contextRoom:home.newRoom')}
-                    title={t('contextRoom:home.newRoom')}
-                    className="context-room-add-room"
-                    onClick={() => setNewRoomOpen(true)}
-                  >
-                    <Plus aria-hidden="true" />
-                  </button>
                   <button type="button" aria-label={t('surface:obsidian.mount')} title={t('surface:obsidian.mount')} className="context-room-add-room" onClick={() => void onMountObsidian()}>
                     <img className="obsidian-app-icon" src={obsidianLogo} alt="" />
                   </button>
                   <button
                     type="button"
-                    aria-label={duplicateCandidateCount > 0 ? `重复 Room，${duplicateCandidateCount} 个待处理合并建议` : '重复 Room'}
-                    title={duplicateCandidateCount > 0 ? `重复 Room · ${duplicateCandidateCount} 个待处理合并建议` : '重复 Room'}
+                    aria-label={duplicateCandidateCount > 0 ? t('contextRoom:home.duplicateRoomTooltipCount', { count: duplicateCandidateCount }) : t('contextRoom:home.duplicateRoomTooltip')}
+                    title={duplicateCandidateCount > 0 ? t('contextRoom:home.duplicateRoomTooltipCountTitle', { count: duplicateCandidateCount }) : t('contextRoom:home.duplicateRoomTooltip')}
                     className="context-room-add-room context-room-duplicate-button"
                     onClick={() => setDuplicateCenterOpen(true)}
                   >
@@ -324,7 +315,7 @@ export function HomeView({
             ) : null}
           </section>
 
-          <KnowledgePendingPanel onFocusAgent={onFocusAgent} />
+          <KnowledgePendingPanel onFocusAgent={onFocusAgent} onOpenCreateRoom={() => setNewRoomOpen(true)} />
 
           <RoomGraph rooms={rooms} onOpen={onOpenDetail} />
         </div>
@@ -352,35 +343,27 @@ export function HomeView({
       </ReferenceDialog>
 
       <ReferenceDialog open={newRoomOpen} onOpenChange={setNewRoomOpen} title={t('contextRoom:home.newContextRoom')}>
-        <RoomForm
-          title={t('contextRoom:home.newContextRoom')}
-          submitLabel={t('contextRoom:home.createRoom')}
-          onCancel={() => setNewRoomOpen(false)}
-          onSubmit={async (draft) => {
-            await submitRoom(draft);
-            setNewRoomOpen(false);
-          }}
-        />
+        <RoomCreationStudio open={newRoomOpen} onOpenChange={setNewRoomOpen} />
       </ReferenceDialog>
       <ReferenceDialog
         open={Boolean(creationReview)}
         onOpenChange={(open) => !open && setCreationReview(null)}
-        title="发现相似 Room"
+        title={t('contextRoom:home.similarRoomsFound')}
       >
         {creationReview ? (
           <div className="context-room-create-duplicate-review">
-            <header><span>创建前检查</span><h2>可能已经有相同主题</h2></header>
-            <p>可直接打开已有 Room，或确认后仍然创建新的 Room。</p>
+            <header><span>{t('contextRoom:home.creationReviewEyebrow')}</span><h2>{t('contextRoom:home.creationReviewTitle')}</h2></header>
+            <p>{t('contextRoom:home.creationReviewBody')}</p>
             <div>
               {creationReview.candidates.map((candidate) => (
                 <button key={candidate.id} type="button" onClick={() => { setCreationReview(null); onOpenDetail(candidate.roomBId) }}>
-                  <span><b>{candidate.roomB.title}</b><small>{candidate.reasons[0] ?? '主题相似'}</small></span>
+                  <span><b>{candidate.roomB.title}</b><small>{candidate.reasons[0] ?? t('contextRoom:home.topicSimilarFallback')}</small></span>
                   <ArrowRight aria-hidden="true" />
                 </button>
               ))}
             </div>
             <footer>
-              <button type="button" onClick={() => setCreationReview(null)}>取消</button>
+              <button type="button" onClick={() => setCreationReview(null)}>{t('contextRoom:shared.cancel')}</button>
               <button
                 type="button"
                 className="context-room-primary-button"
@@ -388,8 +371,9 @@ export function HomeView({
                   const review = creationReview;
                   await onCreateRoom(review.draft, review.overrideToken);
                   setCreationReview(null);
+                  setNewRoomOpen(false);
                 }}
-              >仍然创建</button>
+              >{t('contextRoom:home.stillCreate')}</button>
             </footer>
           </div>
         ) : null}
