@@ -109,6 +109,10 @@ const STRIP_START = new Date(
 )
 const STRIP_DAY_COUNT = 29
 
+// 网关重启/失联时 generate 会抛这类连接错误（dev 下 tsx watch 会随源码保存重启网关）。
+// 原样展示对用户没有可操作性，改提示“稍后重试”。
+const GATEWAY_UNAVAILABLE_PATTERN = /连接恢复|健康检查|尚未就绪|正在停止|did not become ready|fetch failed|network|ECONN/i
+
 const EVENT_ICONS: Record<DiaryEventKind, LucideIcon> = {
   note: FilePenLine,
   focus: Monitor,
@@ -802,10 +806,14 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
     let cancelled = false
     void window.nxcore.diary.activeRun().then((run) => {
       if (cancelled || !run) return
+      // 与轮询处同因：非字符串时间戳会渲染成“生成中NaN”，兜底为当前时间。
+      const startedAt = typeof run.startedAt === 'string' ? run.startedAt
+        : typeof run.createdAt === 'string' ? run.createdAt
+          : new Date().toISOString()
       setActiveRun({
         id: run.id,
         date: run.date,
-        startedAt: run.startedAt ?? run.createdAt,
+        startedAt,
         attempt: run.attempt,
       })
     }).catch(() => undefined)
@@ -873,9 +881,12 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
       })
     } catch (error) {
       setActiveRun(null)
+      const detail = error instanceof Error ? error.message : ''
       showToast({
         title: t('diaryReality:diary.diaryGenerationFailed'),
-        message: error instanceof Error ? error.message : t('diaryReality:diary.theBackgroundTaskCouldNotBeCompleted'),
+        message: GATEWAY_UNAVAILABLE_PATTERN.test(detail)
+          ? t('diaryReality:diary.gatewayUnavailableRetryLater')
+          : detail || t('diaryReality:diary.theBackgroundTaskCouldNotBeCompleted'),
       })
     }
   }, [activeRun, locale, selectedDate, selectedKey, t])
@@ -889,9 +900,21 @@ export function DiaryPage({ onNavigate, onOpenDocument, onFocusRealityEvent }: {
       try {
         const run = await window.nxcore!.diary.run(activeRun.id)
         if (cancelled) return
+        if (!run) {
+          // 运行记录已不存在（如网关数据被重置）：停止轮询并恢复生成按钮，
+          // 否则 activeRun 会卡住，按钮静默失效（点击无反应）。
+          setActiveRun(null)
+          showToast({
+            title: t('diaryReality:diary.diaryGenerationFailed'),
+            message: t('diaryReality:diary.generationRunLost'),
+          })
+          return
+        }
         setActiveRun((current) => {
           if (!current || current.id !== run.id) return current
-          const startedAt = run.startedAt ?? current.startedAt
+          // 只接受字符串时间戳：异常负载（如网关把 Date 序列化成 {}）会传进
+          // new Date(...) 得到 NaN，按钮就会显示“生成中NaN”。
+          const startedAt = typeof run.startedAt === 'string' ? run.startedAt : current.startedAt
           return current.startedAt === startedAt && current.attempt === run.attempt
             ? current
             : { ...current, startedAt, attempt: run.attempt }

@@ -18,6 +18,8 @@
   "diary.diaryGenerationFailed": "日记生成失败",
   "diary.diaryGenerationStarted": "日记生成已开始",
   "diary.documentActivity": "文档记录",
+  "diary.gatewayUnavailableRetryLater": "本地服务正在重启或暂时不可用，请稍候片刻再点一次生成。",
+  "diary.generationRunLost": "生成任务的记录已丢失（本地数据可能被重置），请重新点击生成。",
   "diary.viewSource": "查看来源",
   "diary.openDocumentSource": "打开对应文档",
   "diary.openRecordingSource": "打开对应录音",
