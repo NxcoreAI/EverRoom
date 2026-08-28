@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EverRoom Documentation</title>
+    <script>
+      const language = localStorage.getItem('everroom-docs-language') || navigator.language
+      location.replace(language.toLowerCase().startsWith('zh') ? './zh-CN/' : './en/')
+    </script>
+  </head>
+  <body>
+    <p><a href="./zh-CN/">简体中文</a> · <a href="./en/">English</a></p>
+  </body>
+</html>
