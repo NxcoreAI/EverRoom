@@ -11,6 +11,7 @@ describe("connector data routes", () => {
     const getRecord = vi.fn((_ownerId: string, recordId: string) => {
       if (recordId === "email-1") return { id: recordId, resourceType: "email" };
       if (recordId === "document-1") return { id: recordId, resourceType: "document" };
+      if (recordId === "todo-1") return { id: recordId, resourceType: "todo" };
       if (recordId === "generic-1") return { id: recordId, resourceType: "generic" };
       return null;
     });
@@ -43,10 +44,10 @@ describe("connector data routes", () => {
       const ingestResponse = await app.inject({
         method: "POST",
         url: "/v1/cli-connectors/data/ingest",
-        payload: { recordIds: ["email-1", "document-1", "generic-1", "missing-1"] },
+        payload: { recordIds: ["email-1", "document-1", "todo-1", "generic-1", "missing-1"] },
       });
       expect(ingestResponse.statusCode).toBe(200);
-      expect(ingestResponse.json()).toMatchObject({ imported: 2, deduped: 0, failed: 2 });
+      expect(ingestResponse.json()).toMatchObject({ imported: 3, deduped: 0, failed: 2 });
       expect(ingest.ingest).toHaveBeenNthCalledWith(1, {
         source: { ref: { sourceKind: "connector-email", sourceId: "email-1" } },
         originChannel: "connector",
@@ -56,6 +57,10 @@ describe("connector data routes", () => {
         originChannel: "connector",
       });
       expect(ingest.ingest).toHaveBeenNthCalledWith(3, {
+        source: { ref: { sourceKind: "connector-todo", sourceId: "todo-1" } },
+        originChannel: "connector",
+      });
+      expect(ingest.ingest).toHaveBeenNthCalledWith(4, {
         source: { ref: { sourceKind: "connector-record", sourceId: "generic-1" } },
         originChannel: "connector",
       });

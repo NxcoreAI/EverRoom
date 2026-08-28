@@ -12,6 +12,7 @@ import {
 import type { RoomDuplicateCandidate } from '@nxcore/agent-contract';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
+import obsidianLogo from '../../../../assets/obsidian.svg';
 
 import type { ContextRoomRecord } from '../types';
 import { localizedUiText, uiText } from '../adapters';
@@ -154,6 +155,7 @@ export function HomeView({
   rooms,
   deletedRooms,
   onCreateRoom,
+  onMountObsidian,
   onRenameRoom,
   onDeleteRoom,
   onRestoreRoom,
@@ -166,6 +168,7 @@ export function HomeView({
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
   onCreateRoom: (draft: DraftRoom, duplicateOverrideToken?: string) => Promise<void>;
+  onMountObsidian: () => Promise<void>;
   onRenameRoom: (roomId: string, name: string) => void;
   onDeleteRoom: (roomId: string) => void;
   onRestoreRoom: (roomId: string) => void;
@@ -192,9 +195,15 @@ export function HomeView({
   const [recentlyDeleted, setRecentlyDeleted] = useState<ContextRoomRecord | null>(null);
   const visibleRooms = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return normalized
+    const matched = normalized
       ? rooms.filter((room) => room.title.toLowerCase().includes(normalized))
       : rooms;
+    // 按更新时间倒序（与卡片上的“N 分钟前”同一时间戳）；缺时间戳的旧记录沉底。
+    const updatedAtOf = (room: ContextRoomRecord) => {
+      const time = room.updatedAt ? new Date(room.updatedAt).getTime() : Number.NaN;
+      return Number.isFinite(time) ? time : 0;
+    };
+    return [...matched].sort((left, right) => updatedAtOf(right) - updatedAtOf(left));
   }, [query, rooms]);
   const homeRooms = query.trim() ? visibleRooms : visibleRooms.slice(0, 6);
 
@@ -202,12 +211,18 @@ export function HomeView({
     const api = window.nxcore?.contextRooms;
     if (!api) return;
     let active = true;
-    void api.listDuplicateCandidates('open').then((result) => {
-      if (active) setDuplicateCandidateCount(result.items.filter(isMergeRecommendationCandidate).length);
-    }).catch(() => {
-      // The management dialog surfaces service errors when the user opens it.
-    });
-    return () => { active = false; };
+    const refreshDuplicateCount = () => {
+      void api.listDuplicateCandidates('open').then((result) => {
+        if (active) setDuplicateCandidateCount(result.items.filter(isMergeRecommendationCandidate).length);
+      }).catch(() => {
+        // The management dialog surfaces service errors when the user opens it.
+      });
+    };
+    refreshDuplicateCount();
+    // rooms 变化会触发网关防抖重建候选（含 LLM 同一性判定），首次读取可能拿到
+    // 重建前的旧候选；延迟补拉一次对齐重建后的结果，避免红点与弹窗不一致。
+    const trailingRefresh = setTimeout(refreshDuplicateCount, 5_000);
+    return () => { active = false; clearTimeout(trailingRefresh); };
   }, [rooms]);
 
   const submitRoom = async (draft: DraftRoom) => {
@@ -244,6 +259,9 @@ export function HomeView({
                     onClick={() => setNewRoomOpen(true)}
                   >
                     <Plus aria-hidden="true" />
+                  </button>
+                  <button type="button" aria-label={t('surface:obsidian.mount')} title={t('surface:obsidian.mount')} className="context-room-add-room" onClick={() => void onMountObsidian()}>
+                    <img className="obsidian-app-icon" src={obsidianLogo} alt="" />
                   </button>
                   <button
                     type="button"

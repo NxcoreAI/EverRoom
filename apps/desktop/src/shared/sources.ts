@@ -1,5 +1,5 @@
 export type DataSourceStatus = 'connected' | 'syncing' | 'paused' | 'disconnected' | 'error'
-export type DataSourceKind = 'local-folder' | 'web-page' | 'github' | 'feishu' | 'google-docs' | 'notion'
+export type DataSourceKind = 'local-folder' | 'obsidian-vault' | 'web-page' | 'github' | 'feishu' | 'google-docs' | 'notion'
 export type SourceFileStatus =
   | 'added'
   | 'updated'
@@ -32,6 +32,7 @@ import type {
   RoomDuplicateCheckInput,
   RoomDuplicateCheckResult,
   RoomAppliedEntitiesResult,
+  RoomOverviewProjection,
   RoomMergeOperation,
   RoomMergePreview,
   SubagentInvocation,
@@ -61,7 +62,10 @@ import type {
   UpdateAgentSessionInput,
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
-import type { BrowserExtensionClipperCapture } from './browser-extension'
+import type { ObsidianVaultApi } from './obsidian'
+import type { LocalAgentHistoryImportResult, LocalAgentInstallation, LocalAgentWorkspaceBinding } from './local-agents'
+import type { MigrationApi } from './migrations'
+import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
 import type {
   CreateRealityEventInput,
   FinishRealityCaptureInput,
@@ -126,6 +130,12 @@ import type {
 } from './connector-sync'
 import type { DesktopPageMode } from './page-mode'
 import type { DesktopLocale } from './i18n/desktop'
+import type {
+  AgentNotificationTarget,
+  CloudAgentMessagePage,
+  CloudAgentSessionSummary,
+  NotificationPreferences,
+} from './notifications'
 
 export interface EvidenceBlock {
   id: string
@@ -310,6 +320,10 @@ export interface CloudAccountStatus {
     usedSeconds: number
     remainingSeconds: number
   }
+  registration?: {
+    accountCreated: boolean
+    invitationApplied: boolean
+  }
 }
 
 export interface CloudDevice {
@@ -419,6 +433,17 @@ export interface RuntimeConfigSnapshot {
   }
   /** primary AI 四要素（provider/model/baseUrl/apiKey）是否已填写（占位空串视为未配置）。 */
   primaryConfigured?: boolean
+}
+
+/** gateway 侧两种密钥占位值：快照 redact() 的 "********" 与响应序列化器的 "[REDACTED]"。 */
+export const RUNTIME_CONFIG_SECRET_MASKS = ['********', '[REDACTED]'] as const
+
+/**
+ * 值是否为脱敏占位。派生托管子进程 env 时掩码等同缺失：注入占位串
+ * 子进程能正常起服务、随后每个上游请求静默 401；宁可整套不注入，让它明确报「未配置」。
+ */
+export function isMaskedRuntimeConfigSecret(value: unknown): boolean {
+  return typeof value === 'string' && (RUNTIME_CONFIG_SECRET_MASKS as readonly string[]).includes(value.trim())
 }
 
 export interface RuntimeConfigTestResult {
@@ -652,6 +677,7 @@ export interface NxcoreDesktopApi {
   gateway: {
     status(): Promise<GatewayStatus>
   }
+  migrations: MigrationApi
   browserExtension: {
     status(): Promise<BrowserExtensionStatus>
     install(): Promise<BrowserExtensionStatus>
@@ -772,19 +798,29 @@ export interface NxcoreDesktopApi {
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
+    overview(roomId: string): Promise<RoomOverviewProjection>
+    refreshOverview(roomId: string): Promise<RoomOverviewProjection>
     roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
   }
   account: {
     status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>
     devices(options?: { quiet?: boolean }): Promise<CloudDevice[]>
     login(input:{identifier:string;password:string}): Promise<CloudAccountStatus>
-    loginWithOidc(provider: CloudOidcProvider): Promise<CloudAccountStatus>
+    validateInvitationCode(invitationCode: string): Promise<{ valid: true }>
+    loginWithOidc(provider: CloudOidcProvider, invitationCode?: string): Promise<CloudAccountStatus>
     cancelOidcLogin(): Promise<void>
     logout(): Promise<CloudAccountStatus>
     keyringStatus(options?: { quiet?: boolean }): Promise<AccountKeyringStatus>
     createPairingSession(): Promise<{ pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string }>
     getPairingSession(id: string, options?: { quiet?: boolean }): Promise<{ pairingSessionId: string; status: string; confirmationCode: string; expiresAt: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null; targetAlgorithm?: string | null }>
     approvePairingSession(id: string): Promise<{ pairingSessionId: string; status: string; targetDeviceId?: string | null }>
+  }
+  notifications: {
+    preferences(): Promise<NotificationPreferences>
+    updatePreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences>
+    cloudSessions(deviceId: string): Promise<CloudAgentSessionSummary[]>
+    cloudMessages(deviceId: string, sessionId: string, before?: string): Promise<CloudAgentMessagePage>
+    onOpenTarget(listener: (target: AgentNotificationTarget) => void): () => void
   }
   asr: {
     requestMicrophoneAccess(): Promise<boolean>
@@ -858,6 +894,9 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: RealitySocketFrame) => void): () => void
   }
   agent: {
+    discoverLocalAgents(): Promise<LocalAgentInstallation[]>
+    importLocalAgentHistory(agentId: string): Promise<LocalAgentHistoryImportResult>
+    bindLocalAgentWorkspace(agentId: string, sessionId: string): Promise<LocalAgentWorkspaceBinding | null>
     getStatus(): Promise<AgentStatusSnapshot>
     getUsage(range?: AgentUsageRange): Promise<AgentUsageSnapshot>
     listSessions(pageLabel?: string, roomId?: string | null): Promise<AgentSession[]>
@@ -942,6 +981,7 @@ export interface NxcoreDesktopApi {
     setPaused(id: string, paused: boolean): Promise<DataSourceSummary>
     disconnect(id: string, deleteLocalData: boolean): Promise<void>
   }
+  obsidian: ObsidianVaultApi
   knowledge: {
     listRooms(origin?: 'user' | 'auto'): Promise<{ items: KnowledgeRoomDto[] }>
     getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto>
@@ -987,7 +1027,9 @@ export interface NxcoreDesktopApi {
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
-    listClipCaptures(limit?: number, offset?: number): Promise<{ items: BrowserExtensionClipperCapture[]; total: number }>
+    listClipCaptures(input?: BrowserExtensionClipperListInput): Promise<BrowserExtensionClipperListResult>
+    setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture>
+    getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>

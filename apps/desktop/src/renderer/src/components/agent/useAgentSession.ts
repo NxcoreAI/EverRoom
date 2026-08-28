@@ -119,6 +119,7 @@ export function useAgentSession(
   const [runStartedAtByRun, setRunStartedAtByRun] = useState<Record<string, string>>({})
   const [runCompletedAtByRun, setRunCompletedAtByRun] = useState<Record<string, string>>({})
   const [reasoningByRun, setReasoningByRun] = useState<Record<string, string>>({})
+  const [agentIdByRun, setAgentIdByRun] = useState<Record<string, string>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [scopeReady, setScopeReady] = useState(false)
@@ -190,6 +191,7 @@ export function useAgentSession(
               sessionId: event.sessionId,
               runId: event.runId,
               role: 'user',
+              authorAgentId: null,
               content: prompt,
               createdAt: event.occurredAt,
             }]
@@ -347,6 +349,7 @@ export function useAgentSession(
     const nextReasoning: Record<string, string> = {}
     const nextStartedAt: Record<string, string> = {}
     const nextCompletedAt: Record<string, string> = {}
+    const nextAgentIdByRun: Record<string, string> = {}
     const nextApprovals: PendingShellApproval[] = []
     const reducedByRun = new Map<string, ReducedAgentRunEvents>()
     for (const group of eventGroups) {
@@ -364,6 +367,10 @@ export function useAgentSession(
       if (reduced.completedAt) nextCompletedAt[group.runId] = reduced.completedAt
       nextApprovals.push(...reducePendingShellApprovals(group.events))
     }
+    for (const message of snapshot.messages) {
+      if (message.authorAgentId) nextAgentIdByRun[message.runId] = message.authorAgentId
+    }
+    if (snapshot.activeRun?.agentId) nextAgentIdByRun[snapshot.activeRun.id] = snapshot.activeRun.agentId
     if (snapshot.activeRun?.startedAt) nextStartedAt[snapshot.activeRun.id] = snapshot.activeRun.startedAt
 
     if (expectedScope !== activeScopeRef.current || snapshot.session.id !== sessionIdRef.current) return false
@@ -392,6 +399,7 @@ export function useAgentSession(
     setToolCallsByRun(nextTools)
     setActivityByRun(nextActivity)
     setReasoningByRun(nextReasoning)
+    setAgentIdByRun(nextAgentIdByRun)
     setRunStartedAtByRun(nextStartedAt)
     setRunCompletedAtByRun(nextCompletedAt)
     setPendingApprovals(nextApprovals)
@@ -451,6 +459,7 @@ export function useAgentSession(
     setRunStartedAtByRun({})
     setRunCompletedAtByRun({})
     setReasoningByRun({})
+    setAgentIdByRun({})
     setPendingApprovals([])
     setResolvingApprovalIds(new Set())
     setActiveRunId(null)
@@ -651,6 +660,8 @@ export function useAgentSession(
     activeDocument?: AgentActiveDocumentContext | null,
     replaceRunId?: string,
     attachments?: AgentFileAttachment[],
+    targetAgentId?: string,
+    externalConversationId?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
     if ((!message && !attachments?.length) || activeRunId || loading || sending) return null
@@ -686,6 +697,12 @@ export function useAgentSession(
         delete next[replaceRunId]
         return next
       })
+      setAgentIdByRun((current) => {
+        if (!(replaceRunId in current)) return current
+        const next = { ...current }
+        delete next[replaceRunId]
+        return next
+      })
       eventsByRun.current.delete(replaceRunId)
       sequenceByRun.current.delete(replaceRunId)
       terminalRunIdsRef.current.delete(replaceRunId)
@@ -696,6 +713,7 @@ export function useAgentSession(
       sessionId: sessionIdRef.current ?? 'pending',
       runId: 'pending',
       role: 'user',
+      authorAgentId: null,
       content: message,
       createdAt: new Date().toISOString(),
     }
@@ -705,16 +723,29 @@ export function useAgentSession(
     setError(null)
     try {
       const currentSessionId = await ensureSession([optimisticMessage])
+      const selectedAgentId = targetAgentId ?? currentSession?.activeAgentId ?? 'main'
+      const workspaceBinding = selectedAgentId === 'main'
+        ? null
+        : await api!.bindLocalAgentWorkspace(selectedAgentId, currentSessionId)
+      if (selectedAgentId !== 'main' && !workspaceBinding) {
+        throw new Error(t('surface:useAgentSession.workspaceRequired'))
+      }
       setMessages((current) => current.map((item) => item.id === optimisticId
         ? { ...item, sessionId: currentSessionId }
         : item))
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
+        targetAgentId: selectedAgentId,
+        invocationMode: 'explicit_switch',
+        ...(workspaceBinding ? { workspaceBindingToken: workspaceBinding.token } : {}),
         ...(replaceRunId ? { replaceRunId } : {}),
         responseLanguage: locale,
-        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments),
+        context: buildAgentRunContext(rooms, selectedText, selectedRoomId, activeDocument, pageLabel, attachments, externalConversationId),
       })
+      setAgentIdByRun((current) => current[run.id] === selectedAgentId
+        ? current
+        : { ...current, [run.id]: selectedAgentId })
       const updatedAt = new Date().toISOString()
       const runCompleted = terminalRunIdsRef.current.has(run.id)
       setSessions((current) => current.map((session) => session.id === currentSessionId
@@ -728,6 +759,7 @@ export function useAgentSession(
       setCurrentSession((current) => current?.id === currentSessionId
         ? {
             ...current,
+            activeAgentId: selectedAgentId,
             title: current.title ?? message.slice(0, 48),
             ...(!runCompleted ? { status: 'running' as const } : {}),
             updatedAt,
@@ -829,6 +861,7 @@ export function useAgentSession(
 
   return {
     activeRunId,
+    agentIdByRun,
     activityByRun,
     connected,
     createSession,

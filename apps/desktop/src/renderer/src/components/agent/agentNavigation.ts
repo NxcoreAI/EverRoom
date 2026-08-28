@@ -33,6 +33,7 @@ export interface AgentSessionRouteRequest {
   pageId: PageId
   roomId: string | null
   sessionId: string
+  runId?: string | null
   blockId?: string | null
 }
 
@@ -116,6 +117,29 @@ export function parseAgentNavigationTarget(result: unknown): (AgentNavigationTar
     ...(objectType ? { objectType } : {}),
     ...(blockId ? { blockId } : {}),
   }
+}
+
+/**
+ * 回放导航的处理方式：只有当前活跃 run 的工具调用属于实时导航（允许跳转）；
+ * 重启或面板重挂载后从历史加载的工具调用只恢复 Room 标签页显示，不自动
+ * 跳转打断用户操作。
+ */
+export type AgentReplayNavigationMode = 'live' | 'restore-tab' | 'defer' | 'skip'
+
+export function replayNavigationMode({
+  toolRunId,
+  activeRunId,
+  target,
+  roomIds,
+}: {
+  toolRunId: string
+  activeRunId: string | null
+  target: AgentNavigationTarget & { pageId: PageId }
+  roomIds: ReadonlySet<string>
+}): AgentReplayNavigationMode {
+  if (toolRunId === activeRunId) return 'live'
+  if (target.pageId !== 'rooms' || !target.roomId) return 'skip'
+  return roomIds.has(target.roomId) ? 'restore-tab' : 'defer'
 }
 
 export function navigationKey(tool: DisplayAgentToolCall, target: AgentNavigationTarget): string {

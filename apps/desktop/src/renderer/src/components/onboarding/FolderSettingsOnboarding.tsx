@@ -13,6 +13,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import { useLocale } from '@/i18n/LocaleContext'
 import type { DefaultLocalFolder } from '../../../../shared/sources'
+import type { ObsidianVaultCandidate } from '../../../../shared/obsidian'
+import obsidianLogo from '../../assets/obsidian.svg'
 import './FolderSettingsOnboarding.css'
 
 interface FolderSettingsOnboardingProps {
@@ -31,6 +33,9 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
   const [connectedFolders, setConnectedFolders] = useState<DefaultLocalFolder[]>([])
   const [failedFolders, setFailedFolders] = useState<DefaultLocalFolder[]>([])
   const [customFolders, setCustomFolders] = useState<string[]>([])
+  const [obsidianVaults, setObsidianVaults] = useState<ObsidianVaultCandidate[]>([])
+  const [obsidianSelected, setObsidianSelected] = useState(false)
+  const [obsidianImported, setObsidianImported] = useState(false)
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(false)
   const [mode, setMode] = useState<'form' | 'ready'>('form')
@@ -40,7 +45,7 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
     () => DEFAULT_FOLDERS.every((folder) => connectedFolders.includes(folder)),
     [connectedFolders],
   )
-  const hasConfiguredScope = allConnected || customFolders.length > 0
+  const hasConfiguredScope = allConnected || customFolders.length > 0 || obsidianImported
   const hasPendingFolders = selectedFolders.some((folder) => !connectedFolders.includes(folder))
 
   useEffect(() => {
@@ -53,24 +58,43 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
     setConnectedFolders([])
     setFailedFolders([])
     setCustomFolders([])
+    setObsidianVaults([])
+    setObsidianSelected(false)
+    setObsidianImported(false)
     setBusy(false)
     setMode(showReady ? 'ready' : 'form')
     setChecking(true)
     setError(null)
     const api = window.nxcore?.sources
+    const obsidian = window.nxcore?.obsidian
     if (!api?.listDefaultLocalFolders) {
       setChecking(false)
       setError(t('surface:settings.folderGuide.unavailable'))
       return
     }
-    void api.listDefaultLocalFolders().then((statuses) => {
+    void Promise.all([
+      api.listDefaultLocalFolders(),
+      obsidian?.discover().catch(() => []) ?? Promise.resolve([]),
+    ]).then(([statuses, vaults]) => {
       const connected = statuses.filter((item) => item.connected).map((item) => item.folder)
       setConnectedFolders(connected)
       setSelectedFolders(DEFAULT_FOLDERS)
+      setObsidianVaults(vaults)
+      setObsidianSelected(vaults.length > 0)
     }).catch((cause) => {
       setError(cause instanceof Error ? cause.message : t('surface:settings.folderGuide.failed'))
     }).finally(() => setChecking(false))
   }, [open, showReady, t])
+
+  useEffect(() => {
+    if (!open) return
+    return window.nxcore?.obsidian.onDiscoveryChanged(() => {
+      void window.nxcore?.obsidian.discover().then((vaults) => {
+        setObsidianVaults(vaults)
+        setObsidianSelected((current) => current || vaults.length > 0)
+      }).catch(() => undefined)
+    })
+  }, [open])
 
   const toggleFolder = (folder: DefaultLocalFolder, checked: boolean) => {
     if (connectedFolders.includes(folder)) return
@@ -118,6 +142,23 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
         setConnectedFolders((current) => [...new Set([...current, ...successful])])
         setFailedFolders(failed)
         if (failed.length > 0) throw new Error(t('surface:settings.folderGuide.failed'))
+      }
+      if (obsidianSelected && !obsidianImported && obsidianVaults.length > 0) {
+        const pendingVaults = obsidianVaults.filter((item) => !item.memoryEnabled)
+        const lastRegistryIndex = pendingVaults.map((item) => item.discoveredFrom).lastIndexOf('registry')
+        for (const [index, vault] of pendingVaults.entries()) {
+          const result = await window.nxcore?.obsidian.importCandidate(vault.id, {
+            kind: 'memory',
+            enableRegistryAutoImport: index === lastRegistryIndex,
+          })
+          if (result?.kind === 'memory' && result.failed > 0) {
+            throw new Error(t('surface:settings.folderGuide.obsidianPartialFailure', {
+              name: result.projectName,
+              failed: result.failed,
+            }))
+          }
+        }
+        setObsidianImported(true)
       }
       console.info('[onboarding] folder-apply-success', { destination: 'memory' })
       onClose()
@@ -187,6 +228,20 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
                     </label>
                   )
                 })}
+                {obsidianVaults.length > 0 ? (
+                  <label className="folder-settings-onboarding-option folder-settings-onboarding-app" data-connected={String(obsidianImported)}>
+                    <input type="checkbox" checked={obsidianSelected} onChange={(event) => setObsidianSelected(event.target.checked)} disabled={busy || obsidianImported} />
+                    <span className="folder-settings-onboarding-folder-icon folder-settings-onboarding-obsidian-icon"><img src={obsidianLogo} alt="" /></span>
+                    <span>
+                      <strong>Obsidian</strong>
+                      <small>{t('surface:settings.folderGuide.obsidianSummary', {
+                        vaults: obsidianVaults.length,
+                        notes: obsidianVaults.reduce((total, vault) => total + vault.noteCount, 0),
+                      })}</small>
+                    </span>
+                    {obsidianImported ? <Check aria-hidden="true" /> : <X className="folder-settings-onboarding-failed-icon" aria-hidden="true" />}
+                  </label>
+                ) : null}
                 {customFolders.length > 0 ? (
                   <div className="folder-settings-onboarding-custom-list">
                     <span>{t('surface:settings.folderGuide.addedFolders')}</span>
@@ -202,7 +257,7 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
               <p className="folder-settings-onboarding-error" role="alert" aria-live="polite">{error ?? '\u00a0'}</p>
             </div>
             <footer className="folder-settings-onboarding-actions">
-              <button type="button" className="folder-settings-onboarding-primary" onClick={() => void apply()} disabled={busy || (!hasConfiguredScope && selectedFolders.length === 0)}>
+              <button type="button" className="folder-settings-onboarding-primary" onClick={() => void apply()} disabled={busy || (!hasConfiguredScope && selectedFolders.length === 0 && !obsidianSelected)}>
                 {busy ? <LoaderCircle className="folder-settings-onboarding-spinner" aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
                 {busy ? t('surface:settings.folderGuide.saving') : hasPendingFolders ? t('surface:settings.folderGuide.save') : t('surface:settings.folderGuide.continue')}
                 {!busy ? <ChevronRight aria-hidden="true" /> : null}

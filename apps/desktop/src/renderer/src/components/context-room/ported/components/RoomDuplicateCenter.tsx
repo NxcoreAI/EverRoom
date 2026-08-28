@@ -68,6 +68,18 @@ export function RoomDuplicateCenter({
     if (open) void reload()
   }, [open])
 
+  useEffect(() => {
+    if (open) return
+    // 关闭弹窗时回到列表态，避免下次打开看到上一次的合并预览残留；
+    // 合并进行中（queued/running）保留进度视图，重开可继续跟踪。
+    if (!operation || (operation.status !== 'queued' && operation.status !== 'running')) {
+      setPreview(null)
+      setSelected(null)
+      setOperation(null)
+      setTargetRoomId('')
+    }
+  }, [open, operation])
+
   const sourceRoomId = useMemo(() => {
     if (!selected || !targetRoomId) return ''
     return selected.roomAId === targetRoomId ? selected.roomBId : selected.roomAId

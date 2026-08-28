@@ -7,14 +7,18 @@ import { eq } from 'drizzle-orm'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   connectorEmails,
+  documents as documentsTable,
   entities,
   ingestEvents,
   jobs,
+  roomEntityFacts,
+  roomSourceMemberships,
   rooms,
 } from '../src/infrastructure/database/schema.js'
 import {
   ROOM_RELATION_INDEX_JOB_TYPE,
   RoomRelationRegistry,
+  factFingerprint,
 } from '../src/modules/knowledge/room-relations.js'
 
 const directories: string[] = []
@@ -194,6 +198,86 @@ describe('RoomRelationRegistry', () => {
     const automatic = registry.graph().edges[0]!
     registry.updateManual(automatic.id, { type: 'supports', pinned: true })
     expect(registry.removeManual(automatic.id)).toMatchObject({ origin: 'auto', type: 'shared_evidence', score: 1.1 })
+    sqlite.close()
+  })
+
+  it('projects facts per source with replace semantics and reports fact backfill', async () => {
+    const { db, registry, sqlite } = await harness()
+    addRooms(db, 2)
+    addIngest(db, { id: 'doc-a', sourceKind: 'file' })
+    registry.replaceSource({
+      sourceKind: 'file', sourceId: 'doc-a', sourceVersion: 1, sourceTitle: 'Brief',
+      roomIds: ['room-0', 'room-1'], mentions: [],
+      facts: [
+        { content: '林薇负责视觉', type: '属性', entityIds: ['e-1'] },
+        { content: '   ', type: '属性', entityIds: [] },
+      ],
+    })
+    const factRows = () => db.select().from(roomEntityFacts).all()
+    expect(factRows()).toHaveLength(2)
+    for (const row of factRows()) {
+      expect(row).toMatchObject({
+        factId: factFingerprint('林薇负责视觉'),
+        content: '林薇负责视觉',
+        type: '属性',
+        entityIds: ['e-1'],
+        sourceKind: 'file',
+        sourceId: 'doc-a',
+        sourceVersion: 1,
+      })
+    }
+
+    // 同源新版本整体替换：旧事实随来源消失。
+    registry.replaceSource({
+      sourceKind: 'file', sourceId: 'doc-a', sourceVersion: 2, roomIds: ['room-0'], mentions: [],
+      facts: [{ content: '新版本事实', type: '关系', entityIds: [] }],
+    })
+    expect(factRows().map((row) => [row.sourceId, row.content])).toEqual([['doc-a', '新版本事实']])
+
+    // removeSource 同步清理事实投影。
+    registry.removeSource('file', 'doc-a')
+    expect(factRows()).toHaveLength(0)
+
+    // 存量回填：有成员关系但无事实行的来源报待回填；完成后清零。
+    addIngest(db, { id: 'doc-b', sourceKind: 'file' })
+    addIngest(db, { id: 'doc-c', sourceKind: 'file' })
+    registry.replaceSource({ sourceKind: 'file', sourceId: 'doc-b', sourceVersion: 1, roomIds: ['room-0'], mentions: [], facts: [{ content: '已有事实', type: '属性', entityIds: [] }] })
+    registry.replaceSource({ sourceKind: 'file', sourceId: 'doc-c', sourceVersion: 1, roomIds: ['room-0', 'room-1'], mentions: [] })
+    expect(registry.pendingFactBackfill()).toEqual([
+      { sourceKind: 'file', sourceId: 'doc-c', sourceVersion: 1, roomIds: ['room-0', 'room-1'] },
+    ])
+    registry.markFactBackfillCompleted()
+    expect(registry.pendingFactBackfill()).toEqual([])
+    sqlite.close()
+  })
+
+  it('skips trashed documents in startup backfill scans and revives them on restore', async () => {
+    const { db, registry, sqlite } = await harness()
+    addRooms(db, 1)
+    const now = new Date()
+    db.insert(documentsTable).values([
+      { id: 'doc-live', title: 'Live doc', contentJson: { type: 'doc' }, version: 1 },
+      { id: 'doc-trash', title: 'Trashed doc', contentJson: { type: 'doc' }, version: 1, deletedAt: now },
+    ]).run()
+    // 两个文档都建了可信成员关系但都没有事实行：回填扫描只报未删的那个。
+    registry.replaceSource({ sourceKind: 'everroom-doc', sourceId: 'doc-live', sourceVersion: 1, roomIds: ['room-0'], mentions: [] })
+    registry.replaceSource({ sourceKind: 'everroom-doc', sourceId: 'doc-trash', sourceVersion: 1, roomIds: ['room-0'], mentions: [] })
+    expect(registry.pendingFactBackfill()).toEqual([
+      { sourceKind: 'everroom-doc', sourceId: 'doc-live', sourceVersion: 1, roomIds: ['room-0'] },
+    ])
+
+    // 文档索引补建扫描（entityIndexed=false）同样跳过回收站文档。
+    db.update(roomSourceMemberships).set({ entityIndexed: false }).run()
+    expect(registry.pendingDocumentIndexes()).toEqual([
+      { sourceId: 'doc-live', sourceVersion: 1, roomIds: ['room-0'] },
+    ])
+
+    // 恢复（清空 deletedAt）后重新进入待回填集合。
+    db.update(documentsTable).set({ deletedAt: null }).where(eq(documentsTable.id, 'doc-trash')).run()
+    expect(registry.pendingFactBackfill()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: 'doc-live' }),
+      expect.objectContaining({ sourceId: 'doc-trash' }),
+    ]))
     sqlite.close()
   })
 

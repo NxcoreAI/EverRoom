@@ -15,6 +15,7 @@ import {
   connectorQuarantinedRecords,
   connectorSyncJobs,
   connectorSyncRuns,
+  connectorTodos,
 } from "../src/infrastructure/database/schema.js";
 import { ConnectorSyncService } from "../src/modules/connectors/service.js";
 import { createConnectorDataPiTools } from "../src/modules/connectors/pi-tools.js";
@@ -453,6 +454,60 @@ describe("ConnectorSyncService Agent ingestion", () => {
         expect.objectContaining({ resourceType: "document", operation: "upsert" }),
         expect.objectContaining({ resourceType: "calendar", operation: "upsert" }),
       ]));
+    } finally {
+      await service.dispose();
+      database.sqlite.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("routes todo Agent output into connector_todos with idempotent upsert and todo outbox events", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "nxcore-connector-todos-"));
+    const jobs = [{
+      id: "todo-agent", ownerId: "local-user", service: "google_tasks", allowedActions: ["list_tasks"],
+      dataset: "tasks", resourceType: "todo", input: {}, goal: "同步待办",
+    }];
+    const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", directory], {
+      NXCORE_CLI_CONNECTOR_URL: "http://127.0.0.1:3000",
+      NXCORE_CLI_CONNECTOR_SYNC_ENABLED: "false",
+      NXCORE_CLI_CONNECTOR_SYNC_JOBS: JSON.stringify(jobs),
+    });
+    const database = createDatabase(join(directory, "gateway.sqlite"), config.migrationsDir);
+    let service: ConnectorSyncService;
+    const runtime = syncRuntime((input) => {
+      expect(input.prompt).toContain("google-tasks-sync");
+      const result = service.writeAgentBatch(input.runId, "todo", [{
+        sourceRecordId: "task-source-1", todoId: "task-1", title: "补充天线参数",
+        notes: "见评审会结论", status: "needsAction", dueAt: "2026-09-01T09:00:00+08:00",
+        priority: "high", listId: "list-1", listName: "卫星项目",
+        sourceUpdatedAt: "2026-08-19T08:00:00Z", extensionPayload: {},
+      }]);
+      expect(result.rejected).toEqual([]);
+      service.finishAgentRun(input.runId, { discovered: result.inserted + result.updated });
+    });
+    service = new ConnectorSyncService(database.db, config, logger);
+    service.attachAgentRuntime(runtime);
+
+    try {
+      await service.initialize();
+      await service.triggerJob("todo-agent");
+      await service.triggerJob("todo-agent");
+
+      const todos = database.db.select().from(connectorTodos).all();
+      expect(todos).toHaveLength(1);
+      expect(todos[0]).toMatchObject({
+        todoId: "task-1", title: "补充天线参数", status: "needsAction",
+        priority: "high", listName: "卫星项目",
+      });
+      expect(todos[0]!.dueAt).toBeInstanceOf(Date);
+      const outbox = database.db.select().from(connectorMarkdownOutbox).all();
+      expect(outbox).toEqual([
+        expect.objectContaining({ resourceType: "todo", operation: "upsert", ingestSourceId: todos[0]!.id }),
+      ]);
+      // dataset "tasks" 归类到 todo 域；搜索命中待办正文。
+      expect(service.queryRecords({ ownerId: "local-user", dataset: "tasks", query: "天线" }))
+        .toEqual([expect.objectContaining({ resourceType: "todo", title: "补充天线参数" })]);
+      expect(service.getRecord("local-user", todos[0]!.id)).toMatchObject({ resourceType: "todo", todoId: "task-1" });
     } finally {
       await service.dispose();
       database.sqlite.close();

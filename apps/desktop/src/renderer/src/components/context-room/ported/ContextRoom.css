@@ -555,6 +555,11 @@
   height: 14px;
 }
 
+.context-room-my-actions .context-room-add-room .obsidian-app-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .context-room-duplicate-button {
   position: relative;
 }
@@ -802,11 +807,16 @@
   background-size: 24px 24px;
 }
 
+/* 过渡别名：盒模型契约已上收到 graph/graphShell.css 的 .nx-graph-*；
+   此处旧选择器保留一个过渡期，避免外部覆盖样式失效。 */
 .context-room-graph-shell,
 .context-room-graph-canvas {
+  position: relative;
   width: 100%;
+  max-width: 100%;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .context-room-graph-canvas {
@@ -815,9 +825,11 @@
 }
 
 .context-room-graph-canvas canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
   touch-action: none;
 }
 
@@ -2151,12 +2163,12 @@
   margin-top: auto;
   border-top: 1px solid var(--cr-border);
   border-radius: 0;
-  color: #217346;
+  color: var(--cr-blue);
 }
 
 .context-room-workspace-tabs > .context-room-workspace-tabs-footer:hover {
-  background: #e9f3ed;
-  color: #185c37;
+  background: var(--cr-surface-hover);
+  color: var(--cr-blue);
 }
 
 .context-room-workspace-tabs button.is-dragging {
@@ -3135,149 +3147,8 @@
   font-size: 12px;
 }
 
-.context-room-resource-add-file {
-  display: inline-flex;
-  min-height: 30px;
-  align-items: center;
-  gap: 6px;
-  margin: 0 10px 8px;
-  padding: 0 8px;
-  border: 1px solid var(--cr-border-control);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-blue);
-  font-size: 11px;
-  font-weight: 550;
-  text-align: left;
-}
 
-.context-room-resource-add-file:hover {
-  background: var(--cr-blue-soft);
-}
 
-.context-room-resource-add-file svg {
-  width: 14px;
-  height: 14px;
-}
-
-.context-room-hostfs-picker {
-  margin: 0 10px 10px;
-  overflow: hidden;
-  border: 1px solid var(--cr-border);
-  border-radius: 7px;
-  background: var(--cr-surface);
-}
-
-.context-room-hostfs-picker > header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px;
-  border-bottom: 1px solid var(--cr-border);
-  background: var(--cr-surface-secondary);
-}
-
-.context-room-hostfs-picker > header > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.context-room-hostfs-picker > header strong {
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.context-room-hostfs-picker > header span {
-  overflow: hidden;
-  color: var(--cr-tertiary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-hostfs-picker > header button {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 auto;
-  margin: -8px;
-  place-items: center;
-  border-radius: 0 6px 0 6px;
-  background: transparent;
-  color: var(--cr-tertiary);
-}
-
-.context-room-hostfs-picker > header button:hover {
-  background: var(--cr-surface-hover);
-  color: var(--cr-text);
-}
-
-.context-room-hostfs-picker > header svg {
-  width: 14px;
-  height: 14px;
-}
-
-.context-room-hostfs-picker-list {
-  max-height: 220px;
-  overflow: auto;
-  padding: 4px;
-}
-
-.context-room-hostfs-picker-list > button {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-  min-height: 30px;
-  padding: 4px 6px;
-  border-radius: 5px;
-  color: var(--cr-muted);
-  font-size: 11px;
-  text-align: left;
-}
-
-.context-room-hostfs-picker-list > button:hover {
-  background: var(--cr-surface-hover);
-  color: var(--cr-text);
-}
-
-.context-room-hostfs-picker-list > button svg {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-}
-
-.context-room-hostfs-picker-list > button span {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-hostfs-picker-list > button small {
-  color: var(--cr-tertiary);
-  font-size: 9px;
-}
-
-.context-room-hostfs-picker-state {
-  min-height: 52px;
-  padding: 16px 10px;
-  color: var(--cr-tertiary);
-  font-size: 11px;
-  text-align: center;
-}
-
-.context-room-hostfs-picker-state.is-error {
-  color: #b54732;
-  text-align: left;
-}
 
 .context-room-resource-scroll {
   min-height: 0;
@@ -4142,6 +4013,71 @@
   line-height: 1.65;
 }
 
+.context-room-object-preview-desc {
+  margin: 14px 0 0;
+  color: var(--cr-muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.context-room-object-preview > section {
+  margin-top: 14px;
+}
+
+/* 来源资料行（只读）：与内联详情卡同款，此处作用域放宽到右侧内容区。 */
+.context-room-object-preview .context-room-memory-source-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  text-align: left;
+}
+
+.context-room-object-preview .context-room-memory-source-row > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-room-object-preview .context-room-memory-source-row b {
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-object-preview .context-room-memory-source-row small {
+  color: var(--cr-tertiary);
+  font-size: 10.5px;
+}
+
+.context-room-object-preview .context-room-memory-detail-row-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--cr-tertiary);
+}
+
+.context-room-object-preview .context-room-memory-detail-row-icon svg {
+  width: 12px;
+  height: 12px;
+  color: currentColor;
+}
+
 @keyframes context-room-spin {
   to {
     transform: rotate(360deg);
@@ -4481,6 +4417,162 @@
   overflow: auto;
   padding: 24px 32px 40px;
   background: var(--cr-canvas);
+}
+
+::highlight(room-overview-citation) {
+  background: color-mix(in srgb, var(--cr-blue) 22%, transparent);
+  color: inherit;
+}
+
+::highlight(room-overview-citation-pending) {
+  background: color-mix(in srgb, var(--cr-blue) 13%, transparent);
+  color: inherit;
+}
+
+.context-room-selection-to-agent {
+  position: fixed;
+  z-index: 120;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+  background: #fff;
+  color: #24292f;
+  box-shadow: 0 6px 18px rgba(31, 35, 40, 0.14);
+  font-size: 11px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.context-room-selection-to-agent:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-selection-to-agent:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cr-blue) 34%, transparent);
+  outline-offset: 2px;
+}
+
+.context-room-selection-to-agent svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-citation-comment {
+  position: fixed;
+  z-index: 121;
+  display: grid;
+  width: min(320px, calc(100vw - 16px));
+  grid-template-columns: minmax(0, 1fr) 28px auto;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #dfe3e8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.16);
+}
+
+.context-room-citation-comment > span {
+  display: flex;
+  min-width: 0;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: #657080;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-citation-comment > span svg {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  color: var(--cr-blue);
+}
+
+.context-room-citation-comment input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+  outline: 0;
+  color: #24292f;
+  font: inherit;
+  font-size: 11px;
+}
+
+.context-room-citation-comment input:focus {
+  border-color: color-mix(in srgb, var(--cr-blue) 68%, #dfe3e8);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cr-blue) 14%, transparent);
+}
+
+.context-room-citation-comment button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+
+.context-room-citation-comment-cancel {
+  width: 28px;
+  padding: 0;
+  border: 0;
+  background: #f4f5f6;
+  color: #68717e;
+}
+
+.context-room-citation-comment-add {
+  gap: 4px;
+  padding: 0 9px;
+  border: 1px solid var(--cr-blue);
+  background: var(--cr-blue);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.context-room-citation-comment button:hover {
+  filter: brightness(0.96);
+}
+
+.context-room-citation-comment button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cr-blue) 34%, transparent);
+  outline-offset: 2px;
+}
+
+.context-room-citation-comment button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-citation-badge {
+  position: fixed;
+  z-index: 119;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--cr-surface);
+  border-radius: 50%;
+  background: var(--cr-blue);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(31, 35, 40, 0.18);
+  pointer-events: none;
+}
+
+.context-room-citation-badge svg {
+  width: 9px;
+  height: 9px;
 }
 
 .context-room-dashboard-hero {
@@ -5262,17 +5354,22 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue) 12%, transparent);
 }
 
-.context-room-dashboard-timeline > ol > li > i::after {
+/* 竖向时间轴线（参考 diary-timeline-list）：从本条目圆点圆心一直连到
+   下一条目圆点圆心。left 对准圆点圆心 x（10px 圆即 5px）；top 为圆点
+   圆心（padding-top 15 + margin-top 4 + 半径 5 = 24）；bottom 跨过
+   下一条目 border-top(1) + padding-top(15) + 到圆心的 24。圆点不透明
+   且 z-index 更高，会盖住穿过它的线段。 */
+.context-room-dashboard-timeline > ol > li::before {
   position: absolute;
-  top: 7px;
-  left: 2px;
+  top: 24px;
+  bottom: -25px;
+  left: 4.5px;
   width: 1px;
-  height: calc(100% + 24px);
   background: var(--cr-border);
   content: '';
 }
 
-.context-room-dashboard-timeline > ol > li:last-child > i::after {
+.context-room-dashboard-timeline > ol > li:last-child::before {
   display: none;
 }
 
@@ -5361,6 +5458,18 @@
   color: var(--cr-blue);
 }
 
+.context-room-timeline-materials {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* 不可跳转的来源（连接器邮件/日历等）只作标签展示，去掉按钮交互形态。 */
+.context-room-timeline-material.is-plain {
+  cursor: default;
+}
+
 .context-room-dashboard-empty {
   min-height: 112px;
   border: 1px solid rgba(60, 60, 67, 0.1);
@@ -5404,6 +5513,12 @@
   .context-room-dashboard-timeline > ol > li {
     gap: 12px;
     padding-block: 14px;
+  }
+
+  /* 窄容器下 padding-block 由 15 收窄到 14，轴线端点随之微调。 */
+  .context-room-dashboard-timeline > ol > li::before {
+    top: 23px;
+    bottom: -24px;
   }
 
   .context-room-dashboard-timeline li > div > div:first-child {
@@ -9576,19 +9691,6 @@
   margin-bottom: 7px;
 }
 
-.context-room-resource-add-file {
-  min-height: 28px;
-  margin-bottom: 6px;
-  border-color: transparent;
-  color: var(--cr-muted);
-}
-
-.context-room-resource-add-file:hover {
-  border-color: var(--cr-border);
-  background: var(--cr-surface-hover);
-  color: var(--cr-text);
-}
-
 .context-room-resource-folder {
   min-height: 27px;
   padding-top: 3px;
@@ -10446,16 +10548,8 @@
   background-size: 22px 22px;
 }
 
-.context-room-entity-fact-graph-shell,
-.context-room-entity-fact-graph-canvas {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-}
-
-.context-room-entity-fact-graph-canvas canvas {
-  display: block;
-}
+/* 实体事实图谱壳层盒模型已上收到 graph/graphShell.css 的 .nx-graph-shell/canvas
+   （内核组件自动附加），此处领域类名仅保留语义锚点，不再持有盒模型规则。 */
 
 .context-room-memory-inline-detail,
 .context-room-related-inline-detail {
@@ -10641,6 +10735,29 @@
 }
 
 .context-room-memory-inline-detail .context-room-memory-detail-list button > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* 来源资料行是只读展示（PRD：图谱只读，管理动作在记忆应用完成）。 */
+.context-room-memory-inline-detail .context-room-memory-source-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  text-align: left;
+}
+
+.context-room-memory-inline-detail .context-room-memory-source-row > span:last-child {
   display: flex;
   min-width: 0;
   flex: 1;

@@ -12,7 +12,7 @@ import {
   type PixiTicker,
   type PixiText,
   type PixiViewport,
-} from '../src/renderer/src/components/context-room/ported/graph/PixiForceGraphRenderer'
+} from '../src/renderer/src/components/graph/pixi/PixiForceGraphRenderer'
 
 class FakeTicker implements PixiTicker {
   readonly callbacks = new Set<() => void>()
@@ -430,6 +430,43 @@ describe('PixiForceGraphRenderer', () => {
     ])
   })
 
+  it('uses an injected icon texture factory and skips unknown icon names', async () => {
+    const fakes = createFakes()
+    const customTexture = new FakeTexture()
+    const createIconTexture = vi.fn((icon: string) => (
+      icon === 'attribute' || icon === 'relation' ? customTexture : null
+    ))
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      createIconTexture,
+      edges: [],
+      host: createHost(),
+      nodes: [
+        { icon: 'attribute' },
+        { icon: 'relation' },
+        { icon: 'attribute' },
+        { icon: 'no-such-icon' },
+      ],
+      positions: new Float32Array([0, 0, 10, 0, 20, 0, 30, 0]),
+    })
+
+    // 三种图标名各建一个容器；未知名容器存在但没有 sprite，同名共享同一纹理。
+    expect(renderer.iconParticleContainers).toHaveLength(3)
+    expect(fakes.particles[1]?.children).toHaveLength(2)
+    expect(fakes.particles[2]?.children).toHaveLength(1)
+    expect(fakes.particles[3]?.children).toHaveLength(0)
+    expect((fakes.particles[1]?.children[0] as FakeSprite).texture).toBe(customTexture)
+    expect((fakes.particles[1]?.children[1] as FakeSprite).texture).toBe(customTexture)
+    expect((fakes.particles[2]?.children[0] as FakeSprite).texture).toBe(customTexture)
+    // 负缓存：4 个节点 3 种图标名，工厂只调用 3 次（未知名也只问一次）。
+    expect(createIconTexture).toHaveBeenCalledTimes(3)
+    expect([...new Set(createIconTexture.mock.calls.map(([icon]) => icon))].sort())
+      .toEqual(['attribute', 'no-such-icon', 'relation'])
+
+    renderer.destroy()
+    expect(customTexture.destroyed).toBe(true)
+  })
+
   it('raises label texture resolution in stable steps while zooming in', async () => {
     const fakes = createFakes()
     await createPixiForceGraphRenderer({
@@ -494,6 +531,37 @@ describe('PixiForceGraphRenderer', () => {
     fakes.ticker.tick()
 
     expect(fakes.texts.filter((label) => label.visible).map((label) => label.text)).toEqual(['Relation 3'])
+  })
+
+  it('hides unrelated relationship labels while a node is hovered at high zoom', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [
+        { id: 'edge-0', source: 0, target: 1, label: 'Focused relation' },
+        { id: 'edge-1', source: 2, target: 3, label: 'Unrelated relation' },
+      ],
+      host: createHost(),
+      nodes: Array.from({ length: 4 }, () => ({})),
+      positions: new Float32Array([10, 20, 80, 20, 150, 20, 220, 20]),
+    })
+
+    const viewport = fakes.viewports[0]!
+    viewport.scale.x = 2
+    viewport.visibleBounds = { x: 0, y: 0, width: 300, height: 100 }
+    fakes.ticker.tick()
+    expect(fakes.texts.filter((label) => label.visible).map((label) => label.text))
+      .toEqual(['Focused relation', 'Unrelated relation'])
+
+    renderer.setHoveredIndex(0)
+    fakes.ticker.tick()
+    expect(fakes.texts.filter((label) => label.visible).map((label) => label.text))
+      .toEqual(['Focused relation'])
+
+    renderer.setHoveredIndex(null)
+    fakes.ticker.tick()
+    expect(fakes.texts.filter((label) => label.visible).map((label) => label.text))
+      .toEqual(['Focused relation', 'Unrelated relation'])
   })
 
   it('culls labels to visible nodes and never grows the reusable text pool past its cap', async () => {
@@ -727,6 +795,95 @@ describe('PixiForceGraphRenderer', () => {
     expect(renderer.sprites.map((sprite) => sprite.tint)).toEqual([0x111111, 0x244dcc])
     expect((renderer.sprites[1] as FakeSprite).texture).toBe(texture)
     expect(fakes.particles[0]?.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('centers the initial view on content at natural zoom when centerOnMount is set', async () => {
+    const fakes = createFakes()
+    await createPixiForceGraphRenderer({
+      centerOnMount: true,
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions: new Float32Array([100, 200, 300, 240]),
+    })
+    const viewport = fakes.viewports[0]!
+    // 内容包围盒（含半径 18 与标签预留 24）：(82,182)-(318,282)，中心 (200,232)。
+    // 只居中、不缩放：世界大于面板时通过视口平移浏览，而不是压进面板。
+    expect(viewport.calls).toContain('moveCenter:200,232')
+    expect(viewport.calls.some((call) => call.startsWith('setZoom:'))).toBe(false)
+  })
+
+  it('re-centers once when the host reports its real size after mounting hidden', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      centerOnMount: true,
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: { ...createHost(), clientWidth: 0, clientHeight: 0 },
+      nodes: [{}, {}],
+      positions: new Float32Array([100, 200, 300, 240]),
+    })
+    const viewport = fakes.viewports[0]!
+    // 宿主 0×0（隐藏 tab / 入场动画容器）：构造时按 640×420 兜底居中一次。
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toEqual(['moveCenter:200,232'])
+
+    // 真实尺寸到来 → 补居中一次；之后的面板微调不再抢用户的平移。
+    renderer.resize(400, 300)
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toHaveLength(2)
+    renderer.resize(380, 280)
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toHaveLength(2)
+  })
+
+  it('waits for the first worker frame before centering when the shared buffer is still empty', async () => {
+    const fakes = createFakes()
+    const positions = new Float32Array(4)
+    let revision = 0
+    await createPixiForceGraphRenderer({
+      centerOnMount: true,
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions,
+      revision: () => revision,
+    })
+    const viewport = fakes.viewports[0]!
+    // 渲染器可能在 Worker 首次 publish 前创建（共享坐标缓冲全 0）：
+    // 不能按全 0 坐标居中——那会把视野钉在世界原点（左上角）。
+    fakes.ticker.tick()
+    expect(viewport.calls.some((call) => call.startsWith('moveCenter:'))).toBe(false)
+
+    // Worker 首帧坐标写入（revision 为偶数）后，下一帧对准内容中心。
+    positions.set([100, 200, 300, 240])
+    revision = 2
+    fakes.ticker.tick()
+    expect(viewport.calls).toContain('moveCenter:200,232')
+    // 只补一次：后续帧不再重复居中。
+    fakes.ticker.tick()
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toHaveLength(1)
+  })
+
+  it('honors the fitView minimum scale when content is larger than the screen', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions: new Float32Array([0, 0, 2000, 1400]),
+    })
+    const viewport = fakes.viewports[0]!
+
+    renderer.fitView(1)
+    // minScale 1：内容超出屏幕时保持原始缩放、只居中（紧凑面板语义）。
+    expect(viewport.scale.x).toBe(1)
+    expect(viewport.calls).toContain('moveCenter:1000,712')
+
+    renderer.fitView()
+    // 缺省 minScale 0.2：整体可见优先，允许缩小到内容入屏。
+    expect(viewport.scale.x).toBeGreaterThan(0.2)
+    expect(viewport.scale.x).toBeLessThan(1)
   })
 
   it('resizes viewport and releases ticker, texture, viewport, sprites, and app resources', async () => {

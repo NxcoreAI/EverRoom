@@ -12,6 +12,10 @@
     "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.9",
     "@nxcore/agent-contract": "workspace:*",
     "@nxcore/connector-contract": "workspace:*",
     "@nxcore/document-model": "workspace:*",
@@ -40,9 +44,12 @@
     "better-sqlite3": "^13.0.3",
     "d3-force": "^3.0.0",
     "docx": "^9.7.1",
+    "echarts": "^6.0.0",
     "gsap": "3.15.0",
     "i18next": "^26.3.6",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
+    "mermaid": "^11.12.0",
     "pixi-viewport": "5.0.2",
     "pixi.js": "7.4.3",
     "prosemirror-changeset": "^2.4.1",
@@ -52,18 +59,21 @@
     "react-i18next": "^17.0.11",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "tar-stream": "^3.2.1",
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@oomol-lab/oo-cli": "1.7.5",
     "@oomol-lab/open-connector": "https://codeload.github.com/oomol-lab/open-connector/tar.gz/5719a69468c698c7cb8108e062ff64ecef8a2e65",
-    "@electron/asar": "3.4.1",
     "@sentry/vite-plugin": "5.4.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/d3-force": "^3.0.10",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@types/react-test-renderer": "18.3.1",
+    "@types/tar-stream": "^3.1.4",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^39.2.7",
@@ -150,13 +160,24 @@
         "filter": [
           "**/*",
           "!**/.env*",
+          "!**/node_modules/@datadog/*/prebuilds/linux*/**",
+          "!**/node_modules/@datadog/*/prebuilds/win32*/**",
+          "!**/node_modules/@datadog/*/prebuilds/darwin-x64/**",
+          "!**/node_modules/@embedded-postgres/linux-*/**",
           "!**/*.{map,ts,tsx,mts,cts}"
         ]
       }
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "signIgnore": [
+        "native/share/"
+      ],
       "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",

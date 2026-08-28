@@ -12,12 +12,17 @@ import type {
   DocumentVersionListOptions,
   DocumentVersionSnapshot,
   DocumentDiffResult,
+  CompleteExternalDocumentPatchInput,
+  ExternalDocumentProjectionBinding,
   ImportRoomDocumentInput,
+  PreparedExternalDocumentPatch,
+  PrepareExternalDocumentPatchInput,
   RoomDocument,
   ResolveDocumentBlockReferencesInput,
   ResolveDocumentBlockReferencesResult,
   SaveRoomDocumentInput,
   StartDocumentOperationInput,
+  SyncExternalDocumentProjectionInput,
 } from '@nxcore/agent-contract'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
@@ -165,6 +170,54 @@ export class DocumentGatewayBridge {
     input: DocumentOperationCommandInput,
   ): Promise<DocumentOperationCommandResult> {
     return this.request(`/v1/document-operations/${encodeURIComponent(operationId)}/commands`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true)
+  }
+
+  syncExternalProjection(input: SyncExternalDocumentProjectionInput): Promise<ExternalDocumentProjectionBinding> {
+    return this.request(
+      `/v1/external-document-projections/${input.sourceKind}/${encodeURIComponent(input.sourceId)}/${encodeURIComponent(input.resourceId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          roomId: input.roomId,
+          relativePath: input.relativePath,
+          sourceHash: input.sourceHash,
+          title: input.title,
+          markdown: input.markdown,
+        }),
+      },
+      true,
+    )
+  }
+
+  removeExternalProjections(sourceId: string, resourceId?: string): Promise<{ removed: number }> {
+    const query = resourceId ? `?${new URLSearchParams({ resourceId })}` : ''
+    return this.request(
+      `/v1/external-document-projections/obsidian-vault/${encodeURIComponent(sourceId)}${query}`,
+      { method: 'DELETE' },
+      true,
+    )
+  }
+
+  removeExternalDocumentProjection(documentId: string): Promise<void> {
+    return this.request(
+      `/v1/external-document-projections/documents/${encodeURIComponent(documentId)}`,
+      { method: 'DELETE' },
+      true,
+    )
+  }
+
+  prepareExternalPatch(input: PrepareExternalDocumentPatchInput): Promise<PreparedExternalDocumentPatch> {
+    return this.request('/v1/external-document-patches/prepare', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true)
+  }
+
+  completeExternalPatch(input: CompleteExternalDocumentPatchInput): Promise<DocumentOperationCommandResult> {
+    return this.request('/v1/external-document-patches/complete', {
       method: 'POST',
       body: JSON.stringify(input),
     }, true)

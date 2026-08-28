@@ -41,7 +41,9 @@ describe("bundled project Agent", () => {
       logger,
     );
     orchestrator.initialize();
-    expect(registry.get("multimodal-document-parser")?.revision.outputSchema).toBeNull();
+    expect(registry.get("multimodal-document-parser")?.revision.outputSchema).toMatchObject({
+      required: expect.arrayContaining(["summary", "facts", "missingFields"]),
+    });
 
     const catalog = createSubagentPiTools(registry, orchestrator)
       .find((tool) => tool.name === "agent_catalog")!;
@@ -110,7 +112,11 @@ describe("bundled project Agent", () => {
       status: "completed",
       result: {
         text: JSON.stringify({ summary: "这是一份季度经营报告。" }),
-        structuredOutput: { summary: "这是一份季度经营报告。" },
+        structuredOutput: {
+          summary: "这是一份季度经营报告。",
+          facts: [{ key: "主题", value: "季度经营", evidenceRefs: ["block-1"] }],
+          missingFields: [],
+        },
       },
       errorMessage: null,
     });
@@ -144,6 +150,8 @@ describe("bundled project Agent", () => {
     expect(JSON.parse(documentAnalysisResult.content)).toMatchObject({
       status: "completed",
       summary: "这是一份季度经营报告。",
+      facts: [{ key: "主题", value: "季度经营", evidenceRefs: ["block-1"] }],
+      missingFields: [],
       outputFormat: "structured",
     });
 
@@ -172,40 +180,10 @@ describe("bundled project Agent", () => {
     });
     expect(JSON.parse(proseResult.content)).toMatchObject({
       status: "completed",
-      summary: "文档解析完成。李展萍就读于示例大学，学籍状态为在籍。",
-      outputFormat: "text",
-      warning: "unstructured_subagent_output",
-    });
-
-    const fencedDispatch = vi.fn().mockResolvedValue({
-      id: "document-fenced-invocation",
-      agentDefinitionId: "multimodal-document-parser",
-      status: "completed",
-      result: {
-        text: "文档解析完成。\n```json\n{\"status\":\"complete\",\"summary\":\"李展萍的学历层次为本科。\"}\n```",
-      },
-      errorMessage: null,
-    });
-    const fencedTool = createSubagentPiTools(
-      registry,
-      { dispatch: fencedDispatch } as unknown as SubagentOrchestrator,
-    ).find((tool) => tool.name === "document_analysis")!;
-    const fencedResult = await fencedTool.execute({
-      runId: "main-document-fenced-run",
-      sessionId: "main-session",
-      runtimeSessionRef: null,
-      prompt: "学历层次是什么？",
-      pageLabel: "Main Agent",
-      roomId: null,
-    }, {
-      fileEntryId: "file-student",
-      fileVersionId: "fver-student-v1",
-      question: "学历层次是什么？",
-    });
-    expect(JSON.parse(fencedResult.content)).toMatchObject({
-      status: "completed",
-      summary: "李展萍的学历层次为本科。",
-      outputFormat: "structured",
+      summary: null,
+      facts: null,
+      missingFields: null,
+      outputFormat: null,
     });
 
     const invocation = await orchestrator.dispatch({

@@ -62,6 +62,26 @@ afterEach(async () => {
 });
 
 describe("document memory capture", () => {
+  it("replaces an imported local Agent conversation by stable session id", async () => {
+    const { service, requests, urls } = serviceWithCapture();
+    const messages = [
+      { role: "user" as const, content: "Review this", timestamp: "2026-08-26T01:00:00.000Z" },
+      { role: "assistant" as const, content: "Reviewed", timestamp: "2026-08-26T01:00:01.000Z" },
+    ];
+
+    await expect(service.importConversation({
+      sessionId: "local:codex:thread-1",
+      messages,
+    })).resolves.toEqual({ sessionId: "local:codex:thread-1", messagesImported: 2 });
+
+    expect(urls).toEqual([
+      "http://127.0.0.1:8420/v3/conversation/delete",
+      "http://127.0.0.1:8420/v3/conversation/add",
+    ]);
+    expect(requests[0]).toMatchObject({ session_ids: ["local:codex:thread-1"] });
+    expect(requests[1]).toMatchObject({ session_id: "local:codex:thread-1", messages });
+  });
+
   it("stores the Agent document creation fact without duplicating the full Markdown", async () => {
     const { service, requests } = serviceWithCapture();
 

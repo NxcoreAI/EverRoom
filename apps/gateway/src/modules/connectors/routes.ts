@@ -215,7 +215,7 @@ import type { ConnectorMarkdownService } from "./markdown-service.js";
 const JobParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
 const RunParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
 const ResourceType = Type.Union([
-  Type.Literal("email"), Type.Literal("document"), Type.Literal("calendar"), Type.Literal("generic"),
+  Type.Literal("email"), Type.Literal("document"), Type.Literal("calendar"), Type.Literal("todo"), Type.Literal("generic"),
 ]);
 const JobStatus = Type.Union([
   Type.Literal("draft"), Type.Literal("active"), Type.Literal("paused"), Type.Literal("archived"),
@@ -444,6 +444,7 @@ export function cliConnectorRoutes(
             email: "connector-email",
             document: "connector-document",
             calendar: "connector-calendar",
+            todo: "connector-todo",
             generic: "connector-record",
           };
           const sourceKind = sourceKindByResource[record.resourceType];
@@ -491,6 +492,7 @@ export function cliConnectorRoutes(
         const resourceType = record.resourceType === "email"
           || record.resourceType === "document"
           || record.resourceType === "calendar"
+          || record.resourceType === "todo"
           ? record.resourceType
           : record.resourceType === "generic" ? "generic" : null;
         const artifact = markdown && resourceType

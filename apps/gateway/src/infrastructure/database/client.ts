@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
+import { repairContextRoomSchema } from "./context-room-compatibility.js";
 
 export interface DatabaseClient {
   db: BetterSQLite3Database<typeof schema>;
@@ -215,6 +216,144 @@ function adoptPreReleaseConnectorMarkdownMigrations(
   })();
 }
 
+/** Repair installs whose migration cursor advanced past the room duplicate
+ * migration even though that additive migration was only partially applied. */
+function repairIncompleteRoomDuplicateMigration(
+  sqlite: Database.Database,
+  migrationsDir: string,
+): void {
+  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
+  ).get(type, name));
+  if (!hasObject("table", "__drizzle_migrations")) return;
+
+  const entry = readMigrationJournal(migrationsDir).find((item) => item.tag === "0031_room_duplicates");
+  if (!entry?.tag || typeof entry.when !== "number") return;
+  const latest = sqlite.prepare(
+    "SELECT MAX(created_at) AS created_at FROM __drizzle_migrations",
+  ).get() as { created_at?: number | null } | undefined;
+  if (typeof latest?.created_at !== "number" || latest.created_at < entry.when) return;
+
+  const requiredTableColumns: Record<string, string[]> = {
+    room_duplicate_candidates: [
+      "id", "room_a_id", "room_b_id", "name_score", "centroid_score", "content_overlap",
+      "entity_overlap", "duplicate_score", "confidence", "llm_verdict", "reasons", "status",
+      "evidence_revision", "scoring_version", "created_at", "updated_at",
+    ],
+    room_merge_operations: [
+      "id", "source_room_id", "target_room_id", "idempotency_key", "preview_hash", "status",
+      "stage", "progress", "commit_reached", "impact", "error", "confirmed_at", "completed_at",
+      "created_at", "updated_at",
+    ],
+    room_merge_items: [
+      "id", "operation_id", "resource_type", "resource_id", "before_room_id", "after_room_id",
+      "before_value", "fingerprint", "status", "created_at", "updated_at",
+    ],
+    room_memory_attributions: [
+      "id", "room_id", "memory_id", "source_kind", "source_id", "confidence", "created_at", "updated_at",
+    ],
+  };
+  const requiredBaseColumns: Record<string, string[]> = {
+    agent_runs: ["room_id"],
+    context_rooms: ["lifecycle", "merged_into_room_id", "merged_at"],
+    rooms: ["lifecycle", "merged_into_room_id", "merged_at"],
+  };
+  if (!Object.keys(requiredBaseColumns).every((table) => hasObject("table", table))) return;
+
+  const columnsOf = (table: string) => new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+  );
+  const tablesComplete = Object.entries(requiredTableColumns).every(([table, columns]) =>
+    hasObject("table", table) && columns.every((column) => columnsOf(table).has(column))
+  );
+  const baseColumnsComplete = Object.entries(requiredBaseColumns).every(([table, columns]) =>
+    columns.every((column) => columnsOf(table).has(column))
+  );
+  const indexesComplete = [
+    "room_duplicate_candidates_pair_idx",
+    "room_duplicate_candidates_status_idx",
+    "room_duplicate_candidates_room_a_idx",
+    "room_duplicate_candidates_room_b_idx",
+    "room_memory_attributions_memory_idx",
+    "room_memory_attributions_room_idx",
+    "room_merge_items_operation_resource_idx",
+    "room_merge_items_operation_idx",
+    "room_merge_operations_idempotency_idx",
+    "room_merge_operations_rooms_idx",
+    "room_merge_operations_status_idx",
+  ].every((index) => hasObject("index", index));
+  if (tablesComplete && baseColumnsComplete && indexesComplete) return;
+
+  sqlite.transaction(() => {
+    runAdditiveMigrationIdempotently(sqlite, migrationsDir, entry.tag!);
+    recordMigration(sqlite, migrationsDir, entry);
+  })();
+}
+
+/** Adopt late development migrations when their complete schema was already
+ * applied under a discarded migration cursor. This prevents duplicate ALTER
+ * statements while still allowing partially upgraded databases to migrate. */
+function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations")) return;
+  const hasColumn = (table: string, column: string) => hasTable(table) && new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+  ).has(column);
+  const entries = readMigrationJournal(migrationsDir);
+  let latestMainMigrationsEnsured = false;
+  const ensureLatestMainMigrations = () => {
+    if (latestMainMigrationsEnsured) return;
+    latestMainMigrationsEnsured = true;
+    const tags = [
+      "0033_room_entity_facts",
+      "0034_room_overviews_and_corrections",
+      "0035_eager_hannibal_king",
+    ];
+    sqlite.transaction(() => {
+      for (const tag of tags) runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
+      for (const tag of tags) {
+        const entry = entries.find((item) => item.tag === tag);
+        if (entry) recordMigration(sqlite, migrationsDir, entry);
+      }
+    })();
+  };
+  const record = (tag: string) => {
+    const entry = entries.find((item) => item.tag === tag);
+    if (!entry?.tag || typeof entry.when !== "number") return;
+    if (sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(entry.when)) return;
+    const migrationSql = readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8");
+    sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+      .run(createHash("sha256").update(migrationSql).digest("hex"), entry.when);
+  };
+
+  if (hasTable("clipper_artifacts")
+    && ["visual_status", "visual_kind", "visual_summary", "visual_ocr_text", "visual_key_points",
+      "visual_entities", "visual_relevance", "visual_quality", "visual_model", "visual_prompt_version",
+      "cover_score"].every((column) => hasColumn("clipper_assets", column))) {
+    ensureLatestMainMigrations();
+    record("0036_odd_cardiac");
+  }
+  if (hasColumn("clipper_assets", "visual_content_role")
+    && hasColumn("clipper_assets", "visual_noise_reason")) {
+    ensureLatestMainMigrations();
+    record("0037_acoustic_doctor_spectrum");
+  }
+  if (hasColumn("clipper_captures", "favorited_at")) {
+    ensureLatestMainMigrations();
+    record("0038_clipper_favorites");
+  }
+  if (hasTable("agent_session_participants")
+    && hasColumn("agent_sessions", "active_agent_id")
+    && hasColumn("agent_runs", "agent_id")
+    && hasColumn("agent_runs", "invocation_mode")
+    && hasColumn("agent_messages", "author_agent_id")) {
+    ensureLatestMainMigrations();
+    record("0039_multi_agent_conversations");
+  }
+}
+
 /** Reconcile databases created by feat/contextroom before its migration chain
  * was rebased after main's 0026-0029 migrations. */
 function adoptPreMergeContextRoomMigrations(sqlite: Database.Database, migrationsDir: string): void {
@@ -357,7 +496,10 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   repairLegacyMigrationCursor(sqlite, migrationsDir);
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
+  repairIncompleteRoomDuplicateMigration(sqlite, migrationsDir);
+  adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
   adoptPreMergeContextRoomMigrations(sqlite, migrationsDir);
+  repairContextRoomSchema(sqlite);
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");

@@ -29,6 +29,7 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-tui@0.84.2'
 
 patchedDependencies:
+  '@electron/osx-sign@1.3.3': patches/@electron__osx-sign@1.3.3.patch
   '@tencentdb-agent-memory/memory-tencentdb-v2@2.0.0-beta.1-everroom.8': patches/memory-tencentdb-v2@2.0.0-beta.1-everroom.8.patch
   pi-mcp-adapter@2.26.1: patches/pi-mcp-adapter@2.26.1.patch
   sqlite-vec@0.1.7-alpha.2: patches/sqlite-vec@0.1.7-alpha.2.patch

@@ -160,6 +160,25 @@ const api: NxcoreDesktopApi = {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
+  migrations: {
+    discover: () => invokeQuietly('migrations:discover'),
+    chooseOpenClaw: () => invoke('migrations:choose-openclaw'),
+    importOpenClaw: (id) => invoke('migrations:import-openclaw', id),
+    importNotionZip: () => invoke('migrations:import-notion-zip'),
+    sources: () => invokeQuietly('migrations:sources'),
+    runs: (sourceId) => invokeQuietly('migrations:runs', sourceId),
+    cancel: (runId) => invoke('migrations:cancel', runId),
+    retry: (runId) => invoke('migrations:retry', runId),
+    reimport: (sourceId) => invoke('migrations:reimport', sourceId),
+    clear: (sourceId) => invoke('migrations:clear', sourceId),
+    conversations: (query) => invokeQuietly('migrations:conversations', query),
+    preview: (id) => invokeQuietly('migrations:preview', id),
+    onProgress: (listener) => {
+      const handle = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value)
+      ipcRenderer.on('migrations:progress', handle)
+      return () => ipcRenderer.removeListener('migrations:progress', handle)
+    },
+  },
   browserExtension: {
     status: () => invokeQuietly<BrowserExtensionStatus>('browser-extension:status'),
     install: () => invoke<BrowserExtensionStatus>('browser-extension:install'),
@@ -289,19 +308,34 @@ const api: NxcoreDesktopApi = {
     cancelSubagentInvocation: (invocationId: string) =>
       invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
     refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
+    overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
+    refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
     roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
     devices: (options) => options?.quiet ? invokeQuietly('account:devices') : invoke('account:devices'),
     login: (input) => invoke('account:login', input),
-    loginWithOidc: (provider) => invoke('account:oidc-login', provider),
+    validateInvitationCode: (invitationCode) => invokeQuietly('account:invitation-code-validate', invitationCode),
+    loginWithOidc: (provider, invitationCode) => invoke('account:oidc-login', { provider, invitationCode }),
     cancelOidcLogin: () => invoke('account:oidc-cancel'),
     logout: () => invoke('account:logout'),
     keyringStatus: (options) => options?.quiet ? invokeQuietly('account:keyring-status') : invoke('account:keyring-status'),
     createPairingSession: () => invoke('account:create-pairing-session'),
     getPairingSession: (id, options) => options?.quiet ? invokeQuietly('account:get-pairing-session', id) : invoke('account:get-pairing-session', id),
     approvePairingSession: (id) => invoke('account:approve-pairing-session', id),
+  },
+  notifications: {
+    preferences: () => invokeQuietly('notifications:preferences'),
+    updatePreferences: (input) => invoke('notifications:update-preferences', input),
+    cloudSessions: (deviceId) => invokeQuietly('notifications:cloud-sessions', deviceId),
+    cloudMessages: (deviceId, sessionId, before) => invokeQuietly('notifications:cloud-messages', deviceId, sessionId, before),
+    onOpenTarget: (listener) => {
+      const handle = (_event: Electron.IpcRendererEvent, target: Parameters<typeof listener>[0]) => listener(target)
+      ipcRenderer.on('notifications:open-target', handle)
+      ipcRenderer.send('notifications:renderer-ready')
+      return () => ipcRenderer.removeListener('notifications:open-target', handle)
+    },
   },
   runtimeConfig: {
     get: () => invoke('runtime-config:get'),
@@ -399,6 +433,9 @@ const api: NxcoreDesktopApi = {
     },
   },
   agent: {
+    discoverLocalAgents: () => invokeQuietly('agent:discover-local-agents'),
+    importLocalAgentHistory: (agentId: string) => invoke('agent:import-local-agent-history', agentId),
+    bindLocalAgentWorkspace: (agentId: string, sessionId: string) => invoke('agent:bind-local-agent-workspace', agentId, sessionId),
     getStatus: () => invokeQuietly('agent:get-status'),
     getUsage: (range) => invoke('agent:get-usage', range),
     listSessions: (pageLabel, roomId) => invoke('agent:list-sessions', pageLabel, roomId),
@@ -510,6 +547,37 @@ const api: NxcoreDesktopApi = {
     disconnect: (id, deleteLocalData) =>
       invoke('sources:disconnect', id, deleteLocalData),
   },
+  obsidian: {
+    pickAndMount: () => invoke('obsidian:pick-and-mount'),
+    discover: () => invoke('obsidian:discover'),
+    pickCandidate: () => invoke('obsidian:pick-candidate'),
+    importCandidate: (candidateId, target) => invoke('obsidian:import-candidate', candidateId, target),
+    list: () => invoke('obsidian:list'),
+    tree: (vaultId) => invoke('obsidian:tree', vaultId),
+    readNote: (vaultId, resourceId) => invoke('obsidian:read-note', vaultId, resourceId),
+    saveNote: (vaultId, resourceId, markdown, expectedSourceHash) =>
+      invoke('obsidian:save-note', vaultId, resourceId, markdown, expectedSourceHash),
+    createNote: (vaultId, relativePath, markdown) =>
+      invoke('obsidian:create-note', vaultId, relativePath, markdown),
+    moveNote: (vaultId, resourceId, relativePath, expectedSourceHash) =>
+      invoke('obsidian:move-note', vaultId, resourceId, relativePath, expectedSourceHash),
+    trashNote: (vaultId, resourceId, expectedSourceHash) =>
+      invoke('obsidian:trash-note', vaultId, resourceId, expectedSourceHash),
+    addAttachment: (vaultId, noteRelativePath) =>
+      invoke('obsidian:add-attachment', vaultId, noteRelativePath),
+    rescan: (vaultId) => invoke('obsidian:rescan', vaultId),
+    disconnect: (vaultId) => invoke('obsidian:disconnect', vaultId),
+    onChanged: (listener) => {
+      const handleChanged = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]) => listener(payload)
+      ipcRenderer.on('obsidian:changed', handleChanged)
+      return () => ipcRenderer.removeListener('obsidian:changed', handleChanged)
+    },
+    onDiscoveryChanged: (listener) => {
+      const handleChanged = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]) => listener(payload)
+      ipcRenderer.on('obsidian:discovery-changed', handleChanged)
+      return () => ipcRenderer.removeListener('obsidian:discovery-changed', handleChanged)
+    },
+  },
   knowledge: {
     listRooms: (origin) => invoke('knowledge:rooms:list', origin),
     getRoomContext: (roomId) => invoke('knowledge:rooms:context', roomId),
@@ -545,7 +613,9 @@ const api: NxcoreDesktopApi = {
   },
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
-    listClipCaptures: (limit?: number, offset?: number) => invoke('files:clipper-captures:list', limit, offset),
+    listClipCaptures: (input) => invoke('files:clipper-captures:list', input),
+    setClipCaptureFavorite: (captureId, favorite) => invoke('files:clipper-captures:favorite', captureId, favorite),
+    getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),
     get: (fileId: string) => invoke('files:get', fileId),
     readMarkdown: (fileId: string, options?: { waitMs?: number; pollMs?: number }) =>
       invoke('files:read-markdown', fileId, options),

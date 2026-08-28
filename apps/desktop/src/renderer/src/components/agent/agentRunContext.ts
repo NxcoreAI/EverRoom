@@ -12,6 +12,7 @@ export function buildAgentRunContext(
   activeDocument?: AgentActiveDocumentContext | null,
   pageLabel?: string,
   attachments?: AgentFileAttachment[],
+  externalConversationId?: string,
 ): NonNullable<StartAgentRunInput['context']> {
   return {
     ...(pageLabel?.trim() ? { pageLabel: pageLabel.trim() } : {}),
@@ -28,5 +29,6 @@ export function buildAgentRunContext(
     ...(selectedRoomId?.trim() ? { selectedRoomId: selectedRoomId.trim() } : {}),
     ...(activeDocument ? { activeDocument } : {}),
     ...(attachments?.length ? { attachments } : {}),
+    ...(externalConversationId ? { externalConversationId } : {}),
   }
 }

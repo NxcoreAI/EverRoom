@@ -320,6 +320,7 @@ Everroom/
 │   ├── agent-contract/   # Shared Agent protocol and event types
 │   ├── agent-runtime/    # Runtime interface and development adapter
 │   ├── agent-runtime-pi/ # Pi runtime, memory, knowledge, and connector tools
+│   ├── connector-contract/ # Shared connector sync and normalized data contracts
 │   ├── document-model/   # Pure document normalization and block references
 │   └── reality-contract/ # Shared reality/event contracts
 └── docs/                 # Product, architecture, and implementation notes

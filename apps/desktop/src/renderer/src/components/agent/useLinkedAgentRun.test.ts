@@ -41,6 +41,7 @@ const snapshot: AgentSessionSnapshot = {
     completedAt: null,
     createdAt: new Date(0).toISOString(),
   },
+  participants: [],
   messages: [],
   lastEventSeq: 3,
 }

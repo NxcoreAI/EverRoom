@@ -7,8 +7,11 @@
  * KS config.ts 的 LLM 表面：LLM_MODE/PROTOCOL/PROVIDER/API_KEY/MODEL/
  * BASE_URL/MAX_TOKENS。三项（baseUrl/apiKey/model）全非空才算已配置，
  * 未配置返回 null（保持 .env 透传，不注入半套——LLM_MODE=custom 无 key
- * 会让 wiki ingest 直接报"LLM apiKey 未配置"）。
+ * 会让 wiki ingest 直接报"LLM apiKey 未配置"）。脱敏占位（********）等同
+ * 未配置：不注入掩码，让 KS 明确报「LLM apiKey 未配置」而非静默 401。
  */
+
+import { isMaskedRuntimeConfigSecret } from '../../shared/sources'
 
 /** runtime config primary 段 → KS LLM_*（custom 直连模式）；未配置返回 null。 */
 export function knowledgeServiceLlmEnv(
@@ -20,7 +23,7 @@ export function knowledgeServiceLlmEnv(
     : {}
   const text = (key: string): string => {
     const raw = value[key]
-    return typeof raw === 'string' ? raw.trim() : ''
+    return typeof raw === 'string' && !isMaskedRuntimeConfigSecret(raw) ? raw.trim() : ''
   }
   const baseUrl = text('baseUrl')
   const apiKey = text('apiKey')

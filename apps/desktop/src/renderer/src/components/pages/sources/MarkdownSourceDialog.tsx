@@ -1,6 +1,7 @@
-import { FileText, Network, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
+import { SourceIcon } from './SourceIcon'
 
 export function MarkdownSourceDialog({ kind, value, busy, onChange, onClose, onSubmit }: { kind: 'google-docs' | 'notion'; value: { ids: string; token: string }; busy: boolean; onChange: (value: { ids: string; token: string }) => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   const { t } = useLocale()
@@ -11,7 +12,7 @@ export function MarkdownSourceDialog({ kind, value, busy, onChange, onClose, onS
       <form className="source-connect-form" onSubmit={onSubmit}>
         <label>{t(google ? 'surface:markdownSourceDialog.documentIdOrUrl' : 'surface:markdownSourceDialog.pageIdOrUrl')}<textarea required rows={4} value={value.ids} placeholder={google ? 'https://docs.google.com/document/d/.../edit' : 'https://www.notion.so/...'} onChange={(event) => onChange({ ...value, ids: event.target.value })} /></label>
         <label>{google ? 'OAuth access token' : 'Notion integration token'}<input required type="password" value={value.token} onChange={(event) => onChange({ ...value, token: event.target.value })} /></label>
-        <footer><button type="button" className="secondary-button" onClick={onClose}>{t('surface:markdownSourceDialog.cancel')}</button><button type="submit" className="primary-button" disabled={busy}>{google ? <FileText aria-hidden="true" strokeWidth={1.8} /> : <Network aria-hidden="true" strokeWidth={1.8} />}{t('surface:markdownSourceDialog.startSync')}</button></footer>
+        <footer><button type="button" className="secondary-button" onClick={onClose}>{t('surface:markdownSourceDialog.cancel')}</button><button type="submit" className="primary-button" disabled={busy}><SourceIcon kind={kind} />{t('surface:markdownSourceDialog.startSync')}</button></footer>
       </form>
     </section>
   </div>

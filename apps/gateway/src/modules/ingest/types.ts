@@ -106,6 +106,12 @@ export const DATA_TYPES: DataTypeDef[] = [
     defaults: { room: true, wiki: true, memory: false },
   },
   {
+    key: "connector-todo",
+    label: "连接器待办",
+    matchExtensions: [],
+    defaults: { room: true, wiki: true, memory: false },
+  },
+  {
     key: "connector-record",
     label: "连接器结构化记录",
     matchExtensions: [],
@@ -136,6 +142,7 @@ export type OriginChannel =
   | "connector"
   | "reality"
   | "everroom-doc"
+  | "web-clipper"
   | "upload";
 
 /** 引擎接受的源形态（U8 定死：只收有家数据——本地路径或库表引用）。 */
@@ -146,6 +153,7 @@ export type RefSourceKind =
   | "connector-email"
   | "connector-document"
   | "connector-calendar"
+  | "connector-todo"
   | "connector-record";
 
 export interface IngestSourceInput {

@@ -8,6 +8,7 @@ import type {
   RoomDuplicateCheckInput,
   RoomDuplicateCheckResult,
   RoomAppliedEntitiesResult,
+  RoomOverviewProjection,
   RoomMergeOperation,
   RoomMergePreview,
   SaveContextRoomSnapshotInput,
@@ -101,6 +102,14 @@ export class ContextRoomGatewayBridge {
 
   refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem> {
     return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/refresh-brief`, { method: 'POST' })
+  }
+
+  overview(roomId: string): Promise<RoomOverviewProjection> {
+    return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/overview`)
+  }
+
+  refreshOverview(roomId: string): Promise<RoomOverviewProjection> {
+    return this.request(`/v1/context-rooms/${encodeURIComponent(roomId)}/overview/refresh`, { method: 'POST' })
   }
 
   /** Room 关联的应用实体（room_entity_mentions + entities 实时状态）。 */

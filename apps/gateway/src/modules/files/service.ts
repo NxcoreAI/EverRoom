@@ -43,7 +43,7 @@ export function isSupportedUploadFilename(filename: string): boolean {
   return SUPPORTED_UPLOAD_EXTENSIONS.has(normalizedFileExtension(filename));
 }
 
-export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "web-clipper" | "legacy-upload";
+export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload";
 
 export interface FileImportInput {
   sourceKind: Exclude<FileSourceKind, "legacy-upload">;
@@ -60,6 +60,8 @@ export interface FileImportInput {
   sourceModifiedAt?: Date | undefined;
   pipelines?: { room: boolean; wiki: boolean; memory: boolean } | undefined;
   roomId?: string | undefined;
+  /** Store a source version without starting normalization/fan-out yet. */
+  deferIngest?: boolean | undefined;
 }
 
 export type FileImportStreamInput = Omit<FileImportInput, "buffer"> & { stream: Readable };
@@ -263,6 +265,31 @@ export class FilesService {
       : null;
 
     if (existingVersion) {
+      const shouldEnqueue = !input.deferIngest
+        && (existingVersion.status === "stored" || existingVersion.status === "failed");
+      const jobId = this.fileJobId(existingVersion.id, capability.parserId, capability.parserVersion);
+      if (shouldEnqueue) {
+        const payload = {
+          fileEntryId,
+          fileVersionId: existingVersion.id,
+          attempts: 0,
+          ...(input.pipelines ? { pipelines: input.pipelines } : {}),
+          ...(input.roomId ? { roomId: input.roomId } : {}),
+        };
+        this.db.transaction((tx) => {
+          tx.update(fileVersions).set({ status: "queued", errorCode: null, errorMessage: null })
+            .where(eq(fileVersions.id, existingVersion.id)).run();
+          tx.insert(jobs).values({
+            id: jobId,
+            type: "file.ingest",
+            status: "pending",
+            payload,
+          }).onConflictDoUpdate({
+            target: jobs.id,
+            set: { status: "pending", payload, result: null, error: null, updatedAt: new Date() },
+          }).run();
+        });
+      }
       this.db.update(fileEntries).set({
         originalName: input.originalName,
         relativePath: input.relativePath,
@@ -273,14 +300,16 @@ export class FilesService {
         state: existingVersion.status === "parsed" ? "ready" : existingVersion.status === "failed" ? "failed" : "processing",
         ...(entry?.currentVersionId === existingVersion.id ? {} : { currentVersionId: existingVersion.id }),
       }).where(eq(fileEntries.id, fileEntryId)).run();
-      return {
+      const result: FileImportResult = {
         fileEntryId,
         fileVersionId: existingVersion.id,
-        jobId: this.fileJobId(existingVersion.id, capability.parserId, capability.parserVersion),
+        jobId,
         contentHash,
         blobDeduped: Boolean(existingBlob),
         versionDeduped: true,
       };
+      if (shouldEnqueue) this.kickFileJobs();
+      return result;
     }
 
     const previousVersions = entry
@@ -340,23 +369,25 @@ export class FilesService {
         sourceModifiedAt: input.sourceModifiedAt,
         parserId: capability.parserId,
         parserVersion: capability.parserVersion,
-        status: "queued",
+        status: input.deferIngest ? "stored" : "queued",
       }).run();
-      tx.insert(jobs).values({
-        id: jobId,
-        type: "file.ingest",
-        status: "pending",
-        payload: {
-          fileEntryId,
-          fileVersionId,
-          attempts: 0,
-          ...(input.pipelines ? { pipelines: input.pipelines } : {}),
-          ...(input.roomId ? { roomId: input.roomId } : {}),
-        },
-      }).run();
+      if (!input.deferIngest) {
+        tx.insert(jobs).values({
+          id: jobId,
+          type: "file.ingest",
+          status: "pending",
+          payload: {
+            fileEntryId,
+            fileVersionId,
+            attempts: 0,
+            ...(input.pipelines ? { pipelines: input.pipelines } : {}),
+            ...(input.roomId ? { roomId: input.roomId } : {}),
+          },
+        }).run();
+      }
     });
     entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
-    this.kickFileJobs();
+    if (!input.deferIngest) this.kickFileJobs();
     return { fileEntryId, fileVersionId, jobId, contentHash, blobDeduped: Boolean(existingBlob), versionDeduped: false };
   }
 
@@ -484,6 +515,10 @@ export class FilesService {
       .flatMap(({ contentHash }) => contentHash ? [contentHash] : []);
     const membership = this.db.select().from(fileClusterMemberships)
       .where(eq(fileClusterMemberships.fileEntryId, fileEntryId)).get();
+    // Keep the local clipping available for retry if its external memory cleanup fails.
+    let deletedMemoryDocuments = entry.sourceKind === "web-clipper" && hooks?.deleteMemoryDocuments
+      ? await hooks.deleteMemoryDocuments(fileEntryId)
+      : [];
     this.db.delete(fileEntries).where(eq(fileEntries.id, fileEntryId)).run();
     if (membership) {
       const remaining = this.db.select({ id: fileClusterMemberships.fileEntryId }).from(fileClusterMemberships)
@@ -495,9 +530,9 @@ export class FilesService {
       hooks.requestKnowledgeCleanup(fileEntryId);
       knowledgeCleanup = true;
     }
-    const deletedMemoryDocuments = hooks?.deleteMemoryDocuments
-      ? await hooks.deleteMemoryDocuments(fileEntryId)
-      : [];
+    if (entry.sourceKind !== "web-clipper" && hooks?.deleteMemoryDocuments) {
+      deletedMemoryDocuments = await hooks.deleteMemoryDocuments(fileEntryId);
+    }
     let blobCollected = false;
     for (const version of versions) {
       const catalogReference = this.db.select({ id: fileVersions.id }).from(fileVersions)

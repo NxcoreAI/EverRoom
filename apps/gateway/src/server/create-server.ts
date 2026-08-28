@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 import type { FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -18,9 +18,15 @@ import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
 import { DocumentOperationService } from "../modules/documents/operations/service.js";
 import { documentMcpRoutes } from "../modules/documents/mcp-routes.js";
+import { NotificationBridgeClient } from "../modules/notifications/bridge-client.js";
+import { NotificationMcpHost } from "../modules/notifications/mcp-host.js";
+import { notificationMcpRoutes } from "../modules/notifications/mcp-routes.js";
+import { createNotificationPiTools } from "../modules/notifications/pi-tools.js";
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
+import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
+import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import {
   createAgentResolver,
   createIngestFilterAgentRuntime,
@@ -40,6 +46,8 @@ import { RoomDuplicateService } from "../modules/context-rooms/duplicate-service
 import { ContextRoomService } from "../modules/context-rooms/service.js";
 import { ContextRoomAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/context-rooms/room-agent.js";
 import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
+import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
+import { createRoomOverviewAgentTools } from "../modules/context-rooms/overview-agent-tools.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
@@ -48,6 +56,8 @@ import type { AsrProvider } from "../modules/asr/types.js";
 import { MemoryGatewayError } from "../modules/memory/errors.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import { MemoryService } from "../modules/memory/service.js";
+import { DataMigrationService } from "../modules/data-migrations/service.js";
+import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { FileClusteringService } from "../modules/files/clustering-service.js";
@@ -77,7 +87,10 @@ import { perceptionRoutes } from "../modules/perception/routes.js";
 import { PerceptionService } from "../modules/perception/service.js";
 import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
 import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
-import { createDocumentUnderstandingTools } from "../modules/document-understanding/tools.js";
+import {
+  createDocumentAnalysisResultValidator,
+  createDocumentUnderstandingTools,
+} from "../modules/document-understanding/tools.js";
 import { diaryRoutes } from "../modules/diary/routes.js";
 import { DiaryService } from "../modules/diary/service.js";
 import { AgentSchedulerService } from "../modules/agent-scheduler/service.js";
@@ -99,6 +112,7 @@ import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { createSubagentPiTools } from "../modules/subagents/tools.js";
+import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { RuntimeConfigManager } from "../runtime-config.js";
@@ -251,7 +265,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const disableRequestLogging = gatewayHttpLogLevel !== "debug" && gatewayHttpLogLevel !== "info";
   const app = Fastify({
     loggerInstance: gatewayLogger.logger,
-    disableRequestLogging,
+    logController: new LogController({ disableRequestLogging }),
     routerOptions: {
       // knowledge 文件路由的 id 可能是 caller_ref（如 connector:provider:<uuid>:<docId>），
       // URL 编码后超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
@@ -355,7 +369,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoConnectorManager.startPolling(pollingIntervalMs);
   }
 
-  app.addHook("preSerialization", async (_request, _reply, payload) => redactSecrets(payload));
+  // /v1/runtime-config/secrets 是唯一允许真密钥出站的端点：主进程派生托管
+  // 子进程 env 用（token 鉴权，token 只在主进程）；若在此脱敏，子进程会拿
+  // "[REDACTED]" 当 key 起服务并静默 401。其余响应一律按键名/注册密钥脱敏。
+  app.addHook("preSerialization", async (request, _reply, payload) => {
+    if (request.routeOptions.url === "/v1/runtime-config/secrets") return payload;
+    return redactSecrets(payload);
+  });
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
@@ -413,6 +433,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(runtimeConfigRoutes(runtimeConfigManager));
   const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir });
   const contextRoomService = new ContextRoomService(db);
+  const roomOverviewService = new RoomOverviewService(db, contextRoomService);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
   const documentService = new DocumentService(db, documentEventBroker, (document) => {
@@ -456,6 +477,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       app.log[level](fields, event);
     },
   );
+  const notificationMcpHost = new NotificationMcpHost(
+    config.notificationBridge ? new NotificationBridgeClient(config.notificationBridge) : null,
+  );
+  const externalDocumentProjectionService = new ExternalDocumentProjectionService(
+    db,
+    documentService,
+    documentOperationService,
+    documentMcpHost.capabilities,
+  );
   await documentMcpHost.capabilities.recover();
   const agentResolver = createAgentResolver(config);
   // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
@@ -489,6 +519,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
+  // 手动建 Room：enrich 实体回写时认领到本 Room，使后续资料路由能命中（与推荐晋升同语义）
+  contextRoomService.setRoomEntityClaimer((roomId, entities) =>
+    knowledgeService.claimRoomEntities(roomId, entities));
   roomDuplicateService.initialize();
   const cliConnectorSyncService = new ConnectorSyncService(db, config, app.log);
   let cliConnectorMarkdownService: ConnectorMarkdownService | null = null;
@@ -537,9 +570,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   // Room 创建整理走 internal_workflow 异步调度；logger 供失败降级日志。
-  contextRoomService.setRoomAgentDispatcher(new ContextRoomAgentDispatcher(subagentOrchestrator), (bindings, message) => {
+  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
+  contextRoomService.setRoomAgentDispatcher(contextRoomAgentDispatcher, (bindings, message) => {
     app.log.warn(bindings, message);
   });
+  roomOverviewService.setRoomAgentDispatcher(contextRoomAgentDispatcher);
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
   const recoveredSubagentInvocations = subagentOrchestrator.initialize();
   if (recoveredSubagentInvocations > 0) {
@@ -547,13 +582,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   registerPrimaryAgent(agentResolver, config, documentMcpHost, {
     externalCalls,
-    ...(subagentConfig.enabled
-      ? {
-          tools: createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
+    tools: [
+      ...createRoomOverviewAgentTools(roomOverviewService),
+      ...(subagentConfig.enabled
+        ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
-          }),
-        }
-      : {}),
+         })
+        : []),
+      ...createNotificationPiTools(notificationMcpHost),
+    ],
     // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
     ...(config.knowledge?.roomWikisEnabled
       ? {
@@ -566,6 +603,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       : {}),
   }, cliConnectorSyncService, nangoAgentTools);
   const agentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.primary);
+  const localAgentRuntimeRegistry = new LocalAgentRuntimeRegistry();
   app.log.info(
     {
       runtimeId: agentRuntime.id,
@@ -590,6 +628,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentMcpHost,
     config.cliConnectorAgentMode ?? "direct",
     false,
+    (target) => localAgentRuntimeRegistry.resolve(target),
   );
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
@@ -703,7 +742,12 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
   filesService.initializeCatalog();
-  const clipperService = new ClipperService(db, filesService, config.dataDir);
+  const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
+  dataMigrationService.setFilesService(filesService);
+  agentService.setExternalConversationResolver(dataMigrationService);
+  agentService.setFilesService(filesService);
+  const clipperService = new ClipperService(db, filesService, config.dataDir, createVlmProvider(config));
+  await clipperService.initialize();
   const documentUnderstandingService = new DocumentUnderstandingService(
     db,
     filesService,
@@ -721,11 +765,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
     return null;
   };
-  runtimeConfigManager.onChange(() =>
-    documentUnderstandingService.replaceVisualProvider(createVlmProvider(config)));
+  runtimeConfigManager.onChange(() => {
+    const visualProvider = createVlmProvider(config);
+    documentUnderstandingService.replaceVisualProvider(visualProvider);
+    clipperService.replaceVisualProvider(visualProvider);
+  });
   subagentRuntimeManager.registerAgentTools(
     "multimodal-document-parser",
     () => createDocumentUnderstandingTools(documentUnderstandingService),
+  );
+  subagentRuntimeManager.registerAgentResultValidator(
+    "multimodal-document-parser",
+    createDocumentAnalysisResultValidator(documentUnderstandingService),
   );
   cliConnectorSyncService.setFilesService(filesService);
   const fileClusteringService = new FileClusteringService(
@@ -814,12 +865,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
+    await clipperService.dispose();
     await filesService.dispose();
     await fileClusteringService.dispose();
     await nangoConnectorManager.dispose();
     nangoConnectorDb.close();
     clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
+    await localAgentRuntimeRegistry.dispose();
     await subagentOrchestrator.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
@@ -836,6 +889,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     knowledgeService.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
+    await notificationMcpHost.close();
     sqlite.close();
     await gatewayLogger.close();
   });
@@ -862,9 +916,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(contextRoomRoutes(
     contextRoomService,
     roomDuplicateService,
-    subagentConfig.enabled ? new ContextRoomAgentDispatcher(subagentOrchestrator) : undefined,
+    subagentConfig.enabled ? contextRoomAgentDispatcher : undefined,
+    roomOverviewService,
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
+  await app.register(notificationMcpRoutes(notificationMcpHost));
   await app.register(documentRoutes(documentService));
   await app.register(documentOperationRoutes(
     documentOperationService,
@@ -883,8 +939,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       agentService.validateDocumentOperationContext(context);
     },
   ));
+  await app.register(externalDocumentProjectionRoutes(
+    externalDocumentProjectionService,
+    (context) => agentService.validateDocumentOperationContext(context),
+  ));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
+  await app.register(dataMigrationRoutes(dataMigrationService));
   await app.register(filesRoutes(filesService, {
     // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档
     requestKnowledgeCleanup: (fileId) => {
@@ -973,6 +1034,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ingestService.recoverPendingFilters();
   filesService.setVersionIngestor(async (input) => {
     await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
+    const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);
     return ingestService.ingest({
       source: { ref: {
         sourceKind: "file",
@@ -981,6 +1043,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       } },
       ...(input.pipelines ? { pipelines: input.pipelines } : {}),
       ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(versionContext?.entry.sourceKind === "web-clipper" ? { originChannel: "web-clipper" as const } : {}),
     });
   });
   realityService.setReadySink(async (event) => {
@@ -1008,13 +1071,17 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   perceptionService.initialize();
   // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
   // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
+  // 日历事件走独立 sourceKind "calendar-event"（与 CLI 引用路径同词表），
+  // 否则 room 路由投影里的来源标签/关联记忆都会把它当邮件。
   nangoConnectorManager.setMemorySink((input) =>
     ingestService.ingestConnector({
-      kind: input.kind === "document" ? "cloud-doc" : "mail",
+      kind: input.kind === "document" ? "cloud-doc" : input.kind === "calendar" ? "calendar-event" : "mail",
       sourceId: `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
       dataType: input.kind,
       title: input.title,
       markdown: input.markdown,
+      // 连接级 sourceTag 进 ②b 规则信号：规则可把整个连接（如学校日历）确定性归到 Room。
+      entrySignals: { sourceTag: `connector:${input.provider}:${input.connectionId}` },
       ...(config.knowledge?.routerEnabled ? {} : { pipelines: { room: false, wiki: false, memory: true } }),
     }).then(() => undefined));
   documentOutboxWorker = new DocumentOutboxWorker(

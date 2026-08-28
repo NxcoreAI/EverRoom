@@ -1,6 +1,6 @@
 {
   "name": "@nxcore/browser-extension",
-  "version": "0.2.2",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "description": "Local EverRoom browser extension",

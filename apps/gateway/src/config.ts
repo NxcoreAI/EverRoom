@@ -144,6 +144,8 @@ const RawConfigSchema = Type.Object(
     ingestFilterRulesMaxBytes: Type.Integer({ minimum: 256, maximum: 65_536 }),
     ingestFilterInsightEnabled: Type.Boolean(),
     ingestFilterInsightIntervalMs: Type.Integer({ minimum: 60_000 }),
+    notificationBridgeUrl: Type.String(),
+    notificationBridgeToken: Type.String(),
   },
   { additionalProperties: false },
 );
@@ -281,7 +283,7 @@ export interface ConnectorSyncJobConfig {
   action?: string;
   allowedActions: string[];
   dataset: string;
-  resourceType: "email" | "document" | "calendar" | "generic";
+  resourceType: "email" | "document" | "calendar" | "todo" | "generic";
   connectionName?: string;
   input: Record<string, unknown>;
   goal: string;
@@ -345,6 +347,7 @@ export interface GatewayConfig {
     pollingIntervalMs: number;
   };
   cliConnector?: OpenConnectorCliConfig | null;
+  notificationBridge?: { baseUrl: string; token: string } | null;
 }
 
 export interface VlmConfig {
@@ -552,8 +555,9 @@ function parseConnectorSyncJobs(value: string): ConnectorSyncJobConfig[] {
     const resourceType = typeof job.resourceType === "string"
       ? job.resourceType.trim()
       : inferConnectorResourceType(String(job.dataset));
-    if (resourceType !== "email" && resourceType !== "document" && resourceType !== "calendar" && resourceType !== "generic") {
-      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, or generic`);
+    if (resourceType !== "email" && resourceType !== "document" && resourceType !== "calendar"
+      && resourceType !== "todo" && resourceType !== "generic") {
+      throw new Error(`NXCORE_CLI_CONNECTOR_SYNC_JOBS[${String(index)}].resourceType must be email, document, calendar, todo, or generic`);
     }
     const action = typeof job.action === "string" && job.action.trim() ? job.action.trim() : undefined;
     if (job.allowedActions !== undefined && (!Array.isArray(job.allowedActions)
@@ -600,10 +604,11 @@ function parseConnectorSyncJobs(value: string): ConnectorSyncJobConfig[] {
   });
 }
 
-function inferConnectorResourceType(dataset: string): "email" | "document" | "calendar" | "generic" {
+function inferConnectorResourceType(dataset: string): "email" | "document" | "calendar" | "todo" | "generic" {
   const normalized = dataset.trim().toLowerCase();
   if (/mail|email|message/.test(normalized)) return "email";
   if (/doc|page|file/.test(normalized)) return "document";
+  if (/task|todo/.test(normalized)) return "todo";
   if (/calendar|event|schedule/.test(normalized)) return "calendar";
   return "generic";
 }
@@ -872,6 +877,8 @@ export function loadConfig(
       "NXCORE_INGEST_FILTER_INSIGHT_INTERVAL_MS",
       env.NXCORE_INGEST_FILTER_INSIGHT_INTERVAL_MS ?? "3600000",
     ),
+    notificationBridgeUrl: env.NXCORE_NOTIFICATION_BRIDGE_URL?.trim() ?? "",
+    notificationBridgeToken: env.NXCORE_NOTIFICATION_BRIDGE_TOKEN?.trim() ?? "",
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -919,6 +926,8 @@ export function loadConfig(
   }
   if (Boolean(rawConfig.nangoUrl) !== Boolean(rawConfig.nangoSecret)) throw new Error("Nango connector configuration requires both NXCORE_NANGO_CONNECTOR_URL and NXCORE_NANGO_CONNECTOR_SECRET");
   if (rawConfig.nangoUrl) { const u=new URL(rawConfig.nangoUrl); if (u.protocol!=="https:" && !(u.protocol==="http:" && ["localhost","127.0.0.1","::1"].includes(u.hostname))) throw new Error("NXCORE_NANGO_CONNECTOR_URL must use HTTPS except for loopback development"); }
+  if (Boolean(rawConfig.notificationBridgeUrl)!==Boolean(rawConfig.notificationBridgeToken)) throw new Error("Notification bridge configuration requires URL and token together");
+  if(rawConfig.notificationBridgeUrl){const u=new URL(rawConfig.notificationBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_NOTIFICATION_BRIDGE_URL must be a loopback HTTP endpoint");}
 
   const memory: MemoryRuntimeConfig | null = rawConfig.memoryEnabled
     ? {
@@ -1137,6 +1146,9 @@ export function loadConfig(
           configDirectory: env.NXCORE_CLI_CONNECTOR_CONFIG_DIR?.trim() || join(dataDir, 'open-connector', 'oo-config'),
           dataDirectory: env.NXCORE_CLI_CONNECTOR_DATA_DIR?.trim() || join(dataDir, 'open-connector', 'oo-data'),
         }
+      : null,
+    notificationBridge: rawConfig.notificationBridgeUrl
+      ? { baseUrl: rawConfig.notificationBridgeUrl.replace(/\/$/, ""), token: rawConfig.notificationBridgeToken }
       : null,
     pi,
     cursorCompletionPi,

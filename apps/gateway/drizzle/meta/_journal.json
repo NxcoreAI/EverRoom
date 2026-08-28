@@ -208,22 +208,85 @@
     {
       "idx": 30,
       "version": "6",
+      "when": 1787644800000,
+      "tag": "0030_external_call_budgets",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
       "when": 1787647295707,
       "tag": "0030_room_relations_and_scoring",
       "breakpoints": true
     },
     {
-      "idx": 31,
+      "idx": 32,
       "version": "6",
       "when": 1787655840754,
       "tag": "0031_room_duplicates",
       "breakpoints": true
     },
     {
-      "idx": 32,
+      "idx": 33,
       "version": "6",
-      "when": 1787644800000,
-      "tag": "0030_external_call_budgets",
+      "when": 1787808908878,
+      "tag": "0033_room_entity_facts",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1787817600000,
+      "tag": "0034_room_overviews_and_corrections",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1787834563870,
+      "tag": "0035_eager_hannibal_king",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1787835000000,
+      "tag": "0036_odd_cardiac",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1787835100000,
+      "tag": "0037_acoustic_doctor_spectrum",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1787835200000,
+      "tag": "0038_clipper_favorites",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1787835300000,
+      "tag": "0039_multi_agent_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1787835400000,
+      "tag": "0040_external_document_projections",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1787835500000,
+      "tag": "0041_data_migrations",
       "breakpoints": true
     }
   ]

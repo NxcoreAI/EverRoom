@@ -9,6 +9,7 @@ import {
   connectorDocuments,
   connectorEmails,
   connectorRecords,
+  connectorTodos,
   documents,
   ingestEvents,
   parsedContents,
@@ -47,6 +48,7 @@ import {
   connectorDocumentToMarkdown,
   connectorEmailToMarkdown,
   connectorGenericRecordToMarkdown,
+  connectorTodoToMarkdown,
 } from "./connector-markdown.js";
 import { IngestFilterService, type FilterItem } from "./filter-agent.js";
 
@@ -75,6 +77,7 @@ export type LedgerSourceKind =
   | "mail"
   | "cloud-doc"
   | "calendar-event"
+  | "todo"
   | "connector-record"
   | "visual-event";
 
@@ -173,21 +176,22 @@ export class IngestService {
    * 连接器接入（unified-ingest-plan U4「json 信封」预留位的落地形态）：
    * 归一化 markdown 由连接器模块渲染好直传（家在 connectors.sqlite，引擎不回读），
    * 共用台账（闸1 同源同指纹幂等）与三链路扇出。
-   * ponytail: calendar 复用 sourceKind "mail"（schema 预留位只有 mail/cloud-doc），
-   * 靠 dataType=calendar 区分；要独立枚举时再加迁移。
+   * calendar 用独立的 sourceKind "calendar-event"（台账/路由信封枚举均已含；
+   * 历史上曾复用 "mail" 靠 dataType 区分，路由投影里会显成错误来源标签）。
    */
   async ingestConnector(unit: {
-    kind: "cloud-doc" | "mail";
+    kind: "cloud-doc" | "mail" | "calendar-event" | "todo";
     sourceId: string;
-    dataType: "document" | "mail" | "calendar";
+    dataType: "document" | "mail" | "calendar" | "todo";
     title: string;
     markdown: string;
     occurredAt?: string;
+    entrySignals?: IngestInput["entrySignals"];
     pipelines?: Pipelines;
   }): Promise<IngestResult> {
     const contentHash = contentHashOf(Buffer.from(unit.markdown, "utf8"));
     return this.processNormalized(
-      { pipelines: unit.pipelines },
+      { pipelines: unit.pipelines, ...(unit.entrySignals ? { entrySignals: unit.entrySignals } : {}) },
       {
         sourceKind: unit.kind,
         sourceId: unit.sourceId,
@@ -468,6 +472,26 @@ export class IngestService {
           origin: input.originChannel ?? "connector",
         });
       }
+      case "connector-todo": {
+        const row = this.db.select().from(connectorTodos).where(eq(connectorTodos.id, sourceId)).get();
+        if (!row) throw new IngestError(`connector_todos 无此行：${sourceId}`, "ref_not_found", 404);
+        const markdown = connectorTodoToMarkdown(row);
+        return this.processNormalized({
+          ...input,
+          entrySignals: input.entrySignals ?? { sourceTag: `connector:${row.service}` },
+        }, {
+          sourceKind: "todo",
+          sourceId,
+          sourceVersion: this.nextLedgerVersion("todo", sourceId),
+          dataType: input.dataType ?? "connector-todo",
+          detectedBy: input.dataType ? "explicit" : "source-kind",
+          title: input.title ?? row.title,
+          markdown,
+          contentHash: contentHashOf(Buffer.from(markdown, "utf8")),
+          occurredAt: input.occurredAt ?? isoDate(row.dueAt ?? row.completedAt ?? row.sourceUpdatedAt),
+          origin: input.originChannel ?? "connector",
+        });
+      }
       case "connector-record": {
         const row = this.db.select().from(connectorRecords).where(eq(connectorRecords.id, sourceId)).get();
         if (!row) throw new IngestError(`connector_records 无此行：${sourceId}`, "ref_not_found", 404);
@@ -570,7 +594,11 @@ export class IngestService {
     const eventId = `ing-${randomUUID().slice(0, 12)}`;
 
     // 过滤闸（第一级）：开启且不豁免 → 记 pending 不扇出，去抖批送 agent 判定
-    const filterGate = this.filter && this.filter.enabled && !this.filter.exempt(unit.sourceKind);
+    // A user-authored web clip is an explicit save intent. It must be normalized
+    // and fan out to Memory/Knowledge even when the generic noise filter is on.
+    const filterGate = this.filter && this.filter.enabled
+      && unit.origin !== "web-clipper"
+      && !this.filter.exempt(unit.sourceKind);
     if (filterGate) {
       this.db.insert(ingestEvents).values({
         id: eventId,

@@ -17,6 +17,8 @@ import type {
   BrowserExtensionCapture,
   BrowserExtensionCaptureResult,
   BrowserExtensionClipperCapture,
+  BrowserExtensionClipperListInput,
+  BrowserExtensionClipperListResult,
 } from '../../shared/browser-extension'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
@@ -149,9 +151,28 @@ export class FilesGatewayBridge {
     return this.request(`/v1/files/catalog?${query}`)
   }
 
-  listClipCaptures(limit = 100, offset = 0): Promise<{ items: BrowserExtensionClipperCapture[]; total: number }> {
-    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  listClipCaptures(inputOrLimit: BrowserExtensionClipperListInput | number = {}, legacyOffset = 0): Promise<BrowserExtensionClipperListResult> {
+    const input: BrowserExtensionClipperListInput = typeof inputOrLimit === 'number'
+      ? { limit: inputOrLimit, offset: legacyOffset }
+      : inputOrLimit
+    const query = new URLSearchParams()
+    if (input.query) query.set('query', input.query)
+    if (input.filter) query.set('filter', input.filter)
+    if (input.sort) query.set('sort', input.sort)
+    query.set('limit', String(input.limit ?? 100))
+    query.set('offset', String(input.offset ?? 0))
     return this.request(`/v1/clipper/captures?${query}`)
+  }
+
+  setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture> {
+    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/favorite`, {
+      method: 'PATCH',
+      body: JSON.stringify({ favorite }),
+    })
+  }
+
+  getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture> {
+    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}`)
   }
 
   catalog(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
@@ -342,6 +363,51 @@ export class FilesGatewayBridge {
     return this.importCandidates(candidates, options)
   }
 
+  async importObsidianProject(input: {
+    rootPath: string
+    projectId: string
+    projectName: string
+    pipelines: IngestPipelines
+    roomId?: string
+    resourceIdsByRelativePath?: Readonly<Record<string, string>>
+  }): Promise<FileImportOutcome[]> {
+    const manualExtensions = new Set((await this.capabilities()).items
+      .filter((item) => item.manualImport).map((item) => item.extension))
+    const collected = await collectImportCandidates([input.rootPath], manualExtensions)
+    const candidates = input.resourceIdsByRelativePath
+      ? collected.filter((candidate) => Object.hasOwn(input.resourceIdsByRelativePath!, candidate.filename))
+      : collected
+    return this.importCandidates(candidates, {
+      pipelines: input.pipelines,
+      ...(input.roomId ? { roomId: input.roomId } : {}),
+      source: {
+        id: input.projectId,
+        label: `Obsidian · ${input.projectName}`,
+        ...(input.resourceIdsByRelativePath ? { resourceIdsByRelativePath: input.resourceIdsByRelativePath } : {}),
+      },
+    })
+  }
+
+  async importMigrationFile(input: {
+    filePath: string
+    sourceKey: string
+    originalName: string
+    relativePath: string
+    provider: 'notion'
+    sourceId: string
+  }): Promise<FileImportAcceptedDto> {
+    return this.importPath({
+      filePath: input.filePath,
+      sourceKind: 'migration',
+      sourceKey: input.sourceKey,
+      originalName: input.originalName,
+      relativePath: input.relativePath,
+      provider: input.provider,
+      connectionId: input.sourceId,
+      pipelines: { room: true, wiki: true, memory: true },
+    })
+  }
+
   private async resolveManualBatch(
     batch: PendingManualImportBatch,
     accepted: boolean,
@@ -361,6 +427,7 @@ export class FilesGatewayBridge {
   private async importCandidates(candidates: ImportCandidate[], options?: {
     pipelines?: IngestPipelines
     roomId?: string
+    source?: { id: string; label: string; resourceIdsByRelativePath?: Readonly<Record<string, string>> }
   }): Promise<FileImportOutcome[]> {
     const outcomes: FileImportOutcome[] = []
     const batchId = randomUUID()
@@ -373,9 +440,12 @@ export class FilesGatewayBridge {
         const uploaded = await this.importPath({
           filePath,
           sourceKind: 'manual-upload',
-          sourceKey: `manual:${randomUUID()}`,
+          sourceKey: options?.source
+            ? `obsidian:${options.source.id}:${options.source.resourceIdsByRelativePath?.[filename] ?? filename}`
+            : `manual:${randomUUID()}`,
           originalName: basename(filePath),
           relativePath: filename,
+          ...(options?.source ? { provider: options.source.label, connectionId: options.source.id } : {}),
           ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
           ...(options?.roomId ? { roomId: options.roomId } : {}),
         })
@@ -425,8 +495,29 @@ export class FilesGatewayBridge {
     localItemId: string
     relativePath: string
     sourceModifiedAt: string
+    roomId?: string
   }): Promise<FileImportAcceptedDto> {
     return this.importPath({ ...input, sourceKind: 'local-folder' })
+  }
+
+  async projectVaultNote(input: {
+    filePath: string
+    vaultId: string
+    resourceId: string
+    relativePath: string
+    sourceModifiedAt: string
+    roomId: string
+  }): Promise<FileImportAcceptedDto> {
+    return this.importLocalFile({
+      filePath: input.filePath,
+      sourceKey: `obsidian:${input.vaultId}:${input.resourceId}`,
+      originalName: basename(input.relativePath),
+      localSourceId: input.vaultId,
+      localItemId: input.resourceId,
+      relativePath: input.relativePath,
+      sourceModifiedAt: input.sourceModifiedAt,
+      roomId: input.roomId,
+    })
   }
 
   async importConnectorFile(input: {
@@ -492,7 +583,7 @@ export class FilesGatewayBridge {
 
   private async importPath(input: {
     filePath: string
-    sourceKind: 'manual-upload' | 'local-folder' | 'connector'
+    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration'
     sourceKey: string
     originalName: string
     localSourceId?: string

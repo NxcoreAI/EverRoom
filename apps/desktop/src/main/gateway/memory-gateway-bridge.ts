@@ -102,6 +102,16 @@ export class MemoryGatewayBridge {
     return this.request(`/v1/memory/conversation?${this.query(options)}`)
   }
 
+  importConversation(input: {
+    sessionId: string
+    messages: Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>
+  }): Promise<{ sessionId: string; messagesImported: number }> {
+    return this.request('/v1/memory/conversation/import', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
   searchConversations(
     query: string,
     limit = 10,

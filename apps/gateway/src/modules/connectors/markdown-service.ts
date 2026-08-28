@@ -10,6 +10,7 @@ import {
   connectorMarkdownArtifacts,
   connectorMarkdownOutbox,
   connectorRecords,
+  connectorTodos,
 } from "../../infrastructure/database/schema.js";
 import type { IngestService } from "../ingest/service.js";
 import type { RefSourceKind } from "../ingest/types.js";
@@ -18,19 +19,21 @@ import {
   connectorDocumentToMarkdown,
   connectorEmailToMarkdown,
   connectorGenericRecordToMarkdown,
+  connectorTodoToMarkdown,
 } from "../ingest/connector-markdown.js";
 
 const WORK_INTERVAL_MS = 2_000;
 const LEASE_MS = 60_000;
 const MAX_ATTEMPTS = 10;
 
-type ResourceType = "email" | "document" | "calendar" | "generic";
+type ResourceType = "email" | "document" | "calendar" | "todo" | "generic";
 type ArtifactRow = typeof connectorMarkdownArtifacts.$inferSelect;
 type OutboxRow = typeof connectorMarkdownOutbox.$inferSelect;
 type DomainRow =
   | { resourceType: "email"; row: typeof connectorEmails.$inferSelect }
   | { resourceType: "document"; row: typeof connectorDocuments.$inferSelect }
   | { resourceType: "calendar"; row: typeof connectorCalendarEvents.$inferSelect }
+  | { resourceType: "todo"; row: typeof connectorTodos.$inferSelect }
   | { resourceType: "generic"; row: typeof connectorRecords.$inferSelect };
 
 export interface ConnectorMarkdownLogger {
@@ -84,14 +87,16 @@ function servicePathKey(service: string): string {
 function refSourceKind(resourceType: ResourceType): RefSourceKind {
   if (resourceType === "email") return "connector-email";
   if (resourceType === "document") return "connector-document";
+  if (resourceType === "todo") return "connector-todo";
   if (resourceType === "generic") return "connector-record";
   return "connector-calendar";
 }
 
-function ledgerSourceKind(resourceType: ResourceType): "mail" | "cloud-doc" | "calendar-event" | "connector-record" {
+function ledgerSourceKind(resourceType: ResourceType): "mail" | "cloud-doc" | "calendar-event" | "todo" | "connector-record" {
   if (resourceType === "email") return "mail";
   if (resourceType === "document") return "cloud-doc";
   if (resourceType === "calendar") return "calendar-event";
+  if (resourceType === "todo") return "todo";
   return "connector-record";
 }
 
@@ -132,6 +137,7 @@ function render(domain: DomainRow): string {
   if (domain.resourceType === "email") return connectorEmailToMarkdown(domain.row);
   if (domain.resourceType === "document") return connectorDocumentToMarkdown(domain.row);
   if (domain.resourceType === "calendar") return connectorCalendarEventToMarkdown(domain.row);
+  if (domain.resourceType === "todo") return connectorTodoToMarkdown(domain.row);
   return connectorGenericRecordToMarkdown(domain.row);
 }
 
@@ -221,6 +227,11 @@ export class ConnectorMarkdownService {
       ownerId: connectorCalendarEvents.ownerId,
       deletedAt: connectorCalendarEvents.deletedAt,
     }).from(connectorCalendarEvents).all());
+    addSources("todo", this.db.select({
+      id: connectorTodos.id,
+      ownerId: connectorTodos.ownerId,
+      deletedAt: connectorTodos.deletedAt,
+    }).from(connectorTodos).all());
     addSources("generic", this.db.select({
       id: connectorRecords.id,
       ownerId: connectorRecords.ownerId,
@@ -301,6 +312,12 @@ export class ConnectorMarkdownService {
         contentHash: connectorCalendarEvents.contentHash,
         deletedAt: connectorCalendarEvents.deletedAt,
       }).from(connectorCalendarEvents).all().map((row) => ({ resourceType: "calendar" as const, ...row })),
+      ...this.db.select({
+        id: connectorTodos.id,
+        ownerId: connectorTodos.ownerId,
+        contentHash: connectorTodos.contentHash,
+        deletedAt: connectorTodos.deletedAt,
+      }).from(connectorTodos).all().map((row) => ({ resourceType: "todo" as const, ...row })),
       ...this.db.select({
         id: connectorRecords.id,
         ownerId: connectorRecords.ownerId,
@@ -469,6 +486,10 @@ export class ConnectorMarkdownService {
     }
     if (resourceType === "calendar") {
       const row = this.db.select().from(connectorCalendarEvents).where(eq(connectorCalendarEvents.id, id)).get();
+      return row ? { resourceType, row } : null;
+    }
+    if (resourceType === "todo") {
+      const row = this.db.select().from(connectorTodos).where(eq(connectorTodos.id, id)).get();
       return row ? { resourceType, row } : null;
     }
     const row = this.db.select().from(connectorRecords).where(eq(connectorRecords.id, id)).get();

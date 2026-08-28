@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import type {
   AgentNavigationTarget,
+  DocumentOperationCommandInput,
   DocumentOperationInteractionMode,
   DocumentOperationItemStatus,
   DocumentOperationStatus,
@@ -181,7 +182,7 @@ export const connectorPromptProfiles = sqliteTable(
   {
     id: text("id").primaryKey(),
     service: text("service").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
     name: text("name").notNull(),
     version: integer("version").notNull(),
     template: text("template").notNull(),
@@ -207,7 +208,7 @@ export const connectorSyncJobs = sqliteTable(
     action: text("action").notNull(),
     allowedActions: text("allowed_actions", { mode: "json" }).$type<string[]>().notNull().default([]),
     dataset: text("dataset").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull().default("generic"),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull().default("generic"),
     connectionName: text("connection_name"),
     input: text("input", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     goal: text("goal").notNull().default(""),
@@ -419,6 +420,29 @@ export const connectorCalendarEvents = sqliteTable(
   ],
 );
 
+export const connectorTodos = sqliteTable(
+  "connector_todos",
+  {
+    ...connectorDomainColumns,
+    todoId: text("todo_id").notNull(),
+    title: text("title").notNull(),
+    notes: text("notes").notNull(),
+    /** null = 来源未提供（needsAction/completed 等语义由连接器 Skill 归一）。 */
+    status: text("status"),
+    dueAt: integer("due_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    priority: text("priority"),
+    listId: text("list_id"),
+    listName: text("list_name"),
+  },
+  (table) => [
+    uniqueIndex("connector_todos_owner_source_idx")
+      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
+    index("connector_todos_owner_due_idx").on(table.ownerId, table.dueAt),
+    index("connector_todos_owner_todo_idx").on(table.ownerId, table.todoId),
+  ],
+);
+
 export const connectorMarkdownArtifacts = sqliteTable(
   "connector_markdown_artifacts",
   {
@@ -426,7 +450,7 @@ export const connectorMarkdownArtifacts = sqliteTable(
     ownerId: text("owner_id").notNull(),
     service: text("service").notNull(),
     connectionName: text("connection_name").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
     sourceRecordId: text("source_record_id").notNull(),
     ingestSourceId: text("ingest_source_id").notNull(),
     activePath: text("active_path").notNull(),
@@ -457,7 +481,7 @@ export const connectorMarkdownOutbox = sqliteTable(
   {
     id: text("id").primaryKey(),
     ownerId: text("owner_id").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "generic"] }).notNull(),
+    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
     ingestSourceId: text("ingest_source_id").notNull(),
     operation: text("operation", { enum: ["upsert", "delete"] }).notNull(),
     sourceContentHash: text("source_content_hash").notNull(),
@@ -520,6 +544,7 @@ export const agentSessions = sqliteTable("agent_sessions", {
   pageLabel: text("page_label").notNull(),
   runtimeId: text("runtime_id").notNull(),
   runtimeSessionRef: text("runtime_session_ref"),
+  activeAgentId: text("active_agent_id").notNull().default("main"),
   title: text("title"),
   status: text("status", {
     enum: ["idle", "running", "interrupted", "closed"],
@@ -587,6 +612,51 @@ export const contextRooms = sqliteTable(
   ],
 );
 
+export const roomOverviews = sqliteTable(
+  "room_overviews",
+  {
+    roomId: text("room_id").primaryKey().references(() => contextRooms.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull().default(1),
+    baseProjection: text("base_projection", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    projection: text("projection", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    generatedAt: integer("generated_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("room_overviews_updated_idx").on(table.updatedAt)],
+);
+
+export const roomContextCorrections = sqliteTable(
+  "room_context_corrections",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull().references(() => contextRooms.id, { onDelete: "cascade" }),
+    operation: text("operation", {
+      enum: ["content_replace", "content_add", "content_suppress", "fact_correct", "fact_add", "source_remove", "source_reassign"],
+    }).notNull(),
+    section: text("section", {
+      enum: ["overview", "status", "next_steps", "timeline", "entities"],
+    }).notNull(),
+    targetClaimId: text("target_claim_id"),
+    targetSource: text("target_source", { mode: "json" }).$type<Record<string, unknown> | null>(),
+    targetRoomId: text("target_room_id"),
+    originalText: text("original_text"),
+    replacementText: text("replacement_text"),
+    rationale: text("rationale").notNull(),
+    status: text("status", { enum: ["proposed", "applied", "revoked"] }).notNull().default("proposed"),
+    entryPoint: text("entry_point", { enum: ["overview", "section", "agent"] }).notNull(),
+    sessionId: text("session_id"),
+    proposedByRunId: text("proposed_by_run_id"),
+    appliedAt: integer("applied_at", { mode: "timestamp_ms" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("room_context_corrections_room_status_idx").on(table.roomId, table.status),
+    index("room_context_corrections_session_idx").on(table.sessionId),
+  ],
+);
+
 export const agentRuns = sqliteTable(
   "agent_runs",
   {
@@ -594,6 +664,10 @@ export const agentRuns = sqliteTable(
     sessionId: text("session_id")
       .notNull()
       .references(() => agentSessions.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull().default("main"),
+    invocationMode: text("invocation_mode", {
+      enum: ["explicit_switch", "delegated_subagent"],
+    }).notNull().default("explicit_switch"),
     idempotencyKey: text("idempotency_key").notNull(),
     /** Persisted per-run Room attribution. Sessions may span multiple Rooms. */
     roomId: text("room_id"),
@@ -623,11 +697,138 @@ export const agentMessages = sqliteTable("agent_messages", {
     .notNull()
     .references(() => agentRuns.id, { onDelete: "cascade" }),
   role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
+  authorAgentId: text("author_agent_id"),
   content: text("content").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+export const dataMigrationSources = sqliteTable(
+  "data_migration_sources",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude"] }).notNull(),
+    transport: text("transport", { enum: ["oauth", "zip", "local-sqlite", "local-jsonl", "archive", "directory"] }).notNull(),
+    stableSourceKey: text("stable_source_key").notNull(),
+    displayName: text("display_name").notNull(),
+    status: text("status", { enum: ["ready", "importing", "completed", "error", "unavailable"] }).notNull().default("ready"),
+    lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("data_migration_sources_stable_idx").on(table.provider, table.stableSourceKey)],
+);
+
+export const dataMigrationRuns = sqliteTable(
+  "data_migration_runs",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id").notNull().references(() => dataMigrationSources.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude"] }).notNull(),
+    transport: text("transport", { enum: ["oauth", "zip", "local-sqlite", "local-jsonl", "archive", "directory"] }).notNull(),
+    status: text("status", { enum: ["queued", "running", "completed", "failed", "cancelled"] }).notNull().default("queued"),
+    phase: text("phase", { enum: ["discovering", "reading", "normalizing", "saving", "memory", "finalizing", "completed"] }).notNull().default("discovering"),
+    pagesTotal: integer("pages_total").notNull().default(0),
+    pagesCompleted: integer("pages_completed").notNull().default(0),
+    threadsTotal: integer("threads_total").notNull().default(0),
+    threadsCompleted: integer("threads_completed").notNull().default(0),
+    messagesTotal: integer("messages_total").notNull().default(0),
+    messagesCompleted: integer("messages_completed").notNull().default(0),
+    cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
+    error: text("error"),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("data_migration_runs_source_started_idx").on(table.sourceId, table.startedAt)],
+);
+
+export const externalAgentThreads = sqliteTable(
+  "external_agent_threads",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id").notNull().references(() => dataMigrationSources.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["openclaw", "codex", "claude"] }).notNull(),
+    stableKey: text("stable_key").notNull(),
+    agentId: text("agent_id"),
+    externalSessionId: text("external_session_id").notNull(),
+    title: text("title").notNull(),
+    importVersion: integer("import_version").notNull().default(1),
+    memorySessionId: text("memory_session_id").notNull(),
+    memoryStatus: text("memory_status", { enum: ["pending", "indexed", "error"] }).notNull().default("pending"),
+    available: integer("available", { mode: "boolean" }).notNull().default(true),
+    messageCount: integer("message_count").notNull().default(0),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    lastMessageAt: integer("last_message_at", { mode: "timestamp_ms" }),
+    lastMessageExcerpt: text("last_message_excerpt").notNull().default(""),
+    lastSeenRunId: text("last_seen_run_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("external_agent_threads_source_key_idx").on(table.sourceId, table.stableKey),
+    index("external_agent_threads_recent_idx").on(table.available, table.lastMessageAt),
+  ],
+);
+
+export const externalAgentMessages = sqliteTable(
+  "external_agent_messages",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id").notNull().references(() => externalAgentThreads.id, { onDelete: "cascade" }),
+    stableKey: text("stable_key").notNull(),
+    role: text("role", { enum: ["user", "assistant"] }).notNull(),
+    content: text("content").notNull(),
+    contentHash: text("content_hash").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("external_agent_messages_thread_key_idx").on(table.threadId, table.stableKey),
+    index("external_agent_messages_thread_order_idx").on(table.threadId, table.ordinal),
+  ],
+);
+
+export const agentSessionExternalThreads = sqliteTable(
+  "agent_session_external_threads",
+  {
+    sessionId: text("session_id").primaryKey().references(() => agentSessions.id, { onDelete: "cascade" }),
+    externalThreadId: text("external_thread_id").notNull().references(() => externalAgentThreads.id, { onDelete: "restrict" }),
+    importVersion: integer("import_version").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [index("agent_session_external_threads_thread_idx").on(table.externalThreadId)],
+);
+
+export const agentSessionParticipants = sqliteTable(
+  "agent_session_participants",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    runtimeId: text("runtime_id").notNull(),
+    runtimeSessionRef: text("runtime_session_ref"),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }),
+    workspaceRoot: text("workspace_root"),
+    permissionProfile: text("permission_profile", {
+      enum: ["inspect", "workspace_write", "full_access"],
+    }).notNull().default("inspect"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.sessionId, table.agentId] }),
+    index("agent_session_participants_agent_idx").on(table.agentId),
+  ],
+);
 
 export const agentEvents = sqliteTable(
   "agent_events",
@@ -879,6 +1080,54 @@ export const documentOperationCommands = sqliteTable(
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
   },
   (table) => [uniqueIndex("document_operation_commands_operation_id_idx").on(table.operationId, table.id)],
+);
+
+export const externalDocumentBindings = sqliteTable(
+  "external_document_bindings",
+  {
+    documentId: text("document_id").primaryKey()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    sourceKind: text("source_kind", { enum: ["obsidian-vault"] }).notNull(),
+    sourceId: text("source_id").notNull(),
+    resourceId: text("resource_id").notNull(),
+    roomId: text("room_id").notNull(),
+    relativePath: text("relative_path").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    projectedMarkdown: text("projected_markdown").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("external_document_bindings_source_idx").on(
+      table.sourceKind,
+      table.sourceId,
+      table.resourceId,
+    ),
+  ],
+);
+
+export const externalDocumentPatchPreparations = sqliteTable(
+  "external_document_patch_preparations",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull()
+      .references(() => documentOperations.id, { onDelete: "cascade" }),
+    commandId: text("command_id").notNull(),
+    expectedRevision: integer("expected_revision").notNull(),
+    command: text("command", { mode: "json" }).$type<DocumentOperationCommandInput>().notNull(),
+    expectedSourceHash: text("expected_source_hash").notNull(),
+    patch: text("patch").notNull(),
+    preparedMarkdown: text("prepared_markdown").notNull(),
+    status: text("status", { enum: ["pending", "completed"] }).notNull().default("pending"),
+    resultingSourceHash: text("resulting_source_hash"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("external_document_patch_command_idx").on(table.operationId, table.commandId),
+    index("external_document_patch_expiry_idx").on(table.status, table.expiresAt),
+  ],
 );
 
 export const documentOperationEvents = sqliteTable(
@@ -1138,7 +1387,7 @@ export const entityDocLinks = sqliteTable(
     id: text("id").primaryKey(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1192,7 +1441,7 @@ export const roomSourceMemberships = sqliteTable(
     id: text("id").primaryKey(),
     roomId: text("room_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1227,7 +1476,7 @@ export const roomEntityMentions = sqliteTable(
     roomId: text("room_id").notNull(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1252,6 +1501,49 @@ export const roomEntityMentions = sqliteTable(
     index("room_entity_mentions_entity_idx").on(table.entityId),
     index("room_entity_mentions_room_idx").on(table.roomId),
     index("room_entity_mentions_source_idx").on(table.sourceKind, table.sourceId),
+  ],
+);
+
+/**
+ * 事实记忆投影（PRD 6.6.1：描述实体属性或实体间关系的明确陈述）。
+ * 与 room_entity_mentions 同语义：来源级投影，replaceSource 按来源整体替换；
+ * 同一事实跨来源 = 多行，读取侧按 factId（sha256(content) 指纹）聚合去重。
+ */
+export const roomEntityFacts = sqliteTable(
+  "room_entity_facts",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    /** 全局内容指纹：sha256(content) 前 20 位，跨来源去重键。 */
+    factId: text("fact_id").notNull(),
+    content: text("content").notNull(),
+    /** 属性 = 单一实体的性质/状态/归属；关系 = 实体间关系。 */
+    type: text("type", { enum: ["属性", "关系"] }).notNull().default("属性"),
+    /** 涉及实体（抽取名称经 resolveMentionEntity 解析后的 id；解析不到的不进表）。 */
+    entityIds: text("entity_ids", { mode: "json" }).$type<string[]>(),
+    sourceKind: text("source_kind", {
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+    }).notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceVersion: integer("source_version").notNull(),
+    evidenceGroupKey: text("evidence_group_key").notNull().default(""),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("room_entity_facts_room_source_fact_idx").on(
+      table.roomId,
+      table.sourceKind,
+      table.sourceId,
+      table.factId,
+    ),
+    index("room_entity_facts_room_idx").on(table.roomId),
+    index("room_entity_facts_source_idx").on(table.sourceKind, table.sourceId),
+    index("room_entity_facts_fact_idx").on(table.factId),
   ],
 );
 
@@ -1316,7 +1608,7 @@ export const routeDecisions = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull().default("everroom-doc"),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1420,7 +1712,7 @@ export const fileEntries = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["manual-upload", "local-folder", "connector", "web-clipper", "legacy-upload"],
+      enum: ["manual-upload", "local-folder", "connector", "migration", "web-clipper", "legacy-upload"],
     }).notNull(),
     sourceKey: text("source_key").notNull(),
     originalName: text("original_name").notNull(),
@@ -1501,6 +1793,7 @@ export const clipperCaptures = sqliteTable(
     failedAssetCount: integer("failed_asset_count").notNull().default(0),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
+    favoritedAt: integer("favorited_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
@@ -1528,6 +1821,31 @@ export const clipperAssets = sqliteTable(
     status: text("status", { enum: ["pending", "stored", "failed"] }).notNull().default("pending"),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
+    visualStatus: text("visual_status", {
+      enum: ["pending", "processing", "ready", "skipped", "failed"],
+    }).notNull().default("pending"),
+    visualKind: text("visual_kind", {
+      enum: ["photo", "illustration", "chart", "diagram", "screenshot", "logo", "decoration", "other"],
+    }),
+    visualSummary: text("visual_summary"),
+    visualOcrText: text("visual_ocr_text"),
+    visualKeyPoints: text("visual_key_points", { mode: "json" }).$type<string[]>(),
+    visualEntities: text("visual_entities", { mode: "json" }).$type<Array<{
+      name: string;
+      kind: string;
+      evidence: string;
+    }>>(),
+    visualRelevance: real("visual_relevance"),
+    visualQuality: real("visual_quality"),
+    visualContentRole: text("visual_content_role", {
+      enum: ["primary", "supporting", "noise"],
+    }),
+    visualNoiseReason: text("visual_noise_reason", {
+      enum: ["none", "emoji", "qr_code", "advertisement", "avatar", "logo", "social_widget", "navigation", "decoration", "tracking", "other"],
+    }),
+    visualModel: text("visual_model"),
+    visualPromptVersion: text("visual_prompt_version"),
+    coverScore: real("cover_score"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
@@ -1537,6 +1855,29 @@ export const clipperAssets = sqliteTable(
     index("clipper_assets_hash_idx").on(table.contentHash),
   ],
 );
+
+/**
+ * 网页剪藏的规范化产物。displayMarkdown 忠实用于阅读；semanticMarkdown
+ * 融合图片 VLM 描述，仅供 Memory/Knowledge 下游消费。
+ */
+export const clipperArtifacts = sqliteTable("clipper_artifacts", {
+  captureId: text("capture_id").primaryKey().references(() => clipperCaptures.id, { onDelete: "cascade" }),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  displayMarkdown: text("display_markdown").notNull(),
+  semanticMarkdown: text("semantic_markdown").notNull(),
+  excerpt: text("excerpt").notNull().default(""),
+  coverAssetId: text("cover_asset_id"),
+  parseStatus: text("parse_status", {
+    enum: ["pending", "processing", "ready", "partial", "failed"],
+  }).notNull().default("pending"),
+  visualStatus: text("visual_status", {
+    enum: ["pending", "processing", "ready", "partial", "skipped", "failed"],
+  }).notNull().default("pending"),
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+});
 
 /**
  * 文件版本的结构化多模态解析产物。第一阶段将完整 Canonical Artifact
@@ -1921,7 +2262,7 @@ export const ingestEvents = sqliteTable(
     /** ing-<uuid12> */
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),

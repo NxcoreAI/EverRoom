@@ -1,6 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
-import { X } from 'lucide-react';
+import { FolderInput, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
@@ -8,7 +8,6 @@ import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResourc
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { DETAIL_TABS as TABS, type DetailPane } from '../RoomIconSidebar';
 import { OverviewDashboard, type WorkspaceObjectPreview } from '../detail-panels';
-import type { LocalOfficeFile } from '../detail-panels/ResourcePanel';
 import { WorkspaceContent } from './WorkspaceContent';
 import { WorkspacePaneBody } from './WorkspacePaneBody';
 
@@ -67,13 +66,13 @@ export function WorkspaceLayout({
   onEmptyTrash,
   onSelectResource,
   onOpenWikiPage,
-  onAddFile,
   onOpenMemory,
   onOpenObject,
   onCloseObject,
   onOpenRoom,
   onToggleTask,
   onUpdateRoom,
+  onImportObsidian,
 }: {
   room: ContextRoomRecord;
   rooms: ContextRoomRecord[];
@@ -127,13 +126,13 @@ export function WorkspaceLayout({
   onEmptyTrash: (roomId: string) => Promise<void>;
   onSelectResource: (resource: ContextRoomResource) => void;
   onOpenWikiPage: (resource: ContextRoomWikiPageResource) => void;
-  onAddFile: (file: LocalOfficeFile) => void;
   onOpenMemory: (memoryId: string) => void;
   onOpenObject: (target: WorkspaceObjectPreview) => void;
   onCloseObject: () => void;
   onOpenRoom: (roomId: string) => void;
   onToggleTask: (taskId: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
+  onImportObsidian: () => void;
 }) {
   const { t } = useLocale();
   const overview = panels.length === 1 && panels[0] === 'overview';
@@ -234,12 +233,16 @@ export function WorkspaceLayout({
               ) : null}
             </ContextMenu.Root>
           ))}
+          <button type="button" className="context-room-workspace-tabs-footer" aria-label={t('surface:obsidian.importIntoRoom', { room: room.title })} title={t('surface:obsidian.importIntoRoom', { room: room.title })} onClick={onImportObsidian}>
+            <FolderInput aria-hidden="true" />
+          </button>
         </nav>
 
         {overview ? (
           <OverviewDashboard
             room={room}
             backendDocuments={backendDocuments}
+            knowledgeFiles={knowledgeFiles}
             onSelectResource={onSelectResource}
             onOpenObject={onOpenObject}
             onToggleTask={onToggleTask}
@@ -314,7 +317,6 @@ export function WorkspaceLayout({
                         onRestoreDocument={onRestoreDocument}
                         onDeleteDocumentPermanently={onDeleteDocumentPermanently}
                         onEmptyTrash={onEmptyTrash}
-                        onAddFile={onAddFile}
                         onOpenMemory={onOpenMemory}
                         onToggleTask={onToggleTask}
                         onUpdateRoom={onUpdateRoom}

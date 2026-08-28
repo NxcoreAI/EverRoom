@@ -65,7 +65,7 @@ export function SchedulePane({ room, onOpen }: { room: ContextRoomRecord; onOpen
     ...room.materials.filter((material) => material.type === '会议').map((meeting) => ({
       id: meeting.id, kind: 'meeting' as const, date: parseScheduleDate(meeting.time), time: meeting.time.match(/\b\d{1,2}:\d{2}\b/)?.[0] ?? '', title: meeting.title,
       subtitle: meeting.attendees?.join(locale === 'zh-CN' ? '、' : ', ') || localizedUiText(meeting.summary, t), description: localizedUiText(meeting.summary, t), location: meeting.location,
-      attachments: room.fileItems.slice(0, 1).map((file) => ({ name: file.name, size: file.size })),
+      attachments: meeting.attachments ?? [],
     })),
     ...room.actionItems.filter((task) => !task.completed && task.status !== '已完成').map((task) => ({
       id: task.id, kind: 'task' as const, date: parseScheduleDate(task.deadline), time: '', title: task.title,

@@ -7,7 +7,11 @@
  * dimensions 由 gateway /v1/runtime-config/test 的真实 /embeddings 响应确认；
  * 已配置 TDAI_EMBEDDING_DIMENSIONS 时，探测请求会带上该期望维度，避免供应商默认值覆盖本地配置。
  * 不设 TDAI_EMBEDDING_ENABLED/SEND_DIMENSIONS，走 MemoryCore 默认。
+ * 脱敏占位（********）等同缺失：不注入掩码（MemoryCore 会当真 key 用，
+ * 每个上游请求静默 401），宁可不注入让它按未配置降级。
  */
+
+import { isMaskedRuntimeConfigSecret } from '../../shared/sources'
 export interface MemoryCoreEmbeddingFields {
   provider: string
   model: string
@@ -42,7 +46,7 @@ export function embeddingFieldsFromConfig(
     : {}
   const text = (key: string): string => {
     const raw = value[key]
-    return typeof raw === 'string' ? raw.trim() : ''
+    return typeof raw === 'string' && !isMaskedRuntimeConfigSecret(raw) ? raw.trim() : ''
   }
   const fields = {
     provider: text('provider'),
@@ -68,7 +72,7 @@ export function memoryCoreLlmEnv(
     : {}
   const text = (key: string): string => {
     const raw = value[key]
-    return typeof raw === 'string' ? raw.trim() : ''
+    return typeof raw === 'string' && !isMaskedRuntimeConfigSecret(raw) ? raw.trim() : ''
   }
   const baseUrl = text('baseUrl')
   const apiKey = text('apiKey')

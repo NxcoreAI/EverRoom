@@ -257,7 +257,7 @@ describe("ConnectorSyncService", () => {
     const service = new ConnectorSyncService(database.db, config, logger);
     try {
       await service.initialize();
-      expect(database.db.select().from(connectorPromptProfiles).all()).toHaveLength(3);
+      expect(database.db.select().from(connectorPromptProfiles).all()).toHaveLength(4);
       const created = service.createJob({
         name: "Gmail 最近一天", service: "gmail", dataset: "emails", resourceType: "email",
         connectionName: "default", allowedActions: ["fetch_emails", "get_message"],
