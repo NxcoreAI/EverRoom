@@ -1095,6 +1095,35 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
       }),
     );
 
+    app.get(
+      "/v1/knowledge/route-status",
+      {
+        schema: {
+          tags: ["knowledge"],
+          querystring: Type.Object({
+            sourceIds: Type.String({ minLength: 1, maxLength: 4_000 }),
+          }),
+          response: {
+            200: Type.Object({
+              items: Type.Array(Type.Object({
+                sourceId: Type.String(),
+                status: Type.String(),
+                title: Type.Union([Type.String(), Type.Null()]),
+                updatedAt: Type.String(),
+              })),
+            }),
+          },
+        },
+      },
+      async (request) => ({
+        // 逗号分隔 sourceId 直查（任意状态），供推荐会话轮询「已解析 x/y」；
+        // 去重后截断，防止误用打爆查询。
+        items: service.routeStatusOf(
+          [...new Set(request.query.sourceIds.split(",").map((id) => id.trim()).filter(Boolean))].slice(0, 50),
+        ).map((item) => ({ ...item, updatedAt: iso(item.updatedAt) })),
+      }),
+    );
+
     app.post(
       "/v1/knowledge/route/:decisionId/revert",
       {

@@ -2823,6 +2823,37 @@ export class KnowledgeService {
   }
 
   /**
+   * 路由状态查询（推荐会话进度轮询用）：按 sourceId 取最新决策，不做
+   * confirmed 过滤——新落库的 awaiting_review/auto 就是「已解析」本身，
+   * 而 listRecentDecisions 只面向最近归类（confirmed 历史）。
+   */
+  routeStatusOf(sourceIds: string[]): Array<{
+    sourceId: string;
+    status: string;
+    title: string | null;
+    updatedAt: Date;
+  }> {
+    if (sourceIds.length === 0) return [];
+    const rows = this.db.select({
+      sourceId: routeDecisions.sourceId,
+      status: routeDecisions.status,
+      title: routeDecisions.sourceTitle,
+      updatedAt: routeDecisions.updatedAt,
+    }).from(routeDecisions)
+      .where(and(
+        eq(routeDecisions.sourceKind, "file"),
+        inArray(routeDecisions.sourceId, sourceIds),
+      ))
+      .orderBy(desc(routeDecisions.updatedAt))
+      .all();
+    const latest = new Map<string, { sourceId: string; status: string; title: string | null; updatedAt: Date }>();
+    for (const row of rows) {
+      if (!latest.has(row.sourceId)) latest.set(row.sourceId, row);
+    }
+    return [...latest.values()];
+  }
+
+  /**
    * 撤销已确认路由（plan §5.4）：按落盘账本逐房清源 → 重路由
    * （skipEntry，从 ② 起步）。
    */
