@@ -610,6 +610,7 @@ const api: NxcoreDesktopApi = {
     listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
     readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
     revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
+    openFile: (fileId: string) => invoke('knowledge:files:open', fileId),
   },
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),

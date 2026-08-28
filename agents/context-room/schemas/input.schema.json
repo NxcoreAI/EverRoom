@@ -22,7 +22,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "description": "Target room id, required for brief-refresh and material-analysis."
+      "description": "Target room id, required for room-overview, brief-refresh and material-analysis."
     },
     "roomTitle": {
       "type": "string",
@@ -72,6 +72,19 @@
       "type": "string",
       "maxLength": 35,
       "description": "BCP-47 language tag for natural-language output."
+    },
+    "outputContract": {
+      "type": "object",
+      "description": "Structured output examples supplied by the trusted room-overview workflow."
+    },
+    "rules": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "description": "Additional trusted generation constraints supplied by the internal workflow."
     }
   },
   "required": ["task"],

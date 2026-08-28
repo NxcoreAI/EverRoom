@@ -25,6 +25,7 @@ import {
 } from '../../../../../../shared/knowledge';
 import { localizedUiText } from '../adapters';
 import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
+import { scheduleRoomMarkdownImport } from '../../knowledgeMarkdownImport';
 
 function promotionPercent(progress: KnowledgePromotionProgressDto): number {
   if (progress.status === 'completed') return 100;
@@ -134,6 +135,8 @@ export function KnowledgePendingPanel({ onFocusAgent }: { onFocusAgent: () => vo
       activePromotionsRef.current = new Map(activePromotions.map((entity) => [entity.id, entity.name]));
       for (const entity of completed) {
         showToast({ title: translateRef.current('contextRoom:knowledgePending.roomCreated'), message: translateRef.current('contextRoom:knowledgePending.nameIsReadyToUse', { name: entity.name }) });
+        // md 上传文件自动转为可编辑云文档（幂等；补跑兜路由决策落库窗口）
+        scheduleRoomMarkdownImport(entity.roomId);
       }
       for (const entity of failed) {
         showToast({ title: translateRef.current('contextRoom:knowledgePending.creationFailed'), message: entity.promotion?.error ?? undefined });

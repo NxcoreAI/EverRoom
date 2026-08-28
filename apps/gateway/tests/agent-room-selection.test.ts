@@ -458,6 +458,29 @@ describe('Agent Room selection', () => {
     sqlite.close()
   })
 
+  it('routes a Room overview citation comment to direct application without confirmation', async () => {
+    const { rooms, runtime, service, sqlite } = await createHarness()
+    rooms.saveSnapshot({
+      rooms: [{ id: 'room-current', title: '当前 Room', data: { id: 'room-current', title: '当前 Room' } }],
+      deletedRooms: [],
+    })
+    const session = service.createSession({ pageLabel: 'Context Room', roomId: null })
+
+    await service.startRun(session.id, {
+      prompt: '太长了',
+      idempotencyKey: 'room-overview-citation-routing',
+      context: {
+        selectedRoomId: 'room-current',
+        selectedText: '引用 1\n区块：overview\n引用文本：这是一段过长的概览\n用户评论：太长了',
+      },
+    })
+
+    expect(runtime.starts[0]?.prompt).toContain('context_room_correction_apply_citation')
+    expect(runtime.starts[0]?.prompt).toContain('禁止创建待确认 proposal')
+    expect(runtime.starts[0]?.prompt).toContain('禁止要求用户再次确认')
+    sqlite.close()
+  })
+
   it('resolves a merged Room id to the active target for new Agent runs', async () => {
     const { db, rooms, runtime, service, sqlite } = await createHarness()
     rooms.saveSnapshot({

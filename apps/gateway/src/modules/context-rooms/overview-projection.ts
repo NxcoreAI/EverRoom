@@ -231,10 +231,12 @@ export function buildRoomOverviewProjection(input: {
       `meeting:${sourceId ?? index}`,
     )];
   });
-  // 确定性日程 claim：未来开始的连接器日历事件（同 sourceId 时优先于 LLM meeting claim）。
+  // 确定性日程 claim：未来开始的连接器日历事件（服务层已按开始时间升序），
+  // 取即将到来的前 8 条——先过滤再截断，历史事件再多也不挤掉未来日程。
   const connectorSourceIds = new Set(input.calendarEvents.map((event) => event.sourceId));
-  const scheduleClaims = input.calendarEvents.slice(0, 20).flatMap((event) => {
-    if (!event.startedAt || event.startedAt < generatedAt.toISOString()) return [];
+  const upcomingEvents = input.calendarEvents
+    .filter((event) => event.startedAt && event.startedAt >= generatedAt.toISOString());
+  const scheduleClaims = upcomingEvents.slice(0, 8).flatMap((event) => {
     return [createRoomOverviewClaim(
       "next_steps", event.title, "fact",
       [{ sourceKind: "calendar-event", sourceId: event.sourceId, sourceTitle: event.title }],
@@ -293,7 +295,8 @@ export function buildRoomOverviewProjection(input: {
     )];
   });
   // 确定性事件源②：连接器日历事件（occurredAt = 事件开始时间；解析不到则按无时间沉底）。
-  const calendarEvents = input.calendarEvents.slice(0, 20).flatMap((event) => {
+  // 时间轴取最新 20 条（列表已升序，slice(-20) 保升序输出；最终 timeline 整体倒序）。
+  const calendarEvents = input.calendarEvents.slice(-20).flatMap((event) => {
     if (!event.title) return [];
     return [createRoomOverviewClaim(
       "timeline", event.title, "fact",
@@ -303,8 +306,8 @@ export function buildRoomOverviewProjection(input: {
       `calendar:${event.sourceId}`,
     )];
   });
-  // 确定性事件源③：连接器待办（occurredAt = dueAt；已完成的取完成时间）。
-  const todoTimeline = input.todos.slice(0, 20).flatMap((todo) => {
+  // 确定性事件源③：连接器待办（occurredAt = dueAt；已完成的取完成时间；dueAt 升序 → 取最新 20）。
+  const todoTimeline = input.todos.slice(-20).flatMap((todo) => {
     const occurredAt = todo.completedAt ?? todo.dueAt;
     if (!occurredAt) return [];
     return [createRoomOverviewClaim(

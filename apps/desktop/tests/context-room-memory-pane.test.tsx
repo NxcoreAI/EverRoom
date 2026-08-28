@@ -105,7 +105,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} />,
+        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
       )
     })
 
@@ -132,7 +132,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} />,
+        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
       )
     })
 
@@ -192,7 +192,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} />,
+        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
       )
     })
 
@@ -209,9 +209,13 @@ describe('MemoryPane applied entities', () => {
     expect(renderer!.root.findAllByProps({ className: 'context-room-ghost' })).toHaveLength(0)
   })
 
-  it('pushes the selected node to the right-side detail area when provided', async () => {
-    appliedResult = { entities: [appliedEntity({ entityId: 'e-1', name: '林薇' })], facts: [] }
-    const onOpenObject = vi.fn()
+  it('jumps to the linked Room from the inline detail card instead of pushing the right pane', async () => {
+    // 详情只在本面板的内联卡展示；右区常驻文档，节点点击不再推送右侧内容区。
+    appliedResult = {
+      entities: [appliedEntity({ entityId: 'e-1', name: '林薇', linkedRoomId: 'room-linwei' })],
+      facts: [],
+    }
+    const onOpenRoom = vi.fn()
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
@@ -219,18 +223,20 @@ describe('MemoryPane applied entities', () => {
           room={roomWithPeople()}
           onOpenMemory={() => undefined}
           onUpdateRoom={() => undefined}
-          onOpenObject={onOpenObject}
+          onOpenRoom={onOpenRoom}
         />,
       )
     })
 
     await clickNode(renderer!, '林薇')
 
-    expect(onOpenObject).toHaveBeenCalledTimes(1)
-    expect(onOpenObject).toHaveBeenCalledWith({
-      kind: 'graph-node',
-      node: expect.objectContaining({ id: 'applied:e-1', label: '林薇' }),
+    const jump = renderer!.root.findAllByType('button')
+      .find((button) => flattenChildren(button).includes('打开关联 Room'))
+    expect(jump).toBeTruthy()
+    await act(async () => {
+      jump!.props.onClick()
     })
+    expect(onOpenRoom).toHaveBeenCalledWith('room-linwei')
   })
 
   it('falls back to static entity derivation without a status badge', async () => {
@@ -238,7 +244,7 @@ describe('MemoryPane applied entities', () => {
     let renderer: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} />,
+        <MemoryPane room={roomWithPeople()} onOpenMemory={() => undefined} onUpdateRoom={() => undefined} onOpenRoom={() => undefined} />,
       )
     })
 

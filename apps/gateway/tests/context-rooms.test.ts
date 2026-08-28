@@ -1,13 +1,16 @@
 import type { SubagentInvocation } from '@nxcore/agent-contract'
+import { Ajv } from 'ajv'
 import { eq } from 'drizzle-orm'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { bundledAgentDefinitionsDir } from '../src/config.js'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   connectorCalendarEvents,
   connectorTodos,
+  contextRooms,
   documents as documentsTable,
   entities as entitiesTable,
   roomDocumentLinks,
@@ -673,10 +676,13 @@ describe('RoomOverviewService', () => {
       },
     ]).run()
     db.insert(roomSourceMemberships).values([
-      { id: 'conn-cal', roomId: 'room-connector', sourceKind: 'calendar-event', sourceId: 'cal-conn-1', sourceVersion: 1, evidenceGroupKey: 'cal', role: 'primary', sourceTitle: '发射协调会' },
-      { id: 'conn-todo-1', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-1', sourceVersion: 1, evidenceGroupKey: 't1', role: 'primary', sourceTitle: '补充天线参数' },
-      { id: 'conn-todo-done', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-done', sourceVersion: 1, evidenceGroupKey: 't2', role: 'primary', sourceTitle: '已完成待办' },
+      { id: 'conn-cal', roomId: 'room-connector', sourceKind: 'calendar-event', sourceId: 'cal-conn-1', sourceVersion: 1, evidenceGroupKey: 'cal', role: 'primary', sourceTitle: '发射协调会', updatedAt: new Date('2026-08-21T08:00:00.000Z') },
+      { id: 'conn-todo-1', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-1', sourceVersion: 1, evidenceGroupKey: 't1', role: 'primary', sourceTitle: '补充天线参数', updatedAt: new Date('2026-08-20T09:00:00.000Z') },
+      { id: 'conn-todo-done', roomId: 'room-connector', sourceKind: 'todo', sourceId: 'todo-done', sourceVersion: 1, evidenceGroupKey: 't2', role: 'primary', sourceTitle: '已完成待办', updatedAt: new Date('2026-08-20T09:00:00.000Z') },
     ]).run()
+
+    // 房间行刚被 saveSnapshot 写成 now：回拨，让连接器路由时间成为水位最大者。
+    db.update(contextRooms).set({ updatedAt: new Date('2026-08-19T08:00:00.000Z') }).where(eq(contextRooms.id, 'room-connector')).run()
 
     const projection = new RoomOverviewService(db, service).refresh('room-connector')
     // 确定性 schedule claim：来自 connector 域表的精确开始时间；同 sourceId 的 LLM meeting 不再重复。
@@ -707,8 +713,52 @@ describe('RoomOverviewService', () => {
       occurredAt: '2026-12-01T02:00:00.000Z',
       data: { kind: 'timeline', eventType: 'meeting' },
     })
-    // freshness 候选纳入日程开始时间与待办 dueAt：取最大者。
-    expect(projection.freshness).toMatchObject({ sourceUpdatedAt: '2026-12-01T02:00:00.000Z' })
+    // freshness 水位用连接器源的路由进房时间（membership.updatedAt）：
+    // 事件 startedAt/dueAt 不参与——历史回填也能推进水位，未来日程不会把水位顶到未来。
+    expect(projection.freshness).toMatchObject({ sourceUpdatedAt: '2026-08-21T08:00:00.000Z' })
+  })
+
+  it('keeps upcoming schedules visible when the room holds many past calendar events', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{ id: 'room-many', title: 'Many Events', data: { id: 'room-many', title: 'Many Events' } }],
+      deletedRooms: [],
+    })
+    const syncedAt = new Date('2026-08-20T08:00:00.000Z')
+    const pastEvents: Array<typeof connectorCalendarEvents.$inferInsert> = Array.from({ length: 24 }, (_, index) => ({
+      id: `cal-past-${index}`, ownerId: 'local-user', service: 'google_calendar', connectionName: 'default',
+      sourceRecordId: `past-${index}`, sourceUpdatedAt: syncedAt, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: `hash-past-${index}`, extensionPayload: null,
+      eventId: `past-${index}`, title: `历史事件${index}`, description: '',
+      organizer: null, attendees: [], startAt: new Date(Date.UTC(2020, 0, index + 1)),
+      endAt: null, allDay: true, status: 'confirmed', location: null,
+    }))
+    const upcoming = ([
+      { daysAhead: 3, title: '即将到来的开学典礼' },
+      { daysAhead: 10, title: '较远的家长会' },
+    ] as Array<{ daysAhead: number; title: string }>).map((event, index): typeof connectorCalendarEvents.$inferInsert => ({
+      id: `cal-future-${index}`, ownerId: 'local-user', service: 'google_calendar', connectionName: 'default',
+      sourceRecordId: `future-${index}`, sourceUpdatedAt: syncedAt, syncedAt, schemaVersion: 1, promptVersion: 1,
+      contentHash: `hash-future-${index}`, extensionPayload: null,
+      eventId: `future-${index}`, title: event.title, description: '',
+      organizer: null, attendees: [], startAt: new Date(Date.now() + event.daysAhead * 86_400_000),
+      endAt: null, allDay: false, status: 'confirmed', location: null,
+    }))
+    db.insert(connectorCalendarEvents).values([...pastEvents, ...upcoming]).run()
+    db.insert(roomSourceMemberships).values([...pastEvents, ...upcoming].map((event): typeof roomSourceMemberships.$inferInsert => ({
+      id: `mem-${event.id}`, roomId: 'room-many', sourceKind: 'calendar-event', sourceId: event.id,
+      sourceVersion: 1, evidenceGroupKey: event.id, role: 'primary', sourceTitle: event.title,
+    }))).run()
+
+    const projection = new RoomOverviewService(db, service).refresh('room-many')
+    // 日程 claim 先过滤未来再截断：26 条里 24 条历史不会挤掉 2 条未来日程，按时间升序。
+    const schedules = projection.nextSteps.filter((item) => item.data?.kind === 'next_step' && item.data.itemType === 'schedule')
+    expect(schedules.map((item) => item.text)).toEqual(['即将到来的开学典礼', '较远的家长会'])
+    // 时间轴取最新 20 条：最老的历史事件被挤出，未来事件保留。
+    const timelineTitles = projection.timeline.map((item) => item.text)
+    expect(timelineTitles).not.toContain('历史事件0')
+    expect(timelineTitles).toContain('即将到来的开学典礼')
+    expect(timelineTitles).toContain('较远的家长会')
   })
 
   it('pins fact timeline entries to their first mention instead of the latest', async () => {
@@ -880,10 +930,102 @@ describe('RoomOverviewService', () => {
     }).overview.status[0]?.text).toBe('Confirmed status')
   })
 
+  it('applies a citation-backed correction immediately and validates the current projection', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-citation-correction',
+        title: 'Citation Room',
+        data: {
+          id: 'room-citation-correction',
+          title: 'Citation Room',
+          generatedContext: { overview: 'This overview is much too long for the Room.' },
+        },
+      }],
+      deletedRooms: [],
+    })
+    const overviews = new RoomOverviewService(db, service)
+    const result = overviews.applyCitation('room-citation-correction', {
+      operation: 'content_replace',
+      section: 'overview',
+      originalText: 'much too long',
+      replacementText: 'Short overview.',
+      rationale: 'User asked to shorten the cited text',
+      entryPoint: 'agent',
+    }, { sessionId: 'session-citation', runId: 'run-citation' })
+
+    expect(result.correction).toMatchObject({
+      status: 'applied',
+      sessionId: 'session-citation',
+      originalText: 'much too long',
+      replacementText: 'Short overview.',
+    })
+    expect(result.overview.overview[0]).toMatchObject({ text: 'Short overview.', corrected: true })
+    expect(() => overviews.applyCitation('room-citation-correction', {
+      operation: 'content_replace',
+      section: 'overview',
+      originalText: 'text no longer present',
+      replacementText: 'Should not apply',
+      rationale: 'Stale citation',
+      entryPoint: 'agent',
+    }, { sessionId: 'session-citation', runId: 'run-stale' }))
+      .toThrow('room_correction_citation_not_found')
+  })
+
+  it('validates every citation before atomically applying a cross-claim batch', async () => {
+    const { service, db } = await createHarness()
+    service.saveSnapshot({
+      rooms: [{
+        id: 'room-citation-batch',
+        title: 'Citation Batch Room',
+        data: {
+          id: 'room-citation-batch',
+          title: 'Citation Batch Room',
+          brief: { background: 'First overview claim', goal: 'Second overview claim' },
+          generatedContext: { overview: 'First overview claim' },
+        },
+      }],
+      deletedRooms: [],
+    })
+    const overviews = new RoomOverviewService(db, service)
+    const original = overviews.get('room-citation-batch')
+    expect(original.overview.length).toBeGreaterThanOrEqual(2)
+    const [first, second] = original.overview
+    const edit = (claim: typeof first, replacementText: string) => ({
+      operation: 'content_replace' as const,
+      section: 'overview' as const,
+      targetClaimId: claim!.id,
+      originalText: claim!.text,
+      replacementText,
+      rationale: 'User shortened a cross-claim selection',
+      entryPoint: 'agent' as const,
+    })
+
+    expect(() => overviews.applyCitations('room-citation-batch', [
+      edit(first, 'Short first claim'),
+      { ...edit(second, 'Short second claim'), originalText: 'stale second claim' },
+    ], { sessionId: 'session-batch', runId: 'run-invalid-batch' }))
+      .toThrow('room_correction_citation_mismatch')
+    expect(overviews.list('room-citation-batch')).toHaveLength(0)
+
+    const applied = overviews.applyCitations('room-citation-batch', [
+      edit(first, 'Short first claim'),
+      edit(second, 'Short second claim'),
+    ], { sessionId: 'session-batch', runId: 'run-valid-batch' })
+    expect(applied.corrections).toHaveLength(2)
+    expect(applied.corrections.every((item) => item.status === 'applied')).toBe(true)
+    expect(applied.overview.overview.map((item) => item.text)).toEqual([
+      'Short first claim',
+      'Short second claim',
+    ])
+  })
+
   it('keeps applied corrections on top of a newly generated overview base', async () => {
     let generation = 0
+    const dispatchInputs: RoomAgentDispatchInput[] = []
     const dispatcher: RoomAgentDispatcher = {
-      dispatch: async () => {
+      dispatch: async (input) => {
+        dispatchInputs.push(input)
         generation += 1
         return completedInvocation(JSON.stringify({
           overview: [{ key: 'summary', text: 'Fresh generated overview', aspect: 'summary', evidenceRefs: [] }],
@@ -926,5 +1068,15 @@ describe('RoomOverviewService', () => {
     expect(regenerated.status[0]?.id).toBe(firstGenerated.status[0]?.id)
     expect(regenerated.status[0]?.data).toMatchObject({ kind: 'status', category: 'blocker', state: 'active' })
     expect(regenerated.nextSteps[0]?.text).toBe('Generated next step')
+
+    const schema = JSON.parse(await readFile(
+      join(bundledAgentDefinitionsDir(), 'context-room/schemas/input.schema.json'),
+      'utf8',
+    )) as Record<string, unknown>
+    const validate = new Ajv({ allErrors: true }).compile(schema)
+    for (const input of dispatchInputs) {
+      const accepted = validate({ task: input.task, ...input.taskInput })
+      expect(accepted, JSON.stringify(validate.errors)).toBe(true)
+    }
   })
 })

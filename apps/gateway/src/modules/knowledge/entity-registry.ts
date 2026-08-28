@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   connectorEmails,
@@ -470,6 +470,70 @@ export class EntityRegistry {
       if (this.promoteToRoom(target.id, roomId)) claimed += 1;
     }
     return claimed;
+  }
+
+  /**
+   * 户口实体补种（图谱重建/数据重置后，initialize 调用）：entity_id 为 NULL 的
+   * 活跃 Room 按归一化名认领现有 weak/ready 实体（认领后该实体的既有 mentions
+   * 即成为 direct_mention 依据），未命中则按 Room 标题种子化新建。幂等：已有
+   * entity_id 的 Room 不动；已绑定其他 Room 的实体不抢。返回补种数。
+   */
+  backfillRoomHomeEntities(): number {
+    const now = new Date();
+    const roomRows = this.db.select().from(rooms)
+      .where(and(isNull(rooms.deletedAt), eq(rooms.lifecycle, "active")))
+      .orderBy(rooms.createdAt)
+      .all();
+    const claimable = this.db.select().from(entities)
+      .where(inArray(entities.status, ["weak", "ready"]))
+      .all()
+      .filter((entity) => !entity.roomId)
+      .sort((left, right) => (right.sourceCount - left.sourceCount) || (right.evidenceScore - left.evidenceScore));
+    let backfilled = 0;
+    for (const room of roomRows) {
+      if (room.entityId) continue;
+      const roomNames = new Set([room.title, ...(room.aliases ?? [])]
+        .map((value) => normalizeEntityName(value))
+        .filter((value) => value.length > 0));
+      const rank = (left: typeof entities.$inferSelect, right: typeof entities.$inferSelect): number =>
+        (right.sourceCount - left.sourceCount) || (right.evidenceScore - left.evidenceScore);
+      let entityId: string | null = null;
+      // 已绑定本 Room 的实体优先（认领残留）：直接作为户口，不重复绑定。
+      const own = this.db.select().from(entities).where(eq(entities.roomId, room.id)).all()
+        .filter((entity) => entity.status === "room")
+        .sort((left, right) =>
+          (Number(roomNames.has(normalizeEntityName(right.name))) - Number(roomNames.has(normalizeEntityName(left.name)))) || rank(left, right));
+      if (own.length > 0) {
+        entityId = own[0]!.id;
+      } else {
+        const matchIndex = claimable.findIndex((entity) =>
+          [entity.name, ...(entity.aliases ?? [])].some((value) => roomNames.has(normalizeEntityName(value))));
+        if (matchIndex >= 0) {
+          const claimed = claimable.splice(matchIndex, 1)[0]!;
+          this.db.update(entities).set({ status: "room", roomId: room.id, updatedAt: now })
+            .where(eq(entities.id, claimed.id)).run();
+          entityId = claimed.id;
+        }
+      }
+      if (!entityId) {
+        // 种子化路径沿用 seedRoomEntity 的 id 规约；同 id 已存在（如重建残留）
+        // 时 onConflictDoNothing 保持幂等。
+        entityId = `ent-room-${room.id}`;
+        this.db.insert(entities).values({
+          id: entityId,
+          name: room.title.trim().slice(0, 120),
+          aliases: room.aliases && room.aliases.length > 0 ? room.aliases : null,
+          kind: normalizeKind(room.kind),
+          status: "room",
+          roomId: room.id,
+          createdAt: now,
+          updatedAt: now,
+        }).onConflictDoNothing().run();
+      }
+      this.db.update(rooms).set({ entityId, updatedAt: now }).where(eq(rooms.id, room.id)).run();
+      backfilled += 1;
+    }
+    return backfilled;
   }
 
   private scoringOf(input: EntityLinkInput): EvidenceScoreBreakdown {

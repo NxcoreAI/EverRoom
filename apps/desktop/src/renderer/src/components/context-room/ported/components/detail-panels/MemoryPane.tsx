@@ -1,5 +1,6 @@
 import {
   ChevronLeft,
+  ChevronRight,
   CircleDot,
   Link2,
   Maximize2,
@@ -18,20 +19,19 @@ import { localizedUiText, uiText } from '../../adapters';
 import { EntityFactGraphCanvas } from '../EntityFactGraphCanvas';
 import { createEntityFactGraphData, type EntityFactGraphFactNode } from '../entityFactGraphModel';
 import { ActionConfirmDialog } from '../shared';
-import type { WorkspaceObjectPreview } from './ObjectPreview';
 import { PanelEmptyState } from './PanelEmptyState';
 
 export function MemoryPane({
   room,
   onOpenMemory,
   onUpdateRoom,
-  onOpenObject,
+  onOpenRoom,
 }: {
   room: ContextRoomRecord;
   onOpenMemory: (id: string) => void;
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
-  /** 节点选中时同步推送右侧内容区展示详情（可选，独立渲染时不传）。 */
-  onOpenObject?: (target: WorkspaceObjectPreview) => void;
+  /** 实体已建 Room 时从内联详情卡跳转（详情只在本面板内展示）。 */
+  onOpenRoom: (roomId: string) => void;
 }) {
   const { t, locale } = useLocale();
   const appliedMemory = useRoomAppliedEntities(room.id, room.updatedAt);
@@ -49,11 +49,9 @@ export function MemoryPane({
     || appliedMemory?.entities.length
     || appliedMemory?.facts.length
   );
-  // 选中图谱节点：更新内联详情卡，并同步推送右侧内容区展示完整详情。
+  // 选中图谱节点：只更新内联详情卡（详情归本面板，右区常驻打开的文档）。
   const selectNode = (nodeId: string) => {
     setSelectedId(nodeId);
-    const node = graphData.nodes.find((candidate) => candidate.id === nodeId);
-    if (node && onOpenObject) onOpenObject({ kind: 'graph-node', node });
   };
 
   useEffect(() => {
@@ -278,6 +276,16 @@ export function MemoryPane({
                   })}
                 </div>
               </section>
+            ) : null}
+            {selectedNode.kind === 'entity' && selectedNode.linkedRoomId ? (
+              <button
+                type="button"
+                className="context-room-primary context-room-memory-inline-action"
+                onClick={() => onOpenRoom(selectedNode.linkedRoomId!)}
+              >
+                {t('contextRoom:memory.openLinkedRoom')}
+                <ChevronRight aria-hidden="true" />
+              </button>
             ) : null}
             {selectedMemory ? (
               <footer>

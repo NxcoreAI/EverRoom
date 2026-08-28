@@ -193,6 +193,8 @@ export function OverviewDashboard({
         })),
     entities: overviewProjection?.entities.length
       ? overviewProjection.entities.map((entity) => ({
+          id: entity.id,
+          text: entity.text,
           label: entity.text.split('：')[0] || entity.text,
           description: entity.data?.kind === 'entity'
             ? `${entity.data.entityKind} · ${entity.text} · ${entity.data.mentionCount}`
@@ -260,12 +262,17 @@ export function OverviewDashboard({
   const projectionTasks = projectionNextSteps.filter((item) =>
     item.data?.kind === 'next_step' && item.data.itemType === 'task'
     && !openTaskTitles.has(item.text.trim().toLocaleLowerCase())).slice(0, 3);
-  const generatedOverview = overviewProjection?.overview
-    .filter((item) => item.data?.kind !== 'overview' || item.data.aspect !== 'goal')
+  const overviewClaims = overviewProjection?.overview
+    .filter((item) => item.data?.kind !== 'overview' || item.data.aspect !== 'goal') ?? [];
+  const generatedOverview = overviewClaims
     .map((item) => item.text).join('\n').trim()
     || room.generatedContext?.overview?.trim() || '';
-  const projectedGoal = overviewProjection?.overview.find((item) =>
-    item.data?.kind === 'overview' && item.data.aspect === 'goal')?.text || room.brief.goal;
+  const goalClaim = overviewProjection?.overview.find((item) =>
+    item.data?.kind === 'overview' && item.data.aspect === 'goal');
+  const projectedGoal = goalClaim?.text || room.brief.goal;
+  const projectedNextStepIds = new Set(overviewProjection?.nextSteps.map((item) => item.id) ?? []);
+  const projectedTimelineIds = new Set(overviewProjection?.timeline.map((item) => item.id) ?? []);
+  const projectedTimelineText = new Map(overviewProjection?.timeline.map((item) => [item.id, item.text]) ?? []);
   const hasBrief = Boolean(room.brief.background.trim() || room.brief.goal.trim());
   const hasOverview = Boolean(generatedOverview || hasBrief);
 
@@ -404,24 +411,33 @@ export function OverviewDashboard({
             </button>
           </header>
           {hasOverview ? (
-            <><p data-room-citation-section="overview">{localizedUiText(generatedOverview || room.brief.background, t) || t('contextRoom:overviewDashboard.noBackgroundProvided')}</p><small data-room-citation-section="overview"><b>{t('contextRoom:overviewDashboard.goal')}</b>{localizedUiText(projectedGoal, t) || t('contextRoom:overviewDashboard.notSet')}</small></>
+            <>
+              <p data-room-citation-section="overview">
+                {overviewClaims.length
+                  ? overviewClaims.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
+                  : localizedUiText(generatedOverview || room.brief.background, t) || t('contextRoom:overviewDashboard.noBackgroundProvided')}
+              </p>
+              <small data-room-citation-section="overview"><b>{t('contextRoom:overviewDashboard.goal')}</b><span data-room-citation-claim-id={goalClaim?.id} data-room-citation-claim-text={goalClaim?.text}>{localizedUiText(projectedGoal, t) || t('contextRoom:overviewDashboard.notSet')}</span></small>
+            </>
           ) : (
             <PanelEmptyState compact icon={FileText} title={t('contextRoom:overviewDashboard.noOverviewYet')} description={t('contextRoom:overviewDashboard.theRoomBackgroundAndGoalsAppearHere')} />
           )}
         </article>
         <article>
           <header data-icon-tone="room"><BarChart3 aria-hidden="true" />{t('contextRoom:overviewDashboard.currentStatus')} <em>AI</em></header>
-          {dashboard.aiStatus.trim() ? <p data-room-citation-section="status">{localizedUiText(dashboard.aiStatus, t)}</p> : <PanelEmptyState compact icon={Info} title={t('contextRoom:overviewDashboard.noStatusSummaryYet')} description={t('contextRoom:overviewDashboard.thisStatusWillUpdateAsNewResourcesAnd')} />}
+          {dashboard.aiStatus.trim() ? <p data-room-citation-section="status">{overviewProjection?.status.length
+            ? overviewProjection.status.map((claim, index) => <span key={claim.id} data-room-citation-claim-id={claim.id} data-room-citation-claim-text={claim.text}>{index ? ' ' : ''}{localizedUiText(claim.text, t)}</span>)
+            : localizedUiText(dashboard.aiStatus, t)}</p> : <PanelEmptyState compact icon={Info} title={t('contextRoom:overviewDashboard.noStatusSummaryYet')} description={t('contextRoom:overviewDashboard.thisStatusWillUpdateAsNewResourcesAnd')} />}
         </article>
         <article>
           <header data-icon-tone="ai"><Zap aria-hidden="true" />{t('contextRoom:overviewDashboard.suggestedNextSteps')} <em>AI</em></header>
-          {dashboard.nextSteps.length ? <ul data-room-citation-section="next_steps">{dashboard.nextSteps.map((item) => <li key={item.id} title={[item.owner, item.dueAt].filter(Boolean).join(' · ')} data-item-type={item.itemType}><CornerDownRight aria-hidden="true" />{item.text}</li>)}</ul> : <PanelEmptyState compact icon={Zap} title={t('contextRoom:overviewDashboard.noNextStepSuggestionsYet')} description={t('contextRoom:overviewDashboard.suggestionsWillBeRegeneratedWhenNewContextEnters')} />}
+          {dashboard.nextSteps.length ? <ul data-room-citation-section="next_steps">{dashboard.nextSteps.map((item) => <li key={item.id} title={[item.owner, item.dueAt].filter(Boolean).join(' · ')} data-item-type={item.itemType} data-room-citation-claim-id={projectedNextStepIds.has(item.id) ? item.id : undefined} data-room-citation-claim-text={projectedNextStepIds.has(item.id) ? item.text : undefined}><CornerDownRight aria-hidden="true" />{item.text}</li>)}</ul> : <PanelEmptyState compact icon={Zap} title={t('contextRoom:overviewDashboard.noNextStepSuggestionsYet')} description={t('contextRoom:overviewDashboard.suggestionsWillBeRegeneratedWhenNewContextEnters')} />}
         </article>
         <article>
           <header data-icon-tone="memory"><Bookmark aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedMemoryEntities')}</header>
           {dashboard.entities.length ? (
             <div className="context-room-dashboard-entities" data-room-citation-section="entities">
-              {dashboard.entities.map((entity) => <span key={entity.label} title={entity.description}>{entity.label}</span>)}
+              {dashboard.entities.map((entity) => <span key={entity.label} title={entity.description} data-room-citation-claim-id={'id' in entity ? entity.id : undefined} data-room-citation-claim-text={'text' in entity ? entity.text : undefined}>{entity.label}</span>)}
             </div>
           ) : <PanelEmptyState compact icon={Network} title={t('contextRoom:overviewDashboard.noRelatedEntitiesYet')} description={t('contextRoom:overviewDashboard.detectedPeopleProjectsAndTopicsAppearHere')} />}
         </article>
@@ -484,7 +500,7 @@ export function OverviewDashboard({
         {visibleTimeline.length ? <ol data-room-citation-section="timeline">{visibleTimeline.map((item, index) => {
           // 相关资料按证据来源解析：云文档/上传文件可跳转，连接器来源等展示来源标签
           const materials = timelineMaterials(item.evidence);
-          return <li key={item.id}><i data-kind={item.kind} /><div><div><b>{localizedUiText(item.title, t)}</b>{item.time ? <time>{formatTimelineTime(item.time, locale)}</time> : null}</div>{item.description ? <p>{localizedUiText(item.description, t)}</p> : null}{materials.length ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedResources')} <span>{materials.length}</span></button>{expanded.has(index) ? <div className="context-room-timeline-materials">{materials.map((source) => {
+          return <li key={item.id} data-room-citation-claim-id={projectedTimelineIds.has(item.id) ? item.id : undefined} data-room-citation-claim-text={projectedTimelineText.get(item.id)}><i data-kind={item.kind} /><div><div><b>{localizedUiText(item.title, t)}</b>{item.time ? <time>{formatTimelineTime(item.time, locale)}</time> : null}</div>{item.description ? <p>{localizedUiText(item.description, t)}</p> : null}{materials.length ? <><button type="button" aria-expanded={expanded.has(index)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; })}><ChevronRight aria-hidden="true" />{t('contextRoom:overviewDashboard.relatedResources')} <span>{materials.length}</span></button>{expanded.has(index) ? <div className="context-room-timeline-materials">{materials.map((source) => {
             const resource = timelineResource(source, library.resources);
             const label = resource ? resource.name : source.sourceTitle || t(`contextRoom:memory.sourceKind.${source.sourceKind}`);
             return resource

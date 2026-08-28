@@ -7,6 +7,9 @@ import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   documents,
   entities as entitiesTable,
+  fileBlobs,
+  fileEntries,
+  fileVersions,
   gatewayMetadata,
   ingestEvents,
   jobs,
@@ -549,6 +552,15 @@ export class KnowledgeService {
         "knowledge evidence rescored with V2 rules",
       );
     }
+    // 户口实体补种：图谱重建/数据重置会让 auto Room 丢失 entity_id（direct_mention
+    // 通路随之瘫痪）。每次启动幂等补种；认领优先，让既有 mentions 直接种到 Room 头上。
+    const homeEntitiesBackfilled = this.entityRegistry.backfillRoomHomeEntities();
+    if (homeEntitiesBackfilled > 0) {
+      this.logger.info(
+        { event: "knowledge.room_entities.backfilled", rooms: homeEntitiesBackfilled },
+        "room home entities re-seeded after graph rebuild",
+      );
+    }
     const relationBackfill = this.relationRegistry.rebuildFromFacts();
     const pendingRelationDocuments = this.relationRegistry.pendingDocumentIndexes();
     if (pendingRelationDocuments.length > 0) {
@@ -810,23 +822,47 @@ export class KnowledgeService {
 
     const wanted = [...latestBySource.values()];
     if (wanted.length === 0) return [];
-    const fileRows = this.db.select().from(uploadedFiles)
-      .where(inArray(uploadedFiles.id, wanted.map((decision) => decision.sourceId)))
-      .all();
-    const filesById = new Map(fileRows.map((row) => [row.id, row]));
+    // 元信息双轨：统一导入管线（/v1/file-imports）只写 file_entries 目录，
+    // uploaded_files 仅为遗留字节通道；先旧表后目录表补齐，两边都缺才算不存在
+    const fileMetaById = new Map<string, { originalName: string; bytes: number; uploadedAt: Date }>();
+    const sourceIds = wanted.map((decision) => decision.sourceId);
+    for (const row of this.db.select().from(uploadedFiles)
+      .where(inArray(uploadedFiles.id, sourceIds)).all()) {
+      fileMetaById.set(row.id, { originalName: row.originalName, bytes: row.bytes, uploadedAt: row.createdAt });
+    }
+    const missingIds = sourceIds.filter((id) => !fileMetaById.has(id));
+    if (missingIds.length > 0) {
+      const catalogRows = this.db.select({
+        id: fileEntries.id,
+        originalName: fileEntries.originalName,
+        bytes: fileBlobs.byteSize,
+        createdAt: fileEntries.createdAt,
+      }).from(fileEntries)
+        .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+        .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+        .where(and(inArray(fileEntries.id, missingIds), isNull(fileEntries.deletedAt)))
+        .all();
+      for (const row of catalogRows) {
+        fileMetaById.set(row.id, {
+          originalName: row.originalName,
+          bytes: row.bytes ?? 0,
+          uploadedAt: row.createdAt,
+        });
+      }
+    }
     return wanted
       .map((decision) => {
-        const file = filesById.get(decision.sourceId);
+        const file = fileMetaById.get(decision.sourceId);
         if (!file) return null;
         return {
-          id: file.id,
+          id: decision.sourceId,
           originalName: file.originalName,
           bytes: file.bytes,
           title: decision.sourceTitle,
           status: decision.status,
           decidedBy: decision.decidedBy,
           confidence: decision.confidence ?? null,
-          uploadedAt: file.createdAt,
+          uploadedAt: file.uploadedAt,
         };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -834,11 +870,14 @@ export class KnowledgeService {
 
   /** 文件当前解析产物的 markdown（预览用）；无文件或未解析返回 null。 */
   readFileMarkdown(fileId: string): string | null {
+    // 双轨：目录文件（统一导入管线）走 catalog 解析产物
+    if (this.files.isCatalogEntry(fileId)) return this.files.catalogMarkdownOf(fileId);
     return this.files.markdownOf(fileId);
   }
 
-  /** 文件本体的绝对路径（主进程 reveal 用）；无文件返回 null。 */
+  /** 文件本体的绝对路径（主进程 reveal/open 用）；无文件返回 null。 */
   fileStoragePath(fileId: string): string | null {
+    if (this.files.isCatalogEntry(fileId)) return this.files.catalogStoragePathOf(fileId);
     return this.files.storagePathOf(fileId);
   }
 
@@ -2280,8 +2319,12 @@ export class KnowledgeService {
         .where(eq(documents.id, link.sourceId)).get()?.title ?? null;
     }
     if (link.sourceKind === "file") {
-      return this.db.select({ name: uploadedFiles.originalName }).from(uploadedFiles)
-        .where(eq(uploadedFiles.id, link.sourceId)).get()?.name ?? null;
+      const legacy = this.db.select({ name: uploadedFiles.originalName }).from(uploadedFiles)
+        .where(eq(uploadedFiles.id, link.sourceId)).get()?.name;
+      if (legacy) return legacy;
+      // 目录文件（统一导入管线）取登记行原名
+      return this.db.select({ name: fileEntries.originalName }).from(fileEntries)
+        .where(eq(fileEntries.id, link.sourceId)).get()?.name ?? null;
     }
     return this.db.select({ title: routeDecisions.sourceTitle }).from(routeDecisions)
       .where(and(
@@ -2754,7 +2797,7 @@ export class KnowledgeService {
   }
 
   createRule(input: {
-    matcher: { sourceTag?: string; filenamePrefix?: string; threadId?: string; titleKeyword?: string; creatorId?: string };
+    matcher: { sourceTag?: string; filenamePrefix?: string; threadId?: string; titleKeyword?: string; creatorId?: string; calendarId?: string; listId?: string };
     targetRoomId: string;
   }): { ok: true; id: string } | { ok: false; error: string } {
     const keys = Object.keys(input.matcher).filter((key) => {
@@ -2821,13 +2864,28 @@ export class KnowledgeService {
       if (decision.primaryRoomId) continue;
       const sourceTag = connectorSourceTagOf(decision.sourceId);
       if (matcher.sourceTag !== undefined && sourceTag !== matcher.sourceTag) continue;
+      // 日历级 calendarId：历史决策无 entrySignals 快照，从 markdown 组织者行近似推导
+      const calendarId = matcher.calendarId !== undefined
+        ? calendarOrganizerOf(decision.sourceMarkdown ?? "")
+        : undefined;
+      if (matcher.calendarId !== undefined && calendarId !== matcher.calendarId) continue;
+      // 清单级 listId：从 markdown frontmatter 的 list_id 确定性还原
+      const listId = matcher.listId !== undefined
+        ? todoListIdOf(decision.sourceMarkdown ?? "")
+        : undefined;
+      if (matcher.listId !== undefined && listId !== matcher.listId) continue;
       if (matcher.titleKeyword !== undefined && !(decision.sourceTitle ?? "").includes(matcher.titleKeyword)) continue;
       matched += 1;
+      const entrySignals = {
+        ...(sourceTag ? { sourceTag } : {}),
+        ...(calendarId ? { calendarId } : {}),
+        ...(listId ? { listId } : {}),
+      };
       const result = this.router.routeByRule({
         ref: { kind: decision.sourceKind, id: decision.sourceId, version: decision.sourceVersion },
         title: decision.sourceTitle ?? decision.sourceId,
         markdown: decision.sourceMarkdown ?? "",
-        ...(sourceTag ? { entrySignals: { sourceTag } } : {}),
+        ...(Object.keys(entrySignals).length > 0 ? { entrySignals } : {}),
       });
       if (!result) continue;
       replayed += 1;
@@ -3232,4 +3290,32 @@ export function connectorSourceTagOf(sourceId: string): string | null {
   if (!sourceId.startsWith("connector:")) return null;
   const [provider, connectionId] = sourceId.slice("connector:".length).split(":");
   return provider && connectionId ? `connector:${provider}:${connectionId}` : null;
+}
+
+/**
+ * 决策快照 markdown 的「组织者：」行 → 日历地址。回填用：历史决策没有
+ * entrySignals 快照，日历级 calendarId 只能从组织者行近似（自己日历上的
+ * 事件组织者即日历 id；新建决策走 ingest entrySignals 的精确 scope id）。
+ */
+export function calendarOrganizerOf(markdown: string): string | null {
+  const line = markdown.split("\n").find((candidate) => candidate.startsWith("组织者："));
+  if (!line) return null;
+  const bracket = line.match(/<([^>]+)>/);
+  const address = (bracket?.[1] ?? line.slice("组织者：".length)).trim();
+  return address.includes("@") ? address : null;
+}
+
+/**
+ * 决策快照 markdown frontmatter 的 `list_id:` → 待办清单 id。回填用：
+ * 历史决策没有 entrySignals 快照，清单级 listId 从渲染器写进 markdown 的
+ * frontmatter 确定性还原（connectorTodoToMarkdown 恒写 list_id 键）。
+ */
+export function todoListIdOf(markdown: string): string | null {
+  if (!markdown.startsWith("---")) return null;
+  const end = markdown.indexOf("\n---", 3);
+  if (end < 0) return null;
+  const line = markdown.slice(0, end).split("\n").find((candidate) => candidate.startsWith("list_id:"));
+  if (!line) return null;
+  const value = line.slice("list_id:".length).trim().replace(/^["']|["']$/g, "");
+  return value && value !== "null" ? value : null;
 }

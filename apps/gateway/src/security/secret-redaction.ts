@@ -46,6 +46,10 @@ export function redactSecrets<T>(value: T, key = "", seen = new WeakMap<object, 
     return error as T;
   }
   if (!value || typeof value !== "object") return value;
+  // Date 无可枚举自有属性，走下方重建分支会被摊平成 {}（所有响应的时间戳都经过
+  // preSerialization 调用这里，直接返回 drizzle 行的端点会因此把日期序列化成 {}，
+  // 前端 new Date({}) 得到 NaN）。时间戳不含敏感数据，原样透传。
+  if (value instanceof Date) return value;
   const cached = seen.get(value);
   if (cached) return cached as T;
   if (Array.isArray(value)) {

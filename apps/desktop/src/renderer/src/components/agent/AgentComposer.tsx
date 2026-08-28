@@ -59,6 +59,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary: string
   contextItems: Array<{ id: string; label: string; detail: string }>
   hasSelectedText: boolean
+  /** 有可提交的上下文（引用/选区）时空输入也允许发送；缺省视为无。 */
+  hasSubmittableContext?: boolean
   resetKey: number
   value: string
   active: boolean
@@ -80,6 +82,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   contextSummary,
   contextItems,
   hasSelectedText,
+  hasSubmittableContext = false,
   loading,
   localAgents,
   resetKey,
@@ -556,7 +559,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0) || loading}>
+            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
               <ArrowUp aria-hidden="true" />
             </button>
           )}

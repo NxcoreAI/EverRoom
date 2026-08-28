@@ -321,6 +321,8 @@ export function WorkspaceLayout({
                         onToggleTask={onToggleTask}
                         onUpdateRoom={onUpdateRoom}
                         onOpenObject={onOpenObject}
+                        selectedObject={selectedObject}
+                        onCloseObject={onCloseObject}
                       />
                     </div>
                     {index < panels.length - 1 ? (
@@ -352,9 +354,6 @@ export function WorkspaceLayout({
             />
             <WorkspaceContent
               room={room}
-              rooms={rooms}
-              panels={panels}
-              selectedObject={selectedObject}
               selectedResource={selectedResource}
               backendDocuments={backendDocuments}
               knowledgeFiles={knowledgeFiles}
@@ -363,9 +362,7 @@ export function WorkspaceLayout({
               documentFocusRequestId={documentFocusRequestId}
               onBackendDocumentChange={onBackendDocumentChange}
               onDeleteDocument={onDeleteDocument}
-              onOpenRoom={onOpenRoom}
               onMobileBack={() => setMobileContent(false)}
-              onCloseObject={onCloseObject}
               onUpdateRoom={onUpdateRoom}
             />
           </>

@@ -478,7 +478,11 @@ export class IngestService {
         const markdown = connectorTodoToMarkdown(row);
         return this.processNormalized({
           ...input,
-          entrySignals: input.entrySignals ?? { sourceTag: `connector:${row.service}` },
+          // 清单级 listId 进规则信号（与日历的 calendarId 对等）：规则可只匹配某个清单的待办。
+          entrySignals: input.entrySignals ?? {
+            sourceTag: `connector:${row.service}`,
+            ...(row.listId ? { listId: row.listId } : {}),
+          },
         }, {
           sourceKind: "todo",
           sourceId,
