@@ -192,6 +192,7 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "provisioningProfile": "build/embedded.provisionprofile",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
