@@ -48,7 +48,7 @@ export const DATA_TYPES: DataTypeDef[] = [
   {
     key: "office-doc",
     label: "Office 文档",
-    matchExtensions: ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf", "odt"],
+    matchExtensions: ["doc", "docx", "docm", "dot", "dotx", "dotm", "rtf"],
     defaults: { room: true, wiki: true, memory: true },
   },
   {

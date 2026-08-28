@@ -34,7 +34,7 @@ export const FILE_FORMAT_CAPABILITIES: readonly FileFormatCapability[] = [
   ...capability([".txt", ".text"], "document", "plain-text"),
   ...capability([".pdf"], "document", "pdf-unpdf"),
   ...capability([".docx", ".docm", ".dotx", ".dotm"], "office-doc", "docx-mammoth"),
-  ...capability([".doc", ".dot", ".rtf", ".odt"], "office-doc", "legacy-word-soffice"),
+  ...capability([".doc", ".dot", ".rtf"], "office-doc", "legacy-word-soffice"),
   ...capability([".xlsx", ".xlsm", ".xltx", ".xltm", ".xlam"], "spreadsheet", "xlsx-exceljs"),
   ...capability([".xls", ".xlsb", ".xlt", ".xla", ".ods"], "spreadsheet", "legacy-sheet-soffice"),
   ...capability([".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm", ".sldx", ".sldm"], "slides", "pptx-jszip"),
