@@ -26,6 +26,18 @@ for (const entry of ["lib", "prebuilds", "LICENSE", "package.json"]) {
   });
 }
 
+// pdfjs-dist 的代码被 tsup 内联进 bundle，但 pdf.ts 运行时用 createRequire 解析
+// package.json 定位 cmaps/standard_fonts 静态目录（CJK 非嵌入字体 + 标准字体），
+// 这两个目录必须以真实文件随包分发。
+const pdfjsTarget = "dist/node_modules/pdfjs-dist";
+await mkdir(pdfjsTarget, { recursive: true });
+for (const entry of ["cmaps", "standard_fonts", "package.json"]) {
+  await cp(`node_modules/pdfjs-dist/${entry}`, `${pdfjsTarget}/${entry}`, {
+    recursive: true,
+    force: true,
+  });
+}
+
 // unpdf uses @napi-rs/canvas only for server-side PDF rendering. Keep the
 // native package external to the bundle and ship the current platform build.
 const canvasTarget = "dist/node_modules/@napi-rs";
