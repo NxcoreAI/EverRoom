@@ -6,12 +6,39 @@ import {
   type StructuredTextItem,
 } from "unpdf";
 import { createCanvas, ImageData } from "@napi-rs/canvas";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { storeDocumentAsset } from "./assets.js";
 import type {
   CanonicalDocumentAsset,
   CanonicalDocumentBlock,
   CanonicalDocumentPage,
 } from "./types.js";
+
+// unpdf 默认把 cMapUrl 解析成 file:// URL，但它在 Node 里两条路径都走不通：
+// 内置 serverless 构建用 fetch（不支持 file://），官方 Node 构建又把 file://
+// 字符串直接交给 fs.readFile（只认 URL 对象）——结果是 CJK 非嵌入字体解析
+// 报 “Ensure that the cMapUrl API parameter is provided” 且文本抽取为空。
+// 这里指向本地 pdfjs-dist 静态目录的普通磁盘路径（fs 直读），解析/抽取/渲染共用。
+const requirePdfjs = createRequire(import.meta.url);
+const pdfjsRoot = dirname(requirePdfjs.resolve("pdfjs-dist/package.json"));
+export const PDFJS_STATIC_FILES = {
+  cMapUrl: `${join(pdfjsRoot, "cmaps")}/`,
+  cMapPacked: true,
+  standardFontDataUrl: `${join(pdfjsRoot, "standard_fonts")}/`,
+} as const;
+
+export type PdfDocument = Awaited<ReturnType<typeof getDocumentProxy>>;
+
+/** 打开文档并挂上 CJK 字体静态资源；调用方负责 destroy。 */
+export async function openPdfDocument(bytes: Uint8Array): Promise<PdfDocument> {
+  return getDocumentProxy(bytes, PDFJS_STATIC_FILES);
+}
+
+export async function destroyPdfDocument(pdf: PdfDocument): Promise<void> {
+  const destroy = (pdf as unknown as { destroy?: () => Promise<void> }).destroy;
+  if (destroy) await destroy.call(pdf);
+}
 
 interface PositionedTextItem extends StructuredTextItem {
   bbox: [number, number, number, number];
@@ -93,7 +120,7 @@ function lineBlocks(
 
 export async function parsePdfNative(buffer: Buffer): Promise<NativePdfResult> {
   const bytes = new Uint8Array(buffer);
-  const pdf = await getDocumentProxy(bytes);
+  const pdf = await openPdfDocument(bytes);
   try {
     const extracted = await extractTextItems(pdf);
     const pages: CanonicalDocumentPage[] = [];
@@ -121,17 +148,23 @@ export async function parsePdfNative(buffer: Buffer): Promise<NativePdfResult> {
     }
     return { pages, blocks, markdown: markdownPages.join("\n\n") };
   } finally {
-    const destroy = (pdf as unknown as { destroy?: () => Promise<void> }).destroy;
-    if (destroy) await destroy.call(pdf);
+    await destroyPdfDocument(pdf);
   }
 }
 
 export async function renderPdfPage(buffer: Buffer, pageNo: number, width = 1_800): Promise<Buffer> {
-  const rendered = await renderPageAsImage(new Uint8Array(buffer), pageNo, {
-    width,
-    canvasImport: () => import("@napi-rs/canvas"),
-  });
-  return Buffer.from(rendered);
+  // 先用静态资源参数开文档再传 proxy，绕开 renderPageAsImage(bytes) 内部
+  // 走 unpdf 默认（坏掉的 file:// cMapUrl）的问题。
+  const pdf = await openPdfDocument(new Uint8Array(buffer));
+  try {
+    const rendered = await renderPageAsImage(pdf, pageNo, {
+      width,
+      canvasImport: () => import("@napi-rs/canvas"),
+    });
+    return Buffer.from(rendered);
+  } finally {
+    await destroyPdfDocument(pdf);
+  }
 }
 
 export async function storePageAsset(
@@ -162,7 +195,7 @@ function rgbaOf(data: Uint8ClampedArray, channels: 1 | 3 | 4): Uint8ClampedArray
 }
 
 export async function extractPdfAssets(buffer: Buffer, dataDir: string): Promise<CanonicalDocumentAsset[]> {
-  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  const pdf = await openPdfDocument(new Uint8Array(buffer));
   const assets: CanonicalDocumentAsset[] = [];
   try {
     for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
@@ -188,7 +221,6 @@ export async function extractPdfAssets(buffer: Buffer, dataDir: string): Promise
     }
     return assets;
   } finally {
-    const destroy = (pdf as unknown as { destroy?: () => Promise<void> }).destroy;
-    if (destroy) await destroy.call(pdf);
+    await destroyPdfDocument(pdf);
   }
 }

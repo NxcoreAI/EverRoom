@@ -3,6 +3,7 @@ import TurndownService from "turndown";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { extractText } from "unpdf";
+import { destroyPdfDocument, openPdfDocument } from "../document-understanding/pdf.js";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -297,8 +298,11 @@ export async function legacySlidesToMarkdown(buffer: Buffer, filename: string): 
 
 /** PDF -> md: retain page boundaries so citations can refer back to the source. */
 export async function pdfToMarkdown(buffer: Buffer): Promise<string> {
+  // extractText 不透传文档参数，先带 CJK 静态资源开文档再传 proxy，
+  // 否则 CJK 非嵌入字体的文本抽取为空。
+  const pdf = await openPdfDocument(new Uint8Array(buffer));
   try {
-    const { text } = await extractText(new Uint8Array(buffer), { mergePages: false });
+    const { text } = await extractText(pdf, { mergePages: false });
     const pages = Array.isArray(text) ? text : [text];
     const markdown = pages
       .map((page, index) => ({ page: index + 1, text: page.trim() }))
@@ -310,6 +314,8 @@ export async function pdfToMarkdown(buffer: Buffer): Promise<string> {
   } catch (error) {
     if (error instanceof IngestError) throw error;
     throw new IngestError(`PDF 转换失败：${(error as Error).message}`, "convert_failed");
+  } finally {
+    await destroyPdfDocument(pdf);
   }
 }
 
