@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
-import axios from 'axios'
 
 import type { PrivateAudioAsset, SaasClient } from '../cloud/saas-client'
 import { AccountKeyringService } from '../security/account-keyring-service'
+import { createLoggedHttpClient } from '../network/http-client'
 
 const AUDIO_SCHEMA_VERSION = 1
 const AUDIO_CHUNK_SIZE = 4 * 1024 * 1024
+// OSS 直传/下载走共享工厂，外网请求由 Chromium 网络栈处理（系统代理）。
+const http = createLoggedHttpClient('saas-audio', { timeout: 5 * 60_000 })
 
 function hash(value: Buffer): string { return `sha256:${createHash('sha256').update(value).digest('hex')}` }
 
@@ -86,7 +88,7 @@ export class PrivateAudioSyncService {
         const plainSize = Math.min(AUDIO_CHUNK_SIZE, plain.length - plainOffset)
         plainOffset += plainSize
         const authorization = await this.client.authorizePrivateAudioChunk(asset.id, index, { fileSize: plainSize, contentHash: hash(chunk) })
-        await axios.put(authorization.uploadUrl, chunk, { headers: { ...authorization.headers, 'Content-Length': String(chunk.length) }, maxContentLength: Infinity, maxBodyLength: Infinity, timeout: 5 * 60_000 })
+        await http.put(authorization.uploadUrl, chunk, { headers: { ...authorization.headers, 'Content-Length': String(chunk.length) }, maxContentLength: Infinity, maxBodyLength: Infinity, timeout: 5 * 60_000 })
         await this.client.completePrivateAudioChunk(asset.id, index)
       }
       return await this.client.completePrivateAudioChunks(asset.id)
@@ -112,7 +114,7 @@ export class PrivateAudioSyncService {
     const chunked = !asset.objectKey
     for (let index = 0; index < count; index += 1) {
       const authorization = chunked ? await this.client.authorizePrivateAudioChunkDownload(asset.id, index) : await this.client.authorizePrivateAudioDownload(asset.id)
-      const response = await axios.get<ArrayBuffer>(authorization.downloadUrl, { responseType: 'arraybuffer', timeout: 5 * 60_000 })
+      const response = await http.get<ArrayBuffer>(authorization.downloadUrl, { responseType: 'arraybuffer', timeout: 5 * 60_000 })
       chunks.push(Buffer.from(response.data))
     }
     const plain = Buffer.concat(chunks)
