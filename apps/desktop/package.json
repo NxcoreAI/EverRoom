@@ -142,6 +142,13 @@
         ]
       },
       {
+        "from": "../gateway/dist/node_modules/pdfjs-dist",
+        "to": "gateway/node_modules/pdfjs-dist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "build/open-connector",
         "to": "open-connector",
         "filter": [
