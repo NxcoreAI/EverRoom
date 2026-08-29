@@ -12,6 +12,11 @@ interface Envelope {
 
 const AAD = Buffer.from("everroom-secret-store:v1");
 
+// 固定主密钥（64 hex = 32 字节）：credentials.enc 不再依赖 OS Keychain/safeStorage
+// 解锁，开发与无头环境零交互。换用独立密钥时设 NXCORE_SECRET_STORE_KEY
+// （环境变量或 gateway 的 .env）即可覆盖。
+export const DEFAULT_SECRET_STORE_MASTER_KEY = "56de1bf2447476c62f980f8ddbcb4937a48ba752e59cf1c4ba6f33d75d4691c1";
+
 function parseKey(raw: string | undefined): Buffer | null {
   if (!raw?.trim()) return null;
   const value = raw.trim();

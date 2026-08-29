@@ -121,7 +121,7 @@ import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import type { RuntimeConfig } from "../runtime-config.js";
 import { OpenAiCompatibleVlmClient } from "../modules/perception/vlm-client.js";
 import { isPrimaryConfigured as isRuntimePrimaryConfigured } from "../modules/runtime-config/validate.js";
-import { SecretStore } from "../security/secret-store.js";
+import { DEFAULT_SECRET_STORE_MASTER_KEY, SecretStore } from "../security/secret-store.js";
 import { redactSecrets, redactText } from "../security/secret-redaction.js";
 import { ExternalCallBudgetService } from "../modules/external-calls/service.js";
 import { externalCallRoutes } from "../modules/external-calls/routes.js";
@@ -276,7 +276,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
 
   const { db, sqlite } = createDatabase(config.databasePath, config.migrationsDir);
   app.decorate("db", db);
-  const secretStore = new SecretStore(join(config.dataDir, "security", "credentials.enc"));
+  const secretStore = new SecretStore(
+    join(config.dataDir, "security", "credentials.enc"),
+    // 空白（.env.example 复制来的空值）视为未设置，回落到内置默认。
+    process.env.NXCORE_SECRET_STORE_KEY?.trim() || DEFAULT_SECRET_STORE_MASTER_KEY,
+  );
   const mcpConfigManager = new McpConfigManager(config, secretStore);
   const externalCalls = new ExternalCallBudgetService(sqlite, undefined, {
     userId: config.externalCallUserId ?? config.cliConnectorSyncOwnerId ?? "local-user",

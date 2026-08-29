@@ -55,7 +55,7 @@ import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
 import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
-import { loadOrCreateGatewaySecretKey, shouldUnlockGatewaySecrets } from './security/gateway-secret-key'
+import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
@@ -2244,14 +2244,9 @@ function registerAccountHandlers(
   client: SaasClient,
   onAccountChanged?: (account: CloudAccountStatus) => void,
   beforeLogout?: () => Promise<void>,
-  afterAuthenticated?: () => Promise<void>,
 ): void {
   handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(async () => {
-    const userInitiated = refreshSubscription === true
-    const account = await syncAccountMonitoring(client.status(userInitiated))
-    if (shouldUnlockGatewaySecrets(account.authenticated, userInitiated)) {
-      void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
-    }
+    const account = await syncAccountMonitoring(client.status(refreshSubscription === true))
     onAccountChanged?.(account)
     return account
   }))
@@ -2266,7 +2261,6 @@ function registerAccountHandlers(
     const password = value.password
     return rateLimitAware(async () => {
       const account = await syncAccountMonitoring(client.login(identifier, password))
-      if (account.authenticated) void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
       onAccountChanged?.(account)
       return account
     })
@@ -2283,7 +2277,6 @@ function registerAccountHandlers(
     const invitationCode=typeof value.invitationCode==='string'?value.invitationCode:undefined
     return rateLimitAware(async () => {
       const account = await syncAccountMonitoring(client.loginWithOidc(provider,invitationCode))
-      if (account.authenticated) void afterAuthenticated?.().catch((error) => console.warn('Gateway secrets stay locked.', error))
       onAccountChanged?.(account)
       return account
     })
@@ -2596,8 +2589,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
-  const gatewaySecretStoreKeyPath = join(dataDirectory, 'security', 'gateway-master-key.json')
-  let gatewaySecretStoreKey = await loadOrCreateGatewaySecretKey(gatewaySecretStoreKeyPath)
+  // 主密钥改内置（gateway 端默认值），清掉 Keychain 时代的遗留文件再拉起网关。
+  await cleanupLegacyGatewaySecretKey(join(dataDirectory, 'security'))
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
   await documentAssets.initialize().catch((error) => {
@@ -2729,7 +2722,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             NXCORE_NOTIFICATION_BRIDGE_TOKEN: notificationBridge.token,
           }
           : {}),
-        ...(gatewaySecretStoreKey ? { NXCORE_SECRET_STORE_KEY: gatewaySecretStoreKey } : {}),
         ...(ooCliBridge ? ooCliBridge.environment() : {}),
         NXCORE_CLI_CONNECTOR_AGENT_MODE: ooCliBridge ? 'local' : 'direct',
         NXCORE_CLI_CONNECTOR_SYNC_ENABLED: ooCliBridge ? 'true' : 'false',
@@ -2943,13 +2935,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         transcriptionProcessingCoordinator?.wake()
         void macosPushNotifications?.registerAuthenticatedDevice()
       }
-    }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve(), async () => {
-      if (gatewaySecretStoreKey || process.platform !== 'darwin') return
-      gatewaySecretStoreKey = await loadOrCreateGatewaySecretKey(gatewaySecretStoreKeyPath, true)
-      if (!gatewaySecretStoreKey || !gatewaySupervisor) return
-      await gatewaySupervisor.shutdown()
-      await gatewaySupervisor.start()
-    })
+    }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve())
     registerRuntimeConfigHandlers(saasClient)
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync))
