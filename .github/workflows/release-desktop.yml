@@ -60,6 +60,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          # Include the Nango submodule lockfile: the pnpm store is shared with
+          # the staging `pnpm install` in prepare-nango-runtime.mjs, whose deps
+          # are not covered by the root lockfile. Without this, the store cache
+          # key never changes when those deps change, the exact-key hit skips
+          # the post-job save, and the staging deps re-download every run.
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            apps/gateway/src/modules/connector/package-lock.json
 
       - name: Validate release tag
         shell: bash
@@ -81,6 +89,23 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Tarball cache for the `npm ci` runs inside prepare-nango-runtime.mjs
+      # (Nango submodule) and prepare-genoffice-runtime.mjs (genoffice
+      # submodule). The pnpm store above only covers pnpm installs.
+      - name: Cache npm tarballs for submodule builds
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/gateway/src/modules/connector/package-lock.json', 'apps/desktop/vendor/genoffice/package-lock.json') }}
+          restore-keys: npm-tarballs-${{ runner.os }}-
+
+      # prepare-genoffice-runtime.mjs builds the Rust xlsx sidecar (cargo
+      # build --release); rust-cache covers the registry and target dir.
+      - name: Cache Rust build for xlsx sidecar
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: apps/desktop/vendor/genoffice/apps/sheets/native/xlsx-engine
 
       - name: Check types
         run: pnpm typecheck
@@ -121,9 +146,22 @@ jobs:
       - name: Package macOS arm64
         shell: bash
         run: |
+          # osx-sign walks the whole .app with unbounded concurrency; default
+          # 256 fd limit on runners causes EMFILE on the bundled node_modules.
+          ulimit -n 10240
           args=()
           if [[ -n "$CSC_LINK" ]]; then
             args+=(--config.mac.notarize=true --config.mac.hardenedRuntime=true)
+            profile="apps/desktop/build/embedded.provisionprofile"
+            if [[ -f "$profile" ]]; then
+              # Absolute path: osx-sign passes it verbatim to `security cms`,
+              # which resolves relative paths against its own cwd.
+              args+=("--config.mac.provisioningProfile=$(pwd)/$profile")
+            else
+              # Without a profile, aps-environment is an unauthorized restricted
+              # entitlement and AMFI kills the app at launch. Ship without push.
+              /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.aps-environment' apps/desktop/build/entitlements.mac.plist
+            fi
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
