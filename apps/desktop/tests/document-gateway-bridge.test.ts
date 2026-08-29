@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { DocumentEventFrame, DocumentOperation, DocumentOperationSummary } from '@nxcore/agent-contract'
 import {
@@ -271,4 +271,56 @@ describe('DocumentGatewayBridge CRUD', () => {
       type: 'document.changed',
     } })).toBeNull()
   })
+})
+
+describe('DocumentGatewayBridge 订阅就绪韧性', () => {
+  it('网关未就绪时订阅不抛未捕获异常，恢复后自动补连', async () => {
+    // 复现线上路径：gateway 重启窗口内 getConnection 抛“尚未就绪”，
+    // 旧实现直接在重连定时器回调里抛成 Uncaught Exception。
+    const server = createServer()
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const { WebSocketServer } = await import('ws')
+    const wss = new WebSocketServer({ server })
+    const opened = new Promise<void>((resolve) => wss.on('connection', () => resolve()))
+
+    const connection = {
+      pid: 1,
+      baseUrl: `http://127.0.0.1:${String(port)}`,
+      token: 'test-token',
+      version: 'test',
+    }
+    let ready = false
+    const ensureConnection = vi.fn(async () => {
+      ready = true
+      return connection
+    })
+    const bridge = new DocumentGatewayBridge({
+      getConnection: () => {
+        if (!ready) throw new Error('NxCore Gateway 尚未就绪。')
+        return connection
+      },
+      ensureConnection,
+    } as unknown as GatewaySupervisor)
+
+    const sent: Array<[string, unknown]> = []
+    const contents = {
+      id: 7,
+      isDestroyed: () => false,
+      send: (channel: string, payload: unknown) => sent.push([channel, payload]),
+      once: () => undefined,
+    } as never
+
+    expect(() => bridge.subscribe(contents, 'room-reconnect')).not.toThrow()
+    // 服务端 connection 与客户端 open 的先后不确定，轮询等 renderer 收到基线刷新信号。
+    await vi.waitFor(() => {
+      expect(sent.some(([channel]) => channel === 'documents:ready')).toBe(true)
+    }, { timeout: 3_000 })
+    expect(ensureConnection).toHaveBeenCalled()
+
+    bridge.dispose()
+    await opened
+    await new Promise<void>((resolve) => wss.close(() => resolve()))
+  }, 10_000)
 })

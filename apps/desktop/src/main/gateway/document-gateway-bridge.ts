@@ -35,7 +35,7 @@ export const DOCUMENT_READY_CHANNEL = 'documents:ready'
 
 interface Subscription {
   roomId: string
-  socket: WebSocket
+  socket: WebSocket | null
   closed: boolean
   reconnectTimer: NodeJS.Timeout | null
 }
@@ -260,11 +260,18 @@ export class DocumentGatewayBridge {
     if (subscriptions.has(roomId)) return
     const subscription: Subscription = {
       roomId,
-      socket: this.openSocket(contents, roomId),
+      socket: null,
       closed: false,
       reconnectTimer: null,
     }
     subscriptions.set(roomId, subscription)
+    try {
+      subscription.socket = this.openSocket(contents, roomId)
+    } catch {
+      // 网关尚未就绪（首次进入页面早于子进程就绪）：保留订阅，驱动拉起，起来后由重连补上。
+      void this.supervisor.ensureConnection().catch(() => undefined)
+      this.scheduleReconnect(contents, roomId, 750)
+    }
   }
 
   unsubscribe(contentsId: number, roomId?: string): void {
@@ -274,7 +281,7 @@ export class DocumentGatewayBridge {
     for (const subscription of targets) {
       subscription.closed = true
       if (subscription.reconnectTimer) clearTimeout(subscription.reconnectTimer)
-      subscription.socket.close()
+      subscription.socket?.close()
       subscriptions.delete(subscription.roomId)
     }
     if (subscriptions.size === 0) this.subscriptions.delete(contentsId)
@@ -311,16 +318,28 @@ export class DocumentGatewayBridge {
       }
     })
     socket.on('close', () => {
-      const subscription = this.subscriptions.get(contents.id)?.get(roomId)
-      if (!subscription || subscription.closed || contents.isDestroyed()) return
-      subscription.reconnectTimer = setTimeout(() => {
-        const current = this.subscriptions.get(contents.id)?.get(roomId)
-        if (!current || current.closed || contents.isDestroyed()) return
-        current.socket = this.openSocket(contents, roomId)
-      }, 750)
+      this.scheduleReconnect(contents, roomId, 750)
     })
     socket.on('error', () => undefined)
     return socket
+  }
+
+  /** 网关重启窗口内 getConnection 会抛“尚未就绪”；兜住并驱动 supervisor 拉起网关，订阅保留等下一轮。 */
+  private scheduleReconnect(contents: WebContents, roomId: string, delayMs: number): void {
+    const subscription = this.subscriptions.get(contents.id)?.get(roomId)
+    if (!subscription || subscription.closed || contents.isDestroyed()) return
+    if (subscription.reconnectTimer) clearTimeout(subscription.reconnectTimer)
+    subscription.reconnectTimer = setTimeout(() => {
+      const current = this.subscriptions.get(contents.id)?.get(roomId)
+      if (!current || current.closed || contents.isDestroyed()) return
+      try {
+        current.socket = this.openSocket(contents, roomId)
+        current.reconnectTimer = null
+      } catch {
+        void this.supervisor.ensureConnection().catch(() => undefined)
+        this.scheduleReconnect(contents, roomId, 750)
+      }
+    }, delayMs)
   }
 
   private async request<T>(path: string, init?: RequestInit, retryWhenUnavailable = false): Promise<T> {

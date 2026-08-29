@@ -126,6 +126,9 @@ export class AgentStatusReporter {
       if (error instanceof SaasRequestError && error.status === 404) {
         this.endpointUnavailable = true
         this.endpointRetryAt = Date.now() + 60_000
+      } else if (error instanceof SaasRequestError && error.status !== 401 && error.status !== 403) {
+        // 422 等校验拒绝以前被静默吞掉，排障时看不到服务器给的原因，这里留一条线索。
+        console.warn(`[desktop/agent-status] heartbeat rejected | status=${String(error.status)} message=${error.message}`)
       }
     }).finally(() => {
       this.reportInFlight = null

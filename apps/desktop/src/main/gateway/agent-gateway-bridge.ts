@@ -41,7 +41,7 @@ function isRecoverableConnectionError(error: unknown): boolean {
 
 interface Subscription {
   sessionId: string
-  socket: WebSocket
+  socket: WebSocket | null
   closed: boolean
   reconnectTimer: NodeJS.Timeout | null
 }
@@ -223,12 +223,19 @@ export class AgentGatewayBridge {
     this.unsubscribe(contents.id)
     const subscription: Subscription = {
       sessionId,
-      socket: this.openSocket(contents, sessionId),
+      socket: null,
       closed: false,
       reconnectTimer: null,
     }
     this.subscriptions.set(contents.id, subscription)
     this.contentsLifecycle.observe(contents, () => this.unsubscribe(contents.id))
+    try {
+      subscription.socket = this.openSocket(contents, sessionId)
+    } catch {
+      // 网关尚未就绪：保留订阅，驱动拉起，起来后由重连补上。
+      void this.supervisor.ensureConnection().catch(() => undefined)
+      this.scheduleSessionReconnect(contents, sessionId, 750)
+    }
   }
 
   unsubscribe(contentsId: number): void {
@@ -236,7 +243,7 @@ export class AgentGatewayBridge {
     if (!subscription) return
     subscription.closed = true
     if (subscription.reconnectTimer) clearTimeout(subscription.reconnectTimer)
-    subscription.socket.close()
+    subscription.socket?.close()
     this.subscriptions.delete(contentsId)
   }
 
@@ -277,11 +284,7 @@ export class AgentGatewayBridge {
       }
     })
     socket.on('close', () => {
-      if (watch.closed || !this.runWatches.has(runId)) return
-      watch.reconnectTimer = setTimeout(() => {
-        if (watch.closed || !this.runWatches.has(runId)) return
-        watch.socket = this.openRunWatch(runId, watch)
-      }, 750)
+      this.scheduleRunWatchReconnect(runId, 750)
     })
     socket.on('error', () => undefined)
     return socket
@@ -294,6 +297,24 @@ export class AgentGatewayBridge {
     if (watch.reconnectTimer) clearTimeout(watch.reconnectTimer)
     watch.socket?.close()
     this.runWatches.delete(runId)
+  }
+
+  /** 网关重启窗口内 getConnection 会抛“尚未就绪”；兜住并驱动 supervisor 拉起网关，watch 保留等下一轮。 */
+  private scheduleRunWatchReconnect(runId: string, delayMs: number): void {
+    const watch = this.runWatches.get(runId)
+    if (!watch || watch.closed) return
+    if (watch.reconnectTimer) clearTimeout(watch.reconnectTimer)
+    watch.reconnectTimer = setTimeout(() => {
+      const current = this.runWatches.get(runId)
+      if (!current || current.closed) return
+      try {
+        current.socket = this.openRunWatch(runId, current)
+        current.reconnectTimer = null
+      } catch {
+        void this.supervisor.ensureConnection().catch(() => undefined)
+        this.scheduleRunWatchReconnect(runId, 750)
+      }
+    }, delayMs)
   }
 
   private openSocket(contents: WebContents, sessionId: string): WebSocket {
@@ -318,16 +339,28 @@ export class AgentGatewayBridge {
       }
     })
     socket.on('close', () => {
-      const subscription = this.subscriptions.get(contents.id)
-      if (!subscription || subscription.closed || contents.isDestroyed()) return
-      subscription.reconnectTimer = setTimeout(() => {
-        const current = this.subscriptions.get(contents.id)
-        if (!current || current.closed || contents.isDestroyed()) return
-        current.socket = this.openSocket(contents, sessionId)
-      }, 750)
+      this.scheduleSessionReconnect(contents, sessionId, 750)
     })
     socket.on('error', () => undefined)
     return socket
+  }
+
+  /** 网关重启窗口内 getConnection 会抛“尚未就绪”；兜住并驱动 supervisor 拉起网关，订阅保留等下一轮。 */
+  private scheduleSessionReconnect(contents: WebContents, sessionId: string, delayMs: number): void {
+    const subscription = this.subscriptions.get(contents.id)
+    if (!subscription || subscription.closed || contents.isDestroyed()) return
+    if (subscription.reconnectTimer) clearTimeout(subscription.reconnectTimer)
+    subscription.reconnectTimer = setTimeout(() => {
+      const current = this.subscriptions.get(contents.id)
+      if (!current || current.closed || contents.isDestroyed()) return
+      try {
+        current.socket = this.openSocket(contents, sessionId)
+        current.reconnectTimer = null
+      } catch {
+        void this.supervisor.ensureConnection().catch(() => undefined)
+        this.scheduleSessionReconnect(contents, sessionId, 750)
+      }
+    }, delayMs)
   }
 
   private async request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {

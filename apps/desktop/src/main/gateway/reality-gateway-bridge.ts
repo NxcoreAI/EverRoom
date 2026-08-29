@@ -36,7 +36,7 @@ function isRecoverableConnectionError(error: unknown): boolean {
 }
 
 interface Subscription {
-  socket: WebSocket
+  socket: WebSocket | null
   closed: boolean
   reconnectTimer: NodeJS.Timeout | null
 }
@@ -133,12 +133,19 @@ export class RealityGatewayBridge {
   subscribe(contents: WebContents): void {
     this.unsubscribe(contents.id)
     const subscription: Subscription = {
-      socket: this.openSocket(contents),
+      socket: null,
       closed: false,
       reconnectTimer: null,
     }
     this.subscriptions.set(contents.id, subscription)
     this.contentsLifecycle.observe(contents, () => this.unsubscribe(contents.id))
+    try {
+      subscription.socket = this.openSocket(contents)
+    } catch {
+      // 网关尚未就绪：保留订阅，驱动拉起，起来后由重连补上。
+      void this.supervisor.ensureConnection().catch(() => undefined)
+      this.scheduleReconnect(contents, 1_000)
+    }
   }
 
   unsubscribe(contentsId: number): void {
@@ -146,7 +153,7 @@ export class RealityGatewayBridge {
     if (!subscription) return
     subscription.closed = true
     if (subscription.reconnectTimer) clearTimeout(subscription.reconnectTimer)
-    subscription.socket.close()
+    subscription.socket?.close()
     this.subscriptions.delete(contentsId)
   }
 
@@ -170,16 +177,28 @@ export class RealityGatewayBridge {
       }
     })
     socket.on('close', () => {
-      const subscription = this.subscriptions.get(contents.id)
-      if (!subscription || subscription.closed || contents.isDestroyed()) return
-      subscription.reconnectTimer = setTimeout(() => {
-        const current = this.subscriptions.get(contents.id)
-        if (!current || current.closed || contents.isDestroyed()) return
-        current.socket = this.openSocket(contents)
-      }, 1_000)
+      this.scheduleReconnect(contents, 1_000)
     })
     socket.on('error', () => undefined)
     return socket
+  }
+
+  /** 网关重启窗口内 getConnection 会抛“尚未就绪”；兜住并驱动 supervisor 拉起网关，订阅保留等下一轮。 */
+  private scheduleReconnect(contents: WebContents, delayMs: number): void {
+    const subscription = this.subscriptions.get(contents.id)
+    if (!subscription || subscription.closed || contents.isDestroyed()) return
+    if (subscription.reconnectTimer) clearTimeout(subscription.reconnectTimer)
+    subscription.reconnectTimer = setTimeout(() => {
+      const current = this.subscriptions.get(contents.id)
+      if (!current || current.closed || contents.isDestroyed()) return
+      try {
+        current.socket = this.openSocket(contents)
+        current.reconnectTimer = null
+      } catch {
+        void this.supervisor.ensureConnection().catch(() => undefined)
+        this.scheduleReconnect(contents, delayMs)
+      }
+    }, delayMs)
   }
 
   private asrInput(job: AsrJob): ApplyRealityAsrInput {

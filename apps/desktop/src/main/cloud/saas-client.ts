@@ -380,6 +380,17 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
   }
 }
 
+/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent 字段，避免 strict 校验整包 422。 */
+function saasCompatibleSession(
+  session: AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>,
+): AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'> {
+  const { activeAgentId: _activeAgentId, ...rest } = session
+  return {
+    ...rest,
+    messages: session.messages.map(({ authorAgentId: _authorAgentId, ...message }) => message),
+  }
+}
+
 export class SaasClient {
   private accessToken: string | null = null
   private account: LoginResult | null = null
@@ -450,7 +461,12 @@ export class SaasClient {
   }): Promise<boolean> {
     await this.initialize()
     if (!this.account || !this.accessToken) return false
-    await this.request('/app/agent/status', { method: 'PUT', data: input })
+    await this.request('/app/agent/status', { method: 'PUT', data: {
+      ...input,
+      // SaaS 侧 schema 尚未跟上 agent-contract 的多 Agent 字段，strict 校验会把
+      // 整包 422 拒掉（心跳持续失败）；上行前剥掉。
+      ...(input.sessions ? { sessions: input.sessions.map(saasCompatibleSession) } : {}),
+    } })
     return true
   }
 

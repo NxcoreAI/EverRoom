@@ -83,6 +83,7 @@ export class GatewaySupervisor {
   private child: ChildProcessWithoutNullStreams | null = null
   private connection: GatewayConnection | null = null
   private connectionRecovery: Promise<GatewayConnection> | null = null
+  private startup: Promise<GatewayConnection> | null = null
   private stopping = false
   private lastError: string | null = null
 
@@ -109,7 +110,15 @@ export class GatewaySupervisor {
 
   async start(): Promise<GatewayConnection> {
     if (this.connection) return this.connection
-    if (this.child) throw new Error(`${this.serviceLabel()} is already starting`)
+    // 启动窗口内的并发调用（如登录钩子的 ensureConnection）共享同一个在途启动，
+    // 而不是抛 "already starting" —— 网关冷启动要数秒，用户此刻登录不应失败。
+    this.startup ??= this.launchGateway().finally(() => {
+      this.startup = null
+    })
+    return this.startup
+  }
+
+  private async launchGateway(): Promise<GatewayConnection> {
     this.lastError = null
 
     const gatewayDirectory = app.isPackaged
