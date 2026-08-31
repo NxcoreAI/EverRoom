@@ -95,6 +95,70 @@ describe('RoomDuplicateService', () => {
     sqlite.close()
   })
 
+
+  it('bridges containment-only name pairs (Java vs JAVA Space) into the candidate pool', async () => {
+    const { db, duplicates, roomsService, sqlite } = await harness()
+    // 零证据空壳对：四条内容通道全零，名字 Dice 0.545——靠包含关系（java ⊂ javaspace）保底 0.75 进池。
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-java', title: 'Java', kind: '主题', data: { id: 'room-java', title: 'Java' } },
+        { id: 'room-space', title: 'JAVA Space', kind: '主题', data: { id: 'room-space', title: 'JAVA Space' } },
+      ],
+      deletedRooms: [],
+    })
+
+    expect(await duplicates.rebuildCandidates()).toBe(1)
+    const candidate = duplicates.listCandidates('open')[0]
+    expect(candidate).toMatchObject({
+      roomAId: 'room-java',
+      roomBId: 'room-space',
+      nameScore: 0.75,
+      confidence: 'pending',
+    })
+    expect(candidate?.reasons.some((reason) => reason.includes('包含关系'))).toBe(true)
+    sqlite.close()
+  })
+
+  it('does not boost two-character containment (ai vs trainer stays out)', async () => {
+    const { duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-ai', title: 'ai', kind: '主题', data: { id: 'room-ai', title: 'ai' } },
+        { id: 'room-trainer', title: 'trainer', kind: '主题', data: { id: 'room-trainer', title: 'trainer' } },
+      ],
+      deletedRooms: [],
+    })
+    expect(await duplicates.rebuildCandidates()).toBe(0)
+    sqlite.close()
+  })
+
+  it('keeps LLM-rejected containment pairs as pending for user review (negative cache stays soft)', async () => {
+    // JavaScript ⊃ java：包含命中。两个 service 共用同一库：
+    // ① LLM 判 different → 降级 pending 入池（不再出局）；
+    // ② 换一个判 same 的 LLM rebuild → 负缓存复用旧 different 判定时，仍保持 pending。
+    const base = await harness()
+    const reject = new RoomDuplicateService(base.db, {
+      judgeIdentity: async () => ({ same: false, reason: 'JavaScript 与 Java 是不同技术' }),
+    })
+    base.roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-a', title: 'Java', kind: '主题', data: { id: 'room-a', title: 'Java' } },
+        { id: 'room-b', title: 'JavaScript', kind: '主题', data: { id: 'room-b', title: 'JavaScript' } },
+      ],
+      deletedRooms: [],
+    })
+    expect(await reject.rebuildCandidates()).toBe(1)
+    const rejected = reject.listCandidates('open')[0]
+    expect(rejected).toMatchObject({ confidence: 'pending' })
+    expect(rejected?.reasons.some((reason) => reason.includes('仍建议人工确认'))).toBe(true)
+    const accept = new RoomDuplicateService(base.db, {
+      judgeIdentity: async () => ({ same: true, reason: '同一主题' }),
+    })
+    expect(await accept.rebuildCandidates()).toBe(1)
+    expect(accept.listCandidates('open')[0]).toMatchObject({ confidence: 'pending' })
+    base.sqlite.close()
+  })
+
   it('scores trusted evidence overlap and persists a duplicate candidate', async () => {
     const { db, duplicates, roomsService, sqlite } = await harness()
     roomsService.saveSnapshot({
@@ -369,6 +433,28 @@ describe('RoomDuplicateService', () => {
       { id: 'memory-source', content: '来源记忆' },
     ])
     expect(roomsService.resolveRoomId('room-source')).toBe('room-target')
+    sqlite.close()
+  })
+
+  it('returns the settled operation when startMerge waits', async () => {
+    const { duplicates, roomsService, sqlite } = await harness()
+    roomsService.saveSnapshot({
+      rooms: [
+        { id: 'room-w1', title: '等待合并 A', kind: '主题', data: { id: 'room-w1', title: '等待合并 A' } },
+        { id: 'room-w2', title: '等待合并 A', kind: '主题', data: { id: 'room-w2', title: '等待合并 A' } },
+      ],
+      deletedRooms: [],
+    })
+    const preview = await duplicates.previewMerge('room-w1', 'room-w2')
+    const result = await duplicates.startMerge({
+      sourceRoomId: 'room-w1',
+      targetRoomId: 'room-w2',
+      previewHash: preview.previewHash,
+      idempotencyKey: 'merge-wait-key',
+      wait: true,
+    })
+    // wait=true：请求内等待本地事务完成，直接返回终态，调用方无需轮询。
+    expect(result).toMatchObject({ status: 'completed', progress: 100, commitReached: true })
     sqlite.close()
   })
 })

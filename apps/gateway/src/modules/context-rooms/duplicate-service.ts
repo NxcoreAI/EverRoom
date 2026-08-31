@@ -280,9 +280,37 @@ export class RoomDuplicateService {
     for (const left of namesA) for (const right of namesB) {
       const normalizedLeft = normalizeEntityName(left);
       const normalizedRight = normalizeEntityName(right);
-      score = Math.max(score, normalizedLeft === normalizedRight ? 1 : bigramDiceSimilarity(normalizedLeft, normalizedRight));
+      score = Math.max(score, normalizedLeft === normalizedRight
+        ? 1
+        : this.namePairScore(normalizedLeft, normalizedRight));
     }
     return round(score);
+  }
+
+  /**
+   * 名字对得分：bigram Dice + 包含关系保底。Dice 对「短词 vs 短词+后缀」系统性
+   * 低估（java/javaspace = 0.545 < 0.6 门槛），而这在中文命名里极常见；包含
+   * 关系视为强线索保底 0.75（较短侧 ≥3 字符，防 2 字符噪音）。误伤由进池后的
+   * LLM 同一性终审与用户确认兜底（javascript ≠ java 由 LLM 判 different）。
+   */
+  private namePairScore(normalizedLeft: string, normalizedRight: string): number {
+    const dice = bigramDiceSimilarity(normalizedLeft, normalizedRight);
+    const shorter = normalizedLeft.length <= normalizedRight.length ? normalizedLeft : normalizedRight;
+    const longer = shorter === normalizedLeft ? normalizedRight : normalizedLeft;
+    if (shorter.length >= 3 && longer.includes(shorter)) return Math.max(dice, 0.75);
+    return dice;
+  }
+
+  /** 标题/别名间是否存在规范化包含关系（reasons 文案与 LLM 触发用）。 */
+  private namesContained(a: { context: ContextRow; aliases: string[] }, b: { context: ContextRow; aliases: string[] }): boolean {
+    const namesA = [a.context.title, ...a.aliases].map(normalizeEntityName);
+    const namesB = [b.context.title, ...b.aliases].map(normalizeEntityName);
+    for (const left of namesA) for (const right of namesB) {
+      const shorter = left.length <= right.length ? left : right;
+      const longer = shorter === left ? right : left;
+      if (shorter.length >= 3 && longer.includes(shorter)) return true;
+    }
+    return false;
   }
 
   private relationBetween(a: string, b: string): typeof roomRelations.$inferSelect | null {
@@ -297,6 +325,7 @@ export class RoomDuplicateService {
     const relation = this.relationBetween(a.context.id, b.context.id);
     if (relation && (relation.pinned || relation.manualType)) return null;
     const nameScore = this.nameScore(a, b);
+    const nameContained = this.namesContained(a, b);
     const centroidScore = a.centroid && b.centroid && a.centroidModel && a.centroidModel === b.centroidModel
       ? round(cosineSimilarity(a.centroid, b.centroid)) : 0;
     const contentOverlap = round(weightedEvidenceOverlap(a.evidenceWeights, b.evidenceWeights));
@@ -332,6 +361,7 @@ export class RoomDuplicateService {
     });
     const reasons: string[] = [];
     if (exactName) reasons.push("规范化标题或别名相同");
+    else if (nameContained) reasons.push(`标题存在包含关系（相似度 ${nameScore.toFixed(2)}）`);
     else if (nameScore >= 0.6) reasons.push(`标题相似度 ${nameScore.toFixed(2)}`);
     if (centroidScore >= 0.82) reasons.push(`内容语义相似度 ${centroidScore.toFixed(2)}`);
     if (contentOverlap >= 0.35) reasons.push(`合格资料重叠 ${Math.round(contentOverlap * 100)}%`);
@@ -344,13 +374,15 @@ export class RoomDuplicateService {
       llmVerdict = verdict;
       confidence = verdict === "same"
         ? (duplicateScore >= 0.68 || exactName ? "medium" : "pending")
-        : "related";
+        // 标题包含命中的对（java ⊂ javaspace）：LLM 判不同不再一票否决——
+        // 空壳对证据不变，负缓存会让一次保守误判永久沉默；降级 pending 交用户终审。
+        : (nameContained && !exactName ? "pending" : "related");
     };
     if (sameKind && (exactName || (duplicateScore >= 0.82 && (contentOverlap >= 0.5 || entityOverlap >= 0.35)))) {
       confidence = "high";
     } else if (sameKind && duplicateScore >= 0.68) {
       confidence = "medium";
-    } else if (duplicateScore >= 0.6 || exactName || !sameKind) {
+    } else if (duplicateScore >= 0.6 || exactName || !sameKind || nameScore >= 0.75) {
       // 证据修订未变时复用上次判定：LLM 非确定性重判会让置信度在 rebuild 间抖动，
       // 且每对重复付费。上次判定失败（unavailable）不缓存，下轮重试。
       const cachedVerdict = cached && cached.evidenceRevision === evidenceRevision
@@ -368,6 +400,8 @@ export class RoomDuplicateService {
             );
             reasons.push(judged.reason);
             applyVerdict(judged.same ? "same" : "different");
+            if (!judged.same && nameContained && !exactName)
+              reasons.push("LLM 判定不同；因标题包含关系仍建议人工确认");
           } catch {
             llmVerdict = "unavailable";
             confidence = duplicateScore >= 0.68 && sameKind ? "medium" : "pending";
@@ -376,7 +410,7 @@ export class RoomDuplicateService {
         }
       } else if (duplicateScore >= 0.68 && sameKind) {
         confidence = "medium";
-      } else if (duplicateScore >= 0.6 || exactName) {
+      } else if (duplicateScore >= 0.6 || exactName || nameScore >= 0.75) {
         confidence = "pending";
       }
     }
@@ -629,6 +663,8 @@ export class RoomDuplicateService {
     targetRoomId: string;
     previewHash: string;
     idempotencyKey: string;
+    /** 等待合并终态再返回（本地 sqlite 事务秒级完成；超时兜底返回当前态）。 */
+    wait?: boolean;
   }): Promise<RoomMergeOperation> {
     const existing = this.db.select().from(roomMergeOperations)
       .where(eq(roomMergeOperations.idempotencyKey, input.idempotencyKey)).get();
@@ -666,7 +702,18 @@ export class RoomDuplicateService {
       }).returning().get();
     });
     this.runMerge(id);
-    return operationDto(inserted);
+    return this.settleOperation(id, input.wait);
+  }
+
+  /** 等待合并 Promise 终态（上限 30s；超时/不等待时返回当前快照，调用方自行决定后续）。 */
+  private async settleOperation(id: string, wait?: boolean): Promise<RoomMergeOperation> {
+    const running = this.runningMerges.get(id);
+    if (!wait || !running) return this.getOperation(id)!;
+    await Promise.race([
+      running.catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 30_000).unref?.()),
+    ]);
+    return this.getOperation(id)!;
   }
 
   getOperation(id: string): RoomMergeOperation | null {
@@ -674,14 +721,14 @@ export class RoomDuplicateService {
     return row ? operationDto(row) : null;
   }
 
-  retryMerge(id: string): RoomMergeOperation | null {
+  async retryMerge(id: string): Promise<RoomMergeOperation | null> {
     const row = this.db.select().from(roomMergeOperations).where(eq(roomMergeOperations.id, id)).get();
     if (!row) return null;
     if (row.status !== "failed") return operationDto(row);
     this.db.update(roomMergeOperations).set({ status: "queued", error: null, updatedAt: new Date() })
       .where(eq(roomMergeOperations.id, id)).run();
     this.runMerge(id);
-    return this.getOperation(id);
+    return this.settleOperation(id, true);
   }
 
   cancelMerge(id: string): RoomMergeOperation | null {
