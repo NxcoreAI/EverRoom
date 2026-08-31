@@ -254,7 +254,7 @@ jobs:
           name: macos-assets
           path: release-assets
 
-      - name: Publish prerelease
+      - name: Publish desktop release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -282,9 +282,13 @@ jobs:
           else
             notes="Unsigned Apple Silicon development builds. macOS Gatekeeper may require manual approval before first launch."
           fi
+          release_flags=(--latest)
+          if [[ "$GITHUB_REF_NAME" == *-nightly.* ]]; then
+            release_flags=(--prerelease --latest=false)
+          fi
           gh release create "$GITHUB_REF_NAME" "${expected[@]}" \
             --verify-tag \
-            --prerelease \
+            "${release_flags[@]}" \
             --generate-notes \
             --notes "$notes"
 
