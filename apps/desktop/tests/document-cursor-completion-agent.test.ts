@@ -1,8 +1,11 @@
-import type { AgentEvent, AgentRun, AgentSession } from '@nxcore/agent-contract'
+import type { AgentEvent, AgentRun, AgentSession, AgentSocketFrame } from '@nxcore/agent-contract'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
   buildDocumentCursorCompletionPrompt,
+  classifyDocumentCursorCompletionError,
+  DocumentCursorCompletionCircuitBreaker,
+  DocumentCursorCompletionSessionChannel,
   parseDocumentCursorCompletion,
   sanitizeDocumentCursorCompletion,
   streamDocumentCursorCompletion,
@@ -164,15 +167,15 @@ describe('document cursor completion Agent stream', () => {
     })
   })
 
-  it('builds format-aware rules without allowing new document structures', () => {
+  it('builds a static instruction block and carries format context as data', () => {
     const codePrompt = buildDocumentCursorCompletionPrompt(request('codeBlock', {
       ancestorTypes: ['doc', 'codeBlock'],
       activeMarks: [],
       codeLanguage: 'typescript',
       codeLinePrefix: '  return val',
     }))
-    expect(codePrompt).toContain('typescript 代码块')
-    expect(codePrompt).toContain('依据 codeLinePrefix 保持当前行缩进')
+    expect(codePrompt).toContain('格式规则')
+    expect(codePrompt).toContain('"codeLanguage":"typescript"')
     expect(codePrompt).toContain('"codeLinePrefix":"  return val"')
 
     const listPrompt = buildDocumentCursorCompletionPrompt(request('paragraph', {
@@ -180,40 +183,63 @@ describe('document cursor completion Agent stream', () => {
       activeMarks: ['bold'],
       list: { type: 'bulletList', depth: 1, itemType: 'listItem' },
     }))
-    expect(listPrompt).toContain('第 1 层无序列表的当前条目')
     expect(listPrompt).toContain('不要输出列表标记、复选框或创建下一条目')
-    expect(listPrompt).toContain('当前文字 marks 为 bold')
+    expect(listPrompt).toContain('"list":{"type":"bulletList","depth":1,"itemType":"listItem"}')
+    expect(listPrompt).toContain('"activeMarks":["bold"]')
 
     const taskPrompt = buildDocumentCursorCompletionPrompt(request('paragraph', {
       ancestorTypes: ['doc', 'taskList', 'taskItem', 'paragraph'],
       activeMarks: [],
       list: { type: 'taskList', depth: 1, itemType: 'taskItem', checked: true },
     }))
-    expect(taskPrompt).toContain('任务列表')
-    expect(taskPrompt).toContain('当前任务已完成')
+    expect(taskPrompt).toContain('"checked":true')
 
     const headingPrompt = buildDocumentCursorCompletionPrompt(request('heading', {
       ancestorTypes: ['doc', 'heading'],
       activeMarks: ['code'],
       headingLevel: 2,
     }))
-    expect(headingPrompt).toContain('2 级标题')
     expect(headingPrompt).toContain('不要输出 #')
-    expect(headingPrompt).toContain('不要添加反引号')
+    expect(headingPrompt).toContain('"headingLevel":2')
 
     const quotePrompt = buildDocumentCursorCompletionPrompt(request('paragraph', {
       ancestorTypes: ['doc', 'blockquote', 'paragraph'],
       activeMarks: [],
     }))
-    expect(quotePrompt).toContain('光标位于引用块')
     expect(quotePrompt).toContain('不要输出 >')
+    expect(quotePrompt).toContain('"blockquote"')
 
     const tablePrompt = buildDocumentCursorCompletionPrompt(request('paragraph', {
       ancestorTypes: ['doc', 'table', 'tableRow', 'tableCell', 'paragraph'],
       activeMarks: [],
     }))
-    expect(tablePrompt).toContain('光标位于表格单元格')
     expect(tablePrompt).toContain('不要输出表格分隔符')
+    expect(tablePrompt).toContain('"tableCell"')
+  })
+
+  it('keeps the instruction prefix byte-identical across block types for provider prefix caching', () => {
+    const instructionPrefix = (prompt: string) => prompt.slice(0, prompt.indexOf('<PREFIX>'))
+    const prompts = [
+      request('codeBlock', {
+        ancestorTypes: ['doc', 'codeBlock'],
+        activeMarks: [],
+        codeLanguage: 'typescript',
+      }),
+      request('heading', {
+        ancestorTypes: ['doc', 'heading'],
+        activeMarks: [],
+        headingLevel: 2,
+      }),
+      request('paragraph', {
+        ancestorTypes: ['doc', 'bulletList', 'listItem', 'paragraph'],
+        activeMarks: ['bold'],
+        list: { type: 'bulletList', depth: 1, itemType: 'listItem' },
+      }),
+      request(),
+    ].map((input) => buildDocumentCursorCompletionPrompt(input))
+    for (const prompt of prompts.slice(1)) {
+      expect(instructionPrefix(prompt)).toBe(instructionPrefix(prompts[0]))
+    }
   })
 
   it('strips accidental structure markers from block-local suggestions', () => {
@@ -379,5 +405,171 @@ describe('document cursor completion Agent stream', () => {
     })).rejects.toThrow('gateway failed')
 
     expect(api.deleteSession).toHaveBeenCalledWith('completion-session')
+  })
+})
+
+describe('document cursor completion session channel', () => {
+  function completedEvents(): AgentEvent[] {
+    return [
+      event(1, 'message.delta', { delta: 'KEEP\n自然' }),
+      event(2, 'message.completed', { content: 'KEEP\n自然结束。' }),
+      event(3, 'run.completed', {}),
+    ]
+  }
+
+  it('reuses one session across requests and deletes it only on dispose', async () => {
+    const api: DocumentCursorCompletionAgentApi = {
+      createSession: vi.fn().mockResolvedValue(session()),
+      startRun: vi.fn().mockResolvedValue(run()),
+      getEvents: vi.fn().mockResolvedValue(completedEvents()),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    }
+    const channel = new DocumentCursorCompletionSessionChannel(api, {
+      roomId: 'room-1',
+      documentName: '产品计划',
+    })
+    const options = {
+      signal: new AbortController().signal,
+      pollIntervalMs: 0,
+      onSuggestion: vi.fn(),
+      channel,
+    }
+    const first = await streamDocumentCursorCompletion(api, request(), options)
+    const second = await streamDocumentCursorCompletion(api, request(), options)
+    expect(first).toEqual({ text: '自然结束。', replaceCharacters: 0 })
+    expect(second).toEqual({ text: '自然结束。', replaceCharacters: 0 })
+    expect(api.createSession).toHaveBeenCalledTimes(1)
+    expect(api.deleteSession).not.toHaveBeenCalled()
+
+    channel.dispose()
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+    expect(api.deleteSession).toHaveBeenCalledWith('completion-session')
+  })
+
+  it('consumes pushed events without blind polling', async () => {
+    let pushFrame: ((frame: AgentSocketFrame) => void) | null = null
+    const api: DocumentCursorCompletionAgentApi = {
+      createSession: vi.fn().mockResolvedValue(session()),
+      startRun: vi.fn().mockImplementation(async () => {
+        pushFrame?.({ type: 'event', protocol: 1, event: event(1, 'message.delta', { delta: 'KEEP\n自然' }) })
+        pushFrame?.({ type: 'event', protocol: 1, event: event(2, 'message.completed', { content: 'KEEP\n自然结束。' }) })
+        pushFrame?.({ type: 'event', protocol: 1, event: event(3, 'run.completed', {}) })
+        return run()
+      }),
+      getEvents: vi.fn().mockResolvedValue([]),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn().mockResolvedValue(undefined),
+      unsubscribe: vi.fn().mockResolvedValue(undefined),
+      onEvent: vi.fn().mockImplementation((listener: (frame: AgentSocketFrame) => void) => {
+        pushFrame = listener
+        return () => {
+          pushFrame = null
+        }
+      }),
+    }
+    const channel = new DocumentCursorCompletionSessionChannel(api, {
+      roomId: 'room-1',
+      documentName: '产品计划',
+    })
+    expect(channel.supportsPush).toBe(true)
+
+    // 对账间隔拉到 60s：若推送链路没接通，请求只会在总超时上失败。
+    const result = await streamDocumentCursorCompletion(api, request(), {
+      signal: new AbortController().signal,
+      onSuggestion: vi.fn(),
+      channel,
+      reconcileIntervalMs: 60_000,
+    })
+    expect(result).toEqual({ text: '自然结束。', replaceCharacters: 0 })
+    expect(api.subscribe).toHaveBeenCalledWith('completion-session')
+    channel.dispose()
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+    expect(api.unsubscribe).toHaveBeenCalled()
+    expect(api.deleteSession).toHaveBeenCalledWith('completion-session')
+  })
+
+  it('recreates the reused session once when the service dropped it', async () => {
+    const api: DocumentCursorCompletionAgentApi = {
+      createSession: vi.fn()
+        .mockResolvedValueOnce({ ...session(), id: 'stale-session' })
+        .mockResolvedValueOnce({ ...session(), id: 'fresh-session' }),
+      startRun: vi.fn()
+        .mockRejectedValueOnce(new Error('Agent session not found'))
+        .mockResolvedValueOnce(run()),
+      getEvents: vi.fn().mockResolvedValue(completedEvents()),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    }
+    const channel = new DocumentCursorCompletionSessionChannel(api, {
+      roomId: 'room-1',
+      documentName: '产品计划',
+    })
+
+    const result = await streamDocumentCursorCompletion(api, request(), {
+      signal: new AbortController().signal,
+      pollIntervalMs: 0,
+      onSuggestion: vi.fn(),
+      channel,
+    })
+    expect(result).toEqual({ text: '自然结束。', replaceCharacters: 0 })
+    expect(api.createSession).toHaveBeenCalledTimes(2)
+    expect(api.startRun).toHaveBeenLastCalledWith('fresh-session', expect.anything())
+    channel.dispose()
+  })
+
+  it('aborts early when no usable suggestion arrives within the first-suggestion deadline', async () => {
+    const api: DocumentCursorCompletionAgentApi = {
+      createSession: vi.fn().mockResolvedValue(session()),
+      startRun: vi.fn().mockResolvedValue(run()),
+      getEvents: vi.fn().mockResolvedValue([]),
+      cancelRun: vi.fn().mockResolvedValue({ ...run(), status: 'cancelled' }),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    }
+
+    await expect(streamDocumentCursorCompletion(api, request(), {
+      signal: new AbortController().signal,
+      pollIntervalMs: 0,
+      onSuggestion: vi.fn(),
+      timeoutMs: 5_000,
+      firstSuggestionMs: 0,
+    })).rejects.toMatchObject({ kind: 'first_suggestion_timeout' })
+
+    expect(api.cancelRun).toHaveBeenCalledWith('completion-run')
+  })
+})
+
+describe('document cursor completion circuit breaker', () => {
+  it('opens after consecutive failures with exponential backoff and resets on success', () => {
+    const breaker = new DocumentCursorCompletionCircuitBreaker(3, 5_000, 60_000)
+    const now = 1_000_000
+    expect(breaker.shouldAttempt(now)).toBe(true)
+
+    breaker.recordFailure(now)
+    breaker.recordFailure(now)
+    expect(breaker.shouldAttempt(now)).toBe(true)
+
+    breaker.recordFailure(now)
+    expect(breaker.shouldAttempt(now)).toBe(false)
+    expect(breaker.cooldownRemainingMs(now)).toBe(5_000)
+
+    const later = now + 10_000
+    breaker.recordFailure(later)
+    expect(breaker.cooldownRemainingMs(later)).toBe(10_000)
+
+    breaker.recordSuccess()
+    expect(breaker.shouldAttempt(now)).toBe(true)
+    expect(breaker.cooldownRemainingMs(now)).toBe(0)
+  })
+
+  it('classifies errors for the breaker and session retry paths', () => {
+    expect(classifyDocumentCursorCompletionError(new DOMException('x', 'AbortError'))).toBe('aborted')
+    expect(classifyDocumentCursorCompletionError(new Error('Agent session not found'))).toBe('session_not_found')
+    expect(classifyDocumentCursorCompletionError(new Error('agent_session_not_found'))).toBe('session_not_found')
+    expect(classifyDocumentCursorCompletionError(new Error('runtime_config_not_ready'))).toBe('unconfigured')
+    expect(classifyDocumentCursorCompletionError(new Error('Agent 请求失败（429）'))).toBe('provider')
+    expect(classifyDocumentCursorCompletionError(new Error('fetch failed'))).toBe('network')
+    expect(classifyDocumentCursorCompletionError(new Error('完全未知'))).toBe('unknown')
   })
 })

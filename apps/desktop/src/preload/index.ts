@@ -481,6 +481,15 @@ const api: NxcoreDesktopApi = {
     startRun: (sessionId, input) =>
       invokeQuietly('cursor-completion-agent:start-run', sessionId, input),
     cancelRun: (runId) => invokeQuietly('cursor-completion-agent:cancel-run', runId),
+    subscribe: (sessionId) => invokeQuietly('cursor-completion-agent:subscribe', sessionId),
+    unsubscribe: () => invokeQuietly('cursor-completion-agent:unsubscribe'),
+    onEvent: (listener) => {
+      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
+        listener(frame)
+      }
+      ipcRenderer.on('cursor-completion-agent:event', handleEvent)
+      return () => ipcRenderer.removeListener('cursor-completion-agent:event', handleEvent)
+    },
   },
   documents: {
     list: (roomId) => invoke('documents:list', roomId),

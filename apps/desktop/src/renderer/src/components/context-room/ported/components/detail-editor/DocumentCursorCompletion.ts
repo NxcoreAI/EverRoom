@@ -1,12 +1,15 @@
 import { Extension, type Editor } from '@tiptap/react'
 import { closeHistory } from '@tiptap/pm/history'
-import { Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { useEffect, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 
 import {
+  classifyDocumentCursorCompletionError,
+  documentCursorCompletionCircuitBreaker,
+  DocumentCursorCompletionSessionChannel,
   streamDocumentCursorCompletion,
   type DocumentCursorCompletionFormatContext,
   type DocumentCursorCompletionListType,
@@ -350,15 +353,33 @@ function nearbyDocumentBlocks(
   ]
 }
 
+/**
+ * EditorState 是不可变值——同一 state 引用的上下文提取结果必然相同。
+ * 每个击键会触发 2-3 次全量提取（2400 字符 textBetween + nearbyBlocks
+ * 遍历 + requestKey 序列化），流式回调还会更频繁，按 state 引用记忆化。
+ */
+const completionContextCache = new WeakMap<EditorState, DocumentCursorCompletionContext | null>()
+
 export function documentCursorCompletionContext(
   editor: Editor,
 ): DocumentCursorCompletionContext | null {
-  const selection = editor.state.selection
+  const state = editor.state
+  const cached = completionContextCache.get(state)
+  if (cached !== undefined) return cached
+  const context = computeDocumentCursorCompletionContext(state)
+  completionContextCache.set(state, context)
+  return context
+}
+
+function computeDocumentCursorCompletionContext(
+  state: EditorState,
+): DocumentCursorCompletionContext | null {
+  const selection = state.selection
   if (!(selection instanceof TextSelection) || !selection.empty) return null
   const position = selection.from
   const parent = selection.$from.parent
   if (!parent.isTextblock) return null
-  if (Array.from(editor.state.doc.textContent.replace(/\s/gu, '')).length < MIN_TYPED_CHARACTERS) {
+  if (Array.from(state.doc.textContent.replace(/\s/gu, '')).length < MIN_TYPED_CHARACTERS) {
     return null
   }
   const blockPrefix = parent.textBetween(0, selection.$from.parentOffset, '\n', '\n')
@@ -383,7 +404,7 @@ export function documentCursorCompletionContext(
   const listItem = [...ancestorNodes].reverse()
     .find((node) => node.type.name === 'listItem' || node.type.name === 'taskItem')
   const activeMarks = Array.from(new Set(
-    (editor.state.storedMarks ?? selection.$from.marks()).map((mark) => mark.type.name),
+    (state.storedMarks ?? selection.$from.marks()).map((mark) => mark.type.name),
   ))
   const formatContext: DocumentCursorCompletionFormatContext = {
     ancestorTypes,
@@ -413,15 +434,15 @@ export function documentCursorCompletionContext(
       },
     } : {}),
   }
-  const contextBefore = editor.state.doc.textBetween(
+  const contextBefore = state.doc.textBetween(
     Math.max(0, position - 1_600),
     position,
     '\n',
     '\n',
   )
-  const contextAfter = editor.state.doc.textBetween(
+  const contextAfter = state.doc.textBetween(
     position,
-    Math.min(editor.state.doc.content.size, position + 800),
+    Math.min(state.doc.content.size, position + 800),
     '\n',
     '\n',
   )
@@ -435,7 +456,7 @@ export function documentCursorCompletionContext(
     blockType: parent.type.name,
     formatContext,
     nearbyBlocks,
-    requestKey: `${position}:${editor.state.doc.content.size}:${JSON.stringify(formatContext)}:${contextBefore}:${contextAfter}:${JSON.stringify(nearbyBlocks)}`,
+    requestKey: `${position}:${state.doc.content.size}:${JSON.stringify(formatContext)}:${contextBefore}:${contextAfter}:${JSON.stringify(nearbyBlocks)}`,
   }
 }
 
@@ -555,6 +576,8 @@ export function useDocumentCursorCompletion({
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     const editorElement = editor.view.dom
+    // 会话/订阅复用通道：effect 生命周期内一份，卸载时拆除。
+    let completionChannel: DocumentCursorCompletionSessionChannel | null = null
 
     const cancelPending = (clearSuggestion: boolean, reason = 'cancelled') => {
       if (timerRef.current !== null) {
@@ -584,6 +607,7 @@ export function useDocumentCursorCompletion({
 
     const requestCompletion = (trigger: DocumentCursorCompletionTrigger) => {
       timerRef.current = null
+      const circuitCooldownMs = documentCursorCompletionCircuitBreaker.cooldownRemainingMs()
       const skipReason = !enabledRef.current
         ? 'disabled'
         : editor.isDestroyed
@@ -592,9 +616,15 @@ export function useDocumentCursorCompletion({
             ? 'editor_readonly'
             : !editor.view.hasFocus()
               ? 'editor_blurred'
-              : editor.view.composing ? 'composing' : null
+              : editor.view.composing
+                ? 'composing'
+                : circuitCooldownMs > 0 ? 'circuit_open' : null
       if (skipReason) {
-        recordDocumentCursorCompletionDiagnostic('request.skipped', { trigger, reason: skipReason })
+        recordDocumentCursorCompletionDiagnostic('request.skipped', {
+          trigger,
+          reason: skipReason,
+          ...(skipReason === 'circuit_open' ? { cooldownMs: circuitCooldownMs } : {}),
+        })
         return
       }
       const context = documentCursorCompletionContext(editor)
@@ -606,6 +636,12 @@ export function useDocumentCursorCompletion({
         })
         return
       }
+      completionChannel ??= new DocumentCursorCompletionSessionChannel(api, {
+        roomId,
+        roomTitle,
+        documentName,
+        responseLanguage: locale,
+      })
 
       if (requestRef.current) abortCompletionRequest(requestRef.current, 'superseded')
       const controller = new AbortController()
@@ -653,6 +689,7 @@ export function useDocumentCursorCompletion({
       }, {
         signal: controller.signal,
         responseLanguage: locale,
+        channel: completionChannel ?? undefined,
         onSuggestion: (suggestion) => {
           const active = requestRef.current
           const currentContext = documentCursorCompletionContext(editor)
@@ -692,6 +729,7 @@ export function useDocumentCursorCompletion({
           recordShownCompletion(request, completion)
         },
       }).then((suggestion) => {
+        documentCursorCompletionCircuitBreaker.recordSuccess()
         if (!request.diagnosticEnded) {
           request.diagnosticEnded = true
           recordDocumentCursorCompletionDiagnostic('request.completed', {
@@ -714,6 +752,11 @@ export function useDocumentCursorCompletion({
         showDocumentCursorCompletion(editor, completion)
         recordShownCompletion(request, completion)
       }).catch((error: unknown) => {
+        const errorKind = classifyDocumentCursorCompletionError(error)
+        // abort 是调用方主动取消；session 失联已由通道内重建兜住——两者不熔断。
+        if (errorKind !== 'aborted' && errorKind !== 'session_not_found') {
+          documentCursorCompletionCircuitBreaker.recordFailure()
+        }
         if (!request.diagnosticEnded) {
           request.diagnosticEnded = true
           recordDocumentCursorCompletionDiagnostic(
@@ -722,6 +765,7 @@ export function useDocumentCursorCompletion({
               requestId: request.diagnosticId,
               trigger: request.diagnosticTrigger,
               reason: isAbortError(error) ? 'upstream_abort' : 'stream_error',
+              errorKind,
               durationMs: Date.now() - request.diagnosticStartedAt,
               ...(error instanceof Error ? { message: error.message.slice(0, 500) } : {}),
             },
@@ -1009,6 +1053,7 @@ export function useDocumentCursorCompletion({
       clearCompositionCommit()
       clearDeletionIntent()
       cancelPending(true, 'unmounted')
+      completionChannel?.dispose()
       editorElement.removeEventListener('beforeinput', handleBeforeInput, true)
       editorElement.removeEventListener('input', handleInput)
       editorElement.removeEventListener('compositionstart', handleCompositionStart)

@@ -552,6 +552,22 @@ describe('document cursor completion format context', () => {
     })
   })
 
+  it('memoizes context extraction per editor state and recomputes after transactions', () => {
+    const editor = createContextEditor({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: '一段正文' }] }],
+    })
+
+    const first = documentCursorCompletionContext(editor)
+    const second = documentCursorCompletionContext(editor)
+    expect(second).toBe(first)
+
+    editor.view.dispatch(editor.state.tr.insertText('更多', editor.state.selection.from))
+    const third = documentCursorCompletionContext(editor)
+    expect(third).not.toBe(first)
+    expect(third?.blockPrefix).toBe('一段正文更多')
+  })
+
   it('captures a bounded schema-aware snapshot around the current block', () => {
     const editor = createContextEditor({
       type: 'doc',

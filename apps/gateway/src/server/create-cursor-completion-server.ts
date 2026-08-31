@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyBaseLogger } from "fastify";
 import type { FastifyError } from "fastify";
 import websocket from "@fastify/websocket";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
@@ -13,6 +13,23 @@ import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import { systemRoutes } from "../modules/system/routes.js";
 import "./types.js";
+
+/** 补全会话的孤儿 TTL：编辑器侧正常路径会删除会话，超龄即崩溃残留。 */
+const ORPHAN_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
+
+/** 本服务是补全专用（DB 里只有补全会话），启动时清掉超龄孤儿会话与事件。 */
+async function purgeOrphanCompletionSessions(service: AgentService, log: FastifyBaseLogger): Promise<void> {
+  const deadline = Date.now() - ORPHAN_SESSION_TTL_MS;
+  for (const session of service.listSessions()) {
+    const updatedAt = Date.parse(session.updatedAt);
+    if (!Number.isFinite(updatedAt) || updatedAt > deadline) continue;
+    try {
+      await service.deleteSession(session.id);
+    } catch (error) {
+      log.warn({ err: error, sessionId: session.id }, "failed to purge orphan completion session");
+    }
+  }
+}
 
 export async function createCursorCompletionServer(config: GatewayConfig) {
   const gatewayLogger = await createGatewayLogger(config.dataDir, config.logLevel);
@@ -65,6 +82,7 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
     false,
   );
   await agentService.initialize();
+  await purgeOrphanCompletionSessions(agentService, app.log);
 
   app.addHook("onClose", async () => {
     await agentService.dispose();
