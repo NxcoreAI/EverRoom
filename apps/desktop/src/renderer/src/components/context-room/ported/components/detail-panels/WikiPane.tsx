@@ -17,6 +17,10 @@ import type {
   KnowledgeWikiPageDto,
 } from '../../../../../../../shared/knowledge';
 import type { ContextRoomRecord, ContextRoomWikiPageResource } from '../../types';
+import {
+  listRoomFilesExcludingConverted,
+  scheduleRoomMarkdownImport,
+} from '../../../knowledgeMarkdownImport';
 import { WikiGraphCanvas } from '../WikiGraphCanvas';
 import { MarkdownBody } from './MarkdownBody';
 import { WikiTree } from './WikiTree';
@@ -82,14 +86,15 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
     const knowledge = window.nxcore?.knowledge;
     if (!knowledge) return;
     try {
-      const [data, fileList] = await Promise.all([
+      const [data, roomFiles] = await Promise.all([
         knowledge.listWikiPages(room.id),
-        knowledge.listRoomFiles(room.id).catch(() => ({ items: [] as KnowledgeFileDto[] })),
+        // 已转云文档的 md 原件不再作为来源列出（与资源树同一隐藏规则）
+        listRoomFilesExcludingConverted(room.id).catch(() => [] as KnowledgeFileDto[]),
       ]);
       setStatus(data.status);
       setPages(data.items);
       setPageCount(data.pageCount);
-      setFiles(fileList.items);
+      setFiles(roomFiles);
       setError(null);
     } catch (cause) {
       setStatus('error');
@@ -168,7 +173,14 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
       if (results.length === 0) return;
       const failed = results.filter((result) => result.error);
       const deduped = results.filter((result) => result.deduped).length;
-      const succeeded = results.length - failed.length - deduped;
+      const skipped = results.filter((result) => result.skippedReason);
+      const succeeded = results.length - failed.length - deduped - skipped.length;
+      if (skipped.length > 0) {
+        showToast({
+          title: t('contextRoom:wiki.countFilesSkipped', { count: skipped.length }),
+          message: t('contextRoom:wiki.skippedUnsupportedHint'),
+        });
+      }
       if (deduped > 0) {
         showToast({
           title: t('contextRoom:wiki.countFilesAlreadyExist', { count: deduped }),
@@ -185,6 +197,8 @@ export function WikiPane({ room, selectedResourceId, onOpenPage }: {
         showToast({ title: t('contextRoom:wiki.failedToUploadFilename', { filename: failure.filename }), message: failure.error ?? undefined });
       }
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
+      // Room 内上传的 md 与晋升路径同规则：即时转可编辑云文档（原件随即隐藏）
+      scheduleRoomMarkdownImport(room.id);
     } catch (cause) {
       showToast({ title: t('contextRoom:wiki.uploadFailed'), message: cause instanceof Error ? cause.message : undefined });
     } finally {

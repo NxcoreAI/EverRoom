@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KnowledgeFileDto } from '../../../../../../shared/knowledge';
+import { listRoomFilesExcludingConverted } from '../../knowledgeMarkdownImport';
 
 /**
- * Room 的 knowledge 上传文件清单（uploaded_files ⨝ 最新归属决策）。
+ * Room 的 knowledge 上传文件清单（uploaded_files ⨝ 最新归属决策），已转
+ * 云文档的 md 原件按同名规则隐藏（见 knowledgeMarkdownImport）。
  * knowledge 服务可选：不可用/失败时静默降级为空清单。
  * 刷新：roomId 变化首载 + 监听全局 DOM 事件 'everroom:knowledge-changed'
- * （上传/晋升/挂载完成时各面板 dispatch）；事件后追加一次尾随刷新，
+ * （上传/晋升/挂载/md 转换完成时各面板 dispatch）；事件后追加一次尾随刷新，
  * 兜住"上传 202 返回早于路由决策落库"的异步窗口。
  */
 export function useRoomKnowledgeFiles(roomId: string): {
@@ -20,8 +22,7 @@ export function useRoomKnowledgeFiles(roomId: string): {
     const knowledge = window.nxcore?.knowledge;
     if (!knowledge) return;
     try {
-      const { items } = await knowledge.listRoomFiles(roomIdRef.current);
-      setFiles(items);
+      setFiles(await listRoomFilesExcludingConverted(roomIdRef.current));
     } catch {
       // knowledge 可选：Room 无归属文件/服务未就绪都视为空清单
     }

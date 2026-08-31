@@ -84,6 +84,40 @@ const IMPORT_RETRY_DELAY_MS = 2_000;
 const RUN_STORAGE_KEY = 'everroom:room-recommendation-run';
 /** 完成态停留时长：进度条打满 100% 让用户看到收尾，再撤蒙层。 */
 const RUN_DONE_LINGER_MS = 900;
+/** 明细回报上限：计数始终精确，明细最多展示/存储 N 条（防大目录撑爆蒙层与清单）。 */
+const RUN_DETAIL_LIMIT = 20;
+/** 蒙层上每组明细的可见条数（其余折叠为「等 N 项」）。 */
+const RUN_DETAILS_SHOWN = 5;
+
+type SkipReason = 'unsupported_format' | 'pending_review' | 'duplicate';
+
+interface ImportFailureDetail {
+  filename: string;
+  error: string;
+}
+
+interface ImportSkipDetail {
+  filename: string;
+  reason: SkipReason;
+}
+
+/** 三类计数文案（成功/跳过/失败）：只拼接非零段，与旧「已导入 X 项，Y 项失败」文案兼容。 */
+function runImportSummaryText(ok: number, skipped: number, failed: number, t: Translate): string {
+  const segments: string[] = [];
+  if (ok > 0) segments.push(t('contextRoom:creation.countImported', { count: ok }));
+  if (skipped > 0) segments.push(t('contextRoom:creation.countSkipped', { count: skipped }));
+  if (failed > 0) segments.push(t('contextRoom:creation.countFailed', { count: failed }));
+  return segments.join(t('contextRoom:creation.countSeparator'));
+}
+
+function skipReasonLabel(reason: SkipReason, t: Translate): string {
+  const keys: Record<SkipReason, string> = {
+    unsupported_format: 'contextRoom:creation.skipReasonUnsupported',
+    pending_review: 'contextRoom:creation.skipReasonReview',
+    duplicate: 'contextRoom:creation.skipReasonDuplicate',
+  };
+  return t(keys[reason]);
+}
 
 /** 创建弹窗提交后的推荐生成会话：导入 → 路由 → 证据累积，整卡蒙层展示进度。 */
 interface RecommendationRun {
@@ -98,6 +132,14 @@ interface RecommendationRun {
   files: UploadedFile[];
   /** 导入阶段无法解析的文件数（如扫描版 PDF）：蒙层显性展示，不再静默丢弃。 */
   failedImports: number;
+  /** 非错误性跳过数：格式不支持 / 高风险待人工确认 / 内容已存在（去重）。 */
+  skippedImports: number;
+  /** 真正新导入的文件数（files 含去重命中的旧文件，计数分账以其为准）。 */
+  okImports: number;
+  /** 逐文件失败原因（截断存储，计数保持精确）。 */
+  failureDetails: ImportFailureDetail[];
+  /** 逐文件跳过原因（截断存储，计数保持精确）。 */
+  skipDetails: ImportSkipDetail[];
   routed: number;
   candidates: number;
   error: string | null;
@@ -138,6 +180,14 @@ function readPersistedRun(): RecommendationRun | null {
     return {
       ...parsed,
       failedImports: typeof parsed.failedImports === 'number' ? parsed.failedImports : 0,
+      skippedImports: typeof parsed.skippedImports === 'number' ? parsed.skippedImports : 0,
+      okImports: typeof parsed.okImports === 'number' ? parsed.okImports : 0,
+      failureDetails: Array.isArray(parsed.failureDetails)
+        ? parsed.failureDetails.filter((item) => item && typeof item.filename === 'string' && typeof item.error === 'string')
+        : [],
+      skipDetails: Array.isArray(parsed.skipDetails)
+        ? parsed.skipDetails.filter((item) => item && typeof item.filename === 'string')
+        : [],
       readySnapshot: new Set(Array.isArray(parsed.readySnapshot) ? parsed.readySnapshot : []),
     };
   } catch {
@@ -314,15 +364,19 @@ export function KnowledgePendingPanel({
     }
     unsubscribeProgress();
     if (outcomes === null) return;
+    // 三类分账：成功（进入路由）/ 跳过（格式不支持、待人工确认、内容已存在）/ 失败（带原因）
     const failures = outcomes.filter((item) => item.error);
-    if (failures.length > 0) {
-      // 逐文件 toast 在批量导入（如整仓扫描件）时会刷屏：聚合成一条。
+    const duplicates = outcomes.filter((item) => !item.error && item.fileId && item.deduped);
+    const skipped = outcomes.filter((item) => item.skippedReason === 'unsupported_format' || item.skippedReason === 'pending_review');
+    const skippedCount = skipped.length + duplicates.length;
+    const okCount = outcomes.length - failures.length - skippedCount;
+    if (failures.length > 0 || skippedCount > 0) {
+      // 逐文件 toast 在批量导入（如整仓扫描件）时会刷屏：聚合成一条计数摘要。
       showToast({
-        title: translateRef.current('contextRoom:creation.runImportPartial', {
-          ok: outcomes.length - failures.length,
-          failed: failures.length,
-        }),
-        message: translateRef.current('contextRoom:creation.runImportPartialHint'),
+        title: runImportSummaryText(okCount, skippedCount, failures.length, translateRef.current),
+        message: failures.length > 0
+          ? translateRef.current('contextRoom:creation.runImportFailedHint')
+          : translateRef.current('contextRoom:creation.runImportSkippedHint'),
       });
     }
     const files = outcomes
@@ -331,6 +385,19 @@ export function KnowledgePendingPanel({
     patchRun({
       files,
       failedImports: failures.length,
+      skippedImports: skippedCount,
+      okImports: okCount,
+      failureDetails: failures.slice(0, RUN_DETAIL_LIMIT).map((item) => ({
+        filename: item.filename,
+        error: String(item.error),
+      })),
+      skipDetails: [
+        ...skipped.map((item) => ({
+          filename: item.filename,
+          reason: item.skippedReason === 'pending_review' ? 'pending_review' as const : 'unsupported_format' as const,
+        })),
+        ...duplicates.map((item) => ({ filename: item.filename, reason: 'duplicate' as const })),
+      ].slice(0, RUN_DETAIL_LIMIT),
       phase: files.length > 0 ? 'routing' : 'failed',
       error: files.length > 0 ? null : 'no files imported',
     });
@@ -364,6 +431,10 @@ export function KnowledgePendingPanel({
       imported: { completed: 0, total: 0 },
       files: [],
       failedImports: 0,
+      skippedImports: 0,
+      okImports: 0,
+      failureDetails: [],
+      skipDetails: [],
       routed: 0,
       candidates: 0,
       error: null,
@@ -697,11 +768,8 @@ export function KnowledgePendingPanel({
                         current: run.imported.completed,
                         total: run.imported.total,
                       })
-                    : run.failedImports > 0
-                      ? t('contextRoom:creation.runImportPartial', {
-                          ok: run.files.length,
-                          failed: run.failedImports,
-                        })
+                    : run.failedImports > 0 || run.skippedImports > 0
+                      ? runImportSummaryText(run.okImports, run.skippedImports, run.failedImports, t)
                       : t('contextRoom:creation.filesSelected', { count: run.files.length })}</small>
                 </span>
               </li>
@@ -741,6 +809,44 @@ export function KnowledgePendingPanel({
                 </span>
               </li>
             </ol>
+            {run.phase !== 'importing' && (run.failureDetails.length > 0 || run.skipDetails.length > 0) ? (
+              <div
+                className="context-room-knowledge-overlay-details"
+                data-testid="context-room-import-details"
+              >
+                {run.failureDetails.length > 0 ? (
+                  <ul>
+                    {run.failureDetails.slice(0, RUN_DETAILS_SHOWN).map((item) => (
+                      <li key={`failure:${item.filename}`}>
+                        <AlertCircle aria-hidden="true" />
+                        <span title={item.filename}>{item.filename}</span>
+                        <small>{item.error}</small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {run.skipDetails.length > 0 ? (
+                  <ul>
+                    {run.skipDetails.slice(0, RUN_DETAILS_SHOWN).map((item) => (
+                      <li key={`skip:${item.filename}`}>
+                        <EyeOff aria-hidden="true" />
+                        <span title={item.filename}>{item.filename}</span>
+                        <small>{skipReasonLabel(item.reason, t)}</small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {Math.max(0, run.failureDetails.length - RUN_DETAILS_SHOWN)
+                  + Math.max(0, run.skipDetails.length - RUN_DETAILS_SHOWN) > 0 ? (
+                  <p className="context-room-knowledge-overlay-details-more">
+                    {t('contextRoom:creation.countMore', {
+                      count: Math.max(0, run.failureDetails.length - RUN_DETAILS_SHOWN)
+                        + Math.max(0, run.skipDetails.length - RUN_DETAILS_SHOWN),
+                    })}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             {run.phase === 'failed' ? (
               <p className="context-room-knowledge-overlay-note">{t('contextRoom:creation.runImportFailed')}</p>
             ) : null}
