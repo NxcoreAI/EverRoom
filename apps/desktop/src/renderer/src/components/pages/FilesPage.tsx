@@ -139,6 +139,8 @@ export function FilesPage({
   onOpenOfficePreview: (tab: OfficePreviewTab) => void
 }) {
   const { locale, t } = useLocale()
+  // 「显示原件」的系统叫法跟随平台：macOS 是访达，Windows 是文件资源管理器。
+  const isMacDesktop = window.nxcore?.platform === 'darwin' || navigator.platform?.startsWith('Mac') || navigator.userAgent.includes('Macintosh')
   const filesApi = window.nxcore?.files
   const ingestApi = window.nxcore?.ingest
   const [view, setView] = useState<FilesView>('files')
@@ -430,7 +432,7 @@ export function FilesPage({
       try {
         await filesApi.reveal(file.id)
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : t('surface:files.unableToRevealOriginal'))
+        setMessage(error instanceof Error ? error.message : t(isMacDesktop ? 'surface:files.unableToRevealOriginal' : 'surface:files.unableToRevealOriginalInExplorer'))
       }
     })
   }
@@ -592,7 +594,7 @@ export function FilesPage({
                     </button>
                     <div className="file-document-preview" aria-hidden="true"><span /><span /><span /></div>
                     <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? t('surface:files.originalMissing') : t('surface:files.processing')}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
-                    <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t('surface:files.revealName', { name: file.originalName })} title={t('surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => revealOriginal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
+                    <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t(isMacDesktop ? 'surface:files.revealName' : 'surface:files.revealNameInExplorer', { name: file.originalName })} title={t(isMacDesktop ? 'surface:files.showInFileManager' : 'surface:files.showInExplorer')} disabled={busyId === file.id} onClick={() => revealOriginal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
                   </article>
                 }}
               />

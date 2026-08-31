@@ -132,7 +132,7 @@ describe('FilesPage catalog refresh', () => {
     expect(toolbar.findByType('h2').children.join('')).toBe('文档')
     expect(toolbar.findAll((node) => node.children.join('') === '1 份文件')).toHaveLength(1)
 
-    const revealButton = renderer!.root.findByProps({ 'aria-label': '在访达中显示 访达测试.md' })
+    const revealButton = renderer!.root.findByProps({ 'aria-label': '在文件资源管理器中显示 访达测试.md' })
     await act(async () => {
       revealButton.props.onClick()
     })

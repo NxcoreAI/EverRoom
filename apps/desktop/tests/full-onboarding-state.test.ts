@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   FULL_ONBOARDING_STORAGE_KEY,
+  ONBOARDING_PROBE_RETRY_ATTEMPTS,
   hasExistingOnboardingData,
+  nextOnboardingProbeAction,
+  onboardingProbeRetryDelayMs,
   readFullOnboardingCompleted,
   writeFullOnboardingCompleted,
 } from '../src/renderer/src/components/onboarding/fullOnboardingState'
@@ -41,5 +44,35 @@ describe('full onboarding state', () => {
       deletedRoomCount: 0,
       sourceCount: 0,
     })).toBe(false)
+  })
+})
+
+describe('onboarding probe action (first-run check timing)', () => {
+  it('retries transient failures during the MemoryCore restart window', () => {
+    // Regression: saving the runtime config restarts MemoryCore (~3s); the
+    // first probe often fails and used to strand the user on an empty shell.
+    expect(nextOnboardingProbeAction({ failed: true, apisAvailable: true, hasData: false, attempt: 1 })).toBe('retry')
+    expect(onboardingProbeRetryDelayMs(1)).toBe(1_000)
+    expect(onboardingProbeRetryDelayMs(2)).toBe(2_000)
+  })
+
+  it('never stalls the first-run user when services stay unreachable', () => {
+    for (let attempt = 1; attempt < ONBOARDING_PROBE_RETRY_ATTEMPTS; attempt += 1) {
+      expect(nextOnboardingProbeAction({ failed: true, apisAvailable: true, hasData: false, attempt })).toBe('retry')
+    }
+    // Retries exhausted: stand down without advancing the guide stage — the
+    // user keeps the operable main UI (no hidden shell) and later checks can
+    // still run the guide; completion must not be persisted on a failure.
+    expect(nextOnboardingProbeAction({ failed: true, apisAvailable: true, hasData: false, attempt: ONBOARDING_PROBE_RETRY_ATTEMPTS })).toBe('stand-down')
+  })
+
+  it('prefers existing workspace data even when part of the probe failed', () => {
+    expect(nextOnboardingProbeAction({ failed: true, apisAvailable: true, hasData: true, attempt: ONBOARDING_PROBE_RETRY_ATTEMPTS })).toBe('complete-existing')
+  })
+
+  it('advances the full onboarding only when every service was reachable', () => {
+    expect(nextOnboardingProbeAction({ failed: false, apisAvailable: true, hasData: false, attempt: 1 })).toBe('advance')
+    // Missing preload APIs: do nothing (test environments expose no window.nxcore).
+    expect(nextOnboardingProbeAction({ failed: false, apisAvailable: false, hasData: false, attempt: 1 })).toBe('wait')
   })
 })

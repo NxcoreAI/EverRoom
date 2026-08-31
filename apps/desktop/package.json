@@ -10,7 +10,8 @@
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64"
+    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
+    "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -100,7 +101,8 @@
     "asarUnpack": [
       "node_modules/@esbuild/**/*",
       "node_modules/sqlite-vec-darwin-arm64/**/*",
-      "node_modules/sqlite-vec-darwin-x64/**/*"
+      "node_modules/sqlite-vec-darwin-x64/**/*",
+      "node_modules/sqlite-vec-windows-x64/**/*"
     ],
     "directories": {
       "output": "../../release"
@@ -168,12 +170,6 @@
         "filter": [
           "**/*",
           "!**/.env*",
-          "!**/node_modules/@datadog/*/prebuilds/linux*/**",
-          "!**/node_modules/@datadog/*/prebuilds/win32*/**",
-          "!**/node_modules/@datadog/*/prebuilds/darwin-x64/**",
-          "!**/node_modules/@embedded-postgres/linux-*/**",
-          "!**/node_modules/@embedded-postgres/darwin-x64/**",
-          "!**/node_modules/@embedded-postgres/windows-x64/**",
           "!**/*.{map,ts,tsx,mts,cts}"
         ]
       },

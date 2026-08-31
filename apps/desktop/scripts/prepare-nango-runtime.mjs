@@ -121,6 +121,27 @@ for (const directory of globSync('**/.bin', { cwd: packagedNodeModules })) {
 // avoids copying ~1G of dead weight into the package and re-scanning it.
 rmSync(join(stagingRoot, 'node_modules'), { recursive: true, force: true })
 
+// Ship only the current platform's embedded PostgreSQL and dd-trace prebuilds;
+// every other platform's native dir is 100+ MB of dead weight. The packaging
+// filter used to prune these per platform; doing it here keeps one
+// platform-neutral extraResources entry for both mac and Windows builds.
+// Copies can be hoisted or nested (see the dylib fixup below), so walk both.
+// @embedded-postgres names its Windows packages "windows-*"; dd-trace prebuilds
+// use "win32-*" — hence the two spellings below.
+const osName = process.platform === 'win32' ? 'windows' : process.platform
+const embeddedPlatform = `${osName}-${process.arch}`
+for (const platformDir of globSync('**/@embedded-postgres/*', { cwd: packagedNodeModules })) {
+  if (platformDir.split(/[\\/]/).pop() !== embeddedPlatform) {
+    rmSync(join(packagedNodeModules, platformDir), { recursive: true, force: true })
+  }
+}
+const ddTracePlatform = process.platform === 'win32' ? `win32-${process.arch}` : `${process.platform}-${process.arch}`
+for (const prebuildDir of globSync('**/@datadog/*/prebuilds/*', { cwd: packagedNodeModules })) {
+  if (prebuildDir.split(/[\\/]/).pop() !== ddTracePlatform) {
+    rmSync(join(packagedNodeModules, prebuildDir), { recursive: true, force: true })
+  }
+}
+
 // @embedded-postgres dylibs ship fully-versioned names but postgres links
 // major-only (libzstd.1.dylib); duplicate the files at build time — real
 // copies, because cpSync re-points copied symlinks at the (deleted) staging
