@@ -60,9 +60,17 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
     () => graph.nodes.map((node) => ({ id: node.id, radius: nodeRadius(node) })),
     [graph.nodes],
   )
+  const layoutEdges = useMemo(
+    () => graph.edges.flatMap((edge) => (
+      nodeIndex.has(edge.source) && nodeIndex.has(edge.target)
+        ? [{ source: edge.source, target: edge.target }]
+        : []
+    )),
+    [graph.edges, nodeIndex],
+  )
   const layout = useForceGraphLayout({
     nodes: layoutNodes,
-    edges: graph.edges,
+    edges: layoutEdges,
     label: 'Wiki force graph',
     canvasRef,
     settleFit: SETTLE_FIT,

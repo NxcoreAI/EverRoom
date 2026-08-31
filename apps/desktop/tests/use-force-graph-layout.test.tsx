@@ -411,7 +411,7 @@ describe('useForceGraphLayout', () => {
     }
   })
 
-  it('surfaces worker errors through ready and keeps the binding usable', async () => {
+  it('falls back to the static layout when the worker dies before ready', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const created: FakeForceGraphWorker[] = []
     const workerFactory = () => {
@@ -427,18 +427,55 @@ describe('useForceGraphLayout', () => {
       )
     })
 
-    // ready 只结算一次：初始化阶段就失败（未先 ready）才会走 ready.catch 日志。
+    // 初始化阶段就失败（脚本加载错误/初始化抛错）：日志之外还要拆掉控制器，
+    // 否则全 0 共享坐标缓冲会把所有节点叠在世界原点。
     created[0]!.emitError('boom')
     await act(async () => {})
     expect(console.error).toHaveBeenCalledWith('Test graph worker failed', expect.objectContaining({
       message: 'boom',
     }))
-    // Worker 失败后绑定仍可安全调用（控制器还在，只是 ready 已 reject）。
+    // 控制器置 null → 画布回落静态站位；绑定仍可安全调用。
+    expect(latest?.controller).toBeNull()
+    expect(latest?.positions).toBeNull()
+    expect(latest?.revision).toBeUndefined()
     expect(() => {
       latest?.resize(100, 100)
       latest?.drag('a', 1, 2)
       latest?.release('a')
     }).not.toThrow()
+
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('falls back to the static layout when the worker crashes after ready', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const created: FakeForceGraphWorker[] = []
+    const workerFactory = () => {
+      const worker = new FakeForceGraphWorker()
+      created.push(worker)
+      return worker
+    }
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <ForceGraphLayoutProbe nodes={[{ id: 'a' }]} edges={[]} label="Test graph" workerFactory={workerFactory} />,
+      )
+    })
+
+    created[0]!.emitReady(1)
+    await act(async () => {})
+    expect(latest?.controller).not.toBeNull()
+
+    // ready 之后的运行期崩溃同样要回落：坐标缓冲停在上次写入，
+    // 继续挂载会把死布局当成活布局。
+    created[0]!.emitError('crashed mid-run')
+    await act(async () => {})
+    expect(errorSpy).toHaveBeenCalledWith('Test graph worker failed', expect.objectContaining({
+      message: 'crashed mid-run',
+    }))
+    expect(latest?.controller).toBeNull()
+    expect(latest?.positions).toBeNull()
 
     await act(async () => { renderer.unmount() })
   })
