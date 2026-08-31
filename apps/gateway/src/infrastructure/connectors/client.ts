@@ -4,7 +4,7 @@ import Database from "better-sqlite3";
 
 export interface ConnectorDatabase { sqlite: Database.Database; close(): void; }
 const schema = `
-CREATE TABLE IF NOT EXISTS connector_connections (id TEXT PRIMARY KEY, provider TEXT NOT NULL, nango_config_key TEXT NOT NULL, nango_connection_id TEXT NOT NULL, account_identity_hash TEXT, status TEXT NOT NULL DEFAULT 'active', filters_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(provider,nango_connection_id));
+CREATE TABLE IF NOT EXISTS connector_connections (id TEXT PRIMARY KEY, provider TEXT NOT NULL, nango_config_key TEXT NOT NULL, nango_connection_id TEXT NOT NULL, account_identity_hash TEXT, status TEXT NOT NULL DEFAULT 'active', filters_json TEXT NOT NULL DEFAULT '{}', auth_method TEXT NOT NULL DEFAULT 'nango-oauth', credentials_ref TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(provider,nango_connection_id));
 CREATE TABLE IF NOT EXISTS sync_scopes (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES connector_connections(id), provider_scope_id TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'idle', source_cursor TEXT, delivery_cursor INTEGER NOT NULL DEFAULT 0, checkpoint_revision INTEGER NOT NULL DEFAULT 0, lease_owner TEXT, lease_expires_at TEXT, fence_token INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, UNIQUE(connection_id,provider_scope_id));
 CREATE TABLE IF NOT EXISTS sync_runs (id TEXT PRIMARY KEY, scope_id TEXT NOT NULL REFERENCES sync_scopes(id), mode TEXT NOT NULL, status TEXT NOT NULL, processed INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, error TEXT, started_at TEXT NOT NULL, finished_at TEXT);
 CREATE TABLE IF NOT EXISTS sync_failures (id TEXT PRIMARY KEY, run_id TEXT, scope_id TEXT, kind TEXT NOT NULL, message TEXT NOT NULL, provider_item_id TEXT, created_at TEXT NOT NULL);
@@ -27,6 +27,16 @@ function migrate(sqlite: Database.Database): void {
     sqlite.exec(
       "ALTER TABLE sync_changes ADD COLUMN scope_id TEXT NOT NULL DEFAULT ''",
     );
+  }
+  // 阶段三：授权通道解耦——连接记录授权方式与凭据引用（存量行回落 nango-oauth/NULL）。
+  const connectionColumns = sqlite
+    .prepare("PRAGMA table_info(connector_connections)")
+    .all() as Array<{ name: string }>;
+  if (!connectionColumns.some((column) => column.name === "auth_method")) {
+    sqlite.exec("ALTER TABLE connector_connections ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'nango-oauth'");
+  }
+  if (!connectionColumns.some((column) => column.name === "credentials_ref")) {
+    sqlite.exec("ALTER TABLE connector_connections ADD COLUMN credentials_ref TEXT");
   }
 }
 

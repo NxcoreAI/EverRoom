@@ -4,7 +4,7 @@ import type { ConnectorConnection, ConnectorJsonRecord, ConnectorStatus, MailMes
 import type { NangoRuntimeStatus } from '../../../../shared/sources'
 import { useLocale, type AppLocale } from '@/i18n/LocaleContext'
 import { MarkdownPreviewDialog } from './sources/MarkdownPreviewDialog'
-import { SourceIcon } from './sources/SourceIcon'
+import { SourceIcon, type SourceIconKind } from './sources/SourceIcon'
 import './ConnectorPage.css'
 
 type View = 'connections' | 'runs' | 'scopes' | 'mail' | 'calendar' | 'wiki'
@@ -125,9 +125,11 @@ export function ConnectorSection() {
   </section>
 }
 
-function providerLabel(provider: string): string { return provider === 'gmail' ? 'Gmail' : provider === 'outlook' ? 'Outlook' : provider === 'google-docs' ? 'Google Docs' : provider === 'google-calendar' ? 'Google Calendar' : 'Notion' }
+// M2b：provider 已开放注册（SyncProvider 注册表）——未知 provider 回退注册名与通用图标。
+const PROVIDER_ICON_KINDS = new Set(['gmail', 'outlook', 'google-calendar', 'google-docs', 'notion', 'feishu', 'ics-calendar'])
+function providerLabel(provider: string): string { return provider === 'gmail' ? 'Gmail' : provider === 'outlook' ? 'Outlook' : provider === 'google-docs' ? 'Google Docs' : provider === 'google-calendar' ? 'Google Calendar' : provider === 'notion' ? 'Notion' : provider }
 function ProviderIdentity({ provider, detail }: { provider: ConnectorConnection['provider']; detail: string }) {
-  return <span className="connector-provider-identity"><SourceIcon kind={provider} /><span><strong>{providerLabel(provider)}</strong><small>{detail}</small></span></span>
+  return <span className="connector-provider-identity"><SourceIcon kind={(PROVIDER_ICON_KINDS.has(provider) ? provider : 'web-page') as SourceIconKind} /><span><strong>{providerLabel(provider)}</strong><small>{detail}</small></span></span>
 }
 function ConnectionsView({ connections, scopes, selectedId, onSelect, busy, onSync, onDisable, onEnable, onPurge }: { connections: ConnectorConnection[]; scopes: SyncScope[]; selectedId: string | null; onSelect: (id: string) => void; busy: string | null; onSync: (connection: ConnectorConnection, mode: SyncMode) => void; onDisable: (id: string) => void; onEnable: (id: string) => void; onPurge: (id: string) => void }) {
   const { locale, t } = useLocale()

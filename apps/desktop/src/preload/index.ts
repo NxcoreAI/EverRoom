@@ -212,9 +212,11 @@ const api: NxcoreDesktopApi = {
   nangoConnector: {
     runtimeStatus: () => invokeQuietly('nango-connector:runtime-status'),
     status: () => invoke('nango-connector:status'),
+    providers: () => invoke('nango-connector:providers'),
     startAuthorization: (provider) => invoke('nango-connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
     registerConnection: (input) => invoke('nango-connector:register-connection', input),
+    createWebcalSubscription: (url) => invoke('nango-connector:create-webcal-subscription', url),
     disableConnection: (id) => invoke('nango-connector:disable-connection', id),
     enableConnection: (id) => invoke('nango-connector:enable-connection', id),
     purgeConnection: (id) => invoke('nango-connector:purge-connection', id),

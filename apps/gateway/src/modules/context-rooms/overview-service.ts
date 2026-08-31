@@ -13,6 +13,10 @@ import type {
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
+  parseConnectorSourceRef,
+  type ConnectorSourceRef,
+} from "../connectors/domain-projection.js";
+import {
   connectorCalendarEvents,
   connectorEmails,
   connectorTodos,
@@ -523,6 +527,24 @@ export class RoomOverviewService {
     // 域表全缺（历史库）或部分命中：缺失的走路由快照回退解析。
     const missing = sourceIds.filter((id) => !domainRows.has(id));
     if (missing.length === 0) return sortByCalendarStart(resolved);
+    // ② connector ref → 域行（nango 路径主解析；与 listRoomMails 同构）。
+    const refRows = this.resolveCalendarRefRows(missing);
+    for (const [ref, row] of refRows) {
+      if (!row.title.trim()) continue;
+      resolved.push({
+        sourceId: ref,
+        title: row.title.trim(),
+        startedAt: row.startAt?.toISOString() ?? null,
+        endAt: row.endAt?.toISOString() ?? null,
+        allDay: row.allDay,
+        location: row.location,
+        origin: "connector" as const,
+        provider: row.service,
+      });
+    }
+    const stillMissing = missing.filter((id) => !refRows.has(id));
+    if (stillMissing.length === 0) return sortByCalendarStart([...resolved, ...local]);
+    // ③ 快照兜底：回填前的历史 membership。
     const snapshots = this.db.select({
       sourceId: routeDecisions.sourceId,
       sourceVersion: routeDecisions.sourceVersion,
@@ -532,7 +554,7 @@ export class RoomOverviewService {
       .from(routeDecisions)
       .where(and(
         eq(routeDecisions.sourceKind, "calendar-event"),
-        inArray(routeDecisions.sourceId, missing),
+        inArray(routeDecisions.sourceId, stillMissing),
         isNotNull(routeDecisions.sourceMarkdown),
       ))
       .orderBy(desc(routeDecisions.sourceVersion))
@@ -624,10 +646,88 @@ export class RoomOverviewService {
   }
 
   /**
-   * 邮箱面板的连接器邮件清单（全量，sentAt 倒序截 500）：
-   * memberships sourceId 直连 connector_emails 域行（REST 推送路径）；
-   * 域行缺失（nango 拉取路径，connector ref 作 sourceId）回退路由快照解析——
-   * 与 roomCalendarEvents 同一双轨约定。
+   * connector ref（Nango 拉取路径的 membership sourceId，形如
+   * connector:gmail:{connectionId}:mail:{messageId}）→ 主库域行批量解析。
+   * 按唯一键 (service, connectionName, sourceRecordId) 分组查询；本地单用户
+   * 部署不按 ownerId 过滤（多 owner 命中时以未删除的最新 syncedAt 行为准）。
+   * 只返回 ref 仍指向存活域行的项；解析不出/行缺失交还调用方走快照兜底。
+   */
+  private resolveMailRefRows(refs: string[]): Map<string, typeof connectorEmails.$inferSelect> {
+    const mail = refs
+      .map((ref) => ({ ref, parsed: parseConnectorSourceRef(ref) }))
+      .filter((item): item is { ref: string; parsed: ConnectorSourceRef } =>
+        item.parsed?.kind === "mail");
+    const rows = new Map<string, typeof connectorEmails.$inferSelect>();
+    const groups = new Map<string, { service: string; connectionName: string; entries: Array<{ recordId: string; refs: string[] }> }>();
+    for (const { ref, parsed } of mail) {
+      const key = `${parsed.provider}|${parsed.connectionId}`;
+      const group = groups.get(key) ?? { service: parsed.provider, connectionName: parsed.connectionId, entries: [] };
+      const existing = group.entries.find((item) => item.recordId === parsed.recordId);
+      if (existing) existing.refs.push(ref);
+      else group.entries.push({ recordId: parsed.recordId, refs: [ref] });
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      const found = this.db.select()
+        .from(connectorEmails)
+        .where(and(
+          eq(connectorEmails.service, group.service),
+          eq(connectorEmails.connectionName, group.connectionName),
+          inArray(connectorEmails.sourceRecordId, group.entries.map((item) => item.recordId)),
+          isNull(connectorEmails.deletedAt),
+        ))
+        .orderBy(desc(connectorEmails.syncedAt))
+        .all();
+      const byRecordId = new Map(found.map((row) => [row.sourceRecordId, row]));
+      for (const entry of group.entries) {
+        const row = byRecordId.get(entry.recordId);
+        if (row) for (const ref of entry.refs) rows.set(ref, row);
+      }
+    }
+    return rows;
+  }
+
+  private resolveCalendarRefRows(refs: string[]): Map<string, typeof connectorCalendarEvents.$inferSelect> {
+    const calendar = refs
+      .map((ref) => ({ ref, parsed: parseConnectorSourceRef(ref) }))
+      .filter((item): item is { ref: string; parsed: ConnectorSourceRef } =>
+        item.parsed?.kind === "calendar");
+    const rows = new Map<string, typeof connectorCalendarEvents.$inferSelect>();
+    const groups = new Map<string, { service: string; connectionName: string; entries: Array<{ recordId: string; refs: string[] }> }>();
+    for (const { ref, parsed } of calendar) {
+      const key = `${parsed.provider}|${parsed.connectionId}`;
+      const group = groups.get(key) ?? { service: parsed.provider, connectionName: parsed.connectionId, entries: [] };
+      const existing = group.entries.find((item) => item.recordId === parsed.recordId);
+      if (existing) existing.refs.push(ref);
+      else group.entries.push({ recordId: parsed.recordId, refs: [ref] });
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      const found = this.db.select()
+        .from(connectorCalendarEvents)
+        .where(and(
+          eq(connectorCalendarEvents.service, group.service),
+          eq(connectorCalendarEvents.connectionName, group.connectionName),
+          inArray(connectorCalendarEvents.sourceRecordId, group.entries.map((item) => item.recordId)),
+          isNull(connectorCalendarEvents.deletedAt),
+        ))
+        .orderBy(desc(connectorCalendarEvents.syncedAt))
+        .all();
+      const byRecordId = new Map(found.map((row) => [row.sourceRecordId, row]));
+      for (const entry of group.entries) {
+        const row = byRecordId.get(entry.recordId);
+        if (row) for (const ref of entry.refs) rows.set(ref, row);
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * 邮箱面板的连接器邮件清单（全量，sentAt 倒序截 500），三级解析：
+   * ① memberships sourceId 直连 connector_emails 域行（REST 推送路径）；
+   * ② connector ref 解析 → 域行（nango 拉取路径，阶段一落库后的主路径）；
+   * ③ 仍缺失（回填前的历史 membership）走路由快照解析兜底——验证域行覆盖率
+   * 达 100% 后退役（connector-platform-refactor-plan 阶段四删除）。
    */
   listRoomMails(roomId: string): Array<{
     sourceId: string;
@@ -638,8 +738,7 @@ export class RoomOverviewService {
     snippet: string | null;
     hasAttachments: boolean;
     provider: string | null;
-  }> {
-    const resolved = this.requireRoom(roomId);
+  }> {    const resolved = this.requireRoom(roomId);
     const memberships = this.db.select({
       sourceId: roomSourceMemberships.sourceId,
     })
@@ -675,6 +774,24 @@ export class RoomOverviewService {
     }).filter((mail) => mail.subject);
     const missing = sourceIds.filter((id) => !domainRows.has(id));
     if (missing.length === 0) return sortByMailSentAt(resolvedMails).slice(0, 500);
+    // ② connector ref → 域行（nango 路径主解析；provider 取域行 service 列）。
+    const refRows = this.resolveMailRefRows(missing);
+    for (const [ref, row] of refRows) {
+      if (!row.subject.trim()) continue;
+      resolvedMails.push({
+        sourceId: ref,
+        subject: row.subject.trim(),
+        senderName: row.senderName,
+        senderAddress: row.senderAddress,
+        sentAt: row.sentAt?.toISOString() ?? null,
+        snippet: mailSnippet(row.bodyText),
+        hasAttachments: row.hasAttachments,
+        provider: row.service,
+      });
+    }
+    const stillMissing = missing.filter((id) => !refRows.has(id));
+    if (stillMissing.length === 0) return sortByMailSentAt(resolvedMails).slice(0, 500);
+    // ③ 快照兜底：回填前的历史 membership（senderAddress 缺失、附件恒 false）。
     const snapshots = this.db.select({
       sourceId: routeDecisions.sourceId,
       sourceTitle: routeDecisions.sourceTitle,
@@ -683,7 +800,7 @@ export class RoomOverviewService {
       .from(routeDecisions)
       .where(and(
         eq(routeDecisions.sourceKind, "mail"),
-        inArray(routeDecisions.sourceId, missing),
+        inArray(routeDecisions.sourceId, stillMissing),
         isNotNull(routeDecisions.sourceMarkdown),
       ))
       .orderBy(desc(routeDecisions.sourceVersion))

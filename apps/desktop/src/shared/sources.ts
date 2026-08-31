@@ -82,6 +82,7 @@ import type {
   ConnectorAuthorizationAttempt,
   ConnectorConnection,
   ConnectorJsonRecord,
+  ConnectorProvidersResponse,
   ConnectorStatus,
   MailMessage,
   SyncMode,
@@ -89,6 +90,10 @@ import type {
   SyncScope,
   WikiDocumentPreview,
   WikiDocumentSummary,
+} from '@nxcore/connector-contract'
+export type {
+  ConnectorProviderSummary,
+  ConnectorProvidersResponse,
 } from '@nxcore/connector-contract'
 import type {
   KnowledgeAttachInput,
@@ -768,9 +773,11 @@ export interface NxcoreDesktopApi {
   nangoConnector: {
     runtimeStatus(): Promise<NangoRuntimeStatus>
     status(): Promise<ConnectorStatus>
-    startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt>
+    providers(): Promise<ConnectorProvidersResponse>
+    startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
-    registerConnection(input: { provider: 'gmail' | 'outlook' | 'google-calendar'; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
+    registerConnection(input: { provider: string; nangoConfigKey: string; nangoConnectionId: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
+    createWebcalSubscription(url: string): Promise<ConnectorConnection>
     disableConnection(id: string): Promise<void>
     enableConnection(id: string): Promise<void>
     purgeConnection(id: string): Promise<void>
@@ -858,7 +865,7 @@ export interface NxcoreDesktopApi {
     listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }>
     updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate>
     previewMerge(sourceRoomId: string, targetRoomId: string): Promise<RoomMergePreview>
-    startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string }): Promise<RoomMergeOperation>
+    startMerge(input: { sourceRoomId: string; targetRoomId: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
     getMergeOperation(id: string): Promise<RoomMergeOperation>
     retryMerge(id: string): Promise<RoomMergeOperation>
     cancelMerge(id: string): Promise<RoomMergeOperation>

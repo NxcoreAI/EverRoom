@@ -17,6 +17,8 @@ import { EvidenceSearch } from './sources/EvidenceSearch'
 import { EvidenceViewer } from './sources/EvidenceViewer'
 import { FilterPreferenceGuideDialog } from './sources/FilterPreferenceGuideDialog'
 import { GitHubConnectDialog, type GitHubConnectionInput } from './sources/GitHubConnectDialog'
+import { WebcalSubscriptionDialog } from './sources/WebcalSubscriptionDialog'
+import { useConnectorProviders } from './sources/useConnectorProviders'
 import { MarkdownSourceDialog } from './sources/MarkdownSourceDialog'
 import { MarkdownPreviewDialog } from './sources/MarkdownPreviewDialog'
 import { ObsidianImportDialog } from './sources/ObsidianImportDialog'
@@ -73,6 +75,10 @@ export function SourcesPage() {
   const [activeEvidenceId, setActiveEvidenceId] = useState<string | null>(null)
   const [connectMenuOpen, setConnectMenuOpen] = useState(false)
   const [githubOpen, setGithubOpen] = useState(false)
+  const [webcalOpen, setWebcalOpen] = useState(false)
+  const [webcalUrl, setWebcalUrl] = useState('')
+  const [webcalError, setWebcalError] = useState<string | null>(null)
+  const { providers: connectorProviders } = useConnectorProviders()
   const [githubForm, setGithubForm] = useState(EMPTY_GITHUB_FORM)
   const [markdownSource, setMarkdownSource] = useState<'google-docs' | 'notion' | null>(null)
   const [markdownForm, setMarkdownForm] = useState({ ids: '', token: '' })
@@ -288,6 +294,24 @@ export function SourcesPage() {
     }
   }
 
+  // WebCal/ICS 订阅（webcal-url 通道）：无 OAuth，提交地址即建连（幂等）。
+  const submitWebcalSubscription = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setWebcalError(null)
+    setBusyId('new')
+    try {
+      await window.nxcore?.nangoConnector.createWebcalSubscription(webcalUrl)
+      setWebcalOpen(false)
+      setWebcalUrl('')
+      // 连接与首同步由网关轮询/引导流程接管；本页无需额外刷新。
+      setMessage(t('surface:webcalDialog.subscribed'))
+    } catch (error) {
+      setWebcalError(error instanceof Error ? error.message : t('surface:webcalDialog.subscribeFailed'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   const loadSources = useCallback(async (): Promise<DataSourceSummary[] | null> => {
     if (!api) return null
     try {
@@ -480,7 +504,7 @@ export function SourcesPage() {
   return (
     <div className="page">
       <PageHeader title={t('surface:sources.sources')} action={t('surface:sources.connectSource')} actionDisabled={busyId === 'new'} onAction={() => setConnectMenuOpen((open) => !open)} />
-      {api && connectMenuOpen ? <ConnectSourceMenu busy={Boolean(busyId)} onLocalFolder={() => void addLocalFolder()} onObsidian={() => void mountObsidian()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} onNotionZip={() => void importNotionZip()} onOpenClaw={() => void importOpenClaw()} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} /> : null}
+      {api && connectMenuOpen ? <ConnectSourceMenu busy={Boolean(busyId)} onLocalFolder={() => void addLocalFolder()} onObsidian={() => void mountObsidian()} onGitHub={() => { setConnectMenuOpen(false); setGithubOpen(true) }} onGoogleDocs={() => { setConnectMenuOpen(false); setMarkdownSource('google-docs') }} onNotion={() => { setConnectMenuOpen(false); setMarkdownSource('notion') }} onNotionZip={() => void importNotionZip()} onOpenClaw={() => void importOpenClaw()} connectorsEnabled={connectorsEnabled} onConnectorProvider={(provider) => void connectConnector(provider)} providers={connectorProviders} onWebcalSubscription={() => { setConnectMenuOpen(false); setWebcalOpen(true) }} /> : null}
       {!api ? <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:sources.connectLocalFoldersInTheDesktopApp')}</strong><span>{t('surface:sources.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div> : null}
       {deletionProgress ? <div className="source-feedback source-delete-progress" role="status"><div className="source-delete-progress-copy"><strong>{deletionProgress.message}</strong><span className="source-delete-progress-track"><span style={{ width: `${deletionProgress.percent}%` }} /></span></div><b>{deletionProgress.percent}%</b></div> : message ? <div className="source-feedback" role="status">{message}</div> : null}
       {previewError ? <div className="source-feedback" role="alert">{previewError}</div> : null}
@@ -505,6 +529,7 @@ export function SourcesPage() {
       {evidenceDocument ? <EvidenceViewer evidence={evidenceDocument} activeBlockId={activeEvidenceId} onClose={() => { setEvidenceDocument(null); setActiveEvidenceId(null) }} onShowFile={() => showFile(evidenceDocument.sourceId, evidenceDocument.fileId)} /> : null}
       {markdownPreview ? <MarkdownPreviewDialog preview={markdownPreview.data} onClose={() => setMarkdownPreview(null)} onShowFile={() => showFile(markdownPreview.sourceId, markdownPreview.fileId)} /> : null}
       {githubOpen ? <GitHubConnectDialog values={githubForm} busy={busyId === 'new'} onChange={setGithubForm} onClose={() => setGithubOpen(false)} onSubmit={(event) => void addGitHub(event)} /> : null}
+      {webcalOpen ? <WebcalSubscriptionDialog url={webcalUrl} busy={busyId === 'new'} error={webcalError} onUrlChange={setWebcalUrl} onClose={() => setWebcalOpen(false)} onSubmit={(event) => void submitWebcalSubscription(event)} /> : null}
       {markdownSource ? <MarkdownSourceDialog kind={markdownSource} value={markdownForm} busy={busyId === 'new'} onChange={setMarkdownForm} onClose={() => setMarkdownSource(null)} onSubmit={(event) => void addMarkdownSource(event)} /> : null}
       {guideProvider ? <FilterPreferenceGuideDialog provider={guideProvider} onClose={closeGuide} /> : null}
       {obsidianImportOpen ? <ObsidianImportDialog target={{ kind: 'memory' }} onClose={() => setObsidianImportOpen(false)} onImported={(result) => {

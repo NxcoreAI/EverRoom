@@ -3,6 +3,7 @@ import type {
   ConnectorAuthorizationAttempt,
   ConnectorConnection,
   ConnectorJsonRecord,
+  ConnectorProvidersResponse,
   ConnectorStatus,
   MailMessage,
   SyncMode,
@@ -19,7 +20,7 @@ const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/
 const FAULT_POINTS = new Set(['before_page_commit', 'after_page_commit_before_cursor_cas', 'rate_limited', 'cursor_expired'])
 
 export interface ConnectorConnectionInput {
-  provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'
+  provider: string
   nangoConfigKey: string
   nangoConnectionId: string
   filters?: Record<string, unknown>
@@ -58,14 +59,26 @@ export class NangoConnectorGatewayBridge {
     return { ...status, scopes: status.scopes.map((scope) => this.sanitizeScope(scope)) }
   }
 
+  providers(): Promise<ConnectorProvidersResponse> {
+    return this.request('/v1/nango-connectors/providers')
+  }
+
+  /** WebCal/ICS 日历订阅（webcal-url 通道）：同 URL 幂等，网关不回显 URL 令牌。 */
+  createWebcalSubscription(url: string, provider = 'ics-calendar'): Promise<ConnectorConnection> {
+    const trimmed = url.trim()
+    if (!/^https?:\/\/[^\s]+$/i.test(trimmed) && !/^webcal:\/\//i.test(trimmed)) throw new Error('请输入有效的日历订阅地址（https:// 或 webcal://）。')
+    return this.request('/v1/connectors/connections', { method: 'POST', data: { provider, url: trimmed } })
+  }
+
   registerConnection(input: ConnectorConnectionInput): Promise<ConnectorConnection> {
-    if (!['gmail', 'outlook', 'google-docs', 'notion', 'google-calendar'].includes(input.provider)) throw new Error('不支持的连接提供方。')
+    if (!/^[a-z][a-z0-9-]*$/.test(input.provider)) throw new Error('不支持的连接提供方。')
     if (!input.nangoConfigKey.trim() || !input.nangoConnectionId.trim()) throw new Error('连接配置不能为空。')
     return this.request('/v1/nango-connectors/connections', { method: 'POST', data: { ...input, nangoConfigKey: input.nangoConfigKey.trim(), nangoConnectionId: input.nangoConnectionId.trim() } })
   }
 
-  async startAuthorization(provider: 'gmail' | 'outlook' | 'google-docs' | 'notion' | 'google-calendar'): Promise<ConnectorAuthorizationAttempt> {
-    if (!['gmail', 'outlook', 'google-docs', 'notion', 'google-calendar'].includes(provider)) throw new Error('不支持的连接提供方。')
+  async startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt> {
+    // 注册表白名单校验在网关侧（isConnectorProvider + syncProviderNames）；桥层只做格式约束。
+    if (!/^[a-z][a-z0-9-]*$/.test(provider)) throw new Error('不支持的连接提供方。')
     const result = await this.request<ConnectorAuthorizationAttempt & { authorizationUrl: string }>(
       '/v1/nango-connectors/authorizations',
       { method: 'POST', data: { provider } },
