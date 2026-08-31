@@ -364,6 +364,7 @@ const DOCUMENT_CHANNELS = {
 
 const ASR_CHANNELS = {
   requestMicrophoneAccess: 'asr:request-microphone-access',
+  getMicrophoneAccessStatus: 'asr:get-microphone-access-status',
   openMicrophoneSettings: 'asr:open-microphone-settings',
   openSystemAudioSettings: 'asr:open-system-audio-settings',
   beginRecording: 'asr:begin-recording',
@@ -2089,6 +2090,10 @@ function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator)
     if (status === 'denied' || status === 'restricted') return false
     return systemPreferences.askForMediaAccess('microphone')
   })
+  handle(ASR_CHANNELS.getMicrophoneAccessStatus, () => {
+    if (process.platform !== 'darwin') return 'granted' as const
+    return systemPreferences.getMediaAccessStatus('microphone')
+  })
   handle(ASR_CHANNELS.openMicrophoneSettings, () => {
     if (process.platform !== 'darwin') throw new Error('麦克风隐私设置仅适用于 macOS。')
     return shell.openExternal(
@@ -2565,6 +2570,12 @@ function createWindow(): BrowserWindow {
         console.info(`macOS system audio capture permission was not granted: ${message}`)
         respond({})
       }
+    }, {
+      // macOS 15+ 上自定义 desktopCapturer 授权拿到的 loopback 音轨会立即 ended
+      // (CoreAudio tap 权限探测被系统拒绝，且不弹系统授权窗，见 electron#52738)。
+      // 系统原生选择器会正确触发「录屏与系统音频」TCC 授权并返回可用音轨；
+      // macOS 15 以下该选项被忽略，仍走上方 handler 回退逻辑。
+      useSystemPicker: true,
     })
   }
   window.once('ready-to-show', () => window.show())

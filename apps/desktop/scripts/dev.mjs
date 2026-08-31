@@ -16,6 +16,28 @@ function run(command, args) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
+function electronHealthCheck(executable) {
+  const result = spawnSync(executable, ['--version'], { encoding: 'utf8' })
+  if (result.status === 0) return null
+  if (result.error) return result.error.message
+  if (result.signal) return `terminated by ${result.signal}`
+  return `exited with code ${result.status ?? 'unknown'}`
+}
+
+function assertElectronHealthy(executable) {
+  const failure = electronHealthCheck(executable)
+  if (!failure) return
+
+  console.error(`
+[desktop] Electron executable is not runnable (${failure}):
+  ${executable}
+
+The Electron app bundle or its code signature is damaged. Reinstall workspace dependencies with:
+  pnpm install --force
+`)
+  process.exit(1)
+}
+
 function prepareMacElectron() {
   const sourceApp = resolve(dirname(electronExecutable), '../..')
   const sourcePlist = join(sourceApp, 'Contents/Info.plist')
@@ -31,8 +53,14 @@ function prepareMacElectron() {
   })
 
   if (existsSync(markerPath) && readFileSync(markerPath, 'utf8') === marker) {
-    return join(brandedApp, 'Contents/MacOS/Electron')
+    const cachedExecutable = join(brandedApp, 'Contents/MacOS/Electron')
+    if (!electronHealthCheck(cachedExecutable)) return cachedExecutable
+    console.warn('[desktop] cached branded Electron is not runnable; rebuilding it.')
+    rmSync(brandedApp, { recursive: true, force: true })
+    rmSync(markerPath, { force: true })
   }
+
+  assertElectronHealthy(electronExecutable)
 
   mkdirSync(cacheDirectory, { recursive: true })
   rmSync(brandedApp, { recursive: true, force: true })
@@ -59,13 +87,34 @@ function prepareMacElectron() {
   if (signing.status !== 0) {
     console.warn('[desktop] ad-hoc Electron signing is unavailable; using the stock Electron executable for development.')
     rmSync(brandedApp, { recursive: true, force: true })
+    assertElectronHealthy(electronExecutable)
+    return electronExecutable
+  }
+  const brandedExecutable = join(brandedApp, 'Contents/MacOS/Electron')
+  const brandedFailure = electronHealthCheck(brandedExecutable)
+  if (brandedFailure) {
+    console.warn(`[desktop] branded Electron is not runnable (${brandedFailure}); using the stock Electron executable for development.`)
+    rmSync(brandedApp, { recursive: true, force: true })
+    assertElectronHealthy(electronExecutable)
     return electronExecutable
   }
   writeFileSync(markerPath, marker)
 
-  return join(brandedApp, 'Contents/MacOS/Electron')
+  const devAppPath = brandedApp
+  console.log(`
+[desktop] macOS 开发环境「录屏与系统音频」授权指引:
+  1. 打开 系统设置 → 隐私与安全性 → 录屏与系统音频 (Screen & System Audio Recording)
+  2. 点击 "+" 号,前往并选择下方这个 app(注意是缓存里的 EverRoom.app,不是 release 安装包):
+     ${devAppPath}
+  3. 添加后按提示退出并重新启动开发版应用 (pnpm dev),权限即生效
+  说明: 开发环境下真正发起系统音频捕获的是这个带 branding 的 Electron.app,
+  TCC 权限按 app 路径+签名记录,所以必须给它授权而不是给终端或 IDE。
+`)
+
+  return brandedExecutable
 }
 
+if (process.platform !== 'darwin') assertElectronHealthy(electronExecutable)
 const brandedElectron = process.platform === 'darwin' ? prepareMacElectron() : electronExecutable
 const child = spawn(process.execPath, [electronViteCli, 'dev', ...process.argv.slice(2)], {
   env: { ...process.env, ELECTRON_EXEC_PATH: brandedElectron },

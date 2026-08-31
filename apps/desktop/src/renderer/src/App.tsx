@@ -20,6 +20,7 @@ import { TopBar } from '@/components/TopBar'
 import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGate'
 import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
 import { FolderSettingsOnboarding } from '@/components/onboarding/FolderSettingsOnboarding'
+import { MicrophonePermissionOnboarding } from '@/components/onboarding/MicrophonePermissionOnboarding'
 import { OnboardingFlowChrome, type OnboardingFlowStage } from '@/components/onboarding/OnboardingFlowChrome'
 import { RuntimeConfigGate } from '@/components/onboarding/RuntimeConfigGate'
 import {
@@ -107,7 +108,7 @@ export function App() {
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
   const [suppressRoomOnboarding, setSuppressRoomOnboarding] = useState(false)
   const [fullOnboardingStage, setFullOnboardingStage] = useState<OnboardingFlowStage>('idle')
-  const [completedOnboardingStages, setCompletedOnboardingStages] = useState<Set<'folder' | 'memory' | 'room'>>(() => new Set())
+  const [completedOnboardingStages, setCompletedOnboardingStages] = useState<Set<'folder' | 'microphone' | 'memory' | 'room'>>(() => new Set())
   const [folderOnboardingOpen, setFolderOnboardingOpen] = useState(false)
   const [suppressAutomaticOnboarding, setSuppressAutomaticOnboarding] = useState(true)
   const [memoryReady, setMemoryReady] = useState(false)
@@ -181,7 +182,7 @@ export function App() {
     })
   }, [activePage, folderOnboardingOpen, fullOnboardingStage, suppressRoomOnboarding])
 
-  const markOnboardingStageCompleted = useCallback((stage: 'folder' | 'memory' | 'room') => {
+  const markOnboardingStageCompleted = useCallback((stage: 'folder' | 'microphone' | 'memory' | 'room') => {
     setCompletedOnboardingStages((current) => {
       if (current.has(stage)) return current
       return new Set([...current, stage])
@@ -910,10 +911,9 @@ export function App() {
           })
           if (!isFinalReady && currentStage === 'folder') {
             markOnboardingStageCompleted('folder')
-            fullOnboardingStageRef.current = 'memory'
-            setFullOnboardingStage('memory')
+            fullOnboardingStageRef.current = 'microphone'
+            setFullOnboardingStage('microphone')
             setSuppressRoomOnboarding(true)
-            openMemoryOnboardingRef.current?.()
           } else {
             markOnboardingStageCompleted('folder')
             writeFullOnboardingCompleted()
@@ -927,6 +927,20 @@ export function App() {
           }
         }}
       />
+      {fullOnboardingStage === 'microphone' ? (
+        <MicrophonePermissionOnboarding
+          onNavigateStage={switchOnboardingStage}
+          onFinished={() => {
+            logOnboarding('microphone-finished', { stage: fullOnboardingStageRef.current })
+            markOnboardingStageCompleted('microphone')
+            if (fullOnboardingStageRef.current !== 'microphone') return
+            fullOnboardingStageRef.current = 'memory'
+            setFullOnboardingStage('memory')
+            setSuppressRoomOnboarding(true)
+            openMemoryOnboardingRef.current?.()
+          }}
+        />
+      ) : null}
       </>
       )
       }}

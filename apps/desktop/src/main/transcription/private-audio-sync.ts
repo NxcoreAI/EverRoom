@@ -88,7 +88,7 @@ export class PrivateAudioSyncService {
         const plainSize = Math.min(AUDIO_CHUNK_SIZE, plain.length - plainOffset)
         plainOffset += plainSize
         const authorization = await this.client.authorizePrivateAudioChunk(asset.id, index, { fileSize: plainSize, contentHash: hash(chunk) })
-        await http.put(authorization.uploadUrl, chunk, { headers: { ...authorization.headers, 'Content-Length': String(chunk.length) }, maxContentLength: Infinity, maxBodyLength: Infinity, timeout: 5 * 60_000 })
+        await http.put(authorization.uploadUrl, chunk, { headers: { ...authorization.headers }, maxContentLength: Infinity, maxBodyLength: Infinity, timeout: 5 * 60_000 })
         await this.client.completePrivateAudioChunk(asset.id, index)
       }
       return await this.client.completePrivateAudioChunks(asset.id)
