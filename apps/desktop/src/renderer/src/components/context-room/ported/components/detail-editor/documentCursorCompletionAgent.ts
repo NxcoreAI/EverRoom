@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   AgentRun,
   AgentSession,
+  AgentSocketFrame,
   CreateAgentSessionInput,
   StartAgentRunInput,
 } from '@nxcore/agent-contract'
@@ -13,6 +14,10 @@ export interface DocumentCursorCompletionAgentApi {
   getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
   startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun>
   cancelRun(runId: string): Promise<AgentRun>
+  /** 可选推送通道：存在时流式循环以事件唤醒替代盲轮询。 */
+  subscribe?(sessionId: string): Promise<void>
+  unsubscribe?(): Promise<void>
+  onEvent?(listener: (frame: AgentSocketFrame) => void): () => void
 }
 
 export type DocumentCursorCompletionListType = 'bulletList' | 'orderedList' | 'taskList'
@@ -57,6 +62,91 @@ export interface DocumentCursorCompletionSuggestion {
   text: string
   replaceCharacters: number
 }
+
+export type DocumentCursorCompletionErrorKind =
+  | 'aborted'
+  | 'first_suggestion_timeout'
+  | 'timeout'
+  | 'session_not_found'
+  | 'unconfigured'
+  | 'network'
+  | 'provider'
+  | 'no_completion'
+  | 'unknown'
+
+export class DocumentCursorCompletionError extends Error {
+  constructor(
+    readonly kind: DocumentCursorCompletionErrorKind,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'DocumentCursorCompletionError'
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null
+    && 'name' in error && error.name === 'AbortError'
+}
+
+/** 熔断/重试决策依赖的错误分类：只有 session_not_found 可安全重试。 */
+export function classifyDocumentCursorCompletionError(error: unknown): DocumentCursorCompletionErrorKind {
+  if (error instanceof DocumentCursorCompletionError) return error.kind
+  if (isAbortError(error)) return 'aborted'
+  const message = error instanceof Error ? error.message : String(error)
+  if (/agent_session_not_found|session not found/i.test(message)) return 'session_not_found'
+  if (/runtime_config_not_ready/i.test(message)) return 'unconfigured'
+  if (/ECONNREFUSED|ECONNRESET|EPIPE|ENOTFOUND|ETIMEDOUT|fetch failed|network|socket hang up/i.test(message)) {
+    return 'network'
+  }
+  if (/HTTP 4\d\d|HTTP 5\d\d|status (code )?4\d\d|status (code )?5\d\d|请求失败（[45]\d\d|rate.?limit/i.test(message)) {
+    return 'provider'
+  }
+  return 'unknown'
+}
+
+/**
+ * 补全熔断：连续失败（abort/session 失联除外）后指数退避，打开期间
+ * 直接跳过请求而不是每个击键窗口都全链路白跑。进程级单例——补全服务
+ * 是单例子进程，多个编辑器共享同一份退避状态。
+ */
+export class DocumentCursorCompletionCircuitBreaker {
+  private consecutiveFailures = 0
+  private openUntilMs = 0
+  private lastCooldownMs = 0
+
+  constructor(
+    private readonly failureThreshold = 3,
+    private readonly baseCooldownMs = 5_000,
+    private readonly maxCooldownMs = 60_000,
+  ) {}
+
+  shouldAttempt(nowMs = Date.now()): boolean {
+    return nowMs >= this.openUntilMs
+  }
+
+  cooldownRemainingMs(nowMs = Date.now()): number {
+    return Math.max(0, this.openUntilMs - nowMs)
+  }
+
+  recordSuccess(): void {
+    this.consecutiveFailures = 0
+    this.lastCooldownMs = 0
+    this.openUntilMs = 0
+  }
+
+  recordFailure(nowMs = Date.now()): void {
+    this.consecutiveFailures += 1
+    if (this.consecutiveFailures < this.failureThreshold) return
+    const nextCooldown = this.lastCooldownMs
+      ? Math.min(this.lastCooldownMs * 2, this.maxCooldownMs)
+      : this.baseCooldownMs
+    this.lastCooldownMs = nextCooldown
+    this.openUntilMs = nowMs + nextCooldown
+  }
+}
+
+export const documentCursorCompletionCircuitBreaker = new DocumentCursorCompletionCircuitBreaker()
 
 function levenshteinDistance(left: string, right: string): number {
   const leftCharacters = Array.from(left)
@@ -141,8 +231,16 @@ interface StreamDocumentCursorCompletionOptions {
   signal: AbortSignal
   onSuggestion: (suggestion: DocumentCursorCompletionSuggestion) => void
   responseLanguage?: StartAgentRunInput['responseLanguage']
+  /** 纯轮询模式的拉取间隔（无推送通道时）。 */
   pollIntervalMs?: number
+  /** 推送模式的对账回退间隔：事件唤醒为主，超时兜底拉一次防漏。 */
+  reconcileIntervalMs?: number
+  /** 总超时。 */
   timeoutMs?: number
+  /** 首个可用建议的 deadline：超时即取消 run——迟到的建议对补全没有价值。 */
+  firstSuggestionMs?: number
+  /** 会话/订阅复用通道；缺省时退回每次建删会话的旧路径。 */
+  channel?: DocumentCursorCompletionSessionChannel
 }
 
 export function buildDocumentCursorCompletionPrompt(
@@ -150,48 +248,13 @@ export function buildDocumentCursorCompletionPrompt(
   responseLanguage: StartAgentRunInput['responseLanguage'] = 'zh-CN',
 ): string {
   const t = i18n.getFixedT(responseLanguage, 'common')
-  const { formatContext } = input
-  const insideCodeBlock = input.blockType === 'codeBlock'
-    || formatContext.ancestorTypes.includes('codeBlock')
-  let outputRule: string
-  if (insideCodeBlock) {
-    const language = formatContext.codeLanguage?.trim() || t('contextRoom:documentCursorCompletionAgent.unspecifiedLanguage')
-    outputRule = t('contextRoom:documentCursorCompletionAgent.codeBlockRule', { language })
-  } else if (formatContext.list) {
-    const listLabel = formatContext.list.type === 'orderedList'
-      ? t('contextRoom:documentCursorCompletionAgent.orderedList')
-      : formatContext.list.type === 'taskList'
-        ? t('contextRoom:documentCursorCompletionAgent.taskList')
-        : t('contextRoom:documentCursorCompletionAgent.bulletList')
-    const taskState = formatContext.list.type === 'taskList'
-      ? t('contextRoom:documentCursorCompletionAgent.taskState', {
-        state: t(formatContext.list.checked
-          ? 'contextRoom:documentCursorCompletionAgent.taskCompleted'
-          : 'contextRoom:documentCursorCompletionAgent.taskIncomplete'),
-      })
-      : ''
-    outputRule = t('contextRoom:documentCursorCompletionAgent.listRule', { depth: formatContext.list.depth, list: listLabel, state: taskState })
-  } else if (input.blockType === 'heading') {
-    outputRule = t('contextRoom:documentCursorCompletionAgent.headingRule', {
-      level: formatContext.headingLevel ?? t('contextRoom:documentCursorCompletionAgent.unknown'),
-    })
-  } else if (formatContext.ancestorTypes.includes('blockquote')) {
-    outputRule = t('contextRoom:documentCursorCompletionAgent.blockquoteRule')
-  } else if (formatContext.ancestorTypes.some((type) => type === 'tableCell' || type === 'tableHeader')) {
-    outputRule = t('contextRoom:documentCursorCompletionAgent.tableCellRule')
-  } else {
-    outputRule = t('contextRoom:documentCursorCompletionAgent.textBlockRule')
-  }
-  const markRule = formatContext.activeMarks.includes('code')
-    ? t('contextRoom:documentCursorCompletionAgent.inlineCodeRule')
-    : formatContext.activeMarks.length > 0
-      ? t('contextRoom:documentCursorCompletionAgent.marksRule', { marks: formatContext.activeMarks.join(', ') })
-      : null
   return [
     t('contextRoom:documentCursorCompletionAgent.promptInstruction'),
     t('contextRoom:documentCursorCompletionAgent.correctionRule'),
-    outputRule,
-    ...(markRule ? [markRule] : []),
+    // 指令段是全量固定文本（不随块类型插值）：system/skill 提示词 +
+    // 用户消息头部字节稳定，provider 的前缀缓存才能跨请求命中；
+    // 具体格式语境由 <EDITOR_CONTEXT> 的 blockType/formatContext 数据承载。
+    t('contextRoom:documentCursorCompletionAgent.formatRules'),
     t('contextRoom:documentCursorCompletionAgent.structureRule'),
     '',
     '<PREFIX>',
@@ -393,13 +456,125 @@ async function deleteTemporarySession(
   }
 }
 
+export interface DocumentCursorCompletionChannelOptions {
+  roomId: string
+  roomTitle?: string
+  documentName: string
+  responseLanguage?: StartAgentRunInput['responseLanguage']
+}
+
+/**
+ * 补全会话通道：按编辑器生命周期复用一个 agent 会话和一条 websocket
+ * 订阅，替代「每次补全 createSession → … → deleteSession」的往返 churn。
+ *
+ * 会话失效（404，如补全服务重启）由调用方 invalidate 后自动重建。
+ * 订阅失败不致命：流式循环仍以对账拉取兜底。注意 main 侧订阅按
+ * webContents 单会话——多个编辑器实例并存时后订阅者会顶掉前者，
+ * 被顶掉的编辑器退化为对账节奏，正确性不受影响。
+ */
+export class DocumentCursorCompletionSessionChannel {
+  private session: AgentSession | null = null
+  private creating: Promise<AgentSession> | null = null
+  private subscribedSessionId: string | null = null
+  private readonly listeners = new Set<(event: AgentEvent) => void>()
+  private disposed = false
+  readonly supportsPush: boolean
+
+  constructor(
+    private readonly api: DocumentCursorCompletionAgentApi,
+    private readonly input: DocumentCursorCompletionChannelOptions,
+  ) {
+    this.supportsPush = Boolean(api.subscribe && api.unsubscribe && api.onEvent)
+    api.onEvent?.((frame: AgentSocketFrame) => {
+      if (frame.type !== 'event') return
+      if (frame.event.sessionId !== this.session?.id) return
+      for (const listener of [...this.listeners]) listener(frame.event)
+    })
+  }
+
+  /** 幂等获取（或创建）复用会话；并发调用共享同一次创建。 */
+  async acquireSession(): Promise<AgentSession> {
+    if (this.disposed) {
+      throw new DocumentCursorCompletionError('aborted', 'completion session channel disposed')
+    }
+    if (this.session) return this.session
+    this.creating ??= this.api.createSession({
+      pageLabel: i18n.getFixedT(this.input.responseLanguage ?? 'zh-CN', 'common')(
+        'contextRoom:documentCursorCompletionAgent.pageLabel',
+        { name: this.input.documentName },
+      ),
+      roomId: this.input.roomId,
+    }).then((session) => {
+      this.session = session
+      return session
+    }).finally(() => {
+      this.creating = null
+    })
+    return this.creating
+  }
+
+  /** 丢弃缓存的会话（下次 acquireSession 重建）；订阅句柄随会话 id 失效。 */
+  invalidateSession(): void {
+    this.session = null
+  }
+
+  /** 推送模式下保证订阅已发起；必须在 startRun 之前调用以免漏早期事件。 */
+  async ensureSubscribed(): Promise<void> {
+    if (!this.supportsPush || !this.session) return
+    const sessionId = this.session.id
+    if (this.subscribedSessionId === sessionId) return
+    try {
+      await this.api.subscribe?.(sessionId)
+      if (this.disposed) {
+        // dispose 发生在订阅 IPC 在途时：立即退订，避免孤儿 socket。
+        await this.api.unsubscribe?.().catch(() => undefined)
+        return
+      }
+      this.subscribedSessionId = sessionId
+    } catch {
+      // 订阅失败退回对账拉取节奏；不阻塞补全请求。
+    }
+  }
+
+  addEventListener(listener: (event: AgentEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  /** 尽力拆除：退订 + 删会话；异步执行，不阻塞调用方。 */
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    const api = this.api
+    const session = this.session
+    const wasSubscribed = this.subscribedSessionId !== null
+    this.session = null
+    this.subscribedSessionId = null
+    this.listeners.clear()
+    void (async () => {
+      if (wasSubscribed) await api.unsubscribe?.().catch(() => undefined)
+      if (session) await deleteTemporarySession(api, session.id)
+    })()
+  }
+}
+
+const DEFAULT_STREAM_TIMEOUT_MS = 10_000
+const DEFAULT_FIRST_SUGGESTION_MS = 4_000
+const DEFAULT_RECONCILE_INTERVAL_MS = 500
+
 export async function streamDocumentCursorCompletion(
   api: DocumentCursorCompletionAgentApi,
   input: DocumentCursorCompletionRequest,
   options: StreamDocumentCursorCompletionOptions,
 ): Promise<DocumentCursorCompletionSuggestion> {
+  const channel = options.channel ?? null
+  const pushMode = Boolean(channel?.supportsPush)
   const pollIntervalMs = options.pollIntervalMs ?? 70
-  const timeoutMs = options.timeoutMs ?? 30_000
+  const reconcileIntervalMs = options.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS
+  const timeoutMs = options.timeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS
+  const firstSuggestionMs = options.firstSuggestionMs ?? DEFAULT_FIRST_SUGGESTION_MS
   const startedAt = Date.now()
   let sessionId: string | null = null
   let runId: string | null = null
@@ -407,79 +582,193 @@ export async function streamDocumentCursorCompletion(
   let runSettled = false
   let rawText = ''
   let afterSeq = 0
+  let sawUsableSuggestion = false
+  let wakeResolver: (() => void) | null = null
 
   const cancelRun = () => {
     if (!runId || cancelPromise || runSettled) return
     cancelPromise = api.cancelRun(runId).catch(() => undefined)
   }
-  const onAbort = () => cancelRun()
+  const onAbort = () => {
+    cancelRun()
+    wakeResolver?.()
+  }
   options.signal.addEventListener('abort', onAbort)
+
+  let failureMessage: string | null = null
+  const processEvent = (event: AgentEvent): 'completed' | 'failed' | 'cancelled' | null => {
+    if (event.type === 'message.delta') {
+      const delta = eventText(event, 'delta')
+      if (delta) {
+        rawText += delta
+        const suggestion = parseDocumentCursorCompletion(rawText, input)
+        if (suggestion.text) sawUsableSuggestion = true
+        options.onSuggestion(suggestion)
+      }
+    } else if (event.type === 'message.completed') {
+      const content = eventText(event, 'content')
+      if (content !== null) rawText = content
+      const suggestion = parseDocumentCursorCompletion(rawText, input)
+      if (suggestion.text) sawUsableSuggestion = true
+      options.onSuggestion(suggestion)
+    } else if (event.type === 'run.completed') {
+      return 'completed'
+    } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {
+      failureMessage = eventText(event, 'message')
+      return 'failed'
+    } else if (event.type === 'run.cancelled') {
+      return 'cancelled'
+    }
+    return null
+  }
+
+  // 推送事件先进队列，循环内按 seq 去重排序后与拉取结果合并处理。
+  const pushedEvents: AgentEvent[] = []
+  const removePushListener = channel?.addEventListener((event) => {
+    if (event.seq <= afterSeq) return
+    pushedEvents.push(event)
+    wakeResolver?.()
+  }) ?? null
+
+  /** 推送模式：任意事件唤醒；纯轮询模式：固定间隔。 */
+  const waitForNext = async (): Promise<void> => {
+    if (pushedEvents.length) return
+    if (!pushMode) return wait(pollIntervalMs, options.signal)
+    return new Promise<void>((resolve, reject) => {
+      const settle = () => {
+        globalThis.clearTimeout(timer)
+        options.signal.removeEventListener('abort', onWaitAbort)
+        wakeResolver = null
+        resolve()
+      }
+      const timer = globalThis.setTimeout(settle, reconcileIntervalMs)
+      const onWaitAbort = () => {
+        globalThis.clearTimeout(timer)
+        wakeResolver = null
+        reject(abortError())
+      }
+      if (options.signal.aborted) {
+        onWaitAbort()
+        return
+      }
+      options.signal.addEventListener('abort', onWaitAbort, { once: true })
+      wakeResolver = settle
+    })
+  }
 
   try {
     throwIfAborted(options.signal)
-    const session = await api.createSession({
-      pageLabel: i18n.getFixedT(options.responseLanguage ?? 'zh-CN', 'common')('contextRoom:documentCursorCompletionAgent.pageLabel', { name: input.documentName }),
-      roomId: input.roomId,
-    })
-    sessionId = session.id
-    throwIfAborted(options.signal)
-    const run = await api.startRun(session.id, {
-      prompt: buildDocumentCursorCompletionPrompt(input, options.responseLanguage),
-      idempotencyKey: crypto.randomUUID(),
-      responseLanguage: options.responseLanguage,
-      captureMemory: false,
-      recallMemory: false,
-      toolsEnabled: false,
-      context: {
-        selectedRoomId: input.roomId,
-        rooms: [{
-          id: input.roomId,
-          title: input.roomTitle?.trim() || input.documentName,
-        }],
-      },
-    })
+    let run: AgentRun
+    for (let attempt = 0; ; attempt += 1) {
+      const session = channel
+        ? await channel.acquireSession()
+        : await api.createSession({
+          pageLabel: i18n.getFixedT(options.responseLanguage ?? 'zh-CN', 'common')('contextRoom:documentCursorCompletionAgent.pageLabel', { name: input.documentName }),
+          roomId: input.roomId,
+        })
+      sessionId = session.id
+      if (channel) await channel.ensureSubscribed()
+      try {
+        run = await api.startRun(session.id, {
+          prompt: buildDocumentCursorCompletionPrompt(input, options.responseLanguage),
+          idempotencyKey: crypto.randomUUID(),
+          responseLanguage: options.responseLanguage,
+          captureMemory: false,
+          recallMemory: false,
+          toolsEnabled: false,
+          context: {
+            selectedRoomId: input.roomId,
+            rooms: [{
+              id: input.roomId,
+              title: input.roomTitle?.trim() || input.documentName,
+            }],
+          },
+        })
+        break
+      } catch (error) {
+        // 复用会话可能已被服务端丢弃（补全服务重启）：换新会话重试一次。
+        if (channel && attempt === 0
+          && classifyDocumentCursorCompletionError(error) === 'session_not_found') {
+          channel.invalidateSession()
+          sessionId = null
+          continue
+        }
+        throw error
+      }
+    }
     runId = run.id
     if (options.signal.aborted) {
       cancelRun()
       throw abortError()
     }
 
+    let settleOutcome: 'completed' | 'failed' | 'cancelled' | null = null
     while (Date.now() - startedAt < timeoutMs) {
       throwIfAborted(options.signal)
-      const events = await api.getEvents(session.id, run.id, afterSeq)
-      for (const event of events) {
-        afterSeq = Math.max(afterSeq, event.seq)
-        if (event.type === 'message.delta') {
-          const delta = eventText(event, 'delta')
-          if (delta) {
-            rawText += delta
-            options.onSuggestion(parseDocumentCursorCompletion(rawText, input))
-          }
-        } else if (event.type === 'message.completed') {
-          const content = eventText(event, 'content')
-          if (content !== null) rawText = content
-          options.onSuggestion(parseDocumentCursorCompletion(rawText, input))
-        } else if (event.type === 'run.completed') {
-          runSettled = true
-          const suggestion = parseDocumentCursorCompletion(rawText, input)
-          if (!suggestion.text) throw new Error(i18n.t('contextRoom:documentCursorCompletionAgent.noUsableCompletion'))
-          return suggestion
-        } else if (event.type === 'run.failed' || event.type === 'run.interrupted') {
-          runSettled = true
-          throw new Error(eventText(event, 'message') || i18n.t('contextRoom:documentCursorCompletionAgent.failed'))
-        } else if (event.type === 'run.cancelled') {
-          runSettled = true
-          throw abortError()
-        }
+      // 推送队列非空时直接消费推送（零 HTTP）；否则做一次增量对账拉取。
+      const batch = pushedEvents.splice(0)
+      if (!batch.length || !pushMode) {
+        const events = await api.getEvents(sessionId, run.id, afterSeq)
+        batch.push(...events)
       }
-      await wait(pollIntervalMs, options.signal)
+      batch.sort((left, right) => left.seq - right.seq)
+      for (const event of batch) {
+        if (event.seq <= afterSeq) continue
+        afterSeq = event.seq
+        const outcome = processEvent(event)
+        if (outcome && !settleOutcome) settleOutcome = outcome
+      }
+      if (settleOutcome) {
+        // 终局前做最后一次对账：拉取 + 竞态期间推来的事件合并处理，
+        // 避免 socket 乱序/掉线漏掉 message.completed 导致陈旧收尾。
+        const finalEvents = [...pushedEvents.splice(0)]
+        finalEvents.push(...(await api.getEvents(sessionId, run.id, afterSeq)))
+        finalEvents.sort((left, right) => left.seq - right.seq)
+        for (const event of finalEvents) {
+          if (event.seq <= afterSeq) continue
+          afterSeq = event.seq
+          const outcome = processEvent(event)
+          if (outcome && !settleOutcome) settleOutcome = outcome
+        }
+        runSettled = true
+        if (settleOutcome === 'completed') {
+          const suggestion = parseDocumentCursorCompletion(rawText, input)
+          if (!suggestion.text) {
+            throw new DocumentCursorCompletionError(
+              'no_completion',
+              i18n.t('contextRoom:documentCursorCompletionAgent.noUsableCompletion'),
+            )
+          }
+          return suggestion
+        }
+        if (settleOutcome === 'failed') {
+          throw new DocumentCursorCompletionError(
+            'provider',
+            failureMessage || i18n.t('contextRoom:documentCursorCompletionAgent.failed'),
+          )
+        }
+        throw abortError()
+      }
+      // 首个可用建议 deadline：迟到的建议对补全没有价值。
+      if (!sawUsableSuggestion && Date.now() - startedAt >= firstSuggestionMs) {
+        cancelRun()
+        throw new DocumentCursorCompletionError(
+          'first_suggestion_timeout',
+          i18n.t('contextRoom:documentCursorCompletionAgent.timedOut'),
+        )
+      }
+      await waitForNext()
     }
     cancelRun()
-    throw new Error(i18n.t('contextRoom:documentCursorCompletionAgent.timedOut'))
+    throw new DocumentCursorCompletionError(
+      'timeout',
+      i18n.t('contextRoom:documentCursorCompletionAgent.timedOut'),
+    )
   } finally {
+    removePushListener?.()
     options.signal.removeEventListener('abort', onAbort)
     if (!runSettled) cancelRun()
     if (cancelPromise) await cancelPromise
-    if (sessionId) await deleteTemporarySession(api, sessionId)
+    if (!channel && sessionId) await deleteTemporarySession(api, sessionId)
   }
 }

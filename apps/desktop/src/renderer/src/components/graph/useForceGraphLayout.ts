@@ -51,7 +51,7 @@ export interface UseForceGraphLayoutInput {
 export interface UseForceGraphLayoutResult {
   /** 布局控制器；Worker 不可用（如 SharedArrayBuffer 缺失）时为 null。 */
   readonly controller: ForceGraphLayoutController | null
-  /** Worker 写入的共享坐标；控制器未就绪时为 null，调用方回落静态坐标。 */
+  /** Worker 写入的共享坐标；控制器未就绪或 Worker 死亡时为 null，调用方回落静态坐标。 */
   readonly positions: Float32Array | null
   /** 供渲染层轮询 revision 的稳定回调；控制器未就绪时为 undefined。 */
   readonly revision: (() => number) | undefined
@@ -110,11 +110,22 @@ export function useForceGraphLayout({
 
   useEffect(() => {
     let next: ForceGraphLayoutController
+    let workerFailed = false
     try {
       next = new ForceGraphLayoutController({
         nodes,
         edges,
         options,
+        // Worker 死亡（加载失败/初始化抛错/运行中崩溃）时拆掉控制器：
+        // 共享坐标缓冲停在全 0，若继续挂载会把所有节点画在世界原点叠成
+        // 一叠（相机对准后即满屏重叠大饼）；置 null 让画布回落静态站位。
+        onFatal: (error) => {
+          console.error(`${label} worker failed`, error)
+          if (workerFailed) return
+          workerFailed = true
+          next.dispose()
+          setController(null)
+        },
         ...(workerFactory ? { workerFactory } : {}),
       })
     } catch (error) {
@@ -124,9 +135,8 @@ export function useForceGraphLayout({
     }
     worldRef.current = { height: naturalWorldHeight, width: naturalWorldWidth }
     setController(next)
-    void next.ready.catch((error) => {
-      console.error(`${label} worker failed`, error)
-    })
+    // onFatal 已负责日志；这里只消化 ready 的拒绝，避免未处理 Promise。
+    void next.ready.catch(() => {})
     return () => next.dispose()
   }, [edges, label, naturalWorldHeight, naturalWorldWidth, nodes, options, workerFactory])
 

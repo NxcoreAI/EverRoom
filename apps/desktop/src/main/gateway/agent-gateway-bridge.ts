@@ -65,7 +65,14 @@ export class AgentGatewayBridge {
       trackRun(run: AgentRun): void
       trackEvent(event: AgentEvent): void
     },
-  ) {}
+    options: { eventChannel?: string } = {},
+  ) {
+    // 默认 'agent:event' 是主 Agent UI 的通道；补全等旁路桥必须传独立
+    // channel，否则两个桥的 websocket 帧会在同一渲染进程通道里串台。
+    this.eventChannel = options.eventChannel ?? AGENT_EVENT_CHANNEL
+  }
+
+  private readonly eventChannel: string
 
   setEventObserver(observer: ((event: AgentEvent) => void) | null): void {
     this.eventObserver = observer
@@ -328,7 +335,7 @@ export class AgentGatewayBridge {
       try {
         const frame: unknown = JSON.parse(data.toString())
         if (isAgentSocketFrame(frame)) {
-          contents.send(AGENT_EVENT_CHANNEL, frame)
+          contents.send(this.eventChannel, frame)
           if (frame.type === 'event') {
             this.activity?.trackEvent(frame.event)
             this.eventObserver?.(frame.event)

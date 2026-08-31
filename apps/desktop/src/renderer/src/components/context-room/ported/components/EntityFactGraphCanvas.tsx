@@ -47,10 +47,11 @@ const APPLIED_STATUS_COLORS: Record<RoomAppliedEntityStatus, number> = {
   suppressed: 0x9aa3ad,
 }
 
-/** 固定点位放不下时的确定性环形兜底，避免大量节点同点出生。 */
+/** 固定点位放不下时的确定性黄金角螺旋兜底，任意数量节点两两错开。 */
 function fallbackPosition(index: number, ring: number): [number, number] {
-  const angle = (index / 12) * Math.PI * 2
-  return [260 + Math.cos(angle) * ring, 140 + Math.sin(angle) * ring]
+  const angle = index * Math.PI * (3 - Math.sqrt(5))
+  const distance = ring * Math.sqrt((index + 1) / 12)
+  return [260 + Math.cos(angle) * distance, 140 + Math.sin(angle) * distance]
 }
 
 /** 紧凑小图：近距斥力 + 短连线，常量引用保证布局不因渲染重建。 */
