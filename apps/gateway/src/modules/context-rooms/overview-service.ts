@@ -937,8 +937,7 @@ export class RoomOverviewService {
       eq(roomContextCorrections.roomId, resolved),
     )).get();
     if (agentContext && (!candidate
-      || candidate.sessionId !== agentContext.sessionId
-      || candidate.proposedByRunId === agentContext.runId)) {
+      || candidate.sessionId !== agentContext.sessionId)) {
       throw new Error("room_correction_confirmation_required");
     }
     const now = new Date();
