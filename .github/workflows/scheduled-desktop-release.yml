@@ -81,7 +81,7 @@ jobs:
               echo "tag-exists=false" >> "$GITHUB_OUTPUT"
             fi
           else
-            tag="$(git tag --points-at HEAD --list "desktop-v$version*" --sort=-version:refname | head -n 1)"
+            tag="$(git tag --points-at HEAD --list "desktop-v$version-nightly.*" --sort=-version:refname | head -n 1)"
             if [[ -n "$tag" ]]; then
               echo "tag-exists=true" >> "$GITHUB_OUTPUT"
             else
